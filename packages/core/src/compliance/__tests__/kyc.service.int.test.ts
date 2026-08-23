@@ -51,7 +51,6 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
     .insert(player)
     .values({
       userId: randomUUID(),
-      displayName: 'Player',
       currency: 'USD',
       kycStatus: 'verified',
       ...overrides,

@@ -4,6 +4,9 @@ import {
   UuidSchema,
   LoginInputSchema,
   RegisterInputSchema,
+  RegisterOutputSchema,
+  UsernameAvailabilityInputSchema,
+  UsernameAvailabilityOutputSchema,
   Enable2faInputSchema,
   Enable2faResultSchema,
   Verify2faInputSchema,
@@ -20,6 +23,7 @@ import {
   PhoneLoginRequestInputSchema,
   PhoneLoginRequestOutputSchema,
   PhoneLoginVerifyInputSchema,
+  LoginSecurityStateSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import * as z from 'zod';
@@ -46,7 +50,12 @@ export const identityContract = {
   register: oc
     .route({ method: 'POST', path: '/identity/register' })
     .input(RegisterInputSchema)
-    .output(z.object({ user: UserSchema })),
+    .output(RegisterOutputSchema),
+
+  usernameAvailable: oc
+    .route({ method: 'GET', path: '/identity/username-available' })
+    .input(UsernameAvailabilityInputSchema)
+    .output(UsernameAvailabilityOutputSchema),
 
   // When 2FA is enabled, better-auth withholds the session and signals `twoFactorRedirect`; client must then call verify2fa.
   login: oc
@@ -57,6 +66,7 @@ export const identityContract = {
         user: UserSchema.optional(),
         session: SessionSchema.optional(),
         twoFactorRedirect: z.boolean().optional(),
+        security: LoginSecurityStateSchema.optional(),
       }),
     ),
 
@@ -68,7 +78,9 @@ export const identityContract = {
   phoneLoginVerify: oc
     .route({ method: 'POST', path: '/identity/phone-login/verify' })
     .input(PhoneLoginVerifyInputSchema)
-    .output(z.object({ user: UserSchema, session: SessionSchema })),
+    .output(
+      z.object({ user: UserSchema, session: SessionSchema, security: LoginSecurityStateSchema }),
+    ),
 
   logout: oc.route({ method: 'POST', path: '/identity/logout' }).output(IdentitySuccessSchema),
 

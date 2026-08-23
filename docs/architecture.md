@@ -100,7 +100,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Domains** (`packages/core/src/<domain>/*`) - folded into the single `@openora/core` package and exposed as subpaths (`@openora/core/<domain>`), not as one package per domain. A domain may import the engine zones (`contracts`, `server`, `react`) and a sibling's read-only `/schema` subpath, but **never another domain's internals** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@openora/core/contracts`. ADR-0025.
 
-**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
+**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable. For the pooling/sweeping/reconciliation shape a custody-style payment vendor adds, see [docs/adapters/payment.md](./adapters/payment.md#custody-pooling-sweeping-and-reconciliation).
 
 **Background jobs** - long-running work runs off the request path in a BullMQ worker shipped as an overlay plugin (`/scaffold-plugin <name>-worker`): a module emits an event via the typed `EventBus`, the worker plugin subscribes in `register(ctx)` and processes the job. There is no standalone worker app.
 

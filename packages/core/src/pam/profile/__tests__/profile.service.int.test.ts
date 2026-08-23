@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '../schema/index.js';
@@ -14,18 +13,10 @@ function makeService(): ProfileService {
   return new ProfileService(db.drizzle);
 }
 
-async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name: 'Player One', email: `${randomUUID()}@example.com`, ...overrides })
-    .returning();
-  return row!;
-}
-
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'Player One', ...overrides })
+    .values({ userId, ...overrides })
     .returning();
   return row!;
 }
@@ -47,15 +38,15 @@ beforeEach(async () => {
 });
 
 describe('ProfileService.getMyProfile (real PG)', () => {
-  it('materializes a player row from the users name on first access', async () => {
+  it('materializes a player row from the users username on first access', async () => {
     const svc = makeService();
-    const account = await seedUser({ name: 'Jordan' });
+    const account = await seedUser(db, { name: 'Jordan', username: 'jordan_player' });
 
     const profile = await svc.getMyProfile(account.id);
 
     expect(profile).toMatchObject({
       userId: account.id,
-      displayName: 'Jordan',
+      username: 'jordan_player',
       email: account.email,
     });
     expect(await playersFor(account.id)).toHaveLength(1);
@@ -63,18 +54,18 @@ describe('ProfileService.getMyProfile (real PG)', () => {
 
   it('returns the existing row without inserting a second one on a later call', async () => {
     const svc = makeService();
-    const account = await seedUser();
-    await seedPlayer(account.id, { displayName: 'Existing', country: 'US' });
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { country: 'US' });
 
     const profile = await svc.getMyProfile(account.id);
 
-    expect(profile).toMatchObject({ displayName: 'Existing', country: 'US' });
+    expect(profile).toMatchObject({ username: account.username, country: 'US' });
     expect(await playersFor(account.id)).toHaveLength(1);
   });
 
   it('creates exactly one player row when two first accesses race on the same user', async () => {
     const svc = makeService();
-    const account = await seedUser();
+    const account = await seedUser(db);
 
     const [a, b] = await Promise.all([svc.getMyProfile(account.id), svc.getMyProfile(account.id)]);
 
@@ -86,7 +77,7 @@ describe('ProfileService.getMyProfile (real PG)', () => {
 describe('ProfileService.updateMyProfile (real PG)', () => {
   it('persists profile fields and returns the mapped player with email', async () => {
     const svc = makeService();
-    const account = await seedUser({ name: 'Player One' });
+    const account = await seedUser(db, { name: 'Player One' });
     await seedPlayer(account.id, { country: null });
 
     const result = await svc.updateMyProfile(account.id, { country: 'US' });
@@ -98,18 +89,18 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
 
   it('materializes the profile first when update is the first call for a user', async () => {
     const svc = makeService();
-    const account = await seedUser({ name: 'Fresh' });
+    const account = await seedUser(db, { name: 'Fresh', username: 'fresh_player' });
 
     const result = await svc.updateMyProfile(account.id, { currency: 'EUR' });
 
-    expect(result).toMatchObject({ displayName: 'Fresh', currency: 'EUR' });
+    expect(result).toMatchObject({ username: 'fresh_player', currency: 'EUR' });
     expect(await playersFor(account.id)).toHaveLength(1);
   });
 
   it('leaves other players untouched', async () => {
     const svc = makeService();
-    const account = await seedUser();
-    const other = await seedUser();
+    const account = await seedUser(db);
+    const other = await seedUser(db);
     await seedPlayer(account.id, { country: 'US' });
     await seedPlayer(other.id, { country: 'CA' });
 

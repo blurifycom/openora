@@ -8,6 +8,7 @@ import {
   timestamp,
   index,
   integer,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { THEMES } from '@openora/core/contracts';
 
@@ -18,6 +19,7 @@ export const user = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     name: text().notNull(),
+    username: text().notNull(),
     email: text().notNull().unique(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
@@ -44,6 +46,7 @@ export const user = pgTable(
     // 1min -> 5min -> 15min. Shared by every login method.
     lockoutCount: integer().notNull().default(0),
     lastLockoutAt: timestamp({ withTimezone: true }),
+    lastFailedLoginAt: timestamp({ withTimezone: true }),
     // Responsible-Gambling login block (cooling-off / self-exclusion). Written only via
     // the LOGIN_ENFORCEMENT port. `rgBlockedUntil` null while blocked = indefinite
     // (self-exclusion); a Date is the cooling-off expiry the login gate auto-clears.
@@ -57,7 +60,9 @@ export const user = pgTable(
   // Trigram GIN index so the back-office player search (`ILIKE '%term%'` on email)
   // is index-backed instead of a seq scan. Requires the pg_trgm extension.
   (t) => [
+    uniqueIndex('user_username_unique').on(sql`lower(${t.username})`),
     index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
+    index('user_username_trgm_idx').using('gin', sql`${t.username} gin_trgm_ops`),
     index('user_created_at_idx').on(t.createdAt),
   ],
 );

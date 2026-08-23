@@ -17,6 +17,7 @@ import {
 } from '@openora/core/contracts';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
+import { user } from '@openora/core/pam/schema/identity';
 import { friendship } from '../schema/index.js';
 import {
   type Friendship,
@@ -114,16 +115,29 @@ export class SocialService {
     private readonly identityReader: IdentityReader,
   ) {}
 
+  /** `player` rows widened with the identity-owned handle. */
+  private playersWithUsername(where: SQL) {
+    return this.drizzle.db
+      .select({
+        userId: player.userId,
+        username: user.username,
+        status: player.status,
+        lastSeenAt: player.lastSeenAt,
+      })
+      .from(player)
+      .innerJoin(user, eq(user.id, player.userId))
+      .where(where);
+  }
+
   async sendFriendRequest(callerId: Uuid, targetUserId: Uuid): Promise<Friendship> {
     if (targetUserId === callerId) {
       throw new SelfFriendRequestError();
     }
 
     // Batched: caller + target resolved in one query rather than two round trips.
-    const players = await this.drizzle.db
-      .select({ userId: player.userId, displayName: player.displayName, status: player.status })
-      .from(player)
-      .where(inArray(player.userId, [callerId, targetUserId]));
+    const players = await this.playersWithUsername(
+      inArray(player.userId, [callerId, targetUserId]),
+    );
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
 
@@ -170,7 +184,7 @@ export class SocialService {
         friendshipId: inserted.id,
         requesterId: inserted.requesterId,
         addresseeId: inserted.addresseeId,
-        requesterDisplayName: callerPlayer.displayName,
+        requesterUsername: callerPlayer.username,
       });
       return toFriendshipDto(inserted);
     }
@@ -181,7 +195,7 @@ export class SocialService {
       requesterId: accepted.requesterId,
       addresseeId: accepted.addresseeId,
       accepterId: callerId,
-      accepterDisplayName: callerPlayer.displayName,
+      accepterUsername: callerPlayer.username,
     });
     return toFriendshipDto(accepted);
   }
@@ -410,15 +424,7 @@ export class SocialService {
     const [players, ignores] =
       otherUserIds.length > 0
         ? await Promise.all([
-            this.drizzle.db
-              .select({
-                userId: player.userId,
-                displayName: player.displayName,
-                lastSeenAt: player.lastSeenAt,
-                status: player.status,
-              })
-              .from(player)
-              .where(inArray(player.userId, otherUserIds)),
+            this.playersWithUsername(inArray(player.userId, otherUserIds)),
             this.drizzle.db
               .select({ ignoredId: chatUserIgnore.ignoredId })
               .from(chatUserIgnore)
@@ -442,7 +448,7 @@ export class SocialService {
       if (!targetPlayer) {
         logger.error(
           { friendshipId: row.id, userId },
-          'listFriends: player row missing for friend',
+          'listFriends: no player+user pair for friend',
         );
         return [];
       }
@@ -457,7 +463,7 @@ export class SocialService {
           {
             userId,
             friendshipId: row.id,
-            displayName: targetPlayer.displayName,
+            username: targetPlayer.username,
             status: isOnline ? ('online' as const) : ('offline' as const),
             lastSeenAt: targetPlayer.lastSeenAt,
             isIgnored: ignoredIds.has(userId),
@@ -515,10 +521,7 @@ export class SocialService {
       throw new FriendRequestNotFoundError(friendshipId);
     }
 
-    const [callerPlayer] = await this.drizzle.db
-      .select({ displayName: player.displayName })
-      .from(player)
-      .where(eq(player.userId, callerId));
+    const [callerPlayer] = await this.playersWithUsername(eq(player.userId, callerId));
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row (see
       // sendFriendRequest's same guard).
@@ -530,7 +533,7 @@ export class SocialService {
       requesterId: updated.requesterId,
       addresseeId: updated.addresseeId,
       accepterId: callerId,
-      accepterDisplayName: callerPlayer.displayName,
+      accepterUsername: callerPlayer.username,
     });
     return toFriendshipDto(updated);
   }
@@ -626,14 +629,7 @@ export class SocialService {
 
     const [players, mutualCounts, blocks] = await Promise.all([
       counterpartIds.length > 0
-        ? this.drizzle.db
-            .select({
-              userId: player.userId,
-              displayName: player.displayName,
-              status: player.status,
-            })
-            .from(player)
-            .where(inArray(player.userId, counterpartIds))
+        ? this.playersWithUsername(inArray(player.userId, counterpartIds))
         : Promise.resolve([]),
       direction === 'incoming' && counterpartIds.length > 0
         ? this.getMutualFriendsCounts(callerId, counterpartIds)
@@ -671,7 +667,7 @@ export class SocialService {
       if (!counterpartPlayer) {
         logger.error(
           { friendshipId: row.id, counterpartId },
-          'listFriendRequests: player row missing for counterpart',
+          'listFriendRequests: no player+user pair for counterpart',
         );
         return [];
       }
@@ -686,7 +682,7 @@ export class SocialService {
           {
             friendshipId: row.id,
             userId: counterpartId,
-            displayName: counterpartPlayer.displayName,
+            username: counterpartPlayer.username,
             direction,
             createdAt: row.createdAt,
             mutualFriendsCount:

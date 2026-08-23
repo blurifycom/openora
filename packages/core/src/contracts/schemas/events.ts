@@ -80,6 +80,7 @@ export const domainEventSchemas = {
   'identity.user.lockout.triggered': authContextBase.extend({
     userId: UuidSchema,
     email: z.email(),
+    tier: z.number().int().positive().optional(),
     lockoutUntil: TimestampSchema,
   }),
   'identity.user.unlocked': authContextBase.extend({
@@ -148,7 +149,7 @@ export const domainEventSchemas = {
     .extend({ playerId: UuidSchema.nullable() })
     .extend(authContextBase.shape),
   // A payments admin approved a pending withdrawal; it moves to `processing` and
-  // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
+  // is sent to the PSP/custody rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
     .extend({ adminId: UuidSchema })
     .extend(authContextBase.shape),
@@ -157,9 +158,31 @@ export const domainEventSchemas = {
   'wallet.withdrawal.rejected': walletTxnBase
     .extend({ adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
-  // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
+  // An approved withdrawal failed at the PSP/custody rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`.
   'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
+  // A super admin credited or debited a balance directly, outside the deposit and
+  // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
+  // a correction is not a deposit, and reporting it as one would overstate deposits and
+  // GGR. Subscribers that track balance movement must handle it or they see a balance
+  // change with no event behind it.
+  'wallet.manual_adjustment.created': walletTxnBase
+    .extend({
+      playerId: UuidSchema.nullable(),
+      adminId: UuidSchema,
+      direction: z.enum(['credit', 'debit']),
+      reason: z.string(),
+    })
+    .extend(authContextBase.shape),
+  // A reconciliation run's open-findings count exceeded the operator's configured
+  // threshold. System-driven (no player/admin actor) - the resource is the run itself,
+  // never a finding's payload (an address or tx hash must never reach the audit log
+  // through this event - see docs/standards/audit.md).
+  'wallet.reconciliation.alert': z.object({
+    runId: UuidSchema,
+    openFindings: z.number().int().nonnegative(),
+    threshold: z.number().int().nonnegative(),
+  }),
 
   'gaming.round.started': z.object({
     roundId: UuidSchema,
@@ -174,8 +197,8 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
-  // A chat gift/rain bonus credit's rollover requirement was satisfied by a wager
-  // (BF-326). Emitted by `gaming` (the only `type: 'bet'` wallet-debit caller today),
+  // A chat gift/rain bonus credit's rollover requirement was satisfied by a wager.
+  // Emitted by `gaming` (the only `type: 'bet'` wallet-debit caller today),
   // not `wallet` - see gaming.service.ts's startRound for why.
   'wallet.bonus_rollover.completed': z.object({
     userId: UuidSchema,
@@ -348,6 +371,12 @@ export const domainEventSchemas = {
   'rg.cooling_off.lifted': actorReasonBase
     .extend({ userId: UuidSchema, playerId: UuidSchema.nullable(), exclusionId: UuidSchema })
     .extend(authContextBase.shape),
+  'rg.cooling_off.expired': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    exclusionId: UuidSchema,
+    expiresAt: TimestampSchema,
+  }),
   'rg.exclusion.login_blocked': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -496,14 +525,14 @@ export const domainEventSchemas = {
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
-    requesterDisplayName: z.string(),
+    requesterUsername: z.string(),
   }),
   'social.friend_request.accepted': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
     accepterId: UuidSchema,
-    accepterDisplayName: z.string(),
+    accepterUsername: z.string(),
   }),
   'social.friendship.removed': authContextBase.extend({
     friendshipId: UuidSchema,
@@ -551,6 +580,7 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'wallet.withdrawal.approved': 2,
   'wallet.withdrawal.rejected': 2,
   'wallet.withdrawal.failed': 2,
+  'wallet.manual_adjustment.created': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.
   'rg.limit.set': 2,

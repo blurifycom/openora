@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import type {
-  AdminUserDirectory,
-  PaymentAdapter,
-  AdminPlayerSummary,
-  TagEvaluationCommands,
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  type AdminUserDirectory,
+  type PaymentAdapter,
+  type AdminPlayerSummary,
+  type TagEvaluationCommands,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -16,9 +17,17 @@ import {
   makeIdentityReader,
   NO_CLIENT_META,
   makeAuditWriter,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletDepositAddress,
+  walletAsset,
+  walletReconciliationFinding,
+} from '../schema/index.js';
 import {
   WalletService,
   type WalletServiceDeps,
@@ -27,10 +36,12 @@ import {
   WithdrawalNotPendingError,
   InsufficientBalanceError,
   AmbiguousDepositAddressError,
-  CurrencyMismatchError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
+  AmbiguousNetworkError,
+  BelowMinimumWithdrawalError,
+  WithdrawalDisabledError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
@@ -54,11 +65,18 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
     drizzle: db.drizzle,
     events: events,
     payment: mock<PaymentAdapter>(psp),
+    paymentProviders: makePaymentProviderRegistry(),
     audit,
     identityReader: makeIdentityReader(),
     ...overrides,
   });
   return { svc, events, psp, audit };
+}
+
+function playerIdentityReader() {
+  const identityReader = makeIdentityReader();
+  vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(randomUUID());
+  return identityReader;
 }
 
 const queueService = () => makeService().svc;
@@ -152,7 +170,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${walletAsset}, ${walletReconciliationFinding}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -192,7 +210,7 @@ describe('WalletService.deposit (real PG)', () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
 
-    await svc.deposit({ userId: w.userId, amount: '1', currency: 'BTC', provider: 'fireblocks' });
+    await svc.deposit({ userId: w.userId, amount: '1', currency: 'BTC', provider: 'custody' });
 
     const rows = await txRows(w.id);
     expect(rows[0]).toMatchObject({ type: 'deposit', rail: 'crypto' });
@@ -230,6 +248,110 @@ describe('WalletService.deposit (real PG)', () => {
 
     expect(await balanceOf(w.userId, 'USD')).toBe(100);
     expect(await balanceOf(w.userId, 'EUR')).toBe(10);
+  });
+});
+
+describe('WalletService.manualAdjust (real PG)', () => {
+  it('credits, debits, writes an immutable ledger row and replays exactly once', async () => {
+    const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader() });
+    const player = await seedWallet({ balance: '10' });
+    const adminId = randomUUID();
+    const idempotencyKey = randomUUID();
+
+    const credit = await svc.manualAdjust({
+      adminId,
+      userId: player.userId,
+      direction: 'credit',
+      amount: '5',
+      currency: 'USD',
+      reason: 'settlement correction',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const replay = await svc.manualAdjust({
+      adminId,
+      userId: player.userId,
+      direction: 'credit',
+      amount: '5',
+      currency: 'USD',
+      reason: 'settlement correction',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const debit = await svc.manualAdjust({
+      adminId,
+      userId: player.userId,
+      direction: 'debit',
+      amount: '3',
+      currency: 'USD',
+      reason: 'duplicate credit reversal',
+      idempotencyKey: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+
+    expect(replay).toEqual(credit);
+    expect(await balanceOf(player.userId)).toBe(12);
+    expect(await txById(credit.transactionId)).toMatchObject({
+      type: 'manual_credit',
+      status: 'completed',
+      reviewedBy: adminId,
+      reviewReason: 'settlement correction',
+    });
+    expect(await txById(debit.transactionId)).toMatchObject({ type: 'manual_debit' });
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(2);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.manual_adjustment.created',
+        actorId: adminId,
+        resourceId: credit.transactionId,
+      }),
+    );
+    expect(psp.processDeposit).not.toHaveBeenCalled();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('rejects an overdraw without a ledger or audit entry', async () => {
+    const { svc, audit } = makeService({ identityReader: playerIdentityReader() });
+    const player = await seedWallet({ balance: '10' });
+
+    await expect(
+      svc.manualAdjust({
+        adminId: randomUUID(),
+        userId: player.userId,
+        direction: 'debit',
+        amount: '11',
+        currency: 'USD',
+        reason: 'correction',
+        idempotencyKey: randomUUID(),
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(InsufficientBalanceError);
+
+    expect(await balanceOf(player.userId)).toBe(10);
+    expect(await txRows(player.id)).toHaveLength(0);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('creates a selected-currency balance for a player without a wallet', async () => {
+    const { svc } = makeService({ identityReader: playerIdentityReader() });
+    const userId = randomUUID();
+
+    await svc.manualAdjust({
+      adminId: randomUUID(),
+      userId,
+      direction: 'credit',
+      amount: '7',
+      currency: 'EUR',
+      reason: 'goodwill',
+      idempotencyKey: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+
+    expect(await svc.getBalances(userId)).toEqual({
+      activeCurrency: 'EUR',
+      balances: [{ currency: 'EUR', balance: '7.000000000000000000' }],
+    });
   });
 });
 
@@ -315,6 +437,117 @@ describe('WalletService.withdraw (real PG)', () => {
       rail: 'crypto',
       destinationAddress: 'bc1qexample',
     });
+  });
+
+  it('pins the only payable network on the transaction', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '2', currency: 'BTC' });
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'BTC',
+      network: 'BITCOIN',
+      providerAssetId: 'BTC',
+      minDeposit: '0',
+      minWithdrawal: '0',
+      withdrawalFee: '0',
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+
+    expect(await txById(result.transactionId)).toMatchObject({ network: 'BITCOIN' });
+  });
+
+  it('demands a network when the currency is payable on several, holding no funds', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values(
+      ['ERC20', 'TRC20'].map((network) => ({
+        currency: 'USDT',
+        network,
+        providerAssetId: `USDT_${network}`,
+        minDeposit: '0',
+        minWithdrawal: '0',
+        withdrawalFee: '0',
+      })),
+    );
+
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '10',
+        currency: 'USDT',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousNetworkError);
+    expect(await balanceOf(w.userId)).toBe(100);
+  });
+
+  it('enforces the minimum of the chosen chain, not the currency', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values([
+      {
+        currency: 'USDT',
+        network: 'ERC20',
+        providerAssetId: 'USDT_ERC20',
+        minDeposit: '0',
+        minWithdrawal: '20',
+        withdrawalFee: '0',
+      },
+      {
+        currency: 'USDT',
+        network: 'BEP20',
+        providerAssetId: 'USDT_BSC',
+        minDeposit: '0',
+        minWithdrawal: '1',
+        withdrawalFee: '0',
+      },
+    ]);
+    const args = {
+      userId: w.userId,
+      amount: '5',
+      currency: 'USDT',
+      destinationAddress: '0xexample',
+      ...NO_CLIENT_META,
+    };
+
+    await expect(svc.withdraw({ ...args, network: 'ERC20' })).rejects.toBeInstanceOf(
+      BelowMinimumWithdrawalError,
+    );
+    const ok = await svc.withdraw({ ...args, network: 'BEP20' });
+
+    expect(await txById(ok.transactionId)).toMatchObject({ network: 'BEP20' });
+  });
+
+  it('fails closed when the currency is configured but payable nowhere', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '0',
+      minWithdrawal: '0',
+      withdrawalFee: '0',
+      withdrawalEnabled: false,
+    });
+
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '10',
+        currency: 'USDT',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(WithdrawalDisabledError);
+    expect(await balanceOf(w.userId)).toBe(100);
   });
 
   it('throws DestinationAddressRequiredError for a crypto withdrawal with no address', async () => {
@@ -648,7 +881,7 @@ describe('WalletService idempotency - withdraw (real PG)', () => {
 });
 
 describe('WalletService.approveWithdrawal (real PG)', () => {
-  it('moves pending -> completed, records the provider, and emits approved then completed', async () => {
+  it('moves pending -> completed and emits approved then completed', async () => {
     const { svc, events, psp } = makeService();
     const w = await seedWallet({ balance: '60' });
     const adminId = randomUUID();
@@ -661,7 +894,7 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     expect(await txById(pending.id)).toMatchObject({
       status: 'completed',
       reviewedBy: adminId,
-      providerName: 'psp',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
     });
     expect(await balanceOf(w.userId)).toBe(60);
     expect(emittedTopics(events)).toEqual([
@@ -670,14 +903,61 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     ]);
   });
 
-  it('records the fireblocks provider for a crypto-rail withdrawal', async () => {
+  it('resolves providerName from the default binding when the pair has no catalog row', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
     const pending = await seedTx(w.id, { currency: 'BTC', rail: 'crypto', amount: '1' });
 
     await svc.approveWithdrawal(randomUUID(), pending.id);
 
-    expect(await txById(pending.id)).toMatchObject({ providerName: 'fireblocks' });
+    expect(await txById(pending.id)).toMatchObject({ providerName: DEFAULT_PAYMENT_PROVIDER });
+  });
+
+  it("resolves providerName from the (currency, network) catalog row's own providerName", async () => {
+    const { svc } = makeService();
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+      providerName: 'vendor-a',
+    });
+    const w = await seedWallet({ currency: 'USDT' });
+    const pending = await seedTx(w.id, {
+      currency: 'USDT',
+      network: 'ERC20',
+      rail: 'crypto',
+      amount: '5',
+    });
+
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(await txById(pending.id)).toMatchObject({ providerName: 'vendor-a' });
+  });
+
+  it('falls back to the default binding when the catalog row has a null providerName', async () => {
+    const { svc } = makeService();
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'TRC20',
+      providerAssetId: 'USDT_TRC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+    });
+    const w = await seedWallet({ currency: 'USDT' });
+    const pending = await seedTx(w.id, {
+      currency: 'USDT',
+      network: 'TRC20',
+      rail: 'crypto',
+      amount: '5',
+    });
+
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(await txById(pending.id)).toMatchObject({ providerName: DEFAULT_PAYMENT_PROVIDER });
   });
 
   it('marks failed, refunds the hold, emits failed, and rethrows when the PSP throws', async () => {
@@ -1008,7 +1288,7 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
       userId,
       currency: 'BTC',
       address: 'bc1qexisting',
-      providerName: 'fireblocks',
+      providerName: 'custody',
     });
 
     expect(await svc.getOrCreateDepositAddress(userId, 'BTC')).toEqual({
@@ -1032,7 +1312,32 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
       .select()
       .from(walletDepositAddress)
       .where(eq(walletDepositAddress.userId, userId));
-    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: 'fireblocks' });
+    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: DEFAULT_PAYMENT_PROVIDER });
+  });
+
+  it("persists the (currency, network) catalog row's own providerName", async () => {
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+      providerName: 'vendor-a',
+    });
+    const userId = randomUUID();
+    const issueDepositAddress = vi.fn(async () => ({ address: '0xnew' }));
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
+    });
+
+    await svc.getOrCreateDepositAddress(userId, 'USDT', 'ERC20');
+
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.userId, userId));
+    expect(stored).toMatchObject({ address: '0xnew', providerName: 'vendor-a' });
   });
 
   it('issues one address when two calls race on the same user and currency', async () => {
@@ -1068,7 +1373,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
   async function seedAddress(userId: string, address: string, currency = 'BTC', network?: string) {
     await db.drizzle.db
       .insert(walletDepositAddress)
-      .values({ userId, currency, address, network, providerName: 'fireblocks' });
+      .values({ userId, currency, address, network, providerName: 'custody' });
   }
 
   it('resolves the address, credits the wallet, and emits deposit.completed', async () => {
@@ -1089,19 +1394,33 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
-  it('logs and no-ops when the address is unknown', async () => {
+  it('credits nobody and files an unattributed_deposit finding when the address is unknown', async () => {
     const { svc, events } = makeService();
+    const externalId = randomUUID();
 
-    await svc.creditDepositByAddress({
-      kind: 'deposit',
-      address: 'bc1qunknown',
-      amount: '1',
-      currency: 'BTC',
-      externalId: randomUUID(),
-      txHash: '0xunknown',
-    });
+    await svc.creditDepositByAddress(
+      {
+        kind: 'deposit',
+        address: 'bc1qunknown',
+        amount: '1',
+        currency: 'BTC',
+        externalId,
+        txHash: '0xunknown',
+      },
+      'default',
+    );
 
     expect(events.emit).not.toHaveBeenCalled();
+    const findings = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'unattributed_deposit',
+      providerName: 'default',
+      status: 'open',
+    });
   });
 
   it('is idempotent on a replayed externalId', async () => {
@@ -1126,21 +1445,32 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
-  it('throws CurrencyMismatchError when the event currency differs from the address', async () => {
-    const { svc } = makeService();
+  it('credits nobody and files a currency_mismatch finding on a currency mismatch', async () => {
+    const { svc, events } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
     await seedAddress(w.userId, 'bc1qmismatch');
+    const externalId = randomUUID();
 
-    await expect(
-      svc.creditDepositByAddress({
-        kind: 'deposit',
-        address: 'bc1qmismatch',
-        amount: '1',
-        currency: 'ETH',
-        externalId: randomUUID(),
-        txHash: '0xmismatch',
-      }),
-    ).rejects.toBeInstanceOf(CurrencyMismatchError);
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qmismatch',
+      amount: '1',
+      currency: 'ETH',
+      externalId,
+      txHash: '0xmismatch',
+    });
+
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(0);
+    const findings = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+    expect(findings).toHaveLength(1);
+    // Its own taxonomy, not `unattributed_deposit`: the address resolved fine, the
+    // currency did not. The polled path already tags this case `currency_mismatch`,
+    // and an admin filtering findings by kind has to see both paths alike.
+    expect(findings[0]).toMatchObject({ kind: 'currency_mismatch', status: 'open' });
   });
 
   it('credits a token that shares the EVM address issued for another currency', async () => {

@@ -50,6 +50,13 @@
       "when": 1787037041382,
       "tag": "0006_tiny_ultron",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787296386010,
+      "tag": "0007_seed_global_chat_room",
+      "breakpoints": true
     }
   ]
 }

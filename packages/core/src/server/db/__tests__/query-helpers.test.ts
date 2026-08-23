@@ -4,6 +4,8 @@ import {
   pageToOffset,
   moneyToNumber,
   moneyEquals,
+  moneyCompare,
+  moneyScaleBy,
   mapConcurrent,
 } from '../query-helpers.js';
 
@@ -62,6 +64,50 @@ describe('moneyEquals', () => {
   it('separates two amounts that differ by one wei, where a float compare cannot', () => {
     expect(moneyEquals('1.000000000000000001', '1.000000000000000002')).toBe(false);
     expect(moneyToNumber('1.000000000000000001')).toBe(moneyToNumber('1.000000000000000002'));
+  });
+});
+
+describe('moneyCompare', () => {
+  it('orders two amounts written at different scales', () => {
+    expect(moneyCompare('9.00', '10.00')).toBe(-1);
+    expect(moneyCompare('10.00', '9.00')).toBe(1);
+    expect(moneyCompare('10', '10.00')).toBe(0);
+  });
+
+  it('separates two amounts that differ by one wei, where moneyToNumber cannot', () => {
+    expect(moneyCompare('1.000000000000000001', '1.000000000000000002')).toBe(-1);
+    expect(moneyCompare('1.000000000000000002', '1.000000000000000001')).toBe(1);
+    expect(moneyToNumber('1.000000000000000001')).toBe(moneyToNumber('1.000000000000000002'));
+  });
+
+  it('orders correctly at the margin where a float compare gives the wrong answer', () => {
+    // moneyToNumber demonstrably breaks here: both round to the same float, so a
+    // float-based compare reports them equal (or reverses order) instead of a<b.
+    const a = '123456789012345678.000000000000000001';
+    const b = '123456789012345678.000000000000000002';
+    expect(moneyCompare(a, b)).toBe(-1);
+    expect(moneyToNumber(a)).toBe(moneyToNumber(b));
+  });
+});
+
+describe('moneyScaleBy', () => {
+  it('multiplies exactly', () => {
+    expect(moneyScaleBy('10', '5')).toBe('50.000000000000000000');
+    expect(moneyScaleBy('0.1', '3')).toBe('0.300000000000000000');
+  });
+
+  it('scales a whole amount by a fee multiple', () => {
+    expect(moneyScaleBy('2.50', '5')).toBe('12.500000000000000000');
+  });
+
+  it('is exact where a float multiplication would drift', () => {
+    // 0.1 * 3 famously drifts to 0.30000000000000004 in JS float arithmetic.
+    expect(0.1 * 3).not.toBe(0.3);
+    expect(moneyScaleBy('0.1', '3')).toBe('0.300000000000000000');
+  });
+
+  it('truncates past MONEY_SCALE rather than rounding up', () => {
+    expect(moneyScaleBy('1.000000000000000001', '0.5')).toBe('0.500000000000000000');
   });
 });
 

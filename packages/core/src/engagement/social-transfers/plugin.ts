@@ -11,6 +11,7 @@ import {
   GIFT_COMMANDS,
   RAIN_COMMANDS,
   createToken,
+  CHAT_BLOCK_WRITER,
 } from '@openora/core/contracts';
 import { SocialTransfersService } from './service/social-transfers.service.js';
 import { createSocialTransfersRouter } from './router/index.js';
@@ -41,6 +42,7 @@ export default {
           c.get(CHAT_REALTIME_TRANSPORT),
           c.get(EVENT_BUS),
           c.get(CHAT_ROOM_ACCESS),
+          c.get(CHAT_BLOCK_WRITER),
           c.get(CACHE),
         ),
     );

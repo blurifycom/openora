@@ -9,6 +9,7 @@ import {
   makeEventBus,
   makeAuditWriter,
   makeIdentityReader,
+  makePaymentProviderRegistry,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -88,6 +89,7 @@ function makeWalletService(audit = makeAuditWriter()) {
       drizzle: db.drizzle,
       events: makeEventBus(),
       payment: mock<PaymentAdapter>({ processDeposit: vi.fn(), processWithdrawal: vi.fn() }),
+      paymentProviders: makePaymentProviderRegistry(),
       identityReader: makeIdentityReader(),
       audit,
     }),

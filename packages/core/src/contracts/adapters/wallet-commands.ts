@@ -16,8 +16,8 @@ export type WalletDebitOutcome =
       ok: true;
       newBalance: string;
       currency: string;
-      // Bonus credits (chat gift/rain, BF-326) whose rollover requirement this debit
-      // just satisfied - set only for a `type: 'bet'` debit. Additive/optional so an
+      // Bonus credits (chat gift/rain rollover tracking) whose rollover requirement this
+      // debit just satisfied - set only for a `type: 'bet'` debit. Additive/optional so an
       // existing consumer that only checks `.ok` is unaffected.
       completedBonusCredits?: Array<{ id: string; currency: string; creditedAmount: string }>;
     }

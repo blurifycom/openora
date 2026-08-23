@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
+import { queue, type PaymentAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -12,11 +12,16 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makeJobQueue,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
+import type { ReconciliationService } from '../service/reconciliation.service.js';
+
+const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
@@ -41,25 +46,34 @@ function realWalletService() {
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
+    paymentProviders: makePaymentProviderRegistry(),
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
 }
 
 function routerWith(adminGuard: AdminGuard) {
-  return createWalletRouter(
-    realWalletService(),
+  return createWalletRouter({
+    wallet: realWalletService(),
     adminGuard,
-    makeAuditWriter(),
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
-  );
+    audit: makeAuditWriter(),
+    paymentProviders: makePaymentProviderRegistry(),
+    reconciliation: mock<ReconciliationService>({}),
+    jobQueue: makeJobQueue(),
+    reconciliationQueue: RECONCILIATION_QUEUE,
+  });
 }
 
 const transactionDenyingGuard = () =>
   makeAdminGuard({ deny: ['transaction'], caller: { userId: 'caller-1', role: 'support' } });
 
 const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
+
+const adjustmentDenyingGuard = () =>
+  makeAdminGuard({
+    deny: ['player:adjust-balance'],
+    caller: { userId: 'caller-1', role: 'admin' },
+  });
 
 async function seedLedger(userId: string, amounts: string[]) {
   const row = findOneOrThrow(
@@ -119,5 +133,32 @@ describe('wallet router listPlayerTransactions authz', () => {
 
     expect(result.total).toBe(1);
     expect(result.items[0]?.amount).toBe('10.000000000000000000');
+  });
+});
+
+describe('wallet router manualAdjustment authz', () => {
+  it('requires the player:adjust-balance grant and changes nothing on denial', async () => {
+    const userId = randomUUID();
+
+    await expect(
+      call(
+        routerWith(adjustmentDenyingGuard()).manualAdjustment,
+        {
+          userId,
+          direction: 'credit',
+          amount: '5',
+          currency: 'USD',
+          reason: 'compensation',
+          idempotencyKey: randomUUID(),
+        },
+        { context: CTX },
+      ),
+      // Asserted on the code, not just `ORPCError`: this input also fails
+      // PlayerNotFoundError, so a bare instanceof check passes no matter which
+      // permission the route asks for - and would not notice the guard changing.
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(await db.drizzle.db.select().from(wallet)).toHaveLength(0);
+    expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
   });
 });

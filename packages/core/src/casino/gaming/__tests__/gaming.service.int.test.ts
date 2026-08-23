@@ -177,7 +177,7 @@ describe('GamingService.startRound (real PG)', () => {
 });
 
 describe('GamingService.startRound bonus rollover completion (real PG)', () => {
-  it('emits wallet.bonus_rollover.completed once per credit the bet just completed (BF-326)', async () => {
+  it('emits wallet.bonus_rollover.completed once per credit the bet just completed', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a3', name: 'Aces' });
     const events = makeEventBus();
     const walletCommands = makeWalletCommands({

@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  InProcessRealtimeTransport,
+  type TestDb,
+  seedUser,
+} from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import type {
@@ -68,7 +73,18 @@ import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 let db: TestDb;
 
 function makeService(
-  directory: AdminUserDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
+  directory: AdminUserDirectory = mock<AdminUserDirectory>({
+    lookupPlayers: async () => [],
+    lookupUsers: async (ids: readonly string[]) =>
+      ids.map((id) => ({
+        id,
+        email: `${id}@example.com`,
+        name: id,
+        createdAt: new Date(),
+        isActive: true,
+        role: 'player',
+      })),
+  }),
   socialCommands?: SocialCommands,
 ) {
   const transport = new InProcessRealtimeTransport();
@@ -117,19 +133,11 @@ function makeService(
   };
 }
 
-async function seedUser(name = 'Player') {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name, email: `${randomUUID()}@test.dev`, emailVerified: true })
-    .returning();
-  return row!;
-}
-
 async function seedRoom(overrides: Partial<typeof chatRoom.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(chatRoom)
     .values({
-      name: 'Jackpot Wheel',
+      name: 'Wheel Spin',
       slug: `room-${randomUUID()}`,
       category: 'games-sports',
       ...overrides,
@@ -232,6 +240,31 @@ describe('ChatService realtime wiring', () => {
     second();
     await expect(svc.getOnlineCount('r1')).resolves.toEqual({ count: 0 });
   });
+
+  it('excludes admin and super-admin users from the online count', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async () => [],
+      lookupUsers: async (ids: readonly string[]) =>
+        ids.map((id) => ({
+          id,
+          email: `${id}@example.com`,
+          name: id,
+          createdAt: new Date(),
+          isActive: true,
+          role: id === 'admin' ? 'admin' : id === 'super-admin' ? 'super-admin' : 'player',
+        })),
+    });
+    const { svc } = makeService(directory);
+    const playerUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'player');
+    const adminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'admin');
+    const superAdminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'super-admin');
+
+    await expect(svc.getOnlineCount('r1')).resolves.toEqual({ count: 1 });
+
+    playerUnsubscribe();
+    adminUnsubscribe();
+    superAdminUnsubscribe();
+  });
 });
 
 describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', () => {
@@ -308,15 +341,15 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 });
 
 describe('ChatService.sendGlobalMessage (real PG)', () => {
-  it('stores the display name from the verified user, ignoring the header fallback', async () => {
+  it('stores the username from the verified user, ignoring the header fallback', async () => {
     const { svc, events } = makeService();
-    const account = await seedUser('Platform Admin');
+    const account = await seedUser(db, { name: 'Platform Admin', username: 'platform_admin' });
 
     const msg = await svc.sendGlobalMessage(account.id, 'spoofed-header-name', 'hi');
 
-    expect(msg.username).toBe('Platform Admin');
+    expect(msg.username).toBe('platform_admin');
     const [stored] = await db.drizzle.db.select().from(chatMessage);
-    expect(stored).toMatchObject({ roomId: null, username: 'Platform Admin' });
+    expect(stored).toMatchObject({ roomId: null, username: 'platform_admin' });
     expect(events.emit).toHaveBeenCalledWith('chat.message.sent', {
       messageId: msg.id,
       roomId: null,
@@ -441,7 +474,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
   it('stores and publishes a message in a public room', async () => {
     const { svc, transport } = makeService();
     const room = await seedRoom();
-    const account = await seedUser('Alice');
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
 
@@ -452,7 +485,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
       content: 'hello room',
     });
 
-    expect(msg).toMatchObject({ roomId: room.id, username: 'Alice' });
+    expect(msg).toMatchObject({ roomId: room.id, username: 'alice' });
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 
@@ -1040,13 +1073,13 @@ describe('ChatService admin rooms (real PG)', () => {
     const { svc, events } = makeService();
 
     const room = await svc.createRoom({
-      name: 'Jackpot Wheel',
-      slug: 'jackpot-wheel',
+      name: 'Wheel Spin',
+      slug: 'wheel-spin',
       category: 'games-sports',
       ...NO_CLIENT_META,
     });
 
-    expect(room).toMatchObject({ slug: 'jackpot-wheel', isPublic: true });
+    expect(room).toMatchObject({ slug: 'wheel-spin', isPublic: true });
     expect(typeof room.createdAt).toBe('string');
     const [configuration] = await db.drizzle.db
       .select()
@@ -1055,7 +1088,7 @@ describe('ChatService admin rooms (real PG)', () => {
     expect(configuration).toMatchObject({ roomId: room.id });
     expect(events.emit).toHaveBeenCalledWith(
       'chat.room.created',
-      expect.objectContaining({ roomId: room.id, slug: 'jackpot-wheel' }),
+      expect.objectContaining({ roomId: room.id, slug: 'wheel-spin' }),
     );
   });
 
@@ -1593,6 +1626,26 @@ describe('ChatService moderation (real PG)', () => {
       );
     },
   );
+
+  it('supports a global mute when the virtual global room has no row', async () => {
+    const { svc, moderation } = makeService();
+    const userId = randomUUID();
+
+    await expect(
+      moderation.mute({
+        userId,
+        roomId: '__global',
+        durationSeconds: 60,
+        reason: 'spam',
+        actorId: randomUUID(),
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    await expect(svc.sendGlobalMessage(userId, 'Muted', 'hello')).rejects.toBeInstanceOf(
+      ChatPlayerMutedError,
+    );
+  });
 
   it('enforces an all-chat mute in private rooms', async () => {
     const { svc, moderation } = makeService();

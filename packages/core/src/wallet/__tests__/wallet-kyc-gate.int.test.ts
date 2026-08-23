@@ -17,6 +17,7 @@ import {
   makeIdentityReader,
   NO_CLIENT_META,
   makeAuditWriter,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
@@ -36,6 +37,7 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processWithdrawal: vi.fn() }),
+    paymentProviders: makePaymentProviderRegistry(),
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
     directory,

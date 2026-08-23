@@ -15,6 +15,13 @@
       "when": 1784455114000,
       "tag": "0001_powerful_tiger_shark",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787339175627,
+      "tag": "0002_sour_alex_wilder",
+      "breakpoints": true
     }
   ]
 }

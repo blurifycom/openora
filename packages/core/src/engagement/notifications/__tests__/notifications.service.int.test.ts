@@ -104,7 +104,7 @@ describe('NotificationsService.create (real PG)', () => {
     });
   });
 
-  it('persists the row a wallet.bonus_rollover.completed subscriber would create (BF-326)', async () => {
+  it('persists the row a wallet.bonus_rollover.completed subscriber would create', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
 

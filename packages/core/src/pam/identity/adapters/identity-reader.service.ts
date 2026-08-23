@@ -1,6 +1,6 @@
 import { createLogger, DrizzleService } from '@openora/core/server';
 import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
-import { and, eq, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
 import { session, user } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 
@@ -61,6 +61,27 @@ export class IdentityReaderService implements IdentityReader {
       logger.warn({ err, userId }, 'player id lookup failed for event enrichment');
       return null;
     }
+  }
+
+  async getPlayerIdsByUserIdsSafe(
+    userIds: User['id'][],
+  ): Promise<Map<User['id'], Player['id'] | null>> {
+    const result = new Map<User['id'], Player['id'] | null>(userIds.map((id) => [id, null]));
+    if (userIds.length === 0) {
+      return result;
+    }
+    try {
+      const rows = await this.drizzle.db
+        .select({ userId: player.userId, id: player.id })
+        .from(player)
+        .where(inArray(player.userId, userIds));
+      for (const row of rows) {
+        result.set(row.userId, row.id);
+      }
+    } catch (err) {
+      logger.warn({ err, userIds }, 'batched player id lookup failed for event enrichment');
+    }
+    return result;
   }
 
   async getPlayerKycStatusByUserId(userId: User['id']): Promise<KycStatus | null> {

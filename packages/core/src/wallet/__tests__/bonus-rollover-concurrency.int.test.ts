@@ -4,7 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { PaymentAdapter, PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus, makeAuditWriter, makeIdentityReader } from '../../testing/mock.js';
+import {
+  mock,
+  makeEventBus,
+  makeAuditWriter,
+  makeIdentityReader,
+  makePaymentProviderRegistry,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   wallet,
@@ -21,8 +27,9 @@ import {
 } from '../service/wallet.service.js';
 
 /**
- * QA probe for BF-326, independent of the implementer's own tests. The plan's
- * "biggest modeling assumption" callout was sequential/waterfall clearing; its
+ * QA concurrency probe for bonus-rollover tracking, independent of the implementer's
+ * own tests. The plan's "biggest modeling assumption" callout was sequential/waterfall
+ * clearing; its
  * "core worry that justified the atomic guarded-UPDATE design" was a race between a
  * concurrent bet completing a bonus's rollover and a withdrawal reading a stale view
  * of how much is still locked. Both are only provable by actually firing overlapping
@@ -41,8 +48,8 @@ const unrestricted = mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResol
 // so it is a pre-existing lock-ordering hazard between WalletService.withdraw()'s
 // `SELECT ... FOR UPDATE` on `wallet` and WalletCommandsService.debit()'s unlocked
 // wallet read + walletTransaction insert (FK-checked against the same wallet row),
-// not something BF-326 introduced. Reported separately (QA finding, not a BF-326
-// regression). A deadlock aborts the whole losing transaction with no partial writes,
+// not something bonus-rollover tracking introduced. Reported separately (QA finding,
+// not a regression from this feature). A deadlock aborts the whole losing transaction with no partial writes,
 // so retrying it is safe - this keeps the test asserting the actual money-safety
 // invariant under test instead of flaking on that unrelated, already-existing hazard.
 // Drizzle wraps the pg driver error as `.cause` - the actual "deadlock detected" text
@@ -123,6 +130,7 @@ function makeWalletSvc() {
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processDeposit: vi.fn(), processWithdrawal: vi.fn() }),
+    paymentProviders: makePaymentProviderRegistry(),
     identityReader: makeIdentityReader(),
     audit: makeAuditWriter(),
   });
@@ -142,7 +150,7 @@ beforeEach(async () => {
   );
 });
 
-describe('BF-326 QA concurrency probe: two simultaneous bets against ONE active credit', () => {
+describe('bonus-rollover QA concurrency probe: two simultaneous bets against ONE active credit', () => {
   const TRIALS = 8;
 
   it('never lets rolloverProgress exceed rolloverRequired and completes the credit exactly once, across repeated trials', async () => {
@@ -187,7 +195,7 @@ describe('BF-326 QA concurrency probe: two simultaneous bets against ONE active 
   });
 });
 
-describe('BF-326 QA concurrency probe: withdrawal racing the bet that unlocks it', () => {
+describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that unlocks it', () => {
   const TRIALS = 8;
 
   it('a withdrawal for the full pre-bet balance never succeeds, regardless of which transaction wins the race', async () => {

@@ -12,7 +12,7 @@ import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/s
 import {
   setupTestDb,
   bootTestApp,
-  asPlayer,
+  registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -25,20 +25,6 @@ let gameId: string;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndLogin(email: string): Promise<{ client: TestClient; userId: string }> {
-  const res = await app.app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'Stake Debit E2E Player' }),
-  });
-  if (!res.ok) {
-    throw new Error(`register failed (${res.status}): ${await res.text()}`);
-  }
-  const body = (await readJson(res)) as { user: { id: string } };
-  const client = await asPlayer(app.app, { email });
-  return { client, userId: body.user.id };
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
@@ -87,7 +73,9 @@ afterAll(async () => {
 
 describe('gaming stake debit e2e', () => {
   it('debits the stake atomically with the round and records a completed bet ledger row', async () => {
-    const { client, userId } = await registerAndLogin(`stake-debit-${randomUUID()}@example.com`);
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-${randomUUID()}@example.com`,
+    });
     await deposit(client, '100');
 
     const res = await client.post('/gaming/rounds/start', {
@@ -124,7 +112,9 @@ describe('gaming stake debit e2e', () => {
   });
 
   it('rejects starting a round the player cannot afford and creates no round', async () => {
-    const { client } = await registerAndLogin(`stake-debit-poor-${randomUUID()}@example.com`);
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-poor-${randomUUID()}@example.com`,
+    });
     await deposit(client, '5');
 
     const res = await client.post('/gaming/rounds/start', {

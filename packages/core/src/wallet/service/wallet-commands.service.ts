@@ -108,7 +108,7 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    // A wager is the only source of rollover progress (BF-326: no per-category
+    // A wager is the only source of rollover progress (no per-category
     // contribution %, gaming is the only wagering vertical today).
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
@@ -148,8 +148,8 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    // Gift/rain credits are bonus balance, rollover-locked until wagered through
-    // (BF-326). Every other credit type (deposit, tip, refund, ...) is unrestricted.
+    // Gift/rain credits are bonus balance, rollover-locked until wagered through.
+    // Every other credit type (deposit, tip, refund, ...) is unrestricted.
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {
         walletId: row.id,
@@ -226,7 +226,8 @@ export class WalletCommandsService implements WalletCommands {
 
   // Sequential/waterfall clearing: a bet's amount is applied to the OLDEST active
   // credit's remaining requirement first, and any leftover cascades to the
-  // next-oldest active credit (flagged assumption - see BF-326 plan). Per row: a
+  // next-oldest active credit (a flagged modeling assumption from the design review,
+  // not a spec'd requirement). Per row: a
   // `FOR UPDATE` read locks it for the rest of this transaction, then a guarded
   // `UPDATE ... WHERE status = 'active'` applies the increment - a concurrent debit
   // against the same credit blocks on the row lock and re-reads the committed result,

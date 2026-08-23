@@ -3,16 +3,26 @@ import * as z from 'zod';
 import {
   KycStatusSchema,
   MoneyAmountSchema,
+  MONEY_PRECISION,
+  MONEY_SCALE,
   TagKeySchema,
   TimestampSchema,
   UuidSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
+  WalletReconciliationFindingKindSchema,
+  WalletReconciliationFindingStatusSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
-export { WalletRailSchema, WalletTransactionStatusSchema, WalletTransactionTypeSchema };
+export {
+  WalletRailSchema,
+  WalletTransactionStatusSchema,
+  WalletTransactionTypeSchema,
+  WalletReconciliationFindingKindSchema,
+  WalletReconciliationFindingStatusSchema,
+};
 
 // Deposit/withdraw amounts must be strictly positive; balances/thresholds may be zero.
 const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
@@ -26,6 +36,13 @@ const WalletCurrencyCodeSchema = z
   .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
 
 const WalletCurrencyInputSchema = WalletCurrencyCodeSchema.transform((c) => c.toUpperCase());
+
+// A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
+// different addresses, fees and minimums. Free-form rather than an enum because each
+// vendor spells chains its own way (ERC20 vs ETHEREUM vs eth-mainnet).
+const WalletNetworkSchema = z.string().trim().min(1).max(32);
+
+const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperCase());
 
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
@@ -46,9 +63,17 @@ export const WalletTransactionSchema = z.object({
   type: WalletTransactionTypeSchema,
   amount: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema.nullable(),
   status: WalletTransactionStatusSchema,
   createdAt: TimestampSchema,
 });
+
+export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
+  reviewedBy: UuidSchema.nullable(),
+  reviewedAt: TimestampSchema.nullable(),
+  reviewReason: z.string().nullable(),
+});
+export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
 export const DepositInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
@@ -60,10 +85,27 @@ export const DepositInputSchema = z.object({
 export const WithdrawInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
+  // Required for any currency the operator settles on more than one chain - a payout is
+  // rejected as ambiguous rather than guessing which chain the player meant.
+  network: WalletNetworkInputSchema.optional(),
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
   destinationAddress: z.string().optional(),
 });
+
+export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
+export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
+export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
+
+export const ManualWalletAdjustmentInputSchema = z.object({
+  userId: UuidSchema,
+  direction: ManualAdjustmentDirectionSchema,
+  currency: WalletCurrencyInputSchema,
+  amount: PositiveMoneyAmountSchema,
+  reason: z.string().trim().min(1),
+  idempotencyKey: UuidSchema,
+});
+export type ManualWalletAdjustmentInput = z.infer<typeof ManualWalletAdjustmentInputSchema>;
 
 export const TransactionResultSchema = z.object({
   transactionId: UuidSchema,
@@ -107,6 +149,7 @@ export const WithdrawalQueueItemSchema = z.object({
   username: z.string(),
   amount: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema.nullable(),
   rail: WalletRailSchema.nullable(),
   status: WalletTransactionStatusSchema,
   kycStatus: KycStatusSchema.nullable(),
@@ -177,7 +220,7 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
 });
 
 // Chat gift/rain credits are bonus balance, locked behind a Super-Admin-configurable
-// wagering multiplier before they can be withdrawn (BF-326). No other credit source
+// wagering multiplier before they can be withdrawn. No other credit source
 // carries a rollover requirement today.
 export const BONUS_CREDIT_SOURCE_TYPES = ['gift', 'rain'] as const;
 export const BonusCreditSourceTypeSchema = z.enum(BONUS_CREDIT_SOURCE_TYPES);
@@ -226,16 +269,147 @@ export const RejectWithdrawalInputSchema = z.object({
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
+// The vendor's raw JSON body plus the path-carried `provider` key (oRPC merges a route's
+// path params into the same top-level input object as the body). `provider` is never
+// attacker-trusted for routing to a signature key - the route resolves it against the
+// bound PaymentProviderRegistry and 404/401s identically to a bad signature on a miss.
+export const PaymentWebhookProviderInputSchema = z
+  .object({ provider: z.string().min(1) })
+  .catchall(z.unknown());
+
 export const DepositAddressInputSchema = z.object({
   currency: WalletCurrencyInputSchema,
-  network: z.string().min(1).optional(),
+  network: WalletNetworkInputSchema.optional(),
 });
 export const DepositAddressSchema = z.object({
   address: z.string(),
   currency: WalletCurrencyCodeSchema,
-  network: z.string().optional(),
+  network: WalletNetworkSchema.optional(),
   tag: z.string().optional(),
 });
+
+// Bounded to the column's integer-digit budget so an oversized value is a 4xx at the
+// contract boundary instead of a DB overflow 500.
+const WalletAssetAmountSchema = MoneyAmountSchema.refine(
+  (v) => (v.split('.').at(0) ?? '').length <= MONEY_PRECISION - MONEY_SCALE,
+  { message: `must have at most ${MONEY_PRECISION - MONEY_SCALE} integer digits` },
+);
+
+export const PublicWalletAssetSchema = z.object({
+  currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema,
+  minDeposit: MoneyAmountSchema,
+  minWithdrawal: MoneyAmountSchema,
+  withdrawalFee: MoneyAmountSchema,
+  depositEnabled: z.boolean(),
+  withdrawalEnabled: z.boolean(),
+});
+export type PublicWalletAsset = z.infer<typeof PublicWalletAssetSchema>;
+
+// Admin-only, same treatment as providerAssetId: which vendor settles a pair and its
+// sweep/pool policy are operational detail, never surfaced on the public catalog.
+export const WalletAssetSchema = PublicWalletAssetSchema.extend({
+  id: UuidSchema,
+  providerAssetId: z.string(),
+  // Null means the default single binding (PAYMENT_ADAPTER / PAYMENT_WEBHOOK_VERIFIER),
+  // never a vendor's name to parse - core treats this as an opaque operator-chosen key.
+  providerName: z.string().nullable(),
+  sweepFeeCeiling: MoneyAmountSchema.nullable(),
+  poolLiquidityFloor: MoneyAmountSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type WalletAsset = z.infer<typeof WalletAssetSchema>;
+
+export const WalletAssetKeySchema = z.object({
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+});
+
+export const CreateWalletAssetInputSchema = z.object({
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+  providerAssetId: z.string().trim().min(1),
+  minDeposit: WalletAssetAmountSchema,
+  minWithdrawal: WalletAssetAmountSchema,
+  withdrawalFee: WalletAssetAmountSchema,
+  depositEnabled: z.boolean().default(true),
+  withdrawalEnabled: z.boolean().default(true),
+  // Validated against the bound PaymentProviderRegistry's names() at write time - an
+  // unvalidated typo would fall back to the default adapter, attempting eg a crypto
+  // payout through a PSP. Absent = the default single binding.
+  providerName: z.string().trim().min(1).optional(),
+  sweepFeeCeiling: WalletAssetAmountSchema.optional(),
+  poolLiquidityFloor: WalletAssetAmountSchema.optional(),
+});
+export type CreateWalletAssetInput = z.infer<typeof CreateWalletAssetInputSchema>;
+
+// The (currency, network) key is not mutable: renaming a pair is a delete plus a create,
+// so an in-flight vendor reference can't be rewritten out from under a pending
+// transaction. providerName is immutable the same way - it is deliberately absent here,
+// not merely optional; changing it is only possible via delete + re-create, which the
+// service blocks while a pending/processing transaction exists for the pair.
+export const UpdateWalletAssetInputSchema = WalletAssetKeySchema.extend({
+  providerAssetId: z.string().trim().min(1).optional(),
+  minDeposit: WalletAssetAmountSchema.optional(),
+  minWithdrawal: WalletAssetAmountSchema.optional(),
+  withdrawalFee: WalletAssetAmountSchema.optional(),
+  depositEnabled: z.boolean().optional(),
+  withdrawalEnabled: z.boolean().optional(),
+  sweepFeeCeiling: WalletAssetAmountSchema.optional(),
+  poolLiquidityFloor: WalletAssetAmountSchema.optional(),
+});
+export type UpdateWalletAssetInput = z.infer<typeof UpdateWalletAssetInputSchema>;
+
+// Shared by both cron-style admin triggers - the caller gets back the id of the
+// wallet_job_run row it claimed, nothing else, since the work itself runs async.
+export const JobRunResultSchema = z.object({ runId: UuidSchema });
+
+export const WalletReconciliationFindingSchema = z.object({
+  id: UuidSchema,
+  runId: UuidSchema,
+  providerName: z.string(),
+  kind: WalletReconciliationFindingKindSchema,
+  currency: WalletCurrencyCodeSchema.nullable(),
+  network: WalletNetworkSchema.nullable(),
+  amount: MoneyAmountSchema.nullable(),
+  address: z.string().nullable(),
+  tag: z.string().nullable(),
+  txHash: z.string().nullable(),
+  externalId: z.string().nullable(),
+  transactionId: UuidSchema.nullable(),
+  detail: z.string().nullable(),
+  status: WalletReconciliationFindingStatusSchema,
+  resolvedBy: UuidSchema.nullable(),
+  resolvedAt: TimestampSchema.nullable(),
+  resolutionNote: z.string().nullable(),
+  createdAt: TimestampSchema,
+});
+export type WalletReconciliationFinding = z.infer<typeof WalletReconciliationFindingSchema>;
+
+export const ListReconciliationFindingsInputSchema = PageQuerySchema.extend({
+  status: WalletReconciliationFindingStatusSchema.optional(),
+  kind: WalletReconciliationFindingKindSchema.optional(),
+  providerName: z.string().optional(),
+});
+export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationFindingsInputSchema>;
+
+// There is no third way to close a finding: crediting the player (a manual ledger entry
+// made elsewhere, referenced here by its transactionId) or dismissing it as a non-issue
+// (a mandatory note explaining why). Never a bare status flip with no evidence either way.
+export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('credited'), transactionId: UuidSchema }),
+  z.object({ outcome: z.literal('dismissed'), note: z.string().trim().min(1) }),
+]);
+export type ReconciliationResolution = z.infer<typeof ReconciliationResolutionSchema>;
+
+export const ResolveReconciliationFindingInputSchema = z.object({
+  id: UuidSchema,
+  resolution: ReconciliationResolutionSchema,
+});
+export type ResolveReconciliationFindingInput = z.infer<
+  typeof ResolveReconciliationFindingInputSchema
+>;
 
 export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
@@ -257,6 +431,11 @@ export const walletContract = {
     .input(WithdrawInputSchema)
     .output(TransactionResultSchema),
 
+  manualAdjustment: oc
+    .route({ method: 'POST', path: '/wallet/manual-adjustments' })
+    .input(ManualWalletAdjustmentInputSchema)
+    .output(TransactionResultSchema),
+
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
     .input(
@@ -270,7 +449,7 @@ export const walletContract = {
   listPlayerTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions/{userId}' })
     .input(ListPlayerTransactionsArgs)
-    .output(paginated(WalletTransactionSchema)),
+    .output(paginated(AdminWalletTransactionSchema)),
 
   withdrawals: {
     list: oc
@@ -317,6 +496,32 @@ export const walletContract = {
       .output(WalletAutoWithdrawalConfigSchema),
   },
 
+  // Unauthenticated by design - which assets exist is not secret.
+  listAssets: oc
+    .route({ method: 'GET', path: '/wallet/assets' })
+    .output(z.array(PublicWalletAssetSchema)),
+
+  assets: {
+    list: oc
+      .route({ method: 'GET', path: '/wallet/admin/assets' })
+      .output(z.array(WalletAssetSchema)),
+
+    create: oc
+      .route({ method: 'POST', path: '/wallet/admin/assets' })
+      .input(CreateWalletAssetInputSchema)
+      .output(WalletAssetSchema),
+
+    update: oc
+      .route({ method: 'PUT', path: '/wallet/admin/assets/{currency}/{network}' })
+      .input(UpdateWalletAssetInputSchema)
+      .output(WalletAssetSchema),
+
+    delete: oc
+      .route({ method: 'DELETE', path: '/wallet/admin/assets/{currency}/{network}' })
+      .input(WalletAssetKeySchema)
+      .output(z.boolean()),
+  },
+
   deposits: {
     getAddress: oc
       .route({ method: 'POST', path: '/wallet/deposits/address' })
@@ -343,4 +548,51 @@ export const walletContract = {
     .route({ method: 'POST', path: '/wallet/webhook' })
     .input(PaymentWebhookInputSchema)
     .output(PaymentWebhookOutputSchema),
+
+  // Routes an inbound webhook to the named provider's adapter/verifier pair instead of
+  // the single default binding - see docs/adapters/payment.md "Multi-provider routing".
+  webhookForProvider: oc
+    .route({ method: 'POST', path: '/wallet/webhook/{provider}' })
+    .input(PaymentWebhookProviderInputSchema)
+    .output(PaymentWebhookOutputSchema),
+
+  custody: {
+    sweep: {
+      run: oc
+        .route({
+          method: 'POST',
+          path: '/wallet/custody/sweep/run',
+          summary: 'Enqueue a custody sweep cycle',
+        })
+        .output(JobRunResultSchema),
+    },
+  },
+
+  reconciliation: {
+    list: oc
+      .route({
+        method: 'GET',
+        path: '/wallet/reconciliation',
+        summary: 'List reconciliation findings',
+      })
+      .input(ListReconciliationFindingsInputSchema)
+      .output(paginated(WalletReconciliationFindingSchema)),
+
+    resolve: oc
+      .route({
+        method: 'POST',
+        path: '/wallet/reconciliation/{id}/resolve',
+        summary: 'Resolve a reconciliation finding as credited or dismissed',
+      })
+      .input(ResolveReconciliationFindingInputSchema)
+      .output(WalletReconciliationFindingSchema),
+
+    run: oc
+      .route({
+        method: 'POST',
+        path: '/wallet/reconciliation/run',
+        summary: 'Enqueue a reconciliation run',
+      })
+      .output(JobRunResultSchema),
+  },
 };

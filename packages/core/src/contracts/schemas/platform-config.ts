@@ -68,10 +68,66 @@ export const WalletConfigSchema = z
      * core code change.
      */
     cryptoCurrencies: z.array(z.string().min(1)).optional(),
+    /**
+     * Custody sweep cron knobs. Static config, not a DB row - nothing here is edited
+     * during an incident. Absent means the sweep job no-ops.
+     */
+    sweep: z
+      .object({
+        cron: z.string().default('*/15 * * * *'),
+        /**
+         * Decimal string, compared exactly (see `moneyCompare`/`moneyScaleBy`). A
+         * balance must be worth at least this many times the fee to be worth sweeping.
+         */
+        feeMultiple: MoneyAmountSchema.default('5'),
+        /** Balances considered per cycle; listSweepableBalances is unbounded. */
+        batchSize: z.number().int().positive().default(200),
+        /** Vendor API parallelism. Tune to the vendor's rate limit. */
+        concurrency: z.number().int().positive().default(4),
+        /**
+         * How long a sweep may sit in `unknown` before reconciliation reports it for a
+         * human. `unknown` means the vendor call threw and we cannot tell whether it
+         * was received, so the in-flight guard stays held and nobody releases it
+         * automatically.
+         */
+        unknownAfterMinutes: z.number().int().positive().default(60),
+        /**
+         * How long a claimed run may sit unfinished before another cycle treats it as
+         * abandoned and takes over. Distinct from `unknownAfterMinutes`: this one is
+         * about a crashed worker, that one is about an ambiguous vendor call.
+         */
+        staleRunAfterMinutes: z.number().int().positive().default(30),
+      })
+      .strict()
+      .optional(),
+    /**
+     * Reconciliation cron knobs. Static config, not a DB row - nothing here is edited
+     * during an incident. Absent means the reconciliation job no-ops.
+     */
+    reconciliation: z
+      .object({
+        cron: z.string().default('0 * * * *'),
+        lookbackHours: z.number().int().positive().default(24),
+        stuckAfterMinutes: z.number().int().positive().default(60),
+        /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
+        staleRunAfterMinutes: z.number().int().positive().default(30),
+        alertThreshold: z.number().int().positive().default(10),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
+
+export const RegistrationConfigSchema = z
+  .object({
+    /** Version recorded beside the player's affirmative terms acceptance. */
+    termsVersion: z.string().min(1),
+    /** Public consumer origin used in verification-email links. */
+    webUrl: z.url(),
+  })
+  .strict();
 
 export const PlatformConfigSchema = z
   .object({
@@ -106,6 +162,8 @@ export const PlatformConfigSchema = z
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
     /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
     wallet: WalletConfigSchema.optional(),
+    /** Required before public registration is enabled. */
+    registration: RegistrationConfigSchema.optional(),
     /**
      * Player-facing language codes the operator supports (eg `['en', 'es']`).
      * Undefined or empty means no restriction - any value is accepted.

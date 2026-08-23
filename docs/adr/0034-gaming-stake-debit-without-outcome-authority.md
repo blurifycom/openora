@@ -7,10 +7,9 @@
 
 `casino/gaming`'s `startRound`/`endRound` have never moved money: `game_round.betAmount`
 and `winAmount` are declared `decimal` columns that stay `'0'` for every row, because
-the service never calls `WALLET_COMMANDS`. This was surfaced while building BF-219
-(financial analytics) - GGR had to be sourced from `wallet_transaction` instead of
-`game_round` as a result, and per-game GGR (BF-218) has no real data to report on at
-all.
+the service never calls `WALLET_COMMANDS`. This was surfaced while building financial
+analytics - GGR had to be sourced from `wallet_transaction` instead of `game_round` as
+a result, and per-game GGR has no real data to report on at all.
 
 Closing this fully means answering two independent questions:
 
@@ -58,7 +57,7 @@ alternatives:
 Win-crediting stays deferred until a real (or a properly-scoped mock, designed with
 that partner) `GameOutcomeAuthority` implementation exists to bind via
 `ctx.provideSealed(GAME_OUTCOME_AUTHORITY, ...)`. `game_round.winAmount` and
-per-`game_round` GGR (BF-218) remain blocked on that, not on anything in this change.
+per-`game_round` GGR remain blocked on that, not on anything in this change.
 
 ## Consequences
 

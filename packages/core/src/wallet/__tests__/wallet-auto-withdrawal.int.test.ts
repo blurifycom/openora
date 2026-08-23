@@ -2,17 +2,18 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type {
-  AdminUserDirectory,
-  AuditWritePort,
-  AutoWithdrawalConfig,
-  KycStatus,
-  PaymentAdapter,
-  PlatformConfig,
-  AdminPlayerSummary,
-  PlayerTags,
-  TagEvaluationCommands,
-  TagKey,
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  type AdminUserDirectory,
+  type AuditWritePort,
+  type AutoWithdrawalConfig,
+  type KycStatus,
+  type PaymentAdapter,
+  type PlatformConfig,
+  type AdminPlayerSummary,
+  type PlayerTags,
+  type TagEvaluationCommands,
+  type TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -22,6 +23,7 @@ import {
   makeIdentityReader,
   NO_CLIENT_META,
   makeAuditWriter,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -48,13 +50,13 @@ const MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS: readonly TagKey[] = [
 
 type ServiceOptions = {
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
-  // The global fiat/crypto thresholds are DB-backed (BF-211), not part of
+  // The global fiat/crypto thresholds are DB-backed, not part of
   // PlatformConfig any more - seeded into wallet_auto_withdrawal_config here
   // whenever `autoWithdrawal` is passed, mirroring the production seed
   // default ('0'/'0' = auto-approval off until configured).
   fiatThreshold?: string;
   cryptoThreshold?: string;
-  // The DB row's tag-exclusion column (BF-319). Undefined = let the column's
+  // The DB row's tag-exclusion column. Undefined = let the column's
   // migration DEFAULT apply (the 5-tag starting value); pass an explicit
   // array (incl. []) to seed exactly that set instead.
   excludeRiskFlags?: readonly TagKey[];
@@ -109,6 +111,7 @@ async function makeService({
     drizzle: db.drizzle,
     events: events,
     payment: mock<PaymentAdapter>(psp),
+    paymentProviders: makePaymentProviderRegistry(),
     audit: mock<AuditWritePort>(audit),
     identityReader: makeIdentityReader(),
     directory,
@@ -186,7 +189,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       status: 'completed',
       reviewedBy: null,
       reviewReason: 'auto-approved',
-      providerName: 'psp',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
     });
     expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual([
       'wallet.withdrawal.requested',
@@ -412,6 +415,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       drizzle: db.drizzle,
       events: makeEventBus(),
       payment,
+      paymentProviders: makePaymentProviderRegistry(),
       audit: mock<AuditWritePort>(makeAuditWriter()),
       identityReader: makeIdentityReader(),
       directory,
@@ -724,7 +728,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     expect(result.status).toBe('completed');
     expect(await txById(result.transactionId)).toMatchObject({
       rail: 'crypto',
-      providerName: 'fireblocks',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
       reviewReason: 'auto-approved',
     });
   });

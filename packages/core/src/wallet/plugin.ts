@@ -1,5 +1,5 @@
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
@@ -7,22 +7,45 @@ import {
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
   PAYMENT_WEBHOOK_VERIFIER,
+  PAYMENT_PROVIDERS,
+  DEFAULT_PAYMENT_PROVIDER,
   WALLET_COMMANDS,
   WALLET_READER,
+  WALLET_ASSET_CATALOG,
   PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_TAGS,
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   AUDIT_WRITER,
+  JOB_QUEUE,
+  UuidSchema,
+  queue,
 } from '@openora/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
+import {
+  CustodySweepService,
+  CUSTODY_SWEEP_QUEUE,
+  CustodySweepJobPayloadSchema,
+} from './service/custody-sweep.service.js';
 import { WalletReaderService } from './adapters/wallet-reader.service.js';
+import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
+import { ReconciliationService } from './service/reconciliation.service.js';
+
+const logger = createLogger('wallet');
+
+// Mirrors WalletConfigSchema's wallet.sweep.cron default - used only when the operator
+// hasn't configured platformConfig.wallet.sweep at all, so the job is still scheduled
+// (CustodySweepService.runCycle no-ops every tick until sweep policy is configured).
+const DEFAULT_SWEEP_CRON = '*/15 * * * *';
+
+const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
+const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
 
 export default {
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
@@ -32,6 +55,39 @@ export default {
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
+    // Set inside the router factory (container access); the job worker's handler
+    // closes over this ref, same shape as pam/tag's evalSvc - subscriptions/workers
+    // wire before router factories run, but are set before any real job arrives.
+    let reconciliationRef: ReconciliationService | null = null;
+
+    // One memoized instance backs the cron worker and the router factory below - lazily
+    // constructed (subscriptions/workers wire before router factories run), matching
+    // pam/tag's and compliance's job-worker shape.
+    let sweepSvc: CustodySweepService | null = null;
+    const custodySweepService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (sweepSvc ??= new CustodySweepService({
+        drizzle: c.get(DRIZZLE),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        audit: c.get(AUDIT_WRITER),
+        platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+      }));
+
+    ctx.jobs.worker({
+      queue: CUSTODY_SWEEP_QUEUE,
+      schema: CustodySweepJobPayloadSchema,
+      handler: async ({ payload }) => {
+        await sweepSvc?.runCycle(payload.runId);
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: WALLET_RECONCILIATION_QUEUE,
+      schema: WalletReconciliationJobSchema,
+      handler: async ({ payload }) => {
+        await reconciliationRef?.runCycle(payload.runId);
+      },
+    });
+
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     ctx.provide(PAYMENT_WEBHOOK_VERIFIER, () => {
       const webhookSecret = z
@@ -41,6 +97,19 @@ export default {
         .parse(process.env.PAYMENT_WEBHOOK_SECRET || undefined);
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
+    // Wraps the single PAYMENT_ADAPTER/PAYMENT_WEBHOOK_VERIFIER tokens as the 'default'
+    // registry entry, so a one-vendor operator changes nothing. Core only looks a
+    // providerName up here - it never discovers vendors itself, because Container.register
+    // is last-wins: two overlays each rebinding the single tokens would clobber each
+    // other, so running more than one vendor at once needs an operator-composed map
+    // (rebind PAYMENT_PROVIDERS entirely) rather than a second core-discovered slot.
+    ctx.provide(PAYMENT_PROVIDERS, (c) => ({
+      get: (name: string) =>
+        name === DEFAULT_PAYMENT_PROVIDER
+          ? { adapter: c.get(PAYMENT_ADAPTER), webhookVerifier: c.get(PAYMENT_WEBHOOK_VERIFIER) }
+          : null,
+      names: () => [DEFAULT_PAYMENT_PROVIDER],
+    }));
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(
       WALLET_COMMANDS,
@@ -54,27 +123,70 @@ export default {
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
     ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
-    ctx.routers.add('wallet', (c) =>
-      createWalletRouter(
-        new WalletService({
-          drizzle: c.get(DRIZZLE),
-          events: c.get(EVENT_BUS),
-          payment: c.get(PAYMENT_ADAPTER),
-          identityReader: c.get(IDENTITY_READER),
-          directory: c.get(ADMIN_USER_DIRECTORY),
-          platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
-          limiter: c.get(RATE_LIMITER),
-          riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
-          tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
-            ? c.get(TAG_EVALUATION_COMMANDS)
-            : undefined,
-          audit: c.get(AUDIT_WRITER),
-        }),
-        c.get(ADMIN_GUARD),
-        c.get(AUDIT_WRITER),
-        c.get(PAYMENT_ADAPTER),
-        c.get(PAYMENT_WEBHOOK_VERIFIER),
-      ),
-    );
+    // Operator-editable currency/network config, readable by a payment adapter without
+    // importing wallet tables. Overlay-rebindable, but bound here so it always works.
+    ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
+    ctx.routers.add('wallet', (c) => {
+      const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+      const walletService = new WalletService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        payment: c.get(PAYMENT_ADAPTER),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        identityReader: c.get(IDENTITY_READER),
+        directory: c.get(ADMIN_USER_DIRECTORY),
+        platformConfig,
+        limiter: c.get(RATE_LIMITER),
+        riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
+        tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
+          ? c.get(TAG_EVALUATION_COMMANDS)
+          : undefined,
+        audit: c.get(AUDIT_WRITER),
+      });
+
+      const reconciliation = new ReconciliationService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        wallet: walletService,
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        audit: c.get(AUDIT_WRITER),
+        platformConfig,
+      });
+      reconciliationRef = reconciliation;
+
+      const jobQueue = c.get(JOB_QUEUE);
+
+      custodySweepService(c); // ensure sweepSvc is constructed for the job worker above
+      const sweepCron = platformConfig?.wallet?.sweep?.cron ?? DEFAULT_SWEEP_CRON;
+      // Idempotent schedule (keyed by scheduleId). If platformConfig.wallet.sweep is
+      // absent, this still registers the tick - the handler just no-ops every time.
+      void jobQueue
+        .schedule(CUSTODY_SWEEP_QUEUE, 'wallet-custody-sweep.cron', {}, { cron: sweepCron })
+        .catch((err) => logger.error({ err }, 'wallet-custody-sweep schedule failed'));
+
+      // Absent config means the cycle no-ops - see ReconciliationService.runCycle - but
+      // there is also nothing to schedule at all.
+      if (platformConfig?.wallet?.reconciliation) {
+        void jobQueue
+          .schedule(
+            WALLET_RECONCILIATION_QUEUE,
+            'wallet-reconciliation.cron',
+            {},
+            { cron: platformConfig.wallet.reconciliation.cron },
+          )
+          .catch((err) => logger.error({ err }, 'wallet-reconciliation schedule failed'));
+      }
+
+      return createWalletRouter({
+        wallet: walletService,
+        adminGuard: c.get(ADMIN_GUARD),
+        audit: c.get(AUDIT_WRITER),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        reconciliation,
+        jobQueue,
+        reconciliationQueue: WALLET_RECONCILIATION_QUEUE,
+        limiter: c.get(RATE_LIMITER),
+      });
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

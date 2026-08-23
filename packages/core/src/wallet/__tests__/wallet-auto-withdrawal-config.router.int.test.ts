@@ -7,10 +7,10 @@ import type {
   AdminPlayerSummary,
   AdminUserDirectory,
   PaymentAdapter,
-  PaymentWebhookVerifier,
   PlatformConfig,
   PlayerTags,
 } from '@openora/core/contracts';
+import { queue } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
@@ -20,6 +20,8 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makeJobQueue,
+  makePaymentProviderRegistry,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -31,6 +33,9 @@ import {
 } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
+import type { ReconciliationService } from '../service/reconciliation.service.js';
+
+const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000bb';
@@ -89,6 +94,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   const riskTags = mock<PlayerTags>({
     getActiveTagKeys: vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, []]))),
   });
+  const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -98,19 +104,22 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
         status: 'completed' as const,
       })),
     }),
+    paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
     directory,
     platformConfig: platformConfig ? mock<PlatformConfig>(platformConfig) : undefined,
     riskTags,
   });
-  const router = createWalletRouter(
-    service,
+  const router = createWalletRouter({
+    wallet: service,
     adminGuard,
     audit,
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
-  );
+    paymentProviders,
+    reconciliation: mock<ReconciliationService>({}),
+    jobQueue: makeJobQueue(),
+    reconciliationQueue: RECONCILIATION_QUEUE,
+  });
   return { router, audit, service };
 }
 

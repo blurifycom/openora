@@ -3,7 +3,7 @@ import { walletBonusRolloverConfig } from '../schema/index.js';
 
 /**
  * Idempotently seeds the singleton global bonus-rollover config row. Default
- * multiplier is 1x (BF-326 locked decision) - Super-Admin editable afterward via
+ * multiplier is 1x - Super-Admin editable afterward via
  * PATCH /backoffice/wallet/bonus-rollover-config.
  */
 export async function seedBonusRolloverConfig(db: DrizzleDb): Promise<void> {

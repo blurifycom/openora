@@ -1,12 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import {
-  loadExtensions,
-  DRIZZLE,
-  type Container,
-  type CoreTokenCatalog,
-} from '@openora/core/server';
+import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
@@ -17,26 +12,26 @@ import { migrate as migrateSocialTransfers } from '@openora/core/engagement/migr
 import {
   setupTestDb,
   bootTestApp,
-  asPlayer,
   seedMinimal,
+  registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
 } from '../index.js';
 
 /**
- * Independent QA verification of BF-326 (chat gift/rain funds land as rollover-locked
- * bonus balance, spendable immediately but not withdrawable until a Super-Admin
- * configurable multiplier's worth of wagering clears it, then auto-converts to real
- * balance with a notification). Driven through the REAL app (bootTestApp: real Hono +
- * oRPC + Postgres + Redis + real gift/gaming/notifications/audit modules) rather than
- * the implementer's own unit/router-level tests, which double AUDIT_WRITER/EventBus
+ * Independent QA verification of bonus-rollover tracking (chat gift/rain funds land as
+ * rollover-locked bonus balance, spendable immediately but not withdrawable until a
+ * Super-Admin configurable multiplier's worth of wagering clears it, then auto-converts
+ * to real balance with a notification). Driven through the REAL app (bootTestApp: real
+ * Hono + oRPC + Postgres + Redis + real gift/gaming/notifications/audit modules) rather
+ * than the implementer's own unit/router-level tests, which double AUDIT_WRITER/EventBus
  * and never exercise a real gift claim -> real wager -> real notification round trip.
  *
  * Rain is not separately driven here: `/rain`'s recipient resolution depends on
- * realtime presence (`transport.getOnlineUserIds`), which is orthogonal to BF-326's
- * own logic - both `/gift` and `/rain` converge on the exact same
- * `WalletCommandsService.credit(tx, { type })` call this ticket added to
+ * realtime presence (`transport.getOnlineUserIds`), which is orthogonal to this
+ * feature's own logic - both `/gift` and `/rain` converge on the exact same
+ * `WalletCommandsService.credit(tx, { type })` call bonus-rollover tracking added to
  * (`wallet-commands.service.ts`), so a real gift claim exercises the identical
  * bonus-credit-creation code path a rain credit would. `type: 'rain'` itself is
  * covered directly at the service level by the co-located dev tests.
@@ -52,35 +47,11 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
-  const registerRes = await app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'BF-326 QA Player' }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(app, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
-}
-
-// Same two-stage AdminGuard bootstrap as the sibling BF-319/BF-211 QA suites: static
-// user.role='admin' plus a real DB-backed super-admin role assignment.
-async function makeSuperAdmin(
-  app: TestApp['app'],
-  container: Container<CoreTokenCatalog>,
-  email: string,
-) {
-  const { client, userId } = await registerAndMaterializePlayer(app, email);
-  const drizzle = container.get(DRIZZLE).db;
+// Same two-stage AdminGuard bootstrap as the sibling auto-withdrawal-config QA suites:
+// static user.role='admin' plus a real DB-backed super-admin role assignment.
+async function makeSuperAdmin(app: TestApp, email: string) {
+  const { client, userId } = await registerAndMaterializePlayer(app, { email });
+  const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
   if (!role) {
@@ -120,9 +91,9 @@ async function sendGift(sender: TestClient, amount: string) {
 async function claimGift(claimer: TestClient, giftId: string) {
   // A freshly-registered player has no `wallet` row at all - only `deposit()` lazily
   // provisions one (wallet.service.ts's deposit()). credit() does NOT auto-provision
-  // it (by design: BF-323/BF-324's own scope, not BF-326's), so a claim against a
-  // wallet-less recipient 409s with "Recipient wallet is unavailable" instead of
-  // crediting - discovered while writing this suite. Materialize the wallet the same
+  // it (by design: existing gift/rain scope, not bonus-rollover tracking's own), so a
+  // claim against a wallet-less recipient 409s with "Recipient wallet is unavailable"
+  // instead of crediting - discovered while writing this suite. Materialize the wallet the same
   // way a real player would before ever claiming a gift: deposit first. Idempotent to
   // call more than once per recipient (each call just adds another 1 unit).
   await claimer.post('/wallet/deposit', { amount: '1', currency: 'USD' });
@@ -172,27 +143,21 @@ beforeAll(async () => {
   process.env['NODE_ENV'] ??= 'test';
 
   db = await setupTestDb();
-  // QA-discovered gap (not a BF-326 regression, filed separately): @openora/testing's
-  // setupTestDb() migration list (packages/testing/src/db.ts) omits chat-commands and
-  // social-transfers - both own a `migrate.ts` but neither is in applyAllMigrations,
-  // so `chat_command_config`/`player_gift`/`player_rain` don't exist yet on a fresh
-  // test db and any /gift or /rain e2e test 500s. Apply them directly here so this
-  // suite can actually drive the real gift-claim flow BF-326 needs.
+  // QA-discovered gap (not a regression from this feature, filed separately):
+  // @openora/testing's setupTestDb() migration list (packages/testing/src/db.ts) omits
+  // chat-commands and social-transfers - both own a `migrate.ts` but neither is in
+  // applyAllMigrations, so `chat_command_config`/`player_gift`/`player_rain` don't exist
+  // yet on a fresh test db and any /gift or /rain e2e test 500s. Apply them directly
+  // here so this suite can actually drive the real gift-claim flow it needs.
   await migrateChatCommands(db.url);
   await migrateSocialTransfers(db.url);
   const basePlugins = await loadExtensions();
   appMain = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
 
-  // QA-discovered bug (filed separately, not fixed here): seedDemoData's
-  // wipe-and-reseed step (packages/testing/src/seed-demo-data.ts ~line 419) does
-  // `db.delete(wallet)` without first clearing `wallet_bonus_credit`, whose FK to
-  // `wallet.id` has no ON DELETE CASCADE (wallet/schema/index.ts). On a database that
-  // has ever had a single gift/rain bonus credit, that DELETE now throws a Postgres FK
-  // violation (23503) - which breaks not just this suite's own seedMinimal() call on a
-  // second run, but `pnpm db:seed` itself (tools/db/seed.ts calls the same
-  // seedDemoData) on any real install that has ever seen /gift or /rain activity.
-  // Clear it manually here so this suite keeps working; the real fix belongs in
-  // seed-demo-data.ts (or an ON DELETE CASCADE on the FK), not in a QA test file.
+  // QA-discovered bug, since fixed upstream in seed-demo-data.ts (its wipe-and-reseed
+  // step now clears `wallet_bonus_credit` before `wallet`, since the FK between them has
+  // no ON DELETE CASCADE). Kept here too as a belt-and-suspenders clear so this suite
+  // stays robust to a future regression in that ordering.
   await appMain.container.get(DRIZZLE).db.delete(walletBonusCredit);
 
   await seedMinimal(appMain.container, { playerCount: 0 });
@@ -205,17 +170,18 @@ beforeAll(async () => {
   // This suite's apps share one physical test database across the whole
   // test:integration run (and across repeated local runs of this same file, since
   // setupTestDb() migrates idempotently but never drops), so delete any pre-existing
-  // row a prior run may have left behind - same reasoning as the sibling BF-319 suite.
+  // row a prior run may have left behind - same reasoning as the sibling
+  // auto-withdrawal-config suite.
   await appMain.container.get(DRIZZLE).db.delete(walletBonusRolloverConfig);
 
-  const superAdminEmail = `bf326-super-admin-${randomUUID()}@e2e.test`;
-  const created = await makeSuperAdmin(appMain.app, appMain.container, superAdminEmail);
+  const superAdminEmail = `bonus-rollover-super-admin-${randomUUID()}@e2e.test`;
+  const created = await makeSuperAdmin(appMain, superAdminEmail);
   superAdmin = created.client;
 
   const [gameRow] = await appMain.container
     .get(DRIZZLE)
     .db.insert(game)
-    .values({ name: 'BF-326 QA Game', provider: 'mock', category: 'slots' })
+    .values({ name: 'Bonus Rollover QA Game', provider: 'mock', category: 'slots' })
     .returning();
   if (!gameRow) {
     throw new Error('failed to seed a game row');
@@ -243,15 +209,14 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('BF-326 AC end-to-end: gift -> bonus-locked balance -> wagering -> auto-release -> notification -> withdrawal', () => {
+describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering -> auto-release -> notification -> withdrawal', () => {
   it('walks the full lifecycle against the real app, with the status endpoint correct at every step (probes #1 and #7)', async () => {
     const senderEmail = `bf326-sender-${randomUUID()}@e2e.test`;
     const recipientEmail = `bf326-recipient-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain.app, senderEmail);
-    const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(
-      appMain.app,
-      recipientEmail,
-    );
+    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
+    const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
+      email: recipientEmail,
+    });
     await deposit(sender, '500');
 
     // No wallet_bonus_rollover_config row exists yet anywhere in this suite's fresh
@@ -295,23 +260,28 @@ describe('BF-326 AC end-to-end: gift -> bonus-locked balance -> wagering -> auto
     expect(Number(finalCredit.rolloverProgress)).toBe(40);
     expect(finalCredit.completedAt).not.toBeNull();
 
-    // AC: notification created on release.
-    const notifRes = await recipient.get('/notifications');
-    expect(notifRes.status).toBe(200);
-    const notifications = (await readJson(notifRes)) as Array<{
-      type: string;
-      title: string;
-      body: string;
-    }>;
-    const releaseNotif = notifications.find((n) => n.type === 'wallet.bonus_rollover.completed');
-    expect(
-      releaseNotif,
-      'expected a wallet.bonus_rollover.completed notification row',
-    ).toBeDefined();
-    // The body interpolates the raw numeric(38,18) string verbatim (same established
-    // convention as the sibling withdrawal.approved/rejected notifications in this
-    // same plugin.ts, not something BF-326 introduced) - match loosely on the amount.
-    expect(releaseNotif!.body).toMatch(/40(\.0+)? USD/);
+    // AC: notification created on release. The completion event travels through a real
+    // EventBus (Redis Streams under load), so the notifications subscriber may not have
+    // processed it the instant startRound's HTTP response returns - poll rather than
+    // asserting on the very next request.
+    await vi.waitFor(async () => {
+      const notifRes = await recipient.get('/notifications');
+      expect(notifRes.status).toBe(200);
+      const notifications = (await readJson(notifRes)) as Array<{
+        type: string;
+        title: string;
+        body: string;
+      }>;
+      const releaseNotif = notifications.find((n) => n.type === 'wallet.bonus_rollover.completed');
+      expect(
+        releaseNotif,
+        'expected a wallet.bonus_rollover.completed notification row',
+      ).toBeDefined();
+      // The body interpolates the raw numeric(38,18) string verbatim (same established
+      // convention as the sibling withdrawal.approved/rejected notifications in this
+      // same plugin.ts, not something bonus-rollover tracking introduced) - match loosely on the amount.
+      expect(releaseNotif!.body).toMatch(/40(\.0+)? USD/);
+    });
 
     // AC: converts to withdrawable real balance automatically - a withdrawal that was
     // blocked mid-rollover now succeeds for the full remaining balance (0 after both
@@ -328,12 +298,11 @@ describe('BF-326 AC end-to-end: gift -> bonus-locked balance -> wagering -> auto
   });
 });
 
-describe('BF-326 authz negatives (probe #2)', () => {
+describe('bonus-rollover authz negatives (probe #2)', () => {
   it('a non-super-admin (plain player) is rejected on both backoffice bonus-rollover-config routes', async () => {
-    const { client: plainPlayer } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-plain-${randomUUID()}@e2e.test`,
-    );
+    const { client: plainPlayer } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-plain-${randomUUID()}@e2e.test`,
+    });
 
     const getRes = await plainPlayer.get('/backoffice/wallet/bonus-rollover-config');
     expect(getRes.status).toBeGreaterThanOrEqual(401);
@@ -347,10 +316,9 @@ describe('BF-326 authz negatives (probe #2)', () => {
   });
 
   it('a plain (non-super) admin is also rejected - the resource is super-admin-only', async () => {
-    const { client: adminEmail, userId } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-plain-admin-${randomUUID()}@e2e.test`,
-    );
+    const { client: adminEmail, userId } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-plain-admin-${randomUUID()}@e2e.test`,
+    });
     await appMain.container
       .get(DRIZZLE)
       .db.update(user)
@@ -367,15 +335,13 @@ describe('BF-326 authz negatives (probe #2)', () => {
 
   it("a player's bonus-rollover status is scoped to their own session - there is no userId parameter to point at someone else's credits", async () => {
     const senderEmail = `bf326-scope-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain.app, senderEmail);
-    const { client: ownerClient, userId: ownerId } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-scope-owner-${randomUUID()}@e2e.test`,
-    );
-    const { client: bystander } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-scope-bystander-${randomUUID()}@e2e.test`,
-    );
+    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
+    const { client: ownerClient, userId: ownerId } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-scope-owner-${randomUUID()}@e2e.test`,
+    });
+    const { client: bystander } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-scope-bystander-${randomUUID()}@e2e.test`,
+    });
     await deposit(sender, '50');
     const giftId = await sendGift(sender, '20');
     await claimGift(ownerClient, giftId);
@@ -398,14 +364,13 @@ describe('BF-326 authz negatives (probe #2)', () => {
   });
 });
 
-describe('BF-326 waterfall across multiple simultaneously-active credits (probe #3)', () => {
+describe('bonus-rollover waterfall across multiple simultaneously-active credits (probe #3)', () => {
   it('a single bet drains the oldest active credit first and cascades the leftover into the next, through the real HTTP surface', async () => {
     const senderEmail = `bf326-waterfall-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain.app, senderEmail);
-    const { client: recipient } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-waterfall-recipient-${randomUUID()}@e2e.test`,
-    );
+    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
+    const { client: recipient } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-waterfall-recipient-${randomUUID()}@e2e.test`,
+    });
     await deposit(sender, '500');
 
     const gift1 = await sendGift(sender, '30');
@@ -436,7 +401,7 @@ describe('BF-326 waterfall across multiple simultaneously-active credits (probe 
   });
 });
 
-describe('BF-326 multiplier configurable by Super Admin, forward-only (probes covering the config route + no retroactive change)', () => {
+describe('bonus-rollover multiplier configurable by Super Admin, forward-only (probes covering the config route + no retroactive change)', () => {
   it('GET/PATCH are gated to super-admin, and a new multiplier only applies to credits created AFTER the change', async () => {
     const before = await superAdmin.get('/backoffice/wallet/bonus-rollover-config');
     // Config row is still absent at this point in the suite (first-ever GET) - fails
@@ -456,11 +421,10 @@ describe('BF-326 multiplier configurable by Super Admin, forward-only (probes co
 
     // A fresh gift claimed now picks up the new 3x multiplier.
     const senderEmail = `bf326-multiplier-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain.app, senderEmail);
-    const { client: recipient } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-multiplier-recipient-${randomUUID()}@e2e.test`,
-    );
+    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
+    const { client: recipient } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-multiplier-recipient-${randomUUID()}@e2e.test`,
+    });
     await deposit(sender, '100');
     const giftId = await sendGift(sender, '10');
     await claimGift(recipient, giftId);
@@ -484,14 +448,13 @@ describe('BF-326 multiplier configurable by Super Admin, forward-only (probes co
   });
 });
 
-describe('BF-326 audit trail (probe #5)', () => {
+describe('bonus-rollover audit trail (probe #5)', () => {
   it('wallet.bonus_credit.created, wallet.bonus_credit.completed, and the admin config change all produce audit rows with real before/after state', async () => {
     const senderEmail = `bf326-audit-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain.app, senderEmail);
-    const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(
-      appMain.app,
-      `bf326-audit-recipient-${randomUUID()}@e2e.test`,
-    );
+    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
+    const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
+      email: `bf326-audit-recipient-${randomUUID()}@e2e.test`,
+    });
     await deposit(sender, '100');
     const giftId = await sendGift(sender, '12');
     await claimGift(recipient, giftId);
@@ -547,7 +510,7 @@ describe('BF-326 audit trail (probe #5)', () => {
   });
 });
 
-describe('BF-326 config table stays clean between describe blocks', () => {
+describe('bonus-rollover config table stays clean between describe blocks', () => {
   it('sanity: exactly one wallet_bonus_rollover_config row exists (singleton upsert, not duplicate inserts)', async () => {
     const rows = await appMain.container.get(DRIZZLE).db.select().from(walletBonusRolloverConfig);
     expect(rows).toHaveLength(1);

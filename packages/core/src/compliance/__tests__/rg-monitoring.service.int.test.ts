@@ -55,7 +55,13 @@ async function seedBet(userId: string, betAmount: string) {
 async function seedSession(userId: string, startedMinutesAgo: number) {
   const [u] = await db.drizzle.db
     .insert(user)
-    .values({ id: userId, name: 'P', email: `${userId}@test.dev`, emailVerified: true })
+    .values({
+      id: userId,
+      name: 'P',
+      username: `u_${userId.replaceAll('-', '').slice(0, 14)}`,
+      email: `${userId}@test.dev`,
+      emailVerified: true,
+    })
     .returning();
   await db.drizzle.db.insert(session).values({
     userId: u!.id,

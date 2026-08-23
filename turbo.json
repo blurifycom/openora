@@ -3,6 +3,9 @@
   "ui": "tui",
   "globalDependencies": ["packages/config/**", ".oxlintrc.json", ".oxfmtrc.json"],
   "tasks": {
+    // Every package builds with `tsc` over the same tsconfig its `check:types` uses, so a
+    // successful build IS the typecheck - `verify` runs this instead of `check:types` to
+    // avoid compiling the workspace twice. `check:types` stays for ad-hoc/pre-commit use.
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
@@ -22,19 +25,6 @@
       "dependsOn": ["^build", "build"],
       "outputs": []
     },
-    "@openora/testing#test:integration": {
-      "dependsOn": ["^build", "build", "@openora/core#test:integration"],
-      "cache": false,
-      "passThroughEnv": [
-        "TEST_DATABASE_URL",
-        "DATABASE_URL",
-        "DATABASE_ADMIN_URL",
-        "TEST_ADMIN_DATABASE_URL",
-        "TEST_REDIS_URL",
-        "BETTER_AUTH_SECRET",
-        "BETTER_AUTH_URL"
-      ]
-    },
     "test:integration": {
       "dependsOn": ["^build", "build"],
       "cache": false,
@@ -42,6 +32,8 @@
         "TEST_DATABASE_URL",
         "DATABASE_URL",
         "DATABASE_ADMIN_URL",
+        "TEST_ADMIN_DATABASE_URL",
+        "TEST_REDIS_URL",
         "BETTER_AUTH_SECRET",
         "BETTER_AUTH_URL"
       ]
@@ -79,6 +71,10 @@
     },
     "//#check:shape": {
       "inputs": ["packages/core/src/**", "tools/lint/verify-module-shape.ts"],
+      "outputs": []
+    },
+    "//#check:hygiene": {
+      "inputs": ["**/*", "!.turbo/**", "!**/node_modules/**", "!**/dist/**", "!**/.next/**"],
       "outputs": []
     },
     "//#check:deprecations": {

@@ -35,6 +35,42 @@ function toMinorUnits(amount: string): bigint {
   return BigInt(whole + fraction.padEnd(MONEY_SCALE, '0').slice(0, MONEY_SCALE));
 }
 
+function fromMinorUnits(units: bigint): string {
+  const digits = units.toString().padStart(MONEY_SCALE + 1, '0');
+  const whole = digits.slice(0, -MONEY_SCALE);
+  const fraction = digits.slice(-MONEY_SCALE);
+  return `${whole}.${fraction}`;
+}
+
+// Exact three-way compare for two decimal-string money amounts. Never route this through
+// moneyToNumber for the same reason moneyEquals doesn't: a float carries ~15 significant
+// digits, so at MONEY_SCALE (18) two genuinely different amounts can compare equal, or
+// worse, order backwards.
+export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
+  const diff = toMinorUnits(a) - toMinorUnits(b);
+  return diff < 0n ? -1 : diff > 0n ? 1 : 0;
+}
+
+// Exact decimal multiplication of two money amounts (`amount * factor`), via the same
+// bigint minor-units path as moneyEquals/moneyCompare - never JS float. Both operands are
+// non-negative decimal strings; the result is truncated (not rounded) to MONEY_SCALE.
+export function moneyScaleBy(amount: string, factor: string): string {
+  const product = (toMinorUnits(amount) * toMinorUnits(factor)) / 10n ** BigInt(MONEY_SCALE);
+  return fromMinorUnits(product);
+}
+
+// Exact decimal addition and subtraction over the same bigint minor-units path. Used to
+// derive one side of a balance change from the other: reading the balance separately and
+// then updating it leaves a window for a concurrent writer, and an append-only audit row
+// that records the wrong `before` cannot be corrected afterwards.
+export function moneyAdd(a: string, b: string): string {
+  return fromMinorUnits(toMinorUnits(a) + toMinorUnits(b));
+}
+
+export function moneySubtract(a: string, b: string): string {
+  return fromMinorUnits(toMinorUnits(a) - toMinorUnits(b));
+}
+
 // Run `fn` over `items` with at most `concurrency` promises in flight, results in input
 // order. Use this instead of `Promise.all(items.map(fn))` whenever `items` comes from a
 // query (unbounded) and `fn` touches the DB: an uncapped fan-out opens one pool connection

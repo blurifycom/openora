@@ -46,29 +46,42 @@ describe('getUserId', () => {
 
 describe('extractClientMeta', () => {
   const meta = (headers: NodeHeaders) => extractClientMeta(headers);
+  const trusted = (headers: NodeHeaders) => extractClientMeta(headers, { trustForwarded: true });
 
-  it('reads a single x-forwarded-for entry', () => {
-    expect(meta({ 'x-forwarded-for': '203.0.113.7' }).ip).toBe('203.0.113.7');
+  it('ignores x-forwarded-for without a trusted proxy boundary', () => {
+    expect(meta({ 'x-forwarded-for': '203.0.113.7' }).ip).toBeNull();
+  });
+
+  it('ignores a spoofed x-forwarded-for in favour of x-real-ip', () => {
+    expect(meta({ 'x-forwarded-for': '203.0.113.7', 'x-real-ip': '198.51.100.4' }).ip).toBe(
+      '198.51.100.4',
+    );
+  });
+
+  it('reads a single x-forwarded-for entry when forwarding is trusted', () => {
+    expect(trusted({ 'x-forwarded-for': '203.0.113.7' }).ip).toBe('203.0.113.7');
   });
 
   it('takes the leftmost hop of a proxy chain and trims it', () => {
-    expect(meta({ 'x-forwarded-for': ' 203.0.113.7 , 10.0.0.1, 10.0.0.2' }).ip).toBe('203.0.113.7');
+    expect(trusted({ 'x-forwarded-for': ' 203.0.113.7 , 10.0.0.1, 10.0.0.2' }).ip).toBe(
+      '203.0.113.7',
+    );
   });
 
   it('takes the first value when the header arrives repeated', () => {
-    expect(meta({ 'x-forwarded-for': ['203.0.113.7', '198.51.100.4'] }).ip).toBe('203.0.113.7');
+    expect(trusted({ 'x-forwarded-for': ['203.0.113.7', '198.51.100.4'] }).ip).toBe('203.0.113.7');
   });
 
   it('falls back to x-real-ip when x-forwarded-for is absent', () => {
-    expect(meta({ 'x-real-ip': '198.51.100.4' }).ip).toBe('198.51.100.4');
+    expect(trusted({ 'x-real-ip': '198.51.100.4' }).ip).toBe('198.51.100.4');
   });
 
   it('falls back to x-real-ip when x-forwarded-for is empty', () => {
-    expect(meta({ 'x-forwarded-for': '', 'x-real-ip': '198.51.100.4' }).ip).toBe('198.51.100.4');
+    expect(trusted({ 'x-forwarded-for': '', 'x-real-ip': '198.51.100.4' }).ip).toBe('198.51.100.4');
   });
 
-  it('prefers x-forwarded-for over x-real-ip', () => {
-    expect(meta({ 'x-forwarded-for': '203.0.113.7', 'x-real-ip': '198.51.100.4' }).ip).toBe(
+  it('prefers x-forwarded-for over x-real-ip when forwarding is trusted', () => {
+    expect(trusted({ 'x-forwarded-for': '203.0.113.7', 'x-real-ip': '198.51.100.4' }).ip).toBe(
       '203.0.113.7',
     );
   });

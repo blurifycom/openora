@@ -10,7 +10,10 @@ const ADMIN_DATABASE_URL =
   'postgresql://postgres:postgres@localhost:5432/postgres';
 const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
 
-const REDIS_LOGICAL_DATABASE_COUNT = 16;
+// Databases 0-7 belong to this tier; `@openora/testing` claims 8-15 (see its redis.ts).
+// The split is what lets both integration suites run concurrently without flushing
+// each other's keys - do not widen it without moving the other tier too.
+const REDIS_LOGICAL_DATABASE_COUNT = 8;
 const REDIS_DATABASE = Number(process.env['VITEST_POOL_ID'] ?? 1) % REDIS_LOGICAL_DATABASE_COUNT;
 
 function withRedisDatabase(baseUrl: string, database: number): string {

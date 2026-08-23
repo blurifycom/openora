@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
+import { queue, type PaymentAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -11,11 +11,16 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makeJobQueue,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { autoWithdrawalRule } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
+import type { ReconciliationService } from '../service/reconciliation.service.js';
+
+const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
@@ -45,20 +50,24 @@ const autoRuleDenyingGuard = () =>
 
 function routerWith(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
+  const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
+    paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
   });
-  const router = createWalletRouter(
-    service,
+  const router = createWalletRouter({
+    wallet: service,
     adminGuard,
     audit,
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
-  );
+    paymentProviders,
+    reconciliation: mock<ReconciliationService>({}),
+    jobQueue: makeJobQueue(),
+    reconciliationQueue: RECONCILIATION_QUEUE,
+  });
   return { router, audit };
 }
 

@@ -7,7 +7,16 @@ import type {
   EventBus,
   OssContext,
 } from '@openora/core/server';
-import type { AuditWritePort, ClientMeta, IdentityReader } from '@openora/core/contracts';
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  type AuditWritePort,
+  type ClientMeta,
+  type IdentityReader,
+  type JobQueueAdapter,
+  type PaymentAdapter,
+  type PaymentProviderRegistry,
+  type PaymentWebhookVerifier,
+} from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
 // for a collaborator is inherently partial, so the cast lives here - documented and
@@ -103,12 +112,47 @@ export const makeAuditWriter = (): AuditWritePort & { record: Mock } => ({
   recordInTransaction: vi.fn(async () => undefined),
 });
 
+/**
+ * PaymentProviderRegistry double wrapping a single adapter/verifier pair under
+ * DEFAULT_PAYMENT_PROVIDER - mirrors wallet/plugin.ts's default binding, so a test with
+ * one vendor changes nothing about how it builds a WalletService/router. Pass `names` to
+ * simulate an operator with more than one bound vendor (eg for providerName validation).
+ */
+export const makePaymentProviderRegistry = (
+  options: {
+    adapter?: PaymentAdapter;
+    webhookVerifier?: PaymentWebhookVerifier;
+    names?: readonly string[];
+  } = {},
+): PaymentProviderRegistry => {
+  const adapter = options.adapter ?? mock<PaymentAdapter>({});
+  const webhookVerifier =
+    options.webhookVerifier ?? mock<PaymentWebhookVerifier>({ verify: vi.fn(() => false) });
+  const names = options.names ?? [DEFAULT_PAYMENT_PROVIDER];
+  return {
+    get: (name) => (name === DEFAULT_PAYMENT_PROVIDER ? { adapter, webhookVerifier } : null),
+    names: () => names,
+  };
+};
+
+/** JobQueueAdapter double whose `enqueue` is a vitest mock, for a router test that only
+ * needs to assert a job was enqueued, never that it actually ran. */
+export const makeJobQueue = (): JobQueueAdapter & { enqueue: Mock } =>
+  mock<JobQueueAdapter & { enqueue: Mock }>({
+    enqueue: vi.fn(async () => ({ id: 'test-job' })),
+    schedule: vi.fn(async () => undefined),
+    unschedule: vi.fn(async () => undefined),
+    registerWorker: vi.fn(),
+    close: vi.fn(async () => undefined),
+  });
+
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({
     getLastLoginAt: vi.fn().mockResolvedValue(null),
     getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([]),
     getPlayerIdByUserId: vi.fn().mockResolvedValue(null),
     getPlayerIdByUserIdSafe: vi.fn().mockResolvedValue(null),
+    getPlayerIdsByUserIdsSafe: vi.fn().mockResolvedValue(new Map()),
     getPlayerKycStatusByUserId: vi.fn().mockResolvedValue(null),
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
   });

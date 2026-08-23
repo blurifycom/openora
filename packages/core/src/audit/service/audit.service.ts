@@ -223,7 +223,7 @@ export class AuditService {
     const where = buildWhere(filters);
 
     const sortBy = filters.sortBy ?? 'createdAt';
-    const dir = (filters.sortOrder ?? 'asc') === 'asc' ? asc : desc;
+    const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
 
     const rows = await db
       .select()

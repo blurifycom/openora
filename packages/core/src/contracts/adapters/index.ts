@@ -53,6 +53,7 @@ export type {
 } from './tag-evaluation-commands.js';
 export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
 
+export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 
@@ -120,11 +121,31 @@ export {
   KycCheckResultSchema,
 } from './kyc.js';
 
-export type { PaymentAdapter, PaymentWebhookEvent, PaymentWebhookVerifier } from './payment.js';
-export { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from './payment.js';
+export type {
+  PaymentAdapter,
+  PaymentWebhookEvent,
+  PaymentWebhookVerifier,
+  CustodyBalance,
+  PaymentProvider,
+  PaymentProviderRegistry,
+} from './payment.js';
+export {
+  PAYMENT_ADAPTER,
+  PAYMENT_WEBHOOK_VERIFIER,
+  PAYMENT_PROVIDERS,
+  DEFAULT_PAYMENT_PROVIDER,
+} from './payment.js';
+
+export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';
+export { WALLET_ASSET_CATALOG } from './wallet-asset-catalog.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER } from './geo-ip.js';
+export type { GeoCheckCommands } from './geo-check-commands.js';
+export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
+
+export type { PlayerProvisioning, PlayerRegistrationRecord } from './player-provisioning.js';
+export { PLAYER_PROVISIONING } from './player-provisioning.js';
 
 export type { NotificationDeliveryAdapter } from './notification.js';
 export { NOTIFICATION_DELIVERY_ADAPTER } from './notification.js';
@@ -206,7 +227,7 @@ export type {
   IdentityLockoutOptions,
   SessionCommands,
 } from './identity.js';
-export { IDENTITY_OPTIONS, SESSION_COMMANDS } from './identity.js';
+export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js';
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
@@ -221,7 +242,7 @@ export type {
 export { CHAT_SYSTEM_WRITER } from './chat-system-writer.js';
 
 export type { ChatBlockWriter } from './chat-block-writer.js';
-export { CHAT_BLOCK_WRITER } from './chat-block-writer.js';
+export { CHAT_BLOCK_WRITER, chatBlockLockKey } from './chat-block-writer.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 

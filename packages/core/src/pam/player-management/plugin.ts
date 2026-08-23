@@ -6,6 +6,7 @@ import {
   ADMIN_GAME_REPORTING,
   CHAT_BLOCK_WRITER,
   SESSION_COMMANDS,
+  USER_COMMANDS,
   PLAYER_ACTIVITY_TRACKER,
 } from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -21,6 +22,7 @@ function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
     c.get(ADMIN_GAME_REPORTING),
     c.get(CHAT_BLOCK_WRITER),
     c.get(SESSION_COMMANDS),
+    c.get(USER_COMMANDS),
   );
 }
 

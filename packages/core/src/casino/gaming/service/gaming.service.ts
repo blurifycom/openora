@@ -121,7 +121,7 @@ export class GamingService {
     // caller's transaction could still roll back afterward (it doesn't here, since we're
     // already past the `await ... transaction(...)` call, but the port contract holds for
     // every caller). `gaming` - not `wallet` - is the one emitting a `wallet.*`-named
-    // event because it's the transaction owner (BF-326: gaming is the only `type: 'bet'`
+    // event because it's the transaction owner (gaming is the only `type: 'bet'`
     // wallet-debit caller today; a future second wagering module would repeat this same
     // thread-the-outcome-out-and-emit-after-commit pattern). Plain `emit()`, not
     // `emitInTransaction()`: the latter requires the transactional outbox to be

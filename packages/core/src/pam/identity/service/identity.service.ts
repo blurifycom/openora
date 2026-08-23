@@ -8,11 +8,12 @@ import {
   extractClientMeta,
   getCurrentClientMeta,
   findOneOrThrow,
+  makeConflictError,
   makeNotFoundError,
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import type {
@@ -39,10 +40,20 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
+  GeoCheckCommands,
+  PlayerProvisioning,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { isRgBlocked } from './rg-guard.service.js';
+import {
+  DEFAULT_LOCKOUT_DURATION_MS,
+  DEFAULT_MAX_LOGIN_ATTEMPTS,
+  computeLockoutTier,
+  createAccountLockedError,
+  hasFailedLoginWindowExpired,
+  makeLoginSecurityState,
+} from './lockout-policy.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -53,16 +64,6 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
-}
-
-export function createAccountLockedError(lockoutUntil: Date) {
-  return new ORPCError('UNAUTHORIZED', {
-    message: 'Account is temporarily locked. Please try again later.',
-    data: {
-      code: 'ACCOUNT_LOCKED',
-      lockoutUntil: lockoutUntil.toISOString(),
-    },
-  });
 }
 
 // better-auth returns Date objects and may omit theme/language; the public
@@ -83,6 +84,7 @@ function toUser(u: BetterAuthUser) {
     id: u.id,
     email: u.email,
     name: u.name,
+    username: u.username,
     emailVerified: u.emailVerified,
     theme: u.theme ?? 'system',
     language: u.language ?? 'en',
@@ -123,6 +125,9 @@ type AuthCall<B> = (opts: {
 }) => Promise<globalThis.Response>;
 
 type ExtendedAuthApi = {
+  signUpEmail: AuthCall<
+    Pick<typeof user.$inferInsert, 'email' | 'name' | 'username'> & { password: string }
+  >;
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
@@ -139,6 +144,7 @@ type ExtendedAuthApi = {
 const SUCCESS = { success: true as const };
 
 export const UserNotFoundError = makeNotFoundError('User');
+export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
 
 // better-auth calls use `asResponse: true`, which returns an error *Response*
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
@@ -174,33 +180,6 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   throw new ORPCError(code, { message });
 }
 
-const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
-const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
-
-// Progressive lockout: a repeat lockout inside a rolling 24h window escalates the
-// duration (1 min -> 5 min -> 15 min, capped at tier 3). The window resets once the
-// last lockout falls outside it, so an occasional fat-finger never compounds.
-const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
-const LOCKOUT_TIER_DURATIONS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
-
-function computeLockoutTier({
-  lockoutCount,
-  lastLockoutAt,
-  nowMs,
-  fallbackDurationMs,
-}: {
-  lockoutCount: number;
-  lastLockoutAt: Date | null;
-  nowMs: number;
-  fallbackDurationMs: number;
-}) {
-  const withinWindow =
-    lastLockoutAt !== null && nowMs - lastLockoutAt.getTime() < LOCKOUT_WINDOW_MS;
-  const tier = withinWindow ? lockoutCount + 1 : 1;
-  const durationMs = LOCKOUT_TIER_DURATIONS_MS[Math.min(tier - 1, 2)] ?? fallbackDurationMs;
-  return { tier, durationMs };
-}
-
 const MINUTE_MS = 60 * 1000;
 export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
@@ -212,6 +191,9 @@ export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // throttles (register/resend/etc.) keep the default fail-open.
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+// Keyed on the caller, not the handle: the abuse shape here is enumerating many
+// usernames from one client, not probing one username repeatedly.
+const USERNAME_AVAILABILITY_RATE_LIMIT = { limit: 30, windowMs: MINUTE_MS };
 const PASSWORD_RESET_REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const PASSWORD_RESET_RATE_LIMIT = {
   limit: 5,
@@ -235,6 +217,7 @@ type FakeLoginShadow = {
   lockoutUntil: string | null;
   lockoutCount: number;
   lastLockoutAt: string | null;
+  lastFailedLoginAt: string | null;
 };
 
 function loginShadowKey(email: string): string {
@@ -243,6 +226,15 @@ function loginShadowKey(email: string): string {
 
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
+
+function hasErrorCode(error: unknown, code: string) {
+  if (typeof error !== 'object' || error === null || !('data' in error)) {
+    return false;
+  }
+
+  const data = error.data;
+  return typeof data === 'object' && data !== null && 'code' in data && data.code === code;
+}
 
 function computeLockoutState({
   attempts,
@@ -268,6 +260,8 @@ export type IdentityServiceDeps = {
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
+  geoCheck?: GeoCheckCommands;
+  playerProvisioning?: PlayerProvisioning;
   cache?: CacheAdapter;
 };
 
@@ -290,6 +284,8 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly playerProvisioning?: PlayerProvisioning;
+  private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
 
   constructor({
@@ -301,6 +297,8 @@ export class IdentityService {
     options,
     limiter,
     platformConfig,
+    geoCheck,
+    playerProvisioning,
     cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
@@ -311,6 +309,8 @@ export class IdentityService {
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
+    this.geoCheck = geoCheck;
+    this.playerProvisioning = playerProvisioning;
     this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
@@ -318,6 +318,15 @@ export class IdentityService {
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      registrationWebUrl: this.platformConfig?.registration?.webUrl,
+      onExistingUserSignUp: async (existing) => {
+        const response = await this.api.requestPasswordResetEmailOTP({
+          body: { email: existing.email },
+          headers: new Headers(),
+          asResponse: true,
+        });
+        await ensureOk(response);
+      },
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', {
           userId: resetUser.id,
@@ -365,29 +374,128 @@ export class IdentityService {
     return session?.user?.id ?? null;
   }
 
-  async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  async register(input: RegisterInput, reqHeaders: NodeHeaders) {
+    const registration = this.platformConfig?.registration;
+    const provisioning = this.playerProvisioning;
+    if (!registration || !provisioning) {
+      throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     await assertRateLimit(
       this.limiter,
       `register:${input.email.toLowerCase()}`,
       REGISTER_RATE_LIMIT,
     );
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
+      throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const authResponse = await this.auth.api.signUpEmail({
-      body: { email: input.email, password: input.password, name: input.name },
+    const authResponse = await this.api.signUpEmail({
+      body: {
+        email: input.email,
+        password: input.password,
+        name: input.username,
+        username: input.username,
+      },
       headers,
       asResponse: true,
     });
-    this.forwardCookies(authResponse, resHeaders);
+    if (!authResponse.ok) {
+      // The `lower(username)` unique index is the only arbiter - a pre-flight check
+      // could not close the race anyway, so the taken handle is read off the failure.
+      if (await this.findUserIdByUsername(input.username)) {
+        throw new UsernameConflictError();
+      }
+      await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
+    }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
+    // A known address gets an indistinguishable success response (and a reset mail)
+    // rather than a new account, so only a genuinely new user is provisioned.
+    if ((await this.findUserIdByEmail(input.email)) === body.user.id) {
+      const { playerId } = await this.recordRegistrationConsent(
+        provisioning,
+        body.user.id,
+        registration.termsVersion,
+        { ip, userAgent },
+      );
+      this.events.emit('identity.user.registered', {
+        userId: body.user.id,
+        playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+        ip,
+        userAgent,
+      });
+    }
+    return { status: 'check-email' as const };
+  }
 
-    this.events.emit('identity.user.registered', {
-      userId: body.user.id,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
-      ip,
-      userAgent,
-    });
-    return { user: toUser(body.user) };
+  private async findUserIdByUsername(username: string) {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  private async findUserIdByEmail(email: string) {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  /**
+   * Better Auth commits the user inside its own transaction before returning, so a
+   * failure here would otherwise leave an account with no consent record. The user is
+   * deleted instead (sessions and accounts cascade), making registration all-or-nothing.
+   */
+  private async recordRegistrationConsent(
+    provisioning: PlayerProvisioning,
+    userId: User['id'],
+    termsVersion: string,
+    { ip, userAgent }: ClientMeta,
+  ) {
+    const now = new Date();
+    let outcome: Awaited<ReturnType<PlayerProvisioning['createForRegistration']>>;
+    try {
+      outcome = await provisioning.createForRegistration({
+        userId,
+        termsVersion,
+        termsAcceptedAt: now,
+        ageAcceptedAt: now,
+        registrationIp: ip,
+        registrationUserAgent: userAgent,
+      });
+    } catch (err) {
+      identityLogger.error(
+        { err, userId },
+        'registration consent write failed - rolling back user',
+      );
+      await this.drizzle.db.delete(user).where(eq(user.id, userId));
+      throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Registration is unavailable' });
+    }
+    if (!outcome.created) {
+      // A player row already existed, so this consent capture was discarded. Never
+      // silent: the acceptance evidence is a compliance record.
+      identityLogger.error(
+        { userId, termsVersion },
+        'registration consent not stored - player row already existed',
+      );
+    }
+    return { playerId: outcome.playerId ?? null };
+  }
+
+  async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
+    const { ip } = extractClientMeta(reqHeaders);
+    await assertRateLimit(
+      this.limiter,
+      `check-username:${ip ?? 'unknown'}`,
+      USERNAME_AVAILABILITY_RATE_LIMIT,
+    );
+    return { available: !(await this.findUserIdByUsername(username)) };
   }
 
   /**
@@ -421,6 +529,7 @@ export class IdentityService {
         lockoutUntil: user.lockoutUntil,
         lockoutCount: user.lockoutCount,
         lastLockoutAt: user.lastLockoutAt,
+        lastFailedLoginAt: user.lastFailedLoginAt,
         role: user.role,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
@@ -436,6 +545,7 @@ export class IdentityService {
           | 'lockoutUntil'
           | 'lockoutCount'
           | 'lastLockoutAt'
+          | 'lastFailedLoginAt'
           | 'role'
           | 'rgBlocked'
           | 'rgBlockedUntil'
@@ -446,8 +556,9 @@ export class IdentityService {
     const bypassForAdmins = this.options?.lockout?.bypassForAdmins ?? false;
     const lockoutEnabled = configLockoutEnabled && !(isAdmin && bypassForAdmins);
 
+    const nowMs = Date.now();
     if (lockoutEnabled && existingUser?.lockoutUntil) {
-      if (new Date(existingUser.lockoutUntil) > new Date()) {
+      if (new Date(existingUser.lockoutUntil) > new Date(nowMs)) {
         throw createAccountLockedError(new Date(existingUser.lockoutUntil));
       }
       // Lock window elapsed: clear it so the next failure starts from a fresh budget
@@ -456,9 +567,37 @@ export class IdentityService {
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
+    if (
+      lockoutEnabled &&
+      existingUser &&
+      hasFailedLoginWindowExpired(existingUser.lastFailedLoginAt, existingUser.lastLockoutAt, nowMs)
+    ) {
+      await this.resetLockoutTier(existingUser.id);
+      existingUser = {
+        ...existingUser,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lockoutCount: 0,
+        lastLockoutAt: null,
+        lastFailedLoginAt: null,
+      };
+    }
+
     let fakeLoginShadow: FakeLoginShadow | undefined;
     if (lockoutEnabled && !existingUser) {
       fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
+      if (fakeLoginShadow?.lastFailedLoginAt) {
+        const lastFailedLoginAt = new Date(fakeLoginShadow.lastFailedLoginAt);
+        if (hasFailedLoginWindowExpired(lastFailedLoginAt, null, nowMs)) {
+          fakeLoginShadow = {
+            failedAttempts: 0,
+            lockoutUntil: null,
+            lockoutCount: 0,
+            lastLockoutAt: null,
+            lastFailedLoginAt: null,
+          };
+        }
+      }
       if (fakeLoginShadow?.lockoutUntil) {
         if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
           throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
@@ -569,6 +708,11 @@ export class IdentityService {
       return {
         user: toUser(body.user),
         session: { token: body.token, expiresAt },
+        security: makeLoginSecurityState({
+          failedLoginAttempts: 0,
+          maxAttempts: this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS,
+          lockoutUntil: null,
+        }),
       };
     } catch (error) {
       // An RG block is not a credential failure - surface it as-is, without touching the
@@ -579,15 +723,18 @@ export class IdentityService {
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
-        ['RG_BLOCKED', 'ACCOUNT_SUSPENDED'].includes(
-          (error.data as { code?: string } | undefined)?.code ?? '',
-        )
+        (hasErrorCode(error, 'RG_BLOCKED') || hasErrorCode(error, 'ACCOUNT_SUSPENDED'))
       ) {
         throw error;
       }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
-      const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
+      const isAccountLocked =
+        error instanceof ORPCError &&
+        error.code === 'UNAUTHORIZED' &&
+        hasErrorCode(error, 'ACCOUNT_LOCKED');
+      const isCredentialFailure =
+        error instanceof ORPCError && error.code === 'UNAUTHORIZED' && !isAccountLocked;
 
       let attemptsRemaining: number | undefined;
       if (lockoutEnabled && existingUser && isCredentialFailure) {
@@ -597,7 +744,10 @@ export class IdentityService {
         // the threshold (the read-modify-write this replaces was bypassable under load).
         const [row] = await this.drizzle.db
           .update(user)
-          .set({ failedLoginAttempts: sql`${user.failedLoginAttempts} + 1` })
+          .set({
+            failedLoginAttempts: sql`${user.failedLoginAttempts} + 1`,
+            lastFailedLoginAt: new Date(),
+          })
           .where(eq(user.id, existingUser.id))
           .returning({ failedLoginAttempts: user.failedLoginAttempts });
         const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
@@ -614,21 +764,41 @@ export class IdentityService {
           // Escalate the lockout duration for repeat offenders inside the 24h window.
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: existingUser.lockoutCount ?? 0,
-            lastLockoutAt: existingUser.lastLockoutAt ?? null,
+            lastFailedLoginAt: existingUser.lastFailedLoginAt ?? null,
+            fallbackLastLockoutAt: existingUser.lastLockoutAt ?? null,
             nowMs,
             fallbackDurationMs,
           });
           const lockoutUntil = new Date(nowMs + durationMs);
-          await this.drizzle.db
+          const [lockoutRow] = await this.drizzle.db
             .update(user)
             .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
-            .where(eq(user.id, existingUser.id));
+            // Only the first request that reaches the threshold creates the lockout.
+            // Other concurrent failures must observe and return the winner's lockout
+            // instead of overwriting its tier or emitting a duplicate event.
+            .where(and(eq(user.id, existingUser.id), isNull(user.lockoutUntil)))
+            .returning({ lockoutUntil: user.lockoutUntil });
+
+          if (!lockoutRow) {
+            const [current] = await this.drizzle.db
+              .select({ lockoutUntil: user.lockoutUntil })
+              .from(user)
+              .where(eq(user.id, existingUser.id))
+              .limit(1);
+            if (current?.lockoutUntil) {
+              throw createAccountLockedError(current.lockoutUntil);
+            }
+            throw new ORPCError('INTERNAL_SERVER_ERROR', {
+              message: 'Unable to establish account lockout.',
+            });
+          }
 
           await this.limiter?.reset(makeLoginRateLimitKey(email));
 
           this.events.emit('identity.user.lockout.triggered', {
             userId: existingUser.id,
             email,
+            tier,
             lockoutUntil: lockoutUntil.toISOString(),
             ip,
             userAgent,
@@ -652,7 +822,10 @@ export class IdentityService {
           const nowMs = Date.now();
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
-            lastLockoutAt: fakeLoginShadow?.lastLockoutAt
+            lastFailedLoginAt: fakeLoginShadow?.lastFailedLoginAt
+              ? new Date(fakeLoginShadow.lastFailedLoginAt)
+              : null,
+            fallbackLastLockoutAt: fakeLoginShadow?.lastLockoutAt
               ? new Date(fakeLoginShadow.lastLockoutAt)
               : null,
             nowMs,
@@ -664,6 +837,7 @@ export class IdentityService {
             lockoutUntil: lockoutUntil.toISOString(),
             lockoutCount: tier,
             lastLockoutAt: new Date(nowMs).toISOString(),
+            lastFailedLoginAt: new Date(nowMs).toISOString(),
           });
 
           await this.limiter?.reset(makeLoginRateLimitKey(email));
@@ -676,6 +850,7 @@ export class IdentityService {
           lockoutUntil: null,
           lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
           lastLockoutAt: fakeLoginShadow?.lastLockoutAt ?? null,
+          lastFailedLoginAt: new Date().toISOString(),
         });
       }
 
@@ -687,6 +862,19 @@ export class IdentityService {
         userAgent,
         ...(attemptsRemaining !== undefined ? { attemptsRemaining } : {}),
       });
+      if (isCredentialFailure && error instanceof ORPCError && attemptsRemaining !== undefined) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const security = makeLoginSecurityState({
+          failedLoginAttempts:
+            attemptsRemaining === undefined ? 0 : maxAttempts - attemptsRemaining,
+          maxAttempts,
+          lockoutUntil: null,
+        });
+        throw new ORPCError('UNAUTHORIZED', {
+          message: error.message,
+          data: { ...error.data, ...security },
+        });
+      }
       throw error;
     }
   }
@@ -695,6 +883,19 @@ export class IdentityService {
     return this.drizzle.db
       .update(user)
       .set({ failedLoginAttempts: 0, lockoutUntil: null })
+      .where(eq(user.id, userId));
+  }
+
+  private resetLockoutTier(userId: User['id']) {
+    return this.drizzle.db
+      .update(user)
+      .set({
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lockoutCount: 0,
+        lastLockoutAt: null,
+        lastFailedLoginAt: null,
+      })
       .where(eq(user.id, userId));
   }
 
@@ -995,10 +1196,12 @@ export class IdentityService {
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const userId = await this.currentUserId(headers);
+    const sessionUserId = await this.currentUserId(headers);
+    // Verification links are followed without a session, so an `anonymous` bucket
+    // would be shared by every caller - one client could stall everyone's sign-up.
     await assertRateLimit(
       this.limiter,
-      `verify-email:${userId ?? 'anonymous'}`,
+      `verify-email:${sessionUserId ?? ip ?? 'unknown'}`,
       VERIFY_EMAIL_RATE_LIMIT,
     );
     const res = await this.api.verifyEmail({
@@ -1007,6 +1210,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
+    const userId = sessionUserId ?? (await this.userIdFromVerificationToken(input.token));
     if (userId) {
       this.events.emit('identity.email.verified', {
         userId,
@@ -1016,6 +1220,26 @@ export class IdentityService {
       });
     }
     return SUCCESS;
+  }
+
+  /**
+   * Better Auth answers an unauthenticated verification with `user: null`, so the
+   * subject is recovered from the token it just accepted - otherwise the audit event
+   * would never fire for the ordinary click-the-link flow.
+   */
+  private async userIdFromVerificationToken(token: string) {
+    const payload = token.split('.')[1];
+    if (!payload) {
+      return null;
+    }
+    let email: unknown;
+    try {
+      email = (JSON.parse(Buffer.from(payload, 'base64url').toString()) as { email?: unknown })
+        .email;
+    } catch {
+      return null;
+    }
+    return typeof email === 'string' ? this.findUserIdByEmail(email) : null;
   }
 
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {

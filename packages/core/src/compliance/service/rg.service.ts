@@ -5,6 +5,7 @@ import {
   makeNotFoundError,
   makeConflictError,
   serializeRow,
+  mapConcurrent,
   type EventBus,
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
@@ -52,6 +53,9 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
 );
 
 const HOUR_MS = 60 * 60 * 1000;
+// Cap in-flight enforcement syncs per sweep tick so a large lapsed-cooling-off batch can't
+// exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
+const SWEEP_CONCURRENCY = 10;
 
 function addMonths(from: Date, months: number): Date {
   const d = new Date(from);
@@ -167,8 +171,8 @@ export class RgService {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.durationHours * HOUR_MS);
-    const row = await this.drizzle.db.transaction(async (tx) => {
-      await this.expireLapsedCoolingOff(userId, tx, now);
+    const { row, lapsed } = await this.drizzle.db.transaction(async (tx) => {
+      const lapsedRows = await this.expireLapsedCoolingOff(userId, tx, now);
       const r = findOneOrThrow(
         await tx
           .insert(rgExclusion)
@@ -186,11 +190,20 @@ export class RgService {
         new ExclusionNotFoundError(userId),
       );
       await this.syncEnforcement(userId, tx);
-      return r;
+      return { row: r, lapsed: lapsedRows };
     });
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    for (const lapsedRow of lapsed) {
+      this.events.emit('rg.cooling_off.expired', {
+        userId,
+        playerId,
+        exclusionId: lapsedRow.id,
+        expiresAt: (lapsedRow.expiresAt ?? now).toISOString(),
+      });
+    }
     this.events.emit('rg.cooling_off.activated', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       actorId,
       exclusionId: row.id,
       expiresAt: expiresAt.toISOString(),
@@ -411,9 +424,23 @@ export class RgService {
           lte(rgExclusion.expiresAt, now),
         ),
       )
-      .returning({ userId: rgExclusion.userId });
-    for (const userId of new Set(lapsed.map((r) => r.userId))) {
-      await this.syncEnforcement(userId);
+      .returning({
+        id: rgExclusion.id,
+        userId: rgExclusion.userId,
+        expiresAt: rgExclusion.expiresAt,
+      });
+    const lapsedUserIds = [...new Set(lapsed.map((r) => r.userId))];
+    await mapConcurrent(lapsedUserIds, SWEEP_CONCURRENCY, (userId) => this.syncEnforcement(userId));
+    const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
+      lapsed.map((r) => r.userId),
+    );
+    for (const row of lapsed) {
+      this.events.emit('rg.cooling_off.expired', {
+        userId: row.userId,
+        playerId: playerIds.get(row.userId) ?? null,
+        exclusionId: row.id,
+        expiresAt: (row.expiresAt ?? now).toISOString(),
+      });
     }
   }
 
@@ -428,7 +455,12 @@ export class RgService {
           eq(rgExclusion.status, 'active'),
           lte(rgExclusion.expiresAt, now),
         ),
-      );
+      )
+      .returning({
+        id: rgExclusion.id,
+        userId: rgExclusion.userId,
+        expiresAt: rgExclusion.expiresAt,
+      });
   }
 
   // The single source of truth for the login block: derive it from the STRONGEST

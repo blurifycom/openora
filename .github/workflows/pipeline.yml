@@ -40,19 +40,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Restores the turbo cache the `ci` job just populated for this same commit, so the
+      # build below is a cache hit rather than a second full compile of every package.
+      - uses: ./.github/actions/bootstrap
+
+      # `setup-node` again purely for the npm registry auth the publish step needs -
+      # bootstrap installs node but does not write an authenticated .npmrc.
       - uses: actions/setup-node@v4
         with:
           node-version: 26
           registry-url: https://registry.npmjs.org
           scope: '@openora'
 
-      - name: Enable corepack (pnpm)
-        run: |
-          npm install -g corepack@latest
-          corepack enable
-          corepack prepare pnpm@11.8.0 --activate
-
-      - run: pnpm install --frozen-lockfile
       # Build only the publishable packages - the apps are private and never published.
       - run: pnpm exec turbo run build --filter='!./apps/*'
 
