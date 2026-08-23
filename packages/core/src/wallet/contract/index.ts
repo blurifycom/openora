@@ -219,9 +219,6 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   excludeRiskFlags: z.array(TagKeySchema),
 });
 
-// Chat gift/rain credits are bonus balance, locked behind a Super-Admin-configurable
-// wagering multiplier before they can be withdrawn. No other credit source
-// carries a rollover requirement today.
 export const BONUS_CREDIT_SOURCE_TYPES = ['gift', 'rain'] as const;
 export const BonusCreditSourceTypeSchema = z.enum(BONUS_CREDIT_SOURCE_TYPES);
 export type BonusCreditSourceType = z.infer<typeof BonusCreditSourceTypeSchema>;

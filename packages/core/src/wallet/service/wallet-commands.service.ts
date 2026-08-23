@@ -44,9 +44,6 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
-// A missing config row must never break a `/gift` or `/rain` claim on an install that
-// skipped re-seeding (unlike the admin GET route, which fails closed) - see the
-// contrast with WalletService.getBonusRolloverConfig.
 const DEFAULT_ROLLOVER_MULTIPLIER = '1';
 
 type CompletedBonusCredit = { id: string; currency: string; creditedAmount: string };
@@ -108,8 +105,6 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    // A wager is the only source of rollover progress (no per-category
-    // contribution %, gaming is the only wagering vertical today).
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
         userId,
@@ -148,8 +143,6 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    // Gift/rain credits are bonus balance, rollover-locked until wagered through.
-    // Every other credit type (deposit, tip, refund, ...) is unrestricted.
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {
         walletId: row.id,
@@ -198,7 +191,6 @@ export class WalletCommandsService implements WalletCommands {
         sourceType,
         creditedAmount: amount,
         rolloverMultiplier: multiplier,
-        // Computed in SQL numeric arithmetic, never JS float (db-conventions).
         rolloverRequired: sql`(${amount}::numeric * ${multiplier}::numeric)`,
         rolloverProgress: '0',
         status: 'active',
@@ -224,16 +216,6 @@ export class WalletCommandsService implements WalletCommands {
     });
   }
 
-  // Sequential/waterfall clearing: a bet's amount is applied to the OLDEST active
-  // credit's remaining requirement first, and any leftover cascades to the
-  // next-oldest active credit (a flagged modeling assumption from the design review,
-  // not a spec'd requirement). Per row: a
-  // `FOR UPDATE` read locks it for the rest of this transaction, then a guarded
-  // `UPDATE ... WHERE status = 'active'` applies the increment - a concurrent debit
-  // against the same credit blocks on the row lock and re-reads the committed result,
-  // so progress can never be double-applied past `rolloverRequired`. `remainingAfter`
-  // is computed entirely in SQL (never a JS decimal subtraction) from the locked
-  // pre-update progress captured just above.
   private async applyBonusRolloverProgress(
     txn: DrizzleDb,
     { userId, currency, amount }: { userId: Uuid; currency: string; amount: string },
@@ -264,8 +246,6 @@ export class WalletCommandsService implements WalletCommands {
         .where(and(eq(walletBonusCredit.id, credit.id), eq(walletBonusCredit.status, 'active')))
         .for('update');
 
-      // Raced away concurrently (already completed by another debit in the meantime)
-      // - skip this row, `remaining` carries forward unchanged.
       if (!locked) {
         continue;
       }
@@ -274,9 +254,6 @@ export class WalletCommandsService implements WalletCommands {
         .update(walletBonusCredit)
         .set({
           rolloverProgress: sql`LEAST(${walletBonusCredit.rolloverRequired}, ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric)`,
-          // Explicit enum cast: Postgres allows a bare string literal in an INSERT to
-          // coerce to an enum column, but a computed CASE expression's result type is
-          // `text` and needs an explicit cast to satisfy the column's enum type.
           status: sql`(CASE WHEN ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric >= ${walletBonusCredit.rolloverRequired} THEN 'completed' ELSE 'active' END)::wallet_bonus_credit_status`,
           completedAt: sql`CASE WHEN ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric >= ${walletBonusCredit.rolloverRequired} THEN now() ELSE ${walletBonusCredit.completedAt} END`,
         })

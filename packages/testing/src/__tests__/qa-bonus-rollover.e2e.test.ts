@@ -19,24 +19,6 @@ import {
   type TestClient,
 } from '../index.js';
 
-/**
- * Independent QA verification of bonus-rollover tracking (chat gift/rain funds land as
- * rollover-locked bonus balance, spendable immediately but not withdrawable until a
- * Super-Admin configurable multiplier's worth of wagering clears it, then auto-converts
- * to real balance with a notification). Driven through the REAL app (bootTestApp: real
- * Hono + oRPC + Postgres + Redis + real gift/gaming/notifications/audit modules) rather
- * than the implementer's own unit/router-level tests, which double AUDIT_WRITER/EventBus
- * and never exercise a real gift claim -> real wager -> real notification round trip.
- *
- * Rain is not separately driven here: `/rain`'s recipient resolution depends on
- * realtime presence (`transport.getOnlineUserIds`), which is orthogonal to this
- * feature's own logic - both `/gift` and `/rain` converge on the exact same
- * `WalletCommandsService.credit(tx, { type })` call bonus-rollover tracking added to
- * (`wallet-commands.service.ts`), so a real gift claim exercises the identical
- * bonus-credit-creation code path a rain credit would. `type: 'rain'` itself is
- * covered directly at the service level by the co-located dev tests.
- */
-
 let db: TestDb;
 let appMain: TestApp;
 let superAdmin: TestClient;
@@ -47,8 +29,6 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-// Same two-stage AdminGuard bootstrap as the sibling auto-withdrawal-config QA suites:
-// static user.role='admin' plus a real DB-backed super-admin role assignment.
 async function makeSuperAdmin(app: TestApp, email: string) {
   const { client, userId } = await registerAndMaterializePlayer(app, { email });
   const drizzle = app.container.get(DRIZZLE).db;
@@ -89,13 +69,6 @@ async function sendGift(sender: TestClient, amount: string) {
 }
 
 async function claimGift(claimer: TestClient, giftId: string) {
-  // A freshly-registered player has no `wallet` row at all - only `deposit()` lazily
-  // provisions one (wallet.service.ts's deposit()). credit() does NOT auto-provision
-  // it (by design: existing gift/rain scope, not bonus-rollover tracking's own), so a
-  // claim against a wallet-less recipient 409s with "Recipient wallet is unavailable"
-  // instead of crediting - discovered while writing this suite. Materialize the wallet the same
-  // way a real player would before ever claiming a gift: deposit first. Idempotent to
-  // call more than once per recipient (each call just adds another 1 unit).
   await claimer.post('/wallet/deposit', { amount: '1', currency: 'USD' });
 
   const res = await claimer.post(`/chat-command/gift/${giftId}/claim`);
@@ -143,35 +116,15 @@ beforeAll(async () => {
   process.env['NODE_ENV'] ??= 'test';
 
   db = await setupTestDb();
-  // QA-discovered gap (not a regression from this feature, filed separately):
-  // @openora/testing's setupTestDb() migration list (packages/testing/src/db.ts) omits
-  // chat-commands and social-transfers - both own a `migrate.ts` but neither is in
-  // applyAllMigrations, so `chat_command_config`/`player_gift`/`player_rain` don't exist
-  // yet on a fresh test db and any /gift or /rain e2e test 500s. Apply them directly
-  // here so this suite can actually drive the real gift-claim flow it needs.
   await migrateChatCommands(db.url);
   await migrateSocialTransfers(db.url);
   const basePlugins = await loadExtensions();
   appMain = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
 
-  // QA-discovered bug, since fixed upstream in seed-demo-data.ts (its wipe-and-reseed
-  // step now clears `wallet_bonus_credit` before `wallet`, since the FK between them has
-  // no ON DELETE CASCADE). Kept here too as a belt-and-suspenders clear so this suite
-  // stays robust to a future regression in that ordering.
   await appMain.container.get(DRIZZLE).db.delete(walletBonusCredit);
 
   await seedMinimal(appMain.container, { playerCount: 0 });
-  // seedMinimal does not seed chat-command config (only IAM + tag + demo fixture) -
-  // /gift and /rain 404 with CommandDisabledError without it, same as production boot.
   await seedChatCommands(appMain.container.get(DRIZZLE).db);
-  // Deliberately NOT calling seedBonusRolloverConfig here for most of this file - the
-  // singleton row starts genuinely absent, the same as an install that boots without
-  // ever running the seed script. Probe #7 (missing-config fallback) depends on this.
-  // This suite's apps share one physical test database across the whole
-  // test:integration run (and across repeated local runs of this same file, since
-  // setupTestDb() migrates idempotently but never drops), so delete any pre-existing
-  // row a prior run may have left behind - same reasoning as the sibling
-  // auto-withdrawal-config suite.
   await appMain.container.get(DRIZZLE).db.delete(walletBonusRolloverConfig);
 
   const superAdminEmail = `bonus-rollover-super-admin-${randomUUID()}@e2e.test`;
@@ -194,13 +147,6 @@ afterAll(async () => {
     await appMain.container.get(DRIZZLE).db.delete(gameRound).where(eq(gameRound.gameId, gameId));
     await appMain.container.get(DRIZZLE).db.delete(game).where(eq(game.id, gameId));
   }
-  // MUST clean up every wallet_bonus_credit row this file created: this suite shares
-  // one physical Postgres database with every sibling e2e file in the same
-  // test:integration run (fileParallelism: false), and - per the QA finding recorded
-  // above beforeAll - any leftover wallet_bonus_credit row makes seedDemoData's
-  // `db.delete(wallet)` throw a Postgres FK violation for the NEXT file that calls
-  // seedMinimal(). Leaving rows behind here would silently break every e2e suite that
-  // happens to run after this one.
   if (appMain) {
     await appMain.container.get(DRIZZLE).db.delete(walletBonusCredit);
     await appMain.container.get(DRIZZLE).db.delete(walletBonusRolloverConfig);
@@ -219,9 +165,6 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     });
     await deposit(sender, '500');
 
-    // No wallet_bonus_rollover_config row exists yet anywhere in this suite's fresh
-    // app - proves the credit() path's 1x fallback (probe #7), not just that a prior
-    // admin PATCH happened to leave the multiplier at 1.
     const giftId = await sendGift(sender, '40');
     const claimResult = await claimGift(recipient, giftId);
     expect(claimResult.claimedBy).toBe(recipientId);
@@ -231,19 +174,16 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     const credit = status.credits[0]!;
     expect(credit).toMatchObject({ sourceType: 'gift', status: 'active' });
     expect(Number(credit.creditedAmount)).toBe(40);
-    expect(Number(credit.rolloverMultiplier)).toBe(1); // fallback, no config row seeded
+    expect(Number(credit.rolloverMultiplier)).toBe(1);
     expect(Number(credit.rolloverRequired)).toBe(40);
     expect(Number(credit.rolloverProgress)).toBe(0);
 
-    // AC: usable for gameplay immediately - the gifted balance is already spendable.
     await bet(recipient, '25');
     status = await rolloverStatus(recipient);
     const midCredit = status.credits.find((c) => c.id === credit.id)!;
     expect(midCredit.status).toBe('active');
     expect(Number(midCredit.rolloverProgress)).toBe(25);
 
-    // AC: cannot withdraw locked funds. Remaining balance is exactly 15 (40 - 25 bet),
-    // and locked = 40 - 25 = 15, so withdrawable = 0 - any positive withdrawal is blocked.
     const blockedWithdraw = await recipient.post('/wallet/withdraw', {
       amount: '10',
       currency: 'USD',
@@ -252,7 +192,6 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     const blockedBody = await readJson(blockedWithdraw);
     expect(String(blockedBody.message ?? blockedBody.error ?? '')).toMatch(/rollover|locked/i);
 
-    // Final bet completes the rollover requirement exactly (25 + 15 = 40).
     await bet(recipient, '15');
     status = await rolloverStatus(recipient);
     const finalCredit = status.credits.find((c) => c.id === credit.id)!;
@@ -260,10 +199,6 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     expect(Number(finalCredit.rolloverProgress)).toBe(40);
     expect(finalCredit.completedAt).not.toBeNull();
 
-    // AC: notification created on release. The completion event travels through a real
-    // EventBus (Redis Streams under load), so the notifications subscriber may not have
-    // processed it the instant startRound's HTTP response returns - poll rather than
-    // asserting on the very next request.
     await vi.waitFor(async () => {
       const notifRes = await recipient.get('/notifications');
       expect(notifRes.status).toBe(200);
@@ -277,16 +212,9 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
         releaseNotif,
         'expected a wallet.bonus_rollover.completed notification row',
       ).toBeDefined();
-      // The body interpolates the raw numeric(38,18) string verbatim (same established
-      // convention as the sibling withdrawal.approved/rejected notifications in this
-      // same plugin.ts, not something bonus-rollover tracking introduced) - match loosely on the amount.
       expect(releaseNotif!.body).toMatch(/40(\.0+)? USD/);
     });
 
-    // AC: converts to withdrawable real balance automatically - a withdrawal that was
-    // blocked mid-rollover now succeeds for the full remaining balance (0 after both
-    // bets; deposit more so there's something concrete to withdraw and re-prove the
-    // lock is actually gone, not just that the balance happens to be zero).
     await deposit(recipient, '5');
     const unlockedWithdraw = await recipient.post('/wallet/withdraw', {
       amount: '5',
@@ -324,10 +252,6 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
       .db.update(user)
       .set({ role: 'admin' })
       .where(eq(user.id, userId));
-    // Deliberately NOT assigning the super-admin adminRoleAssignment row - this is the
-    // "coarse gate passes, granular RBAC does not" case the plan's permissions.ts
-    // change is supposed to prevent from leaking through.
-
     const getRes = await adminEmail.get('/backoffice/wallet/bonus-rollover-config');
     expect(getRes.status).toBeGreaterThanOrEqual(401);
     expect(getRes.status).toBeLessThan(500);
@@ -349,14 +273,9 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
     const ownerStatus = await rolloverStatus(ownerClient);
     expect(ownerStatus.credits.some((c) => Number(c.creditedAmount) === 20)).toBe(true);
 
-    // The bystander's own call returns THEIR OWN (empty) list - proving the route
-    // resolves strictly from the caller's session (getUserId(context)) and there is no
-    // request parameter (query/body) that could redirect it at ownerId's credits.
     const bystanderStatus = await rolloverStatus(bystander);
     expect(bystanderStatus.credits).toHaveLength(0);
 
-    // Confirm a query-string userId override (a naive IDOR attempt) is silently
-    // ignored, not honored.
     const idorAttempt = await bystander.get(`/wallet/bonus-rollover/status?userId=${ownerId}`);
     expect(idorAttempt.status).toBe(200);
     const idorBody = await readJson(idorAttempt);
@@ -375,9 +294,6 @@ describe('bonus-rollover waterfall across multiple simultaneously-active credits
 
     const gift1 = await sendGift(sender, '30');
     await claimGift(recipient, gift1);
-    // Distinct idempotencyKey/gift row - createdAt ordering (asc) is what the waterfall
-    // keys off, so give the two claims a moment apart rather than relying on
-    // same-millisecond insert order.
     await new Promise((resolve) => setTimeout(resolve, 20));
     const gift2 = await sendGift(sender, '50');
     await claimGift(recipient, gift2);
@@ -385,8 +301,6 @@ describe('bonus-rollover waterfall across multiple simultaneously-active credits
     let status = await rolloverStatus(recipient);
     expect(status.credits.filter((c) => c.status === 'active')).toHaveLength(2);
 
-    // One 40-unit bet: fully drains+completes the 30-required credit, 10 leftover
-    // cascades into the 50-required credit.
     await bet(recipient, '40');
 
     status = await rolloverStatus(recipient);
@@ -404,8 +318,6 @@ describe('bonus-rollover waterfall across multiple simultaneously-active credits
 describe('bonus-rollover multiplier configurable by Super Admin, forward-only (probes covering the config route + no retroactive change)', () => {
   it('GET/PATCH are gated to super-admin, and a new multiplier only applies to credits created AFTER the change', async () => {
     const before = await superAdmin.get('/backoffice/wallet/bonus-rollover-config');
-    // Config row is still absent at this point in the suite (first-ever GET) - fails
-    // closed with NotFound, matching the plan's documented GET behaviour.
     expect(before.status).toBe(404);
 
     const setRes = await superAdmin.patch('/backoffice/wallet/bonus-rollover-config', {
@@ -419,7 +331,6 @@ describe('bonus-rollover multiplier configurable by Super Admin, forward-only (p
     expect(getRes.status).toBe(200);
     expect(Number((await readJson(getRes)).multiplier)).toBe(3);
 
-    // A fresh gift claimed now picks up the new 3x multiplier.
     const senderEmail = `bf326-multiplier-sender-${randomUUID()}@e2e.test`;
     const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
     const { client: recipient } = await registerAndMaterializePlayer(appMain, {
@@ -434,16 +345,12 @@ describe('bonus-rollover multiplier configurable by Super Admin, forward-only (p
     expect(Number(newCredit.rolloverMultiplier)).toBe(3);
     expect(Number(newCredit.rolloverRequired)).toBe(30);
 
-    // Bump the multiplier again and confirm this just-created credit's own snapshot
-    // does NOT retroactively change.
     await superAdmin.patch('/backoffice/wallet/bonus-rollover-config', { multiplier: '10' });
     const restatus = await rolloverStatus(recipient);
     const sameCredit = restatus.credits.find((c) => c.id === newCredit.id)!;
     expect(Number(sameCredit.rolloverMultiplier)).toBe(3);
     expect(Number(sameCredit.rolloverRequired)).toBe(30);
 
-    // Reset to 1x so later describe blocks in this file that don't seed their own
-    // wallet_bonus_rollover_config value get the expected 1x credits again.
     await superAdmin.patch('/backoffice/wallet/bonus-rollover-config', { multiplier: '1' });
   });
 });
@@ -476,10 +383,6 @@ describe('bonus-rollover audit trail (probe #5)', () => {
       currency: 'USD',
       sourceType: 'gift',
     });
-    // Numeric compare, not exact string: the value reaching the audit write has
-    // already round-tripped through Postgres numeric(38,18) (claimGift() passes the
-    // DB-returned, already-normalized playerGift.amount into credit()), not the raw
-    // "12" the API request body carried.
     expect(Number(createdEntry.after.creditedAmount)).toBe(12);
     expect(createdEntry.after.rolloverRequired).toBeDefined();
     expect(createdEntry.before).toBeNull();

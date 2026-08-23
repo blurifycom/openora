@@ -106,18 +106,6 @@ export class GamingService {
       return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
 
-    // wallet's WalletCommandsService.debit() runs INSIDE this method's own transaction
-    // above and never owns its commit boundary, so it cannot safely emit itself - this
-    // caller's transaction could still roll back afterward (it doesn't here, since we're
-    // already past the `await ... transaction(...)` call, but the port contract holds for
-    // every caller). `gaming` - not `wallet` - is the one emitting a `wallet.*`-named
-    // event because it's the transaction owner (gaming is the only `type: 'bet'`
-    // wallet-debit caller today; a future second wagering module would repeat this same
-    // thread-the-outcome-out-and-emit-after-commit pattern). Plain `emit()`, not
-    // `emitInTransaction()`: the latter requires the transactional outbox to be
-    // explicitly bound and throws otherwise, which would make every /gift-then-wager
-    // flow fail outright on any install that hasn't opted into the outbox - the wrong
-    // tool for a best-effort notification.
     for (const credit of completedBonusCredits) {
       this.events.emit('wallet.bonus_rollover.completed', {
         userId,

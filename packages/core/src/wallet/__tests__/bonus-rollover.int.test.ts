@@ -106,8 +106,6 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // wallet CASCADEs to walletBalance and walletBonusCredit (both FK wallet.id);
-  // walletBonusRolloverConfig has no FK (singleton) so it needs listing explicitly.
   await db.drizzle.db.execute(
     sql`TRUNCATE ${walletTransaction}, ${walletBonusCredit}, ${walletBonusRolloverConfig}, ${wallet} RESTART IDENTITY CASCADE`,
   );
@@ -204,7 +202,6 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     });
     const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
 
-    // Bet 1 of 40: fully drains+completes `older` (needs 30), leftover 10 cascades to `newer`.
     const res1 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '40', type: 'bet' });
     if (!res1.ok) {
       throw new Error('expected res1.ok');
@@ -219,7 +216,6 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     expect(rows.find((r) => r.id === newer.id)).toMatchObject({ status: 'active' });
     expect(Number(rows.find((r) => r.id === newer.id)!.rolloverProgress)).toBe(10);
 
-    // Bet 2 of 30: newer goes 10 -> 40, still short of 50 - stays active, not before threshold.
     const res2 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
     if (!res2.ok) {
       throw new Error('expected res2.ok');
@@ -229,7 +225,6 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     expect(rows.find((r) => r.id === newer.id)).toMatchObject({ status: 'active' });
     expect(Number(rows.find((r) => r.id === newer.id)!.rolloverProgress)).toBe(40);
 
-    // Bet 3 of 20: newer completes at exactly 50 - not after (LEAST caps it), with its own audit row.
     const res3 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '20', type: 'bet' });
     if (!res3.ok) {
       throw new Error('expected res3.ok');
@@ -329,7 +324,6 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
 describe('WalletService.withdraw with an active bonus rollover lock (real PG)', () => {
   it('blocks a withdrawal once the requested amount exceeds the withdrawable (unlocked) balance', async () => {
     const w = await seedWallet({ balance: '100' });
-    // locked = rolloverRequired - rolloverProgress = 100 - 20 = 80; withdrawable = 100 - 80 = 20.
     await insertCredit(w, {
       creditedAmount: '100',
       rolloverRequired: '100',

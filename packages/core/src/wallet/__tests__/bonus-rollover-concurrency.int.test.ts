@@ -26,34 +26,10 @@ import {
   InsufficientBalanceError,
 } from '../service/wallet.service.js';
 
-/**
- * QA concurrency probe for bonus-rollover tracking, independent of the implementer's
- * own tests. The plan's "biggest modeling assumption" callout was sequential/waterfall
- * clearing; its
- * "core worry that justified the atomic guarded-UPDATE design" was a race between a
- * concurrent bet completing a bonus's rollover and a withdrawal reading a stale view
- * of how much is still locked. Both are only provable by actually firing overlapping
- * transactions against real Postgres, not by asserting on a single-threaded call
- * sequence (which is all the co-located dev tests do). Each `it` below repeats several
- * trials with a fresh wallet+credit per trial: a lock-ordering bug would not
- * necessarily reproduce on the first race.
- */
-
 let db: TestDb;
 
 const unrestricted = mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(false) });
 
-// A concurrent bet-debit + withdraw on the SAME wallet can hit a genuine Postgres
-// deadlock (40P01) - confirmed via a control run with NO bonus credit involved at all,
-// so it is a pre-existing lock-ordering hazard between WalletService.withdraw()'s
-// `SELECT ... FOR UPDATE` on `wallet` and WalletCommandsService.debit()'s unlocked
-// wallet read + walletTransaction insert (FK-checked against the same wallet row),
-// not something bonus-rollover tracking introduced. Reported separately (QA finding,
-// not a regression from this feature). A deadlock aborts the whole losing transaction with no partial writes,
-// so retrying it is safe - this keeps the test asserting the actual money-safety
-// invariant under test instead of flaking on that unrelated, already-existing hazard.
-// Drizzle wraps the pg driver error as `.cause` - the actual "deadlock detected" text
-// (and the 40P01 code) live there, not on the outer DrizzleQueryError's own `.message`.
 function isDeadlock(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false;
@@ -159,10 +135,6 @@ describe('bonus-rollover QA concurrency probe: two simultaneous bets against ONE
       const credit = await insertCredit(w, { creditedAmount: '100', rolloverRequired: '100' });
       const svc = makeCommandsSvc();
 
-      // Two concurrent bets of 70 each: if progress were applied without a real DB
-      // guard (eg read-modify-write in application code), both could read progress=0
-      // and each write 70, landing at 70 (lost update) or 140 (double count) instead
-      // of correctly capping at 100 with only one of the two reporting completion.
       const [r1, r2] = await Promise.all([
         db.drizzle.db.transaction((txn) =>
           svc.debit(txn, { userId: w.userId, amount: '70', type: 'bet' }),
@@ -200,12 +172,6 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
 
   it('a withdrawal for the full pre-bet balance never succeeds, regardless of which transaction wins the race', async () => {
     for (let trial = 0; trial < TRIALS; trial++) {
-      // locked = 100 - 90 = 10; the bet below is exactly the remaining rollover need,
-      // so it both completes the credit AND is the only thing standing between
-      // "locked" and "fully unlocked". There is no consistent DB snapshot in which
-      // balance=100 AND locked=0 both hold at once (the bet's balance debit and its
-      // rollover-progress update commit together, same transaction) - so a withdrawal
-      // for the full 100 must be refused under every interleaving.
       const w = await seedWallet('100');
       await insertCredit(w, {
         creditedAmount: '100',
@@ -252,8 +218,6 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         );
       }
 
-      // Whatever the interleaving, the bet always lands (balance -10, credit completed) -
-      // the withdrawal never got any money out.
       const [balRow] = await db.drizzle.db
         .select()
         .from(walletBalance)
@@ -310,8 +274,6 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         .select()
         .from(walletBalance)
         .where(eq(walletBalance.walletId, w.id));
-      // The bet always spends 10. The withdrawal spends its own 10 only if it won -
-      // either way, total money leaving the wallet is fully accounted for, never more.
       expect(
         Number(balRow!.amount),
         `trial ${trial}: balance must equal 100 - bet(10) - withdraw(10 if it succeeded)`,

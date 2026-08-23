@@ -687,10 +687,6 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.banned',
   // chat.gift.sent
   // chat.rain.distributed
-  // wallet.bonus_rollover.completed - already audited directly in-service
-  // (wallet.bonus_credit.completed, via AUDIT_WRITER.recordInTransaction) at the exact
-  // point the credit flips to completed; a second subscription here would double-audit
-  // the same state change.
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',

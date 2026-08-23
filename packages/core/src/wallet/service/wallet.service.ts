@@ -321,12 +321,6 @@ export async function readWalletBalance(
   return row?.amount ?? '0';
 }
 
-// Used ONLY by withdraw(): folds the bonus-rollover lock into the same guarded
-// conditional UPDATE that already enforces `balance >= amount`, rather than a
-// separate read-then-check step - a read-then-check would race against a concurrent
-// bet that, at that same moment, frees up balance by completing a bonus's rollover in
-// a different transaction (db-conventions: a DB guard inside the transaction, not
-// read-then-decide-in-application-code).
 export function debitWithdrawableBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -355,10 +349,6 @@ export function debitWithdrawableBalance(
     .returning({ amount: walletBalance.amount });
 }
 
-// Read-only, for the withdraw() error-message branch ONLY (never a ledger guard
-// itself - debitWithdrawableBalance's UPDATE ... WHERE is the actual guard). Tells
-// InsufficientBalanceError apart from BonusRolloverLockedError after that guarded
-// UPDATE returns zero rows.
 async function readLockedBonusAmount(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -1124,13 +1114,8 @@ export class WalletService {
           };
         }
 
-        // Guarded conditional debit: the WHERE makes balance>=amount AND bonus-rollover-unlocked
-        // atomic with the write; 0 rows back rolls back the whole tx. Folds the bonus lock into
-        // this single guarded UPDATE rather than a separate read-then-check step - see
-        // debitWithdrawableBalance's doc comment for why.
         const debited = await debitWithdrawableBalance(txn, current.id, currency, amount);
         if (debited.length !== 1) {
-          // Read-only, after the failed guard - just to tell the player which error applies.
           const [available, locked] = await Promise.all([
             readWalletBalance(txn, current.id, currency),
             readLockedBonusAmount(txn, current.id, currency),
@@ -1746,8 +1731,6 @@ export class WalletService {
     });
   }
 
-  // Caller's own credits, newest first, capped at 50 - the frontend filters
-  // active vs completed by `status` client-side.
   async getBonusRolloverStatus(userId: User['id']): Promise<{ credits: BonusCredit[] }> {
     const rows = await this.drizzle.db
       .select()
@@ -1758,11 +1741,6 @@ export class WalletService {
     return { credits: rows.map(toBonusCreditDto) };
   }
 
-  // The row always exists in a properly-seeded install - a missing row on the READ
-  // path is an unexpected failure mode, not a normal "unconfigured" state, so this
-  // throws (mirrors getAutoWithdrawalConfig). This is the admin GET's fail-closed
-  // path; the credit() write path uses a separate, non-throwing '1x' fallback
-  // (wallet-commands.service.ts) so a missing row never breaks a live /gift or /rain.
   async getBonusRolloverConfig(): Promise<BonusRolloverConfig> {
     const config = await this.getBonusRolloverConfigOrNull();
     if (!config) {
@@ -1771,8 +1749,6 @@ export class WalletService {
     return config;
   }
 
-  // Non-throwing variant for callers that need to tell "missing" from "found"
-  // without a try/catch (eg the router's audit `before` read).
   async getBonusRolloverConfigOrNull(): Promise<BonusRolloverConfig | null> {
     const [row] = await this.drizzle.db
       .select()
@@ -1781,9 +1757,6 @@ export class WalletService {
     return row ? toBonusRolloverConfigDto(row) : null;
   }
 
-  // Upsert (self-heals a missing singleton row via the existing route, same reasoning
-  // as setAutoWithdrawalConfig). Update + audit write run in one transaction: an
-  // audit-write failure must roll back the multiplier change too.
   async setBonusRolloverConfig(
     adminId: User['id'],
     { multiplier }: { multiplier: string },

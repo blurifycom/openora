@@ -43,10 +43,6 @@ beforeEach(async () => {
 const superAdminGuard = () =>
   makeAdminGuard({ caller: { userId: CALLER_ID, role: 'super-admin' } });
 
-// 'bonus-rollover-config' is granted only to super-admin by default (see
-// permissions.ts statement + default-admin-roles.ts: super-admin's matrix is
-// computed from every `statement` key, but `admin`/`payments-manager` omit it,
-// which defaults to no_access) - both must be denied here.
 const adminDenyingGuard = () =>
   makeAdminGuard({
     deny: ['bonus-rollover-config:view', 'bonus-rollover-config:update'],

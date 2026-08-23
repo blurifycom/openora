@@ -411,8 +411,6 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'bonus-rollover-config', 'update');
-        // The before-read, upsert, and audit write all run inside one transaction in
-        // the service - an audit failure rolls back the multiplier change too.
         return wallet.setBonusRolloverConfig(adminId, input, { ip, userAgent });
       }),
     },

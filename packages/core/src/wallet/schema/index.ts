@@ -227,12 +227,6 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// One row per gift/rain credit. Rollover-locked until `rolloverProgress`
-// (accumulated 100% of every casino wager while `active`) reaches `rolloverRequired`
-// (creditedAmount * rolloverMultiplier, snapshotted at credit time - a later config
-// change never retroactively changes an already-created row). No FK back to
-// player_gift/player_rain: neither call site has that row's id available at credit
-// time (see wallet-commands.service.ts), and sourceType alone is sufficient.
 export const walletBonusCredit = pgTable(
   'wallet_bonus_credit',
   {
@@ -240,7 +234,6 @@ export const walletBonusCredit = pgTable(
     walletId: uuid()
       .notNull()
       .references(() => wallet.id),
-    // Bare uuid, not a FK - userId is the identity module's row, out of this module's reach.
     userId: uuid().notNull(),
     currency: text().notNull(),
     sourceType: walletBonusCreditSourceTypeEnum().$type<BonusCreditSourceType>().notNull(),
@@ -255,16 +248,11 @@ export const walletBonusCredit = pgTable(
     completedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    // The progress-update lookup (debit-time waterfall) and the withdrawal-lock sum both
-    // filter on exactly this triple, ordered by createdAt for the waterfall.
     index('wallet_bonus_credit_user_id_currency_status_idx').on(t.userId, t.currency, t.status),
     index('wallet_bonus_credit_wallet_id_idx').on(t.walletId),
   ],
 );
 
-// Global rollover-multiplier singleton, Super-Admin-editable at runtime.
-// singletonKey's unique constraint DB-enforces exactly one row ever ('global'). No
-// `enabled` toggle - the AC only asks for a configurable multiplier, not a kill switch.
 export const walletBonusRolloverConfig = pgTable('wallet_bonus_rollover_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique().default('global'),
