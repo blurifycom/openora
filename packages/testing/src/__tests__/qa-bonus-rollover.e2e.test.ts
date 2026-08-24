@@ -304,9 +304,10 @@ describe('bonus-rollover waterfall across multiple simultaneously-active credits
 
     await bet(recipient, '40');
 
-    status = await rolloverStatus(recipient);
-    const older = status.credits.find((c) => Number(c.creditedAmount) === 30)!;
-    const newer = status.credits.find((c) => Number(c.creditedAmount) === 50)!;
+    const completedStatus = await rolloverStatus(recipient, 'completed');
+    const activeStatus = await rolloverStatus(recipient, 'active');
+    const older = completedStatus.credits.find((c) => Number(c.creditedAmount) === 30)!;
+    const newer = activeStatus.credits.find((c) => Number(c.creditedAmount) === 50)!;
     expect(older.status, 'the older (first-claimed) credit must be the one that completed').toBe(
       'completed',
     );
