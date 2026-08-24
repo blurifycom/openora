@@ -1247,10 +1247,15 @@ export class IdentityService {
     // the emailed code alone, bypassing its second factor. Verification still stands; the
     // session does not, and the player signs in through `login` to face the challenge.
     if (account?.twoFactorEnabled) {
-      await this.drizzle.db
-        .update(session)
-        .set({ expiresAt: new Date() })
-        .where(eq(session.userId, body.user.id));
+      // Scoped to the token this call just minted: the player's other devices did nothing
+      // wrong, and an unrelated sign-out here would be indistinguishable from a session
+      // hijack. The RG/backoffice branch above is the one that revokes everything.
+      if (body.token) {
+        await this.drizzle.db
+          .update(session)
+          .set({ expiresAt: new Date() })
+          .where(eq(session.token, body.token));
+      }
       return { twoFactorRedirect: true as const };
     }
 
