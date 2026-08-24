@@ -13,7 +13,12 @@ import {
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletWithdrawalAddress,
+} from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
 const events = makeEventBus();
@@ -62,7 +67,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${wallet}, ${walletWithdrawalAddress} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
 });
@@ -122,5 +127,33 @@ describe('WalletService - rate limiting (real Redis + real PG)', () => {
     const result = await svc.deposit({ userId: fresh.userId, amount: '1', currency: 'USD' });
 
     expect(result.status).toBe('completed');
+  });
+
+  // The 50-row cap does not bound writes on its own: deleting frees a slot, so a client
+  // could churn create/delete forever without ever holding 51 rows.
+  it('counts withdrawal address writes against the same per-user budget', async () => {
+    const userId = randomUUID();
+    const svc = makeService();
+    for (let i = 0; i < 30; i++) {
+      await svc.createWithdrawalAddress(userId, {
+        label: `wallet ${i}`,
+        currency: 'USDT',
+        network: 'ERC20',
+        address: `0x${String(i).padStart(40, '0')}`,
+      });
+    }
+
+    await expect(
+      svc.createWithdrawalAddress(userId, {
+        label: 'one too many',
+        currency: 'USDT',
+        network: 'ERC20',
+        address: '0xffffffffffffffffffffffffffffffffffffffff',
+      }),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    await expect(svc.deleteWithdrawalAddress(userId, randomUUID())).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(await db.drizzle.db.select().from(walletWithdrawalAddress)).toHaveLength(30);
   });
 });

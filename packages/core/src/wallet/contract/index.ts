@@ -44,6 +44,12 @@ const WalletNetworkSchema = z.string().trim().min(1).max(32);
 
 const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperCase());
 
+// One shape for both the saved address and the payout target: the whitelist check matches
+// them with an exact string equality, so an untrimmed paste on either side would look like
+// an address the player never saved. Deliberately no case transform - base58 rails (BTC
+// legacy, TRC20, Solana) are case-sensitive, so lowercasing would corrupt the address.
+const WalletAddressInputSchema = z.string().trim().min(8).max(128);
+
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
@@ -90,7 +96,7 @@ export const WithdrawInputSchema = z.object({
   network: WalletNetworkInputSchema.optional(),
   provider: z.string().optional(),
   idempotencyKey: UuidSchema,
-  destinationAddress: z.string().optional(),
+  destinationAddress: WalletAddressInputSchema.optional(),
 });
 
 export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
@@ -374,6 +380,33 @@ export type ResolveReconciliationFindingInput = z.infer<
   typeof ResolveReconciliationFindingInputSchema
 >;
 
+export const WithdrawalAddressSchema = z.object({
+  id: UuidSchema,
+  label: z.string(),
+  currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema,
+  address: z.string(),
+  createdAt: TimestampSchema,
+});
+export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
+
+// The address string itself is deliberately unvalidated beyond a length bound: every
+// chain has its own format, and the payment provider is the only thing that can tell a
+// live address from a well-formed dead one. It rejects a bad one at payout time.
+export const CreateWithdrawalAddressInputSchema = z.object({
+  label: z.string().trim().min(1).max(50),
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+  address: WalletAddressInputSchema,
+});
+export type CreateWithdrawalAddressInput = z.infer<typeof CreateWithdrawalAddressInputSchema>;
+
+export const ListWithdrawalAddressesInputSchema = z.object({
+  currency: WalletCurrencyInputSchema.optional(),
+});
+
+export const WithdrawalAddressKeySchema = z.object({ id: UuidSchema });
+
 export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
 
@@ -482,6 +515,25 @@ export const walletContract = {
     delete: oc
       .route({ method: 'DELETE', path: '/wallet/admin/assets/{currency}/{network}' })
       .input(WalletAssetKeySchema)
+      .output(z.boolean()),
+  },
+
+  // Player-owned and player-scoped: an address book is personal data, never listed for
+  // an admin, so there is no admin counterpart to these three routes.
+  withdrawalAddresses: {
+    list: oc
+      .route({ method: 'GET', path: '/wallet/withdrawal-addresses' })
+      .input(ListWithdrawalAddressesInputSchema)
+      .output(z.array(WithdrawalAddressSchema)),
+
+    create: oc
+      .route({ method: 'POST', path: '/wallet/withdrawal-addresses' })
+      .input(CreateWithdrawalAddressInputSchema)
+      .output(WithdrawalAddressSchema),
+
+    delete: oc
+      .route({ method: 'DELETE', path: '/wallet/withdrawal-addresses/{id}' })
+      .input(WithdrawalAddressKeySchema)
       .output(z.boolean()),
   },
 

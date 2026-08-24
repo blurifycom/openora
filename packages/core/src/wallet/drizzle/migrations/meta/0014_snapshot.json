@@ -1,6 +1,6 @@
 {
-  "id": "8696e94a-a770-4864-a602-d2beb8a514b8",
-  "prevId": "2d4930dd-4e83-4bdf-898d-4faa12878e94",
+  "id": "8c62ea3f-ab28-489f-bbb8-5fcdd1516e24",
+  "prevId": "8d008a5a-58b4-4a85-b1c9-302512e04687",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -176,6 +176,12 @@
         "provider_name": {
           "name": "provider_name",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sweep_dust_threshold": {
+          "name": "sweep_dust_threshold",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": false
         },
@@ -1230,6 +1236,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "destination_wallet_id": {
+          "name": "destination_wallet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "tx_hash": {
           "name": "tx_hash",
           "type": "text",
@@ -1534,6 +1546,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "provider_name": {
+          "name": "provider_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_wallet_id": {
+          "name": "provider_wallet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1615,7 +1639,7 @@
     "public.wallet_job_run_status": {
       "name": "wallet_job_run_status",
       "schema": "public",
-      "values": ["running", "completed", "failed", "abandoned"]
+      "values": ["running", "completed", "skipped", "failed", "abandoned"]
     },
     "public.wallet_rail": {
       "name": "wallet_rail",

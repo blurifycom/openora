@@ -257,9 +257,10 @@ export async function mapEventToRecord(
   // Player/Admin revoked one or all of their own sessions, or an admin forced it.
   // actorId = the resolved playerId on the self-revoke path, else the acting admin's
   // raw userId (never resolved - actor is an admin, not the subject player).
+  // Self-revoke sends its own userId as actorId, so only a *different* actor is forced.
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
     const isSingle = topic === 'identity.session.revoked';
-    const isForced = !!p['actorId'];
+    const isForced = !!p['actorId'] && p['actorId'] !== p['userId'];
     const actorId = isForced ? str(p['actorId']) : str(p['playerId']);
     return {
       ...base,

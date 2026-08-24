@@ -1,6 +1,6 @@
 {
-  "id": "8696e94a-a770-4864-a602-d2beb8a514b8",
-  "prevId": "2d4930dd-4e83-4bdf-898d-4faa12878e94",
+  "id": "8d008a5a-58b4-4a85-b1c9-302512e04687",
+  "prevId": "7a480cfc-7da5-438c-9f84-7d214d7829e0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1230,6 +1230,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "destination_wallet_id": {
+          "name": "destination_wallet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "tx_hash": {
           "name": "tx_hash",
           "type": "text",
@@ -1533,6 +1539,18 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "provider_name": {
+          "name": "provider_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_wallet_id": {
+          "name": "provider_wallet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",

@@ -37,6 +37,7 @@ import {
   type User,
   type IdentityReader,
   type ClientMeta,
+  type Uuid,
   type PaginationOptions,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
@@ -48,6 +49,7 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletWithdrawalAddress,
   walletAsset,
   type Wallet,
   type WalletDepositAddress,
@@ -55,6 +57,7 @@ import {
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
   type WalletAssetRow,
+  type WalletWithdrawalAddressRow,
 } from '../schema/index.js';
 import {
   LIVE_WEBHOOK_RUN_ID,
@@ -72,6 +75,8 @@ import type {
   CreateWalletAssetInput,
   UpdateWalletAssetInput,
   ManualAdjustmentDirection,
+  WithdrawalAddress,
+  CreateWithdrawalAddressInput,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -111,6 +116,11 @@ export const DestinationAddressRequiredError = makeConflictError(
   'A destination address is required for a crypto-rail withdrawal',
 );
 
+export const DestinationAddressNotWhitelistedError = makeConflictError(
+  'DestinationAddressNotWhitelistedError',
+  'This payout address is not approved for withdrawals. Save it in your address book first',
+);
+
 export const WalletAssetNotFoundError = makeNotFoundError('WalletAsset');
 
 export const WalletAssetAlreadyExistsError = makeConflictError(
@@ -136,6 +146,16 @@ export const WalletAssetUnknownProviderError = makeConflictError(
 export const WalletAssetHasInFlightTransactionsError = makeConflictError(
   'WalletAssetHasInFlightTransactionsError',
   'A pending or processing transaction exists for this currency and network',
+);
+
+export const WithdrawalAddressAlreadyExistsError = makeConflictError(
+  'WithdrawalAddressAlreadyExistsError',
+  'This address is already saved for that currency and network',
+);
+
+export const WithdrawalAddressLimitReachedError = createDomainError<[limit: number]>(
+  'WithdrawalAddressLimitReachedError',
+  (limit) => `A player may save at most ${limit} withdrawal addresses`,
 );
 
 export const AmbiguousNetworkError = createDomainError(
@@ -186,6 +206,21 @@ export const AmbiguousDepositAddressError = createDomainError(
 // else on the fiat rail (a PSP). The concrete provider is recorded per transaction, not
 // here. Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
+
+// A saved-address book, not a payout allowlist: the cap only stops one account turning
+// the table into unbounded free storage. Not operator-configurable until someone asks.
+const WITHDRAWAL_ADDRESS_LIMIT = 50;
+
+function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddress {
+  return {
+    id: row.id,
+    label: row.label,
+    currency: row.currency,
+    network: row.network,
+    address: row.address,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
 // reads as their active currency before one is created on first deposit.
@@ -1072,6 +1107,12 @@ export class WalletService {
     const assets = await this.assetsForCurrency(currency);
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
+    const destinationWalletId = await this.requireWhitelistedWalletId(
+      userId,
+      currency,
+      settlementNetwork,
+      destinationAddress,
+    );
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -1114,6 +1155,7 @@ export class WalletService {
             rail: this.resolveRail(currency),
             network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
+            destinationWalletId,
           },
         });
 
@@ -1369,6 +1411,11 @@ export class WalletService {
         rail: tx.rail,
         adminId,
         destinationAddress: tx.destinationAddress,
+        // The provider-side whitelisted destination for that address, when the bound adapter
+        // whitelists at all. Absent for an address that predates whitelisting or was never in
+        // the book, and such an adapter is expected to refuse rather than pay out to the raw
+        // address - the whitelist is the control, so bypassing it would defeat the point.
+        ...(tx.destinationWalletId ? { destinationWalletId: tx.destinationWalletId } : {}),
         // Pinned at request time; without it an adapter cannot tell ERC20 USDT from TRC20.
         network: tx.network,
       });
@@ -2423,5 +2470,200 @@ export class WalletService {
       throw new AmbiguousDepositAddressError(address, network);
     }
     return rows.find((row) => row.network === network) ?? rows[0];
+  }
+
+  /**
+   * The player's own payout address book. Every method here is scoped on `userId` - a
+   * saved address is personal data with no admin read path, so there is
+   * deliberately no variant of these that takes an arbitrary user id.
+   */
+  async listWithdrawalAddresses(userId: Uuid, currency?: string): Promise<WithdrawalAddress[]> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(walletWithdrawalAddress)
+      .where(
+        and(
+          eq(walletWithdrawalAddress.userId, userId),
+          currency === undefined ? undefined : eq(walletWithdrawalAddress.currency, currency),
+        ),
+      )
+      .orderBy(desc(walletWithdrawalAddress.createdAt));
+    return rows.map(toWithdrawalAddressDto);
+  }
+
+  async createWithdrawalAddress(
+    userId: Uuid,
+    input: CreateWithdrawalAddressInput,
+    meta?: Partial<ClientMeta>,
+  ): Promise<WithdrawalAddress> {
+    // Shares the wallet mutation budget with deposit/withdraw: the row cap alone does
+    // not bound writes, since deleting frees a slot and lets a client churn forever.
+    await this.rateLimit(userId);
+    // ponytail: count-then-insert, so N concurrent creates can land N over the cap.
+    // Move to an insert...where (select count) < limit if that ever matters.
+    const [existing] = await this.drizzle.db
+      .select({ total: count() })
+      .from(walletWithdrawalAddress)
+      .where(eq(walletWithdrawalAddress.userId, userId));
+    if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
+      throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
+    }
+
+    // Registered with the custody provider BEFORE the row exists, so a rejected or unreachable
+    // provider leaves no saved address the player would believe they can withdraw to. The port
+    // is required to be idempotent, so the conflict path below cannot orphan a destination.
+    const whitelisted = await this.whitelistWithdrawalAddress(userId, input);
+
+    // onConflictDoNothing turns the unique index into a domain conflict rather than a
+    // 500 - a double-submitted form is a 409, not an incident.
+    const [row] = await this.drizzle.db
+      .insert(walletWithdrawalAddress)
+      .values({ userId, ...input, ...whitelisted })
+      .onConflictDoNothing()
+      .returning();
+    if (!row) {
+      throw new WithdrawalAddressAlreadyExistsError();
+    }
+
+    await this.audit.record({
+      actorId: userId,
+      actorType: 'player',
+      action: 'wallet.withdrawal_address.created',
+      resourceType: 'wallet_withdrawal_address',
+      resourceId: row.id,
+      // The address string is deliberately absent: the audit log is admin-readable and
+      // a player's saved addresses are not. The row id is enough to correlate.
+      after: { label: row.label, currency: row.currency, network: row.network },
+      ...meta,
+    });
+    return toWithdrawalAddressDto(row);
+  }
+
+  /**
+   * Refuses a payout to an address the provider has not approved. A no-op for an adapter that
+   * does not whitelist, and for a fiat rail, which has no address at all.
+   */
+  private async requireWhitelistedWalletId(
+    userId: Uuid,
+    currency: string,
+    network: string | null,
+    destinationAddress: string | undefined,
+  ): Promise<string | null> {
+    if (!this.payment.whitelistWithdrawalAddress || !destinationAddress) {
+      return null;
+    }
+    const walletId = await this.whitelistedWalletId(userId, currency, network, destinationAddress);
+    if (!walletId) {
+      throw new DestinationAddressNotWhitelistedError();
+    }
+    return walletId;
+  }
+
+  /**
+   * The approved destination saved for this address, or null. Matched on the address itself
+   * rather than an id on the transaction, because a withdrawal is requested by address and may
+   * name one the player never saved.
+   */
+  private async whitelistedWalletId(
+    userId: Uuid,
+    currency: string,
+    network: string | null,
+    address: string | null | undefined,
+  ): Promise<string | null> {
+    if (!this.payment.whitelistWithdrawalAddress || !address) {
+      return null;
+    }
+    const providerName = await this.providerNameFor(currency, network);
+    const [row] = await this.drizzle.db
+      .select({
+        id: walletWithdrawalAddress.id,
+        network: walletWithdrawalAddress.network,
+        providerName: walletWithdrawalAddress.providerName,
+        providerWalletId: walletWithdrawalAddress.providerWalletId,
+      })
+      .from(walletWithdrawalAddress)
+      .where(
+        and(
+          eq(walletWithdrawalAddress.userId, userId),
+          eq(walletWithdrawalAddress.currency, currency),
+          eq(walletWithdrawalAddress.address, address),
+          ...(network ? [eq(walletWithdrawalAddress.network, network)] : []),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      return null;
+    }
+    // An id minted by a different provider names nothing in the current one, and a row
+    // saved while no whitelisting adapter was bound has no id at all. Both re-register
+    // with the provider that will actually settle, rather than failing a payout on a
+    // saved address the player cannot fix themselves.
+    if (row.providerWalletId && row.providerName === providerName) {
+      return row.providerWalletId;
+    }
+    const { providerWalletId } = await this.payment.whitelistWithdrawalAddress({
+      userId,
+      currency,
+      network: row.network,
+      address,
+    });
+    await this.drizzle.db
+      .update(walletWithdrawalAddress)
+      .set({ providerName, providerWalletId })
+      .where(eq(walletWithdrawalAddress.id, row.id));
+    return providerWalletId;
+  }
+
+  /**
+   * Delegates to the bound payment adapter when it whitelists destinations, and returns nothing
+   * to store when it does not. A vendor failure propagates rather than being swallowed: saving
+   * the address anyway would produce a row that looks usable and fails only once the player has
+   * committed to a payout.
+   */
+  private async whitelistWithdrawalAddress(
+    userId: Uuid,
+    input: CreateWithdrawalAddressInput,
+  ): Promise<{ providerName: string; providerWalletId: string } | Record<string, never>> {
+    if (!this.payment.whitelistWithdrawalAddress) {
+      return {};
+    }
+    const { providerWalletId } = await this.payment.whitelistWithdrawalAddress({
+      userId,
+      currency: input.currency,
+      network: input.network,
+      address: input.address,
+    });
+    return {
+      providerName: await this.providerNameFor(input.currency, input.network),
+      providerWalletId,
+    };
+  }
+
+  /** False when the row does not exist OR belongs to someone else - the caller cannot
+   * tell the two apart, which is what stops the id space being probed. */
+  async deleteWithdrawalAddress(
+    userId: Uuid,
+    id: WithdrawalAddress['id'],
+    meta?: Partial<ClientMeta>,
+  ): Promise<boolean> {
+    await this.rateLimit(userId);
+    const [row] = await this.drizzle.db
+      .delete(walletWithdrawalAddress)
+      .where(and(eq(walletWithdrawalAddress.id, id), eq(walletWithdrawalAddress.userId, userId)))
+      .returning();
+    if (!row) {
+      return false;
+    }
+
+    await this.audit.record({
+      actorId: userId,
+      actorType: 'player',
+      action: 'wallet.withdrawal_address.deleted',
+      resourceType: 'wallet_withdrawal_address',
+      resourceId: row.id,
+      before: { label: row.label, currency: row.currency, network: row.network },
+      ...meta,
+    });
+    return true;
   }
 }

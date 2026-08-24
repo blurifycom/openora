@@ -116,6 +116,25 @@ export type PaymentAdapter = {
   ): Promise<{ address: string; tag?: string }>;
 
   /**
+   * Register a player's payout address with the vendor and return the id a withdrawal names as
+   * its destination. Implemented by a custody vendor that requires destinations to be approved
+   * before funds can reach them; a synchronous PSP, which pays to an address it is handed,
+   * omits it and the wallet module stores no provider id.
+   *
+   * Called on the address-book write path rather than at payout time on purpose: approval can
+   * need a human quorum, which must not sit inside a withdrawal that is already holding a
+   * player's funds. Implementations must be idempotent on (userId, currency, network, address) -
+   * a retried registration has to return the original id instead of creating a second
+   * destination that then needs its own approval.
+   */
+  whitelistWithdrawalAddress?(input: {
+    userId: string;
+    currency: string;
+    network: string;
+    address: string;
+  }): Promise<{ providerWalletId: string }>;
+
+  /**
    * Vendor-specific normalization of a raw webhook into a reconcilable event, or
    * null when the body is not one (eg an unrecognized event type). Optional -
    * `MockPaymentAdapter` omits it; an address-based/async vendor overlay implements it.

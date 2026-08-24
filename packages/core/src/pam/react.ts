@@ -15,6 +15,8 @@ export {
   useUpdateProfile,
   useChangePassword,
   useSendEmailVerification,
+  useMySessions,
+  useRevokeMySession,
   type Enable2faResult,
 } from './identity/react/account.js';
 export {

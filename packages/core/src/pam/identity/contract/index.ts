@@ -37,8 +37,13 @@ export const SessionItemSchema = z.object({
   id: UuidSchema,
   expiresAt: TimestampSchema,
   createdAt: TimestampSchema,
+  // Last time better-auth refreshed the session - "last used" in a device list.
+  updatedAt: TimestampSchema,
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
+  // True for the session making the request; false everywhere it cannot be known
+  // (eg an admin listing someone else's devices).
+  current: z.boolean(),
 });
 export type SessionItem = z.infer<typeof SessionItemSchema>;
 
@@ -181,6 +186,23 @@ export const identityContract = {
     revokeAll: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke-all' })
       .input(z.object({ userId: UuidSchema }))
+      .output(IdentitySuccessSchema),
+
+    // Self-service twins of the admin routes above: the caller's own devices only,
+    // scoped by the verified session rather than a `userId` input.
+    listMine: oc
+      .route({ method: 'GET', path: '/identity/sessions/me' })
+      .input(
+        PageQuerySchema.extend({
+          sortBy: SessionSortBySchema.optional(),
+          sortOrder: SortOrderSchema.default('desc').optional(),
+        }),
+      )
+      .output(paginated(SessionItemSchema)),
+
+    revokeMine: oc
+      .route({ method: 'POST', path: '/identity/sessions/me/revoke' })
+      .input(z.object({ id: UuidSchema }))
       .output(IdentitySuccessSchema),
   },
 };

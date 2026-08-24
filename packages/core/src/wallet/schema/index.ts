@@ -101,6 +101,7 @@ export const walletTransaction = pgTable(
     providerName: text(),
     providerRefId: text(),
     destinationAddress: text(),
+    destinationWalletId: text(),
     txHash: text(),
     // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
     // identity now lives in the typed columns above, not here.
@@ -169,6 +170,42 @@ export const walletDepositAddress = pgTable(
       .on(t.address, t.network, t.currency)
       .where(sql`${t.tag} IS NULL AND ${t.network} IS NOT NULL`),
     index('wallet_deposit_address_address_idx').on(t.address),
+  ],
+);
+
+// A player's own address book: named payout destinations they pick from at withdrawal
+// time instead of re-typing a 40-character string. Never validated on-chain here - the
+// payment provider rejects a malformed address when the payout is actually attempted.
+export const walletWithdrawalAddress = pgTable(
+  'wallet_withdrawal_address',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module (identity), bare uuid - no .references, the user table is another
+    // domain's. Every read and write is scoped on this column.
+    userId: uuid().notNull(),
+    label: text().notNull(),
+    currency: text().notNull(),
+    network: text().notNull(),
+    address: text().notNull(),
+    // Which custody provider `providerWalletId` belongs to. Without it a provider swap would
+    // silently reuse the previous vendor's id and pay out to whatever that id now names.
+    providerName: text(),
+    // The provider-side whitelisted destination this address was registered as, in whatever
+    // form the bound custody vendor names one. Null when the adapter does not whitelist - a
+    // synchronous PSP has no such concept - and the payout path then has nothing to send to,
+    // which is the intended failure: an unwhitelisted address must not be payable.
+    providerWalletId: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A double submit conflicts instead of duplicating the same destination twice.
+    uniqueIndex('wallet_withdrawal_address_user_id_currency_network_address_idx').on(
+      t.userId,
+      t.currency,
+      t.network,
+      t.address,
+    ),
+    index('wallet_withdrawal_address_user_id_created_at_idx').on(t.userId, t.createdAt),
   ],
 );
 
@@ -383,6 +420,7 @@ export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
+export type WalletWithdrawalAddressRow = typeof walletWithdrawalAddress.$inferSelect;
 export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
