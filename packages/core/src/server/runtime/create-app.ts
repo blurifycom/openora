@@ -423,7 +423,7 @@ export async function createApp(
     };
 
     // Never identify from a client-supplied `x-user-id` header (W1, ADR-0019).
-    const userId = await sessions.resolveUserId(c.req.raw.headers);
+    const resolved = await sessions.resolveSession(c.req.raw.headers);
 
     const runHandler = async (): Promise<Response> => {
       const { matched, response } = await handler.handle(c.req.raw, { context });
@@ -436,13 +436,14 @@ export async function createApp(
 
     const traceId = headers['x-trace-id'] ?? randomUUID();
 
-    if (!userId) {
+    if (!resolved) {
       // No valid session - context.auth stays undefined so getUserId 401s. Auth and
       // public routes still work. Run inside the request context for trace correlation.
       return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
     }
 
-    context.auth = { userId };
+    const { userId } = resolved;
+    context.auth = resolved;
 
     if (container.has(PLAYER_ACTIVITY_TRACKER)) {
       container
