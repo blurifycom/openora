@@ -27,11 +27,28 @@ export async function* createEventStreamGenerator<T>(
     wake();
   });
 
-  const onAbort = () => {
+  let cleanedUp = false;
+  let onAbort = () => {};
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    unsubscribe();
+    signal?.removeEventListener('abort', onAbort);
+  };
+
+  onAbort = () => {
     done = true;
+    cleanup();
     wake();
   };
-  signal?.addEventListener('abort', onAbort);
+
+  if (signal?.aborted) {
+    onAbort();
+  } else {
+    signal?.addEventListener('abort', onAbort, { once: true });
+  }
 
   try {
     while (!done && !signal?.aborted) {
@@ -47,7 +64,6 @@ export async function* createEventStreamGenerator<T>(
       }
     }
   } finally {
-    unsubscribe();
-    signal?.removeEventListener('abort', onAbort);
+    cleanup();
   }
 }
