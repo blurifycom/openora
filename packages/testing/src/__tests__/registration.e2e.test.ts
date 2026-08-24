@@ -68,6 +68,59 @@ describe('registration email verification', () => {
     expect(body.session.token).toBeTruthy();
   });
 
+  it('lets the verified player fill in the optional profile step with that session', async () => {
+    // The modal's last screen: the session the code just minted is the only thing
+    // authorising the write, so this is the whole register -> code -> profile path.
+    const email = `reg-profile-${randomUUID()}@e2e.test`;
+    await submitRegistration(app, { email });
+    const verified = await verifyEmailByOtp(app, email);
+    const cookie = (verified.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    expect(cookie).toBeTruthy();
+
+    const res = await app.app.request('/profile', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        dateOfBirth: '1990-05-17',
+        phone: '+441632960001',
+        country: 'GB',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const [row] = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(player)
+      .where(eq(player.userId, (await userIdFor(email)) ?? ''));
+    expect(row).toMatchObject({
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      dateOfBirth: '1990-05-17',
+      phone: '+441632960001',
+      country: 'GB',
+    });
+  });
+
+  it('rejects a profile update that carries no fields', async () => {
+    // `Skip` must not post an empty body: without the contract's own guard this reaches
+    // `db.update().set({})` and 500s.
+    const email = `reg-profile-empty-${randomUUID()}@e2e.test`;
+    await submitRegistration(app, { email });
+    const verified = await verifyEmailByOtp(app, email);
+    const cookie = (verified.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+
+    const res = await app.app.request('/profile', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
   it('refuses to sign in a blocked account that enters a valid code', async () => {
     // An account can be RG-blocked or suspended between registering and entering the
     // code. Verification still stands - the block is on the session, not the address.

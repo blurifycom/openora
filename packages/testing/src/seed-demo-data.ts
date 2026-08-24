@@ -511,8 +511,20 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
           ? new Date(now - (30 + Math.floor(rng() * 60)) * dayMs)
           : null;
 
+    // Same `rng` stream as the rest of the row, so the seed stays reproducible. Ages 21-65
+    // keep every demo player clear of the 18+ floor the profile contract enforces.
+    const dateOfBirth = new Date(now - (21 + Math.floor(rng() * 45)) * 365.25 * dayMs)
+      .toISOString()
+      .slice(0, 10);
+
     await db.insert(player).values({
       userId: playerUser.id,
+      firstName: first,
+      lastName: last,
+      dateOfBirth,
+      // The contact number mirrors the login credential for a demo player; a real one fills
+      // this in on the optional profile step long before any phone verification.
+      phone: phoneNumber,
       country,
       currency,
       status,

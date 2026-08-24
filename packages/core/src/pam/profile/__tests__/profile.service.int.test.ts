@@ -97,6 +97,57 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
     expect(await playersFor(account.id)).toHaveLength(1);
   });
 
+  it('persists the registration profile fields the signup step collects', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+
+    const result = await svc.updateMyProfile(account.id, {
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      dateOfBirth: '1990-05-17',
+      phone: '+441632960001',
+      country: 'GB',
+    });
+
+    expect(result).toMatchObject({
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      dateOfBirth: '1990-05-17',
+      phone: '+441632960001',
+      country: 'GB',
+    });
+    const [row] = await playersFor(account.id);
+    expect(row).toMatchObject({
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      // A `date` column in string mode must come back as the calendar day it went in as,
+      // with no timezone shift.
+      dateOfBirth: '1990-05-17',
+      phone: '+441632960001',
+    });
+  });
+
+  it('leaves omitted fields alone and clears the ones explicitly set to null', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id, {
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      dateOfBirth: '1990-05-17',
+      phone: '+441632960001',
+    });
+
+    const result = await svc.updateMyProfile(account.id, { firstName: 'Augusta', phone: null });
+
+    expect(result).toMatchObject({
+      firstName: 'Augusta',
+      lastName: 'Lovelace',
+      dateOfBirth: '1990-05-17',
+      phone: null,
+    });
+  });
+
   it('leaves other players untouched', async () => {
     const svc = makeService();
     const account = await seedUser(db);
