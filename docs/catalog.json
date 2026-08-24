@@ -389,11 +389,14 @@
         "wallet_job_run",
         "wallet_provider_vault",
         "wallet_reconciliation_finding",
-        "wallet_transaction"
+        "wallet_transaction",
+        "wallet_withdrawal_address"
       ],
       "routes": [
         "wallet.approve",
         "wallet.create",
+        "wallet.create",
+        "wallet.delete",
         "wallet.delete",
         "wallet.delete",
         "wallet.deposit",
@@ -402,6 +405,7 @@
         "wallet.getAddress",
         "wallet.getBalance",
         "wallet.getBalances",
+        "wallet.list",
         "wallet.list",
         "wallet.list",
         "wallet.list",
@@ -1280,6 +1284,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "CreateWithdrawalAddressInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "CurrencyCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
@@ -1614,6 +1622,10 @@
     {
       "name": "ListRgFlagsInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ListWithdrawalAddressesInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "LobbyCategoryDetailSchema",
@@ -2186,6 +2198,14 @@
     {
       "name": "WalletTransactionTypeSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WithdrawalAddressKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalAddressSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "WithdrawalQueueFilterSchema",
