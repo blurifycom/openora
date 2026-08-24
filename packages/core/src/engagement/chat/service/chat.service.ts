@@ -242,9 +242,6 @@ export class ChatService {
     let blocked: ReadonlySet<User['id']> | null = viewerId ? null : new Set();
     const pending: ChatMessage[] = [];
     const deliver = (message: ChatMessage) => {
-      if (!active) {
-        return;
-      }
       if (blocked && !blocked.has(message.userId)) {
         listener(message);
       }
@@ -266,6 +263,9 @@ export class ChatService {
     const unsubscribe = this.transport.subscribe<ChatMessage>(
       channel,
       (message) => {
+        if (!active) {
+          return;
+        }
         if (blocked === null) {
           pending.push(message);
         } else {
@@ -276,7 +276,6 @@ export class ChatService {
     );
     return () => {
       active = false;
-      pending.length = 0;
       unsubscribe();
       presence?.leave(channel, presenceMemberId, connectionId);
     };
