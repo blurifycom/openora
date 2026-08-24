@@ -1321,6 +1321,7 @@ export class WalletService {
         riskTags,
         requestedAt: r.tx.createdAt.toISOString(),
         destinationAddress: r.tx.destinationAddress,
+        destinationTag: r.tx.destinationTag,
         txHash: r.tx.txHash,
       };
     });

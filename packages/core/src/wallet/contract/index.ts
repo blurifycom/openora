@@ -168,6 +168,9 @@ export const WithdrawalQueueItemSchema = z.object({
   riskTags: z.array(z.string()),
   requestedAt: TimestampSchema,
   destinationAddress: z.string().nullable(),
+  // An approver on a tag chain is releasing funds to an address shared by many accounts, so
+  // the tag is part of what they are approving, not a detail behind it.
+  destinationTag: z.string().nullable(),
   txHash: z.string().nullable(),
 });
 export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
