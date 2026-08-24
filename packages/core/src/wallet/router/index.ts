@@ -33,6 +33,8 @@ import {
   DestinationAddressRequiredError,
   DestinationAddressNotWhitelistedError,
   AutoWithdrawalConfigNotFoundError,
+  BonusRolloverLockedError,
+  BonusRolloverConfigNotFoundError,
   WalletAssetNotFoundError,
   WalletAssetAlreadyExistsError,
   WalletAssetUnsupportedError,
@@ -167,6 +169,7 @@ export function createWalletRouter({
             KycRequiredError,
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
+            BonusRolloverLockedError,
             DestinationAddressNotWhitelistedError,
             WithdrawalDisabledError,
           ],
@@ -411,6 +414,28 @@ export function createWalletRouter({
           wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),
       ),
+    },
+
+    bonusRolloverStatus: os.bonusRolloverStatus.handler(({ context, input }) =>
+      wallet.getBonusRolloverStatus(getUserId(context), input.status),
+    ),
+
+    bonusRolloverConfig: {
+      get: os.bonusRolloverConfig.get.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'bonus-rollover-config', 'view');
+        return mapErrors({ NOT_FOUND: BonusRolloverConfigNotFoundError }, () =>
+          wallet.getBonusRolloverConfig(),
+        );
+      }),
+
+      set: os.bonusRolloverConfig.set.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'bonus-rollover-config', 'update');
+        return wallet.setBonusRolloverConfig(adminId, input, { ip, userAgent });
+      }),
     },
 
     webhook: os.webhook.handler(async ({ context }) => {

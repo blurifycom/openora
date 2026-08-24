@@ -81,7 +81,7 @@ export class GamingService {
 
     await this.getGame(gameId);
 
-    const round = await this.drizzle.db.transaction(async (tx) => {
+    const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
       const outcome = await this.walletCommands.debit(tx, {
         userId,
         amount: betAmount,
@@ -90,7 +90,7 @@ export class GamingService {
       if (!outcome.ok) {
         throw new InsufficientBalanceError(outcome.available, betAmount);
       }
-      return findOneOrThrow(
+      const insertedRound = findOneOrThrow(
         await tx
           .insert(gameRound)
           .values({
@@ -103,7 +103,17 @@ export class GamingService {
           .returning(),
         new GameRoundNotFoundError(gameId),
       );
+      return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
+
+    for (const credit of completedBonusCredits) {
+      this.events.emit('wallet.bonus_rollover.completed', {
+        userId,
+        creditId: credit.id,
+        currency: credit.currency,
+        creditedAmount: credit.creditedAmount,
+      });
+    }
 
     const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
 

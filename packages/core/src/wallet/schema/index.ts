@@ -29,6 +29,12 @@ import {
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
+import {
+  BONUS_CREDIT_SOURCE_TYPES,
+  BONUS_CREDIT_STATUSES,
+  type BonusCreditSourceType,
+  type BonusCreditStatus,
+} from '../contract/index.js';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
 // the contract. Editing the value set is a one-place change in wallet-tx.ts.
@@ -43,6 +49,16 @@ export const walletTransactionStatusEnum = pgEnum(
 );
 
 export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
+
+export const walletBonusCreditSourceTypeEnum = pgEnum(
+  'wallet_bonus_credit_source_type',
+  BONUS_CREDIT_SOURCE_TYPES,
+);
+
+export const walletBonusCreditStatusEnum = pgEnum(
+  'wallet_bonus_credit_status',
+  BONUS_CREDIT_STATUSES,
+);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -248,6 +264,43 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+export const walletBonusCredit = pgTable(
+  'wallet_bonus_credit',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    walletId: uuid()
+      .notNull()
+      .references(() => wallet.id),
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    sourceType: walletBonusCreditSourceTypeEnum().$type<BonusCreditSourceType>().notNull(),
+    creditedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    rolloverMultiplier: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    rolloverRequired: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    rolloverProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    status: walletBonusCreditStatusEnum().$type<BonusCreditStatus>().notNull().default('active'),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    index('wallet_bonus_credit_user_id_currency_status_idx').on(t.userId, t.currency, t.status),
+    index('wallet_bonus_credit_wallet_id_idx').on(t.walletId),
+  ],
+);
+
+export const walletBonusRolloverConfig = pgTable('wallet_bonus_rollover_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique().default('global'),
+  multiplier: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+  updatedBy: uuid(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 // Chain-level behaviour (how the vendor hands out addresses) is deliberately NOT here -
 // that belongs to the bound payment adapter, which owns its own vendor vocabulary.
 export const walletAsset = pgTable(
@@ -421,6 +474,8 @@ export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
 export type WalletWithdrawalAddressRow = typeof walletWithdrawalAddress.$inferSelect;
 export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;
+export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
+export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
 export type WalletJobRun = typeof walletJobRun.$inferSelect;

@@ -12,7 +12,12 @@ export type WalletDebitArgs = {
 };
 
 export type WalletDebitOutcome =
-  | { ok: true; newBalance: string; currency: string }
+  | {
+      ok: true;
+      newBalance: string;
+      currency: string;
+      completedBonusCredits?: Array<{ id: string; currency: string; creditedAmount: string }>;
+    }
   | { ok: false; available: string };
 
 export type WalletCreditArgs = {
