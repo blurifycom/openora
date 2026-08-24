@@ -359,7 +359,7 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
-    expect(balance!.amount).toBe('100');
+    expect(balance!.amount).toBe('100.000000000000000000');
   });
 });
 
