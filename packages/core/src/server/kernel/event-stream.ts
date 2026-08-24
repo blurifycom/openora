@@ -27,11 +27,31 @@ export async function* createEventStreamGenerator<T>(
     wake();
   });
 
-  const onAbort = () => {
+  // Abort can race the async iterator consumer. Clean up immediately and make
+  // the operation idempotent so a later generator `finally` cannot re-run the
+  // underlying subscription teardown.
+  let cleanedUp = false;
+  let onAbort = () => {};
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    unsubscribe();
+    signal?.removeEventListener('abort', onAbort);
+  };
+
+  onAbort = () => {
     done = true;
+    cleanup();
     wake();
   };
-  signal?.addEventListener('abort', onAbort);
+
+  if (signal?.aborted) {
+    onAbort();
+  } else {
+    signal?.addEventListener('abort', onAbort, { once: true });
+  }
 
   try {
     while (!done && !signal?.aborted) {
@@ -47,7 +67,6 @@ export async function* createEventStreamGenerator<T>(
       }
     }
   } finally {
-    unsubscribe();
-    signal?.removeEventListener('abort', onAbort);
+    cleanup();
   }
 }

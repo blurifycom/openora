@@ -60,6 +60,24 @@ describe('createEventStreamGenerator', () => {
     await gen.next();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
+
+  // Regression coverage for the disconnect race: abort must release the
+  // subscription even while the consumer is waiting for the next event.
+  it('unsubscribes immediately when abort happens before consumption resumes', async () => {
+    const controller = new AbortController();
+    const unsubscribe = vi.fn();
+    const gen = createEventStreamGenerator<number>(() => unsubscribe, {
+      signal: controller.signal,
+    });
+
+    const pending = gen.next();
+    controller.abort();
+
+    await expect(pending).resolves.toEqual({ done: true, value: undefined });
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    await gen.return?.(undefined);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
 });
 
 describe('domain-error factories', () => {

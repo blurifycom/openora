@@ -238,9 +238,15 @@ export class ChatService {
     const presenceMemberId = viewerId ?? `anonymous:${connectionId}`;
     const presence = this.transport.presence;
     presence?.join(channel, presenceMemberId, connectionId);
+    // A disconnect can race the async block-list lookup. Keep the callback
+    // from delivering queued messages after the stream has unsubscribed.
+    let active = true;
     let blocked: ReadonlySet<User['id']> | null = viewerId ? null : new Set();
     const pending: ChatMessage[] = [];
     const deliver = (message: ChatMessage) => {
+      if (!active) {
+        return;
+      }
       if (blocked && !blocked.has(message.userId)) {
         listener(message);
       }
@@ -249,6 +255,9 @@ export class ChatService {
       this.excludedSenderIdsFor(viewerId)
         .catch(() => new Set<User['id']>())
         .then((ids) => {
+          if (!active) {
+            return;
+          }
           blocked = ids;
           for (const message of pending) {
             deliver(message);
@@ -268,6 +277,8 @@ export class ChatService {
       viewerId,
     );
     return () => {
+      active = false;
+      pending.length = 0;
       unsubscribe();
       presence?.leave(channel, presenceMemberId, connectionId);
     };
