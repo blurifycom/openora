@@ -28,6 +28,8 @@ export type DirectAuditAction =
   | 'wallet.bonus_credit.completed'
   | 'wallet.bonus_rollover_config.set'
   | 'wallet.manual_adjustment.created'
+  | 'wallet.withdrawal_address.created'
+  | 'wallet.withdrawal_address.deleted'
   | 'wallet.custody.sweep_cycle'
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
