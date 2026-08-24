@@ -185,6 +185,21 @@ describe('WalletCommandsService bonus credit creation on gift/rain (real PG)', (
 
     expect(await creditsFor(w.userId)).toHaveLength(0);
   });
+
+  it('stores bonus-credit currencies using the canonical balance key', async () => {
+    const w = await seedWallet({ balance: '0', currency: 'usd' });
+    const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
+
+    const result = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'usd',
+      type: 'gift',
+    });
+
+    expect(result.ok).toBe(true);
+    expect((await creditsFor(w.userId))[0]!.currency).toBe('USD');
+  });
 });
 
 describe('WalletCommandsService bonus rollover progress waterfall (real PG)', () => {
@@ -319,9 +334,59 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
       .where(eq(walletBonusCredit.id, credit.id));
     expect(Number(row!.rolloverProgress)).toBe(0);
   });
+
+  it('blocks non-bet debits from spending rollover-locked funds', async () => {
+    const w = await seedWallet({ balance: '100' });
+    await insertCredit(w, {
+      creditedAmount: '100',
+      rolloverRequired: '1000',
+    });
+    const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
+
+    const result = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '1',
+      type: 'gift',
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('expected locked debit to fail');
+    }
+    expect(Number(result.available)).toBe(100);
+    expect(await creditsFor(w.userId)).toHaveLength(1);
+    const [balance] = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(balance!.amount).toBe('100');
+  });
 });
 
 describe('WalletService.withdraw with an active bonus rollover lock (real PG)', () => {
+  it('locks only the proportional credited amount when the multiplier exceeds 1x', async () => {
+    const w = await seedWallet({ balance: '100' });
+    await insertCredit(w, {
+      creditedAmount: '100',
+      rolloverRequired: '1000',
+      rolloverProgress: '500',
+    });
+    const { svc } = makeWalletService();
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '51', currency: 'USD', ip: null, userAgent: null }),
+    ).rejects.toBeInstanceOf(BonusRolloverLockedError);
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '50',
+      currency: 'USD',
+      ip: null,
+      userAgent: null,
+    });
+    expect(result.status).toBe('pending');
+  });
+
   it('blocks a withdrawal once the requested amount exceeds the withdrawable (unlocked) balance', async () => {
     const w = await seedWallet({ balance: '100' });
     await insertCredit(w, {
@@ -403,6 +468,23 @@ describe('WalletService.withdraw with an active bonus rollover lock (real PG)', 
   });
 });
 
+describe('WalletService bonus rollover status (real PG)', () => {
+  it('returns active credits by default and completed credits when requested', async () => {
+    const w = await seedWallet({ balance: '0' });
+    await insertCredit(w, { status: 'active' });
+    await insertCredit(w, { status: 'completed', completedAt: new Date() });
+    const { svc } = makeWalletService();
+
+    const active = await svc.getBonusRolloverStatus(w.userId);
+    const completed = await svc.getBonusRolloverStatus(w.userId, 'completed');
+
+    expect(active.credits).toHaveLength(1);
+    expect(active.credits[0]!.status).toBe('active');
+    expect(completed.credits).toHaveLength(1);
+    expect(completed.credits[0]!.status).toBe('completed');
+  });
+});
+
 describe('WalletService bonus rollover config admin (real PG)', () => {
   it('fails closed (NotFound) on GET when unseeded', async () => {
     const { svc } = makeWalletService();
@@ -441,9 +523,12 @@ describe('WalletService bonus rollover config admin (real PG)', () => {
     const { svc, audit } = makeWalletService();
     const adminId = randomUUID();
 
+    const [before] = await db.drizzle.db.select().from(walletBonusRolloverConfig);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     const updated = await svc.setBonusRolloverConfig(adminId, { multiplier: '2' }, NO_CLIENT_META);
 
     expect(Number(updated.multiplier)).toBe(2);
+    expect(Date.parse(updated.updatedAt)).toBeGreaterThan(before!.updatedAt.getTime());
     expect(await db.drizzle.db.select().from(walletBonusRolloverConfig)).toHaveLength(1);
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),

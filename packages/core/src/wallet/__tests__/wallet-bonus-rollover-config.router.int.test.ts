@@ -142,6 +142,18 @@ describe('wallet bonus-rollover-config routes', () => {
     ).rejects.toThrow();
   });
 
+  it('set: rejects a multiplier above the operational cap', async () => {
+    const { router } = routerWith(superAdminGuard());
+
+    await expect(
+      call(
+        router.bonusRolloverConfig.set,
+        { multiplier: '100.000000000000000001' },
+        { context: CTX },
+      ),
+    ).rejects.toThrow();
+  });
+
   it('set: super-admin updates the multiplier, GET reflects immediately, and writes an admin audit entry with before/after', async () => {
     const { router, audit } = routerWith(superAdminGuard());
 

@@ -30,38 +30,6 @@ let db: TestDb;
 
 const unrestricted = mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(false) });
 
-function isDeadlock(err: unknown): boolean {
-  if (!(err instanceof Error)) {
-    return false;
-  }
-  if (err.message.includes('deadlock detected')) {
-    return true;
-  }
-  const cause = (err as { cause?: unknown }).cause;
-  if (cause && typeof cause === 'object') {
-    if ('code' in cause && cause.code === '40P01') {
-      return true;
-    }
-    if (cause instanceof Error && cause.message.includes('deadlock detected')) {
-      return true;
-    }
-  }
-  return false;
-}
-
-async function withDeadlockRetry<T>(fn: () => Promise<T>, retries = 6): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (attempt < retries && isDeadlock(err)) {
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-
 async function seedWallet(balance: string, currency = 'USD') {
   const row = findOneOrThrow(
     await db.drizzle.db.insert(wallet).values({ userId: randomUUID(), currency }).returning(),
@@ -181,23 +149,21 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
       const commandsSvc = makeCommandsSvc();
       const walletSvc = makeWalletSvc();
 
-      const betPromise = withDeadlockRetry(() =>
-        db.drizzle.db.transaction((txn) =>
-          commandsSvc.debit(txn, { userId: w.userId, amount: '10', type: 'bet' }),
-        ),
+      const betPromise = db.drizzle.db.transaction((txn) =>
+        commandsSvc.debit(txn, { userId: w.userId, amount: '10', type: 'bet' }),
       );
-      const withdrawPromise = withDeadlockRetry(() =>
-        walletSvc.withdraw({
+      const withdrawPromise = walletSvc
+        .withdraw({
           userId: w.userId,
           amount: '100',
           currency: 'USD',
           ip: null,
           userAgent: null,
-        }),
-      ).then(
-        (res) => ({ ok: true as const, res }),
-        (err: unknown) => ({ ok: false as const, err }),
-      );
+        })
+        .then(
+          (res) => ({ ok: true as const, res }),
+          (err: unknown) => ({ ok: false as const, err }),
+        );
 
       const [betResult, withdrawOutcome] = await Promise.all([betPromise, withdrawPromise]);
       if (!betResult.ok) {
@@ -247,23 +213,21 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
       const commandsSvc = makeCommandsSvc();
       const walletSvc = makeWalletSvc();
 
-      const betPromise = withDeadlockRetry(() =>
-        db.drizzle.db.transaction((txn) =>
-          commandsSvc.debit(txn, { userId: w.userId, amount: '10', type: 'bet' }),
-        ),
+      const betPromise = db.drizzle.db.transaction((txn) =>
+        commandsSvc.debit(txn, { userId: w.userId, amount: '10', type: 'bet' }),
       );
-      const withdrawPromise = withDeadlockRetry(() =>
-        walletSvc.withdraw({
+      const withdrawPromise = walletSvc
+        .withdraw({
           userId: w.userId,
           amount: '10',
           currency: 'USD',
           ip: null,
           userAgent: null,
-        }),
-      ).then(
-        () => true,
-        () => false,
-      );
+        })
+        .then(
+          () => true,
+          () => false,
+        );
 
       const [betResult, withdrawSucceeded] = await Promise.all([betPromise, withdrawPromise]);
       if (!betResult.ok) {

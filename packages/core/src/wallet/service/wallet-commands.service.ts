@@ -10,7 +10,12 @@ import type {
   WalletCreditOutcome,
   WalletTransactionType,
 } from '@openora/core/contracts';
-import { createDomainError, makeConflictError, type DrizzleDb } from '@openora/core/server';
+import {
+  createDomainError,
+  makeConflictError,
+  moneyToNumber,
+  type DrizzleDb,
+} from '@openora/core/server';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   wallet,
@@ -22,6 +27,8 @@ import {
 import type { BonusCreditSourceType } from '../contract/index.js';
 import {
   creditWalletBalance,
+  balanceKey,
+  debitWithdrawableBalance,
   debitWalletBalance,
   railFor,
   readWalletBalance,
@@ -84,7 +91,7 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletCommandAmountError('debit', amount);
     }
 
-    const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+    const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update');
     if (!row) {
       return { ok: false, available: '0' };
     }
@@ -97,7 +104,10 @@ export class WalletCommandsService implements WalletCommands {
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
     // arithmetic - no JS float math on either side of the debit.
-    const debited = await debitWalletBalance(txn, row.id, row.currency, amount);
+    const debited =
+      type === 'bet'
+        ? await debitWalletBalance(txn, row.id, row.currency, amount)
+        : await debitWithdrawableBalance(txn, row.id, row.currency, amount);
     const newBalance = debited[0]?.amount;
     if (newBalance === undefined) {
       return { ok: false, available };
@@ -108,7 +118,7 @@ export class WalletCommandsService implements WalletCommands {
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
         userId,
-        currency: row.currency,
+        currency: balanceKey(row.currency),
         amount,
       });
       return { ok: true, newBalance, currency: row.currency, completedBonusCredits };
@@ -187,7 +197,7 @@ export class WalletCommandsService implements WalletCommands {
       .values({
         walletId,
         userId,
-        currency,
+        currency: balanceKey(currency),
         sourceType,
         creditedAmount: amount,
         rolloverMultiplier: multiplier,
@@ -207,7 +217,7 @@ export class WalletCommandsService implements WalletCommands {
       resourceId: creditRow.id,
       after: {
         userId,
-        currency,
+        currency: balanceKey(currency),
         sourceType,
         creditedAmount: amount,
         rolloverMultiplier: multiplier,
@@ -226,7 +236,7 @@ export class WalletCommandsService implements WalletCommands {
       .where(
         and(
           eq(walletBonusCredit.userId, userId),
-          eq(walletBonusCredit.currency, currency),
+          eq(walletBonusCredit.currency, balanceKey(currency)),
           eq(walletBonusCredit.status, 'active'),
         ),
       )
@@ -236,7 +246,7 @@ export class WalletCommandsService implements WalletCommands {
     let remaining = amount;
 
     for (const credit of activeCredits) {
-      if (Number(remaining) <= 0) {
+      if (moneyToNumber(remaining) <= 0) {
         break;
       }
 

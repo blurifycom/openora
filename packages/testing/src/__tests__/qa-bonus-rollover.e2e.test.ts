@@ -90,8 +90,9 @@ async function bet(client: TestClient, amount: string) {
   return readJson(res);
 }
 
-async function rolloverStatus(client: TestClient) {
-  const res = await client.get('/wallet/bonus-rollover/status');
+async function rolloverStatus(client: TestClient, status?: 'active' | 'completed') {
+  const query = status ? `?status=${status}` : '';
+  const res = await client.get(`/wallet/bonus-rollover/status${query}`);
   if (res.status !== 200) {
     throw new Error(`bonus-rollover/status failed (${res.status}): ${await res.text()}`);
   }
@@ -193,7 +194,7 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     expect(String(blockedBody.message ?? blockedBody.error ?? '')).toMatch(/rollover|locked/i);
 
     await bet(recipient, '15');
-    status = await rolloverStatus(recipient);
+    status = await rolloverStatus(recipient, 'completed');
     const finalCredit = status.credits.find((c) => c.id === credit.id)!;
     expect(finalCredit.status).toBe('completed');
     expect(Number(finalCredit.rolloverProgress)).toBe(40);

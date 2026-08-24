@@ -393,8 +393,8 @@ export function createWalletRouter({
       ),
     },
 
-    bonusRolloverStatus: os.bonusRolloverStatus.handler(({ context }) =>
-      wallet.getBonusRolloverStatus(getUserId(context)),
+    bonusRolloverStatus: os.bonusRolloverStatus.handler(({ context, input }) =>
+      wallet.getBonusRolloverStatus(getUserId(context), input.status),
     ),
 
     bonusRolloverConfig: {

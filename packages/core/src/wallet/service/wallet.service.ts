@@ -72,6 +72,7 @@ import type {
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
   BonusCredit,
+  BonusCreditStatus,
   BonusRolloverConfig,
   WalletAsset,
   PublicWalletAsset,
@@ -267,7 +268,7 @@ export function railFor(currency: string, cryptoCurrencies?: readonly string[]):
 // Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
 // wallet. Every read and write of wallet_balance funnels through these three helpers,
 // so normalizing the key here is enough to keep one row per wallet+currency.
-const balanceKey = (currency: string) => currency.toUpperCase();
+export const balanceKey = (currency: string) => currency.toUpperCase();
 
 export function creditWalletBalance(
   txn: DrizzleDb,
@@ -327,19 +328,28 @@ export function debitWithdrawableBalance(
   currency: string,
   amount: string,
 ) {
+  const currencyKey = balanceKey(currency);
+
   return txn
     .update(walletBalance)
     .set({ amount: sql`${walletBalance.amount} - ${amount}::numeric` })
     .where(
       and(
         eq(walletBalance.walletId, walletId),
-        eq(walletBalance.currency, balanceKey(currency)),
+        eq(walletBalance.currency, currencyKey),
         gte(
           sql`${walletBalance.amount} - COALESCE((
-            SELECT SUM(${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress})
+            SELECT SUM(
+              ${walletBonusCredit.creditedAmount}
+              * GREATEST(
+                ${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress},
+                0
+              )
+              / NULLIF(${walletBonusCredit.rolloverRequired}, 0)
+            )
             FROM ${walletBonusCredit}
             WHERE ${walletBonusCredit.walletId} = ${walletId}
-              AND ${walletBonusCredit.currency} = ${balanceKey(currency)}
+              AND ${walletBonusCredit.currency} = ${currencyKey}
               AND ${walletBonusCredit.status} = 'active'
           ), 0)`,
           amount,
@@ -354,15 +364,20 @@ async function readLockedBonusAmount(
   walletId: Wallet['id'],
   currency: string,
 ): Promise<string> {
+  const currencyKey = balanceKey(currency);
   const [row] = await txn
     .select({
-      locked: sql<string>`coalesce(sum(${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress}), 0)`,
+      locked: sql<string>`coalesce(sum(
+        ${walletBonusCredit.creditedAmount}
+        * greatest(${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress}, 0)
+        / nullif(${walletBonusCredit.rolloverRequired}, 0)
+      ), 0)`,
     })
     .from(walletBonusCredit)
     .where(
       and(
         eq(walletBonusCredit.walletId, walletId),
-        eq(walletBonusCredit.currency, balanceKey(currency)),
+        eq(walletBonusCredit.currency, currencyKey),
         eq(walletBonusCredit.status, 'active'),
       ),
     );
@@ -1731,11 +1746,14 @@ export class WalletService {
     });
   }
 
-  async getBonusRolloverStatus(userId: User['id']): Promise<{ credits: BonusCredit[] }> {
+  async getBonusRolloverStatus(
+    userId: User['id'],
+    status: BonusCreditStatus = 'active',
+  ): Promise<{ credits: BonusCredit[] }> {
     const rows = await this.drizzle.db
       .select()
       .from(walletBonusCredit)
-      .where(eq(walletBonusCredit.userId, userId))
+      .where(and(eq(walletBonusCredit.userId, userId), eq(walletBonusCredit.status, status)))
       .orderBy(desc(walletBonusCredit.createdAt))
       .limit(50);
     return { credits: rows.map(toBonusCreditDto) };
@@ -1772,7 +1790,7 @@ export class WalletService {
         .values({ singletonKey: 'global', multiplier, updatedBy: adminId })
         .onConflictDoUpdate({
           target: walletBonusRolloverConfig.singletonKey,
-          set: { multiplier, updatedBy: adminId },
+          set: { multiplier, updatedBy: adminId, updatedAt: new Date() },
         })
         .returning();
       const config = toBonusRolloverConfigDto(
