@@ -4,6 +4,7 @@ import {
   AdminGuard,
   mapErrors,
   getUserId,
+  getSessionId,
   createEventStreamGenerator,
   type EventBus,
 } from '@openora/core/server';
@@ -164,6 +165,7 @@ export function createIdentityRouter(
         await adminGuard.assert(context, 'sessions', 'view');
         return sessionSvc.listSessions({
           userId: input.userId,
+          currentSessionId: getSessionId(context),
           page: input.page,
           limit: input.limit,
           sortBy: input.sortBy,
@@ -185,6 +187,27 @@ export function createIdentityRouter(
           ip: caller.ip,
           userAgent: caller.userAgent,
         });
+      }),
+
+      listMine: os.sessions.listMine.handler(({ input, context }) =>
+        sessionSvc.listSessions({
+          userId: getUserId(context),
+          currentSessionId: getSessionId(context),
+          activeOnly: true,
+          page: input.page,
+          limit: input.limit,
+          sortBy: input.sortBy,
+          sortOrder: input.sortOrder,
+        }),
+      ),
+
+      // Scoped to the caller's own userId, so a forged id cannot kill someone
+      // else's device - a miss is a 404, not a cross-user revoke.
+      revokeMine: os.sessions.revokeMine.handler(({ input, context }) => {
+        const userId = getUserId(context);
+        return mapErrors({ NOT_FOUND: SessionNotFoundError }, () =>
+          sessionSvc.revokeSession(userId, input.id, userId, context.clientMeta),
+        );
       }),
     },
   });
