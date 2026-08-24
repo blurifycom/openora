@@ -85,6 +85,17 @@ describe('SessionService', () => {
     expect(new Date(items[0]!.expiresAt).getTime()).toBeLessThanOrEqual(Date.now());
   });
 
+  it('keeps the last-used timestamp when a session is revoked', async () => {
+    const account = await seedUser(db);
+    const lastUsed = new Date(Date.now() - 3_600_000);
+    const target = await seedSession(account.id, { updatedAt: lastUsed });
+
+    await service().revokeSession(account.id, target.id);
+
+    const { items } = await service().listSessions({ userId: account.id, page: 1, limit: 20 });
+    expect(new Date(items[0]!.updatedAt).getTime()).toBe(lastUsed.getTime());
+  });
+
   it('refuses to revoke a session owned by someone else', async () => {
     const owner = await seedUser(db);
     const stranger = await seedUser(db);

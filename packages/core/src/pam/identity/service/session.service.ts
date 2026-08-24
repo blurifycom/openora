@@ -84,7 +84,9 @@ export class SessionService {
   async revokeSession(userId: User['id'], id: string, actorId?: User['id'], meta?: ClientMeta) {
     const updated = await this.drizzle.db
       .update(session)
-      .set({ expiresAt: sql`now()` })
+      // Keep updatedAt as-is: it is the session's last-used time in the device
+      // list, and the $onUpdateFn would otherwise overwrite it with the revoke time.
+      .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
       .where(and(eq(session.id, id), eq(session.userId, userId)))
       .returning({ id: session.id });
 
@@ -106,7 +108,7 @@ export class SessionService {
   async revokeAllSessions(userId: User['id'], actorId?: User['id'], meta?: ClientMeta) {
     await this.drizzle.db
       .update(session)
-      .set({ expiresAt: sql`now()` })
+      .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
       .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
 
     this.events.emit('identity.sessions.revoked_all', {
