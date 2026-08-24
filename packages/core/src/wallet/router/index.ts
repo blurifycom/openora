@@ -31,6 +31,7 @@ import {
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
+  DestinationAddressNotWhitelistedError,
   AutoWithdrawalConfigNotFoundError,
   WalletAssetNotFoundError,
   WalletAssetAlreadyExistsError,
@@ -43,6 +44,8 @@ import {
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
   PlayerNotFoundError,
+  WithdrawalAddressAlreadyExistsError,
+  WithdrawalAddressLimitReachedError,
 } from '../service/wallet.service.js';
 import {
   ReconciliationService,
@@ -164,6 +167,7 @@ export function createWalletRouter({
             KycRequiredError,
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
+            DestinationAddressNotWhitelistedError,
             WithdrawalDisabledError,
           ],
         },
@@ -380,6 +384,25 @@ export function createWalletRouter({
           () => wallet.deleteWalletAsset(adminId, input.currency, input.network, { ip, userAgent }),
         );
       }),
+    },
+
+    withdrawalAddresses: {
+      list: os.withdrawalAddresses.list.handler(({ input, context }) =>
+        wallet.listWithdrawalAddresses(getUserId(context), input.currency),
+      ),
+
+      create: os.withdrawalAddresses.create.handler(({ input, context }) =>
+        mapErrors(
+          {
+            CONFLICT: [WithdrawalAddressAlreadyExistsError, WithdrawalAddressLimitReachedError],
+          },
+          () => wallet.createWithdrawalAddress(getUserId(context), input, context.clientMeta),
+        ),
+      ),
+
+      delete: os.withdrawalAddresses.delete.handler(({ input, context }) =>
+        wallet.deleteWithdrawalAddress(getUserId(context), input.id, context.clientMeta),
+      ),
     },
 
     deposits: {
