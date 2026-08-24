@@ -238,8 +238,6 @@ export class ChatService {
     const presenceMemberId = viewerId ?? `anonymous:${connectionId}`;
     const presence = this.transport.presence;
     presence?.join(channel, presenceMemberId, connectionId);
-    // A disconnect can race the async block-list lookup. Keep the callback
-    // from delivering queued messages after the stream has unsubscribed.
     let active = true;
     let blocked: ReadonlySet<User['id']> | null = viewerId ? null : new Set();
     const pending: ChatMessage[] = [];

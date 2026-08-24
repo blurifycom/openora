@@ -27,9 +27,6 @@ export async function* createEventStreamGenerator<T>(
     wake();
   });
 
-  // Abort can race the async iterator consumer. Clean up immediately and make
-  // the operation idempotent so a later generator `finally` cannot re-run the
-  // underlying subscription teardown.
   let cleanedUp = false;
   let onAbort = () => {};
   const cleanup = () => {

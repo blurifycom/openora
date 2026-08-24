@@ -61,8 +61,6 @@ describe('createEventStreamGenerator', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
-  // Regression coverage for the disconnect race: abort must release the
-  // subscription even while the consumer is waiting for the next event.
   it('unsubscribes immediately when abort happens before consumption resumes', async () => {
     const controller = new AbortController();
     const unsubscribe = vi.fn();
