@@ -88,6 +88,21 @@ export default {
       sendEmail(p.userId, title, body);
     });
 
+    ctx.events.on('wallet.bonus_rollover.completed', (payload) => {
+      const parsed = domainEventSchemas['wallet.bonus_rollover.completed'].safeParse(payload);
+      if (!parsed.success || !svcRef) {
+        return;
+      }
+      const p = parsed.data;
+      const title = 'Bonus unlocked';
+      const body = `Your ${p.creditedAmount} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`;
+      svcRef
+        .create({ userId: p.userId, type: 'wallet.bonus_rollover.completed', title, body })
+        .catch((err) =>
+          logger.error({ err }, 'wallet.bonus_rollover.completed notification failed'),
+        );
+    });
+
     ctx.events.on('social.friend_request.sent', (payload) => {
       const parsed = domainEventSchemas['social.friend_request.sent'].safeParse(payload);
       if (!parsed.success || !svcRef) {

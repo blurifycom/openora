@@ -386,6 +386,8 @@
         "wallet_asset",
         "wallet_auto_withdrawal_config",
         "wallet_balance",
+        "wallet_bonus_credit",
+        "wallet_bonus_rollover_config",
         "wallet_custody_sweep",
         "wallet_deposit_address",
         "wallet_job_run",
@@ -396,12 +398,14 @@
       ],
       "routes": [
         "wallet.approve",
+        "wallet.bonusRolloverStatus",
         "wallet.create",
         "wallet.create",
         "wallet.delete",
         "wallet.delete",
         "wallet.delete",
         "wallet.deposit",
+        "wallet.get",
         "wallet.get",
         "wallet.get",
         "wallet.getAddress",
@@ -419,6 +423,7 @@
         "wallet.resolve",
         "wallet.run",
         "wallet.run",
+        "wallet.set",
         "wallet.set",
         "wallet.set",
         "wallet.setActiveCurrency",
@@ -959,6 +964,7 @@
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
+    "wallet.bonus_rollover.completed",
     "wallet.deposit.completed",
     "wallet.manual_adjustment.created",
     "wallet.reconciliation.alert",
@@ -1116,6 +1122,30 @@
     {
       "name": "BlockedUserSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditSourceTypeSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverConfigSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverStatusInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "BrandingSchema",
@@ -1995,6 +2025,10 @@
     },
     {
       "name": "SetAutoWithdrawalRuleInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetBonusRolloverConfigInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {

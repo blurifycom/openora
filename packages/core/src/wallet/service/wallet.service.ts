@@ -49,6 +49,8 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletBonusCredit,
+  walletBonusRolloverConfig,
   walletWithdrawalAddress,
   walletAsset,
   type Wallet,
@@ -56,6 +58,8 @@ import {
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
+  type WalletBonusCredit as WalletBonusCreditRow,
+  type WalletBonusRolloverConfig as WalletBonusRolloverConfigRow,
   type WalletAssetRow,
   type WalletWithdrawalAddressRow,
 } from '../schema/index.js';
@@ -70,6 +74,9 @@ import type {
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
+  BonusCredit,
+  BonusCreditStatus,
+  BonusRolloverConfig,
   WalletAsset,
   PublicWalletAsset,
   CreateWalletAssetInput,
@@ -84,6 +91,7 @@ const logger = createLogger('wallet');
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
 export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
+export const BonusRolloverConfigNotFoundError = makeNotFoundError('BonusRolloverConfig');
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
@@ -114,6 +122,11 @@ export const DepositAddressUnsupportedError = makeConflictError(
 export const DestinationAddressRequiredError = makeConflictError(
   'DestinationAddressRequiredError',
   'A destination address is required for a crypto-rail withdrawal',
+);
+
+export const BonusRolloverLockedError = createDomainError<[locked: string]>(
+  'BonusRolloverLockedError',
+  (locked) => `Withdrawal blocked: ${locked} is locked by an active bonus rollover requirement`,
 );
 
 export const DestinationAddressNotWhitelistedError = makeConflictError(
@@ -290,7 +303,7 @@ export function railFor(currency: string, cryptoCurrencies?: readonly string[]):
 // Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
 // wallet. Every read and write of wallet_balance funnels through these three helpers,
 // so normalizing the key here is enough to keep one row per wallet+currency.
-const balanceKey = (currency: string) => currency.toUpperCase();
+export const balanceKey = (currency: string) => currency.toUpperCase();
 
 export function creditWalletBalance(
   txn: DrizzleDb,
@@ -342,6 +355,68 @@ export async function readWalletBalance(
       and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, balanceKey(currency))),
     );
   return row?.amount ?? '0';
+}
+
+export function debitWithdrawableBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+) {
+  const currencyKey = balanceKey(currency);
+
+  return txn
+    .update(walletBalance)
+    .set({ amount: sql`${walletBalance.amount} - ${amount}::numeric` })
+    .where(
+      and(
+        eq(walletBalance.walletId, walletId),
+        eq(walletBalance.currency, currencyKey),
+        gte(
+          sql`${walletBalance.amount} - COALESCE((
+            SELECT SUM(
+              ${walletBonusCredit.creditedAmount}
+              * GREATEST(
+                ${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress},
+                0
+              )
+              / NULLIF(${walletBonusCredit.rolloverRequired}, 0)
+            )
+            FROM ${walletBonusCredit}
+            WHERE ${walletBonusCredit.walletId} = ${walletId}
+              AND ${walletBonusCredit.currency} = ${currencyKey}
+              AND ${walletBonusCredit.status} = 'active'
+          ), 0)`,
+          amount,
+        ),
+      ),
+    )
+    .returning({ amount: walletBalance.amount });
+}
+
+async function readLockedBonusAmount(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<string> {
+  const currencyKey = balanceKey(currency);
+  const [row] = await txn
+    .select({
+      locked: sql<string>`coalesce(sum(
+        ${walletBonusCredit.creditedAmount}
+        * greatest(${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress}, 0)
+        / nullif(${walletBonusCredit.rolloverRequired}, 0)
+      ), 0)`,
+    })
+    .from(walletBonusCredit)
+    .where(
+      and(
+        eq(walletBonusCredit.walletId, walletId),
+        eq(walletBonusCredit.currency, currencyKey),
+        eq(walletBonusCredit.status, 'active'),
+      ),
+    );
+  return row?.locked ?? '0';
 }
 
 // Namespace the key per operation so the same raw key on a deposit then a withdraw can't
@@ -431,6 +506,29 @@ function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAu
     updatedBy: row.updatedBy,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toBonusCreditDto(row: WalletBonusCreditRow): BonusCredit {
+  return {
+    id: row.id,
+    currency: row.currency,
+    sourceType: row.sourceType,
+    creditedAmount: row.creditedAmount,
+    rolloverMultiplier: row.rolloverMultiplier,
+    rolloverRequired: row.rolloverRequired,
+    rolloverProgress: row.rolloverProgress,
+    status: row.status,
+    createdAt: row.createdAt.toISOString(),
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+  };
+}
+
+function toBonusRolloverConfigDto(row: WalletBonusRolloverConfigRow): BonusRolloverConfig {
+  return {
+    id: row.id,
+    multiplier: row.multiplier,
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -1073,13 +1171,16 @@ export class WalletService {
           };
         }
 
-        // Guarded conditional debit: the WHERE makes balance>=amount atomic with the write; 0 rows back rolls back the whole tx.
-        const debited = await debitWalletBalance(txn, current.id, currency, amount);
+        const debited = await debitWithdrawableBalance(txn, current.id, currency, amount);
         if (debited.length !== 1) {
-          throw new InsufficientBalanceError(
-            await readWalletBalance(txn, current.id, currency),
-            amount,
-          );
+          const [available, locked] = await Promise.all([
+            readWalletBalance(txn, current.id, currency),
+            readLockedBonusAmount(txn, current.id, currency),
+          ]);
+          if (moneyToNumber(available) < moneyToNumber(amount)) {
+            throw new InsufficientBalanceError(available, amount);
+          }
+          throw new BonusRolloverLockedError(locked);
         }
 
         if (this.tagEvaluationCommands) {
@@ -1686,6 +1787,70 @@ export class WalletService {
           cryptoThreshold: config.cryptoThreshold,
           excludeRiskFlags: config.excludeRiskFlags,
         },
+        ...meta,
+      });
+      return config;
+    });
+  }
+
+  async getBonusRolloverStatus(
+    userId: User['id'],
+    status: BonusCreditStatus = 'active',
+  ): Promise<{ credits: BonusCredit[] }> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(walletBonusCredit)
+      .where(and(eq(walletBonusCredit.userId, userId), eq(walletBonusCredit.status, status)))
+      .orderBy(desc(walletBonusCredit.createdAt))
+      .limit(50);
+    return { credits: rows.map(toBonusCreditDto) };
+  }
+
+  async getBonusRolloverConfig(): Promise<BonusRolloverConfig> {
+    const config = await this.getBonusRolloverConfigOrNull();
+    if (!config) {
+      throw new BonusRolloverConfigNotFoundError('global');
+    }
+    return config;
+  }
+
+  async getBonusRolloverConfigOrNull(): Promise<BonusRolloverConfig | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletBonusRolloverConfig)
+      .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+    return row ? toBonusRolloverConfigDto(row) : null;
+  }
+
+  async setBonusRolloverConfig(
+    adminId: User['id'],
+    { multiplier }: { multiplier: string },
+    meta?: ClientMeta,
+  ): Promise<BonusRolloverConfig> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletBonusRolloverConfig)
+        .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+      const rows = await txn
+        .insert(walletBonusRolloverConfig)
+        .values({ singletonKey: 'global', multiplier, updatedBy: adminId })
+        .onConflictDoUpdate({
+          target: walletBonusRolloverConfig.singletonKey,
+          set: { multiplier, updatedBy: adminId, updatedAt: new Date() },
+        })
+        .returning();
+      const config = toBonusRolloverConfigDto(
+        findOneOrThrow(rows, new BonusRolloverConfigNotFoundError('global')),
+      );
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.bonus_rollover_config.set',
+        resourceType: 'bonus_rollover_config',
+        resourceId: config.id,
+        before: before ? { multiplier: before.multiplier } : null,
+        after: { multiplier: config.multiplier },
         ...meta,
       });
       return config;
