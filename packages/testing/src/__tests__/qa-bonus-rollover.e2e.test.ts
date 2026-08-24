@@ -299,7 +299,7 @@ describe('bonus-rollover waterfall across multiple simultaneously-active credits
     const gift2 = await sendGift(sender, '50');
     await claimGift(recipient, gift2);
 
-    let status = await rolloverStatus(recipient);
+    const status = await rolloverStatus(recipient);
     expect(status.credits.filter((c) => c.status === 'active')).toHaveLength(2);
 
     await bet(recipient, '40');
