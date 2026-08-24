@@ -21,7 +21,17 @@ export class SessionResolver {
   }
 
   async resolveUserId(headers: Headers): Promise<string | undefined> {
-    const session = await this.auth.api.getSession({ headers });
-    return session?.user?.id;
+    return (await this.resolveSession(headers))?.userId;
+  }
+
+  // sessionId identifies the session row itself, so a handler can tell the caller's
+  // own device apart from their others. Optional because a stubbed/partial getSession
+  // response still carries a usable userId.
+  async resolveSession(
+    headers: Headers,
+  ): Promise<{ userId: string; sessionId?: string | undefined } | undefined> {
+    const resolved = await this.auth.api.getSession({ headers });
+    const userId = resolved?.user?.id;
+    return userId ? { userId, sessionId: resolved?.session?.id } : undefined;
   }
 }

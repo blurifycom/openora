@@ -30,12 +30,19 @@ export class SessionService {
 
   async listSessions({
     userId,
+    currentSessionId,
+    activeOnly,
     page,
     limit,
     sortBy,
     sortOrder,
-  }: PaginationOptions<{ userId: User['id'] }, SessionSortBy>) {
-    const where = eq(session.userId, userId);
+  }: PaginationOptions<
+    { userId: User['id']; currentSessionId?: string; activeOnly?: boolean },
+    SessionSortBy
+  >) {
+    const where = activeOnly
+      ? and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`))
+      : eq(session.userId, userId);
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), then user-chosen sort within each group.
     const activeFirst = sql<number>`CASE WHEN ${session.expiresAt} > NOW() THEN 0 ELSE 1 END`;
@@ -62,8 +69,10 @@ export class SessionService {
           id: s.id,
           expiresAt: s.expiresAt.toISOString(),
           createdAt: s.createdAt.toISOString(),
+          updatedAt: s.updatedAt.toISOString(),
           ipAddress: s.ipAddress,
           userAgent: s.userAgent,
+          current: s.id === currentSessionId,
         }),
       ),
       total: Number(n),
@@ -75,7 +84,9 @@ export class SessionService {
   async revokeSession(userId: User['id'], id: string, actorId?: User['id'], meta?: ClientMeta) {
     const updated = await this.drizzle.db
       .update(session)
-      .set({ expiresAt: sql`now()` })
+      // Keep updatedAt as-is: it is the session's last-used time in the device
+      // list, and the $onUpdateFn would otherwise overwrite it with the revoke time.
+      .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
       .where(and(eq(session.id, id), eq(session.userId, userId)))
       .returning({ id: session.id });
 
@@ -97,7 +108,7 @@ export class SessionService {
   async revokeAllSessions(userId: User['id'], actorId?: User['id'], meta?: ClientMeta) {
     await this.drizzle.db
       .update(session)
-      .set({ expiresAt: sql`now()` })
+      .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
       .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
 
     this.events.emit('identity.sessions.revoked_all', {

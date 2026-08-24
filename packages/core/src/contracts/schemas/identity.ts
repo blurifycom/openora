@@ -167,6 +167,7 @@ export const ChangeEmailInputSchema = z.object({
 
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
 
+export type IdentitySuccess = z.infer<typeof IdentitySuccessSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Organization = z.infer<typeof OrganizationSchema>;
 export type Member = z.infer<typeof MemberSchema>;

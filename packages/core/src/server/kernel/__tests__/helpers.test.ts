@@ -60,6 +60,41 @@ describe('createEventStreamGenerator', () => {
     await gen.next();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
+
+  it('unsubscribes immediately when abort happens before consumption resumes', async () => {
+    const controller = new AbortController();
+    const unsubscribe = vi.fn();
+    const gen = createEventStreamGenerator<number>(() => unsubscribe, {
+      signal: controller.signal,
+    });
+
+    const pending = gen.next();
+    controller.abort();
+
+    await expect(pending).resolves.toEqual({ done: true, value: undefined });
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    await gen.return?.(undefined);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('unsubscribes immediately when abort happens while paused at a yield', async () => {
+    const controller = new AbortController();
+    const unsubscribe = vi.fn();
+    const gen = createEventStreamGenerator<number>(
+      (push) => {
+        queueMicrotask(() => push(1));
+        return unsubscribe;
+      },
+      { signal: controller.signal },
+    );
+
+    await expect(gen.next()).resolves.toEqual({ done: false, value: 1 });
+    controller.abort();
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    await gen.return?.(undefined);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
 });
 
 describe('domain-error factories', () => {

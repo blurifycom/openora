@@ -18,6 +18,8 @@ export type PaginationOptions<
     sortOrder?: SortOrder;
   };
 
+export type Paginated<T> = { items: T[]; total: number; page: number; limit: number };
+
 export const paginated = <T extends z.ZodType>(item: T) =>
   z.object({
     items: z.array(item),
