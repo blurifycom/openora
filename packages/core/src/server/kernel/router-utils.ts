@@ -10,6 +10,9 @@ type RequestLike = { headers: NodeHeaders };
 // NEVER sourced from a client-supplied header - a forged `x-user-id` cannot reach this field.
 export type AuthContext = {
   userId: string;
+  // Id of the better-auth session row backing this request. Lets a handler tell the
+  // caller's own session apart from their other devices (eg "In Use" vs "Revoke").
+  sessionId?: string | undefined;
 };
 
 export type OssContext = {
@@ -48,6 +51,10 @@ function resolveAuth(context: unknown): AuthContext {
 
 export function getUserId(context: unknown): string {
   return resolveAuth(context).userId;
+}
+
+export function getSessionId(context: unknown): string | undefined {
+  return resolveAuth(context).sessionId;
 }
 
 // Extracts IP only from headers; does not trust X-Forwarded-For without a
