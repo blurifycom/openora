@@ -1091,6 +1091,7 @@ export class WalletService {
     network,
     idempotencyKey,
     destinationAddress,
+    destinationTag,
     ip,
     userAgent,
   }: {
@@ -1100,6 +1101,7 @@ export class WalletService {
     network?: string;
     idempotencyKey?: string;
     destinationAddress?: string;
+    destinationTag?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
@@ -1157,6 +1159,7 @@ export class WalletService {
             rail: this.resolveRail(currency),
             network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
+            destinationTag: destinationTag ?? null,
             destinationWalletId,
           },
         });
@@ -1414,6 +1417,7 @@ export class WalletService {
         rail: tx.rail,
         adminId,
         destinationAddress: tx.destinationAddress,
+        destinationTag: tx.destinationTag,
         // The provider-side whitelisted destination for that address, when the bound adapter
         // whitelists at all. Absent for an address that predates whitelisting or was never in
         // the book, and such an adapter is expected to refuse rather than pay out to the raw

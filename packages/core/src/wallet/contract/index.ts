@@ -97,6 +97,12 @@ export const WithdrawInputSchema = z.object({
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
   destinationAddress: WalletAddressInputSchema.optional(),
+  // Tag/memo networks (XRP, XLM, EOS, and the exchange deposit addresses on them) carry the
+  // beneficiary in a separate field rather than in the address: one address serves every
+  // account behind it. A payout sent without the tag the player was given arrives
+  // unattributed and has to be recovered by hand, so it is carried end to end instead of
+  // being dropped between the request and the custodian.
+  destinationTag: z.string().trim().min(1).max(64).optional(),
 });
 
 export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;

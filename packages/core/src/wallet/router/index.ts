@@ -182,6 +182,7 @@ export function createWalletRouter({
             network: input.network,
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
+            destinationTag: input.destinationTag,
             ...context.clientMeta,
           }),
       );

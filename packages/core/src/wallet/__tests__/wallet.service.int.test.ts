@@ -935,6 +935,49 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
     expect(result.transactionId).toBeDefined();
   });
 
+  it('carries the destination tag through to the payout adapter', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      network: 'BITCOIN',
+      destinationAddress: 'bc1qexample',
+      destinationTag: '4138454749',
+      ...NO_CLIENT_META,
+    });
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId, NO_CLIENT_META);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationTag: '4138454749' }),
+    );
+  });
+
+  it('leaves the tag null for a payout that carries none', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      network: 'BITCOIN',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId, NO_CLIENT_META);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationTag: null }),
+    );
+  });
+
   it('leaves a non-whitelisting adapter alone', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
