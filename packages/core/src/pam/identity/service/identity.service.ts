@@ -15,7 +15,6 @@ import {
 import { parseCookies } from 'better-auth/cookies';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
-import { player } from '@openora/core/pam/schema/profile';
 import type {
   CacheAdapter,
   RateLimiterAdapter,
@@ -30,6 +29,7 @@ import type {
   RequestPasswordResetInput,
   VerifyPasswordResetOtpInput,
   ResetPasswordInput,
+  ResendEmailVerificationInput,
   VerifyEmailInput,
   UpdateProfileInput,
   Theme,
@@ -40,12 +40,13 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
+  RegistrationFailureReason,
   GeoCheckCommands,
   PlayerProvisioning,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
-import { isRgBlocked } from './rg-guard.service.js';
+import { assertAccountNotBlocked } from './rg-guard.service.js';
 import {
   DEFAULT_LOCKOUT_DURATION_MS,
   DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -134,8 +135,8 @@ type ExtendedAuthApi = {
   requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
   checkVerificationOTP: AuthCall<{ email: string; type: 'forget-password'; otp: string }>;
   resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
-  sendVerificationEmail: AuthCall<{ email: string }>;
-  verifyEmail: AuthCall<{ token: string }>;
+  sendVerificationOTP: AuthCall<{ email: string; type: 'email-verification' }>;
+  verifyEmailOTP: AuthCall<{ email: string; otp: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
   changeEmail: AuthCall<{ newEmail: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
@@ -206,8 +207,20 @@ const PASSWORD_RESET_VERIFY_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 const VERIFY_2FA_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
-const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
-const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+// Fails closed with the verify budget below: better-auth issues a fresh code (and a fresh
+// 3-attempt counter) per resend, so an unbounded resend loop is an unbounded guess budget.
+const EMAIL_VERIFICATION_RATE_LIMIT = {
+  limit: 3,
+  windowMs: 15 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
+// Fails closed like the other secret-guessing budgets: the emailed code is six digits,
+// so an unthrottled window is a brute-force window, not a degraded-UX window.
+const VERIFY_EMAIL_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 15 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -287,6 +300,12 @@ export class IdentityService {
   private readonly playerProvisioning?: PlayerProvisioning;
   private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
+  // Addresses whose reset code is being sent because a sign-up hit an existing account.
+  // Held only for the duration of that send: `requestPasswordResetEmailOTP` drives
+  // `sendVerificationOTP` -> `render` inside the same await, so the flag is read before
+  // the `finally` clears it. Not cache-backed - it never has to outlive the call or
+  // cross a process.
+  private readonly existingAccountSignUps = new Set<string>();
 
   constructor({
     drizzle,
@@ -318,14 +337,23 @@ export class IdentityService {
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
-      registrationWebUrl: this.platformConfig?.registration?.webUrl,
+      requireEmailVerification:
+        this.platformConfig?.registration?.requireEmailVerification ?? false,
+      isExistingAccountSignUp: (lookupEmail) =>
+        this.existingAccountSignUps.has(lookupEmail.toLowerCase()),
       onExistingUserSignUp: async (existing) => {
-        const response = await this.api.requestPasswordResetEmailOTP({
-          body: { email: existing.email },
-          headers: new Headers(),
-          asResponse: true,
-        });
-        await ensureOk(response);
+        const key = existing.email.toLowerCase();
+        this.existingAccountSignUps.add(key);
+        try {
+          const response = await this.api.requestPasswordResetEmailOTP({
+            body: { email: existing.email },
+            headers: new Headers(),
+            asResponse: true,
+          });
+          await ensureOk(response);
+        } finally {
+          this.existingAccountSignUps.delete(key);
+        }
       },
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', {
@@ -374,20 +402,62 @@ export class IdentityService {
     return session?.user?.id ?? null;
   }
 
+  // Same gate as password login and phone login, from the one shared implementation.
+  private assertAccountNotBlocked(
+    account: { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null },
+    meta: ClientMeta,
+  ): Promise<string | null> {
+    return assertAccountNotBlocked({ drizzle: this.drizzle, events: this.events }, account, meta, {
+      revokeSessions: true,
+      errorData: { rgBlocked: { code: 'RG_BLOCKED' }, suspended: { code: 'ACCOUNT_SUSPENDED' } },
+    });
+  }
+
+  /**
+   * Emitted on every registration attempt that produced no account. The audit trail is
+   * the one place that records what actually happened - the HTTP response deliberately
+   * does not, because a truthful answer on a known address is an enumeration oracle.
+   */
+  private emitRegistrationFailed(
+    reason: RegistrationFailureReason,
+    input: RegisterInput,
+    { ip, userAgent }: ClientMeta,
+  ) {
+    this.events.emit('identity.user.registration.failed', {
+      email: input.email,
+      username: input.username,
+      reason,
+      ip,
+      userAgent,
+    });
+  }
+
   async register(input: RegisterInput, reqHeaders: NodeHeaders) {
+    // Read before the config guard: a rejected attempt is audited too, and an audit row
+    // with no origin is barely a record.
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const meta = { ip, userAgent };
     const registration = this.platformConfig?.registration;
     const provisioning = this.playerProvisioning;
     if (!registration || !provisioning) {
+      this.emitRegistrationFailed('registration_disabled', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
-    await assertRateLimit(
-      this.limiter,
-      `register:${input.email.toLowerCase()}`,
-      REGISTER_RATE_LIMIT,
-    );
-    await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    // `assertRateLimit` throws and is shared by a dozen call sites, so the emit wraps it
+    // here rather than moving into it.
+    try {
+      await assertRateLimit(
+        this.limiter,
+        `register:${input.email.toLowerCase()}`,
+        REGISTER_RATE_LIMIT,
+      );
+      await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    } catch (err) {
+      this.emitRegistrationFailed('rate_limited', input, meta);
+      throw err;
+    }
     if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
+      this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
     const headers = nodeHeadersToHeaders(reqHeaders);
@@ -405,26 +475,65 @@ export class IdentityService {
       // The `lower(username)` unique index is the only arbiter - a pre-flight check
       // could not close the race anyway, so the taken handle is read off the failure.
       if (await this.findUserIdByUsername(input.username)) {
+        this.emitRegistrationFailed('username_taken', input, meta);
         throw new UsernameConflictError();
       }
+      // `ensureOk` always throws on a non-ok response, so emitting first needs no catch.
+      this.emitRegistrationFailed('error', input, meta);
       await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
     }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
     // A known address gets an indistinguishable success response (and a reset mail)
     // rather than a new account, so only a genuinely new user is provisioned.
-    if ((await this.findUserIdByEmail(input.email)) === body.user.id) {
-      const { playerId } = await this.recordRegistrationConsent(
+    if ((await this.findUserIdByEmail(input.email)) !== body.user.id) {
+      // The known-address branch: no account was created, so the attempt failed even
+      // though the caller is told it succeeded. Only the audit trail says so.
+      this.emitRegistrationFailed('email_already_registered', input, meta);
+      return { status: 'check-email' as const };
+    }
+    let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
+    try {
+      consent = await this.recordRegistrationConsent(
         provisioning,
         body.user.id,
         registration.termsVersion,
         { ip, userAgent },
       );
-      this.events.emit('identity.user.registered', {
-        userId: body.user.id,
-        playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
-        ip,
-        userAgent,
-      });
+    } catch (err) {
+      this.emitRegistrationFailed('error', input, meta);
+      throw err;
+    }
+    const { playerId, consentStored } = consent;
+    this.events.emit('identity.user.registered', {
+      userId: body.user.id,
+      playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+      // Only claimed when the consent row was actually written - a discarded capture
+      // must not leave an audit trail implying evidence that does not exist.
+      ...(consentStored
+        ? {
+            termsVersion: registration.termsVersion,
+            acceptedTerms: input.acceptedTerms,
+            acceptedAge: input.acceptedAge,
+          }
+        : {}),
+      ip,
+      userAgent,
+    });
+    // Sent here rather than by better-auth's sendOnSignUp hook: that hook also fires on
+    // the synthetic duplicate-email response, mailing a live code to an address whose
+    // owner never asked for it - and `verifyEmail` signs that code's bearer in.
+    // A mail failure is logged, never surfaced: the account exists either way and the
+    // player can ask for a new code, so failing the call here would only mislead them.
+    const otpResponse = await this.api.sendVerificationOTP({
+      body: { email: input.email, type: 'email-verification' },
+      headers,
+      asResponse: true,
+    });
+    if (!otpResponse.ok) {
+      identityLogger.error(
+        { userId: body.user.id, status: otpResponse.status },
+        'verification code could not be sent - player must request a new one',
+      );
     }
     return { status: 'check-email' as const };
   }
@@ -485,7 +594,7 @@ export class IdentityService {
         'registration consent not stored - player row already existed',
       );
     }
-    return { playerId: outcome.playerId ?? null };
+    return { playerId: outcome.playerId ?? null, consentStored: outcome.created };
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
@@ -614,64 +723,12 @@ export class IdentityService {
       });
       await ensureOk(authResponse);
 
-      // Resolved once (only when a user was found), before either gate below, so both
-      // the RG-block and the Backoffice-block events - and the eventual login success
-      // event - can all carry playerId.
-      let playerRow: Pick<typeof player.$inferSelect, 'id' | 'status'> | undefined;
-      if (existingUser) {
-        [playerRow] = await this.drizzle.db
-          .select({ id: player.id, status: player.status })
-          .from(player)
-          .where(eq(player.userId, existingUser.id))
-          .limit(1);
-      }
-
-      // RG login block, applied only AFTER credentials verify so a pre-auth probe can't
-      // distinguish a restricted account from a wrong password. Kill the session
-      // better-auth just issued and never forward its cookie. Cooling-off auto-expires
-      // here once rgBlockedUntil elapses (no unblock job).
-      if (existingUser && isRgBlocked(existingUser)) {
-        await this.drizzle.db
-          .update(session)
-          .set({ expiresAt: new Date() })
-          .where(eq(session.userId, existingUser.id));
-        this.events.emit('rg.exclusion.login_blocked', {
-          userId: existingUser.id,
-          playerId: playerRow?.id ?? null,
-          ip,
-          userAgent,
-        });
-        throw new ORPCError('FORBIDDEN', {
-          message: 'Account access is currently restricted (responsible gambling).',
-          data: { code: 'RG_BLOCKED' },
-        });
-      }
-
-      // Backoffice-initiated account block (status suspended/closed). Same shape as the
-      // RG gate above: applied only AFTER credentials verify, kills the just-issued
-      // session and withholds its cookie. Distinct mechanism from RG (self_excluded is
-      // out of scope here) - a suspended/closed player can never log back in.
-      if (
-        existingUser &&
-        playerRow &&
-        (playerRow.status === 'suspended' || playerRow.status === 'closed')
-      ) {
-        await this.drizzle.db
-          .update(session)
-          .set({ expiresAt: new Date() })
-          .where(eq(session.userId, existingUser.id));
-        this.events.emit('player.login_blocked', {
-          userId: existingUser.id,
-          playerId: playerRow.id,
-          status: playerRow.status,
-          ip,
-          userAgent,
-        });
-        throw new ORPCError('FORBIDDEN', {
-          message: 'This account has been suspended and can no longer be used.',
-          data: { code: 'ACCOUNT_SUSPENDED' },
-        });
-      }
+      // RG and backoffice blocks, applied only AFTER credentials verify so a pre-auth
+      // probe can't distinguish a restricted account from a wrong password. Resolves
+      // playerId once, so the eventual login success event can carry it too.
+      const playerId = existingUser
+        ? await this.assertAccountNotBlocked(existingUser, { ip, userAgent })
+        : null;
 
       this.forwardCookies(authResponse, resHeaders);
 
@@ -696,7 +753,7 @@ export class IdentityService {
         .where(eq(session.token, body.token));
       this.events.emit('identity.user.login', {
         userId: body.user.id,
-        playerId: playerRow?.id ?? null,
+        playerId,
         ip,
         userAgent,
       });
@@ -1178,68 +1235,118 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async sendEmailVerification(reqHeaders: NodeHeaders) {
-    const headers = nodeHeadersToHeaders(reqHeaders);
-    const session = await this.auth.api.getSession({ headers });
-    const email = session?.user?.email;
-    if (email) {
-      await assertRateLimit(
-        this.limiter,
-        `email-verify:${email.toLowerCase()}`,
-        EMAIL_VERIFICATION_RATE_LIMIT,
-      );
-      await this.api.sendVerificationEmail({ body: { email }, headers, asResponse: true });
+  /**
+   * Resends the registration code. Unauthenticated by design - the player has no session
+   * until the code is verified - so it answers SUCCESS for every address and only mails a
+   * code to an account that exists and is still unverified. Verified accounts are skipped
+   * deliberately: `verifyEmail` signs the code's bearer in, so resending to a verified
+   * address would turn this into passwordless sign-in for anyone who can read that inbox.
+   */
+  async sendEmailVerification(input: ResendEmailVerificationInput, reqHeaders: NodeHeaders) {
+    const { ip } = extractClientMeta(reqHeaders);
+    const email = input.email.toLowerCase();
+    await assertRateLimit(this.limiter, `email-verify:${email}`, EMAIL_VERIFICATION_RATE_LIMIT);
+    if (ip) {
+      await assertRateLimit(this.limiter, `email-verify-ip:${ip}`, EMAIL_VERIFICATION_RATE_LIMIT);
     }
-    return SUCCESS;
-  }
-
-  async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
-    const headers = nodeHeadersToHeaders(reqHeaders);
-    const sessionUserId = await this.currentUserId(headers);
-    // Verification links are followed without a session, so an `anonymous` bucket
-    // would be shared by every caller - one client could stall everyone's sign-up.
-    await assertRateLimit(
-      this.limiter,
-      `verify-email:${sessionUserId ?? ip ?? 'unknown'}`,
-      VERIFY_EMAIL_RATE_LIMIT,
-    );
-    const res = await this.api.verifyEmail({
-      query: { token: input.token },
-      headers,
-      asResponse: true,
-    });
-    await ensureOk(res);
-    const userId = sessionUserId ?? (await this.userIdFromVerificationToken(input.token));
-    if (userId) {
-      this.events.emit('identity.email.verified', {
-        userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-        ip,
-        userAgent,
+    const [row] = await this.drizzle.db
+      .select({ emailVerified: user.emailVerified })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+    if (row && !row.emailVerified) {
+      await this.api.sendVerificationOTP({
+        body: { email, type: 'email-verification' },
+        headers: nodeHeadersToHeaders(reqHeaders),
+        asResponse: true,
       });
     }
     return SUCCESS;
   }
 
   /**
-   * Better Auth answers an unauthenticated verification with `user: null`, so the
-   * subject is recovered from the token it just accepted - otherwise the audit event
-   * would never fire for the ordinary click-the-link flow.
+   * Consumes the 6-digit code mailed by `register()` and signs the player in -
+   * better-auth's `autoSignInAfterVerification` mints the session here rather than at
+   * sign-up, which is what lets sign-up stay sessionless and therefore keep its
+   * duplicate-email response indistinguishable. Same post-credential gates as `login`:
+   * a code is proof of address ownership, not a bypass for an RG or backoffice block.
    */
-  private async userIdFromVerificationToken(token: string) {
-    const payload = token.split('.')[1];
-    if (!payload) {
-      return null;
+  async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const email = input.email.toLowerCase();
+    // Keyed on the address under attack (six digits are guessable) and on the caller, so
+    // one client can neither grind a single account nor sweep many.
+    await assertRateLimit(this.limiter, `verify-email:${email}`, VERIFY_EMAIL_RATE_LIMIT);
+    // Only when the caller's IP is actually known: an `unknown` bucket would be shared by
+    // every anonymous caller, letting one client stall everyone else's sign-up.
+    if (ip) {
+      await assertRateLimit(this.limiter, `verify-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
-    let email: unknown;
-    try {
-      email = (JSON.parse(Buffer.from(payload, 'base64url').toString()) as { email?: unknown })
-        .email;
-    } catch {
-      return null;
+    const res = await this.api.verifyEmailOTP({
+      body: { email, otp: input.otp },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    const body = (await res.json()) as { token?: string | null; user: BetterAuthUser };
+
+    // better-auth has already committed `emailVerified` by now, so the audit record is
+    // emitted before any gate below can throw - a state change that leaves no trail is a
+    // compliance gap, see docs/standards/audit.md.
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(body.user.id);
+    this.events.emit('identity.email.verified', { userId: body.user.id, playerId, ip, userAgent });
+
+    const [account] = await this.drizzle.db
+      .select({
+        id: user.id,
+        rgBlocked: user.rgBlocked,
+        rgBlockedUntil: user.rgBlockedUntil,
+        twoFactorEnabled: user.twoFactorEnabled,
+      })
+      .from(user)
+      .where(eq(user.id, body.user.id))
+      .limit(1);
+    if (account) {
+      await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
-    return typeof email === 'string' ? this.findUserIdByEmail(email) : null;
+
+    // better-auth mints this session with `createSession`, which its twoFactor plugin only
+    // hooks on the sign-in routes - so an enrolled account would get a full session from
+    // the emailed code alone, bypassing its second factor. Verification still stands; the
+    // session does not, and the player signs in through `login` to face the challenge.
+    if (account?.twoFactorEnabled) {
+      // Scoped to the token this call just minted: the player's other devices did nothing
+      // wrong, and an unrelated sign-out here would be indistinguishable from a session
+      // hijack. The RG/backoffice branch above is the one that revokes everything.
+      if (body.token) {
+        await this.drizzle.db
+          .update(session)
+          .set({ expiresAt: new Date() })
+          .where(eq(session.token, body.token));
+      }
+      return { twoFactorRedirect: true as const };
+    }
+
+    if (!body.token) {
+      throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Verification did not sign you in' });
+    }
+    this.forwardCookies(res, resHeaders);
+    await this.drizzle.db
+      .update(session)
+      .set({ ipAddress: ip, userAgent })
+      .where(eq(session.token, body.token));
+    this.events.emit('identity.user.login', { userId: body.user.id, playerId, ip, userAgent });
+
+    const sessionDurationSeconds =
+      this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
+    return {
+      user: toUser(body.user),
+      session: {
+        token: body.token,
+        expiresAt: new Date(Date.now() + sessionDurationSeconds * 1000).toISOString(),
+      },
+    };
   }
 
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {

@@ -124,8 +124,11 @@ export const RegistrationConfigSchema = z
   .object({
     /** Version recorded beside the player's affirmative terms acceptance. */
     termsVersion: z.string().min(1),
-    /** Public consumer origin used in verification-email links. */
-    webUrl: z.url(),
+    /**
+     * Blocks sign-in until the player has verified their address. Off by default:
+     * unverified players stay unrestricted while the KYC toggle is off.
+     */
+    requireEmailVerification: z.boolean().default(false),
   })
   .strict();
 

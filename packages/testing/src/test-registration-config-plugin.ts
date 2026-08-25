@@ -9,7 +9,6 @@ export default {
       definePlatformConfig({
         registration: {
           termsVersion: 'test-v1',
-          webUrl: 'http://localhost:3000',
         },
       }),
     );

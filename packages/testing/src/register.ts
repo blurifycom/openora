@@ -27,34 +27,39 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
-/** The `token` query param better-auth put in the most recent verification email. */
-export function verificationTokenFor(email: string): string {
-  const [sent] = capturedEmailsFor(email);
+/**
+ * The 6-digit code in the most recent verification email. Filtered by subject rather than
+ * taking the newest mail outright: a sign-up on an address that already has an account
+ * also mails a six-digit code, and picking that one up would silently test the wrong flow.
+ */
+export function verificationOtpFor(email: string): string {
+  const [sent] = capturedEmailsFor(email).filter((mail) => /verify/i.test(mail.subject));
   if (!sent) {
     throw new Error(`no verification email captured for ${email}`);
   }
-  const token = /[?&]token=([^&\s"']+)/.exec(sent.body)?.[1];
-  if (!token) {
-    throw new Error(`no token in verification email for ${email}: ${sent.body}`);
+  const otp = /\b(\d{6})\b/.exec(sent.body)?.[1];
+  if (!otp) {
+    throw new Error(`no verification code in email for ${email}: ${sent.body}`);
   }
-  return decodeURIComponent(token);
+  return otp;
 }
 
 /**
- * Clicks the emailed verification link for real - the route consumes the token,
- * rate-limits, and emits `identity.email.verified`, none of which a direct
- * `email_verified` write would exercise.
+ * Enters the emailed code for real - the route consumes the OTP, rate-limits, mints the
+ * session and emits `identity.email.verified`, none of which a direct `email_verified`
+ * write would exercise. Returns the response so callers can assert on the session.
  */
-export async function verifyEmailByLink(app: TestApp, email: string) {
+export async function verifyEmailByOtp(app: TestApp, email: string) {
   const res = await app.app.request('/identity/email/verify', {
     method: 'POST',
-    // Fresh client IP per click: the route buckets unauthenticated callers by IP.
+    // Fresh client IP per attempt: the route also buckets callers by IP.
     headers: registrationRequestHeaders(),
-    body: JSON.stringify({ token: verificationTokenFor(email) }),
+    body: JSON.stringify({ email, otp: verificationOtpFor(email) }),
   });
   if (!res.ok) {
     throw new Error(`verify email failed (${res.status}): ${await res.text()}`);
   }
+  return res;
 }
 
 /** Escape hatch for tests that only need the verified state, not the route. */
@@ -67,8 +72,8 @@ export async function forceEmailVerified(app: TestApp, userId: string) {
 }
 
 /**
- * Registers a player and returns its user id. Sign-in requires a verified address,
- * so pass `verifyEmail: false` only when the test asserts on the unverified state.
+ * Registers a player and returns its user id. Verification is what mints the first
+ * session, so pass `verifyEmail: false` only when the test asserts on the unverified state.
  */
 export async function registerPlayer(
   app: TestApp,
@@ -87,7 +92,7 @@ export async function registerPlayer(
     throw new Error('registered user was not persisted');
   }
   if (input.verifyEmail !== false) {
-    await verifyEmailByLink(app, input.email);
+    await verifyEmailByOtp(app, input.email);
   }
   return registered.id;
 }
