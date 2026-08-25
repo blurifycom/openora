@@ -1,12 +1,5 @@
 import { eq, asc, desc, count } from 'drizzle-orm';
-import {
-  DrizzleService,
-  makeNotFoundError,
-  makeConflictError,
-  createDomainError,
-  findOneOrThrow,
-  pageToOffset,
-} from '@openora/core/server';
+import { DrizzleService, findOneOrThrow, pageToOffset } from '@openora/core/server';
 import type {
   Uuid,
   CommandChatMessage,
@@ -31,63 +24,43 @@ import type {
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
+import {
+  BlockedRecipientError,
+  BelowMinimumError,
+  ChatCommandIdempotencyKeyReuseError,
+  ChatPlayerNotFoundError,
+  ChatRoomNotMemberError,
+  CommandDisabledError,
+  ConcurrentCommandReplayError,
+  ExceedsLimitError,
+  GiftAlreadyClaimedError,
+  GiftCreditError,
+  GiftNotFoundError,
+  GiftSelfClaimError,
+  InsufficientBalanceError,
+  NoOnlineUsersError,
+  RainCreditError,
+  TooManyRecipientsError,
+} from './chat-command-transfers.service.js';
 
-export const CommandDisabledError = makeNotFoundError('ChatCommand');
-export const ChatPlayerNotFoundError = makeNotFoundError('ChatPlayer');
-export const InsufficientBalanceError = makeConflictError(
-  'InsufficientBalance',
-  'Not enough balance',
-);
-export const ExceedsLimitError = makeConflictError(
-  'ExceedsLimit',
-  'Amount exceeds the command limit',
-);
-export const BelowMinimumError = makeConflictError(
-  'BelowMinimum',
-  'Amount is below the minimum for this command',
-);
-export const NoOnlineUsersError = makeConflictError(
-  'NoOnlineUsers',
-  'No other users are online in this room',
-);
-export const TooManyRecipientsError = makeConflictError(
-  'TooManyRecipients',
-  'Amount too small: you need at least $1 per recipient',
-);
-export const RainCreditError = makeConflictError(
-  'RainCreditError',
-  'A recipient wallet is unavailable; rain aborted',
-);
-export const GiftNotFoundError = makeNotFoundError('ChatGift');
-export const GiftAlreadyClaimedError = makeConflictError(
-  'GiftAlreadyClaimed',
-  'This gift has already been claimed',
-);
-export const GiftSelfClaimError = makeConflictError(
-  'GiftSelfClaim',
-  'You cannot claim your own gift',
-);
-export const BlockedRecipientError = makeConflictError(
-  'BlockedRecipient',
-  'You cannot receive money from a user you blocked',
-);
-export const GiftCreditError = makeConflictError(
-  'GiftCreditError',
-  'Recipient wallet is unavailable; gift claim aborted',
-);
-export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
-  'ChatCommandIdempotencyKeyReuse',
-  'This idempotency key was already used with different request parameters',
-);
-export const ConcurrentCommandReplayError = makeConflictError(
-  'ConcurrentCommandReplay',
-  'This request is already being processed - please retry',
-);
-export const ChatRoomNotMemberError = createDomainError(
-  'ChatRoomNotMemberError',
-  (roomId: Uuid | null) =>
-    roomId ? `You are not a member of room: ${roomId}` : 'You are not a member of global chat',
-);
+export {
+  BlockedRecipientError,
+  BelowMinimumError,
+  ChatCommandIdempotencyKeyReuseError,
+  ChatPlayerNotFoundError,
+  ChatRoomNotMemberError,
+  CommandDisabledError,
+  ConcurrentCommandReplayError,
+  ExceedsLimitError,
+  GiftAlreadyClaimedError,
+  GiftCreditError,
+  GiftNotFoundError,
+  GiftSelfClaimError,
+  InsufficientBalanceError,
+  NoOnlineUsersError,
+  RainCreditError,
+  TooManyRecipientsError,
+};
 
 function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {
   return {
@@ -321,8 +294,8 @@ export class ChatCommandsService {
     }
   }
 
-  // Zero rain business logic here - the RAIN_COMMANDS port (bound by
-  // social-transfers) owns money movement, limit checks, idempotency, and
+  // Zero rain business logic here - the RAIN_COMMANDS port (bound by this
+  // plugin) owns money movement, limit checks, idempotency, and
   // posting/publishing the resulting chat message. This module only resolves
   // who is online (it owns presence for the whole chat-command surface via
   // its own dependency on `chat`) and translates the port's discriminated

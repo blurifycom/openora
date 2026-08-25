@@ -68,6 +68,14 @@ export const PostRainInputSchema = z.object({
 });
 export type PostRainInput = z.infer<typeof PostRainInputSchema>;
 
+export const SendDonateInputSchema = z.object({
+  targetUsername: z.string().min(1),
+  amount: MoneyAmountSchema,
+  roomId: ChatRoomIdSchema,
+  idempotencyKey: UuidSchema,
+});
+export type SendDonateInput = z.infer<typeof SendDonateInputSchema>;
+
 export const ClaimGiftOutputSchema = z.object({
   claimedBy: UuidSchema,
   claimedByUsername: z.string(),
@@ -94,9 +102,8 @@ export const chatCommandsContract = {
     .input(z.object({}))
     .output(z.array(ChatCommandDescriptorSchema)),
 
-  // Dedicated gift-send operation - money/limit/idempotency logic lives in the
-  // social-transfers module behind the GIFT_COMMANDS port; this module only
-  // wires the route. See AGENTS.md.
+  // Dedicated gift-send operation - transfer mechanics live in the transfer
+  // service owned by this plugin. See AGENTS.md.
   postGift: oc
     .route({ method: 'POST', path: '/chat-command/gift' })
     .input(PostGiftInputSchema)
@@ -113,12 +120,15 @@ export const chatCommandsContract = {
     .output(GiftStateSchema),
 
   // Dedicated rain-send operation - this module resolves the online recipient
-  // list (it owns presence lookups for the chat command surface) and hands it
-  // to the RAIN_COMMANDS port; money/limit/idempotency logic lives in
-  // social-transfers. See AGENTS.md.
+  // list and hands it to the transfer service. See AGENTS.md.
   postRain: oc
     .route({ method: 'POST', path: '/chat-command/rain' })
     .input(PostRainInputSchema)
+    .output(CommandChatMessageSchema),
+
+  sendDonate: oc
+    .route({ method: 'POST', path: '/chat-command/donate' })
+    .input(SendDonateInputSchema)
     .output(CommandChatMessageSchema),
 
   mentionSearch: oc

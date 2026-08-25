@@ -113,7 +113,12 @@
       "id": "chat-commands",
       "group": "engagement",
       "tables": [
-        "chat_command_config"
+        "chat_command_config",
+        "chat_command_idempotency",
+        "player_donate",
+        "player_gift",
+        "player_rain",
+        "player_rain_receiver"
       ],
       "routes": [
         "chat-commands.adminListCommands",
@@ -123,7 +128,8 @@
         "chat-commands.listCommands",
         "chat-commands.mentionSearch",
         "chat-commands.postGift",
-        "chat-commands.postRain"
+        "chat-commands.postRain",
+        "chat-commands.sendDonate"
       ]
     },
     {
@@ -346,19 +352,6 @@
       ]
     },
     {
-      "id": "social-transfers",
-      "group": "engagement",
-      "tables": [
-        "player_donate",
-        "player_gift",
-        "player_rain",
-        "player_rain_receiver"
-      ],
-      "routes": [
-        "social-transfers.sendDonate"
-      ]
-    },
-    {
       "id": "tag",
       "group": "pam",
       "tables": [
@@ -482,7 +475,6 @@
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -517,7 +509,6 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
@@ -543,7 +534,7 @@
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -556,7 +547,6 @@
       "boundIn": [
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts"
       ]
     },
@@ -575,8 +565,8 @@
       "token": "CHAT_ROOM_ACCESS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts"
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
     {
@@ -585,8 +575,8 @@
       "token": "CHAT_SYSTEM_WRITER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts"
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
     {
@@ -653,8 +643,7 @@
       "token": "GIFT_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts"
+        "packages/core/src/engagement/chat-commands/plugin.ts"
       ]
     },
     {
@@ -792,8 +781,7 @@
       "token": "RAIN_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts"
+        "packages/core/src/engagement/chat-commands/plugin.ts"
       ]
     },
     {
@@ -862,7 +850,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts",
-        "packages/core/src/engagement/social-transfers/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -1967,7 +1955,7 @@
     },
     {
       "name": "SendDonateInputSchema",
-      "file": "packages/core/src/engagement/social-transfers/contract/index.ts"
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "SendFriendRequestInputSchema",

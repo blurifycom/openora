@@ -10,6 +10,7 @@ import {
   findOneOrThrow,
   createDomainError,
   type EventBus,
+  type DrizzleDb,
   type DrizzleTx,
 } from '@openora/core/server';
 import type {
@@ -36,9 +37,15 @@ import type {
 import { chatChannel } from '@openora/core/contracts';
 import { chatCommandConfig } from '@openora/core/engagement/schema/chat-commands';
 import type { SendDonateInput } from '../contract/index.js';
-import { playerGift, playerDonate, playerRain, playerRainReceiver } from '../schema/index.js';
+import {
+  chatCommandIdempotency,
+  playerGift,
+  playerDonate,
+  playerRain,
+  playerRainReceiver,
+} from '../schema/index.js';
 
-const logger = createLogger('social-transfers');
+const logger = createLogger('chat-commands');
 
 function publishChatEvent<T>(transport: RealtimeTransport, roomId: Uuid | null, event: T): void {
   void Promise.resolve()
@@ -108,7 +115,8 @@ export const ConcurrentCommandReplayError = makeConflictError(
 );
 export const ChatRoomNotMemberError = createDomainError(
   'ChatRoomNotMemberError',
-  (roomId: Uuid) => `You are not a member of room: ${roomId}`,
+  (roomId: Uuid | null) =>
+    roomId ? `You are not a member of room: ${roomId}` : 'You are not a member of global chat',
 );
 
 // Internal-only: createDomainError instances don't expose their constructor args as
@@ -172,6 +180,11 @@ type CommandIdempotencyRecord = {
   result: CommandChatMessage | null;
 };
 
+type DurableCommandClaim = {
+  id: Uuid;
+  replay: CommandChatMessage | null;
+};
+
 // The replay guard must match on the COMPLETE request, not just the amount - a reused
 // key with a different room, recipient count, or donate target is a distinct request,
 // not a replay of the original. `idempotencyKey` itself is excluded so the fingerprint
@@ -195,6 +208,112 @@ export function fingerprintCommand(input: MoneyMovingInput): string {
             roomId: input.roomId,
           };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+async function claimDurableCommand(
+  tx: DrizzleTx,
+  {
+    commandType,
+    actorId,
+    idempotencyKey,
+    fingerprint,
+  }: {
+    commandType: 'gift' | 'rain' | 'donate';
+    actorId: Uuid;
+    idempotencyKey: Uuid;
+    fingerprint: string;
+  },
+): Promise<DurableCommandClaim> {
+  const [inserted] = await tx
+    .insert(chatCommandIdempotency)
+    .values({ actorId, commandType, idempotencyKey, fingerprint })
+    .onConflictDoNothing({
+      target: [
+        chatCommandIdempotency.actorId,
+        chatCommandIdempotency.commandType,
+        chatCommandIdempotency.idempotencyKey,
+      ],
+    })
+    .returning({ id: chatCommandIdempotency.id });
+
+  if (inserted) {
+    return { id: inserted.id, replay: null };
+  }
+
+  const [existing] = await tx
+    .select({
+      id: chatCommandIdempotency.id,
+      fingerprint: chatCommandIdempotency.fingerprint,
+      result: chatCommandIdempotency.result,
+    })
+    .from(chatCommandIdempotency)
+    .where(
+      and(
+        eq(chatCommandIdempotency.actorId, actorId),
+        eq(chatCommandIdempotency.commandType, commandType),
+        eq(chatCommandIdempotency.idempotencyKey, idempotencyKey),
+      ),
+    )
+    .for('update');
+
+  if (!existing) {
+    throw new ConcurrentCommandReplayError();
+  }
+  if (existing.fingerprint !== fingerprint) {
+    throw new ChatCommandIdempotencyKeyReuseError();
+  }
+  if (!existing.result) {
+    throw new ConcurrentCommandReplayError();
+  }
+  return { id: existing.id, replay: existing.result };
+}
+
+async function findDurableCommandReplay(
+  db: DrizzleDb,
+  {
+    commandType,
+    actorId,
+    idempotencyKey,
+    fingerprint,
+  }: {
+    commandType: 'gift' | 'rain' | 'donate';
+    actorId: Uuid;
+    idempotencyKey: Uuid;
+    fingerprint: string;
+  },
+): Promise<CommandChatMessage | null> {
+  const [existing] = await db
+    .select({
+      fingerprint: chatCommandIdempotency.fingerprint,
+      result: chatCommandIdempotency.result,
+    })
+    .from(chatCommandIdempotency)
+    .where(
+      and(
+        eq(chatCommandIdempotency.actorId, actorId),
+        eq(chatCommandIdempotency.commandType, commandType),
+        eq(chatCommandIdempotency.idempotencyKey, idempotencyKey),
+      ),
+    );
+
+  if (!existing) {
+    return null;
+  }
+  if (existing.fingerprint !== fingerprint) {
+    throw new ChatCommandIdempotencyKeyReuseError();
+  }
+  if (!existing.result) {
+    throw new ConcurrentCommandReplayError();
+  }
+  return existing.result;
+}
+
+async function completeDurableCommand(
+  tx: DrizzleTx,
+  id: Uuid,
+  result: CommandChatMessage,
+): Promise<void> {
+  await tx.update(chatCommandIdempotency).set({ result }).where(eq(chatCommandIdempotency.id, id));
 }
 
 function shuffleArray<T>(arr: readonly T[]): T[] {
@@ -319,7 +438,7 @@ function toSendRainResult(error: unknown): SendRainResult {
   throw error;
 }
 
-export class SocialTransfersService implements GiftCommands, RainCommands {
+export class ChatCommandTransfersService implements GiftCommands, RainCommands {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly systemWriter: ChatSystemWriter,
@@ -520,6 +639,21 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       throw new BelowMinimumError();
     }
 
+    const fingerprint = fingerprintCommand({ type: 'gift', ...input });
+    const replay = await this.findCommandReplay('gift', actorId, input.idempotencyKey, fingerprint);
+    if (replay) {
+      return replay;
+    }
+    const durableReplay = await findDurableCommandReplay(this.drizzle.db, {
+      commandType: 'gift',
+      actorId,
+      idempotencyKey: input.idempotencyKey,
+      fingerprint,
+    });
+    if (durableReplay) {
+      return durableReplay;
+    }
+
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const senderSummary = senderSummaries.find((s) => s.userId === actorId);
     if (!senderSummary) {
@@ -527,23 +661,32 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     }
     const senderUsername = senderSummary.username;
 
-    // Sender resolved BEFORE reserving (mirrors doSendDonate): runWithCommandReservation
-    // only releases the reservation on a failure inside its own callback, so anything
-    // between reserveCommandIdempotency and that callback would otherwise leak a stuck
-    // reservation for the full TTL on a transient directory error.
-    const fingerprint = fingerprintCommand({ type: 'gift', ...input });
-    const replay = await this.findCommandReplay('gift', actorId, input.idempotencyKey, fingerprint);
-    if (replay) {
-      return replay;
-    }
+    // Sender resolved BEFORE reserving: runWithCommandReservation only releases the
+    // reservation on a failure inside its own callback, so anything between reserveCommandIdempotency
+    // and that callback would otherwise leak a stuck reservation for the full TTL.
     await this.reserveCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint);
 
-    const { msg, giftId, currency } = await this.runWithCommandReservation(
+    const { msg, giftId, currency, replayed } = await this.runWithCommandReservation(
       'gift',
       actorId,
       input.idempotencyKey,
       () =>
         this.drizzle.db.transaction(async (tx) => {
+          const command = await claimDurableCommand(tx, {
+            commandType: 'gift',
+            actorId,
+            idempotencyKey: input.idempotencyKey,
+            fingerprint,
+          });
+          if (command.replay) {
+            return {
+              msg: command.replay,
+              giftId: undefined,
+              currency: undefined,
+              replayed: true as const,
+            };
+          }
+
           const debit = await this.wallet.debit(tx, {
             userId: actorId,
             amount: input.amount,
@@ -604,10 +747,19 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             before: null,
             after: { amount: input.amount, roomId: input.roomId },
           });
+          await completeDurableCommand(tx, command.id, message);
 
-          return { msg: message, giftId: giftRow.id, currency: debit.currency };
+          return {
+            msg: message,
+            giftId: giftRow.id,
+            currency: debit.currency,
+            replayed: false as const,
+          };
         }),
     );
+    if (replayed) {
+      return msg;
+    }
     await this.completeCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint, msg);
 
     // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
@@ -791,15 +943,25 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (input.recipientCount > configMax) {
       throw new ExceedsLimitError();
     }
-    const senderSummaries = await this.directory.lookupPlayers([actorId]);
-    const sender = senderSummaries.find((s) => s.userId === actorId);
-    if (!sender) {
-      throw new ChatPlayerNotFoundError(actorId);
-    }
     const fingerprint = fingerprintCommand({ type: 'rain', ...input });
     const replay = await this.findCommandReplay('rain', actorId, input.idempotencyKey, fingerprint);
     if (replay) {
       return replay;
+    }
+    const durableReplay = await findDurableCommandReplay(this.drizzle.db, {
+      commandType: 'rain',
+      actorId,
+      idempotencyKey: input.idempotencyKey,
+      fingerprint,
+    });
+    if (durableReplay) {
+      return durableReplay;
+    }
+
+    const senderSummaries = await this.directory.lookupPlayers([actorId]);
+    const sender = senderSummaries.find((s) => s.userId === actorId);
+    if (!sender) {
+      throw new ChatPlayerNotFoundError(actorId);
     }
     await this.reserveCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint);
 
@@ -810,11 +972,8 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     // for the full TTL. It must also stay after findCommandReplay/reserveCommandIdempotency so a
     // replay with a now-empty onlineUserIds list (the caller retried after everyone left) still
     // returns the original stored result instead of a spurious NoOnlineUsersError.
-    const { msg, currency, totalDistributed, recipientIds } = await this.runWithCommandReservation(
-      'rain',
-      actorId,
-      input.idempotencyKey,
-      async () => {
+    const { msg, currency, totalDistributed, recipientIds, replayed } =
+      await this.runWithCommandReservation('rain', actorId, input.idempotencyKey, async () => {
         const recipients = shuffleArray(input.onlineUserIds.filter((id) => id !== actorId)).slice(
           0,
           input.recipientCount,
@@ -831,6 +990,22 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           return { userId: summary.userId, username: summary.username };
         });
         return this.drizzle.db.transaction(async (tx) => {
+          const command = await claimDurableCommand(tx, {
+            commandType: 'rain',
+            actorId,
+            idempotencyKey: input.idempotencyKey,
+            fingerprint,
+          });
+          if (command.replay) {
+            return {
+              msg: command.replay,
+              currency: undefined,
+              totalDistributed: undefined,
+              recipientIds: undefined,
+              replayed: true as const,
+            };
+          }
+
           const { perRecipient, totalDistributed } = await calculateRainSplit(
             tx,
             input.amount,
@@ -905,6 +1080,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             before: null,
             after: { amount: totalDistributed, recipientCount: recipients.length },
           });
+          await completeDurableCommand(tx, command.id, message);
 
           return {
             msg: message,
@@ -912,10 +1088,13 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             totalDistributed,
             perRecipient,
             recipientIds: recipients,
+            replayed: false as const,
           };
         });
-      },
-    );
+      });
+    if (replayed) {
+      return msg;
+    }
     await this.completeCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint, msg);
 
     // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
@@ -949,17 +1128,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       throw new BelowMinimumError();
     }
 
-    const target = await this.resolveExactPlayer(input.targetUsername);
-
-    if (target.userId === actorId) {
-      throw new DonateSelfError();
-    }
-    const senderSummaries = await this.directory.lookupPlayers([actorId]);
-    const sender = senderSummaries.find((s) => s.userId === actorId);
-    if (!sender) {
-      throw new ChatPlayerNotFoundError(actorId);
-    }
-
     const fingerprint = fingerprintCommand({ type: 'donate', ...input });
     const replay = await this.findCommandReplay(
       'donate',
@@ -970,14 +1138,43 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (replay) {
       return replay;
     }
+    const durableReplay = await findDurableCommandReplay(this.drizzle.db, {
+      commandType: 'donate',
+      actorId,
+      idempotencyKey: input.idempotencyKey,
+      fingerprint,
+    });
+    if (durableReplay) {
+      return durableReplay;
+    }
+
+    const target = await this.resolveExactPlayer(input.targetUsername);
+    if (target.userId === actorId) {
+      throw new DonateSelfError();
+    }
+    const senderSummaries = await this.directory.lookupPlayers([actorId]);
+    const sender = senderSummaries.find((s) => s.userId === actorId);
+    if (!sender) {
+      throw new ChatPlayerNotFoundError(actorId);
+    }
     await this.reserveCommandIdempotency('donate', actorId, input.idempotencyKey, fingerprint);
 
-    const { msg, currency } = await this.runWithCommandReservation(
+    const { msg, currency, replayed } = await this.runWithCommandReservation(
       'donate',
       actorId,
       input.idempotencyKey,
       () =>
         this.drizzle.db.transaction(async (tx) => {
+          const command = await claimDurableCommand(tx, {
+            commandType: 'donate',
+            actorId,
+            idempotencyKey: input.idempotencyKey,
+            fingerprint,
+          });
+          if (command.replay) {
+            return { msg: command.replay, currency: undefined, replayed: true as const };
+          }
+
           if (await this.blockWriter.isBlocked(tx, actorId, target.userId)) {
             throw new BlockedRecipientError();
           }
@@ -1041,10 +1238,14 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             before: null,
             after: { recipientId: target.userId, amount: input.amount, currency: debit.currency },
           });
+          await completeDurableCommand(tx, command.id, message);
 
-          return { msg: message, currency: debit.currency };
+          return { msg: message, currency: debit.currency, replayed: false as const };
         }),
     );
+    if (replayed) {
+      return msg;
+    }
     await this.completeCommandIdempotency(
       'donate',
       actorId,

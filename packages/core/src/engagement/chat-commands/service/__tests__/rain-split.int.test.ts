@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../../migrate.js';
-import { calculateRainSplit, TooManyRecipientsError } from '../social-transfers.service.js';
+import { calculateRainSplit, TooManyRecipientsError } from '../chat-command-transfers.service.js';
 
 let db: TestDb;
 

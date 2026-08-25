@@ -12,14 +12,15 @@ import type {
   ChatBlockWriter,
 } from '@openora/core/contracts';
 import {
-  SocialTransfersService,
+  ChatCommandTransfersService,
   InsufficientBalanceError,
   BelowMinimumError,
   DonateSelfError,
   BlockedRecipientError,
   ChatPlayerNotFoundError,
+  ChatCommandIdempotencyKeyReuseError,
   fingerprintCommand,
-} from '../social-transfers.service.js';
+} from '../chat-command-transfers.service.js';
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
 const CLAIMER_ID = '00000000-0000-0000-0000-000000000002';
@@ -225,6 +226,7 @@ function makeSvc(
       returning?: Record<string, unknown>[][];
       execute?: Record<string, unknown>[][];
     };
+    durableReplay?: Record<string, unknown>;
     writer?: ChatSystemWriter;
     wallet?: WalletCommands;
     directory?: AdminUserDirectory;
@@ -235,12 +237,23 @@ function makeSvc(
     cache?: CacheAdapter;
   } = {},
 ) {
+  const selectRows = overrides.drizzleRows?.select ?? [];
   const drizzle = makeDrizzle({
-    select: overrides.drizzleRows?.select ?? [],
+    // The service checks the durable replay record after loading command config.
+    // Keep that lookup explicit in the mock queue without changing each test's
+    // command-config fixture.
+    select:
+      selectRows.length > 0
+        ? [
+            selectRows[0] ?? [],
+            overrides.durableReplay ? [overrides.durableReplay] : [],
+            ...selectRows.slice(1),
+          ]
+        : [],
     returning: overrides.drizzleRows?.returning ?? [],
     execute: overrides.drizzleRows?.execute,
   });
-  return new SocialTransfersService(
+  return new ChatCommandTransfersService(
     drizzle,
     overrides.writer ?? makeWriter(),
     overrides.wallet ?? makeWallet(),
@@ -259,7 +272,7 @@ const IDEMPOTENCY_CACHE_KEY = `chat-command:idempotency:${ACTOR_ID}:gift:${IDEMP
 const RAIN_IDEMPOTENCY_CACHE_KEY = `chat-command:idempotency:${ACTOR_ID}:rain:${IDEMPOTENCY_KEY}`;
 const IDEMPOTENCY_ROW_ID = '00000000-0000-0000-0000-0000000000bb';
 
-describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
+describe('ChatCommandTransfersService.sendGift (GIFT_COMMANDS port)', () => {
   it('returns { ok: false, reason: "disabled" } when the command row is missing', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[]] } });
     const result = await svc.sendGift(
@@ -313,7 +326,7 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[ENABLED_ROW]],
-        returning: [[{ ...GIFT_ROW }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ ...GIFT_ROW }]],
       },
       writer,
     });
@@ -348,7 +361,7 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
   });
 });
 
-describe('SocialTransfersService.sendGift idempotency', () => {
+describe('ChatCommandTransfersService.sendGift idempotency', () => {
   it('inserts the idempotency guard row and debits once when a fresh key is supplied', async () => {
     const wallet = makeWallet();
     const svc = makeSvc({
@@ -434,7 +447,7 @@ describe('SocialTransfersService.sendGift idempotency', () => {
   });
 });
 
-describe('SocialTransfersService.claimGift', () => {
+describe('ChatCommandTransfersService.claimGift', () => {
   it('credits the claimer and returns { ok: true } on happy path', async () => {
     const wallet = makeWallet();
     const writer = makeWriter();
@@ -530,7 +543,7 @@ describe('SocialTransfersService.claimGift', () => {
   });
 });
 
-describe('SocialTransfersService.getGift', () => {
+describe('ChatCommandTransfersService.getGift', () => {
   it('returns { ok: true, gift } for a gift in a room the viewer is a member of', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[GIFT_ROW]] } });
     const result = await svc.getGift(GIFT_ID, CLAIMER_ID);
@@ -570,7 +583,7 @@ describe('SocialTransfersService.getGift', () => {
   });
 });
 
-describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
+describe('ChatCommandTransfersService.sendRain (RAIN_COMMANDS port)', () => {
   const RAIN_ROW = { ...ENABLED_ROW, key: 'rain', label: 'Rain' };
 
   it('returns { ok: false, reason: "player_not_found" } when a recipient is missing', async () => {
@@ -646,6 +659,30 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     expect(wallet.debit).not.toHaveBeenCalled();
   });
 
+  it('replays the durable result before checking transient online presence', async () => {
+    const wallet = makeWallet();
+    const input = {
+      amount: '10.00000000',
+      recipientCount: 2,
+      roomId: ROOM_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+      onlineUserIds: [],
+    };
+    const svc = makeSvc({
+      drizzleRows: { select: [[RAIN_ROW]] },
+      durableReplay: {
+        fingerprint: fingerprintCommand({ type: 'rain', ...input }),
+        result: SYSTEM_MSG,
+      },
+      wallet,
+    });
+
+    const result = await svc.sendRain(input, ACTOR_ID);
+
+    expect(result).toEqual({ ok: true, message: SYSTEM_MSG });
+    expect(wallet.debit).not.toHaveBeenCalled();
+  });
+
   it('distributes to online recipients excluding the actor, persists a player_rain row + receivers, posts a system message with rain metadata inside the transaction, and publishes after commit', async () => {
     const wallet = makeWallet();
     const writer = makeWriter();
@@ -653,7 +690,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ id: '00000000-0000-0000-0000-0000000000cc' }]],
         execute: [
           [
             {
@@ -714,7 +751,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ id: '00000000-0000-0000-0000-0000000000cc' }]],
         execute: [
           [
             {
@@ -757,7 +794,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ id: '00000000-0000-0000-0000-0000000000cc' }]],
         execute: [
           [
             {
@@ -810,7 +847,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ id: '00000000-0000-0000-0000-0000000000cc' }]],
         execute: [
           [
             {
@@ -853,7 +890,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ id: '00000000-0000-0000-0000-0000000000cc' }]],
         execute: [
           [
             {
@@ -1020,7 +1057,68 @@ function makeRecipientDirectory(): AdminUserDirectory {
   });
 }
 
-describe('SocialTransfersService.sendDonate', () => {
+describe('ChatCommandTransfersService.sendDonate', () => {
+  it('replays the durable result when the cache has expired', async () => {
+    const wallet = makeWallet();
+    const input = {
+      targetUsername: 'alice',
+      amount: '10.00000000',
+      roomId: ROOM_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+    };
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [
+          [DONATE_ROW],
+          [
+            {
+              id: IDEMPOTENCY_ROW_ID,
+              fingerprint: fingerprintCommand({ type: 'donate', ...input }),
+              result: DONATE_SYSTEM_MSG,
+            },
+          ],
+        ],
+        returning: [[]],
+      },
+      wallet,
+      directory: makeRecipientDirectory(),
+    });
+
+    const result = await svc.sendDonate(input, ACTOR_ID);
+
+    expect(result).toEqual(DONATE_SYSTEM_MSG);
+    expect(wallet.debit).not.toHaveBeenCalled();
+  });
+
+  it('rejects a durable key reused with a different request fingerprint', async () => {
+    const input = {
+      targetUsername: 'alice',
+      amount: '10.00000000',
+      roomId: ROOM_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+    };
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [
+          [DONATE_ROW],
+          [
+            {
+              id: IDEMPOTENCY_ROW_ID,
+              fingerprint: 'different-fingerprint',
+              result: DONATE_SYSTEM_MSG,
+            },
+          ],
+        ],
+        returning: [[]],
+      },
+      directory: makeRecipientDirectory(),
+    });
+
+    await expect(svc.sendDonate(input, ACTOR_ID)).rejects.toThrow(
+      ChatCommandIdempotencyKeyReuseError,
+    );
+  });
+
   it('debits sender, credits recipient, and returns the system message on success', async () => {
     const wallet = makeWallet();
     const writer = mock<ChatSystemWriter>({
@@ -1029,7 +1127,7 @@ describe('SocialTransfersService.sendDonate', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[DONATE_ROW]],
-        returning: [[{ id: '00000000-0000-0000-0000-0000000000dd' }]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ id: '00000000-0000-0000-0000-0000000000dd' }]],
       },
       wallet,
       writer,
@@ -1087,7 +1185,10 @@ describe('SocialTransfersService.sendDonate', () => {
 
   it('throws BlockedRecipientError when the sender targets a blocked user', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[DONATE_ROW]] },
+      drizzleRows: {
+        select: [[DONATE_ROW]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
+      },
       directory: makeRecipientDirectory(),
       blockWriter: mock<ChatBlockWriter>({
         getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),

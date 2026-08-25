@@ -1,11 +1,11 @@
 // Rain command port: `chat-commands` owns presence (it already depends on `chat`
 // for CHAT_BLOCK_WRITER), so it resolves which players are online in a room via
-// CHAT_REALTIME_TRANSPORT and hands `social-transfers` the plain id list - social-
-// transfers never queries chat's presence tracking directly.
+// CHAT_REALTIME_TRANSPORT and hands the transfer service the plain id list -
+// the transfer service never queries chat's presence tracking directly.
 //
 // Same discriminated-result shape as GIFT_COMMANDS and the same reason it
 // exists: chat-commands' router can't `instanceof`-match an error class
-// defined in social-transfers without a forbidden cross-module internals
+// defined in the transfer service without a forbidden cross-module internals
 // import. ADR-0017.
 import { createToken, type Token } from './token.js';
 import type { Uuid } from '../schemas/common.js';
@@ -18,7 +18,7 @@ export type SendRainArgs = {
   roomId: Uuid | null;
   idempotencyKey: Uuid;
   // Every user id currently online in the room (may include the actor) -
-  // resolved by the caller BEFORE this port is called. social-transfers
+  // resolved by the caller BEFORE this port is called. The transfer service
   // filters out the actor, shuffles, and caps to recipientCount itself.
   onlineUserIds: Uuid[];
 };

@@ -1,7 +1,7 @@
 // Claimable-gift command port: `chat-commands` posts/claims gifts into the chat
 // stream (they are conceptually part of the chat command surface) but owns none
-// of the money/limit/idempotency logic - `social-transfers` does, behind this
-// port. Same command-port pattern as WALLET_COMMANDS, ADR-0017. Results are a
+// of the money/limit/idempotency logic - the chat-commands transfer service
+// does, behind this port. Same command-port pattern as WALLET_COMMANDS, ADR-0017. Results are a
 // discriminated union rather than a thrown error so the failure reason can cross
 // the module boundary without either side importing the other's error classes;
 // the consuming router maps `reason` to its own typed error (see chat-commands

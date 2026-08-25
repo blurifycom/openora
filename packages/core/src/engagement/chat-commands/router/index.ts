@@ -3,28 +3,34 @@ import { populateContractRouterPaths } from '@orpc/contract';
 import { mapErrors, getUserId, type OssContext, type AdminGuard } from '@openora/core/server';
 import { chatCommandsContract } from '../contract/index.js';
 import {
-  ChatCommandsService,
-  CommandDisabledError,
-  InsufficientBalanceError,
-  ExceedsLimitError,
-  BelowMinimumError,
-  NoOnlineUsersError,
-  TooManyRecipientsError,
-  RainCreditError,
-  GiftNotFoundError,
+  BlockedRecipientError as TransferBlockedRecipientError,
+  ChatCommandIdempotencyKeyReuseError as TransferIdempotencyKeyReuseError,
+  ChatCommandTransfersService,
+  ChatPlayerNotFoundError as TransferChatPlayerNotFoundError,
+  ChatRoomNotMemberError as TransferChatRoomNotMemberError,
+  CommandDisabledError as TransferCommandDisabledError,
+  ConcurrentCommandReplayError as TransferConcurrentReplayError,
+  DonateSelfError,
+  ExceedsLimitError as TransferExceedsLimitError,
+  BelowMinimumError as TransferBelowMinimumError,
+  InsufficientBalanceError as TransferInsufficientBalanceError,
+  NoOnlineUsersError as TransferNoOnlineUsersError,
+  RainCreditError as TransferRainCreditError,
+  TooManyRecipientsError as TransferTooManyRecipientsError,
   GiftAlreadyClaimedError,
-  GiftSelfClaimError,
-  BlockedRecipientError,
   GiftCreditError,
-  ChatCommandIdempotencyKeyReuseError,
-  ConcurrentCommandReplayError,
-  ChatRoomNotMemberError,
-  ChatPlayerNotFoundError,
-} from '../service/chat-commands.service.js';
+  GiftNotFoundError,
+  GiftSelfClaimError,
+} from '../service/chat-command-transfers.service.js';
+import { ChatCommandsService } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
 
-export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: AdminGuard) {
+export function createChatCommandsRouter(
+  svc: ChatCommandsService,
+  transferService: ChatCommandTransfersService,
+  adminGuard: AdminGuard,
+) {
   const os = implement(cc).$context<OssContext>();
 
   return os.router({
@@ -44,15 +50,15 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
       const actorId = getUserId(context);
       return mapErrors(
         {
-          NOT_FOUND: [CommandDisabledError, ChatPlayerNotFoundError],
+          NOT_FOUND: [TransferCommandDisabledError, TransferChatPlayerNotFoundError],
           CONFLICT: [
-            InsufficientBalanceError,
-            ExceedsLimitError,
-            BelowMinimumError,
-            ChatCommandIdempotencyKeyReuseError,
-            ConcurrentCommandReplayError,
+            TransferInsufficientBalanceError,
+            TransferExceedsLimitError,
+            TransferBelowMinimumError,
+            TransferIdempotencyKeyReuseError,
+            TransferConcurrentReplayError,
           ],
-          FORBIDDEN: [ChatRoomNotMemberError],
+          FORBIDDEN: [TransferChatRoomNotMemberError],
         },
         () => svc.postGift(input, actorId),
       );
@@ -63,11 +69,11 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
       return mapErrors(
         {
           NOT_FOUND: [GiftNotFoundError],
-          FORBIDDEN: [ChatRoomNotMemberError],
+          FORBIDDEN: [TransferChatRoomNotMemberError],
           CONFLICT: [
             GiftAlreadyClaimedError,
             GiftSelfClaimError,
-            BlockedRecipientError,
+            TransferBlockedRecipientError,
             GiftCreditError,
           ],
         },
@@ -80,7 +86,7 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
       return mapErrors(
         {
           NOT_FOUND: [GiftNotFoundError],
-          FORBIDDEN: [ChatRoomNotMemberError],
+          FORBIDDEN: [TransferChatRoomNotMemberError],
         },
         () => svc.getGift(input.id, viewerId),
       );
@@ -90,20 +96,40 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
       const actorId = getUserId(context);
       return mapErrors(
         {
-          NOT_FOUND: [CommandDisabledError, ChatPlayerNotFoundError],
+          NOT_FOUND: [TransferCommandDisabledError, TransferChatPlayerNotFoundError],
           CONFLICT: [
-            InsufficientBalanceError,
-            ExceedsLimitError,
-            BelowMinimumError,
-            NoOnlineUsersError,
-            TooManyRecipientsError,
-            RainCreditError,
-            ChatCommandIdempotencyKeyReuseError,
-            ConcurrentCommandReplayError,
+            TransferInsufficientBalanceError,
+            TransferExceedsLimitError,
+            TransferBelowMinimumError,
+            TransferNoOnlineUsersError,
+            TransferTooManyRecipientsError,
+            TransferRainCreditError,
+            TransferIdempotencyKeyReuseError,
+            TransferConcurrentReplayError,
           ],
-          FORBIDDEN: [ChatRoomNotMemberError],
+          FORBIDDEN: [TransferChatRoomNotMemberError],
         },
         () => svc.postRain(input, actorId),
+      );
+    }),
+
+    sendDonate: os.sendDonate.handler(({ input, context }) => {
+      const actorId = getUserId(context);
+      return mapErrors(
+        {
+          NOT_FOUND: [TransferCommandDisabledError, TransferChatPlayerNotFoundError],
+          CONFLICT: [
+            TransferInsufficientBalanceError,
+            TransferExceedsLimitError,
+            TransferBelowMinimumError,
+            DonateSelfError,
+            TransferBlockedRecipientError,
+            TransferIdempotencyKeyReuseError,
+            TransferConcurrentReplayError,
+          ],
+          FORBIDDEN: [TransferChatRoomNotMemberError],
+        },
+        () => transferService.sendDonate(input, actorId),
       );
     }),
 

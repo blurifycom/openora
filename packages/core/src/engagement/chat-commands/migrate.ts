@@ -4,7 +4,7 @@
 import { fileURLToPath } from 'node:url';
 import { runMigrations } from '@openora/core/server/migrate';
 
-/** Apply the chat-commands module migrations (idempotent: drizzle skips already-recorded ones). */
+/** Apply chat-command and player-transfer migrations (idempotent per journal). */
 export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),

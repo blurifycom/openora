@@ -1,9 +1,73 @@
 {
-  "id": "f2a9b9cb-6eba-4596-960b-1bbc7809b899",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "7758e125-aad5-43bd-ae9a-a4c9a1f0d327",
+  "prevId": "87c4c011-02ca-4e04-a90d-f7f8f169cd28",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.chat_command_config": {
+      "name": "chat_command_config",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "config": {
+          "name": "config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "chat_command_config_key_unique": {
+          "name": "chat_command_config_key_unique",
+          "nullsNotDistinct": false,
+          "columns": ["key"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.player_donate": {
       "name": "player_donate",
       "schema": "",
@@ -41,7 +105,7 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
@@ -104,7 +168,7 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
@@ -173,13 +237,13 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
         "per_recipient": {
           "name": "per_recipient",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
@@ -242,7 +306,7 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
