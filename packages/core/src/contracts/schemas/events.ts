@@ -197,6 +197,13 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  'wallet.bonus_rollover.completed': z.object({
+    userId: UuidSchema,
+    creditId: UuidSchema,
+    currency: CurrencyCodeSchema,
+    creditedAmount: MoneyAmountSchema,
+  }),
+
   'chat.message.sent': z.object({
     messageId: UuidSchema,
     // null for global-chat messages (no room); a room id otherwise.
