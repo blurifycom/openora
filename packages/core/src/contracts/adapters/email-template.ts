@@ -3,6 +3,7 @@ import { createToken, type Token } from './token.js';
 export type EmailTemplateKey =
   | 'verifyEmail'
   | 'resetPasswordOtp'
+  | 'existingAccountSignUp'
   | 'rgLimitUpdated'
   | 'rgCoolingOffActivated'
   | 'rgCoolingOffLifted'
@@ -12,6 +13,7 @@ export type EmailTemplateKey =
 export type EmailTemplateData = {
   verifyEmail: { otp: string };
   resetPasswordOtp: { otp: string; email: string };
+  existingAccountSignUp: { otp: string; email: string };
   rgLimitUpdated: { period: string; type: string; description: string };
   rgCoolingOffActivated: { expiresAt: Date };
   rgCoolingOffLifted: Record<string, never>;
@@ -57,6 +59,18 @@ export const DEFAULT_EMAIL_TEMPLATES: {
   resetPasswordOtp: (data) => ({
     subject: 'Reset your password',
     body: `Your password reset code is: ${data.otp}`,
+  }),
+  // Sent when someone tries to sign up with an address that already has an account. It
+  // must never confirm or deny that the account exists to anyone but its owner, so the
+  // wording addresses the owner and the sign-up response stays identical either way.
+  // Carries a reset code rather than only a notice: whoever tried is most likely the
+  // owner having forgotten they registered.
+  existingAccountSignUp: (data) => ({
+    subject: 'You already have an account',
+    body:
+      `Someone tried to create an account with this email address. ` +
+      `You already have one, so no new account was created. ` +
+      `If it was you, sign in as usual - or use this code to reset your password: ${data.otp}`,
   }),
   rgLimitUpdated: (data) => ({
     subject: 'Your gambling limit was updated',

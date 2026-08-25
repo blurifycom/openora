@@ -29,3 +29,34 @@ describe('mapEventToRecord: identity.session.revoked', () => {
     expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: sessionId });
   });
 });
+
+describe('mapEventToRecord: identity.user.registration.failed', () => {
+  it('records a rejected attempt as a failure against the registration resource', async () => {
+    const row = await mapEventToRecord('identity.user.registration.failed', {
+      email: 'taken@example.com',
+      username: 'taken_handle',
+      reason: 'username_taken',
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0',
+    });
+
+    expect(row).toMatchObject({
+      result: 'failure',
+      resourceType: 'registration',
+      actorType: 'system',
+      resourceId: null,
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0',
+    });
+  });
+
+  it('carries the address and reason through, since a rejected attempt has no actor', async () => {
+    const row = await mapEventToRecord('identity.user.registration.failed', {
+      email: 'blocked@example.com',
+      reason: 'geo_blocked',
+    });
+
+    expect(row.after).toMatchObject({ email: 'blocked@example.com', reason: 'geo_blocked' });
+    expect(row.actorId).toBeUndefined();
+  });
+});

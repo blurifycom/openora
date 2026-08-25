@@ -69,7 +69,13 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await redis.flush();
+  events.emit.mockClear();
 });
+
+const failureReasons = () =>
+  events.emit.mock.calls
+    .filter(([topic]) => topic === 'identity.user.registration.failed')
+    .map(([, payload]) => (payload as { reason: string }).reason);
 
 describe('IdentityService.register - availability gates', () => {
   it('rejects registration when the operator has not configured it', async () => {
@@ -78,6 +84,7 @@ describe('IdentityService.register - availability gates', () => {
     await expect(svc.register(validInput(), {})).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
+    expect(failureReasons()).toEqual(['registration_disabled']);
   });
 
   it('rejects registration when no player provisioning port is bound', async () => {
@@ -96,6 +103,7 @@ describe('IdentityService.register - availability gates', () => {
       code: 'FORBIDDEN',
     });
     expect(checkRegistration).toHaveBeenCalledWith('203.0.113.7');
+    expect(failureReasons()).toEqual(['geo_blocked']);
   });
 
   it('throttles registrations coming from one address, across different emails', async () => {
@@ -111,6 +119,27 @@ describe('IdentityService.register - availability gates', () => {
 
     await expect(svc.register(validInput(), headers)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
+    });
+    expect(failureReasons()).toContain('rate_limited');
+  });
+
+  // Every attempt has to leave a record with its origin, not only the ones that produce
+  // an account. A rejected attempt is unauthenticated, so the address is the only subject
+  // there is to record it against.
+  it('records the origin of a rejected attempt, since there is no account to attribute it to', async () => {
+    const svc = makeService({ platformConfig: undefined });
+    const input = validInput();
+
+    await svc
+      .register(input, { 'x-real-ip': '203.0.113.7', 'user-agent': 'Mozilla/5.0' })
+      .catch(() => undefined);
+
+    expect(events.emit).toHaveBeenCalledWith('identity.user.registration.failed', {
+      email: input.email,
+      username: input.username,
+      reason: 'registration_disabled',
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0',
     });
   });
 });

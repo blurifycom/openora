@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
+import { auditLog } from '@openora/core/audit/schema';
 import {
   verificationOtpFor,
   setupTestDb,
@@ -216,10 +217,60 @@ describe('registration email verification', () => {
       .from(player)
       .where(eq(player.userId, (await userIdFor(email)) ?? ''));
     expect(players).toHaveLength(1);
-    expect(capturedEmailsFor(email).some((e) => /reset/i.test(e.subject))).toBe(true);
+    // The mail must say why it arrived. A bare "Reset your password" reaches someone who
+    // never asked to reset anything and explains nothing about the sign-up they just tried.
+    const notice = capturedEmailsFor(email).find(
+      (e) => e.subject === 'You already have an account',
+    );
+    expect(notice).toBeDefined();
+    expect(notice?.body).toMatch(/\b\d{6}\b/);
     // Exactly one verification code was ever mailed - the one the real owner's own
     // sign-up produced. A second would hand a stranger a code that signs them in.
     expect(capturedEmailsFor(email).filter((e) => /verify/i.test(e.subject))).toHaveLength(1);
+  });
+
+  // The audit subscription is fire-and-forget, so this is the only level that proves the
+  // whole chain: emit -> SUBSCRIBED_TOPICS -> mapper -> row. A unit test on the mapper
+  // alone would still pass with the topic missing from the subscription list.
+  it('writes a rejected attempt to the audit log with its origin and outcome', async () => {
+    const email = `reg-audit-${randomUUID()}@e2e.test`;
+    const username = `dup_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+    await registerPlayer(app, { email: `reg-audit-first-${randomUUID()}@e2e.test`, username });
+
+    // Called directly rather than through `submitRegistration`, which picks its own
+    // client IP - the origin is what this test is about.
+    const res = await app.app.request('/identity/register', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-real-ip': '203.0.113.42',
+        'user-agent': 'AuditProbe/1.0',
+      },
+      body: JSON.stringify({
+        email,
+        password: 'password123',
+        username: username.toUpperCase(),
+        acceptedTerms: true,
+        acceptedAge: true,
+      }),
+    });
+    expect(res.status).toBe(409);
+
+    await vi.waitFor(async () => {
+      const rows = await app.container
+        .get(DRIZZLE)
+        .db.select()
+        .from(auditLog)
+        .where(eq(auditLog.action, 'identity.user.registration.failed'));
+      const row = rows.find((r) => (r.after as { email?: string })?.email === email);
+      expect(row).toMatchObject({
+        result: 'failure',
+        resourceType: 'registration',
+        ip: '203.0.113.42',
+        userAgent: 'AuditProbe/1.0',
+      });
+      expect(row?.after).toMatchObject({ reason: 'username_taken' });
+    });
   });
 
   it('records the terms and age acceptance on the player row at registration', async () => {

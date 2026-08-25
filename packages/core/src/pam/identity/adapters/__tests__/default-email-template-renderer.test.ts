@@ -26,6 +26,20 @@ describe('DefaultEmailTemplateRenderer', () => {
     });
   });
 
+  it('renders existingAccountSignUp without naming it a password reset', () => {
+    const result = renderer.render(
+      'existingAccountSignUp',
+      { otp: '123456', email: 'test@example.com' },
+      'en',
+    );
+
+    expect(result.subject).toBe('You already have an account');
+    expect(result.body).toContain('123456');
+    // The whole point of the separate key: a player who never asked to reset anything
+    // must not be handed a bare reset code with no explanation.
+    expect(result.body).toContain('no new account was created');
+  });
+
   it('ignores locale - always English', () => {
     const en = renderer.render(
       'resetPasswordOtp',

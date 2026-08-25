@@ -60,6 +60,36 @@ describe('createAuth', () => {
       });
     });
 
+    it('renders the existing-account template when the reset came from a sign-up', async () => {
+      // better-auth issues both through the same `forget-password` type, so without the
+      // predicate a duplicate sign-up mails a bare "Reset your password" to someone who
+      // never asked to reset anything.
+      const sendEmail = vi.fn().mockResolvedValue(undefined);
+      const templateRenderer = {
+        render: vi.fn().mockResolvedValue({ subject: 'Exists', body: 'Code: 123456' }),
+      };
+
+      createAuth({
+        db: {} as never,
+        sendEmail,
+        templateRenderer,
+        isExistingAccountSignUp: (email) => email === 'test@example.com',
+      });
+
+      const emailOtpOpts = emailOTPMock.mock.calls[0][0];
+      await emailOtpOpts.sendVerificationOTP({
+        email: 'test@example.com',
+        otp: '123456',
+        type: 'forget-password',
+      });
+
+      expect(templateRenderer.render).toHaveBeenCalledWith(
+        'existingAccountSignUp',
+        { otp: '123456', email: 'test@example.com' },
+        'en',
+      );
+    });
+
     it('renders the verification code template for an email-verification OTP', async () => {
       const sendEmail = vi.fn().mockResolvedValue(undefined);
       const templateRenderer = {

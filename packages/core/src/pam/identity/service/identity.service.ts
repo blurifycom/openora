@@ -40,6 +40,7 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
+  RegistrationFailureReason,
   GeoCheckCommands,
   PlayerProvisioning,
 } from '@openora/core/contracts';
@@ -299,6 +300,12 @@ export class IdentityService {
   private readonly playerProvisioning?: PlayerProvisioning;
   private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
+  // Addresses whose reset code is being sent because a sign-up hit an existing account.
+  // Held only for the duration of that send: `requestPasswordResetEmailOTP` drives
+  // `sendVerificationOTP` -> `render` inside the same await, so the flag is read before
+  // the `finally` clears it. Not cache-backed - it never has to outlive the call or
+  // cross a process.
+  private readonly existingAccountSignUps = new Set<string>();
 
   constructor({
     drizzle,
@@ -332,13 +339,21 @@ export class IdentityService {
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       requireEmailVerification:
         this.platformConfig?.registration?.requireEmailVerification ?? false,
+      isExistingAccountSignUp: (lookupEmail) =>
+        this.existingAccountSignUps.has(lookupEmail.toLowerCase()),
       onExistingUserSignUp: async (existing) => {
-        const response = await this.api.requestPasswordResetEmailOTP({
-          body: { email: existing.email },
-          headers: new Headers(),
-          asResponse: true,
-        });
-        await ensureOk(response);
+        const key = existing.email.toLowerCase();
+        this.existingAccountSignUps.add(key);
+        try {
+          const response = await this.api.requestPasswordResetEmailOTP({
+            body: { email: existing.email },
+            headers: new Headers(),
+            asResponse: true,
+          });
+          await ensureOk(response);
+        } finally {
+          this.existingAccountSignUps.delete(key);
+        }
       },
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', {
@@ -398,20 +413,51 @@ export class IdentityService {
     });
   }
 
+  /**
+   * Emitted on every registration attempt that produced no account. The audit trail is
+   * the one place that records what actually happened - the HTTP response deliberately
+   * does not, because a truthful answer on a known address is an enumeration oracle.
+   */
+  private emitRegistrationFailed(
+    reason: RegistrationFailureReason,
+    input: RegisterInput,
+    { ip, userAgent }: ClientMeta,
+  ) {
+    this.events.emit('identity.user.registration.failed', {
+      email: input.email,
+      username: input.username,
+      reason,
+      ip,
+      userAgent,
+    });
+  }
+
   async register(input: RegisterInput, reqHeaders: NodeHeaders) {
+    // Read before the config guard: a rejected attempt is audited too, and an audit row
+    // with no origin is barely a record.
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const meta = { ip, userAgent };
     const registration = this.platformConfig?.registration;
     const provisioning = this.playerProvisioning;
     if (!registration || !provisioning) {
+      this.emitRegistrationFailed('registration_disabled', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
-    await assertRateLimit(
-      this.limiter,
-      `register:${input.email.toLowerCase()}`,
-      REGISTER_RATE_LIMIT,
-    );
-    await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    // `assertRateLimit` throws and is shared by a dozen call sites, so the emit wraps it
+    // here rather than moving into it.
+    try {
+      await assertRateLimit(
+        this.limiter,
+        `register:${input.email.toLowerCase()}`,
+        REGISTER_RATE_LIMIT,
+      );
+      await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    } catch (err) {
+      this.emitRegistrationFailed('rate_limited', input, meta);
+      throw err;
+    }
     if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
+      this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
     const headers = nodeHeadersToHeaders(reqHeaders);
@@ -429,42 +475,65 @@ export class IdentityService {
       // The `lower(username)` unique index is the only arbiter - a pre-flight check
       // could not close the race anyway, so the taken handle is read off the failure.
       if (await this.findUserIdByUsername(input.username)) {
+        this.emitRegistrationFailed('username_taken', input, meta);
         throw new UsernameConflictError();
       }
+      // `ensureOk` always throws on a non-ok response, so emitting first needs no catch.
+      this.emitRegistrationFailed('error', input, meta);
       await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
     }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
     // A known address gets an indistinguishable success response (and a reset mail)
     // rather than a new account, so only a genuinely new user is provisioned.
-    if ((await this.findUserIdByEmail(input.email)) === body.user.id) {
-      const { playerId } = await this.recordRegistrationConsent(
+    if ((await this.findUserIdByEmail(input.email)) !== body.user.id) {
+      // The known-address branch: no account was created, so the attempt failed even
+      // though the caller is told it succeeded. Only the audit trail says so.
+      this.emitRegistrationFailed('email_already_registered', input, meta);
+      return { status: 'check-email' as const };
+    }
+    let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
+    try {
+      consent = await this.recordRegistrationConsent(
         provisioning,
         body.user.id,
         registration.termsVersion,
         { ip, userAgent },
       );
-      this.events.emit('identity.user.registered', {
-        userId: body.user.id,
-        playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
-        ip,
-        userAgent,
-      });
-      // Sent here rather than by better-auth's sendOnSignUp hook: that hook also fires on
-      // the synthetic duplicate-email response, mailing a live code to an address whose
-      // owner never asked for it - and `verifyEmail` signs that code's bearer in.
-      // A mail failure is logged, never surfaced: the account exists either way and the
-      // player can ask for a new code, so failing the call here would only mislead them.
-      const otpResponse = await this.api.sendVerificationOTP({
-        body: { email: input.email, type: 'email-verification' },
-        headers,
-        asResponse: true,
-      });
-      if (!otpResponse.ok) {
-        identityLogger.error(
-          { userId: body.user.id, status: otpResponse.status },
-          'verification code could not be sent - player must request a new one',
-        );
-      }
+    } catch (err) {
+      this.emitRegistrationFailed('error', input, meta);
+      throw err;
+    }
+    const { playerId, consentStored } = consent;
+    this.events.emit('identity.user.registered', {
+      userId: body.user.id,
+      playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+      // Only claimed when the consent row was actually written - a discarded capture
+      // must not leave an audit trail implying evidence that does not exist.
+      ...(consentStored
+        ? {
+            termsVersion: registration.termsVersion,
+            acceptedTerms: input.acceptedTerms,
+            acceptedAge: input.acceptedAge,
+          }
+        : {}),
+      ip,
+      userAgent,
+    });
+    // Sent here rather than by better-auth's sendOnSignUp hook: that hook also fires on
+    // the synthetic duplicate-email response, mailing a live code to an address whose
+    // owner never asked for it - and `verifyEmail` signs that code's bearer in.
+    // A mail failure is logged, never surfaced: the account exists either way and the
+    // player can ask for a new code, so failing the call here would only mislead them.
+    const otpResponse = await this.api.sendVerificationOTP({
+      body: { email: input.email, type: 'email-verification' },
+      headers,
+      asResponse: true,
+    });
+    if (!otpResponse.ok) {
+      identityLogger.error(
+        { userId: body.user.id, status: otpResponse.status },
+        'verification code could not be sent - player must request a new one',
+      );
     }
     return { status: 'check-email' as const };
   }
@@ -525,7 +594,7 @@ export class IdentityService {
         'registration consent not stored - player row already existed',
       );
     }
-    return { playerId: outcome.playerId ?? null };
+    return { playerId: outcome.playerId ?? null, consentStored: outcome.created };
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {

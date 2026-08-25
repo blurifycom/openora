@@ -615,6 +615,13 @@ export async function mapEventToRecord(
     return { ...base, actorId: str(p['playerId']), actorType: 'player' };
   }
 
+  // A rejected attempt has no account behind it, so there is no actor to name - only the
+  // address that was tried, which `after` already carries. `resourceType` is narrowed off
+  // the default 'identity' so an auditor can pull registration attempts on their own.
+  if (topic === 'identity.user.registration.failed') {
+    return { ...base, resourceType: 'registration' };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -645,6 +652,7 @@ export async function mapEventToRecord(
 
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.registered',
+  'identity.user.registration.failed',
   'identity.user.login',
   'identity.user.login.failed',
   'identity.user.lockout.triggered',

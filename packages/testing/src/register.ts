@@ -27,9 +27,13 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
-/** The 6-digit code in the most recent verification email. */
+/**
+ * The 6-digit code in the most recent verification email. Filtered by subject rather than
+ * taking the newest mail outright: a sign-up on an address that already has an account
+ * also mails a six-digit code, and picking that one up would silently test the wrong flow.
+ */
 export function verificationOtpFor(email: string): string {
-  const [sent] = capturedEmailsFor(email);
+  const [sent] = capturedEmailsFor(email).filter((mail) => /verify/i.test(mail.subject));
   if (!sent) {
     throw new Error(`no verification email captured for ${email}`);
   }

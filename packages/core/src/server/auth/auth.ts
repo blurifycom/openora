@@ -34,6 +34,13 @@ export type AuthOptions = {
    */
   requireEmailVerification?: boolean;
   onExistingUserSignUp?: (user: { id: string; email: string }) => Promise<void> | void;
+  /**
+   * True while the reset code being sent was triggered by a sign-up on an address that
+   * already has an account, rather than by its owner asking to reset. better-auth issues
+   * both through the same `forget-password` OTP type, so `sendVerificationOTP` cannot tell
+   * them apart on its own - and the two need different copy.
+   */
+  isExistingAccountSignUp?: (email: string) => boolean;
   cookieDomain?: string;
 };
 
@@ -133,10 +140,14 @@ export function createAuth(options: AuthOptions): BetterAuthType {
             return;
           }
           const locale = (await options.getUserLanguage?.(email)) ?? 'en';
+          // Three explicit branches, not a computed key: `render` is generic over the key,
+          // so a union of keys will not narrow the data argument to a single payload type.
           const { subject, body } =
             type === 'email-verification'
               ? await templateRenderer.render('verifyEmail', { otp }, locale)
-              : await templateRenderer.render('resetPasswordOtp', { otp, email }, locale);
+              : options.isExistingAccountSignUp?.(email)
+                ? await templateRenderer.render('existingAccountSignUp', { otp, email }, locale)
+                : await templateRenderer.render('resetPasswordOtp', { otp, email }, locale);
           await sendEmail({ to: email, subject, body });
         },
       }),

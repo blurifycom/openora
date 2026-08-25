@@ -57,6 +57,21 @@ export const PhoneLoginErrorReasonSchema = z.enum(PHONE_LOGIN_ERROR_REASONS);
 export const PHONE_LOGIN_OTP_INVALID_REASONS = ['expired', 'wrong_code'] as const;
 export const PhoneLoginOtpInvalidReasonSchema = z.enum(PHONE_LOGIN_OTP_INVALID_REASONS);
 
+/**
+ * Why a registration attempt produced no account. `email_already_registered` is the odd
+ * one out: the caller is deliberately told the attempt succeeded, because saying otherwise
+ * is an account-enumeration oracle. The audit trail records what actually happened.
+ */
+export const REGISTRATION_FAILURE_REASONS = [
+  'registration_disabled',
+  'rate_limited',
+  'geo_blocked',
+  'username_taken',
+  'email_already_registered',
+  'error',
+] as const;
+export const RegistrationFailureReasonSchema = z.enum(REGISTRATION_FAILURE_REASONS);
+
 export const OrganizationSchema = z.object({
   id: UuidSchema,
   name: z.string().min(1).max(255),
@@ -74,6 +89,18 @@ export const MemberSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+/**
+ * The rule for every password the platform *sets*. Upper-bounded to better-auth's own
+ * `maxPasswordLength` default (128), which it enforces itself but only after the fact -
+ * on sign-up that surfaces as a generic "Registration is unavailable", and on reset it
+ * burns a valid one-time code before rejecting. Bounding it here fails the caller with
+ * the real reason instead.
+ *
+ * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
+ * password was ever storable) and would only narrow an existing contract.
+ */
+export const PasswordSchema = z.string().min(8).max(128);
+
 const credentialsBase = z.object({
   email: z.email(),
   password: z.string().min(8),
@@ -89,6 +116,7 @@ export const LoginSecurityStateSchema = z.object({
 });
 
 export const RegisterInputSchema = credentialsBase.extend({
+  password: PasswordSchema,
   username: UsernameSchema,
   acceptedTerms: z.literal(true),
   acceptedAge: z.literal(true),
@@ -125,10 +153,7 @@ export const ResetPasswordInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
   token: z.string().min(1).optional(),
-  // Upper-bounded to better-auth's own maxPasswordLength default (128): better-auth checks
-  // this AFTER consuming the OTP, so an over-length password would burn a valid one-time
-  // code and still get rejected - reject it here instead, before the OTP is ever spent.
-  newPassword: z.string().min(8).max(128),
+  newPassword: PasswordSchema,
 });
 
 export const VerifyPasswordResetOtpInputSchema = ResetPasswordInputSchema.pick({
@@ -158,7 +183,7 @@ export const UpdateProfileInputSchema = z
 
 export const ChangePasswordInputSchema = z.object({
   currentPassword: z.string().min(8),
-  newPassword: z.string().min(8),
+  newPassword: PasswordSchema,
 });
 
 export const ChangeEmailInputSchema = z.object({
@@ -195,3 +220,4 @@ export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSche
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
 export type PhoneLoginErrorReason = z.infer<typeof PhoneLoginErrorReasonSchema>;
 export type PhoneLoginOtpInvalidReason = z.infer<typeof PhoneLoginOtpInvalidReasonSchema>;
+export type RegistrationFailureReason = z.infer<typeof RegistrationFailureReasonSchema>;
