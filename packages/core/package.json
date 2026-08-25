@@ -254,6 +254,11 @@
       "import": "./dist/engagement/server.js",
       "default": "./dist/engagement/server.js"
     },
+    "./engagement/react": {
+      "types": "./dist/engagement/react.d.ts",
+      "import": "./dist/engagement/react.js",
+      "default": "./dist/engagement/react.js"
+    },
     "./engagement/contracts": {
       "types": "./dist/engagement/contracts.d.ts",
       "import": "./dist/engagement/contracts.js",

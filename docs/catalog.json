@@ -118,8 +118,12 @@
       "routes": [
         "chat-commands.adminListCommands",
         "chat-commands.adminUpdateCommand",
+        "chat-commands.claimGift",
+        "chat-commands.getGift",
         "chat-commands.listCommands",
-        "chat-commands.mentionSearch"
+        "chat-commands.mentionSearch",
+        "chat-commands.postGift",
+        "chat-commands.postRain"
       ]
     },
     {
@@ -283,7 +287,9 @@
       "routes": [
         "notifications.list",
         "notifications.markAllRead",
-        "notifications.markRead"
+        "notifications.markRead",
+        "notifications.stream",
+        "notifications.unreadCount"
       ]
     },
     {
@@ -342,6 +348,19 @@
       ]
     },
     {
+      "id": "social-transfers",
+      "group": "engagement",
+      "tables": [
+        "player_donate",
+        "player_gift",
+        "player_rain",
+        "player_rain_receiver"
+      ],
+      "routes": [
+        "social-transfers.sendDonate"
+      ]
+    },
+    {
       "id": "tag",
       "group": "pam",
       "tables": [
@@ -369,8 +388,6 @@
         "wallet_asset",
         "wallet_auto_withdrawal_config",
         "wallet_balance",
-        "wallet_bonus_credit",
-        "wallet_bonus_rollover_config",
         "wallet_custody_sweep",
         "wallet_deposit_address",
         "wallet_job_run",
@@ -381,14 +398,12 @@
       ],
       "routes": [
         "wallet.approve",
-        "wallet.bonusRolloverStatus",
         "wallet.create",
         "wallet.create",
         "wallet.delete",
         "wallet.delete",
         "wallet.delete",
         "wallet.deposit",
-        "wallet.get",
         "wallet.get",
         "wallet.get",
         "wallet.getAddress",
@@ -408,9 +423,7 @@
         "wallet.run",
         "wallet.set",
         "wallet.set",
-        "wallet.set",
         "wallet.setActiveCurrency",
-        "wallet.streamBalance",
         "wallet.update",
         "wallet.webhook",
         "wallet.webhookForProvider",
@@ -471,6 +484,7 @@
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -505,6 +519,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
@@ -530,6 +545,7 @@
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -542,6 +558,7 @@
       "boundIn": [
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts"
       ]
     },
@@ -560,7 +577,8 @@
       "token": "CHAT_ROOM_ACCESS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
       ]
     },
     {
@@ -569,7 +587,8 @@
       "token": "CHAT_SYSTEM_WRITER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
       ]
     },
     {
@@ -628,6 +647,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts"
+      ]
+    },
+    {
+      "category": "gift-commands",
+      "interface": "SendGiftArgs",
+      "token": "GIFT_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
       ]
     },
     {
@@ -760,6 +789,16 @@
       ]
     },
     {
+      "category": "rain-commands",
+      "interface": "SendRainArgs",
+      "token": "RAIN_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
+      ]
+    },
+    {
       "category": "realtime",
       "interface": "RealtimePresence",
       "token": "REALTIME_TRANSPORT",
@@ -767,7 +806,7 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/wallet/plugin.ts"
+        "packages/core/src/engagement/notifications/plugin.ts"
       ]
     },
     {
@@ -826,6 +865,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -841,9 +881,13 @@
     }
   ],
   "events": [
+    "chat.donate.sent",
+    "chat.gift.claimed",
+    "chat.gift.sent",
     "chat.message.sent",
     "chat.private_room.created",
     "chat.private_room.deleted",
+    "chat.rain.distributed",
     "chat.room.created",
     "chat.room.deleted",
     "chat.room.member.banned",
@@ -853,6 +897,7 @@
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
+    "chat.user.mentioned",
     "chat.user.unblocked",
     "chat.user.unignored",
     "cms.banner.created",
@@ -896,7 +941,6 @@
     "identity.user.phone_login",
     "identity.user.reactivated",
     "identity.user.registered",
-    "identity.user.registration.failed",
     "identity.user.unauthorized_access",
     "identity.user.unlocked",
     "notifications.created",
@@ -919,7 +963,6 @@
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
-    "wallet.bonus_rollover.completed",
     "wallet.deposit.completed",
     "wallet.manual_adjustment.created",
     "wallet.reconciliation.alert",
@@ -1079,30 +1122,6 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
-      "name": "BonusCreditSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "BonusCreditSourceTypeSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "BonusCreditStatusSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "BonusRolloverConfigSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "BonusRolloverStatusInputSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "BonusRolloverStatusSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
       "name": "BrandingSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
@@ -1139,24 +1158,12 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
-      "name": "ChatAttachmentKindSchema",
-      "file": "packages/core/src/contracts/schemas/chat-attachment.ts"
-    },
-    {
-      "name": "ChatAttachmentSchema",
-      "file": "packages/core/src/contracts/schemas/chat-attachment.ts"
-    },
-    {
       "name": "ChatCommandDescriptorSchema",
       "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "ChatCommandTypeSchema",
       "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
-    },
-    {
-      "name": "ChatConfigSchema",
-      "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
       "name": "ChatConnectionGrantSchema",
@@ -1239,6 +1246,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ClaimGiftOutputSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
       "name": "ClientMetaSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
@@ -1304,10 +1315,6 @@
     },
     {
       "name": "DepositInputSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "DestinationTagInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -1457,6 +1464,10 @@
     {
       "name": "GiftCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "GiftStateSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",
@@ -1647,6 +1658,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "MarkNotificationReadOutputSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
       "name": "MemberSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1675,7 +1690,19 @@
       "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
+      "name": "NotificationCountSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationDataSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
       "name": "NotificationSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationSortBySchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
@@ -1701,10 +1728,6 @@
     {
       "name": "PaginatedPlayerSearchArgsSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
-    },
-    {
-      "name": "PasswordSchema",
-      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "PaymentWebhookInputSchema",
@@ -1839,6 +1862,14 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "PostGiftInputSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "PostRainInputSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
       "name": "ProfileCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
@@ -1869,10 +1900,6 @@
     {
       "name": "RegistrationConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
-    },
-    {
-      "name": "RegistrationFailureReasonSchema",
-      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "RegistrationsOverTimePointSchema",
@@ -1908,10 +1935,6 @@
     },
     {
       "name": "RequestPasswordResetInputSchema",
-      "file": "packages/core/src/contracts/schemas/identity.ts"
-    },
-    {
-      "name": "ResendEmailVerificationInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
@@ -1963,16 +1986,12 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SendDonateInputSchema",
+      "file": "packages/core/src/engagement/social-transfers/contract/index.ts"
+    },
+    {
       "name": "SendFriendRequestInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
-    },
-    {
-      "name": "SendGlobalMessageInputSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
-      "name": "SendRoomMessageInputSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "SessionItemSchema",
@@ -1996,10 +2015,6 @@
     },
     {
       "name": "SetAutoWithdrawalRuleInputSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "SetBonusRolloverConfigInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -2155,19 +2170,11 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
-      "name": "WalletBalanceChangeReasonSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
       "name": "WalletBalanceSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "WalletBalancesSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "WalletBalanceUpdateSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {

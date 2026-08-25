@@ -1,33 +1,81 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type OssContext } from '@openora/core/server';
-import { notificationsContract, NotificationTypeSchema } from '../contract/index.js';
+import {
+  createEventStreamGenerator,
+  getUserId,
+  mapErrors,
+  type OssContext,
+} from '@openora/core/server';
+import type { RealtimeTransport, User } from '@openora/core/contracts';
+import {
+  notificationsContract,
+  NotificationTypeSchema,
+  type Notification,
+} from '../contract/index.js';
+import type { Notification as NotificationRow } from '../schema/index.js';
 import {
   NotificationsService,
   NotificationNotFoundError,
   NotificationOwnershipError,
 } from '../service/notifications.service.js';
 
-export function createNotificationsRouter(notifications: NotificationsService) {
+export function notificationsChannel(userId: User['id']): string {
+  return `notifications:${userId}`;
+}
+
+export function toNotificationDto(row: NotificationRow): Notification | null {
+  const type = NotificationTypeSchema.safeParse(row.type);
+  if (!type.success) {
+    return null;
+  }
+  return {
+    id: row.id,
+    userId: row.userId,
+    type: type.data,
+    title: row.title,
+    body: row.body,
+    data: row.data ?? null,
+    readAt: row.readAt ? row.readAt.toISOString() : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export function createNotificationStream(
+  realtime: RealtimeTransport,
+  userId: User['id'],
+  signal: AbortSignal | undefined,
+): AsyncGenerator<Notification> {
+  return createEventStreamGenerator(
+    (push) => realtime.subscribe<Notification>(notificationsChannel(userId), push),
+    { signal },
+  );
+}
+
+export function createNotificationsRouter({
+  notifications,
+  realtime,
+}: {
+  notifications: NotificationsService;
+  realtime: RealtimeTransport;
+}) {
   const os = implement(notificationsContract).$context<OssContext>();
 
   return os.router({
-    list: os.list.handler(({ context }) =>
-      notifications.listForUser(getUserId(context)).then((items) =>
-        items.flatMap((n) => {
-          const type = NotificationTypeSchema.safeParse(n.type);
-          if (!type.success) {
-            return [];
-          }
-          return [
-            {
-              ...n,
-              type: type.data,
-              readAt: n.readAt ? n.readAt.toISOString() : null,
-              createdAt: n.createdAt.toISOString(),
-            },
-          ];
+    list: os.list.handler(({ input, context }) =>
+      notifications.listForUser({ userId: getUserId(context), ...input }).then((page) => ({
+        ...page,
+        items: page.items.flatMap((row) => {
+          const dto = toNotificationDto(row);
+          return dto ? [dto] : [];
         }),
-      ),
+      })),
+    ),
+
+    unreadCount: os.unreadCount.handler(({ context }) =>
+      notifications.unreadCount(getUserId(context)).then((count) => ({ count })),
+    ),
+
+    stream: os.stream.handler(({ signal, context }) =>
+      createNotificationStream(realtime, getUserId(context), signal),
     ),
 
     markRead: os.markRead.handler(async ({ input, context }) => {

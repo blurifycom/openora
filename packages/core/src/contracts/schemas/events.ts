@@ -217,6 +217,15 @@ export const domainEventSchemas = {
     currency: CurrencyCodeSchema,
     creditedAmount: MoneyAmountSchema,
   }),
+  // Reserved: no emitter exists yet. A future settlement engine publishes this.
+  'gaming.bet.settled': z.object({
+    roundId: UuidSchema,
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    outcome: z.enum(['win', 'loss']),
+    amount: MoneyAmountSchema,
+    currency: CurrencyCodeSchema,
+  }),
 
   'chat.message.sent': z.object({
     messageId: UuidSchema,
@@ -525,6 +534,14 @@ export const domainEventSchemas = {
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
+  }),
+
+  // Reserved: no bonus module exists yet and nothing emits this.
+  'bonus.granted': z.object({
+    bonusId: UuidSchema,
+    userId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: CurrencyCodeSchema,
   }),
 } as const;
 

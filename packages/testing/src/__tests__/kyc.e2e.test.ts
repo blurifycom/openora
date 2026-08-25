@@ -360,8 +360,8 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
 
     await vi.waitFor(async () => {
       const notifyRes = await client.get('/notifications');
-      const notifications = await readJson(notifyRes);
-      const found = (notifications as Array<{ type: string; body: string }>).find(
+      const { items } = await readJson(notifyRes);
+      const found = (items as Array<{ type: string; body: string }>).find(
         (n) => n.type === 'kyc.resubmission_requested',
       );
       expect(found).toBeTruthy();
