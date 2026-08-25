@@ -40,6 +40,7 @@ export const adminStatement = {
   tag: ['view', 'create', 'delete'] as const,
   'chat-room': ['view', 'create', 'update', 'delete'] as const,
   'auto-withdrawal-config': ['view', 'update'] as const,
+  'bonus-rollover-config': ['view', 'update'] as const,
   'wallet-asset': ['view', 'create', 'update', 'delete'] as const,
   'wallet-custody': ['view', 'run'] as const,
   'wallet-reconciliation': ['view', 'resolve', 'run'] as const,

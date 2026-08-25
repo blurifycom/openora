@@ -28,6 +28,7 @@ export const adminRole = ac.newRole({
   tag: ['view', 'create', 'delete'],
   'chat-room': ['view', 'create', 'update', 'delete'],
   'auto-withdrawal-config': ['view', 'update'],
+  'bonus-rollover-config': ['view', 'update'],
   'wallet-asset': ['view', 'create', 'update', 'delete'],
   'wallet-custody': ['view', 'run'],
   'wallet-reconciliation': ['view', 'resolve', 'run'],

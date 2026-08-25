@@ -21,7 +21,7 @@
 import { createAuth, createDrizzleDb } from '@openora/core/server';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
-import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
+import { seedAutoWithdrawalConfig, seedBonusRolloverConfig } from '@openora/core/wallet/seed';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
 import { seedDemoData } from '@openora/testing/seed-demo-data';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
@@ -47,6 +47,8 @@ async function main() {
   console.log('  Default tags ready.');
   await seedAutoWithdrawalConfig(db);
   console.log('  Auto-withdrawal config ready.');
+  await seedBonusRolloverConfig(db);
+  console.log('  Bonus rollover config ready.');
   await seedChatCommands(db);
   console.log('  Chat command config ready.');
 
