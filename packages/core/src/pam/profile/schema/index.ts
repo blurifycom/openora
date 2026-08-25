@@ -4,6 +4,7 @@ import {
   text,
   integer,
   decimal,
+  date,
   timestamp,
   pgEnum,
   index,
@@ -18,6 +19,15 @@ export const player = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull().unique('player_user_id_unique'),
+    firstName: text(),
+    lastName: text(),
+    // `mode: 'string'` keeps a birth date a plain calendar date: the default Date mode
+    // round-trips through a timestamp and shifts the day for players east or west of UTC.
+    dateOfBirth: date({ mode: 'string' }),
+    // Self-declared contact number - deliberately not unique. `user.phoneNumber` is unique
+    // because it is a login credential; making this one unique too would turn an optional
+    // profile field into a phone-enumeration oracle and let anyone squat a stranger's number.
+    phone: text(),
     country: text(),
     currency: text().notNull().default('USD'),
     status: playerStatusEnum().notNull().default('active'),

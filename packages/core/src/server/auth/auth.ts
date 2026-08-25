@@ -27,8 +27,20 @@ export type AuthOptions = {
   onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
   templateRenderer?: EmailTemplateRenderer;
   getUserLanguage?: (email: string) => Promise<string | null>;
-  registrationWebUrl?: string;
+  /**
+   * Blocks sign-in until the address is verified. Default off: unverified players stay
+   * unrestricted while the KYC toggle is off. Operators that need the stricter gate set
+   * `registration.requireEmailVerification` in platform config.
+   */
+  requireEmailVerification?: boolean;
   onExistingUserSignUp?: (user: { id: string; email: string }) => Promise<void> | void;
+  /**
+   * True while the reset code being sent was triggered by a sign-up on an address that
+   * already has an account, rather than by its owner asking to reset. better-auth issues
+   * both through the same `forget-password` OTP type, so `sendVerificationOTP` cannot tell
+   * them apart on its own - and the two need different copy.
+   */
+  isExistingAccountSignUp?: (email: string) => boolean;
   cookieDomain?: string;
 };
 
@@ -87,8 +99,12 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     },
     emailAndPassword: {
       enabled: true,
+      // Sign-up never mints a session: better-auth only returns the indistinguishable
+      // duplicate-email response when autoSignIn is off (or verification is required,
+      // which is now operator-configurable). The session is minted by the OTP
+      // verification step instead - see `autoSignInAfterVerification` below.
       autoSignIn: false,
-      requireEmailVerification: true,
+      requireEmailVerification: options.requireEmailVerification ?? false,
       revokeSessionsOnPasswordReset: true,
       onExistingUserSignUp: options.onExistingUserSignUp
         ? async ({ user }) => {
@@ -102,24 +118,11 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         : undefined,
     },
     emailVerification: {
-      sendOnSignUp: true,
-      expiresIn: 24 * 60 * 60,
-      sendVerificationEmail: async ({ user, url, token }) => {
-        const locale = (user as { language?: string }).language ?? 'en';
-        const verificationUrl = options.registrationWebUrl
-          ? new URL('/verify-email', options.registrationWebUrl)
-          : undefined;
-        if (verificationUrl) {
-          verificationUrl.searchParams.set('token', token);
-          verificationUrl.searchParams.set('callbackURL', '/');
-        }
-        const { subject, body } = await templateRenderer.render(
-          'verifyEmail',
-          { url: verificationUrl?.toString() ?? url, token },
-          locale,
-        );
-        await sendEmail({ to: user.email, subject, body });
-      },
+      // The verification OTP is sent by IdentityService.register(), never by better-auth:
+      // its sign-up hook fires on the synthetic duplicate-email response too, which would
+      // mail a valid code to an existing account's address (takeover).
+      sendOnSignUp: false,
+      autoSignInAfterVerification: true,
     },
     // Without this, better-auth's admin plugin defaults new signups to its own
     // 'user' role, which UserRoleSchema (player|admin) rejects everywhere downstream.
@@ -131,15 +134,20 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,
         async sendVerificationOTP({ email, otp, type }) {
-          if (type !== 'forget-password') {
+          // Allow-list, not a fallback: an OTP type this app never issues (sign-in,
+          // change-email) must send nothing rather than borrow another template's copy.
+          if (type !== 'email-verification' && type !== 'forget-password') {
             return;
           }
           const locale = (await options.getUserLanguage?.(email)) ?? 'en';
-          const { subject, body } = await templateRenderer.render(
-            'resetPasswordOtp',
-            { otp, email },
-            locale,
-          );
+          // Three explicit branches, not a computed key: `render` is generic over the key,
+          // so a union of keys will not narrow the data argument to a single payload type.
+          const { subject, body } =
+            type === 'email-verification'
+              ? await templateRenderer.render('verifyEmail', { otp }, locale)
+              : options.isExistingAccountSignUp?.(email)
+                ? await templateRenderer.render('existingAccountSignUp', { otp, email }, locale)
+                : await templateRenderer.render('resetPasswordOtp', { otp, email }, locale);
           await sendEmail({ to: email, subject, body });
         },
       }),

@@ -9,6 +9,7 @@ import {
 import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
+import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
 import { KycStatusSchema, KycStatusSourceSchema, PlayerStatusSchema } from './player.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
@@ -53,6 +54,19 @@ export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // The consent the player actually gave, carried so the audit trail holds it too -
+    // the `player` row alone is current state, not a record of the act. Absent when the
+    // consent write was discarded because a player row already existed.
+    termsVersion: z.string().optional(),
+    acceptedTerms: z.literal(true).optional(),
+    acceptedAge: z.literal(true).optional(),
+  }),
+  // No `userId`: registration is unauthenticated, so the address is the only subject
+  // there is - the same shape `identity.user.login.failed` settled on below.
+  'identity.user.registration.failed': authContextBase.extend({
+    email: z.email(),
+    username: UsernameSchema.optional(),
+    reason: RegistrationFailureReasonSchema,
   }),
   'identity.user.login': authContextBase.extend({
     userId: UuidSchema,

@@ -49,7 +49,7 @@ export default {
   register(ctx) {
     ctx.provide(PLATFORM_CONFIG, () =>
       definePlatformConfig({
-        registration: { termsVersion: 'test-v1', webUrl: 'http://localhost:3000' },
+        registration: { termsVersion: 'test-v1' },
         kyc: {
           gateWithdrawals: true,
           reverifyThresholds: { USD: '10', EUR: '10' },

@@ -25,8 +25,7 @@ import {
   ClientMeta,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
-import { player } from '@openora/core/pam/schema/profile';
-import { isRgBlocked } from './rg-guard.service.js';
+import { assertAccountNotBlocked } from './rg-guard.service.js';
 import {
   DEFAULT_MAX_LOGIN_ATTEMPTS,
   createAccountLockedError,
@@ -380,48 +379,22 @@ export class PhoneLoginService {
       account = { ...account, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
-    // Resolved once, before either gate below, so both the RG-block and the
-    // Backoffice-block events - and the eventual phone-login success event - can all
-    // carry playerId.
-    const [playerRow] = await this.drizzle.db
-      .select({ id: player.id, status: player.status })
-      .from(player)
-      .where(eq(player.userId, account.id))
-      .limit(1);
-
-    // RG login block applied only AFTER the OTP verifies so a probe can't distinguish
-    // a restricted account from a wrong code.
-    if (isRgBlocked(account)) {
-      this.events.emit('rg.exclusion.login_blocked', {
-        userId: account.id,
-        playerId: playerRow?.id ?? null,
-        ip,
-        userAgent,
-      });
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Account access is currently restricted (responsible gambling).',
-        data: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
-      });
-    }
-
-    // Backoffice-initiated account block (status suspended/closed). Checked after the OTP
-    // verifies, before the session-minting transaction - no session exists yet, so unlike
-    // the email path there is nothing to revoke here; the OTP is left unconsumed so the
-    // gate reads the same as the RG block above. Distinct from RG (self_excluded is out of
-    // scope) - a suspended/closed player can never complete phone login.
-    if (playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')) {
-      this.events.emit('player.login_blocked', {
-        userId: account.id,
-        playerId: playerRow.id,
-        status: playerRow.status,
-        ip,
-        userAgent,
-      });
-      throw new ORPCError('FORBIDDEN', {
-        message: 'This account has been suspended and can no longer be used.',
-        data: { reason: PhoneLoginErrorReasonSchema.enum.account_suspended },
-      });
-    }
+    // Same RG and backoffice gates as password login, from the one shared implementation.
+    // Checked after the OTP verifies, before the session-minting transaction - no session
+    // exists yet, so unlike the email paths there is nothing to revoke here; the OTP is
+    // left unconsumed so a blocked account reads the same as any other rejection.
+    const playerId = await assertAccountNotBlocked(
+      { drizzle: this.drizzle, events: this.events },
+      account,
+      { ip, userAgent },
+      {
+        revokeSessions: false,
+        errorData: {
+          rgBlocked: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
+          suspended: { reason: PhoneLoginErrorReasonSchema.enum.account_suspended },
+        },
+      },
+    );
 
     // Mint the session directly - bypasses better-auth's TOTP plugin chain by design,
     // so phone login never triggers a second factor.
@@ -457,7 +430,7 @@ export class PhoneLoginService {
 
     this.events.emit('identity.user.phone_login', {
       userId: account.id,
-      playerId: playerRow?.id ?? null,
+      playerId,
       method: 'phone',
       ip,
       userAgent,

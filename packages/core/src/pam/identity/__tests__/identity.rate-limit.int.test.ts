@@ -76,7 +76,7 @@ describe('IdentityService - rate limiting (real Redis)', () => {
       events,
       limiter,
       platformConfig: definePlatformConfig({
-        registration: { termsVersion: '2026-08', webUrl: 'https://app.example.test' },
+        registration: { termsVersion: '2026-08', requireEmailVerification: false },
       }),
     });
 
@@ -158,29 +158,38 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 
-  it('rejects verifyEmail with a 429 once the per-caller limit is exhausted', async () => {
+  it('rejects verifyEmail with a 429 once the per-address limit is exhausted', async () => {
     const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
-      await limiter.consume('verify-email:203.0.113.5', { limit: 5, windowMs: 15 * 60 * 1000 });
+      await limiter.consume('verify-email:target@e2e.test', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
+    // Six digits are guessable, so the budget follows the address under attack.
     await expect(
-      svc.verifyEmail({ token: 'sometoken' }, { 'x-real-ip': '203.0.113.5' }),
+      svc.verifyEmail(
+        { email: 'target@e2e.test', otp: '000000' },
+        { 'x-real-ip': '203.0.113.5' },
+        new Headers(),
+      ),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 
-  it('buckets unauthenticated verifyEmail callers separately, so one cannot stall the rest', async () => {
+  it('buckets verifyEmail addresses separately, so one target cannot stall the rest', async () => {
     const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
-      await limiter.consume('verify-email:203.0.113.6', { limit: 5, windowMs: 15 * 60 * 1000 });
+      await limiter.consume('verify-email:target@e2e.test', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
-    // Verification links are followed without a session. A shared bucket would let the
-    // exhausted caller above block every other sign-up in flight.
+    // Codes are entered without a session. A shared bucket would let the exhausted
+    // address above block every other sign-up in flight.
     await expect(
-      svc.verifyEmail({ token: 'sometoken' }, { 'x-real-ip': '203.0.113.7' }),
+      svc.verifyEmail(
+        { email: 'other@e2e.test', otp: '000000' },
+        { 'x-real-ip': '203.0.113.7' },
+        new Headers(),
+      ),
     ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 
