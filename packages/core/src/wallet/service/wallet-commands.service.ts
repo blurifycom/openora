@@ -24,7 +24,7 @@ import {
   walletBonusRolloverConfig,
   type Wallet,
 } from '../schema/index.js';
-import type { BonusCreditSourceType } from '../contract/index.js';
+import type { BonusCreditSourceType, ManualAdjustmentDirection } from '../contract/index.js';
 import {
   creditWalletBalance,
   balanceKey,
@@ -63,11 +63,15 @@ export class WalletCommandsService implements WalletCommands {
   ) {}
 
   // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
+  // `direction` is required (not optional) so a new call site can't compile without deciding
+  // it - `debit()` always passes 'debit', `credit()` always passes 'credit', including the
+  // gift/rain/tip legs that share one `type` for both sides of the transfer.
   private writeLedgerRow(
     txn: DrizzleDb,
     row: { id: string; currency: string },
     type: WalletTransactionType,
     amount: string,
+    direction: ManualAdjustmentDirection,
   ) {
     return txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -75,6 +79,7 @@ export class WalletCommandsService implements WalletCommands {
       amount,
       currency: row.currency,
       status: 'completed',
+      direction,
       rail: railFor(row.currency, this.platformConfig?.wallet?.cryptoCurrencies),
     });
   }
@@ -98,7 +103,7 @@ export class WalletCommandsService implements WalletCommands {
     const available = await readWalletBalance(txn, row.id, row.currency);
 
     if (type === 'loss') {
-      await this.writeLedgerRow(txn, row, 'loss', '0');
+      await this.writeLedgerRow(txn, row, 'loss', '0', 'debit');
       return { ok: true, newBalance: available, currency: row.currency };
     }
 
@@ -113,7 +118,7 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, row, type, amount);
+    await this.writeLedgerRow(txn, row, type, amount, 'debit');
 
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
@@ -151,7 +156,7 @@ export class WalletCommandsService implements WalletCommands {
       throw new Error('wallet credit: no row');
     }
 
-    await this.writeLedgerRow(txn, row, type, amount);
+    await this.writeLedgerRow(txn, row, type, amount, 'credit');
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {

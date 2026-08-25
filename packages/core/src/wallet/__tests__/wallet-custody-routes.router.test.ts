@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import { queue, type JobQueueAdapter, type PaymentAdapter } from '@openora/core/contracts';
+import {
+  queue,
+  type JobQueueAdapter,
+  type PaymentAdapter,
+  type RealtimeTransport,
+} from '@openora/core/contracts';
 import {
   mock,
   makeDrizzle,
@@ -45,6 +50,7 @@ function routerWith(
     reconciliation: overrides.reconciliation ?? mock<ReconciliationService>({}),
     jobQueue: overrides.jobQueue ?? makeJobQueue(),
     reconciliationQueue: RECONCILIATION_QUEUE,
+    realtime: mock<RealtimeTransport>({}),
   });
 }
 

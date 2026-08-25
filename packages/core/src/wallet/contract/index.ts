@@ -1,4 +1,4 @@
-import { oc } from '@orpc/contract';
+import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   KycStatusSchema,
@@ -60,9 +60,30 @@ export const WalletBalancesSchema = z.object({
   balances: z.array(WalletBalanceSchema),
 });
 
+// A change *signal*, never the balance itself: carrying `{ currency, balance }` on the
+// stream would make the stream a money surface - a dropped or reordered event leaves a
+// stale number on screen with no self-correction. This shape only tells the client WHAT
+// changed; the client re-fetches getBalance(s)/listTransactions, which is cheap and
+// always internally consistent.
+export const WalletBalanceChangeReasonSchema = z.enum(['deposit', 'withdrawal', 'adjustment']);
+export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
+
+export const WalletBalanceUpdateSchema = z.object({
+  eventId: UuidSchema,
+  currency: WalletCurrencyCodeSchema,
+  reason: WalletBalanceChangeReasonSchema,
+});
+export type WalletBalanceUpdate = z.infer<typeof WalletBalanceUpdateSchema>;
+
 export const SetActiveCurrencyInputSchema = z.object({ currency: WalletCurrencyCodeSchema });
 
 export const ActiveCurrencySchema = z.object({ activeCurrency: WalletCurrencyCodeSchema });
+
+// Shared by a manual adjustment's input direction and a transaction row's recorded
+// direction - a wallet move only ever goes one of these two ways.
+export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
+export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
+export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
 
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
@@ -71,6 +92,11 @@ export const WalletTransactionSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema.nullable(),
   status: WalletTransactionStatusSchema,
+  // Which way this leg moved money - derived server-side from what the operation IS,
+  // never a caller input. Nullable: rows written before this column existed (and any
+  // row whose `type` never carried a recoverable direction, eg a pre-migration gift/
+  // rain/tip leg) have no direction on record.
+  direction: ManualAdjustmentDirectionSchema.nullable(),
   createdAt: TimestampSchema,
 });
 
@@ -104,10 +130,6 @@ export const WithdrawInputSchema = z.object({
   // being dropped between the request and the custodian.
   destinationTag: z.string().trim().min(1).max(64).optional(),
 });
-
-export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
-export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
-export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
 
 export const ManualWalletAdjustmentInputSchema = z.object({
   userId: UuidSchema,
@@ -479,6 +501,10 @@ export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
 
   getBalances: oc.route({ method: 'GET', path: '/wallet/balances' }).output(WalletBalancesSchema),
+
+  streamBalance: oc
+    .route({ method: 'GET', path: '/wallet/balance/stream' })
+    .output(eventIterator(WalletBalanceUpdateSchema)),
 
   setActiveCurrency: oc
     .route({ method: 'PUT', path: '/wallet/active-currency' })

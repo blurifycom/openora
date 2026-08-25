@@ -778,6 +778,7 @@ export class WalletService {
           amount,
           currency,
           status: 'completed',
+          direction: 'credit',
           rail: this.resolveRail(currency),
           providerName: provider,
           providerRefId: psp.externalId,
@@ -877,6 +878,7 @@ export class WalletService {
           amount,
           currency,
           status: 'completed',
+          direction,
           reviewedBy: adminId,
           reviewedAt: new Date(),
           reviewReason: reason,
@@ -1041,7 +1043,12 @@ export class WalletService {
       rawIdempotencyKey: string | undefined;
       amount: string;
       currency: string;
-      values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey'>;
+      // `direction` is nullable on the column (historical rows predate it) but every
+      // new insert must set it explicitly - narrowed to required+non-null here so a
+      // caller that forgets it fails to typecheck instead of writing another NULL row.
+      values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey' | 'direction'> & {
+        direction: ManualAdjustmentDirection;
+      };
     },
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const idempotencyKey = rawIdempotencyKey
@@ -1156,6 +1163,7 @@ export class WalletService {
             amount,
             currency,
             status: 'pending',
+            direction: 'debit',
             rail: this.resolveRail(currency),
             network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
@@ -2272,6 +2280,7 @@ export class WalletService {
         currency: tx.currency,
         network: tx.network,
         status: tx.status,
+        direction: tx.direction,
         createdAt: tx.createdAt.toISOString(),
         reviewedBy: includeInternal ? tx.reviewedBy : null,
         reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
@@ -2408,6 +2417,7 @@ export class WalletService {
           amount: event.amount,
           currency: event.currency,
           status: 'completed',
+          direction: 'credit',
           rail: this.resolveRail(event.currency),
           // Prefer the chain the vendor reported; fall back to the one the address was
           // issued on, which is the only network an address-only webhook can imply.
