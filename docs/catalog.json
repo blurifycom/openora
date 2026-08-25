@@ -113,23 +113,13 @@
       "id": "chat-commands",
       "group": "engagement",
       "tables": [
-        "chat_command_config",
-        "chat_command_idempotency",
-        "player_donate",
-        "player_gift",
-        "player_rain",
-        "player_rain_receiver"
+        "chat_command_config"
       ],
       "routes": [
         "chat-commands.adminListCommands",
         "chat-commands.adminUpdateCommand",
-        "chat-commands.claimGift",
-        "chat-commands.getGift",
         "chat-commands.listCommands",
-        "chat-commands.mentionSearch",
-        "chat-commands.postGift",
-        "chat-commands.postRain",
-        "chat-commands.sendDonate"
+        "chat-commands.mentionSearch"
       ]
     },
     {
@@ -539,7 +529,6 @@
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -570,7 +559,6 @@
       "token": "CHAT_ROOM_ACCESS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
@@ -580,7 +568,6 @@
       "token": "CHAT_SYSTEM_WRITER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
@@ -646,10 +633,8 @@
       "category": "gift-commands",
       "interface": "SendGiftArgs",
       "token": "GIFT_COMMANDS",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts"
-      ]
+      "status": "stub",
+      "boundIn": []
     },
     {
       "category": "identity",
@@ -784,10 +769,8 @@
       "category": "rain-commands",
       "interface": "SendRainArgs",
       "token": "RAIN_COMMANDS",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts"
-      ]
+      "status": "stub",
+      "boundIn": []
     },
     {
       "category": "realtime",
@@ -855,7 +838,6 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -871,13 +853,9 @@
     }
   ],
   "events": [
-    "chat.donate.sent",
-    "chat.gift.claimed",
-    "chat.gift.sent",
     "chat.message.sent",
     "chat.private_room.created",
     "chat.private_room.deleted",
-    "chat.rain.distributed",
     "chat.room.created",
     "chat.room.deleted",
     "chat.room.member.banned",
@@ -1985,7 +1963,7 @@
     },
     {
       "name": "SendDonateInputSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+      "file": "packages/core/src/contracts/orpc/social-transfers.ts"
     },
     {
       "name": "SendFriendRequestInputSchema",

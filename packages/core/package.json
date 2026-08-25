@@ -299,11 +299,6 @@
       "import": "./dist/engagement/chat-commands/schema/index.js",
       "default": "./dist/engagement/chat-commands/schema/index.js"
     },
-    "./engagement/chat-commands/service": {
-      "types": "./dist/engagement/chat-commands/service/chat-command-transfers.service.d.ts",
-      "import": "./dist/engagement/chat-commands/service/chat-command-transfers.service.js",
-      "default": "./dist/engagement/chat-commands/service/chat-command-transfers.service.js"
-    },
     "./engagement/plugins/chat-commands": {
       "types": "./dist/engagement/chat-commands/plugin.d.ts",
       "import": "./dist/engagement/chat-commands/plugin.js",

@@ -50,7 +50,6 @@
       "@openora/core/contracts": ["./src/contracts/index.ts"],
       "@openora/core/contracts/kit": ["./src/contracts/kit.ts"],
       "@openora/core/engagement": ["./src/engagement/index.ts"],
-      "@openora/core/engagement/chat-commands/service": ["./src/engagement/chat-commands/service/chat-command-transfers.service.ts"],
       "@openora/core/engagement/contracts": ["./src/engagement/contracts.ts"],
       "@openora/core/engagement/contracts/chat": ["./src/engagement/chat/contract/index.ts"],
       "@openora/core/engagement/contracts/chat-commands": ["./src/engagement/chat-commands/contract/index.ts"],

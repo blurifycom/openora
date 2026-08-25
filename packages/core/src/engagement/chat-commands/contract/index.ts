@@ -68,14 +68,6 @@ export const PostRainInputSchema = z.object({
 });
 export type PostRainInput = z.infer<typeof PostRainInputSchema>;
 
-export const SendDonateInputSchema = z.object({
-  targetUsername: z.string().min(1),
-  amount: MoneyAmountSchema,
-  roomId: ChatRoomIdSchema,
-  idempotencyKey: UuidSchema,
-});
-export type SendDonateInput = z.infer<typeof SendDonateInputSchema>;
-
 export const ClaimGiftOutputSchema = z.object({
   claimedBy: UuidSchema,
   claimedByUsername: z.string(),
@@ -124,11 +116,6 @@ export const chatCommandsContract = {
   postRain: oc
     .route({ method: 'POST', path: '/chat-command/rain' })
     .input(PostRainInputSchema)
-    .output(CommandChatMessageSchema),
-
-  sendDonate: oc
-    .route({ method: 'POST', path: '/chat-command/donate' })
-    .input(SendDonateInputSchema)
     .output(CommandChatMessageSchema),
 
   mentionSearch: oc

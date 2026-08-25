@@ -4,7 +4,7 @@
 import { fileURLToPath } from 'node:url';
 import { runMigrations } from '@openora/core/server/migrate';
 
-/** Apply chat-command and player-transfer migrations (idempotent per journal). */
+/** Apply chat-command migrations (legacy transfer migrations remain journal-compatible). */
 export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),

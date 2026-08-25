@@ -29,6 +29,27 @@
       "when": 1787652660418,
       "tag": "0003_faithful_wallop",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787663063255,
+      "tag": "0004_swift_talon",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787687957784,
+      "tag": "0005_damp_ultimatum",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787694061445,
+      "tag": "0006_cuddly_leader",
+      "breakpoints": true
     }
   ]
 }

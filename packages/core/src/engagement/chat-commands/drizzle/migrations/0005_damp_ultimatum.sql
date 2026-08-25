@@ -1,0 +1,2 @@
+-- Legacy compatibility migration. Transfer tables are retained for downstream
+-- overlays and must not be dropped or recreated by OpenOra.
