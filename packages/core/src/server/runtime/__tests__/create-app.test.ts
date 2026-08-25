@@ -51,6 +51,35 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
   });
 });
 
+describe('createApp - streaming responses opt out of transformation', () => {
+  it('marks an SSE response no-transform so an intermediary cannot batch its frames', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const created = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL });
+      created.app.get('/sse-probe', (c) =>
+        c.body(new ReadableStream(), { headers: { 'content-type': 'text/event-stream' } }),
+      );
+
+      const stream = await created.app.request('/sse-probe');
+      expect(stream.headers.get('cache-control')).toBe('no-store, no-transform');
+      expect(stream.headers.get('x-accel-buffering')).toBe('no');
+
+      const json = await created.app.request('/health');
+      expect(json.headers.get('cache-control')).toBe('no-store');
+      expect(json.headers.get('x-accel-buffering')).toBeNull();
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+});
+
 describe('createApp - service name for the Redis Streams consumer group', () => {
   const saved = { redis: process.env['REDIS_URL'], manifest: process.env['SERVICE_MANIFEST'] };
 
