@@ -32,6 +32,18 @@ const KycResubmissionNotifyJobSchema = z.object({
   reason: z.string().nullable(),
 });
 
+// p.amount on every wallet/chat/gaming event payload is a MoneyAmount decimal string
+// scaled to MONEY_SCALE = 18 (crypto-first precision), eg "100.000000000000000000" -
+// display-only trimming for notification text; Number() can lose precision below its
+// ~15-17 significant digits for an extreme 18-decimal value, an accepted tradeoff.
+function formatMoneyAmount(amount: string): string {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) {
+    return amount;
+  }
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(value);
+}
+
 type NotificationMapEntry = {
   event: DomainEventName;
   sendEmail: boolean;
@@ -80,7 +92,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'withdrawal.approved',
       title: 'Withdrawal approved',
-      body: `Your withdrawal of ${p.amount} ${p.currency} has been approved and is being processed.`,
+      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been approved and is being processed.`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -92,7 +104,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'withdrawal.rejected',
       title: 'Withdrawal rejected',
-      body: `Your withdrawal of ${p.amount} ${p.currency} was rejected and the funds were returned to your balance.${p.reason ? ` Reason: ${p.reason}.` : ''}`,
+      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} was rejected and the funds were returned to your balance.${p.reason ? ` Reason: ${p.reason}.` : ''}`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -104,7 +116,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'withdrawal.requested',
       title: 'Withdrawal requested',
-      body: `Your withdrawal request of ${p.amount} ${p.currency} has been received and is pending review.`,
+      body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -116,7 +128,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'withdrawal.completed',
       title: 'Withdrawal completed',
-      body: `Your withdrawal of ${p.amount} ${p.currency} has been completed.`,
+      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -128,7 +140,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'withdrawal.failed',
       title: 'Withdrawal failed',
-      body: `Your withdrawal of ${p.amount} ${p.currency} failed and the funds were returned to your balance.`,
+      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -140,7 +152,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'deposit.completed',
       title: 'Deposit completed',
-      body: `Your deposit of ${p.amount} ${p.currency} has been completed.`,
+      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -152,7 +164,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'balance.adjusted',
       title: 'Balance adjusted',
-      body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${p.amount} ${p.currency}. Reason: ${p.reason}.`,
+      body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
       data: { transactionId: p.transactionId },
     }),
     { sendEmail: true },
@@ -176,7 +188,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.recipientId,
       type: 'tip.received',
       title: 'You received a tip',
-      body: `${p.senderUsername} sent you ${p.amount} ${p.currency}.`,
+      body: `${p.senderUsername} sent you ${formatMoneyAmount(p.amount)} ${p.currency}.`,
       data: compactData({ roomId: p.roomId }),
     }),
     { sendEmail: true },
@@ -230,7 +242,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'bet.settled',
       title: p.outcome === 'win' ? 'Bet won' : 'Bet settled',
-      body: `Your bet settled as a ${p.outcome} for ${p.amount} ${p.currency}.`,
+      body: `Your bet settled as a ${p.outcome} for ${formatMoneyAmount(p.amount)} ${p.currency}.`,
       data: { roundId: p.roundId },
     }),
     { sendEmail: true },
@@ -242,7 +254,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'bonus.granted',
       title: 'Bonus granted',
-      body: `You were granted a bonus of ${p.amount} ${p.currency}.`,
+      body: `You were granted a bonus of ${formatMoneyAmount(p.amount)} ${p.currency}.`,
       data: { bonusId: p.bonusId },
     }),
     { sendEmail: true },

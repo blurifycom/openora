@@ -214,4 +214,129 @@ describe('notificationEventMap', () => {
     expect(entryFor('wallet.withdrawal.approved').sendEmail).toBe(true);
     expect(entryFor('wallet.withdrawal.rejected').sendEmail).toBe(true);
   });
+
+  describe('amount formatting in notification body text', () => {
+    const basePayloads = {
+      'wallet.withdrawal.approved': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        adminId: randomUUID(),
+      }),
+      'wallet.withdrawal.rejected': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        adminId: randomUUID(),
+        reason: 'test reason',
+      }),
+      'wallet.withdrawal.requested': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        playerId: null,
+      }),
+      'wallet.withdrawal.completed': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        playerId: null,
+      }),
+      'wallet.withdrawal.failed': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        adminId: randomUUID(),
+      }),
+      'wallet.deposit.completed': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        playerId: null,
+      }),
+      'wallet.manual_adjustment.created': (amount: string) => ({
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+        transactionId: randomUUID(),
+        playerId: null,
+        adminId: randomUUID(),
+        direction: 'credit' as const,
+        reason: 'goodwill credit',
+      }),
+      'chat.donate.sent': (amount: string) => ({
+        senderId: randomUUID(),
+        senderUsername: 'alice',
+        recipientId: randomUUID(),
+        recipientUsername: 'bob',
+        amount,
+        currency: 'EUR',
+        roomId: null,
+      }),
+      'gaming.bet.settled': (amount: string) => ({
+        roundId: randomUUID(),
+        userId: randomUUID(),
+        playerId: null,
+        outcome: 'win' as const,
+        amount,
+        currency: 'EUR',
+      }),
+      'bonus.granted': (amount: string) => ({
+        bonusId: randomUUID(),
+        userId: randomUUID(),
+        amount,
+        currency: 'EUR',
+      }),
+    } as const;
+
+    const events = Object.keys(basePayloads) as (keyof typeof basePayloads)[];
+
+    it.each(events)('trims the padded 18-decimal amount down to "100" in the %s body', (event) => {
+      const input = entryFor(event).handle(basePayloads[event]('100.000000000000000000'));
+
+      expect(input?.body).toContain('100');
+      expect(input?.body).not.toContain('100.000000000000000000');
+    });
+
+    it.each(events)(
+      'resolves a fractional amount to "0.5", not "0.5000000000000000" or "1", in the %s body',
+      (event) => {
+        const input = entryFor(event).handle(basePayloads[event]('0.500000000000000000'));
+
+        expect(input?.body).toContain('0.5');
+        expect(input?.body).not.toContain('0.5000000000000000');
+        expect(input?.body).not.toContain(' 1 ');
+      },
+    );
+
+    it.each(events)(
+      'adds a thousands separator, resolving to "1,234.5", in the %s body',
+      (event) => {
+        const input = entryFor(event).handle(basePayloads[event]('1234.500000000000000000'));
+
+        expect(input?.body).toContain('1,234.5');
+      },
+    );
+  });
+
+  it('leaves currency and reason untouched while only the amount substring is reformatted', () => {
+    const input = entryFor('wallet.manual_adjustment.created').handle({
+      userId: randomUUID(),
+      amount: '100.000000000000000000',
+      currency: 'EUR',
+      transactionId: randomUUID(),
+      playerId: null,
+      adminId: randomUUID(),
+      direction: 'credit',
+      reason: 'goodwill credit',
+    });
+
+    expect(input?.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
+  });
 });
