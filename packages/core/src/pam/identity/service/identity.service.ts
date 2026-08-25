@@ -14,6 +14,7 @@ import {
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import type {
@@ -146,6 +147,11 @@ const SUCCESS = { success: true as const };
 export const UserNotFoundError = makeNotFoundError('User');
 export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
 
+const BetterAuthErrorBodySchema = z.object({
+  message: z.string().optional(),
+  code: z.string().optional(),
+});
+
 // better-auth calls use `asResponse: true`, which returns an error *Response*
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
 // to the right HTTP status instead of the handler silently returning success.
@@ -169,15 +175,20 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
     });
   }
   let message = `Request failed (${res.status})`;
-  try {
-    const parsed = JSON.parse(await res.text()) as { message?: string };
-    if (parsed.message) {
-      message = parsed.message;
+  let betterAuthCode: string | undefined;
+  const body = BetterAuthErrorBodySchema.safeParse(await res.json().catch(() => null));
+  if (body.success) {
+    if (body.data.message) {
+      message = body.data.message;
     }
-  } catch {
-    // non-JSON body - keep the default message
+    if (body.data.code) {
+      betterAuthCode = body.data.code;
+    }
   }
-  throw new ORPCError(code, { message });
+  throw new ORPCError(code, {
+    message,
+    ...(betterAuthCode ? { data: { code: betterAuthCode } } : {}),
+  });
 }
 
 const MINUTE_MS = 60 * 1000;
