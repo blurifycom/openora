@@ -1,6 +1,8 @@
 import {
+  ADMIN_SECURITY_POLICY,
   ADMIN_USER_DIRECTORY,
   CACHE,
+  GEO_IP_ADAPTER,
   IDENTITY_READER,
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
@@ -16,9 +18,10 @@ import {
   SESSION_COMMANDS,
   USER_COMMANDS,
   SMS_ADAPTER,
+  AdminSecurityConfigSchema,
 } from '@openora/core/contracts';
 import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
@@ -29,8 +32,52 @@ import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
+import { AdminSecurityService } from './service/admin-security.service.js';
+import { TrustedDeviceService } from './service/trusted-device.service.js';
+import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
+
+type IdentityContainer = TypedContainer<CoreTokenCatalog>;
+
+function adminSecurityConfig(c: IdentityContainer) {
+  const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+  return platformConfig?.adminSecurity ?? AdminSecurityConfigSchema.parse({});
+}
+
+function makeTrustedDevices(c: IdentityContainer) {
+  return new TrustedDeviceService({
+    drizzle: c.get(DRIZZLE),
+    events: c.get(EVENT_BUS),
+    trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
+  });
+}
+
+function makeTwoFactorLockout(c: IdentityContainer) {
+  return new TwoFactorLockoutService({
+    drizzle: c.get(DRIZZLE),
+    events: c.get(EVENT_BUS),
+    identityReader: c.get(IDENTITY_READER),
+    config: adminSecurityConfig(c).twoFactorLockout,
+  });
+}
+
+function makeAdminSecurity(c: IdentityContainer) {
+  const identityReader = c.get(IDENTITY_READER);
+  return new AdminSecurityService({
+    drizzle: c.get(DRIZZLE),
+    events: c.get(EVENT_BUS),
+    sessions: new SessionService({
+      drizzle: c.get(DRIZZLE),
+      events: c.get(EVENT_BUS),
+      identityReader,
+    }),
+    trustedDevices: makeTrustedDevices(c),
+    identityReader,
+    config: adminSecurityConfig(c),
+    geoIp: c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : undefined,
+  });
+}
 
 export default {
   id: 'identity',
@@ -66,6 +113,10 @@ export default {
         ),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every
+    // admin request; leaving it unbound turns both checks off, which is why it is bound
+    // here rather than behind a feature flag.
+    ctx.provide(ADMIN_SECURITY_POLICY, (c) => makeAdminSecurity(c));
     ctx.provide(USER_COMMANDS, (c) => new DrizzleUserCommands(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({
@@ -91,6 +142,8 @@ export default {
           geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
           playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
           cache: c.get(CACHE),
+          trustedDevices: makeTrustedDevices(c),
+          twoFactorLockout: makeTwoFactorLockout(c),
         }),
         new SessionService({
           drizzle: c.get(DRIZZLE),
@@ -108,6 +161,7 @@ export default {
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
+        makeAdminSecurity(c),
       ),
     );
   },

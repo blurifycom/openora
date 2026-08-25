@@ -57,6 +57,13 @@
       "when": 1787339175084,
       "tag": "0007_fuzzy_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787656339386,
+      "tag": "0008_pink_bucky",
+      "breakpoints": true
     }
   ]
 }

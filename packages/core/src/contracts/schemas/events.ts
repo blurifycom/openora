@@ -50,6 +50,10 @@ export const KycStatusUpdatedSchema = z.object({
   source: KycStatusSourceSchema,
 });
 
+export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as const;
+export const TwoFactorMethodSchema = z.enum(TWO_FACTOR_METHODS);
+export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
+
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
@@ -107,10 +111,52 @@ export const domainEventSchemas = {
   'identity.2fa.enabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
   }),
   'identity.2fa.disabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
+  }),
+  'identity.2fa.verified': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
+    trustedDevice: z.boolean(),
+  }),
+  'identity.2fa.failed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
+    attemptsRemaining: z.number().int().nonnegative(),
+  }),
+  'identity.2fa.lockout.triggered': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    lockoutUntil: TimestampSchema,
+  }),
+  // An admin account reached an admin route without a second factor configured.
+  'identity.2fa.enrollment_blocked': authContextBase.extend({
+    userId: UuidSchema,
+  }),
+  // A session was used from a device or network that no longer matches the one it
+  // was issued to; the session is revoked before this is emitted.
+  'identity.session.fingerprint_mismatch': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    sessionId: UuidSchema,
+    mismatch: z.enum(['user_agent', 'ip']),
+  }),
+  'identity.trusted_device.added': authContextBase.extend({
+    userId: UuidSchema,
+    deviceId: UuidSchema,
+    label: z.string(),
+    expiresAt: TimestampSchema,
+  }),
+  'identity.trusted_device.revoked': authContextBase.extend({
+    userId: UuidSchema,
+    deviceId: UuidSchema,
+    actorId: UuidSchema,
   }),
   'identity.password.reset': authContextBase.extend({
     userId: UuidSchema,
@@ -540,6 +586,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
+  // v2: `method` records which factor was used, required by the audit trail.
+  'identity.2fa.enabled': 2,
+  'identity.2fa.disabled': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

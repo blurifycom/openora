@@ -28,6 +28,7 @@ export const UserSchema = z.object({
   language: LanguageSchema,
   phoneNumber: z.string().nullable().optional(),
   phoneVerified: z.boolean().optional(),
+  twoFactorEnabled: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -139,6 +140,9 @@ export const Enable2faResultSchema = z.object({
 
 export const Verify2faInputSchema = z.object({
   code: z.string().min(6).max(10),
+  // Suppresses the second factor on this browser until the trust window lapses.
+  // Honoured only while the operator allows a non-zero trusted-device window.
+  trustDevice: z.boolean().default(false),
 });
 
 export const Disable2faInputSchema = z.object({

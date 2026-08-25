@@ -631,6 +631,13 @@ export async function mapEventToRecord(
     topic === 'identity.user.logout' ||
     topic === 'identity.2fa.enabled' ||
     topic === 'identity.2fa.disabled' ||
+    topic === 'identity.2fa.verified' ||
+    topic === 'identity.2fa.failed' ||
+    topic === 'identity.2fa.lockout.triggered' ||
+    topic === 'identity.2fa.enrollment_blocked' ||
+    topic === 'identity.session.fingerprint_mismatch' ||
+    topic === 'identity.trusted_device.added' ||
+    topic === 'identity.trusted_device.revoked' ||
     topic === 'identity.password.reset' ||
     topic === 'identity.email.verified' ||
     topic === 'identity.profile.updated'
@@ -664,6 +671,13 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.phone_otp.cancelled',
   'identity.2fa.enabled',
   'identity.2fa.disabled',
+  'identity.2fa.verified',
+  'identity.2fa.failed',
+  'identity.2fa.lockout.triggered',
+  'identity.2fa.enrollment_blocked',
+  'identity.session.fingerprint_mismatch',
+  'identity.trusted_device.added',
+  'identity.trusted_device.revoked',
   'identity.password.reset',
   'identity.email.verified',
   'identity.profile.updated',

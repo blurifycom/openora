@@ -41,6 +41,13 @@ export const user = pgTable(
     phoneVerifiedAt: timestamp({ withTimezone: true }),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
+    // Second-factor lockout, counted separately from the password-login columns above:
+    // the two thresholds are configured independently and a 2FA lockout must not
+    // consume the password-login budget (or vice versa).
+    failedTwoFactorAttempts: integer().notNull().default(0),
+    twoFactorLockoutUntil: timestamp({ withTimezone: true }),
+    twoFactorLockoutCount: integer().notNull().default(0),
+    lastFailedTwoFactorAt: timestamp({ withTimezone: true }),
     // Progressive lockout tiers: `lockoutCount` counts lockouts inside a rolling 24h
     // window (reset once `lastLockoutAt` falls outside it), escalating the duration
     // 1min -> 5min -> 15min. Shared by every login method.
@@ -79,6 +86,10 @@ export const session = pgTable(
       .$onUpdateFn(() => new Date()),
     ipAddress: text(),
     userAgent: text(),
+    // Written by the admin session guard, throttled. better-auth owns `updatedAt` and
+    // ties it to its own updateAge bookkeeping, so touching that column to record
+    // activity would shift session expiry - this one is ours and better-auth ignores it.
+    lastSeenAt: timestamp({ withTimezone: true }),
     userId: uuid()
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
@@ -163,9 +174,38 @@ export const smsOtpSession = pgTable(
   (t) => [index('sms_otp_session_phone_idx').on(t.phone)],
 );
 
+// Server-side trusted-device registry. better-auth issues its own opaque trust cookie,
+// which cannot be listed or revoked; a device only skips the second factor when BOTH
+// that cookie and an unrevoked row here are present, so revoking the row forces 2FA on
+// the very next request.
+export const adminTrustedDevice = pgTable(
+  'admin_trusted_device',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid()
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    deviceHash: text().notNull(),
+    label: text().notNull(),
+    ipAddress: text(),
+    userAgent: text(),
+    lastUsedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    revokedAt: timestamp({ withTimezone: true }),
+    revokedBy: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('admin_trusted_device_user_hash_idx').on(t.userId, t.deviceHash),
+    index('admin_trusted_device_user_id_idx').on(t.userId),
+    index('admin_trusted_device_expires_at_idx').on(t.expiresAt),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type SmsOtpSession = typeof smsOtpSession.$inferSelect;
 export type Account = typeof account.$inferSelect;
 export type Verification = typeof verification.$inferSelect;
 export type TwoFactor = typeof twoFactor.$inferSelect;
+export type AdminTrustedDevice = typeof adminTrustedDevice.$inferSelect;

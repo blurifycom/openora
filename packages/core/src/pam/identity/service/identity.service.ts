@@ -16,6 +16,9 @@ import { parseCookies } from 'better-auth/cookies';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import type { TrustedDeviceService } from './trusted-device.service.js';
+import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
+import { player } from '@openora/core/pam/schema/profile';
 import type {
   CacheAdapter,
   RateLimiterAdapter,
@@ -90,6 +93,7 @@ function toUser(u: BetterAuthUser) {
     emailVerified: u.emailVerified,
     theme: u.theme ?? 'system',
     language: u.language ?? 'en',
+    twoFactorEnabled: u.twoFactorEnabled ?? false,
     createdAt: toIso(u.createdAt),
     updatedAt: toIso(u.updatedAt),
   };
@@ -131,7 +135,7 @@ type ExtendedAuthApi = {
     Pick<typeof user.$inferInsert, 'email' | 'name' | 'username'> & { password: string }
   >;
   enableTwoFactor: AuthCall<{ password: string }>;
-  verifyTOTP: AuthCall<{ code: string }>;
+  verifyTOTP: AuthCall<{ code: string; trustDevice?: boolean }>;
   disableTwoFactor: AuthCall<{ password: string }>;
   requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
   checkVerificationOTP: AuthCall<{ email: string; type: 'forget-password'; otp: string }>;
@@ -287,6 +291,8 @@ export type IdentityServiceDeps = {
   geoCheck?: GeoCheckCommands;
   playerProvisioning?: PlayerProvisioning;
   cache?: CacheAdapter;
+  trustedDevices?: TrustedDeviceService;
+  twoFactorLockout?: TwoFactorLockoutService;
 };
 
 /**
@@ -317,6 +323,8 @@ export class IdentityService {
   // the `finally` clears it. Not cache-backed - it never has to outlive the call or
   // cross a process.
   private readonly existingAccountSignUps = new Set<string>();
+  private readonly trustedDevices?: TrustedDeviceService;
+  private readonly twoFactorLockout?: TwoFactorLockoutService;
 
   constructor({
     drizzle,
@@ -330,6 +338,8 @@ export class IdentityService {
     geoCheck,
     playerProvisioning,
     cache,
+    trustedDevices,
+    twoFactorLockout,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -342,6 +352,8 @@ export class IdentityService {
     this.geoCheck = geoCheck;
     this.playerProvisioning = playerProvisioning;
     this.cache = cache;
+    this.trustedDevices = trustedDevices;
+    this.twoFactorLockout = twoFactorLockout;
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
@@ -1120,24 +1132,51 @@ export class IdentityService {
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const twoFactorKey =
-      (await this.currentUserId(headers)) ?? twoFactorPendingCookieValue(headers) ?? 'anonymous';
+    const pendingCookie = twoFactorPendingCookieValue(headers);
+    const sessionUserId = await this.currentUserId(headers);
+    const twoFactorKey = sessionUserId ?? pendingCookie ?? 'anonymous';
     await assertRateLimit(this.limiter, `verify2fa:${twoFactorKey}`, VERIFY_2FA_RATE_LIMIT);
+
+    const challengedUserId =
+      sessionUserId ?? (await this.twoFactorLockout?.resolvePendingUserId(pendingCookie));
+    if (challengedUserId) {
+      await this.twoFactorLockout?.assertNotLocked(challengedUserId);
+    }
+
+    const trustDevice = input.trustDevice && this.trustedDevices !== undefined;
     const res = await this.api.verifyTOTP({
-      body: { code: input.code },
+      body: { code: input.code, trustDevice },
       headers,
       asResponse: true,
     });
+    if (!res.ok && challengedUserId) {
+      await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
+    }
     await ensureOk(res);
+    if (challengedUserId) {
+      await this.twoFactorLockout?.reset(challengedUserId);
+    }
     this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
       this.events.emit('identity.2fa.enabled', {
         userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        method: 'totp',
         ip,
         userAgent,
       });
+      this.events.emit('identity.2fa.verified', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        method: 'totp',
+        trustedDevice: trustDevice,
+        ip,
+        userAgent,
+      });
+      if (trustDevice) {
+        await this.trustedDevices?.trust(userId, { ip, userAgent });
+      }
     }
     return SUCCESS;
   }
@@ -1162,6 +1201,7 @@ export class IdentityService {
       this.events.emit('identity.2fa.disabled', {
         userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        method: 'totp',
         ip,
         userAgent,
       });

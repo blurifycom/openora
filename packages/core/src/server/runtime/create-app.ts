@@ -29,6 +29,7 @@ import {
   JOB_QUEUE,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
+  ADMIN_SECURITY_POLICY,
   IDENTITY_READER,
   RATE_LIMITER,
   CACHE,
@@ -265,6 +266,7 @@ export async function createApp(
         c.get(EVENT_BUS),
         // has() avoids throwing on an unbound token so boot works without the identity module.
         c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
+        c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
       ),
   );
   if (config.igaming) {
