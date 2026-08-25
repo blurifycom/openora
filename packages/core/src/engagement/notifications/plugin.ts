@@ -26,6 +26,8 @@ import { NotificationsService } from './service/notifications.service.js';
 import type { CreateNotificationInput } from './contract/index.js';
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
+const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
+const NOTIFICATION_RETENTION_DAYS = 30;
 
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
@@ -374,6 +376,18 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: NOTIFICATIONS_RETENTION_PURGE_QUEUE,
+      schema: z.object({}),
+      handler: async () => {
+        if (!svcRef) {
+          return;
+        }
+        const { count } = await svcRef.purgeExpired(NOTIFICATION_RETENTION_DAYS);
+        logger.info({ count }, 'notification retention purge complete');
+      },
+    });
+
     ctx.routers.add('notifications', (c) => {
       const svc = new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;
@@ -381,6 +395,14 @@ export default {
       directoryRef = c.get(ADMIN_USER_DIRECTORY);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
+      // Off-peak, one hour after tag's daily-evaluation (0 2 * * *), so the in-process
+      // driver doesn't run both sweeps at once in dev/test.
+      void jobQueueRef.schedule(
+        NOTIFICATIONS_RETENTION_PURGE_QUEUE,
+        'notifications.retention-purge.daily',
+        {},
+        { cron: '0 3 * * *' },
+      );
       return createNotificationsRouter({ notifications: svc, realtime: realtimeRef });
     });
   },

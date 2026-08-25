@@ -8,7 +8,7 @@ import {
   findOneOrThrow,
   pageToOffset,
 } from '@openora/core/server';
-import { eq, and, isNull, asc, desc, count } from 'drizzle-orm';
+import { eq, and, isNull, asc, desc, count, lt } from 'drizzle-orm';
 import type { PaginationOptions, User } from '@openora/core/contracts';
 import { notification } from '../schema/index.js';
 import type { CreateNotificationInput, NotificationSortBy } from '../contract/index.js';
@@ -94,6 +94,17 @@ export class NotificationsService {
       .update(notification)
       .set({ readAt: new Date() })
       .where(and(eq(notification.userId, userId), isNull(notification.readAt)))
+      .returning({ id: notification.id });
+    return { count: rows.length };
+  }
+
+  // Unconditional on age (read or unread), not gated on readAt - deletes anything past
+  // the retention window regardless of read state.
+  async purgeExpired(retentionDays: number) {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const rows = await this.drizzle.db
+      .delete(notification)
+      .where(lt(notification.createdAt, cutoff))
       .returning({ id: notification.id });
     return { count: rows.length };
   }

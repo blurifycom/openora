@@ -323,3 +323,28 @@ describe('NotificationsService.markAllRead (real PG)', () => {
     expect(await svc.markAllRead(userId)).toEqual({ count: 0 });
   });
 });
+
+describe('NotificationsService.purgeExpired (real PG)', () => {
+  it('deletes only rows older than the retention window, regardless of readAt', async () => {
+    const { svc } = makeService();
+    const expired = await seedNotification({
+      createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+    });
+    const fresh = await seedNotification({
+      createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+    });
+
+    expect(await svc.purgeExpired(30)).toEqual({ count: 1 });
+
+    const remaining = await db.drizzle.db.select().from(notification);
+    expect(remaining.map((r) => r.id)).toEqual([fresh.id]);
+    expect(remaining.find((r) => r.id === expired.id)).toBeUndefined();
+  });
+
+  it('returns zero when nothing is old enough to purge', async () => {
+    const { svc } = makeService();
+    await seedNotification({ createdAt: new Date() });
+
+    expect(await svc.purgeExpired(30)).toEqual({ count: 0 });
+  });
+});
