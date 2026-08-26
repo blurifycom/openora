@@ -319,7 +319,9 @@ export default {
       }
       const dto = toNotificationDto(record);
       if (dto) {
-        void realtimeRef.publish(notificationsChannel(record.userId), dto);
+        void Promise.resolve(realtimeRef.publish(notificationsChannel(record.userId), dto)).catch(
+          (err: unknown) => logger.error({ err }, 'notification realtime publish failed'),
+        );
       }
     };
 

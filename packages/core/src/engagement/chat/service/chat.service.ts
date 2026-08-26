@@ -113,37 +113,47 @@ function parseMentionedUsernames(content: string): string[] {
   return [...usernames];
 }
 
-function emitMentions(
-  events: EventBus,
-  directory: AdminUserDirectory,
-  content: string,
-  byUserId: User['id'],
-  roomId: ChatRoom['id'] | null,
-  messageId: ChatMessage['id'],
-): void {
+function emitMentions({
+  events,
+  directory,
+  isBlockedByMentioned,
+  content,
+  byUserId,
+  roomId,
+  messageId,
+}: {
+  events: EventBus;
+  directory: AdminUserDirectory;
+  isBlockedByMentioned: (mentionedUserId: User['id']) => Promise<boolean>;
+  content: string;
+  byUserId: User['id'];
+  roomId: ChatRoom['id'] | null;
+  messageId: ChatMessage['id'];
+}): void {
   const usernames = parseMentionedUsernames(content);
   if (usernames.length === 0) {
     return;
   }
-  void mapConcurrent(usernames, MENTION_RESOLVE_CONCURRENCY, (username) =>
-    directory.getPlayerByUsername(username).catch((err: unknown) => {
+  void mapConcurrent(usernames, MENTION_RESOLVE_CONCURRENCY, async (username) => {
+    const summary = await directory.getPlayerByUsername(username).catch((err: unknown) => {
       logger.error({ err, username, messageId }, 'chat mention lookup failed');
       return null;
-    }),
-  )
-    .then((resolved) => {
-      const mentionedIds = new Set(
-        resolved.flatMap((summary) =>
-          summary && summary.userId !== byUserId ? [summary.userId] : [],
-        ),
-      );
-      for (const mentionedUserId of mentionedIds) {
-        events.emit('chat.user.mentioned', { mentionedUserId, byUserId, roomId, messageId });
-      }
-    })
-    .catch((err: unknown) => {
-      logger.error({ err, messageId }, 'chat mention resolution failed');
     });
+    if (!summary || summary.userId === byUserId) {
+      return;
+    }
+    const mentionedUserId = summary.userId;
+    const blocked = await isBlockedByMentioned(mentionedUserId).catch((err: unknown) => {
+      logger.error({ err, mentionedUserId, messageId }, 'chat mention block check failed');
+      return true;
+    });
+    if (blocked) {
+      return;
+    }
+    events.emit('chat.user.mentioned', { mentionedUserId, byUserId, roomId, messageId });
+  }).catch((err: unknown) => {
+    logger.error({ err, messageId }, 'chat mention resolution failed');
+  });
 }
 
 function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
@@ -1192,7 +1202,16 @@ export class ChatService {
 
     const message = toPublicMessage(record);
     publishChatEvent(this.transport, roomId, message);
-    emitMentions(this.events, this.directory, safeContent, userId, roomId, record.id);
+    emitMentions({
+      events: this.events,
+      directory: this.directory,
+      isBlockedByMentioned: (mentionedUserId) =>
+        this.isBlocked(this.drizzle.db, mentionedUserId, userId),
+      content: safeContent,
+      byUserId: userId,
+      roomId,
+      messageId: record.id,
+    });
     return message;
   }
 
@@ -1269,7 +1288,16 @@ export class ChatService {
 
     const message = toPublicMessage(record);
     publishChatEvent(this.transport, null, message);
-    emitMentions(this.events, this.directory, safeContent, userId, null, record.id);
+    emitMentions({
+      events: this.events,
+      directory: this.directory,
+      isBlockedByMentioned: (mentionedUserId) =>
+        this.isBlocked(this.drizzle.db, mentionedUserId, userId),
+      content: safeContent,
+      byUserId: userId,
+      roomId: null,
+      messageId: record.id,
+    });
     return message;
   }
 
@@ -1565,7 +1593,11 @@ export class ChatService {
     return [...(await this.blockedIdsFor(viewerId))];
   }
 
-  async isBlocked(tx: DrizzleTx, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
+  async isBlocked(
+    tx: DrizzleDb | DrizzleTx,
+    blockerId: User['id'],
+    blockedId: User['id'],
+  ): Promise<boolean> {
     const [row] = await tx
       .select({ blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
