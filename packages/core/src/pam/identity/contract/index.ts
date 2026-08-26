@@ -14,6 +14,7 @@ import {
   RequestPasswordResetInputSchema,
   VerifyPasswordResetOtpInputSchema,
   ResetPasswordInputSchema,
+  ResendEmailVerificationInputSchema,
   VerifyEmailInputSchema,
   UpdateProfileInputSchema,
   ChangePasswordInputSchema,
@@ -137,14 +138,26 @@ export const identityContract = {
     .input(ChangePasswordInputSchema)
     .output(IdentitySuccessSchema),
 
+  // Unauthenticated: the player has no session until the emailed code is verified.
+  // Always answers success, so it never reveals whether the address has an account.
   sendEmailVerification: oc
     .route({ method: 'POST', path: '/identity/email/verify/send' })
+    .input(ResendEmailVerificationInputSchema)
     .output(IdentitySuccessSchema),
 
+  // Verifying the registration code is what mints the session (sign-up never does). A
+  // 2FA-enrolled account is verified but NOT signed in - it gets `twoFactorRedirect` and
+  // completes the challenge through `login`, exactly as that route signals it.
   verifyEmail: oc
     .route({ method: 'POST', path: '/identity/email/verify' })
     .input(VerifyEmailInputSchema)
-    .output(IdentitySuccessSchema),
+    .output(
+      z.object({
+        user: UserSchema.optional(),
+        session: SessionSchema.optional(),
+        twoFactorRedirect: z.boolean().optional(),
+      }),
+    ),
 
   changeEmail: oc
     .route({ method: 'POST', path: '/identity/email/change' })

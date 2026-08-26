@@ -11,7 +11,7 @@ export default {
   register(ctx) {
     ctx.provide(PLATFORM_CONFIG, () =>
       definePlatformConfig({
-        registration: { termsVersion: 'test-v1', webUrl: 'http://localhost:3000' },
+        registration: { termsVersion: 'test-v1' },
         autoWithdrawal: { enabled: true, dailyCapCount: 1 },
       }),
     );

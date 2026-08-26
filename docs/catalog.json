@@ -908,6 +908,7 @@
     "identity.user.phone_login",
     "identity.user.reactivated",
     "identity.user.registered",
+    "identity.user.registration.failed",
     "identity.user.unauthorized_access",
     "identity.user.unlocked",
     "notifications.created",
@@ -1706,6 +1707,10 @@
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
+      "name": "PasswordSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "PaymentWebhookInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1878,6 +1883,10 @@
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
+      "name": "RegistrationFailureReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "RegistrationsOverTimePointSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1911,6 +1920,10 @@
     },
     {
       "name": "RequestPasswordResetInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ResendEmailVerificationInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {

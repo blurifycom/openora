@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
-import { CurrencyCodeSchema } from './igaming-config.js';
+import { CountryCodeSchema, CurrencyCodeSchema } from './igaming-config.js';
+import { E164PhoneSchema } from './identity.js';
 import { TagKeySchema } from './tag.js';
 import { PageQuerySchema, SortOrderSchema } from '../kit.js';
 
@@ -45,6 +46,10 @@ export const PlayerSchema = z.object({
   userId: UuidSchema,
   username: z.string(),
   email: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  dateOfBirth: z.iso.date().nullable(),
+  phone: z.string().nullable(),
   country: z.string().nullable(),
   currency: CurrencyCodeSchema,
   status: PlayerStatusSchema,
@@ -90,9 +95,45 @@ export type KycStatus = z.infer<typeof KycStatusSchema>;
 
 export type PaginatedPlayerListSearchArgs = z.infer<typeof PaginatedPlayerSearchArgsSchema>;
 
-export const UpdatePlayerProfileInputSchema = PlayerSchema.pick({
-  country: true,
-  currency: true,
-}).partial();
+export const MIN_PLAYER_AGE_YEARS = 18;
+
+/**
+ * Compares calendar dates, not elapsed milliseconds: a leap day between the birth date
+ * and the cutoff would shift a ms-based boundary by a day. The player's own 18th birthday
+ * passes.
+ */
+export function isAdultDateOfBirth(dateOfBirth: string, now = new Date()): boolean {
+  const cutoff =
+    (now.getUTCFullYear() - MIN_PLAYER_AGE_YEARS) * 10_000 +
+    (now.getUTCMonth() + 1) * 100 +
+    now.getUTCDate();
+  return Number(dateOfBirth.replaceAll('-', '')) <= cutoff;
+}
+
+/**
+ * Deliberately narrower than `PlayerSchema`: the read side stays tolerant of rows written
+ * before these columns existed, while a write is held to ISO country codes and E.164
+ * phones. `null` clears a field; omitting it leaves the stored value alone. `phone` is the
+ * player's self-declared contact number - the verified login credential lives on the
+ * identity module's `user.phoneNumber` and is never written from here.
+ */
+export const UpdatePlayerProfileInputSchema = z
+  .object({
+    firstName: z.string().min(1).max(100).nullable(),
+    lastName: z.string().min(1).max(100).nullable(),
+    dateOfBirth: z.iso
+      .date()
+      .refine((value) => isAdultDateOfBirth(value), {
+        message: `Player must be at least ${MIN_PLAYER_AGE_YEARS} years old`,
+      })
+      .nullable(),
+    phone: E164PhoneSchema.nullable(),
+    country: CountryCodeSchema.nullable(),
+    currency: CurrencyCodeSchema,
+  })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: 'Provide at least one field to update',
+  });
 
 export type UpdatePlayerProfileInput = z.infer<typeof UpdatePlayerProfileInputSchema>;

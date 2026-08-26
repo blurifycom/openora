@@ -10,6 +10,12 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
     userId: row.userId,
     username,
     email,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    // Already a 'YYYY-MM-DD' string - the column is a `date` in string mode, unlike the
+    // timestamps below.
+    dateOfBirth: row.dateOfBirth,
+    phone: row.phone,
     country: row.country,
     currency: row.currency,
     status: row.status,

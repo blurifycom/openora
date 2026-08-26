@@ -4,16 +4,12 @@ import { DefaultEmailTemplateRenderer } from '../default-email-template-renderer
 describe('DefaultEmailTemplateRenderer', () => {
   const renderer = new DefaultEmailTemplateRenderer();
 
-  it('renders the verifyEmail template with the url and token interpolated', () => {
-    const result = renderer.render(
-      'verifyEmail',
-      { url: 'https://example.com/verify', token: 'tok123' },
-      'de',
-    );
+  it('renders the verifyEmail template with the otp interpolated', () => {
+    const result = renderer.render('verifyEmail', { otp: '123456' }, 'de');
 
     expect(result).toEqual({
       subject: 'Verify your email',
-      body: 'Verify your email using this link: https://example.com/verify\n\nVerification token: tok123',
+      body: 'Your email verification code is: 123456',
     });
   });
 
@@ -28,6 +24,20 @@ describe('DefaultEmailTemplateRenderer', () => {
       subject: 'Reset your password',
       body: 'Your password reset code is: 123456',
     });
+  });
+
+  it('renders existingAccountSignUp without naming it a password reset', () => {
+    const result = renderer.render(
+      'existingAccountSignUp',
+      { otp: '123456', email: 'test@example.com' },
+      'en',
+    );
+
+    expect(result.subject).toBe('You already have an account');
+    expect(result.body).toContain('123456');
+    // The whole point of the separate key: a player who never asked to reset anything
+    // must not be handed a bare reset code with no explanation.
+    expect(result.body).toContain('no new account was created');
   });
 
   it('ignores locale - always English', () => {
