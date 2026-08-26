@@ -1,12 +1,5 @@
 import { populateContractRouterPaths, type ContractRouter } from '@orpc/contract';
 import { healthContract } from './health.js';
-export {
-  socialTransfersContract,
-  SendDonateInputSchema,
-  SystemChatMessageSchema,
-  CommandChatMessageSchema,
-} from './social-transfers.js';
-export type { SendDonateInput } from './social-transfers.js';
 
 // Not an aggregator - owns only `health` and `composeContract`. Each module owns
 // its route contract; the consumer's composition root assembles the runtime

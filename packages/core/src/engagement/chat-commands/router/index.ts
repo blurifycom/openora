@@ -4,14 +4,7 @@ import { getUserId, type OssContext, type AdminGuard } from '@openora/core/serve
 import { chatCommandsContract } from '../contract/index.js';
 import { ChatCommandsService } from '../service/chat-commands.service.js';
 
-const cc = populateContractRouterPaths({
-  chatCommands: {
-    listCommands: chatCommandsContract.listCommands,
-    adminListCommands: chatCommandsContract.adminListCommands,
-    adminUpdateCommand: chatCommandsContract.adminUpdateCommand,
-    mentionSearch: chatCommandsContract.mentionSearch,
-  },
-}).chatCommands;
+const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
 
 export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: AdminGuard) {
   const os = implement(cc).$context<OssContext>();

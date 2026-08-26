@@ -1239,10 +1239,6 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
-      "name": "ClaimGiftOutputSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
-    },
-    {
       "name": "ClientMetaSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
@@ -1457,10 +1453,6 @@
     {
       "name": "GiftCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
-    },
-    {
-      "name": "GiftStateSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",
@@ -1843,14 +1835,6 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
-      "name": "PostGiftInputSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
-    },
-    {
-      "name": "PostRainInputSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
-    },
-    {
       "name": "ProfileCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
@@ -1973,10 +1957,6 @@
     {
       "name": "SelfExcludedLoginDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
-    },
-    {
-      "name": "SendDonateInputSchema",
-      "file": "packages/core/src/contracts/orpc/social-transfers.ts"
     },
     {
       "name": "SendFriendRequestInputSchema",
