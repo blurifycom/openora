@@ -66,7 +66,7 @@ The `oss-dev` MCP dev server is wired in [`.mcp.json`](./.mcp.json) (stdio, laun
 claude mcp list    # verify the oss-dev server is connected
 ```
 
-Then use `list-modules`, `list-routes`, `get-drizzle-schema`, `propose-table-change`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
+Then use `list-modules`, `list-routes`, `get-drizzle-schema`, `propose-table-change`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. See [docs/guides/agent-quickstart.md](./docs/guides/agent-quickstart.md).
 
 ### 2. Manual run
 
@@ -94,7 +94,7 @@ packages/core       # @openora/core - contracts, server engine, react SDK, all 1
 extensions.config.ts# the single registry of enabled plugins
 ```
 
-See [docs/architecture.md](./docs/architecture.md) and the pillars + decision tree in [AGENTS.md](./AGENTS.md).
+See [docs/platform/architecture.md](./docs/platform/architecture.md) and the pillars + decision tree in [AGENTS.md](./AGENTS.md).
 
 ## Extending the platform
 
@@ -137,7 +137,7 @@ pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming && pnpm install && pnpm dev
 ```
 
-See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full guide.
+See [docs/guides/downstream-consumer.md](./docs/guides/downstream-consumer.md) for the full guide.
 
 ## Frontend
 
@@ -149,13 +149,16 @@ Planned work and progress live on the public board: **[openora roadmap](https://
 
 ## Documentation
 
-- Architecture: [docs/architecture.md](./docs/architecture.md)
-- System design: [docs/system-design.md](./docs/system-design.md)
-- Core concepts: [docs/core-concepts.md](./docs/core-concepts.md)
-- Glossary (operator vs player, KYC, RTP, provably fair, rollover...): [docs/glossary.md](./docs/glossary.md)
+`docs/` holds one folder per kind, plus the generated `catalog.json`.
+
+- **[docs/platform/](./docs/platform/)** - what the platform is: [introduction](./docs/platform/introduction.md), [core concepts](./docs/platform/core-concepts.md), [architecture](./docs/platform/architecture.md), [system design](./docs/platform/system-design.md), [glossary](./docs/platform/glossary.md).
+- **[docs/guides/](./docs/guides/)** - how to do a job: [quickstart](./docs/guides/quickstart.md), [agent quickstart](./docs/guides/agent-quickstart.md), [agentic workflow](./docs/guides/agentic-workflow.md), [consuming downstream](./docs/guides/downstream-consumer.md), [MCP setup](./docs/guides/mcp-setup.md).
+- **[docs/standards/](./docs/standards/)** - the rules a change must follow (money, custody, database, types, testing...).
+- **[docs/adapters/](./docs/adapters/)** - binding a vendor behind a port (payment, custody, KYC, notification, error tracking).
+- **[docs/modules/](./docs/modules/)** - a module's own surface and invariants ([wallet](./docs/modules/wallet.md)).
+- **[docs/adr/](./docs/adr/)** - why each decision was made.
+- `docs/catalog.json` - the generated module/route/table/event surface. Never hand-edited.
 - Pillars & decision tree: [AGENTS.md](./AGENTS.md)
-- ADRs: [docs/adr/](./docs/adr/)
-- Adapter binding guides (KYC, payment, ...): [docs/adapters/](./docs/adapters/)
 
 ## Community
 

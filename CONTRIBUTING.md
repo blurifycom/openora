@@ -181,4 +181,4 @@ relicensing right above, say so in your MR so we can discuss before merging.
 
 The `oss-dev` MCP server (stdio, see `.mcp.json`) exposes
 the schema registry, route catalog, plugin manifest, and scaffolders as tools. Start at
-[docs/agent-quickstart.md](./docs/agent-quickstart.md).
+[docs/guides/agent-quickstart.md](./docs/guides/agent-quickstart.md).

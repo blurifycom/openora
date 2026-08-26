@@ -52,3 +52,51 @@ Promotion follows `feature -> dev -> stage -> tag`.
 
 - Do not put internal URLs, secrets, tokens, customer or operator names, PII, internal hosts, or paths in commit messages, PR titles, or PR descriptions.
 - Refer to tickets by bare key only.
+
+## Fix pipeline
+
+Use when CI is red, when the branch has conflicts with its target, or both. Input is a PR URL or number, an Actions run or job URL, or nothing (use the current branch).
+
+### Read the failure before you edit
+
+1. Resolve the run: `gh run list --branch <branch> --limit 5`, then `gh run view <id> --log-failed`. From a job URL, use `gh run view --job <job-id> --log-failed`.
+2. Map the failed step to its local command and run that command locally. Never fix from a log alone.
+   - `Verify` -> `pnpm verify`
+   - `Commitlint` -> `pnpm commitlint --from origin/dev --to HEAD`
+   - `Run migrations` -> `pnpm db:setup:test && pnpm exec turbo run build --filter=@openora/core && pnpm db:migrate`
+   - `check:drift` inside `verify` -> `pnpm regen`, then commit the regenerated files
+3. If the command passes locally but fails in CI, the difference is environment, not code: a missing migration, a seeded row the test assumed, ordering, or a stale lockfile. Say so instead of guessing at the source.
+
+### Rebase and conflicts
+
+1. `git fetch origin` then `git rebase origin/dev`. The target is `dev` for a feature branch and `stage` for `dev`.
+2. Resolve each conflict from both sides' intent, not by taking one side wholesale. A conflict in a generated file is resolved by `pnpm regen`, never by hand.
+3. Re-run the failing gate after the rebase; a rebase can surface a new failure.
+4. Push with `--force-with-lease`, never plain `--force`, and only after the push confirmation below.
+
+### Rules
+
+- Fix the cause. Deleting a test, adding a skip, loosening a lint rule, or relaxing a gate to make CI green needs explicit approval first, and is reported as such.
+- Never push without explicit per-action confirmation.
+- After the push, watch the new run and report its result rather than assuming it passed.
+
+## Fix review comments
+
+Use on "fix the comments", "check <reviewer>'s comments", or a PR or discussion URL. Reviewers are human; a comment can be wrong.
+
+### Workflow
+
+1. Resolve the PR from `$ARGUMENTS` or from the current branch, and confirm the working tree is clean.
+2. Fetch the threads: `gh api "repos/blurifycom/openora/pulls/<n>/comments" --paginate` for inline threads and `gh pr view <n> --json reviews,comments` for the rest. Keep the unresolved ones.
+3. **Verify each comment against the code on this branch before fixing it.** Open the file, read the surrounding code, and decide: correct | already handled | wrong on this branch | out of scope for this PR. Report that verdict per comment and do not change code for a comment that is wrong.
+4. Fix the ones that hold, smallest diff each, following the standard the comment cites.
+5. Run `pnpm verify`.
+6. Report the commit SHA and stop for explicit push confirmation.
+7. Reply per thread after the push, so the reply points at real code. Write replies in the user's voice. State what changed and the SHA, or state plainly why the comment does not apply.
+8. Report which comments were fixed, answered, and rejected.
+
+### Rules
+
+- Never silently skip a comment. Every thread gets a fix or a stated reason.
+- Never resolve a thread you did not address.
+- A comment that is right about core but belongs in a consumer overlay is answered, not fixed here.

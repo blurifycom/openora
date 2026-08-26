@@ -102,7 +102,7 @@ async function main() {
   console.log(`  API          http://localhost:${ports['PORT_API'] ?? '3001'}`);
   console.log(`  Backoffice   http://localhost:3000`);
   console.log(
-    `  MCP server   oss-dev (stdio, via .mcp.json - see docs/mcp-setup.md for per-editor setup)`,
+    `  MCP server   oss-dev (stdio, via .mcp.json - see docs/guides/mcp-setup.md for per-editor setup)`,
   );
   console.log(`  Storybook    http://localhost:6006`);
   console.log('');
@@ -112,7 +112,7 @@ async function main() {
   console.log('Add an extension: /scaffold-plugin <name>');
   console.log('');
   console.log('Read AGENTS.md for architecture rules and decision tree.');
-  console.log('Read docs/agent-quickstart.md for a step-by-step agent workflow.');
+  console.log('Read docs/guides/agent-quickstart.md for a step-by-step agent workflow.');
 }
 
 main().catch((e) => {

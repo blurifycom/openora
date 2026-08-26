@@ -248,3 +248,90 @@ console.log(
     `${catalog.events.length} events, ${catalog.schemas.length} schemas`,
 );
 console.log('[catalog] wrote docs/catalog.json');
+
+// The domain reference table in system-design.md is derived from the same data, so it is
+// generated rather than hand-maintained - it drifted badly when it was not. Everything else
+// in that file is hand-written prose and is left untouched.
+const REFERENCE_START = '<!-- gen:catalog-reference -->';
+const REFERENCE_END = '<!-- /gen:catalog-reference -->';
+
+const DOMAIN_PACKAGE: Record<string, string> = {
+  'admin-console': '@openora/core/admin-console',
+  analytics: '@openora/core/analytics',
+  audit: '@openora/core/audit',
+  casino: '@openora/core/casino',
+  cms: '@openora/core/cms',
+  compliance: '@openora/core/compliance',
+  engagement: '@openora/core/engagement',
+  iam: '@openora/core/iam',
+  pam: '@openora/core/pam',
+  wallet: '@openora/core/wallet',
+};
+
+const byDomain = new Map<string, { modules: string[]; tables: string[]; routes: number }>();
+for (const module of catalog.modules) {
+  const entry = byDomain.get(module.group) ?? { modules: [], tables: [], routes: 0 };
+  entry.modules.push(module.id);
+  entry.tables.push(...module.tables);
+  entry.routes += module.routes.length;
+  byDomain.set(module.group, entry);
+}
+
+const summarize = (tables: string[]) =>
+  tables.length === 0
+    ? '(owns none - reads through ports)'
+    : tables.length <= 4
+      ? tables.join(', ')
+      : `${tables.slice(0, 4).join(', ')} + ${tables.length - 4} more`;
+
+// Padded to the widest cell per column so the emitted table already matches what the
+// formatter would produce - otherwise `pnpm gen:catalog` and `pnpm check:format` would
+// fight each other and the drift check would never settle.
+const renderTable = (header: string[], rows: string[][]) => {
+  const widths = header.map((cell, i) =>
+    Math.max(cell.length, ...rows.map((row) => (row[i] ?? '').length)),
+  );
+  const line = (cells: string[]) =>
+    `| ${cells.map((cell, i) => cell.padEnd(widths[i] ?? 0)).join(' | ')} |`;
+  return [
+    line(header),
+    `| ${widths.map((w) => '-'.repeat(w)).join(' | ')} |`,
+    ...rows.map(line),
+  ].join('\n');
+};
+
+const referenceTable = [
+  `Generated from \`docs/catalog.json\` - ${catalog.modules.length} modules, ` +
+    `${[...byDomain.values()].reduce((n, d) => n + d.routes, 0)} routes, ` +
+    `${catalog.adapters.length} adapter ports, ${catalog.events.length} events. ` +
+    'Edit the code, then run `pnpm gen:catalog`.',
+  '',
+  renderTable(
+    ['Domain', 'Modules', 'Tables', 'Routes'],
+    [...byDomain.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([domain, d]) => [
+        `\`${DOMAIN_PACKAGE[domain] ?? domain}\``,
+        d.modules.sort().join(' · '),
+        summarize(d.tables.sort()),
+        String(d.routes),
+      ]),
+  ),
+].join('\n');
+
+const systemDesignPath = join(docsDir, 'platform', 'system-design.md');
+const systemDesign = readFileSync(systemDesignPath, 'utf8');
+const start = systemDesign.indexOf(REFERENCE_START);
+const end = systemDesign.indexOf(REFERENCE_END);
+if (start === -1 || end === -1) {
+  throw new Error(
+    `[catalog] ${systemDesignPath} is missing the ${REFERENCE_START} / ${REFERENCE_END} markers.`,
+  );
+}
+writeFileSync(
+  systemDesignPath,
+  systemDesign.slice(0, start + REFERENCE_START.length) +
+    `\n\n${referenceTable}\n\n` +
+    systemDesign.slice(end),
+);
+console.log('[catalog] wrote docs/platform/system-design.md reference table');

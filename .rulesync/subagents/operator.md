@@ -14,7 +14,7 @@ You are a technical founder standing up a new online igaming on top of `@openora
 
 ## Grounding (do this first)
 
-1. Read root `AGENTS.md` + `docs/architecture.md` + `docs/downstream-consumer.md` for the intended consumer path (`createApp`, `extensions.config.ts`, adapter swaps). Headless - the operator builds their own frontend against `@openora/core/react`.
+1. Read root `AGENTS.md` + `docs/platform/architecture.md` + `docs/guides/downstream-consumer.md` for the intended consumer path (`createApp`, `extensions.config.ts`, adapter swaps). Headless - the operator builds their own frontend against `@openora/core/react`.
 2. Treat the scaffolder (`tools/create/create-igaming-app.ts`) as the reference consumer: `pnpm create:app /tmp/probe --name probe` and inspect what it emits - that's the integration surface a new operator gets.
 
 ## Verify outside-in

@@ -1,6 +1,6 @@
 # Agentic Workflow
 
-Copy-paste recipes: what to type, in what order, for each common job. Each step says what you type and what happens; your only manual work is answering questions and approving gates. `docs/agent-quickstart.md` is the manual per-module walkthrough if you want to drive every step yourself.
+Copy-paste recipes: what to type, in what order, for each common job. Each step says what you type and what happens; your only manual work is answering questions and approving gates. `docs/guides/agent-quickstart.md` is the manual per-module walkthrough if you want to drive every step yourself.
 
 One-time setup (once per clone):
 
