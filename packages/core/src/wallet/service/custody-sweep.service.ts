@@ -18,7 +18,7 @@ import {
   type User,
   type Uuid,
 } from '@openora/core/contracts';
-import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import {
   walletAsset,
   walletCustodySweep,
@@ -268,7 +268,9 @@ export class CustodySweepService {
           isNotNull(walletCustodySweep.externalId),
         ),
       )
-      .orderBy(asc(walletCustodySweep.createdAt))
+      // Random, not oldest-first: a sweep the vendor never resolves would otherwise sit
+      // at the head of every batch and starve later in-flight rows of a status check.
+      .orderBy(sql`random()`)
       .limit(batchSize);
     await mapConcurrent(rows, concurrency, async (row) => {
       const adapter = this.paymentProviders.get(row.providerName)?.adapter;
@@ -440,7 +442,9 @@ export class CustodySweepService {
     // (docs/standards/money.md: treat external payment calls as non-transactional).
     // The claim row above already holds the durable guard.
     try {
-      const treasuryRef = this.platformConfig?.wallet?.treasuryRef;
+      // Keyed by provider: one flat string would send vendor A's treasury account id to
+      // vendor B and route custody funds to an account that vendor does not own.
+      const treasuryRef = this.platformConfig?.wallet?.treasuryRefs?.[providerName];
       const result = await adapter.sweepToPool?.(balance, {
         idempotencyKey: claimed.id,
         ...(treasuryRef ? { treasuryRef } : {}),
@@ -455,10 +459,13 @@ export class CustodySweepService {
         // poolRef records WHICH pool received the funds, not just that a transfer
         // happened. Player funds must stay separate from operator funds, and that is
         // the question a regulator asks; without it the ledger cannot answer it.
+        // Only what the adapter reports. The requested treasuryRef is not evidence the
+        // vendor used it, and this row is hash-chained into an append-only audit log -
+        // a wrong destination recorded there is worse than a null one.
         .set({
           status: 'processing',
           externalId: result.externalId,
-          poolRef: result.poolRef ?? treasuryRef ?? null,
+          poolRef: result.poolRef ?? null,
         })
         .where(eq(walletCustodySweep.id, claimed.id));
       summary.swept += 1;

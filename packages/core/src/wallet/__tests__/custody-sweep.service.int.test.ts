@@ -134,6 +134,32 @@ describe('CustodySweepService (real PG)', () => {
     expect(rows[0]?.poolRef).toBe('pool-players-1');
   });
 
+  it("passes the sweeping provider's own treasuryRef and records only the adapter's poolRef", async () => {
+    await seedAsset();
+    const b = makeBalance();
+    const listSweepableBalances = vi.fn().mockResolvedValue([b]);
+    const sweepToPool = vi.fn().mockResolvedValue({ externalId: 'vendor-ref-1' });
+    const config = platformConfig();
+    config.wallet = {
+      ...config.wallet,
+      treasuryRefs: { default: 'treasury-default', 'vendor-b': 'treasury-vendor-b' },
+    };
+    const { service } = serviceWith(
+      mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }),
+      config,
+    );
+
+    await service.runCycle();
+
+    expect(sweepToPool).toHaveBeenCalledWith(
+      b,
+      expect.objectContaining({ treasuryRef: 'treasury-default' }),
+    );
+    // The vendor never confirmed a destination, so the audited row must not claim one.
+    const rows = await sweepRows(b.userId);
+    expect(rows[0]?.poolRef).toBeNull();
+  });
+
   it('sweepToPool throws -> the guard is still held and the next cycle does not re-sweep', async () => {
     await seedAsset();
     const b = makeBalance();

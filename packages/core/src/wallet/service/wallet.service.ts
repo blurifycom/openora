@@ -319,6 +319,13 @@ export function assertDepositAllowed(
   network?: string,
 ): void {
   if (assets.length === 0) {
+    // No catalog row at all means the operator never configured this currency (a fiat
+    // PSP), and a currency-level request passes through unchecked. A request naming a
+    // network does not: the pair it names does not exist - either a typo or a catalog
+    // row deleted while this request was in flight - so it fails closed.
+    if (network !== undefined) {
+      throw new UnsupportedNetworkError(currency, network.toUpperCase());
+    }
     return;
   }
   if (network === undefined) {
@@ -749,12 +756,19 @@ export class WalletService {
     return row?.providerName ?? DEFAULT_PAYMENT_PROVIDER;
   }
 
+  // Fails closed on a named provider that is no longer registered (removed or
+  // misconfigured after the catalog row was written). Falling back to the default
+  // adapter would pay a withdrawal out through the wrong vendor while still recording
+  // the old provider name - money moved somewhere the ledger does not describe.
   private async paymentAdapterFor(currency: string, network: string | null) {
     const providerName = await this.providerNameFor(currency, network);
-    const adapter =
-      providerName === DEFAULT_PAYMENT_PROVIDER
-        ? this.payment
-        : (this.paymentProviders.get(providerName)?.adapter ?? this.payment);
+    if (providerName === DEFAULT_PAYMENT_PROVIDER) {
+      return { providerName, adapter: this.payment };
+    }
+    const adapter = this.paymentProviders.get(providerName)?.adapter;
+    if (!adapter) {
+      throw new WalletAssetUnknownProviderError();
+    }
     return { providerName, adapter };
   }
 

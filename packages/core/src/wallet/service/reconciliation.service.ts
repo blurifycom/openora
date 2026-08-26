@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import {
   type DrizzleService,
   type EventBus,
@@ -539,6 +539,13 @@ export class ReconciliationService {
     counts: { unknownAtProvider: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
+    // Mirrors the externalId this loop files below, which is the findings dedup key.
+    const alreadyReported = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'unknown_at_provider'
+        AND ${walletReconciliationFinding.externalId}
+            = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
+    )`;
     const stuck = await this.drizzle.db
       .select()
       .from(walletTransaction)
@@ -549,7 +556,11 @@ export class ReconciliationService {
           lt(walletTransaction.createdAt, cutoff),
         ),
       )
-      .orderBy(asc(walletTransaction.createdAt))
+      // Unreported first, then oldest. Findings dedupe on (kind, externalId), so a row
+      // already reported produces nothing on a re-run: ordering it last stops a
+      // permanent backlog from filling the batch and hiding newer stuck withdrawals,
+      // while still re-checking it at the vendor whenever the batch has room.
+      .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
       .limit(batchSize);
 
     for (const tx of stuck) {
@@ -617,6 +628,12 @@ export class ReconciliationService {
     counts: { stuckSweeps: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - unknownAfterMinutes * 60 * 1000);
+    const alreadyReportedSweep = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'stuck_sweep'
+        AND ${walletReconciliationFinding.externalId}
+            = coalesce(${walletCustodySweep.externalId}, ${walletCustodySweep.id}::text)
+    )`;
     const stuck = await this.drizzle.db
       .select()
       .from(walletCustodySweep)
@@ -632,7 +649,9 @@ export class ReconciliationService {
           lt(walletCustodySweep.createdAt, cutoff),
         ),
       )
-      .orderBy(asc(walletCustodySweep.createdAt))
+      // Same starvation guard as reconcileStuckWithdrawals: already-reported sweeps go
+      // last so a permanent backlog cannot hide newer stuck ones from the operator.
+      .orderBy(asc(alreadyReportedSweep), asc(walletCustodySweep.createdAt))
       .limit(batchSize);
 
     for (const sweep of stuck) {

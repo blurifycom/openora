@@ -319,10 +319,14 @@ verifier and adapter from the same entry.
 
 ### Treasury
 
-`wallet.treasuryRef` (platform config) names the vendor-side account sweeps move player
-funds into and withdrawals are paid out of. It is passed to `sweepToPool` and recorded on
-`wallet_custody_sweep.poolRef` when the vendor does not return one of its own. Absent, the
-destination is whatever the adapter defaults to and `poolRef` stays null.
+`wallet.treasuryRefs` (platform config) names the vendor-side account sweeps move player
+funds into, keyed by provider name (`default` for the single bound adapter) - an account id
+only means something at the vendor that issued it. The entry for the sweeping provider is
+passed to `sweepToPool`. Absent, the destination is whatever the adapter defaults to.
+
+`wallet_custody_sweep.poolRef` records only the destination the adapter itself returns:
+the requested `treasuryRef` is not evidence the vendor used it, and the sweep is audited
+into an append-only log. An adapter that does not return a `poolRef` leaves it null.
 
 ### Dust
 

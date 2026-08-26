@@ -286,6 +286,26 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     expect(await balanceOf(w.id)).toBe('6.000000000000000000');
   });
 
+  it('a permanently stuck withdrawal does not starve later ones out of the batch', async () => {
+    await seedStuckWithdrawal(randomUUID());
+    await seedStuckWithdrawal(randomUUID());
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      getWithdrawalStatus: vi.fn(async () => null),
+    });
+    const { reconciliation } = makeServices(payment, {
+      platformConfig: { reconciliation: { ...RECONCILIATION_CONFIG, batchSize: 1 } },
+    });
+
+    await reconciliation.runCycle();
+    expect(await findingRows()).toHaveLength(1);
+
+    // The oldest row keeps matching the query forever (a finding never resolves it), so
+    // an oldest-first batch of 1 would report it again and never reach the second row.
+    await reconciliation.runCycle();
+    expect(await findingRows()).toHaveLength(2);
+  });
+
   it('files an unknown_at_provider finding when the vendor has no record', async () => {
     const providerRefId = randomUUID();
     await seedStuckWithdrawal(providerRefId);

@@ -16,7 +16,10 @@ const asset = (network: string, depositEnabled: boolean, minDeposit = '10') => (
 describe('assertDepositAllowed', () => {
   it('passes an unconfigured currency through (fiat PSP)', () => {
     expect(() => assertDepositAllowed([], 'USD')).not.toThrow();
-    expect(() => assertDepositAllowed([], 'USD', 'SEPA')).not.toThrow();
+  });
+
+  it('rejects a named network when the currency has no catalog row at all', () => {
+    expect(() => assertDepositAllowed([], 'USDT', 'TRC20')).toThrow(UnsupportedNetworkError);
   });
 
   it('rejects a named network that is disabled', () => {

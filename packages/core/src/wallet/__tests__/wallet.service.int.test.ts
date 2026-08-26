@@ -44,6 +44,7 @@ import {
   BelowMinimumWithdrawalError,
   WithdrawalDisabledError,
   DepositDisabledError,
+  WalletAssetUnknownProviderError,
   DestinationAddressNotWhitelistedError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
@@ -1113,7 +1114,12 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
   });
 
   it("resolves providerName from the (currency, network) catalog row's own providerName", async () => {
-    const { svc } = makeService();
+    const { svc } = makeService({
+      paymentProviders: makePaymentProviderRegistry({
+        adapter: mock<PaymentAdapter>(makePsp()),
+        names: [DEFAULT_PAYMENT_PROVIDER, 'vendor-a'],
+      }),
+    });
     await db.drizzle.db.insert(walletAsset).values({
       currency: 'USDT',
       network: 'ERC20',
@@ -1526,8 +1532,13 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
     });
     const userId = randomUUID();
     const issueDepositAddress = vi.fn(async () => ({ address: '0xnew' }));
+    const vendorA = mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress });
     const { svc } = makeService({
-      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
+      payment: vendorA,
+      paymentProviders: makePaymentProviderRegistry({
+        adapter: vendorA,
+        names: [DEFAULT_PAYMENT_PROVIDER, 'vendor-a'],
+      }),
     });
 
     await svc.getOrCreateDepositAddress(userId, 'USDT', 'ERC20');
@@ -1589,6 +1600,27 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
         .from(walletDepositAddress)
         .where(eq(walletDepositAddress.userId, userId)),
     ).toHaveLength(0);
+  });
+
+  it('fails closed when the catalog names a provider that is no longer registered', async () => {
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+      providerName: 'vendor-gone',
+    });
+    const issueDepositAddress = vi.fn(async () => ({ address: '0xnope' }));
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
+    });
+
+    await expect(
+      svc.getOrCreateDepositAddress(randomUUID(), 'USDT', 'ERC20'),
+    ).rejects.toBeInstanceOf(WalletAssetUnknownProviderError);
+    expect(issueDepositAddress).not.toHaveBeenCalled();
   });
 
   it('throws DepositAddressUnsupportedError when the adapter cannot issue addresses', async () => {

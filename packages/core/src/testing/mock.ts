@@ -130,7 +130,9 @@ export const makePaymentProviderRegistry = (
     options.webhookVerifier ?? mock<PaymentWebhookVerifier>({ verify: vi.fn(() => false) });
   const names = options.names ?? [DEFAULT_PAYMENT_PROVIDER];
   return {
-    get: (name) => (name === DEFAULT_PAYMENT_PROVIDER ? { adapter, webhookVerifier } : null),
+    // Any name this registry advertises resolves to the same double; anything else is
+    // unregistered, which production code must fail closed on rather than fall back.
+    get: (name) => (names.includes(name) ? { adapter, webhookVerifier } : null),
     names: () => names,
   };
 };
