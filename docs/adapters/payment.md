@@ -1,133 +1,70 @@
 # Payment Adapter
 
-## Interface
+The seam between the wallet ledger and whoever actually holds or moves the money. Core never
+learns a vendor's name; it learns the shape of what a vendor can do.
 
-Source of truth: [`packages/core/src/contracts/adapters/payment.ts`](../../packages/core/src/contracts/adapters/payment.ts) - `PaymentAdapter`, `PaymentWebhookEvent`, `PaymentWebhookVerifier`, and the `PAYMENT_ADAPTER` / `PAYMENT_WEBHOOK_VERIFIER` tokens.
+Contract: [`packages/core/src/contracts/adapters/payment.ts`](../../packages/core/src/contracts/adapters/payment.ts).
+Read it for the exact method names and shapes. This file covers what the port is for and how a
+binding has to behave. The money rules the caller must follow are in
+[`docs/standards/custody.md`](../standards/custody.md); a vendor that holds funds per player also
+reads [`custody.md`](./custody.md).
 
-This file covers the port and how to bind a synchronous PSP. A vendor that holds funds per player also implements the optional pooling/sweeping methods - see [`custody.md`](./custody.md). The money rules the caller must follow either way are in [`docs/standards/custody.md`](../standards/custody.md).
+## Two vendor shapes
 
-`issueDepositAddress` and `parseWebhook` are optional - present only on address-based/async vendors, omitted by a synchronous PSP (see the two vendor shapes below).
+**A synchronous processor** - card, bank transfer, e-wallet. It takes a charge or a payout and
+answers in the same call with a final outcome. The ledger finalises the transaction immediately.
+It issues no addresses and sends no webhooks, so it implements only the two money-moving
+capabilities.
 
-## Default binding
+**An asynchronous, address-issuing vendor** - a crypto custody rail. Deposits are inbound: the
+player is handed an address once and sends funds whenever, with no further call to this API. A
+payout leaves in a non-final state and settles later. Both directions are confirmed by webhook,
+so this shape also issues addresses and normalises the vendor's webhook payloads.
 
-The `wallet` module ships `MockPaymentAdapter` (synchronous, always returns
-`{ externalId, status: 'completed' }` for both deposits and withdrawals) as the default
-`PAYMENT_ADAPTER` binding, and `HmacPaymentWebhookVerifier` as the default
-`PAYMENT_WEBHOOK_VERIFIER` binding - both wired in `wallet/src/plugin.ts`. This is
-intentionally permissive for local dev; neither talks to a real payment rail.
+Everything beyond those two - pooling, sweeping, transaction listing, address whitelisting - is
+optional. A binding declares what it supports by implementing it; core skips what is absent
+rather than failing.
 
-## Two vendor shapes this port covers
+## What a binding must guarantee
 
-**Synchronous PSP** (card/bank/e-wallet): `processDeposit`/`processWithdrawal` return an
-already-terminal `status` (`'completed'`/`'failed'`) in the same call. The wallet module
-finalizes the transaction immediately - this is `MockPaymentAdapter`'s shape, and the
-one most PSP integrations use. `issueDepositAddress`/`parseWebhook` are omitted
-entirely.
+- **Fail closed on an unverified webhook.** A missing header, an unknown signing key, or a key
+  fetch that failed all mean reject. Never fall through to processing the body.
+- **Verify against the raw bytes.** Parsing the body before verifying changes whitespace and key
+  order, and the signature will not match.
+- **Normalise, never interpret.** The adapter translates a vendor payload into the shared event
+  shape. Deciding whether to credit anyone is the ledger's job, not the adapter's.
+- **Carry an idempotency key on every state-changing call.** A thrown call and a lost response
+  look identical from here, and the retry must not move funds twice.
+- **Return the vendor's own settlement identifier.** It is what makes crediting idempotent, and
+  what an auditor traces.
+- **Say which pairs you serve.** The asset catalog asks the binding whether it can handle a
+  currency and network before an operator saves the pair, so an unsupported pair fails in an
+  admin form rather than on a player's deposit screen.
+- **Do not hold a transaction open across a vendor call.** Network calls belong outside the
+  database transaction; persist a recoverable state first.
 
-**Custody/address-issuing vendor** (a crypto MPC/custody rail): deposits are inbound and
-address-based - a player is handed a deposit address (`issueDepositAddress`) and sends
-funds whenever; the vendor confirms asynchronously via webhook. Withdrawals go through
-multiple intermediate states (`processWithdrawal` returns a non-terminal `status`, eg
-`'submitted'`) before reaching a terminal one, also reported via webhook. Both paths
-resolve through `parseWebhook` -> the wallet's webhook route (`POST /wallet/webhook`) ->
-`WalletService.creditDepositByAddress` / `reconcileWithdrawalStatus`.
+## Deposit flow, address-based vendor
 
-## Binding a real vendor
+1. The player asks for a deposit address. Core issues one through the binding on the first ask and
+   persists it, so a second ask returns the stored address without another vendor call.
+2. The player sends funds on-chain at some later time. Nothing calls this API.
+3. The vendor posts a webhook. Core verifies the signature, asks the binding to normalise the
+   payload, resolves the address back to a player, and credits the ledger once - deduplicated on
+   the vendor's settlement identifier.
 
-1. Create an overlay plugin (or extend an existing one):
+A payout runs the same way in reverse: core submits, the vendor answers "accepted, not final", and
+a later webhook moves the transaction to its final state. A replayed webhook, or one for a
+transaction already finished, does nothing.
 
-```bash
-/scaffold-plugin custody-payment
-```
+## Binding a vendor
 
-2. Implement `PaymentAdapter` against the vendor's API. For a synchronous PSP, only
-   `processDeposit`/`processWithdrawal` are needed. For a custody/address-issuing
-   vendor, add `issueDepositAddress` and `parseWebhook`:
+An overlay plugin in the consumer's repo binds the adapter, and a matching verifier when the
+vendor does not use the default signature scheme. Scaffold it with `/scaffold-plugin`, and
+register it after the wallet module so its binding wins.
 
-```ts
-// extensions/custody-payment/src/custody-payment-adapter.ts
-import type { PaymentAdapter, PaymentWebhookEvent } from '@openora/core/contracts';
+Core ships a mock binding that settles everything instantly. It exists so local development runs
+with no vendor account, and it talks to no real rail. Never let it reach an environment that holds
+real money.
 
-export class CustodyPaymentAdapter implements PaymentAdapter {
-  async processDeposit(amount: string, currency: string, metadata: Record<string, unknown>) {
-    // Not called for an address-based vendor - deposits arrive via webhook instead.
-    throw new Error('use issueDepositAddress + the webhook path for deposits');
-  }
-
-  async processWithdrawal(amount: string, currency: string, metadata: Record<string, unknown>) {
-    // POST to the vendor's payout/transaction API; the vendor confirms async.
-    // Return a non-terminal status - the wallet module leaves the transaction
-    // `processing` and relies on the webhook for the eventual completed/failed.
-    return { externalId: 'vendor-tx-id', status: 'processing' };
-  }
-
-  async issueDepositAddress(userId: string, currency: string) {
-    // POST to the vendor's address/session API for this asset.
-    return { address: 'vendor-issued-address' };
-  }
-
-  parseWebhook(
-    rawBody: string,
-    headers: Record<string, string | string[] | undefined>,
-  ): PaymentWebhookEvent | null {
-    // Normalize the vendor's raw webhook payload into the shared shape.
-    const body = JSON.parse(rawBody);
-    if (body.type === 'deposit') {
-      return {
-        kind: 'deposit',
-        address: body.destinationAddress,
-        amount: body.amount,
-        currency: body.asset,
-        txHash: body.txHash,
-        externalId: body.id,
-      };
-    }
-    if (body.type === 'withdrawal') {
-      return { kind: 'withdrawal', externalId: body.id, status: body.status };
-    }
-    return null;
-  }
-}
-```
-
-3. Bind the adapter (and, if the vendor uses its own signature scheme rather than
-   HMAC-SHA256, a matching `PaymentWebhookVerifier`) in the plugin, AFTER `wallet` in
-   `extensions.config.ts` (last registration wins):
-
-```ts
-// extensions/custody-payment/plugin.ts
-import { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from '@openora/core/contracts';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { CustodyPaymentAdapter } from './src/custody-payment-adapter.js';
-
-export default {
-  id: 'custody-payment',
-  dependsOn: ['wallet'],
-  register(ctx) {
-    ctx.provide(PAYMENT_ADAPTER, () => new CustodyPaymentAdapter());
-    // Omit this line to keep the default HmacPaymentWebhookVerifier (PAYMENT_WEBHOOK_SECRET env var).
-  },
-} as const satisfies Plugin<CoreTokenCatalog>;
-```
-
-4. Register in `extensions.config.ts` **after** the `wallet` entry.
-
-## Webhook recipe: create/issue -> webhook reconciles
-
-The address-based/async recipe is the same shape regardless of vendor:
-
-1. Player calls `POST /wallet/deposits/address` (`{ currency }`) -> `getOrCreateDepositAddress`
-   calls `issueDepositAddress` once and persists the result in `wallet_deposit_address`
-   (idempotent - a second call for the same user/asset returns the stored address
-   without a second vendor call).
-2. The vendor sends funds to that address whenever the player deposits, then POSTs a
-   webhook to `POST /wallet/webhook`.
-3. The route verifies the raw body against `PAYMENT_WEBHOOK_VERIFIER` (fail closed on a
-   missing/invalid signature), calls `parseWebhook`, and dispatches: a `deposit` event
-   resolves the address back to a userId and credits the wallet (idempotent on the
-   vendor's `externalId` via the `wallet_transaction.provider_ref_id` unique index); a
-   `withdrawal` event transitions a `processing` transaction to its terminal state
-   (idempotent - a replayed or stray webhook for an already-terminal/unmatched row
-   no-ops).
-
-See the wallet contract and service for the exact route behavior.
+Running a fiat processor and a crypto custodian at the same time goes through the provider
+registry - see [`custody.md`](./custody.md#running-more-than-one-vendor).

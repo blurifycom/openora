@@ -11,9 +11,9 @@ inbound deposit.
 
 ## Attribution
 
-- Key on `(address, network)`, never the address alone. One account-chain address serves every
-  token on that chain and repeats across sibling chains, so an address maps to many issued rows.
-  A unique index enforces this.
+- Key on the address **and** its network, never the address alone. One account-chain address
+  serves every token on that chain and repeats across sibling chains, so an address alone maps to
+  many issued rows. The database enforces the pair.
 - A tag is optional on the wire, so funds can arrive with no tag or the wrong one. Persist the
   tag with the issued address, and read the **destination** tag on an inbound event.
 - Never attribute by amount and time. An unattributable deposit becomes a reconciliation
@@ -40,7 +40,7 @@ inbound deposit.
 - Moving a token on an account chain needs that chain's native asset in the same container.
   Either top each container up or relay the fee from one funding container - never both on the
   same chain, which funds it twice and strands the surplus.
-- Set limits per `(currency, network)`. The same token costs cents on one chain and dollars on
+- Set limits per currency **and** network. The same token costs cents on one chain and dollars on
   another, so one currency-wide floor is either too high for the cheap chain or below the fee
   on the expensive one.
 
@@ -49,7 +49,7 @@ inbound deposit.
 - Debit inside the transaction that creates the withdrawal row, and refund in full on rejection.
 - Register a payout destination with the vendor on the address-book write path, not at payout
   time: approval can need a human quorum, which must not sit inside a withdrawal already
-  holding a player's funds. Registration is idempotent on `(userId, currency, network, address)`.
+  holding a player's funds. Registering the same destination twice is a no-op.
 - Auto-approval fails closed. A missing risk or KYC signal goes to manual review.
 - Pay from the pool, never from a player's deposit container, and across more than one payout
   container. An account chain serializes on a per-account sequence number and a UTXO chain caps
@@ -59,8 +59,8 @@ inbound deposit.
 
 ## Reconciliation
 
-- The webhook is a signal, not a guarantee. Deliveries are retried and the retries run out, so
-  a ledger with no second source keeps a withdrawal in `processing` forever.
+- The webhook is a signal, not a guarantee. Deliveries are retried, and the retries run out. A
+  ledger with no second source leaves a payout waiting on the vendor forever.
 - Findings are surfaced, never auto-credited. Crediting one is an admin action with an actor
   and a reason, and the run and its findings go to the audit log.
 
