@@ -132,6 +132,28 @@ export class AdminGuard {
     return { userId, role: userRecord.role, ip, userAgent };
   }
 
+  async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
+    const caller = await this.assert(context);
+    const assigned = await this.permissionResolver?.isSuperAdmin(caller.userId);
+    const isSuper = assigned ?? caller.role === 'admin';
+
+    if (!isSuper) {
+      this.emitUnauthorized(
+        caller.userId,
+        caller.role,
+        'admin',
+        'super-admin',
+        caller.ip,
+        caller.userAgent,
+      );
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Super admin access required',
+        data: { reason: AuthGuardReasonSchema.enum.admin_required },
+      });
+    }
+    return caller;
+  }
+
   private resolveGrants(userId: string): Promise<AdminGrant[] | null> {
     return this.permissionResolver
       ? this.permissionResolver.getGrants(userId)

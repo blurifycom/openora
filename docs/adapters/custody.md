@@ -109,9 +109,9 @@ flowchart TD
   list --> perbalance["for each balance"]
   perbalance --> catalogRow{"catalog row exists?"}
   catalogRow -- no --> skip
-  catalogRow -- yes --> minDeposit{"amount >= minimum<br/>deposit (dust)?"}
-  minDeposit -- no --> skip
-  minDeposit -- yes --> feeMultiple{"amount >= fee x<br/>fee-multiple?"}
+  catalogRow -- yes --> dust{"amount >= dust<br/>threshold?"}
+  dust -- no --> skip
+  dust -- yes --> feeMultiple{"amount >= fee x<br/>fee-multiple?"}
   feeMultiple -- no --> skip
   feeMultiple -- yes --> feeCeiling{"fee within ceiling,<br/>unless pool is below<br/>its liquidity floor?"}
   feeCeiling -- no --> skip
@@ -121,6 +121,23 @@ flowchart TD
   claim --> call["call sweepToPool<br/>(outside the transaction)"]
   call --> markAudit["mark and audit"]
 ```
+
+## Dust floor
+
+The sweep has its own dust threshold per asset, and falls back to the deposit minimum only when
+none is set. The two are separate on purpose: raising a deposit minimum must not silently change
+what gets swept.
+
+## Treasury destination
+
+Platform config names the vendor-side account that sweeps move player funds into, one entry per
+provider name. An account identifier only means anything at the vendor that issued it, so this is
+configuration, never a constant.
+
+The sweep record stores only the destination the adapter reports back. The destination that was
+_requested_ is not evidence the vendor honoured it, and that evidence is what a regulator asks for.
+An adapter that reports no destination leaves the record empty rather than assuming the requested
+one. Every sweep is audited into the append-only log either way.
 
 ## Reconciliation
 
@@ -184,10 +201,11 @@ flowchart LR
 
 `PAYMENT_ADAPTER` and `PAYMENT_WEBHOOK_VERIFIER` are single DI bindings, and
 `Container.register` is last-wins - two overlays each rebinding them would clobber each other.
-Running a fiat PSP and a crypto custodian at once therefore goes through `PAYMENT_PROVIDERS`,
-which maps `wallet_asset.providerName` to one `{ adapter, webhookVerifier }` pair. Core only
-looks a name up there; it never discovers vendors itself, so the operator composes that map in
-their own plugin.
+Core exposes that single pair as the `default` entry of `PAYMENT_PROVIDERS`, so the one-vendor
+case needs no extra wiring. An operator running a fiat PSP and a crypto custodian at once rebinds
+`PAYMENT_PROVIDERS` with a map of named pairs and sets `wallet_asset.providerName` per
+(currency, network). Deposit-address issuance, withdrawal settlement and the webhook route then all
+resolve the adapter from that column. Core only looks a name up; it never discovers vendors itself.
 
 The webhook route resolves the verifier and the adapter from the **same** entry, so a body can
 never be verified against one vendor's key and parsed in another's format.

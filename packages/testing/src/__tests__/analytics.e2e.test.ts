@@ -30,7 +30,11 @@ async function readJson(res: Response): Promise<any> {
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
-  const res = await client.post('/wallet/deposit', { amount, currency });
+  const res = await client.post('/wallet/deposit', {
+    idempotencyKey: randomUUID(),
+    amount,
+    currency,
+  });
   if (res.status !== 200) {
     throw new Error(`deposit failed (${res.status}): ${await res.text()}`);
   }

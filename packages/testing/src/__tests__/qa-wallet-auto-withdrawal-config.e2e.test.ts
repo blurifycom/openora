@@ -335,8 +335,13 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     const belowEmail = `below-${randomUUID()}@e2e.test`;
     const below = await registerAndMaterializePlayer(appMain, { email: belowEmail });
     await verifyKyc(superAdmin, below.userId);
-    await below.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await below.client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const belowRes = await below.client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
       amount: '50',
       currency: 'USD',
     });
@@ -347,8 +352,13 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     const aboveEmail = `above-${randomUUID()}@e2e.test`;
     const above = await registerAndMaterializePlayer(appMain, { email: aboveEmail });
     await verifyKyc(superAdmin, above.userId);
-    await above.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await above.client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const aboveRes = await above.client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
       amount: '150',
       currency: 'USD',
     });
@@ -383,7 +393,11 @@ describe('immediate effect: two consecutive config changes in one run', () => {
     const email = `immediate-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
 
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '10',
@@ -391,7 +405,11 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       excludeRiskFlags: [],
     });
     const first = await readJson(
-      await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '20',
+        currency: 'USD',
+      }),
     );
     expect(first.status).toBe('pending');
 
@@ -401,7 +419,11 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       excludeRiskFlags: [],
     });
     const second = await readJson(
-      await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '20',
+        currency: 'USD',
+      }),
     );
     expect(second.status).toBe('completed');
 
@@ -411,7 +433,11 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       excludeRiskFlags: [],
     });
     const third = await readJson(
-      await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '20',
+        currency: 'USD',
+      }),
     );
     expect(third.status).toBe('pending');
   });
@@ -432,9 +458,17 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       reason: 'QA: trusted player, rule above global',
     });
 
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('completed');
 
@@ -459,9 +493,17 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       reason: 'QA: watchlist player, rule below global',
     });
 
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('pending');
   });
@@ -479,9 +521,17 @@ describe('fail-closed: the singleton config row is missing', () => {
     const { client, userId } = await registerAndMaterializePlayer(appUnseeded, { email: email });
     const admin = await asAdmin(appUnseeded.app);
     await verifyKyc(admin, userId);
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
 
-    const res = await client.post('/wallet/withdraw', { amount: '10', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '10',
+      currency: 'USD',
+    });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');

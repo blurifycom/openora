@@ -14,6 +14,7 @@ export type AdminPermissionResolver = {
    * DB-backed role assignment (caller should fall back to static roles).
    */
   getGrants(userId: string): Promise<AdminGrant[] | null>;
+  isSuperAdmin(userId: string): Promise<boolean | null>;
 };
 
 export const ADMIN_PERMISSION_RESOLVER: Token<AdminPermissionResolver> = createToken(

@@ -50,7 +50,13 @@ export const WALLET_CUSTODY_SWEEP_STATUSES = [
   'unknown',
 ] as const;
 
-export const WALLET_JOB_RUN_STATUSES = ['running', 'completed', 'failed', 'abandoned'] as const;
+export const WALLET_JOB_RUN_STATUSES = [
+  'running',
+  'completed',
+  'skipped',
+  'failed',
+  'abandoned',
+] as const;
 
 export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'missing_deposit',

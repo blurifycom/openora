@@ -48,6 +48,8 @@ import {
   UnsupportedNetworkError,
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
+  DepositDisabledError,
+  BelowMinimumDepositError,
   PlayerNotFoundError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
@@ -170,14 +172,21 @@ export function createWalletRouter({
     ),
 
     deposit: os.deposit.handler(({ input, context }) =>
-      mapErrors({ CONFLICT: IdempotencyKeyReuseError }, () =>
-        wallet.deposit({
-          userId: getUserId(context),
-          amount: input.amount,
-          currency: input.currency,
-          provider: input.provider,
-          idempotencyKey: input.idempotencyKey,
-        }),
+      mapErrors(
+        {
+          // A disabled currency/network is a permanent policy rejection, not a state
+          // conflict: 409 would tell a status-code-branching client to retry it.
+          BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
+          CONFLICT: IdempotencyKeyReuseError,
+        },
+        () =>
+          wallet.deposit({
+            userId: getUserId(context),
+            amount: input.amount,
+            currency: input.currency,
+            provider: input.provider,
+            idempotencyKey: input.idempotencyKey,
+          }),
       ),
     ),
 
@@ -215,11 +224,7 @@ export function createWalletRouter({
     }),
 
     manualAdjustment: os.manualAdjustment.handler(async ({ input, context }) => {
-      const {
-        userId: adminId,
-        ip,
-        userAgent,
-      } = await adminGuard.assert(context, 'player', 'adjust-balance');
+      const { userId: adminId, ip, userAgent } = await adminGuard.assertSuperAdmin(context);
       return mapErrors(
         {
           NOT_FOUND: PlayerNotFoundError,
@@ -437,8 +442,12 @@ export function createWalletRouter({
 
     deposits: {
       getAddress: os.deposits.getAddress.handler(({ input, context }) =>
-        mapErrors({ CONFLICT: DepositAddressUnsupportedError }, () =>
-          wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
+        mapErrors(
+          {
+            BAD_REQUEST: [UnsupportedNetworkError, DepositDisabledError],
+            CONFLICT: DepositAddressUnsupportedError,
+          },
+          () => wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),
       ),
     },

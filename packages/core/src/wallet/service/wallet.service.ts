@@ -193,6 +193,20 @@ export const BelowMinimumWithdrawalError = createDomainError(
     `Withdrawal of ${amount} ${currency} on ${network} is below the ${minimum} ${currency} minimum`,
 );
 
+export const DepositDisabledError = createDomainError(
+  'DepositDisabledError',
+  (currency, network) =>
+    network
+      ? `Deposits are disabled for ${currency} on ${network}`
+      : `Deposits are disabled for ${currency} on every configured network`,
+);
+
+export const BelowMinimumDepositError = createDomainError(
+  'BelowMinimumDepositError',
+  (amount, minimum, currency, network) =>
+    `Deposit of ${amount} ${currency} on ${network} is below the ${minimum} ${currency} minimum`,
+);
+
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
 export const AmbiguousDepositAddressError = createDomainError(
@@ -291,6 +305,64 @@ export function assertAboveMinimumWithdrawal(
   );
   if (asset && moneyCompare(amount, asset.minWithdrawal) < 0) {
     throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
+  }
+}
+
+type DepositAsset = {
+  network: string;
+  minDeposit: string;
+  depositEnabled: boolean;
+};
+
+export function assertDepositAllowed(
+  assets: readonly DepositAsset[],
+  currency: string,
+  network?: string,
+): void {
+  if (assets.length === 0) {
+    // No catalog row at all means the operator never configured this currency (a fiat
+    // PSP), and a currency-level request passes through unchecked. A request naming a
+    // network does not: the pair it names does not exist - either a typo or a catalog
+    // row deleted while this request was in flight - so it fails closed.
+    if (network !== undefined) {
+      throw new UnsupportedNetworkError(currency, network.toUpperCase());
+    }
+    return;
+  }
+  if (network === undefined) {
+    if (!assets.some((asset) => asset.depositEnabled)) {
+      throw new DepositDisabledError(currency, null);
+    }
+    return;
+  }
+  const wanted = network.toUpperCase();
+  const asset = assets.find((candidate) => candidate.network.toUpperCase() === wanted);
+  if (!asset) {
+    throw new UnsupportedNetworkError(currency, wanted);
+  }
+  if (!asset.depositEnabled) {
+    throw new DepositDisabledError(currency, asset.network);
+  }
+}
+
+export function assertAboveMinimumDeposit(
+  assets: readonly DepositAsset[],
+  amount: string,
+  currency: string,
+  network?: string,
+): void {
+  const enabled = assets.filter((asset) => asset.depositEnabled);
+  const wanted = network?.toUpperCase();
+  const applicable = wanted
+    ? enabled.filter((asset) => asset.network.toUpperCase() === wanted)
+    : enabled;
+  const floor = applicable.reduce<DepositAsset | undefined>(
+    (lowest, asset) =>
+      !lowest || moneyCompare(asset.minDeposit, lowest.minDeposit) < 0 ? asset : lowest,
+    undefined,
+  );
+  if (floor && moneyCompare(amount, floor.minDeposit) < 0) {
+    throw new BelowMinimumDepositError(amount, floor.minDeposit, currency, floor.network);
   }
 }
 
@@ -426,6 +498,8 @@ async function readLockedBonusAmount(
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
 const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
+
+const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', 'manual_debit']);
 
 function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
@@ -630,6 +704,39 @@ export class WalletService {
       .where(eq(walletAsset.currency, currency.toUpperCase()));
   }
 
+  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
+  // the same rows) from removing the pair while a deposit is being gated against it.
+  private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
+    return db
+      .select({
+        network: walletAsset.network,
+        minDeposit: walletAsset.minDeposit,
+        depositEnabled: walletAsset.depositEnabled,
+      })
+      .from(walletAsset)
+      .where(eq(walletAsset.currency, currency.toUpperCase()))
+      .for('share');
+  }
+
+  /**
+   * `network` is optional because not every deposit path knows one: `deposit()` takes a
+   * PSP amount and currency only, so it is gated currency-wide (any enabled network
+   * clears it). Per-network gating applies where a network is actually chosen, ie
+   * `getOrCreateDepositAddress`, which is the path that hands a player a chain address.
+   */
+  private async assertDepositable(
+    currency: string,
+    amount?: string,
+    network?: string,
+    db: DrizzleDb = this.drizzle.db,
+  ) {
+    const assets = await this.depositAssetsForCurrency(currency, db);
+    assertDepositAllowed(assets, currency, network);
+    if (amount !== undefined) {
+      assertAboveMinimumDeposit(assets, amount, currency, network);
+    }
+  }
+
   private resolveRail(currency: string): WalletRail {
     return railFor(currency, this.platformConfig?.wallet?.cryptoCurrencies);
   }
@@ -648,6 +755,22 @@ export class WalletService {
       .from(walletAsset)
       .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
     return row?.providerName ?? DEFAULT_PAYMENT_PROVIDER;
+  }
+
+  // Fails closed on a named provider that is no longer registered (removed or
+  // misconfigured after the catalog row was written). Falling back to the default
+  // adapter would pay a withdrawal out through the wrong vendor while still recording
+  // the old provider name - money moved somewhere the ledger does not describe.
+  private async paymentAdapterFor(currency: string, network: string | null) {
+    const providerName = await this.providerNameFor(currency, network);
+    if (providerName === DEFAULT_PAYMENT_PROVIDER) {
+      return { providerName, adapter: this.payment };
+    }
+    const adapter = this.paymentProviders.get(providerName)?.adapter;
+    if (!adapter) {
+      throw new WalletAssetUnknownProviderError();
+    }
+    return { providerName, adapter };
   }
 
   private rateLimit(userId: User['id']) {
@@ -720,6 +843,12 @@ export class WalletService {
    * reach the PSP, but the ledger insert's unique-index conflict still
    * guarantees only one balance credit - the loser's write becomes a replay
    * read of the winner's row.
+   *
+   * Deposit gating is network-aware when a network is known (e.g. via
+   * `getOrCreateDepositAddress`), but here we gate on "any network for this
+   * currency is enabled" because `provider` routing may resolve a specific
+   * network inside `processDeposit`. A fiat PSP (no networks) passes through
+   * unchecked; an explicit network route checks that specific network only.
    */
   async deposit({
     userId,
@@ -735,6 +864,7 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
+    await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
     // resends after a timeout) must not re-charge. A genuine concurrent race (two
@@ -1420,9 +1550,11 @@ export class WalletService {
       });
     }
 
+    const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
+
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
-      result = await this.payment.processWithdrawal(amount, tx.currency, {
+      result = await adapter.processWithdrawal(amount, tx.currency, {
         transactionId: tx.id,
         userId,
         rail: tx.rail,
@@ -1452,7 +1584,7 @@ export class WalletService {
       await this.drizzle.db
         .update(walletTransaction)
         .set({
-          providerName: await this.providerNameFor(tx.currency, tx.network),
+          providerName,
           providerRefId: result.externalId,
         })
         .where(eq(walletTransaction.id, tx.id));
@@ -1463,7 +1595,7 @@ export class WalletService {
       .update(walletTransaction)
       .set({
         status: 'completed',
-        providerName: await this.providerNameFor(tx.currency, tx.network),
+        providerName,
         providerRefId: result.externalId,
       })
       .where(eq(walletTransaction.id, tx.id));
@@ -1898,8 +2030,10 @@ export class WalletService {
 
   // The catalog is operator-editable, so an admin can name a pair the bound vendor has
   // never heard of. Reject at write time rather than at a player's deposit request.
-  private assertAdapterSupports(currency: string, network: string) {
-    if (this.payment.supportsAsset && !this.payment.supportsAsset(currency, network)) {
+  private assertAdapterSupports(currency: string, network: string, providerName?: string) {
+    const adapter =
+      (providerName ? this.paymentProviders.get(providerName)?.adapter : undefined) ?? this.payment;
+    if (adapter.supportsAsset && !adapter.supportsAsset(currency, network)) {
       throw new WalletAssetUnsupportedError();
     }
   }
@@ -1918,8 +2052,8 @@ export class WalletService {
     input: CreateWalletAssetInput,
     meta?: ClientMeta,
   ): Promise<WalletAsset> {
-    this.assertAdapterSupports(input.currency, input.network);
     this.assertProviderNameValid(input.providerName);
+    this.assertAdapterSupports(input.currency, input.network, input.providerName);
     return this.drizzle.db.transaction(async (txn) => {
       const rows = await txn.insert(walletAsset).values(input).onConflictDoNothing().returning();
       // Empty => the (currency, network) unique index rejected it.
@@ -1945,16 +2079,20 @@ export class WalletService {
     { currency, network, ...changes }: UpdateWalletAssetInput,
     meta?: ClientMeta,
   ): Promise<WalletAsset> {
-    if (changes.providerAssetId !== undefined) {
-      this.assertAdapterSupports(currency, network);
-    }
     return this.drizzle.db.transaction(async (txn) => {
       const [before] = await txn
         .select()
         .from(walletAsset)
-        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
+        // Held until commit, so an address issuance that already gated against this row
+        // (see depositAssetsForCurrency) commits its address first and is then seen by
+        // the in-use count below, instead of slipping in behind the delete.
+        .for('update');
       if (!before) {
         throw new WalletAssetNotFoundError(`${currency}/${network}`);
+      }
+      if (changes.providerAssetId !== undefined) {
+        this.assertAdapterSupports(currency, network, before.providerName ?? undefined);
       }
       const rows = await txn
         .update(walletAsset)
@@ -1988,18 +2126,35 @@ export class WalletService {
       const [before] = await txn
         .select()
         .from(walletAsset)
-        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
+        // Held until commit, so an address issuance that already gated against this row
+        // (see depositAssetsForCurrency) commits its address first and is then seen by
+        // the in-use count below, instead of slipping in behind the delete.
+        .for('update');
       if (!before) {
         return false;
       }
       // wallet_balance is keyed by currency only (no network column), so this guard is
       // necessarily currency-wide: removing one network of a currency players still hold
       // is blocked even if their balance arrived over another network. Fails safe.
-      const [held] = await txn
-        .select({ n: count() })
+      const held = await txn
+        .select({ id: walletBalance.id })
         .from(walletBalance)
-        .where(and(eq(walletBalance.currency, currency), sql`${walletBalance.amount} > 0`));
-      if ((held?.n ?? 0) > 0) {
+        .where(and(eq(walletBalance.currency, currency), sql`${walletBalance.amount} > 0`))
+        .for('update');
+      if (held.length > 0) {
+        throw new WalletAssetInUseError();
+      }
+      const [issued] = await txn
+        .select({ n: count() })
+        .from(walletDepositAddress)
+        .where(
+          and(
+            eq(walletDepositAddress.currency, currency),
+            eq(walletDepositAddress.network, network),
+          ),
+        );
+      if ((issued?.n ?? 0) > 0) {
         throw new WalletAssetInUseError();
       }
       // Renaming a pair is a delete plus a create (the (currency, network) key AND
@@ -2286,7 +2441,8 @@ export class WalletService {
         createdAt: tx.createdAt.toISOString(),
         reviewedBy: includeInternal ? tx.reviewedBy : null,
         reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
-        reviewReason: includeInternal ? tx.reviewReason : null,
+        reviewReason:
+          includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.reviewReason : null,
       })),
       total: Number(n),
       page,
@@ -2299,27 +2455,36 @@ export class WalletService {
     currency: string,
     network?: string,
   ): Promise<DepositAddressResult> {
+    await this.assertDepositable(currency, undefined, network);
+
     const existing = await this.findDepositAddress(userId, currency, network);
     if (existing) {
       return toDepositAddressResult(existing);
     }
-    if (!this.payment.issueDepositAddress) {
+    const { providerName, adapter } = await this.paymentAdapterFor(currency, network ?? null);
+    if (!adapter.issueDepositAddress) {
       throw new DepositAddressUnsupportedError();
     }
-    const issued = await this.payment.issueDepositAddress(userId, currency, network);
+    const issued = await adapter.issueDepositAddress(userId, currency, network);
 
-    const [row] = await this.drizzle.db
-      .insert(walletDepositAddress)
-      .values({
-        userId,
-        currency,
-        network: network ?? null,
-        address: issued.address,
-        tag: issued.tag ?? null,
-        providerName: await this.providerNameFor(currency, network ?? null),
-      })
-      .onConflictDoNothing()
-      .returning();
+    // Re-gate inside the transaction that writes the row: the catalog pair can be
+    // disabled or deleted while the vendor call is in flight, and this is what makes
+    // deleteWalletAsset's in-use check race-free.
+    const [row] = await this.drizzle.db.transaction(async (txn) => {
+      await this.assertDepositable(currency, undefined, network, txn);
+      return txn
+        .insert(walletDepositAddress)
+        .values({
+          userId,
+          currency,
+          network: network ?? null,
+          address: issued.address,
+          tag: issued.tag ?? null,
+          providerName,
+        })
+        .onConflictDoNothing()
+        .returning();
+    });
     if (row) {
       return toDepositAddressResult(row);
     }
@@ -2351,19 +2516,23 @@ export class WalletService {
         { address: event.address, network: event.network, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
       );
-      await recordReconciliationFinding(this.drizzle.db, {
-        runId: LIVE_WEBHOOK_RUN_ID,
-        providerName,
-        kind: 'unattributed_deposit',
-        currency: event.currency,
-        network: event.network ?? null,
-        amount: event.amount,
-        address: event.address,
-        tag: event.tag ?? null,
-        txHash: event.txHash,
-        externalId: event.externalId,
-        detail: 'no wallet_deposit_address matched this address/network/tag',
-      });
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId: LIVE_WEBHOOK_RUN_ID,
+          providerName,
+          kind: 'unattributed_deposit',
+          currency: event.currency,
+          network: event.network ?? null,
+          amount: event.amount,
+          address: event.address,
+          tag: event.tag ?? null,
+          txHash: event.txHash,
+          externalId: event.externalId,
+          detail: 'no wallet_deposit_address matched this address/network/tag',
+        },
+        this.audit,
+      );
       return;
     }
     if (
@@ -2380,19 +2549,23 @@ export class WalletService {
         },
         'payment webhook: currency mismatch for inbound deposit',
       );
-      await recordReconciliationFinding(this.drizzle.db, {
-        runId: LIVE_WEBHOOK_RUN_ID,
-        providerName: depositAddress.providerName,
-        kind: 'currency_mismatch',
-        currency: event.currency,
-        network: event.network ?? depositAddress.network,
-        amount: event.amount,
-        address: event.address,
-        tag: event.tag ?? null,
-        txHash: event.txHash,
-        externalId: event.externalId,
-        detail: `currency mismatch: event reported ${event.currency}, address issued for ${depositAddress.currency}`,
-      });
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId: LIVE_WEBHOOK_RUN_ID,
+          providerName: depositAddress.providerName,
+          kind: 'currency_mismatch',
+          currency: event.currency,
+          network: event.network ?? depositAddress.network,
+          amount: event.amount,
+          address: event.address,
+          tag: event.tag ?? null,
+          txHash: event.txHash,
+          externalId: event.externalId,
+          detail: `currency mismatch: event reported ${event.currency}, address issued for ${depositAddress.currency}`,
+        },
+        this.audit,
+      );
       return;
     }
 

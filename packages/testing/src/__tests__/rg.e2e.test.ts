@@ -219,9 +219,17 @@ describe('RG self-exclusion leaves player funds unlocked', () => {
     const email = `rg-withdraw-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(app, { email: email });
 
-    const depositRes = await client.post('/wallet/deposit', { amount: '50', currency: 'USD' });
+    const depositRes = await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '50',
+      currency: 'USD',
+    });
     expect(depositRes.status).toBe(200);
-    const withdrawRes = await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' });
+    const withdrawRes = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '20',
+      currency: 'USD',
+    });
     expect(withdrawRes.status).toBe(200);
     const withdrawalId = (await readJson(withdrawRes)).transactionId as string;
 
@@ -617,7 +625,11 @@ describe('RG monitoring (queue-based)', () => {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-    const depositRes = await client.post('/wallet/deposit', { amount: '85', currency: 'USD' });
+    const depositRes = await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '85',
+      currency: 'USD',
+    });
     expect(depositRes.status).toBe(200);
 
     await vi.waitFor(async () => {
