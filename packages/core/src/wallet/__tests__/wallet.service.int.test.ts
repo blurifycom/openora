@@ -43,6 +43,7 @@ import {
   AmbiguousNetworkError,
   BelowMinimumWithdrawalError,
   WithdrawalDisabledError,
+  DepositDisabledError,
   DestinationAddressNotWhitelistedError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
@@ -1556,6 +1557,38 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
       .from(walletDepositAddress)
       .where(eq(walletDepositAddress.userId, userId));
     expect(stored).toHaveLength(1);
+  });
+
+  it('rejects and persists nothing when the pair is disabled during the vendor call', async () => {
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'TRC20',
+      providerAssetId: 'USDT_TRC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+    });
+    const userId = randomUUID();
+    const issueDepositAddress = vi.fn(async () => {
+      await db.drizzle.db
+        .update(walletAsset)
+        .set({ depositEnabled: false })
+        .where(and(eq(walletAsset.currency, 'USDT'), eq(walletAsset.network, 'TRC20')));
+      return { address: 'Tlate' };
+    });
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
+    });
+
+    await expect(svc.getOrCreateDepositAddress(userId, 'USDT', 'TRC20')).rejects.toBeInstanceOf(
+      DepositDisabledError,
+    );
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(walletDepositAddress)
+        .where(eq(walletDepositAddress.userId, userId)),
+    ).toHaveLength(0);
   });
 
   it('throws DepositAddressUnsupportedError when the adapter cannot issue addresses', async () => {

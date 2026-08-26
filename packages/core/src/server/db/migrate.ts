@@ -38,7 +38,8 @@ export type RunMigrationsOptions = {
   /**
    * Raw SQL statements to run, in order, AFTER every pending migration is applied. Same
    * trust model as `preSql`; for constraints drizzle-kit cannot express against a table
-   * it has just created (eg an append-only trigger on the audit log).
+   * it has just created (eg an append-only trigger on the audit log). Runs while the
+   * migration advisory lock is still held, so concurrent runners never overlap here.
    */
   postSql?: string[];
 };
@@ -149,13 +150,13 @@ export async function runMigrations(opts: RunMigrationsOptions) {
               }
             },
           });
+          for (const sql of opts.postSql ?? []) {
+            await pool.query(sql);
+          }
         },
       );
     } finally {
       lockClient.release();
-    }
-    for (const sql of opts.postSql ?? []) {
-      await pool.query(sql);
     }
   } finally {
     await pool.end();

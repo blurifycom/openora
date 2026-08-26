@@ -486,12 +486,16 @@ export class CustodySweepService {
   ): Promise<void> {
     const error =
       err === undefined ? {} : { error: err instanceof Error ? err.message : String(err) };
-    const moved = await this.drizzle.db
-      .select()
-      .from(walletCustodySweep)
-      .where(and(eq(walletCustodySweep.runId, runId), eq(walletCustodySweep.status, 'processing')));
-
     await this.drizzle.db.transaction(async (txn) => {
+      // Read inside the transaction: a concurrent path moving another row of this run to
+      // `processing` between the read and the writes would otherwise leave that sweep
+      // out of the audit chain.
+      const moved = await txn
+        .select()
+        .from(walletCustodySweep)
+        .where(
+          and(eq(walletCustodySweep.runId, runId), eq(walletCustodySweep.status, 'processing')),
+        );
       await txn
         .update(walletJobRun)
         .set({ finishedAt: new Date(), status, summary: { ...summary, ...error } })

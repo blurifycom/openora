@@ -148,8 +148,10 @@ export function createWalletRouter({
     deposit: os.deposit.handler(({ input, context }) =>
       mapErrors(
         {
-          BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError],
-          CONFLICT: [IdempotencyKeyReuseError, DepositDisabledError],
+          // A disabled currency/network is a permanent policy rejection, not a state
+          // conflict: 409 would tell a status-code-branching client to retry it.
+          BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
+          CONFLICT: IdempotencyKeyReuseError,
         },
         () =>
           wallet.deposit({
@@ -415,8 +417,8 @@ export function createWalletRouter({
       getAddress: os.deposits.getAddress.handler(({ input, context }) =>
         mapErrors(
           {
-            BAD_REQUEST: UnsupportedNetworkError,
-            CONFLICT: [DepositAddressUnsupportedError, DepositDisabledError],
+            BAD_REQUEST: [UnsupportedNetworkError, DepositDisabledError],
+            CONFLICT: DepositAddressUnsupportedError,
           },
           () => wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),

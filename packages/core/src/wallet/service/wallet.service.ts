@@ -696,19 +696,33 @@ export class WalletService {
       .where(eq(walletAsset.currency, currency.toUpperCase()));
   }
 
-  private depositAssetsForCurrency(currency: string) {
-    return this.drizzle.db
+  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
+  // the same rows) from removing the pair while a deposit is being gated against it.
+  private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
+    return db
       .select({
         network: walletAsset.network,
         minDeposit: walletAsset.minDeposit,
         depositEnabled: walletAsset.depositEnabled,
       })
       .from(walletAsset)
-      .where(eq(walletAsset.currency, currency.toUpperCase()));
+      .where(eq(walletAsset.currency, currency.toUpperCase()))
+      .for('share');
   }
 
-  private async assertDepositable(currency: string, amount?: string, network?: string) {
-    const assets = await this.depositAssetsForCurrency(currency);
+  /**
+   * `network` is optional because not every deposit path knows one: `deposit()` takes a
+   * PSP amount and currency only, so it is gated currency-wide (any enabled network
+   * clears it). Per-network gating applies where a network is actually chosen, ie
+   * `getOrCreateDepositAddress`, which is the path that hands a player a chain address.
+   */
+  private async assertDepositable(
+    currency: string,
+    amount?: string,
+    network?: string,
+    db: DrizzleDb = this.drizzle.db,
+  ) {
+    const assets = await this.depositAssetsForCurrency(currency, db);
     assertDepositAllowed(assets, currency, network);
     if (amount !== undefined) {
       assertAboveMinimumDeposit(assets, amount, currency, network);
@@ -814,6 +828,12 @@ export class WalletService {
    * reach the PSP, but the ledger insert's unique-index conflict still
    * guarantees only one balance credit - the loser's write becomes a replay
    * read of the winner's row.
+   *
+   * Deposit gating is network-aware when a network is known (e.g. via
+   * `getOrCreateDepositAddress`), but here we gate on "any network for this
+   * currency is enabled" because `provider` routing may resolve a specific
+   * network inside `processDeposit`. A fiat PSP (no networks) passes through
+   * unchecked; an explicit network route checks that specific network only.
    */
   async deposit({
     userId,
@@ -2034,7 +2054,11 @@ export class WalletService {
       const [before] = await txn
         .select()
         .from(walletAsset)
-        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
+        // Held until commit, so an address issuance that already gated against this row
+        // (see depositAssetsForCurrency) commits its address first and is then seen by
+        // the in-use count below, instead of slipping in behind the delete.
+        .for('update');
       if (!before) {
         throw new WalletAssetNotFoundError(`${currency}/${network}`);
       }
@@ -2073,7 +2097,11 @@ export class WalletService {
       const [before] = await txn
         .select()
         .from(walletAsset)
-        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
+        // Held until commit, so an address issuance that already gated against this row
+        // (see depositAssetsForCurrency) commits its address first and is then seen by
+        // the in-use count below, instead of slipping in behind the delete.
+        .for('update');
       if (!before) {
         return false;
       }
@@ -2409,18 +2437,24 @@ export class WalletService {
     }
     const issued = await adapter.issueDepositAddress(userId, currency, network);
 
-    const [row] = await this.drizzle.db
-      .insert(walletDepositAddress)
-      .values({
-        userId,
-        currency,
-        network: network ?? null,
-        address: issued.address,
-        tag: issued.tag ?? null,
-        providerName,
-      })
-      .onConflictDoNothing()
-      .returning();
+    // Re-gate inside the transaction that writes the row: the catalog pair can be
+    // disabled or deleted while the vendor call is in flight, and this is what makes
+    // deleteWalletAsset's in-use check race-free.
+    const [row] = await this.drizzle.db.transaction(async (txn) => {
+      await this.assertDepositable(currency, undefined, network, txn);
+      return txn
+        .insert(walletDepositAddress)
+        .values({
+          userId,
+          currency,
+          network: network ?? null,
+          address: issued.address,
+          tag: issued.tag ?? null,
+          providerName,
+        })
+        .onConflictDoNothing()
+        .returning();
+    });
     if (row) {
       return toDepositAddressResult(row);
     }
