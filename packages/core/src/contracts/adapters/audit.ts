@@ -31,6 +31,9 @@ export type DirectAuditAction =
   | 'wallet.withdrawal_address.created'
   | 'wallet.withdrawal_address.deleted'
   | 'wallet.custody.sweep_cycle'
+  | 'wallet.custody.sweep'
+  | 'wallet.reconciliation_finding.recorded'
+  | 'wallet.reconciliation_run.skipped'
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
   | 'wallet.reconciliation_finding.resolved';

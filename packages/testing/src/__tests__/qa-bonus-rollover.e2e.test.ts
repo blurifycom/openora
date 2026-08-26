@@ -45,7 +45,11 @@ async function makeSuperAdmin(app: TestApp, email: string) {
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
-  const res = await client.post('/wallet/deposit', { amount, currency });
+  const res = await client.post('/wallet/deposit', {
+    amount,
+    currency,
+    idempotencyKey: randomUUID(),
+  });
   if (res.status !== 200) {
     throw new Error(`deposit failed (${res.status}): ${await res.text()}`);
   }
@@ -69,7 +73,11 @@ async function sendGift(sender: TestClient, amount: string) {
 }
 
 async function claimGift(claimer: TestClient, giftId: string) {
-  await claimer.post('/wallet/deposit', { amount: '1', currency: 'USD' });
+  await claimer.post('/wallet/deposit', {
+    amount: '1',
+    currency: 'USD',
+    idempotencyKey: randomUUID(),
+  });
 
   const res = await claimer.post(`/chat-command/gift/${giftId}/claim`);
   if (res.status !== 200) {
@@ -188,6 +196,7 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     const blockedWithdraw = await recipient.post('/wallet/withdraw', {
       amount: '10',
       currency: 'USD',
+      idempotencyKey: randomUUID(),
     });
     expect(blockedWithdraw.status).toBe(409);
     const blockedBody = await readJson(blockedWithdraw);
@@ -220,6 +229,7 @@ describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering
     const unlockedWithdraw = await recipient.post('/wallet/withdraw', {
       amount: '5',
       currency: 'USD',
+      idempotencyKey: randomUUID(),
     });
     expect(unlockedWithdraw.status).toBe(200);
     const unlockedBody = await readJson(unlockedWithdraw);

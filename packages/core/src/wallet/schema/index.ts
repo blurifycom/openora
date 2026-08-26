@@ -349,6 +349,7 @@ export const walletAsset = pgTable(
     // custody container into the pool. Null means no ceiling. Per-asset, not global:
     // fee units differ per chain, so one global number cannot compare a fee
     // denominated in one chain's native coin against another's.
+    sweepDustThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     sweepFeeCeiling: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // Below this pooled balance, the sweep fee ceiling is ignored - running the pool
     // dry to save a fee costs more than the fee. Null means never override the ceiling.

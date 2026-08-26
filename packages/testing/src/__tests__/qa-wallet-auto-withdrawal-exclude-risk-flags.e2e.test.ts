@@ -163,18 +163,34 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
     const tagged = await registerAndMaterializePlayer(appMain, { email: taggedEmail });
     await verifyKyc(superAdmin, tagged.userId);
     await assignTag(superAdmin, tagged.playerId, 'high_risk');
-    await tagged.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await tagged.client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const taggedRes = await readJson(
-      await tagged.client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await tagged.client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(taggedRes.status).toBe('pending');
 
     const cleanEmail = `preexisting-clean-${randomUUID()}@e2e.test`;
     const clean = await registerAndMaterializePlayer(appMain, { email: cleanEmail });
     await verifyKyc(superAdmin, clean.userId);
-    await clean.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await clean.client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const cleanRes = await readJson(
-      await clean.client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await clean.client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(cleanRes.status).toBe('completed');
   });
@@ -202,9 +218,17 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
     });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('pending');
   });
@@ -227,9 +251,17 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
     });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'high_risk');
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('completed');
   });
@@ -251,9 +283,17 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
     });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'kyc_rejected');
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('completed');
   });
@@ -273,9 +313,17 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
     });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '1', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '1',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('pending');
   });
@@ -292,9 +340,17 @@ describe('regression (no weakening): a player with no excluded tag, under thresh
     const email = `no-regression-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('completed');
   });
@@ -319,9 +375,17 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
       reason: 'QA: trusted-looking player, still carries an excluded tag',
     });
 
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('pending');
   });
@@ -357,9 +421,17 @@ describe('audit trail', () => {
     const email = `audit-effective-tags-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
-    await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     const res = await readJson(
-      await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '50',
+        currency: 'USD',
+      }),
     );
     expect(res.status).toBe('completed');
 

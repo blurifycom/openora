@@ -134,6 +134,32 @@ describe('CustodySweepService (real PG)', () => {
     expect(rows[0]?.poolRef).toBe('pool-players-1');
   });
 
+  it("passes the sweeping provider's own treasuryRef and records only the adapter's poolRef", async () => {
+    await seedAsset();
+    const b = makeBalance();
+    const listSweepableBalances = vi.fn().mockResolvedValue([b]);
+    const sweepToPool = vi.fn().mockResolvedValue({ externalId: 'vendor-ref-1' });
+    const config = platformConfig();
+    config.wallet = {
+      ...config.wallet,
+      treasuryRefs: { default: 'treasury-default', 'vendor-b': 'treasury-vendor-b' },
+    };
+    const { service } = serviceWith(
+      mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }),
+      config,
+    );
+
+    await service.runCycle();
+
+    expect(sweepToPool).toHaveBeenCalledWith(
+      b,
+      expect.objectContaining({ treasuryRef: 'treasury-default' }),
+    );
+    // The vendor never confirmed a destination, so the audited row must not claim one.
+    const rows = await sweepRows(b.userId);
+    expect(rows[0]?.poolRef).toBeNull();
+  });
+
   it('sweepToPool throws -> the guard is still held and the next cycle does not re-sweep', async () => {
     await seedAsset();
     const b = makeBalance();
@@ -180,25 +206,32 @@ describe('CustodySweepService (real PG)', () => {
 
   it('two cycles started concurrently: the second returns immediately and listSweepableBalances is called exactly once', async () => {
     await seedAsset();
-    // The vendor call has to be slow enough to hold the first cycle's claim open while
-    // the second one attempts its own. Resolved immediately, a cycle can finish - and
-    // clear its claim - before the sibling's insert is even issued, at which point both
-    // legitimately succeed as two SEQUENTIAL runs and the test fails without anything
-    // being wrong. That is a race in the test, not in the claim.
+    // The first cycle parks inside the vendor call so its claim is provably still open
+    // when the second one attempts its own. Gating on a promise rather than a timer is
+    // what makes that ordering a guarantee: under load a sleep can expire early enough
+    // for the first cycle to finish - and clear its claim - before the sibling's insert
+    // is issued, at which point both legitimately succeed as two SEQUENTIAL runs and the
+    // test fails without anything being wrong.
     const balances = [makeBalance()];
-    const listSweepableBalances = vi.fn(
-      () => new Promise((resolve) => setTimeout(() => resolve(balances), 100)),
-    );
+    let firstCycleHoldsClaim!: () => void;
+    let releaseFirstCycle!: () => void;
+    const claimHeld = new Promise<void>((resolve) => (firstCycleHoldsClaim = resolve));
+    const vendorCall = new Promise<void>((resolve) => (releaseFirstCycle = resolve));
+    const listSweepableBalances = vi.fn(async () => {
+      firstCycleHoldsClaim();
+      await vendorCall;
+      return balances;
+    });
     const sweepToPool = vi.fn().mockResolvedValue({ externalId: randomUUID() });
     const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }));
 
-    const [a, b] = await Promise.all([service.runCycle(), service.runCycle()]);
-    const results = [a, b];
-    const claimed = results.filter((r) => r !== null);
-    const skipped = results.filter((r) => r === null);
+    const first = service.runCycle();
+    await claimHeld;
+    const second = await service.runCycle();
+    releaseFirstCycle();
 
-    expect(claimed).toHaveLength(1);
-    expect(skipped).toHaveLength(1);
+    expect(await first).not.toBeNull();
+    expect(second).toBeNull();
     expect(listSweepableBalances).toHaveBeenCalledTimes(1);
   });
 
@@ -227,7 +260,7 @@ describe('CustodySweepService (real PG)', () => {
     expect(sweeps).toHaveLength(0);
   });
 
-  it('writes exactly one audit entry per cycle regardless of how many balances were swept', async () => {
+  it('writes one audit entry per swept balance plus one for the cycle', async () => {
     await seedAsset();
     const balances = [makeBalance(), makeBalance(), makeBalance()];
     const adapter = mock<PaymentAdapter>({
@@ -239,13 +272,16 @@ describe('CustodySweepService (real PG)', () => {
     const result = await service.runCycle();
     expect(result?.summary.swept).toBe(3);
 
-    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
-    const [, entry] = (audit.recordInTransaction as ReturnType<typeof vi.fn>).mock.calls[0] as [
+    const calls = (audit.recordInTransaction as ReturnType<typeof vi.fn>).mock.calls as [
       unknown,
       { action: string; after: Record<string, unknown> },
-    ];
-    expect(entry.action).toBe('wallet.custody.sweep_cycle');
-    expect(entry.after).toMatchObject({ runId: result?.runId, swept: 3 });
+    ][];
+    const entries = calls.map(([, entry]) => entry);
+
+    expect(entries.filter((e) => e.action === 'wallet.custody.sweep')).toHaveLength(3);
+    const cycle = entries.filter((e) => e.action === 'wallet.custody.sweep_cycle');
+    expect(cycle).toHaveLength(1);
+    expect(cycle[0]?.after).toMatchObject({ runId: result?.runId, swept: 3 });
   });
 
   it('a repeated unconfigured asset files exactly one finding, not one per cycle', async () => {

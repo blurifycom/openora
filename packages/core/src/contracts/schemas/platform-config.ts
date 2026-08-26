@@ -69,6 +69,14 @@ export const WalletConfigSchema = z
      */
     cryptoCurrencies: z.array(z.string().min(1)).optional(),
     /**
+     * Vendor-side account each provider's sweeps move player funds into, keyed by the
+     * provider name in `wallet_asset.providerName` (`default` for the single bound
+     * adapter). Keyed rather than flat because one operator can run several vendors,
+     * and an account id only means something at the vendor that issued it. A provider
+     * with no entry sweeps to whatever its adapter defaults to.
+     */
+    treasuryRefs: z.record(z.string().min(1), z.string().min(1)).optional(),
+    /**
      * Custody sweep cron knobs. Static config, not a DB row - nothing here is edited
      * during an incident. Absent means the sweep job no-ops.
      */
@@ -108,6 +116,7 @@ export const WalletConfigSchema = z
       .object({
         cron: z.string().default('0 * * * *'),
         lookbackHours: z.number().int().positive().default(24),
+        batchSize: z.number().int().positive().default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
         /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),

@@ -11,6 +11,15 @@ import { auditLog } from '../schema/index.js';
 import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
 import { AuditListFiltersSchema } from '../contract/index.js';
 
+const tamper = async (mutate: () => Promise<unknown>) => {
+  await db.drizzle.db.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`);
+  try {
+    await mutate();
+  } finally {
+    await db.drizzle.db.execute(sql`ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`);
+  }
+};
+
 describe('computeHash canonical form', () => {
   it('matches the frozen golden vector', () => {
     expect(
@@ -240,10 +249,12 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
-    await db.drizzle.db
-      .update(auditLog)
-      .set({ hash: 'tampered-wrong-hash' })
-      .where(eq(auditLog.id, row.id));
+    await tamper(() =>
+      db.drizzle.db
+        .update(auditLog)
+        .set({ hash: 'tampered-wrong-hash' })
+        .where(eq(auditLog.id, row.id)),
+    );
 
     const result = await makeService().verifyChain();
 
@@ -265,10 +276,12 @@ describe('AuditService.verifyChain() (real PG)', () => {
       after: { role: 'player' },
       result: 'success',
     });
-    await db.drizzle.db
-      .update(auditLog)
-      .set({ after: { role: 'admin' } })
-      .where(eq(auditLog.id, row.id));
+    await tamper(() =>
+      db.drizzle.db
+        .update(auditLog)
+        .set({ after: { role: 'admin' } })
+        .where(eq(auditLog.id, row.id)),
+    );
 
     const result = await makeService().verifyChain();
 
@@ -289,10 +302,12 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
     });
-    await db.drizzle.db
-      .update(auditLog)
-      .set({ prevHash: 'wrong-prev-hash' })
-      .where(eq(auditLog.id, second.id));
+    await tamper(() =>
+      db.drizzle.db
+        .update(auditLog)
+        .set({ prevHash: 'wrong-prev-hash' })
+        .where(eq(auditLog.id, second.id)),
+    );
 
     const result = await makeService().verifyChain();
 

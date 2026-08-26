@@ -107,6 +107,23 @@ The vendor call happens outside the database transaction, after the row is claim
 is audited. Every threshold is set per currency and network: the same token costs cents on one
 chain and dollars on another.
 
+## Dust floor
+
+The sweep has its own dust threshold per asset, and falls back to the deposit minimum only when
+none is set. The two are separate on purpose: raising a deposit minimum must not silently change
+what gets swept.
+
+## Treasury destination
+
+Platform config names the vendor-side account that sweeps move player funds into, one entry per
+provider name. An account identifier only means anything at the vendor that issued it, so this is
+configuration, never a constant.
+
+The sweep record stores only the destination the adapter reports back. The destination that was
+_requested_ is not evidence the vendor honoured it, and that evidence is what a regulator asks for.
+An adapter that reports no destination leaves the record empty rather than assuming the requested
+one. Every sweep is audited into the append-only log either way.
+
 ## Reconciliation
 
 Three things start a finding.
@@ -131,10 +148,14 @@ vendor topology and belongs in the overlay.
 ## Running more than one vendor
 
 The adapter and the webhook verifier are each a single binding, and the last registration wins, so
-two overlays that both bind them would clobber each other. Running a fiat processor and a crypto
-custodian at once therefore goes through a provider registry: the asset catalog names a provider
-per pair, and the registry maps that name to one adapter-and-verifier pair. Core only looks a name
-up; it never discovers vendors by itself, so the operator composes the map in their own plugin.
+two overlays that both bind them would clobber each other. Core exposes that single pair as the
+registry's **default** entry, so the one-vendor case needs no extra wiring.
 
-The webhook route resolves the verifier and the adapter from the **same** entry. A body can never
-be verified against one vendor's key and then parsed in another's format.
+Running a fiat processor and a crypto custodian at once means rebinding the registry with a map of
+named pairs, and naming a provider per currency-and-network row in the asset catalog. Issuing a
+deposit address, settling a withdrawal and handling a webhook then all resolve the vendor from that
+one place. Core only looks a name up; it never discovers vendors by itself, so the operator
+composes the map in their own plugin.
+
+The webhook path resolves the verifier and the adapter from the **same** entry. A body can never be
+verified against one vendor's key and then parsed in another's format.

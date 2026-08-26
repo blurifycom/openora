@@ -131,8 +131,16 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
-    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '5',
+      currency: 'USD',
+    });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '0.5',
+      currency: 'USD',
+    });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('completed');
@@ -166,8 +174,16 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     const admin = await asAdmin(appGated.app);
     // No verifyKyc() call - player stays at the default kycStatus 'pending'.
 
-    await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '3',
+      currency: 'USD',
+    });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '0.5',
+      currency: 'USD',
+    });
     // gateWithdrawals is off, so the withdraw request itself succeeds...
     expect(res.status).toBe(200);
     const body = await readJson(res);
@@ -187,8 +203,16 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     await verifyKyc(admin, userId);
     await assignTag(admin, playerId, 'high_risk');
 
-    await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '3',
+      currency: 'USD',
+    });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '0.5',
+      currency: 'USD',
+    });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -203,8 +227,16 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
-    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: '2.5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '5',
+      currency: 'USD',
+    });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '2.5',
+      currency: 'USD',
+    });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -219,8 +251,13 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
-    await client.post('/wallet/deposit', { amount: '0.1', currency: 'BTC' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '0.1',
+      currency: 'BTC',
+    });
     const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
       amount: '0.01',
       currency: 'BTC',
       destinationAddress: 'bc1qe2e-crypto-rail-test-address',
@@ -245,9 +282,17 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
     expect(setRes.status).toBe(200);
 
-    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '5',
+      currency: 'USD',
+    });
     // 0.4 is well under the global 2 threshold but over the per-player rule's 0.1.
-    const res = await client.post('/wallet/withdraw', { amount: '0.4', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '0.4',
+      currency: 'USD',
+    });
     const body = await readJson(res);
     expect(body.status).toBe('pending');
   });
@@ -264,9 +309,17 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
     expect(setRes.status).toBe(200);
 
-    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '5',
+      currency: 'USD',
+    });
     // 2.5 exceeds the global 2 threshold but is under the per-player rule's 3.
-    const res = await client.post('/wallet/withdraw', { amount: '2.5', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '2.5',
+      currency: 'USD',
+    });
     const body = await readJson(res);
     expect(body.status).toBe('completed');
 
@@ -290,15 +343,27 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
     const admin = await asAdmin(appCapGated.app);
     await verifyKyc(admin, userId);
 
-    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '5',
+      currency: 'USD',
+    });
 
     const first = await readJson(
-      await client.post('/wallet/withdraw', { amount: '0.3', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '0.3',
+        currency: 'USD',
+      }),
     );
     expect(first.status).toBe('completed');
 
     const second = await readJson(
-      await client.post('/wallet/withdraw', { amount: '0.3', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '0.3',
+        currency: 'USD',
+      }),
     );
     expect(second.status).toBe('pending');
 
@@ -399,10 +464,18 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     const { client } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
-    await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '3',
+      currency: 'USD',
+    });
 
     const w1 = await readJson(
-      await client.post('/wallet/withdraw', { amount: '0.6', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '0.6',
+        currency: 'USD',
+      }),
     );
     expect(w1.status).toBe('pending');
     const balanceAfterHold = (await readJson(await client.get('/wallet/balance'))).balance;
@@ -415,7 +488,11 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     expect((await readJson(approveRes)).status).toBe('completed');
 
     const w2 = await readJson(
-      await client.post('/wallet/withdraw', { amount: '0.4', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '0.4',
+        currency: 'USD',
+      }),
     );
     expect(w2.status).toBe('pending');
     const balanceAfterSecondHold = (await readJson(await client.get('/wallet/balance'))).balance;

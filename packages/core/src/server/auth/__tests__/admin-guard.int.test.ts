@@ -16,14 +16,19 @@ const ADMIN_HEADERS = { 'x-real-ip': '127.0.0.1', 'user-agent': 'Mozilla/5.0' };
 function makeGuard({
   userId,
   grants,
+  superAdmin,
 }: {
   userId?: string;
   grants?: { resource: string; action: string }[];
+  superAdmin?: boolean | null;
 } = {}) {
   const events = makeEventBus();
   const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => userId) });
   const permissionResolver = grants
-    ? mock<AdminPermissionResolver>({ getGrants: vi.fn(async () => grants) })
+    ? mock<AdminPermissionResolver>({
+        getGrants: vi.fn(async () => grants),
+        isSuperAdmin: vi.fn(async () => superAdmin ?? null),
+      })
     : undefined;
   const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events);
   return { guard, events };
@@ -196,6 +201,48 @@ describe('AdminGuard.assert - DB grants (real PG)', () => {
     const { guard } = makeGuard({ userId, grants: [{ resource: 'player', action: 'view' }] });
 
     await expect(guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+  });
+});
+
+describe('AdminGuard.assertSuperAdmin (real PG)', () => {
+  it('denies a role whose matrix grants everything but is not flagged super admin', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard({ userId, grants: [], superAdmin: false });
+
+    await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ resource: 'admin', action: 'super-admin' }),
+    );
+  });
+
+  it('allows a DB-assigned super admin', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ userId, grants: [], superAdmin: true });
+
+    await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).resolves.toMatchObject({
+      userId,
+    });
+  });
+
+  it('falls back to the static admin role when no resolver is bound (bootstrap)', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ userId });
+
+    await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).resolves.toMatchObject({
+      userId,
+    });
+  });
+
+  it('denies a non-admin static role on the bootstrap path', async () => {
+    const userId = await seedUser('support');
+    const { guard } = makeGuard({ userId });
+
+    await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).rejects.toThrow(
       expect.objectContaining({ code: 'FORBIDDEN' }),
     );
   });
