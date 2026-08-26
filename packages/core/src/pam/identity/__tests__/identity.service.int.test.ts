@@ -478,6 +478,61 @@ describe('IdentityService - login banned-user 403 (not the RG block)', () => {
     );
     expect(events.emit).not.toHaveBeenCalledWith('rg.exclusion.login_blocked', expect.anything());
   });
+
+  it("forwards better-auth's error code so a client can tell an unverified email from bad credentials", async () => {
+    await seedUser();
+    signInEmailMock.mockResolvedValue(
+      jsonResponse({ message: 'Email not verified', code: 'EMAIL_NOT_VERIFIED' }, 403),
+    );
+    const svc = buildService();
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'whatever1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      data: { code: 'EMAIL_NOT_VERIFIED' },
+    });
+  });
+
+  it('omits the data code when better-auth sends none', async () => {
+    await seedUser();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'BANNED_USER' }, 403));
+    const svc = buildService();
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'whatever1' }, {}, new Headers()),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: undefined });
+  });
+
+  it('ignores an error body that is not the shape better-auth documents', async () => {
+    await seedUser();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Denied', code: 42 }, 403));
+    const svc = buildService();
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'whatever1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Request failed (403)',
+      data: undefined,
+    });
+  });
+
+  it('falls back to the status message when the error body is not JSON', async () => {
+    await seedUser();
+    signInEmailMock.mockResolvedValue(
+      new Response('<html>gateway timeout</html>', { status: 403 }),
+    );
+    const svc = buildService();
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'whatever1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Request failed (403)',
+      data: undefined,
+    });
+  });
 });
 
 describe('IdentityService - RG login gate (real PG)', () => {
