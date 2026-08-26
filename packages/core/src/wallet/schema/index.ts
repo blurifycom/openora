@@ -32,8 +32,10 @@ import {
 import {
   BONUS_CREDIT_SOURCE_TYPES,
   BONUS_CREDIT_STATUSES,
+  MANUAL_ADJUSTMENT_DIRECTIONS,
   type BonusCreditSourceType,
   type BonusCreditStatus,
+  type ManualAdjustmentDirection,
 } from '../contract/index.js';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
@@ -58,6 +60,15 @@ export const walletBonusCreditSourceTypeEnum = pgEnum(
 export const walletBonusCreditStatusEnum = pgEnum(
   'wallet_bonus_credit_status',
   BONUS_CREDIT_STATUSES,
+);
+
+// Same credit/debit vocabulary as a manual adjustment (contract/index.ts) - a wallet
+// move only ever has these two directions, so one enum covers both. Nullable: rows
+// written before this column existed (all gift/rain/tip legs pre-dating it, plus any
+// other historical row) have no recoverable direction and stay NULL rather than guess.
+export const walletTransactionDirectionEnum = pgEnum(
+  'wallet_transaction_direction',
+  MANUAL_ADJUSTMENT_DIRECTIONS,
 );
 
 export const wallet = pgTable('wallet', {
@@ -106,6 +117,11 @@ export const walletTransaction = pgTable(
       .notNull()
       .default('pending'),
     rail: walletRailEnum().$type<WalletRail>(),
+    // Which way this leg moved money. Derived from what the operation IS (never a
+    // caller input) and set at every insert site going forward; NULL only for rows
+    // written before this column existed. See the enum comment above for why gift/
+    // rain/tip needed this at all - they wrote the same `type` for both legs.
+    direction: walletTransactionDirectionEnum().$type<ManualAdjustmentDirection>(),
     // Admin user id (cross-module). Bare uuid, no .references - the user table is
     // owned by another domain.
     reviewedBy: uuid(),
@@ -117,6 +133,7 @@ export const walletTransaction = pgTable(
     providerName: text(),
     providerRefId: text(),
     destinationAddress: text(),
+    destinationTag: text(),
     destinationWalletId: text(),
     txHash: text(),
     // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
@@ -203,6 +220,11 @@ export const walletWithdrawalAddress = pgTable(
     currency: text().notNull(),
     network: text().notNull(),
     address: text().notNull(),
+    // On a tag/memo chain the address alone does not name a beneficiary - one exchange address
+    // serves every account behind it, and the tag picks which. The tag is therefore part of the
+    // whitelisted destination, not a per-withdrawal free field: without it here a player who
+    // saved a shared address could pay out to anyone else holding an account at it.
+    destinationTag: text(),
     // Which custody provider `providerWalletId` belongs to. Without it a provider swap would
     // silently reuse the previous vendor's id and pay out to whatever that id now names.
     providerName: text(),
@@ -214,12 +236,15 @@ export const walletWithdrawalAddress = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // A double submit conflicts instead of duplicating the same destination twice.
+    // A double submit conflicts instead of duplicating the same destination twice. The tag is
+    // coalesced because two NULLs are distinct to a unique index, which would let the untagged
+    // form of an address be saved twice.
     uniqueIndex('wallet_withdrawal_address_user_id_currency_network_address_idx').on(
       t.userId,
       t.currency,
       t.network,
       t.address,
+      sql`coalesce(${t.destinationTag}, '')`,
     ),
     index('wallet_withdrawal_address_user_id_created_at_idx').on(t.userId, t.createdAt),
   ],

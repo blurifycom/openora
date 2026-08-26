@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import {
+  createEventStreamGenerator,
   getUserId,
   mapErrors,
   assertRateLimit,
@@ -18,8 +19,10 @@ import {
   type QueueName,
   type RateLimiterAdapter,
   type RateLimitKey,
+  type RealtimeTransport,
+  type User,
 } from '@openora/core/contracts';
-import { walletContract } from '../contract/index.js';
+import { walletContract, type WalletBalanceUpdate } from '../contract/index.js';
 import { CUSTODY_SWEEP_QUEUE } from '../service/custody-sweep.service.js';
 import {
   WalletService,
@@ -96,6 +99,21 @@ async function dispatchWebhook(
   return { ok: true as const };
 }
 
+export function walletBalanceChannel(userId: User['id']): string {
+  return `wallet:balance:${userId}`;
+}
+
+export function createWalletBalanceStream(
+  realtime: RealtimeTransport,
+  userId: User['id'],
+  signal: AbortSignal | undefined,
+): AsyncGenerator<WalletBalanceUpdate> {
+  return createEventStreamGenerator(
+    (push) => realtime.subscribe<WalletBalanceUpdate>(walletBalanceChannel(userId), push),
+    { signal },
+  );
+}
+
 /**
  * Named rather than positional. Half of these are structurally similar ports, so a
  * positional slip type-checks; and the sweep and reconciliation branches each add their
@@ -110,6 +128,7 @@ export type WalletRouterDeps = {
   reconciliation: ReconciliationService;
   jobQueue: JobQueueAdapter;
   reconciliationQueue: QueueName;
+  realtime: RealtimeTransport;
   limiter?: RateLimiterAdapter<RateLimitKey>;
 };
 
@@ -121,6 +140,7 @@ export function createWalletRouter({
   reconciliation,
   jobQueue,
   reconciliationQueue,
+  realtime,
   limiter,
 }: WalletRouterDeps) {
   const os = implement(walletContract).$context<OssContext>();
@@ -136,6 +156,12 @@ export function createWalletRouter({
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
 
     getBalances: os.getBalances.handler(({ context }) => wallet.getBalances(getUserId(context))),
+
+    // Player-scoped: the channel is keyed by the session's userId, never an input
+    // parameter, so a player can never subscribe to another player's balance channel.
+    streamBalance: os.streamBalance.handler(({ signal, context }) => {
+      return createWalletBalanceStream(realtime, getUserId(context), signal);
+    }),
 
     setActiveCurrency: os.setActiveCurrency.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: WalletNotFoundError }, () =>
@@ -182,6 +208,7 @@ export function createWalletRouter({
             network: input.network,
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
+            destinationTag: input.destinationTag,
             ...context.clientMeta,
           }),
       );

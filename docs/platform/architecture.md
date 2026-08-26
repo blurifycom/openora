@@ -4,8 +4,8 @@ How the platform fits together: the contract spine, the plugin host that loads
 everything, the adapter seams that keep it swappable, and how a downstream
 consumer reuses it without forking.
 
-For the rationale behind each choice, see the [ADRs](./adr/). For the rules an
-agent must follow, see [AGENTS.md](../AGENTS.md).
+For the rationale behind each choice, see the [ADRs](../adr/). For the rules an
+agent must follow, see [AGENTS.md](../../AGENTS.md).
 
 > **Packaging note (ADR-0025, 2026-06-16):** the foundation, engine, and free domains
 > now ship as ONE published package, `@openora/core`, with subpaths - `@openora/core/contracts`
@@ -13,7 +13,7 @@ agent must follow, see [AGENTS.md](../AGENTS.md).
 > plugin-host + db + auth + createApp), `@openora/core/compliance`, and per-module subpaths.
 > The logical structure described below is unchanged; specifier names like `@openora/adapters`,
 > `@openora/db`, `@openora/orpc-contract`, `@openora/react` are now `@openora/core/*` subpaths.
-> See [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md).
+> See [ADR-0025](../adr/0025-single-core-package-with-module-subpaths.md).
 
 ## System overview
 
@@ -100,7 +100,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Domains** (`packages/core/src/<domain>/*`) - folded into the single `@openora/core` package and exposed as subpaths (`@openora/core/<domain>`), not as one package per domain. A domain may import the engine zones (`contracts`, `server`, `react`) and a sibling's read-only `/schema` subpath, but **never another domain's internals** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@openora/core/contracts`. ADR-0025.
 
-**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable. For the pooling/sweeping/reconciliation shape a custody-style payment vendor adds, see [docs/adapters/payment.md](./adapters/payment.md#custody-pooling-sweeping-and-reconciliation).
+**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable. For the pooling/sweeping/reconciliation shape a custody-style payment vendor adds, see [docs/adapters/payment.md](../adapters/payment.md#custody-pooling-sweeping-and-reconciliation).
 
 **Background jobs** - long-running work runs off the request path in a BullMQ worker shipped as an overlay plugin (`/scaffold-plugin <name>-worker`): a module emits an event via the typed `EventBus`, the worker plugin subscribes in `register(ctx)` and processes the job. There is no standalone worker app.
 
@@ -149,7 +149,7 @@ sequenceDiagram
 
 The API layer is a backend-for-frontend: it triggers commands and serves reads.
 Modules do **not** call each other - they couple to **topics**, not to each
-other's routes. See [ADR-0010](./adr/0010-event-driven-broker-and-microservices.md)
+other's routes. See [ADR-0010](../adr/0010-event-driven-broker-and-microservices.md)
 for the full direction; the shape:
 
 - **Events for side effects.** A module emits via the typed `EventBus` (payloads
@@ -186,4 +186,4 @@ for the full direction; the shape:
   flowing. The `no-cross-module-schema-read` lint warning flags the remaining
   shared-table couplings to retire first. Scale the stateless Hono API horizontally;
   scale async work by moving consumers to their own services. See
-  [ADR-0017](./adr/0017-extraction-readiness-manifest-outbox-command-ports.md).
+  [ADR-0017](../adr/0017-extraction-readiness-manifest-outbox-command-ports.md).

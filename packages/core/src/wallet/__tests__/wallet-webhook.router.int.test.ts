@@ -13,7 +13,7 @@ import {
   type RateLimiterAdapter,
   type RateLimitKey,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   mock,
@@ -91,6 +91,7 @@ function routerWithProviders(
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
     reconciliationQueue: RECONCILIATION_QUEUE,
+    realtime: new InProcessRealtimeTransport(),
     limiter,
   });
 }

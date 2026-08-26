@@ -1,6 +1,6 @@
 ---
 name: review
-description: Context-aware PR review with draft comments and a GO or NO-GO verdict. Use on "review", "/review", "review this PR", optionally a PR number or "--base <ref>".
+description: Context-aware PR review with draft comments and a GO or NO-GO verdict. Use on "review", "/review", "review this PR", optionally a PR number, "--base <ref>", "--post" (publish findings to the PR as inline comments plus a verdict), or "--yes" (post without confirming).
 ---
 
 # review
