@@ -114,6 +114,12 @@ export const DepositInputSchema = z.object({
   idempotencyKey: UuidSchema.optional(),
 });
 
+// Bounded but otherwise unvalidated, like the address: each tag chain has its own format (an
+// XRP tag is a uint32, an XLM memo can be text or a hash), and the bound adapter is the only
+// thing that knows which. Tightening this here would break every chain but the one it was
+// tightened for; the adapter rejects a malformed tag at payout time.
+export const DestinationTagInputSchema = z.string().trim().min(1).max(64);
+
 export const WithdrawInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
@@ -127,8 +133,9 @@ export const WithdrawInputSchema = z.object({
   // beneficiary in a separate field rather than in the address: one address serves every
   // account behind it. A payout sent without the tag the player was given arrives
   // unattributed and has to be recovered by hand, so it is carried end to end instead of
-  // being dropped between the request and the custodian.
-  destinationTag: z.string().trim().min(1).max(64).optional(),
+  // being dropped between the request and the custodian. It must match the tag saved on the
+  // whitelisted destination - see `requireWhitelistedWalletId`.
+  destinationTag: DestinationTagInputSchema.optional(),
 });
 
 export const ManualWalletAdjustmentInputSchema = z.object({
@@ -476,6 +483,7 @@ export const WithdrawalAddressSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema,
   address: z.string(),
+  destinationTag: z.string().nullable(),
   createdAt: TimestampSchema,
 });
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
@@ -488,6 +496,10 @@ export const CreateWithdrawalAddressInputSchema = z.object({
   currency: WalletCurrencyInputSchema,
   network: WalletNetworkInputSchema,
   address: WalletAddressInputSchema,
+  // Part of the saved destination, for the same reason the address is: on a tag chain the pair
+  // names the beneficiary and the address alone does not. A withdrawal must present the tag it
+  // was saved with, so this is what the payout is checked against.
+  destinationTag: DestinationTagInputSchema.optional(),
 });
 export type CreateWithdrawalAddressInput = z.infer<typeof CreateWithdrawalAddressInputSchema>;
 

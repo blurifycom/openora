@@ -1346,6 +1346,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "DestinationTagInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "Disable2faInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },

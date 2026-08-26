@@ -220,6 +220,11 @@ export const walletWithdrawalAddress = pgTable(
     currency: text().notNull(),
     network: text().notNull(),
     address: text().notNull(),
+    // On a tag/memo chain the address alone does not name a beneficiary - one exchange address
+    // serves every account behind it, and the tag picks which. The tag is therefore part of the
+    // whitelisted destination, not a per-withdrawal free field: without it here a player who
+    // saved a shared address could pay out to anyone else holding an account at it.
+    destinationTag: text(),
     // Which custody provider `providerWalletId` belongs to. Without it a provider swap would
     // silently reuse the previous vendor's id and pay out to whatever that id now names.
     providerName: text(),
@@ -231,12 +236,15 @@ export const walletWithdrawalAddress = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // A double submit conflicts instead of duplicating the same destination twice.
+    // A double submit conflicts instead of duplicating the same destination twice. The tag is
+    // coalesced because two NULLs are distinct to a unique index, which would let the untagged
+    // form of an address be saved twice.
     uniqueIndex('wallet_withdrawal_address_user_id_currency_network_address_idx').on(
       t.userId,
       t.currency,
       t.network,
       t.address,
+      sql`coalesce(${t.destinationTag}, '')`,
     ),
     index('wallet_withdrawal_address_user_id_created_at_idx').on(t.userId, t.createdAt),
   ],
