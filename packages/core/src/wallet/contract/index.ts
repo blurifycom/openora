@@ -1,4 +1,4 @@
-import { oc } from '@orpc/contract';
+import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   KycStatusSchema,
@@ -60,9 +60,30 @@ export const WalletBalancesSchema = z.object({
   balances: z.array(WalletBalanceSchema),
 });
 
+// A change *signal*, never the balance itself: carrying `{ currency, balance }` on the
+// stream would make the stream a money surface - a dropped or reordered event leaves a
+// stale number on screen with no self-correction. This shape only tells the client WHAT
+// changed; the client re-fetches getBalance(s)/listTransactions, which is cheap and
+// always internally consistent.
+export const WalletBalanceChangeReasonSchema = z.enum(['deposit', 'withdrawal', 'adjustment']);
+export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
+
+export const WalletBalanceUpdateSchema = z.object({
+  eventId: UuidSchema,
+  currency: WalletCurrencyCodeSchema,
+  reason: WalletBalanceChangeReasonSchema,
+});
+export type WalletBalanceUpdate = z.infer<typeof WalletBalanceUpdateSchema>;
+
 export const SetActiveCurrencyInputSchema = z.object({ currency: WalletCurrencyCodeSchema });
 
 export const ActiveCurrencySchema = z.object({ activeCurrency: WalletCurrencyCodeSchema });
+
+// Shared by a manual adjustment's input direction and a transaction row's recorded
+// direction - a wallet move only ever goes one of these two ways.
+export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
+export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
+export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
 
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
@@ -71,6 +92,11 @@ export const WalletTransactionSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema.nullable(),
   status: WalletTransactionStatusSchema,
+  // Which way this leg moved money - derived server-side from what the operation IS,
+  // never a caller input. Nullable: rows written before this column existed (and any
+  // row whose `type` never carried a recoverable direction, eg a pre-migration gift/
+  // rain/tip leg) have no direction on record.
+  direction: ManualAdjustmentDirectionSchema.nullable(),
   createdAt: TimestampSchema,
 });
 
@@ -88,6 +114,12 @@ export const DepositInputSchema = z.object({
   idempotencyKey: UuidSchema.optional(),
 });
 
+// Bounded but otherwise unvalidated, like the address: each tag chain has its own format (an
+// XRP tag is a uint32, an XLM memo can be text or a hash), and the bound adapter is the only
+// thing that knows which. Tightening this here would break every chain but the one it was
+// tightened for; the adapter rejects a malformed tag at payout time.
+export const DestinationTagInputSchema = z.string().trim().min(1).max(64);
+
 export const WithdrawInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
@@ -97,11 +129,14 @@ export const WithdrawInputSchema = z.object({
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
   destinationAddress: WalletAddressInputSchema.optional(),
+  // Tag/memo networks (XRP, XLM, EOS, and the exchange deposit addresses on them) carry the
+  // beneficiary in a separate field rather than in the address: one address serves every
+  // account behind it. A payout sent without the tag the player was given arrives
+  // unattributed and has to be recovered by hand, so it is carried end to end instead of
+  // being dropped between the request and the custodian. It must match the tag saved on the
+  // whitelisted destination - see `requireWhitelistedWalletId`.
+  destinationTag: DestinationTagInputSchema.optional(),
 });
-
-export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
-export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
-export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
 
 export const ManualWalletAdjustmentInputSchema = z.object({
   userId: UuidSchema,
@@ -162,6 +197,9 @@ export const WithdrawalQueueItemSchema = z.object({
   riskTags: z.array(z.string()),
   requestedAt: TimestampSchema,
   destinationAddress: z.string().nullable(),
+  // An approver on a tag chain is releasing funds to an address shared by many accounts, so
+  // the tag is part of what they are approving, not a detail behind it.
+  destinationTag: z.string().nullable(),
   txHash: z.string().nullable(),
 });
 export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
@@ -445,6 +483,7 @@ export const WithdrawalAddressSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema,
   address: z.string(),
+  destinationTag: z.string().nullable(),
   createdAt: TimestampSchema,
 });
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
@@ -457,6 +496,10 @@ export const CreateWithdrawalAddressInputSchema = z.object({
   currency: WalletCurrencyInputSchema,
   network: WalletNetworkInputSchema,
   address: WalletAddressInputSchema,
+  // Part of the saved destination, for the same reason the address is: on a tag chain the pair
+  // names the beneficiary and the address alone does not. A withdrawal must present the tag it
+  // was saved with, so this is what the payout is checked against.
+  destinationTag: DestinationTagInputSchema.optional(),
 });
 export type CreateWithdrawalAddressInput = z.infer<typeof CreateWithdrawalAddressInputSchema>;
 
@@ -470,6 +513,10 @@ export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
 
   getBalances: oc.route({ method: 'GET', path: '/wallet/balances' }).output(WalletBalancesSchema),
+
+  streamBalance: oc
+    .route({ method: 'GET', path: '/wallet/balance/stream' })
+    .output(eventIterator(WalletBalanceUpdateSchema)),
 
   setActiveCurrency: oc
     .route({ method: 'PUT', path: '/wallet/active-currency' })

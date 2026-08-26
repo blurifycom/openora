@@ -396,11 +396,23 @@ export async function createApp(
       } else {
         await next();
       }
+      // An SSE body is a sequence of small frames that only mean anything on arrival, so any
+      // intermediary that compresses or buffers it holds every event until its own flush
+      // threshold. That is not hypothetical: Next's built-in gzip (and nginx's, and a CDN's)
+      // turned a sub-100ms balance push into an 11-second one, with the events arriving in
+      // batches. `no-transform` is the standards-defined opt-out every one of them honours,
+      // and `X-Accel-Buffering` covers nginx's separate proxy-buffering stage.
+      const isEventStream = (c.res.headers.get('content-type') ?? '').includes('text/event-stream');
+      if (isEventStream) {
+        c.res.headers.set('X-Accel-Buffering', 'no');
+      }
       c.res.headers.set(
         'Cache-Control',
         isCacheable
           ? `public, max-age=${maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidateSeconds}`
-          : 'no-store',
+          : isEventStream
+            ? 'no-store, no-transform'
+            : 'no-store',
       );
     });
   }

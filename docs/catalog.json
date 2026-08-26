@@ -427,6 +427,7 @@
         "wallet.set",
         "wallet.set",
         "wallet.setActiveCurrency",
+        "wallet.streamBalance",
         "wallet.update",
         "wallet.webhook",
         "wallet.webhookForProvider",
@@ -808,7 +809,8 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -1342,6 +1344,10 @@
     },
     {
       "name": "DepositInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "DestinationTagInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -2197,11 +2203,19 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "WalletBalanceChangeReasonSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "WalletBalanceSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "WalletBalancesSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletBalanceUpdateSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {

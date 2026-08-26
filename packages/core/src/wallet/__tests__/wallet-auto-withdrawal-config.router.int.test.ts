@@ -11,7 +11,7 @@ import type {
   PlayerTags,
 } from '@openora/core/contracts';
 import { queue } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   mock,
@@ -119,6 +119,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
     reconciliationQueue: RECONCILIATION_QUEUE,
+    realtime: new InProcessRealtimeTransport(),
   });
   return { router, audit, service };
 }

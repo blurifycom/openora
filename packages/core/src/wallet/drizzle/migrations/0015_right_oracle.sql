@@ -1,0 +1,3 @@
+DROP INDEX "wallet_withdrawal_address_user_id_currency_network_address_idx";--> statement-breakpoint
+ALTER TABLE "wallet_withdrawal_address" ADD COLUMN "destination_tag" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "wallet_withdrawal_address_user_id_currency_network_address_idx" ON "wallet_withdrawal_address" USING btree ("user_id","currency","network","address",coalesce("destination_tag", ''));

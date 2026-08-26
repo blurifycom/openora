@@ -231,6 +231,28 @@ describe('WalletCommandsService.credit (real PG)', () => {
   });
 });
 
+describe('WalletCommandsService ledger direction (real PG)', () => {
+  // gift/rain/tip write the SAME `type` for both legs of a transfer - direction is the
+  // only column that tells the sender's debit apart from the recipient's credit.
+  it('records opposite directions for the sender debit and recipient credit legs of a tip', async () => {
+    const sender = await seedWallet({ balance: '100' });
+    const recipient = await seedWallet({ balance: '0' });
+
+    await svc.debit(db.drizzle.db, { userId: sender.userId, amount: '10', type: 'tip' });
+    await svc.credit(db.drizzle.db, {
+      userId: recipient.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'tip',
+    });
+
+    const senderRows = await txRows(sender.id);
+    const recipientRows = await txRows(recipient.id);
+    expect(senderRows[0]).toMatchObject({ type: 'tip', direction: 'debit' });
+    expect(recipientRows[0]).toMatchObject({ type: 'tip', direction: 'credit' });
+  });
+});
+
 describe('WalletCommandsService ledger sequence (real PG)', () => {
   it('nets a deposit-like credit, a bet debit, and a win credit into one running balance', async () => {
     const w = await seedWallet({ balance: '0' });
