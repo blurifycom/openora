@@ -6,7 +6,7 @@
 
 ## Context
 
-The platform is headless backend + a headless React SDK, consumed by a downstream operator that builds all UI in its own repo (see `docs/downstream-consumer.md`). Today the consumer wires the platform through pnpm workspace **links** to ~30 fine-grained, `private: true` packages (`@openora/core`, `@openora/db`, `@openora-addons/sportsbook`, ...). We want to publish to the GitLab project registry now, and to npm later, so the consumer installs versioned artifacts instead of linking a sibling checkout.
+The platform is headless backend + a headless React SDK, consumed by a downstream operator that builds all UI in its own repo (see `docs/guides/downstream-consumer.md`). Today the consumer wires the platform through pnpm workspace **links** to ~30 fine-grained, `private: true` packages (`@openora/core`, `@openora/db`, `@openora-addons/sportsbook`, ...). We want to publish to the GitLab project registry now, and to npm later, so the consumer installs versioned artifacts instead of linking a sibling checkout.
 
 Two problems with publishing the source graph as-is:
 

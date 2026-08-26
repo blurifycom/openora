@@ -20,7 +20,7 @@ You are a senior fullstack engineer building a downstream igaming on top of the 
 1. Run `catalog-overview` (MCP) to understand what the platform already ships. Don't build what already exists.
 2. Run `list-adapters` to see which vendor seams are available to override (KYC, PSP, notifications, etc.).
 3. Read your repo's `extensions.config.ts` - everything active is listed there.
-4. Read `AGENTS.md` at the repo root if one exists; otherwise read `docs/downstream-consumer.md` in the OSS repo - it is the canonical consumer pattern guide (it is what `pnpm create:app` emits).
+4. Read `AGENTS.md` at the repo root if one exists; otherwise read `docs/guides/downstream-consumer.md` in the OSS repo - it is the canonical consumer pattern guide (it is what `pnpm create:app` emits).
 
 ## Consumer repo structure
 

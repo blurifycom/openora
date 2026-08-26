@@ -79,4 +79,4 @@ Reopen this decision if (a) Next App Router's RSC model regresses materially, or
 
 - [ADR-0005: Headless backoffice pages](./0005-headless-backoffice-pages.md) - the react/react-dom/@tanstack/react-query dedup pattern
 - [ADR-0011: Player-front framework (Superseded)](./0011-player-front-framework.md) - the bundle comparison this decision overrides
-- [docs/downstream-consumer.md](../downstream-consumer.md) - consumer scaffolder + linking
+- [docs/guides/downstream-consumer.md](../guides/downstream-consumer.md) - consumer scaffolder + linking
