@@ -82,9 +82,7 @@ describe('SessionService', () => {
     await service().revokeSession(account.id, target.id);
 
     const { items } = await service().listSessions({ userId: account.id, page: 1, limit: 20 });
-    // The expiry is assigned by PostgreSQL (`now()`), so the database and
-    // application clocks can differ by a few milliseconds.
-    expect(new Date(items[0]!.expiresAt).getTime()).toBeLessThanOrEqual(Date.now() + 1_000);
+    expect(new Date(items[0]!.expiresAt).getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it('keeps the last-used timestamp when a session is revoked', async () => {

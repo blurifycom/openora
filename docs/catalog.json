@@ -631,13 +631,6 @@
       ]
     },
     {
-      "category": "gift-commands",
-      "interface": "SendGiftArgs",
-      "token": "GIFT_COMMANDS",
-      "status": "stub",
-      "boundIn": []
-    },
-    {
       "category": "identity",
       "interface": "IdentityLockoutOptions",
       "token": "IDENTITY_OPTIONS",
@@ -765,13 +758,6 @@
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
-    },
-    {
-      "category": "rain-commands",
-      "interface": "SendRainArgs",
-      "token": "RAIN_COMMANDS",
-      "status": "stub",
-      "boundIn": []
     },
     {
       "category": "realtime",
