@@ -1,2 +1,0 @@
--- Legacy compatibility migration. Transfer ownership moved to the downstream
--- overlay; OpenOra intentionally performs no schema operation here.

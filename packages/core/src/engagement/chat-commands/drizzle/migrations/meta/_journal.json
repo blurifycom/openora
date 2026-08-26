@@ -5,50 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1785744212797,
-      "tag": "0000_daffy_lady_bullseye",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1787009522084,
-      "tag": "0001_sturdy_barracuda",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1787576445682,
-      "tag": "0002_talented_red_ghost",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1787652660418,
-      "tag": "0003_faithful_wallop",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1787663063255,
-      "tag": "0004_swift_talon",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1787687957784,
-      "tag": "0005_damp_ultimatum",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1787694061445,
-      "tag": "0006_cuddly_leader",
+      "when": 1787729046139,
+      "tag": "0000_striped_trauma",
       "breakpoints": true
     }
   ]
