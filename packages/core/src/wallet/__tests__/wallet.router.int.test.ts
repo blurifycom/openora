@@ -72,7 +72,7 @@ const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 const adjustmentDenyingGuard = () =>
   makeAdminGuard({
-    deny: ['player:adjust-balance'],
+    superAdmin: false,
     caller: { userId: 'caller-1', role: 'admin' },
   });
 
@@ -138,7 +138,7 @@ describe('wallet router listPlayerTransactions authz', () => {
 });
 
 describe('wallet router manualAdjustment authz', () => {
-  it('requires the player:adjust-balance grant and changes nothing on denial', async () => {
+  it('requires super admin and changes nothing on denial', async () => {
     const userId = randomUUID();
 
     await expect(

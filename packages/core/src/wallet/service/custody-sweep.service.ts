@@ -18,7 +18,7 @@ import {
   type User,
   type Uuid,
 } from '@openora/core/contracts';
-import { and, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import {
   walletAsset,
   walletCustodySweep,
@@ -73,13 +73,13 @@ export type SweepGateDecision = 'sweep' | 'dust' | 'fee' | 'ceiling';
 export function gateSweepBalance(args: {
   amount: string;
   estimatedFee: string;
-  minDeposit: string;
+  dustThreshold: string;
   feeMultiple: string;
   sweepFeeCeiling: string | null;
   poolLiquidityFloor: string | null;
   poolBalance: string | null;
 }): SweepGateDecision {
-  if (moneyCompare(args.amount, args.minDeposit) < 0) {
+  if (moneyCompare(args.amount, args.dustThreshold) < 0) {
     return 'dust';
   }
   const feeFloor = moneyScaleBy(args.estimatedFee, args.feeMultiple);
@@ -162,7 +162,7 @@ export class CustodySweepService {
     // the partial unique index would then block every subsequent cycle until the
     // staleness takeover window elapsed. A failed cycle must free its own slot.
     try {
-      await this.resolveInFlightSweeps(sweepConfig.concurrency);
+      await this.resolveInFlightSweeps(sweepConfig.concurrency, sweepConfig.batchSize);
 
       const poolBalanceCache = new Map<string, string>();
       for (const providerName of this.paymentProviders.names()) {
@@ -258,7 +258,7 @@ export class CustodySweepService {
   // Reusing getWithdrawalStatus for a sweep is deliberate: its {status, txHash} shape
   // is generic to any vendor transaction (a withdrawal or a sweep), and a sweep's
   // externalId is exactly the reference such a lookup needs.
-  private async resolveInFlightSweeps(concurrency: number): Promise<void> {
+  private async resolveInFlightSweeps(concurrency: number, batchSize: number): Promise<void> {
     const rows = await this.drizzle.db
       .select()
       .from(walletCustodySweep)
@@ -267,7 +267,11 @@ export class CustodySweepService {
           inArray(walletCustodySweep.status, IN_FLIGHT_STATUSES),
           isNotNull(walletCustodySweep.externalId),
         ),
-      );
+      )
+      // Random, not oldest-first: a sweep the vendor never resolves would otherwise sit
+      // at the head of every batch and starve later in-flight rows of a status check.
+      .orderBy(sql`random()`)
+      .limit(batchSize);
     await mapConcurrent(rows, concurrency, async (row) => {
       const adapter = this.paymentProviders.get(row.providerName)?.adapter;
       if (!adapter?.getWithdrawalStatus || !row.externalId) {
@@ -351,29 +355,33 @@ export class CustodySweepService {
     if (!asset) {
       // Funds sitting in a container the operator has no policy for must be visible,
       // not a log line.
-      await recordReconciliationFinding(this.drizzle.db, {
-        runId,
-        providerName,
-        kind: 'unconfigured_asset',
-        currency: balance.currency,
-        network: balance.network,
-        amount: balance.amount,
-        // No vendor reference exists for this finding, and the condition recurs every
-        // single cycle until an operator configures the asset - without a stable
-        // stand-in one missing catalog row files a finding every cron tick, drowning
-        // the real findings and pinning the alert threshold permanently over the line.
-        // The asset, not the player, is the subject: one row to act on, not one per
-        // affected container.
-        externalId: `unconfigured:${providerName}:${balance.currency}:${balance.network}`,
-        detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
-      });
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName,
+          kind: 'unconfigured_asset',
+          currency: balance.currency,
+          network: balance.network,
+          amount: balance.amount,
+          // No vendor reference exists for this finding, and the condition recurs every
+          // single cycle until an operator configures the asset - without a stable
+          // stand-in one missing catalog row files a finding every cron tick, drowning
+          // the real findings and pinning the alert threshold permanently over the line.
+          // The asset, not the player, is the subject: one row to act on, not one per
+          // affected container.
+          externalId: `unconfigured:${providerName}:${balance.currency}:${balance.network}`,
+          detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
+        },
+        this.audit,
+      );
       return;
     }
 
     const gateArgs = {
       amount: balance.amount,
       estimatedFee: balance.estimatedFee,
-      minDeposit: asset.minDeposit,
+      dustThreshold: asset.sweepDustThreshold ?? asset.minDeposit,
       feeMultiple: sweepConfig.feeMultiple,
       sweepFeeCeiling: asset.sweepFeeCeiling,
       poolLiquidityFloor: asset.poolLiquidityFloor,
@@ -434,7 +442,13 @@ export class CustodySweepService {
     // (docs/standards/money.md: treat external payment calls as non-transactional).
     // The claim row above already holds the durable guard.
     try {
-      const result = await adapter.sweepToPool?.(balance, { idempotencyKey: claimed.id });
+      // Keyed by provider: one flat string would send vendor A's treasury account id to
+      // vendor B and route custody funds to an account that vendor does not own.
+      const treasuryRef = this.platformConfig?.wallet?.treasuryRefs?.[providerName];
+      const result = await adapter.sweepToPool?.(balance, {
+        idempotencyKey: claimed.id,
+        ...(treasuryRef ? { treasuryRef } : {}),
+      });
       if (!result) {
         throw new Error(
           `provider "${providerName}" advertised listSweepableBalances but has no sweepToPool`,
@@ -445,6 +459,9 @@ export class CustodySweepService {
         // poolRef records WHICH pool received the funds, not just that a transfer
         // happened. Player funds must stay separate from operator funds, and that is
         // the question a regulator asks; without it the ledger cannot answer it.
+        // Only what the adapter reports. The requested treasuryRef is not evidence the
+        // vendor used it, and this row is hash-chained into an append-only audit log -
+        // a wrong destination recorded there is worse than a null one.
         .set({
           status: 'processing',
           externalId: result.externalId,
@@ -477,15 +494,38 @@ export class CustodySweepService {
     const error =
       err === undefined ? {} : { error: err instanceof Error ? err.message : String(err) };
     await this.drizzle.db.transaction(async (txn) => {
+      // Read inside the transaction: a concurrent path moving another row of this run to
+      // `processing` between the read and the writes would otherwise leave that sweep
+      // out of the audit chain.
+      const moved = await txn
+        .select()
+        .from(walletCustodySweep)
+        .where(
+          and(eq(walletCustodySweep.runId, runId), eq(walletCustodySweep.status, 'processing')),
+        );
       await txn
         .update(walletJobRun)
         .set({ finishedAt: new Date(), status, summary: { ...summary, ...error } })
         .where(eq(walletJobRun.id, jobRunId));
-      // One entry for the whole cycle, never one per swept balance -
-      // AuditService.recordInTransaction takes a single global advisory lock (the audit
-      // log is a hash chain), so one row per container at thousands of containers would
-      // serialize the entire platform's audit stream behind this job. wallet_custody_sweep
-      // rows are the per-move record; this is the cycle record, joined on runId.
+      for (const sweep of moved) {
+        await this.audit.recordInTransaction(txn, {
+          actorType: 'system',
+          action: 'wallet.custody.sweep',
+          resourceType: 'wallet_custody_sweep',
+          resourceId: sweep.id,
+          after: {
+            runId,
+            userId: sweep.userId,
+            providerName: sweep.providerName,
+            currency: sweep.currency,
+            network: sweep.network,
+            amount: sweep.amount,
+            estimatedFee: sweep.estimatedFee,
+            externalId: sweep.externalId,
+            poolRef: sweep.poolRef,
+          },
+        });
+      }
       await this.audit.recordInTransaction(txn, {
         actorType: 'system',
         action: 'wallet.custody.sweep_cycle',
