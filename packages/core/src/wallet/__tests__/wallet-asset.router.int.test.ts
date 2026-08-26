@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { queue, type PaymentAdapter } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   mock,
@@ -91,6 +91,7 @@ function routerWith(
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
     reconciliationQueue: RECONCILIATION_QUEUE,
+    realtime: new InProcessRealtimeTransport(),
   });
   return { router, audit, service };
 }

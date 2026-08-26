@@ -22,7 +22,7 @@
     "check:shape": "tsx tools/lint/verify-module-shape.ts",
     "check:hygiene": "tsx tools/lint/verify-oss-hygiene.ts",
     "check:deprecations": "depretec --fail-on-found",
-    "check:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-catalog.ts && git diff --exit-code -- docs/catalog.json",
+    "check:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-catalog.ts && git diff --exit-code -- docs/catalog.json docs/platform/system-design.md",
     "fix:lint": "oxlint . --fix",
     "fix:format": "oxfmt && node tools/lint/ensure-final-newline.mjs",
     "test:unit": "turbo run test:unit",

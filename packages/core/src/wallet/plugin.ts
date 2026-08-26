@@ -9,6 +9,7 @@ import {
   PAYMENT_WEBHOOK_VERIFIER,
   PAYMENT_PROVIDERS,
   DEFAULT_PAYMENT_PROVIDER,
+  REALTIME_TRANSPORT,
   WALLET_COMMANDS,
   WALLET_READER,
   WALLET_ASSET_CATALOG,
@@ -20,8 +21,11 @@ import {
   AUDIT_WRITER,
   JOB_QUEUE,
   UuidSchema,
+  domainEventSchemas,
   queue,
+  type RealtimeTransport,
 } from '@openora/core/contracts';
+import type { WalletBalanceChangeReason } from './contract/index.js';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import {
@@ -32,7 +36,7 @@ import {
 import { WalletReaderService } from './adapters/wallet-reader.service.js';
 import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
-import { createWalletRouter } from './router/index.js';
+import { createWalletRouter, walletBalanceChannel } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 import { ReconciliationService } from './service/reconciliation.service.js';
@@ -59,6 +63,90 @@ export default {
     // closes over this ref, same shape as pam/tag's evalSvc - subscriptions/workers
     // wire before router factories run, but are set before any real job arrives.
     let reconciliationRef: ReconciliationService | null = null;
+
+    // Set inside the router factory (container access); the balance-changed event
+    // handlers below close over this ref - same shape as compliance's kycStatusChannel
+    // publish. Subscriptions wire before router factories run, but are set before any
+    // real event arrives.
+    let realtimeTransport: RealtimeTransport | null = null;
+
+    // Publishes a change *signal*, never the balance itself - see the comment on
+    // WalletBalanceUpdateSchema. Only wired to events that actually move a settled
+    // balance (see the `ctx.events.on` calls below); `wallet.withdrawal.approved` and
+    // `wallet.withdrawal.completed` are deliberately absent - approval only flips a
+    // pending withdrawal to `processing` and completion just finalizes the PSP leg, the
+    // funds were already debited at `wallet.withdrawal.requested` time.
+    const publishBalanceChanged = (
+      userId: string,
+      currency: string,
+      reason: WalletBalanceChangeReason,
+      eventId: string,
+    ) => {
+      if (!realtimeTransport) {
+        return;
+      }
+      return realtimeTransport.publish(walletBalanceChannel(userId), {
+        eventId,
+        currency,
+        reason,
+      });
+    };
+
+    ctx.events.on('wallet.deposit.completed', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(parsed.data.userId, parsed.data.currency, 'deposit', envelope.eventId);
+    });
+    ctx.events.on('wallet.withdrawal.requested', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.withdrawal.requested'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(
+        parsed.data.userId,
+        parsed.data.currency,
+        'withdrawal',
+        envelope.eventId,
+      );
+    });
+    ctx.events.on('wallet.withdrawal.failed', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.withdrawal.failed'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(
+        parsed.data.userId,
+        parsed.data.currency,
+        'withdrawal',
+        envelope.eventId,
+      );
+    });
+    ctx.events.on('wallet.withdrawal.rejected', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.withdrawal.rejected'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(
+        parsed.data.userId,
+        parsed.data.currency,
+        'withdrawal',
+        envelope.eventId,
+      );
+    });
+    ctx.events.on('wallet.manual_adjustment.created', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.manual_adjustment.created'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(
+        parsed.data.userId,
+        parsed.data.currency,
+        'adjustment',
+        envelope.eventId,
+      );
+    });
 
     // One memoized instance backs the cron worker and the router factory below - lazily
     // constructed (subscriptions/workers wire before router factories run), matching
@@ -133,6 +221,7 @@ export default {
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) => {
+      realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const walletService = new WalletService({
         drizzle: c.get(DRIZZLE),
@@ -191,6 +280,7 @@ export default {
         reconciliation,
         jobQueue,
         reconciliationQueue: WALLET_RECONCILIATION_QUEUE,
+        realtime: realtimeTransport,
         limiter: c.get(RATE_LIMITER),
       });
     });

@@ -1,6 +1,6 @@
 {
-  "id": "76bc6c80-2b98-44be-a045-2cf9b9721916",
-  "prevId": "2e55806e-da5d-4a8e-a74e-705495594c36",
+  "id": "5ef1db6f-9a71-4cc2-985f-7262006c7aad",
+  "prevId": "9cb907e0-23be-4124-bd49-3d3191a186c4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1396,6 +1396,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "direction": {
+          "name": "direction",
+          "type": "wallet_transaction_direction",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
         "reviewed_by": {
           "name": "reviewed_by",
           "type": "uuid",
@@ -1748,6 +1755,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "destination_tag": {
+          "name": "destination_tag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "provider_name": {
           "name": "provider_name",
           "type": "text",
@@ -1794,6 +1807,12 @@
               "expression": "address",
               "isExpression": false,
               "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "coalesce(\"destination_tag\", '')",
+              "asc": true,
+              "isExpression": true,
               "nulls": "last"
             }
           ],
@@ -1876,6 +1895,11 @@
       "name": "wallet_reconciliation_finding_status",
       "schema": "public",
       "values": ["open", "resolved"]
+    },
+    "public.wallet_transaction_direction": {
+      "name": "wallet_transaction_direction",
+      "schema": "public",
+      "values": ["credit", "debit"]
     },
     "public.wallet_transaction_status": {
       "name": "wallet_transaction_status",

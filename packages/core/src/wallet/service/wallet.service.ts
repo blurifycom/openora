@@ -231,6 +231,7 @@ function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddr
     currency: row.currency,
     network: row.network,
     address: row.address,
+    destinationTag: row.destinationTag,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -908,6 +909,7 @@ export class WalletService {
           amount,
           currency,
           status: 'completed',
+          direction: 'credit',
           rail: this.resolveRail(currency),
           providerName: provider,
           providerRefId: psp.externalId,
@@ -1007,6 +1009,7 @@ export class WalletService {
           amount,
           currency,
           status: 'completed',
+          direction,
           reviewedBy: adminId,
           reviewedAt: new Date(),
           reviewReason: reason,
@@ -1171,7 +1174,12 @@ export class WalletService {
       rawIdempotencyKey: string | undefined;
       amount: string;
       currency: string;
-      values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey'>;
+      // `direction` is nullable on the column (historical rows predate it) but every
+      // new insert must set it explicitly - narrowed to required+non-null here so a
+      // caller that forgets it fails to typecheck instead of writing another NULL row.
+      values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey' | 'direction'> & {
+        direction: ManualAdjustmentDirection;
+      };
     },
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const idempotencyKey = rawIdempotencyKey
@@ -1221,6 +1229,7 @@ export class WalletService {
     network,
     idempotencyKey,
     destinationAddress,
+    destinationTag,
     ip,
     userAgent,
   }: {
@@ -1230,6 +1239,7 @@ export class WalletService {
     network?: string;
     idempotencyKey?: string;
     destinationAddress?: string;
+    destinationTag?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
@@ -1244,6 +1254,7 @@ export class WalletService {
       currency,
       settlementNetwork,
       destinationAddress,
+      destinationTag,
     );
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
@@ -1284,9 +1295,11 @@ export class WalletService {
             amount,
             currency,
             status: 'pending',
+            direction: 'debit',
             rail: this.resolveRail(currency),
             network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
+            destinationTag: destinationTag ?? null,
             destinationWalletId,
           },
         });
@@ -1448,6 +1461,7 @@ export class WalletService {
         riskTags,
         requestedAt: r.tx.createdAt.toISOString(),
         destinationAddress: r.tx.destinationAddress,
+        destinationTag: r.tx.destinationTag,
         txHash: r.tx.txHash,
       };
     });
@@ -1546,6 +1560,7 @@ export class WalletService {
         rail: tx.rail,
         adminId,
         destinationAddress: tx.destinationAddress,
+        destinationTag: tx.destinationTag,
         // The provider-side whitelisted destination for that address, when the bound adapter
         // whitelists at all. Absent for an address that predates whitelisting or was never in
         // the book, and such an adapter is expected to refuse rather than pay out to the raw
@@ -2422,6 +2437,7 @@ export class WalletService {
         currency: tx.currency,
         network: tx.network,
         status: tx.status,
+        direction: tx.direction,
         createdAt: tx.createdAt.toISOString(),
         reviewedBy: includeInternal ? tx.reviewedBy : null,
         reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
@@ -2576,6 +2592,7 @@ export class WalletService {
           amount: event.amount,
           currency: event.currency,
           status: 'completed',
+          direction: 'credit',
           rail: this.resolveRail(event.currency),
           // Prefer the chain the vendor reported; fall back to the one the address was
           // issued on, which is the only network an address-only webhook can imply.
@@ -2753,19 +2770,31 @@ export class WalletService {
   }
 
   /**
-   * Refuses a payout to an address the provider has not approved. A no-op for an adapter that
+   * Refuses a payout to a destination the provider has not approved. A no-op for an adapter that
    * does not whitelist, and for a fiat rail, which has no address at all.
+   *
+   * The tag is matched as strictly as the address. On a tag chain one exchange address is shared
+   * by every account behind it, so an address-only check would let a player whitelist their own
+   * account at that exchange and then pay out to a stranger's tag at the same address - an
+   * auto-approved withdrawal would do it with nobody looking.
    */
   private async requireWhitelistedWalletId(
     userId: Uuid,
     currency: string,
     network: string | null,
     destinationAddress: string | undefined,
+    destinationTag: string | undefined,
   ): Promise<string | null> {
     if (!this.payment.whitelistWithdrawalAddress || !destinationAddress) {
       return null;
     }
-    const walletId = await this.whitelistedWalletId(userId, currency, network, destinationAddress);
+    const walletId = await this.whitelistedWalletId(
+      userId,
+      currency,
+      network,
+      destinationAddress,
+      destinationTag,
+    );
     if (!walletId) {
       throw new DestinationAddressNotWhitelistedError();
     }
@@ -2773,15 +2802,17 @@ export class WalletService {
   }
 
   /**
-   * The approved destination saved for this address, or null. Matched on the address itself
-   * rather than an id on the transaction, because a withdrawal is requested by address and may
-   * name one the player never saved.
+   * The approved destination saved for this (address, tag) pair, or null. Matched on the pair
+   * itself rather than an id on the transaction, because a withdrawal is requested by address
+   * and may name one the player never saved. An absent tag matches only a row saved without
+   * one: a tagged payout against an untagged whitelist row is a different beneficiary.
    */
   private async whitelistedWalletId(
     userId: Uuid,
     currency: string,
     network: string | null,
     address: string | null | undefined,
+    destinationTag: string | null | undefined,
   ): Promise<string | null> {
     if (!this.payment.whitelistWithdrawalAddress || !address) {
       return null;
@@ -2791,6 +2822,7 @@ export class WalletService {
       .select({
         id: walletWithdrawalAddress.id,
         network: walletWithdrawalAddress.network,
+        destinationTag: walletWithdrawalAddress.destinationTag,
         providerName: walletWithdrawalAddress.providerName,
         providerWalletId: walletWithdrawalAddress.providerWalletId,
       })
@@ -2800,6 +2832,9 @@ export class WalletService {
           eq(walletWithdrawalAddress.userId, userId),
           eq(walletWithdrawalAddress.currency, currency),
           eq(walletWithdrawalAddress.address, address),
+          destinationTag
+            ? eq(walletWithdrawalAddress.destinationTag, destinationTag)
+            : isNull(walletWithdrawalAddress.destinationTag),
           ...(network ? [eq(walletWithdrawalAddress.network, network)] : []),
         ),
       )
@@ -2819,6 +2854,7 @@ export class WalletService {
       currency,
       network: row.network,
       address,
+      ...(row.destinationTag ? { destinationTag: row.destinationTag } : {}),
     });
     await this.drizzle.db
       .update(walletWithdrawalAddress)
@@ -2845,6 +2881,7 @@ export class WalletService {
       currency: input.currency,
       network: input.network,
       address: input.address,
+      ...(input.destinationTag ? { destinationTag: input.destinationTag } : {}),
     });
     return {
       providerName: await this.providerNameFor(input.currency, input.network),

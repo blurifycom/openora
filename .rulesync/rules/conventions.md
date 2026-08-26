@@ -32,6 +32,9 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 | module, DI wiring, integration, cross-module dependency | `docs/standards/module-structure.md` |
 | error class or catch                                    | `docs/standards/errors.md`           |
 | money movement or payment settlement                    | `docs/standards/money.md`            |
+| wallet module surface or ledger invariant               | `docs/modules/wallet.md`             |
+| deposit address, sweep, reconciliation, custody rules   | `docs/standards/custody.md`          |
+| implementing or binding a payment/custody vendor        | `docs/adapters/`                     |
 | KYC or responsible gambling                             | `docs/standards/compliance.md`       |
 | audit production or consumption                         | `docs/standards/audit.md`            |
 | async seam, event, job, or realtime                     | `messaging-and-microservices`        |

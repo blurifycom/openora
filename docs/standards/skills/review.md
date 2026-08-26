@@ -72,8 +72,17 @@ Return line-anchored draft comments, acceptance-criteria status, and one GO or N
 2. One status line per acceptance criterion: met, not met, or not verifiable.
 3. Exactly one GO or NO-GO sentence.
 
+### Posting to the PR
+
+Report only by default. `--post` publishes the findings to the PR; it needs a PR number.
+
+1. Show the exact comment bodies and their anchors, then stop for confirmation. `--yes` skips that stop.
+2. Post inline with `gh api "repos/blurifycom/openora/pulls/<n>/comments"`, one per finding, anchored to `path` and `line` on the head commit.
+3. Post the GO or NO-GO line as a single summary review.
+4. Write every comment in the user's voice: plain, direct, no severity markers, no internal ticket text or names.
+
 ### Rules
 
-- Review only - never edit, commit, push, or post comments.
+- Never edit, commit, or push. Posting comments happens only under `--post`.
 - Cap review fan-out at four specialised agents.
 - Money, authz, data-loss, contract-break, or unmet-acceptance findings force NO-GO.

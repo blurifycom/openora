@@ -123,15 +123,20 @@ export type PaymentAdapter = {
    *
    * Called on the address-book write path rather than at payout time on purpose: approval can
    * need a human quorum, which must not sit inside a withdrawal that is already holding a
-   * player's funds. Implementations must be idempotent on (userId, currency, network, address) -
-   * a retried registration has to return the original id instead of creating a second
-   * destination that then needs its own approval.
+   * player's funds. Implementations must be idempotent on
+   * (userId, currency, network, address, destinationTag) - a retried registration has to return
+   * the original id instead of creating a second destination that then needs its own approval.
+   *
+   * `destinationTag` is part of the destination, not a detail of it: on a tag/memo chain one
+   * address serves many accounts and the tag picks which, so two tags on the same address are
+   * two different beneficiaries and must whitelist as two different destinations.
    */
   whitelistWithdrawalAddress?(input: {
     userId: string;
     currency: string;
     network: string;
     address: string;
+    destinationTag?: string;
   }): Promise<{ providerWalletId: string }>;
 
   /**

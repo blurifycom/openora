@@ -1,9 +1,9 @@
 # System design
 
-The whole platform in one place: the single `@openora/core` package, 15 modules across
-9 domains, the contract spine, the plugin host, the adapter ports, the three async seams,
-and how a downstream consumer overlays proprietary code. Generated from `docs/catalog.json`
-(15 modules, 24 adapters, 49 events, 115 routes), `extensions.config.ts`, and the package graph.
+The whole platform in one place: the single `@openora/core` package and its domains, the
+contract spine, the plugin host, the adapter ports, the three async seams, and how a
+downstream consumer overlays proprietary code. The reference table at the bottom is generated
+from `docs/catalog.json` and carries the current counts; the prose here does not repeat them.
 
 > **Packaging note (ADR-0025, 2026-06-16):** the foundation + engine + free domains
 > now ship as ONE published package, `@openora/core`, with subpaths (`@openora/core/contracts`,
@@ -13,12 +13,12 @@ and how a downstream consumer overlays proprietary code. Generated from `docs/ca
 > names (`@openora/orpc-contract`, `@openora/shared-schemas`, `@openora/adapters`, `@openora/db`, `@openora/auth`,
 > `@openora/api-runtime`, `@openora/plugin-host`, `@openora/react`) are now subpaths of `@openora/core`.
 
-For rationale see the [ADRs](./adr/) — especially [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md)
-(single `@openora/core` package, supersedes ADR-0024 packaging), [ADR-0024](./adr/0024-domain-as-package-and-distribution-tiers.md)
-(domain-as-package + distribution, supersedes ADR-0022), [ADR-0021](./adr/0021-everything-is-an-add-on.md)
+For rationale see the [ADRs](../adr/) — especially [ADR-0025](../adr/0025-single-core-package-with-module-subpaths.md)
+(single `@openora/core` package, supersedes ADR-0024 packaging), [ADR-0024](../adr/0024-domain-as-package-and-distribution-tiers.md)
+(domain-as-package + distribution, supersedes ADR-0022), [ADR-0021](../adr/0021-everything-is-an-add-on.md)
 
-- [ADR-0020](./adr/0020-editions-and-add-on-modules.md) (the add-on / editions tier, removed 2026-07-26 - every module now ships in core),
-  [ADR-0014/0016/0017](./adr/) (seams, envelope, outbox). Consumer wiring: [downstream-consumer.md](./downstream-consumer.md).
+- [ADR-0020](../adr/0020-editions-and-add-on-modules.md) (the add-on / editions tier, removed 2026-07-26 - every module now ships in core),
+  [ADR-0014/0016/0017](../adr/) (seams, envelope, outbox). Consumer wiring: [downstream-consumer.md](../guides/downstream-consumer.md).
 
 ## 1. Mega architecture — the whole system
 
@@ -285,21 +285,26 @@ flowchart TB
   S1 & S2 & S3 --- PG[("PostgreSQL")]
 ```
 
-## Reference — domain → modules → tables → routes
+## Reference - domain -> modules -> tables -> routes
 
-Route counts are from `docs/catalog.json` (115 routes total, `health` included).
+<!-- gen:catalog-reference -->
 
-| Domain                        | Modules                                                    | Tables                                                                        | Routes |
-| ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- | ------ |
-| `@openora/core/iam`           | iam (admin roles · perms · invites)                        | admin_role / admin_role_assignment / admin_role_permission / admin_invitation | 16     |
-| `@openora/core/audit`         | audit (append-only log)                                    | audit_log                                                                     | 2      |
-| `@openora/core/admin-console` | backoffice read API (via pam + wallet ports)               | (owns none - reads via ADMIN_USER_DIRECTORY + ADMIN_WALLET_REPORTING)         | 6      |
-| `@openora/core/pam`           | identity · profile · player-management · player-note · tag | user / session / account / twoFactor / verification, player, player_note, tag | 31     |
-| `@openora/core/compliance`    | compliance (RG/KYC)                                        | geo_rule, user_limit                                                          | 15     |
-| `@openora/core/wallet`        | wallet                                                     | wallet, wallet_transaction                                                    | 11     |
-| `@openora/core/casino`        | gaming · lobby                                             | Game / GameRound, LobbyCategory / FeaturedSlot                                | 9      |
-| `@openora/core/engagement`    | chat · notifications                                       | ChatRoom / ChatMessage, notification                                          | 14     |
-| `@openora/core/cms`           | cms                                                        | page / banner                                                                 | 10     |
+Generated from `docs/catalog.json` - 19 modules, 224 routes, 42 adapter ports, 91 events. Edit the code, then run `pnpm gen:catalog`.
+
+| Domain                        | Modules                                                          | Tables                                                                              | Routes |
+| ----------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
+| `@openora/core/admin-console` | admin-console                                                    | (owns none - reads through ports)                                                   | 8      |
+| `@openora/core/analytics`     | analytics                                                        | (owns none - reads through ports)                                                   | 3      |
+| `@openora/core/audit`         | audit                                                            | audit_log                                                                           | 2      |
+| `@openora/core/casino`        | gaming · lobby                                                   | featured_slot, game, game_round, lobby_category + 1 more                            | 9      |
+| `@openora/core/cms`           | cms                                                              | banner, page                                                                        | 10     |
+| `@openora/core/compliance`    | compliance                                                       | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 20     |
+| `@openora/core/engagement`    | chat · chat-commands · notifications · social · social-transfers | chat_command_config, chat_message, chat_mute, chat_platform_ban + 15 more           | 73     |
+| `@openora/core/iam`           | iam                                                              | admin_invitation, admin_role, admin_role_assignment, admin_role_permission          | 17     |
+| `@openora/core/pam`           | identity · player-management · player-note · profile · tag       | account, player, player_note, player_tag + 7 more                                   | 47     |
+| `@openora/core/wallet`        | wallet                                                           | auto_withdrawal_rule, wallet, wallet_asset, wallet_auto_withdrawal_config + 10 more | 35     |
+
+<!-- /gen:catalog-reference -->
 
 ## Cross-domain edges (lint-enforced — ADR-0015)
 
@@ -309,8 +314,8 @@ Route counts are from `docs/catalog.json` (115 routes total, `health` included).
 | gaming → wallet             | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
 | player-management → profile | read-only `@openora/core/pam/schema/profile`                   |
 | lobby → gaming              | read-only `@openora/core/casino/schema/gaming`                 |
-| any → any                   | domain **events** via `EventBus` (24 topics) — never money     |
+| any → any                   | domain **events** via `EventBus` — never money                 |
 
-11 adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus
+The adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus
 the transactional `OUTBOX` carry everything else. Money and needed-now reads stay synchronous
 and transactional; nothing else imports another module's internals.

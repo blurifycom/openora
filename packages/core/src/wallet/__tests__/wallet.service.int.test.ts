@@ -937,6 +937,104 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
     expect(result.transactionId).toBeDefined();
   });
 
+  it('refuses a tag the player never whitelisted on an address they did', async () => {
+    const psp = whitelistingPsp();
+    const { svc } = makeService({ payment: mock<PaymentAdapter>(psp) });
+    const w = await seedWallet({ currency: 'XRP', balance: '5' });
+    await db.drizzle.db.insert(walletWithdrawalAddress).values({
+      userId: w.userId,
+      label: 'my exchange account',
+      currency: 'XRP',
+      network: 'XRPL',
+      address: 'rSharedExchangeAddress',
+      destinationTag: '1000',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
+      providerWalletId: 'fb-wallet-1',
+    });
+
+    // Same shared exchange address, someone else's account behind it.
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '1',
+        currency: 'XRP',
+        network: 'XRPL',
+        destinationAddress: 'rSharedExchangeAddress',
+        destinationTag: '2000',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(DestinationAddressNotWhitelistedError);
+
+    // Dropping the tag must not fall back to the address-only match either.
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '1',
+        currency: 'XRP',
+        network: 'XRPL',
+        destinationAddress: 'rSharedExchangeAddress',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(DestinationAddressNotWhitelistedError);
+
+    expect(await balanceOf(w.userId)).toBe(5);
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+
+    const allowed = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'XRP',
+      network: 'XRPL',
+      destinationAddress: 'rSharedExchangeAddress',
+      destinationTag: '1000',
+      ...NO_CLIENT_META,
+    });
+    expect(allowed.transactionId).toBeDefined();
+  });
+
+  it('carries the destination tag through to the payout adapter', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      network: 'BITCOIN',
+      destinationAddress: 'bc1qexample',
+      destinationTag: '4138454749',
+      ...NO_CLIENT_META,
+    });
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId, NO_CLIENT_META);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationTag: '4138454749' }),
+    );
+  });
+
+  it('leaves the tag null for a payout that carries none', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      network: 'BITCOIN',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId, NO_CLIENT_META);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationTag: null }),
+    );
+  });
+
   it('leaves a non-whitelisting adapter alone', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC', balance: '5' });
