@@ -1,53 +1,52 @@
 # Custody Adapter
 
-The crypto half of the [payment port](./payment.md). Same `PaymentAdapter` interface, plus the
-optional methods a vendor that holds funds per player must implement. Read
-[`docs/standards/custody.md`](../standards/custody.md) for the money rules the caller must
-follow either way; this file is the port and the topology.
+The crypto half of the [payment port](./payment.md): the extra capabilities a vendor needs when it
+holds funds per player rather than settling a charge. Read
+[`docs/standards/custody.md`](../standards/custody.md) for the money rules the caller must follow
+either way; this file is the topology and the flow.
 
-Four vendor shapes this port has to cover, by which optional methods they implement:
+## Four vendor shapes
 
-| Vendor shape                                | issueDepositAddress | parseWebhook | sweep methods       | listTransactions             |
-| ------------------------------------------- | ------------------- | ------------ | ------------------- | ---------------------------- |
-| Synchronous fiat PSP                        | no                  | no           | no                  | optional (settlement report) |
-| Custody with per-player containers          | yes                 | yes          | yes                 | yes                          |
-| Exchange-style, one address + memo          | yes (tag)           | yes          | no (already pooled) | yes                          |
-| Crypto payment processor that pools for you | yes                 | yes          | no                  | yes                          |
+| Vendor shape                               | Issues addresses | Sends webhooks | Pools and sweeps   | Reports its transactions |
+| ------------------------------------------ | ---------------- | -------------- | ------------------ | ------------------------ |
+| Synchronous fiat processor                 | no               | no             | no                 | settlement report only   |
+| Custody with a container per player        | yes              | yes            | yes                | yes                      |
+| Exchange-style, one address plus a tag     | yes, as a tag    | yes            | no, already pooled | yes                      |
+| Crypto processor that pools on your behalf | yes              | yes            | no                 | yes                      |
 
-Sweeping is optional, reconciliation is universal - it applies to a fiat PSP settlement
-report exactly as to an on-chain ledger.
+Sweeping is optional. Reconciliation is not: it applies to a fiat processor's settlement report
+exactly as it applies to an on-chain ledger.
 
-## Why deposit-address topology differs by chain
+## Why the address topology differs by chain
 
-- **UTXO chains** - one shared container can mint unlimited receive addresses, one per
-  player. Attribution is by address alone.
-- **Account/EVM chains** - a container holds one address, so a distinct address per
-  player means one container per player. That single address also serves every token on
-  the chain, which is why a deposit event carries `network` and not just `address` -
-  `address` alone does not identify which chain (or which of several issued rows) it
-  belongs to.
-- **Tag/memo chains** - one shared address plus a per-player tag; attribution is by
-  `(address, tag)`.
+- **UTXO chains** - one container mints an unlimited number of receive addresses, one per player.
+  The address alone identifies the player.
+- **Account chains** - a container holds a single address, so a distinct address per player means a
+  container per player. That one address also serves every token on the chain, and the same string
+  repeats across sibling chains. An inbound event that carries only an address is therefore
+  ambiguous; it must carry the network too.
+- **Tag chains** - one shared address plus a per-player tag. The pair identifies the player, and
+  the tag is optional on the wire, so funds can arrive with none.
 
 ## Custody topology
 
 ```mermaid
 flowchart LR
   subgraph core["wallet module (core)"]
-    catalog["wallet_asset<br/>catalog"]
-    addr["wallet_deposit_address"]
-    ledger["ledger<br/>wallet_balance + wallet_transaction"]
+    catalog["asset catalog"]
+    addr["issued deposit addresses"]
+    ledger["ledger<br/>balances + transactions"]
     sweep["sweep job<br/>owns all policy"]
     recon["reconciliation job"]
   end
 
   subgraph overlay["overlay plugin"]
-    psp["PSP adapter"]
-    custody["custody adapter"]
+    psp["fiat processor binding"]
+    custody["custody binding"]
   end
 
   subgraph vendorside["vendor side"]
-    perplayer["per-player custody container"]
+    perplayer["container per player"]
     shared["shared container"]
     pool["pool"]
     payout["payout source"]
@@ -55,9 +54,9 @@ flowchart LR
 
   catalog --> sweep
   catalog --> recon
-  sweep -- "listSweepableBalances / sweepToPool" --> custody
-  recon -- "listTransactions / getWithdrawalStatus" --> custody
-  recon -- "listTransactions" --> psp
+  sweep -- "list balances, move to pool" --> custody
+  recon -- "list transactions, look up a payout" --> custody
+  recon -- "list settlements" --> psp
   custody -. implemented by .-> perplayer
   custody -. implemented by .-> shared
   perplayer -- sweep --> pool
@@ -70,124 +69,72 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant P as Player
-  participant R as Wallet router
-  participant S as WalletService
+  participant C as Wallet (core)
   participant V as Vendor
   participant J as Sweep job (cron)
 
-  P->>R: POST /wallet/deposits/address
-  R->>S: getOrCreateDepositAddress
-  S->>V: issueDepositAddress (once)
-  V-->>S: address (+ network/tag)
-  S-->>S: persist wallet_deposit_address (idempotent)
-  S-->>P: address
+  P->>C: ask for a deposit address
+  C->>V: issue one, first time only
+  V-->>C: address, with its network and any tag
+  C-->>P: address
 
-  Note over P,V: player sends funds on-chain whenever - no call to this API
+  Note over P,V: the player sends funds on-chain whenever - no call to this API
 
-  V->>R: POST /wallet/webhook/{provider}
-  R->>R: verify signature
-  R->>S: parseWebhook -> creditDepositByAddress
-  S-->>S: insert wallet_transaction (dedup on providerRefId) + credit balance
+  V->>C: webhook
+  C->>C: verify, normalise, credit once
 
-  Note over J,V: separate path, its own cron tick - no causal link to the deposit above
-  J->>V: listSweepableBalances / sweepToPool
+  Note over J,V: separate path, its own cron tick, no causal link to the deposit above
+  J->>V: list sweepable balances, move them to the pool
 ```
 
-A deposit never triggers a sweep. Crediting the player and moving the funds into the
-pool are independent code paths - the first happens on every deposit, the second on
-whatever cadence the sweep job runs, and neither waits on the other.
+A deposit never triggers a sweep. Crediting the player and moving the funds are separate paths: the
+first runs on every deposit, the second on the sweep job's own cadence, and neither waits on the
+other. A vendor outage that blocks sweeping must never delay a credit.
 
 ## Sweep cycle
 
-```mermaid
-flowchart TD
-  tick["cron tick"] --> inflight["resolve in-flight sweeps"]
-  inflight --> perprovider["for each provider"]
-  perprovider --> impl{"adapter implements<br/>listSweepableBalances?"}
-  impl -- no --> skip["skip"]
-  impl -- yes --> list["list balances"]
-  list --> perbalance["for each balance"]
-  perbalance --> catalogRow{"catalog row exists?"}
-  catalogRow -- no --> skip
-  catalogRow -- yes --> minDeposit{"amount >= minimum<br/>deposit (dust)?"}
-  minDeposit -- no --> skip
-  minDeposit -- yes --> feeMultiple{"amount >= fee x<br/>fee-multiple?"}
-  feeMultiple -- no --> skip
-  feeMultiple -- yes --> feeCeiling{"fee within ceiling,<br/>unless pool is below<br/>its liquidity floor?"}
-  feeCeiling -- no --> skip
-  feeCeiling -- yes --> noInflight{"no in-flight sweep for<br/>this (user, currency, network)?"}
-  noInflight -- no --> skip
-  noInflight -- yes --> claim["claim a row"]
-  claim --> call["call sweepToPool<br/>(outside the transaction)"]
-  call --> markAudit["mark and audit"]
-```
+Each tick resolves what is still in flight, then considers every balance the vendor reports. A
+balance is swept only when all of these hold:
+
+1. The operator's asset catalog has the currency and network. An unlisted pair is not ours to move.
+2. The amount clears the dust floor. Below it, the fee is a larger share than the funds.
+3. The amount is worth several times the current network fee, so the move is not mostly cost.
+4. The fee itself is under its ceiling - unless the pool has fallen below its liquidity floor, in
+   which case paying an expensive fee beats failing a payout.
+5. Nothing is already in flight for that player, currency and network.
+
+The vendor call happens outside the database transaction, after the row is claimed, and the result
+is audited. Every threshold is set per currency and network: the same token costs cents on one
+chain and dollars on another.
 
 ## Reconciliation
 
-```mermaid
-flowchart TD
-  A["(A) listTransactions<br/>over a window"]
-  B["(B) withdrawals stuck in<br/>processing past an age threshold"]
-  C["(C) live webhook path fails<br/>to attribute a deposit"]
+Three things start a finding.
 
-  A --> depositEvent["deposit event"]
-  depositEvent --> hasRow{"matching ledger row?"}
-  hasRow -- no --> findingCredit["finding<br/>(NEVER auto-credit)"]
-  hasRow -- yes --> amountCheck{"amount / currency match?"}
-  amountCheck -- no --> findingMismatch["finding"]
-  amountCheck -- yes --> reconciled["reconciled"]
+- **The scheduled sweep of vendor transactions.** Every deposit the vendor reports is matched
+  against the ledger. No matching row, or a row whose amount or currency disagrees, is a finding.
+- **Payouts that have waited too long.** Anything still unsettled past an age threshold gets a
+  targeted status lookup. A vendor that reports a final state closes it; a vendor that knows
+  nothing about it is a finding.
+- **The live path failing to attribute a deposit.** Funds arrived and no player could be resolved.
 
-  A --> withdrawalEvent["withdrawal event"]
-  withdrawalEvent --> idempotentRecon["existing idempotent<br/>status reconciliation"]
-
-  B --> lookup["targeted status lookup<br/>(getWithdrawalStatus)"]
-  lookup -- terminal --> idempotentRecon
-  lookup -- null --> findingStuck["finding"]
-
-  C --> findingCredit
-
-  findingCredit --> threshold{"findings over threshold?"}
-  findingMismatch --> threshold
-  findingStuck --> threshold
-  threshold -- yes --> alert["alert"]
-  threshold --> report["admin report"]
-  report --> manual["manual credit by an admin"]
-```
+Findings are reported, never auto-credited. Crediting one is an admin action with an actor and a
+reason, and both the run and the resolution go to the audit log. Findings past a threshold raise an
+alert, because a rising count means the live path is broken, not that the reconciler is working.
 
 ## Policy lives in core, topology lives in the overlay
 
-Core learns the _shape_ of custody - per-player containers, pooling, on-chain fees, a
-provider's transaction list - never a vendor's name. Which chains are UTXO, account-based,
-or tag-based is vendor topology, not policy; it belongs in the overlay adapter, not in
-core.
-
-## Routes this port backs
-
-| Route                                      | Does                                                      | Permission                      |
-| ------------------------------------------ | --------------------------------------------------------- | ------------------------------- |
-| `POST /wallet/webhook/{provider}`          | Routes an inbound webhook to the named provider's adapter | none (signature-verified)       |
-| `POST /wallet/deposits/address`            | Issues (once) and returns the player's deposit address    | player session                  |
-| `POST /wallet/custody/sweep/run`           | Enqueues one sweep cycle on demand                        | `wallet-custody:run`            |
-| `GET /wallet/reconciliation`               | Lists open findings                                       | `wallet-reconciliation:view`    |
-| `POST /wallet/reconciliation/{id}/resolve` | Resolves a finding, including a manual credit             | `wallet-reconciliation:resolve` |
-| `POST /wallet/reconciliation/run`          | Enqueues one reconciliation pass on demand                | `wallet-reconciliation:run`     |
+Core learns the shape of custody - containers per player, pooling, on-chain fees, a vendor's
+transaction list - and never a vendor's name. Which chains are UTXO, account-based or tag-based is
+vendor topology and belongs in the overlay.
 
 ## Running more than one vendor
 
-```mermaid
-flowchart LR
-  tx["transaction"] --> provider["asset catalog's<br/>provider name"]
-  provider --> registry["provider registry"]
-  registry -- "no name bound" --> default["default single binding<br/>(PAYMENT_ADAPTER / PAYMENT_WEBHOOK_VERIFIER)"]
-  registry -- "named vendor" --> named["named vendor's<br/>adapter + verifier pair"]
-```
+The adapter and the webhook verifier are each a single binding, and the last registration wins, so
+two overlays that both bind them would clobber each other. Running a fiat processor and a crypto
+custodian at once therefore goes through a provider registry: the asset catalog names a provider
+per pair, and the registry maps that name to one adapter-and-verifier pair. Core only looks a name
+up; it never discovers vendors by itself, so the operator composes the map in their own plugin.
 
-`PAYMENT_ADAPTER` and `PAYMENT_WEBHOOK_VERIFIER` are single DI bindings, and
-`Container.register` is last-wins - two overlays each rebinding them would clobber each other.
-Running a fiat PSP and a crypto custodian at once therefore goes through `PAYMENT_PROVIDERS`,
-which maps `wallet_asset.providerName` to one `{ adapter, webhookVerifier }` pair. Core only
-looks a name up there; it never discovers vendors itself, so the operator composes that map in
-their own plugin.
-
-The webhook route resolves the verifier and the adapter from the **same** entry, so a body can
-never be verified against one vendor's key and parsed in another's format.
+The webhook route resolves the verifier and the adapter from the **same** entry. A body can never
+be verified against one vendor's key and then parsed in another's format.

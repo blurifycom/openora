@@ -40,6 +40,7 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 | async seam, event, job, or realtime                     | `messaging-and-microservices`        |
 | test                                                    | `docs/standards/testing.md`          |
 | comment or JSDoc                                        | `docs/standards/comments.md`         |
+| prose doc, README, guide                                | `docs/standards/documentation.md`    |
 | hook or typed client                                    | `docs/standards/react-sdk.md`        |
 | commit or PR                                            | `docs/standards/git-delivery.md`     |
 | failing gate or lint rule                               | `docs/standards/enforcement.md`      |
