@@ -31,6 +31,12 @@ import {
   ExclusionPeriodNotElapsedError,
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import {
+  RgSelfServiceService,
+  CooldownNotElapsedError,
+  LimitChangeExpiredError,
+  NoPendingLimitChangeError,
+} from '../service/rg-self-service.service.js';
 
 export function kycStatusChannel(userId: User['id']): string {
   return `compliance:kyc-status:${userId}`;
@@ -59,9 +65,11 @@ export function createComplianceRouter({
   realtime,
   rg,
   rgMonitoring,
+  rgSelfService,
 }: {
   rg: RgService;
   rgMonitoring: RgMonitoringService;
+  rgSelfService: RgSelfServiceService;
   compliance: ComplianceService;
   adminGuard: AdminGuard;
   audit: AuditWritePort;
@@ -75,17 +83,17 @@ export function createComplianceRouter({
   const os = implement(complianceContract).$context<OssContext>();
 
   return os.router({
-    getLimits: os.getLimits.handler(({ context }) =>
-      compliance.getLimitsForUser(getUserId(context)),
-    ),
+    getLimits: os.getLimits.handler(({ context }) => rgSelfService.getLimits(getUserId(context))),
 
+    // Immediate for a first limit or a lower one; files a cool-down request for a raise.
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
-      return compliance.upsertLimit(getUserId(context), input, context.clientMeta);
+      return rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta);
     }),
 
+    // Files a removal request - the limit keeps applying until the player confirms it.
     deleteLimit: os.deleteLimit.handler(({ input, context }) => {
       return mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
-        compliance.removeLimit(input.id, getUserId(context), context.clientMeta),
+        rgSelfService.requestLimitRemoval(input.id, getUserId(context), context.clientMeta),
       );
     }),
 
@@ -197,20 +205,20 @@ export function createComplianceRouter({
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return rg.setPlayerLimit(input.userId, input, userId, { ip, userAgent });
+      return rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent });
     }),
 
     activateCoolingOff: os.activateCoolingOff.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rg.activateCoolingOff(input.userId, input, userId, { ip, userAgent }),
+        rg.activateCoolingOff(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),
 
     activateSelfExclusion: os.activateSelfExclusion.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rg.activateSelfExclusion(input.userId, input, userId, { ip, userAgent }),
+        rg.activateSelfExclusion(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),
 
@@ -234,12 +242,48 @@ export function createComplianceRouter({
 
     getRgSection: os.getRgSection.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
-      return rg.getRgSection(input.userId);
+      return rgSelfService.getSection(input.userId);
     }),
 
     listRgFlags: os.listRgFlags.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return rgMonitoring.listFlags(input);
     }),
+
+    // Player self-service. Every handler below resolves the subject from the SESSION and
+    // none of them reads a userId from input: a player acts on themselves and nobody
+    // else. Lifting an exclusion stays admin-only and has no self-service counterpart.
+    getMyRgSection: os.getMyRgSection.handler(({ context }) =>
+      rgSelfService.getSection(getUserId(context)),
+    ),
+
+    confirmPendingLimitChange: os.confirmPendingLimitChange.handler(({ input, context }) =>
+      mapErrors(
+        {
+          NOT_FOUND: [LimitNotFoundError, NoPendingLimitChangeError],
+          FORBIDDEN: LimitOwnershipError,
+          CONFLICT: [CooldownNotElapsedError, LimitChangeExpiredError],
+        },
+        () => rgSelfService.confirmPendingChange(input.id, getUserId(context), context.clientMeta),
+      ),
+    ),
+
+    cancelPendingLimitChange: os.cancelPendingLimitChange.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
+        rgSelfService.cancelPendingChange(input.id, getUserId(context), context.clientMeta),
+      ),
+    ),
+
+    requestCoolingOff: os.requestCoolingOff.handler(({ input, context }) =>
+      mapErrors({ CONFLICT: ActiveExclusionError }, () =>
+        rgSelfService.requestCoolingOff(getUserId(context), input, context.clientMeta),
+      ),
+    ),
+
+    requestSelfExclusion: os.requestSelfExclusion.handler(({ input, context }) =>
+      mapErrors({ CONFLICT: ActiveExclusionError }, () =>
+        rgSelfService.requestSelfExclusion(getUserId(context), input, context.clientMeta),
+      ),
+    ),
   });
 }

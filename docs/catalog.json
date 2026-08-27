@@ -161,9 +161,12 @@
         "compliance.activateSelfExclusion",
         "compliance.addGeoRule",
         "compliance.bulkApproveKyc",
+        "compliance.cancelPendingLimitChange",
+        "compliance.confirmPendingLimitChange",
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
+        "compliance.getMyRgSection",
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
@@ -172,7 +175,9 @@
         "compliance.listGeoRules",
         "compliance.listRgFlags",
         "compliance.overrideKycStatus",
+        "compliance.requestCoolingOff",
         "compliance.requestKycResubmission",
+        "compliance.requestSelfExclusion",
         "compliance.setPlayerLimit",
         "compliance.streamKycStatus",
         "compliance.submitKyc",
@@ -814,6 +819,16 @@
       ]
     },
     {
+      "category": "rg-limits",
+      "interface": "RgLimitDecision",
+      "token": "RG_LIMITS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "rng",
       "interface": "RngAdapter",
       "token": "RNG_ADAPTER",
@@ -915,8 +930,6 @@
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
     "compliance.kyc.updated",
-    "compliance.limit.removed",
-    "compliance.limit.upserted",
     "gaming.round.ended",
     "gaming.round.started",
     "iam.invitation.accepted",
@@ -954,6 +967,10 @@
     "rg.cooling_off.expired",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
+    "rg.limit.change_cancelled",
+    "rg.limit.change_confirmed",
+    "rg.limit.change_expired",
+    "rg.limit.change_requested",
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
@@ -1631,6 +1648,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "LimitChangeKindSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
       "name": "LimitPeriodSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
@@ -1649,6 +1670,10 @@
     {
       "name": "LimitTypeSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "LimitViewSchema",
+      "file": "packages/core/src/compliance/contract/limits.ts"
     },
     {
       "name": "ListFriendRequestsInputSchema",
@@ -1955,12 +1980,20 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "RequestCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "RequestKycResubmissionInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "RequestPasswordResetInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RequestSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
       "name": "ResendEmailVerificationInputSchema",
@@ -1973,6 +2006,10 @@
     {
       "name": "ResolveReconciliationFindingInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ResponsibleGamingSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
       "name": "RetentionCohortRowSchema",
@@ -2000,6 +2037,10 @@
     },
     {
       "name": "RgFlagTypeSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgInitiatorSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {

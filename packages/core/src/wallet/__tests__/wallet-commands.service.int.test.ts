@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { PlayEligibilityPort } from '@openora/core/contracts';
+import type { PlayEligibilityPort, RgLimitsPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -65,6 +65,87 @@ beforeEach(async () => {
   await db.drizzle.db.execute(
     sql`TRUNCATE ${walletTransaction}, ${wallet} RESTART IDENTITY CASCADE`,
   );
+});
+
+// The money dimension of RG: a bound gate that refuses, one that allows, and the absent
+// port (an install without the compliance module).
+const refusingLimits = () =>
+  mock<RgLimitsPort>({
+    checkDeposit: vi.fn(),
+    checkWager: vi.fn().mockResolvedValue({
+      allowed: false,
+      limitType: 'wager',
+      period: 'daily',
+      limit: '50',
+      used: '45',
+    }),
+  });
+const allowingLimits = () =>
+  mock<RgLimitsPort>({
+    checkDeposit: vi.fn(),
+    checkWager: vi.fn().mockResolvedValue({ allowed: true }),
+  });
+
+describe('WalletCommandsService wager-limit gate (real PG)', () => {
+  it('refuses a bet over the limit without touching the ledger, and says why', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const gated = new WalletCommandsService(eligibility(false), audit, undefined, refusingLimits());
+
+    await expect(
+      gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
+    ).rejects.toMatchObject({
+      name: 'WagerLimitExceededError',
+      data: { limitType: 'wager', period: 'daily', limit: '50', used: '45' },
+    });
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
+  it('lets a bet within the limit through', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const gated = new WalletCommandsService(eligibility(false), audit, undefined, allowingLimits());
+
+    await expect(
+      gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(await balanceOf(w.userId)).toBe(90);
+  });
+
+  it('never gates a win or a loss - they settle a round that was already staked', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const limits = refusingLimits();
+    const gated = new WalletCommandsService(eligibility(false), audit, undefined, limits);
+
+    await gated.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'win',
+    });
+    await gated.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
+
+    expect(limits.checkWager).not.toHaveBeenCalled();
+  });
+
+  it('passes bets through untouched when no gate is bound', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const ungated = new WalletCommandsService(eligibility(false), audit);
+
+    await expect(
+      ungated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('refuses on the exclusion before it even asks about the amount', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const limits = allowingLimits();
+    const gated = new WalletCommandsService(eligibility(true), audit, undefined, limits);
+
+    await expect(
+      gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
+    ).rejects.toBeInstanceOf(WalletRgRestrictedError);
+    expect(limits.checkWager).not.toHaveBeenCalled();
+  });
 });
 
 describe('WalletCommandsService responsible-gambling gate (real PG)', () => {

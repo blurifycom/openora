@@ -3,6 +3,7 @@ import {
   periodWindow,
   thresholdPct,
   isAtThreshold,
+  pendingChangeStatus,
   RG_FLAG_THRESHOLD_PCT,
 } from '../service/rg-eval.js';
 
@@ -58,5 +59,43 @@ describe('isAtThreshold (80% boundary)', () => {
   it('raises above 80% and at/over the limit', () => {
     expect(isAtThreshold(90, 100)).toBe(true);
     expect(isAtThreshold(100, 100)).toBe(true);
+  });
+});
+
+describe('pendingChangeStatus', () => {
+  const row = (over: Partial<Parameters<typeof pendingChangeStatus>[0]> = {}) => ({
+    pendingKind: 'increase' as string | null,
+    pendingEffectiveAt: new Date(NOW.getTime() + DAY) as Date | null,
+    pendingExpiresAt: new Date(NOW.getTime() + 8 * DAY) as Date | null,
+    ...over,
+  });
+
+  it('reports no request when none is parked', () => {
+    expect(pendingChangeStatus(row({ pendingKind: null }), NOW)).toBeNull();
+  });
+
+  it('reports no request when the kind is set but the deadline is not', () => {
+    expect(pendingChangeStatus(row({ pendingEffectiveAt: null }), NOW)).toBeNull();
+  });
+
+  it('is waiting while the cool-down is still running', () => {
+    expect(pendingChangeStatus(row(), NOW)).toBe('waiting');
+  });
+
+  it('is ready once the cool-down has elapsed', () => {
+    expect(pendingChangeStatus(row({ pendingEffectiveAt: NOW }), NOW)).toBe('ready');
+  });
+
+  it('is expired once the confirmation window has closed, however long it was ready', () => {
+    expect(
+      pendingChangeStatus(
+        row({ pendingEffectiveAt: new Date(NOW.getTime() - 8 * DAY), pendingExpiresAt: NOW }),
+        NOW,
+      ),
+    ).toBe('expired');
+  });
+
+  it('a zero cool-down is confirmable at once - it is not "no confirmation"', () => {
+    expect(pendingChangeStatus(row({ pendingEffectiveAt: NOW }), NOW)).toBe('ready');
   });
 });

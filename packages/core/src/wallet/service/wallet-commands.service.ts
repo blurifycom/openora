@@ -1,6 +1,7 @@
 import type {
   AuditWritePort,
   PlayEligibilityPort,
+  RgLimitsPort,
   PlatformConfig,
   Uuid,
   WalletCommands,
@@ -51,6 +52,30 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
+/**
+ * A wager refused by the player's own wager or loss limit. The amount dimension of RG,
+ * beside `WalletRgRestrictedError`'s exclusion dimension (ADR-0032). Carries typed
+ * `data` so the client can translate it rather than read the message.
+ */
+export type WagerLimitExceededData = {
+  limitType: string;
+  period: string;
+  limit: string;
+  used: string;
+};
+
+export class WagerLimitExceededError extends Error {
+  readonly data: WagerLimitExceededData;
+
+  constructor(data: WagerLimitExceededData) {
+    super(
+      `Wager refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
+    );
+    this.name = 'WagerLimitExceededError';
+    this.data = data;
+  }
+}
+
 const DEFAULT_ROLLOVER_MULTIPLIER = '1';
 
 type CompletedBonusCredit = { id: string; currency: string; creditedAmount: string };
@@ -60,6 +85,9 @@ export class WalletCommandsService implements WalletCommands {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
+    // Optional, like the port itself: an install without the compliance module has no
+    // `user_limit` table and nothing to enforce. Bound, the gate is fail-closed.
+    private readonly rgLimits?: RgLimitsPort,
   ) {}
 
   // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
@@ -87,8 +115,22 @@ export class WalletCommandsService implements WalletCommands {
   async debit(tx: unknown, { userId, amount, type }: WalletDebitArgs): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
-    if (type === 'bet' && (await this.playEligibility.isRestricted(userId))) {
-      throw new WalletRgRestrictedError();
+    if (type === 'bet') {
+      if (await this.playEligibility.isRestricted(userId)) {
+        throw new WalletRgRestrictedError();
+      }
+      // The only point where the stake is known, so the only place a wager/loss limit can
+      // be applied. `win` and `loss` stay ungated for the ADR-0032 reason: they settle a
+      // round that was already staked, and refusing them strands it.
+      const decision = await this.rgLimits?.checkWager(userId, amount);
+      if (decision && !decision.allowed) {
+        throw new WagerLimitExceededError({
+          limitType: decision.limitType,
+          period: decision.period,
+          limit: decision.limit,
+          used: decision.used,
+        });
+      }
     }
 
     // `loss` is informational (stake already left at bet time): 0-amount row, balance untouched. Every other debit is real money.

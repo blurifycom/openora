@@ -51,6 +51,7 @@ import {
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
+  DepositLimitExceededError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
 } from '../service/wallet.service.js';
@@ -177,7 +178,9 @@ export function createWalletRouter({
           // A disabled currency/network is a permanent policy rejection, not a state
           // conflict: 409 would tell a status-code-branching client to retry it.
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
-          CONFLICT: IdempotencyKeyReuseError,
+          // The RG refusal forwards its typed `.data` (limitType/period/limit/used) so
+          // the client renders a translated message, never `ORPCError.message`.
+          CONFLICT: [IdempotencyKeyReuseError, DepositLimitExceededError],
         },
         () =>
           wallet.deposit({

@@ -518,10 +518,19 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
-  // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
+  // RG actions. `userId` = subject player (resource), `actorId` = whoever acted.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
+  //
+  // The actor comes from the payload's `initiatedBy`, NOT from a hard-coded 'admin':
+  // these topics are now emitted by the player's own self-service path too, and filing
+  // a player's limit change under an admin actor is exactly the attribution error a
+  // regulator would catch. Topics that predate `initiatedBy` (the lifts, which stay
+  // admin-only) fall back to 'admin'.
   if (
     topic === 'rg.limit.set' ||
+    topic === 'rg.limit.change_requested' ||
+    topic === 'rg.limit.change_confirmed' ||
+    topic === 'rg.limit.change_cancelled' ||
     topic === 'rg.cooling_off.activated' ||
     topic === 'rg.self_exclusion.activated' ||
     topic === 'rg.self_exclusion.lifted' ||
@@ -532,14 +541,33 @@ export async function mapEventToRecord(
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
-          : null;
+          : topic === 'rg.limit.change_confirmed'
+            ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
+            : null;
+    const initiatedBy = p['initiatedBy'];
     return {
       ...base,
-      actorType: 'admin',
+      actorType:
+        initiatedBy === 'player' || initiatedBy === 'system' || initiatedBy === 'admin'
+          ? initiatedBy
+          : 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
       before,
+      after: p,
+    };
+  }
+
+  // The confirmation window ran out with nobody acting - system-attributed, like
+  // rg.cooling_off.expired below. The parked request is dropped; the limit never moved.
+  if (topic === 'rg.limit.change_expired') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      before: { pendingAmount: p['requestedAmount'] ?? null },
       after: p,
     };
   }
@@ -700,6 +728,10 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',
+  'rg.limit.change_requested',
+  'rg.limit.change_confirmed',
+  'rg.limit.change_cancelled',
+  'rg.limit.change_expired',
   'rg.cooling_off.activated',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',

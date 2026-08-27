@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { LimitsSchema } from './igaming-config.js';
+import {
+  LimitsSchema,
+  ResponsibleGamingSchema,
+  defaultResponsibleGamingConfig,
+} from './igaming-config.js';
 import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
@@ -165,6 +169,13 @@ export const PlatformConfigSchema = z
      * defaults), reusing the shared LimitsSchema shape.
      */
     rgLimits: z.record(z.string().length(2), LimitsSchema).default({}),
+    /**
+     * RG process knobs - the limit-change cool-down and its confirmation window.
+     * Lives here rather than in `IgamingConfig` because `PLATFORM_CONFIG` is always
+     * bound (`IGAMING_CONFIG` only when an operator passes one), and the cool-down
+     * must have a value on every install or the protection silently disappears.
+     */
+    responsibleGambling: ResponsibleGamingSchema.default(defaultResponsibleGamingConfig),
     /**
      * KYC verification knobs: provider id, webhook secret env, withdrawal gating,
      * and per-currency re-KYC deposit thresholds. Absent = KYC ungated, no re-KYC.

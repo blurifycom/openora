@@ -17,6 +17,7 @@ import type {
   EmailTemplateKey,
   AdminUserDirectory,
   IdentityReader,
+  RgInitiator,
   User,
   ClientMeta,
 } from '@openora/core/contracts';
@@ -30,7 +31,6 @@ import type {
   LiftCoolingOffInput,
   ActivateSelfExclusionInput,
   LiftSelfExclusionInput,
-  RgSection,
 } from '../contract/index.js';
 
 const logger = createLogger('compliance-rg');
@@ -53,6 +53,16 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
 );
 
 const HOUR_MS = 60 * 60 * 1000;
+// The "no request parked on this limit" tuple, spelled once so no write path can clear
+// four of the five columns and leave a half-request behind.
+export const NO_PENDING_CHANGE = {
+  pendingKind: null,
+  pendingAmount: null,
+  pendingMinutes: null,
+  pendingRequestedAt: null,
+  pendingEffectiveAt: null,
+  pendingExpiresAt: null,
+} as const;
 // Cap in-flight enforcement syncs per sweep tick so a large lapsed-cooling-off batch can't
 // exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
 const SWEEP_CONCURRENCY = 10;
@@ -111,14 +121,25 @@ export class RgService {
     this.templateRenderer = deps.templateRenderer ?? null;
   }
 
+  /**
+   * Writes a limit outright: it takes effect immediately and voids any outstanding
+   * player request to weaken it. Used by the admin route, and by the self-service path
+   * for the two changes that need no cool-down (a first limit, or a lower one) - a
+   * player raising a limit goes through `RgSelfServiceService` instead.
+   *
+   * Clearing `pending*` here is deliberate: a directly written limit is the current
+   * decision, and leaving a stale request parked beside it would let the player confirm
+   * their way back to an older, weaker value.
+   */
   async setPlayerLimit(
     userId: User['id'],
     input: SetPlayerLimitInput,
     actorId: User['id'],
+    initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<Limit> {
     const [prior] = await this.drizzle.db
-      .select({ amount: userLimit.amount, minutes: userLimit.minutes })
+      .select()
       .from(userLimit)
       .where(
         and(
@@ -134,14 +155,33 @@ export class RgService {
         .values({ ...input, userId })
         .onConflictDoUpdate({
           target: [userLimit.userId, userLimit.type, userLimit.period],
-          set: { amount: input.amount, minutes: input.minutes },
+          set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
         })
         .returning(),
       new LimitNotFoundError(userId),
     );
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    if (prior?.pendingKind) {
+      this.events.emit('rg.limit.change_cancelled', {
+        userId,
+        playerId,
+        actorId,
+        limitId: row.id,
+        type: input.type,
+        period: input.period,
+        kind: prior.pendingKind,
+        previousAmount: prior.amount,
+        previousMinutes: prior.minutes,
+        requestedAmount: prior.pendingAmount,
+        requestedMinutes: prior.pendingMinutes,
+        initiatedBy,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
     this.events.emit('rg.limit.set', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       actorId,
       limitId: row.id,
       type: input.type,
@@ -150,22 +190,39 @@ export class RgService {
       minutes: input.minutes,
       previousAmount: prior?.amount ?? null,
       previousMinutes: prior?.minutes ?? null,
+      initiatedBy,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    const limitDescription = input.amount ?? `${input.minutes} minutes`;
-    await this.notify(userId, 'rgLimitUpdated', {
-      period: input.period,
-      type: input.type,
-      description: limitDescription,
-    });
+    await this.notifyLimitUpdated(userId, input.type, input.period, input.amount, input.minutes);
     return toLimitDto(row);
+  }
+
+  /**
+   * The player-facing "your limit changed" mail. Public so the self-service confirm
+   * path - which writes the limit itself, atomically with clearing the request that
+   * authorised it - sends the same mail as this class does, rather than re-wiring the
+   * renderer/directory/transport trio a second time.
+   */
+  async notifyLimitUpdated(
+    userId: User['id'],
+    type: SetPlayerLimitInput['type'],
+    period: SetPlayerLimitInput['period'],
+    amount: string | null,
+    minutes: number | null,
+  ): Promise<void> {
+    await this.notify(userId, 'rgLimitUpdated', {
+      period,
+      type,
+      description: amount ?? `${minutes} minutes`,
+    });
   }
 
   async activateCoolingOff(
     userId: User['id'],
     input: ActivateCoolingOffInput,
     actorId: User['id'],
+    initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
@@ -208,6 +265,7 @@ export class RgService {
       exclusionId: row.id,
       expiresAt: expiresAt.toISOString(),
       reason: input.reason,
+      initiatedBy,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
@@ -225,6 +283,7 @@ export class RgService {
     userId: User['id'],
     input: ActivateSelfExclusionInput,
     actorId: User['id'],
+    initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'self_exclusion');
@@ -262,6 +321,7 @@ export class RgService {
       durationMonths: input.isPermanent ? null : (input.durationMonths ?? null),
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
       reason: input.reason,
+      initiatedBy,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
@@ -388,23 +448,28 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  async getRgSection(userId: User['id']): Promise<RgSection> {
+  /**
+   * The exclusions in force for a player right now. A lapsed cooling-off row stays
+   * `active` until the sweep expires it, so it is filtered out here by its expiry -
+   * the section must reflect what is actually enforced, not what the row still says.
+   *
+   * The limits half of the RG section lives in `RgSelfServiceService.getSection`, which
+   * composes this: usage and pending requests need the spend windows, which this class
+   * has no business knowing about.
+   */
+  async getActiveExclusions(
+    userId: User['id'],
+  ): Promise<{ coolingOff: RgExclusion | null; selfExclusion: RgExclusion | null }> {
     const now = new Date();
-    const [limits, exclusions] = await Promise.all([
-      this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId)),
-      this.drizzle.db
-        .select()
-        .from(rgExclusion)
-        .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
-        .orderBy(desc(rgExclusion.createdAt)),
-    ]);
-    // A lapsed cooling-off row stays `active` until the sweep expires it - treat it as
-    // not-active here so the section reflects the enforced state.
+    const exclusions = await this.drizzle.db
+      .select()
+      .from(rgExclusion)
+      .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
+      .orderBy(desc(rgExclusion.createdAt));
     const coolingOff =
       exclusions.find((e) => e.kind === 'cooling_off' && e.expiresAt && e.expiresAt > now) ?? null;
     const selfExclusion = exclusions.find((e) => e.kind === 'self_exclusion') ?? null;
     return {
-      limits: limits.map(toLimitDto),
       coolingOff: coolingOff ? toExclusionDto(coolingOff) : null,
       selfExclusion: selfExclusion ? toExclusionDto(selfExclusion) : null,
     };

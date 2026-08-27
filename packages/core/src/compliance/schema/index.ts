@@ -20,6 +20,7 @@ import {
   RG_FLAG_STATUSES,
   limitTypes,
   limitPeriods,
+  LIMIT_CHANGE_KINDS,
   geoRuleActions,
   type KycRiskSignals,
   type KycCheckResult,
@@ -33,6 +34,7 @@ export const rgExclusionKind = pgEnum('rg_exclusion_kind', EXCLUSION_KINDS);
 export const rgExclusionStatus = pgEnum('rg_exclusion_status', EXCLUSION_STATUSES);
 export const rgFlagType = pgEnum('rg_flag_type', RG_FLAG_TYPES);
 export const rgFlagStatus = pgEnum('rg_flag_status', RG_FLAG_STATUSES);
+export const limitChangeKind = pgEnum('limit_change_kind', LIMIT_CHANGE_KINDS);
 
 export const userLimit = pgTable(
   'user_limit',
@@ -45,6 +47,23 @@ export const userLimit = pgTable(
     amount: decimal({ precision: 18, scale: 2 }),
     minutes: integer(),
     period: text({ enum: limitPeriods }).notNull(),
+    // A player's request to WEAKEN this limit (raise it or drop it), parked here rather
+    // than in a table of its own: `(userId, type, period)` is already unique, so a limit
+    // can carry at most one open request. `amount` above stays the effective limit the
+    // whole time a request is pending - nothing here is ever promoted lazily on read,
+    // and the sweep that expires a stale request never touches `amount` either. The
+    // only thing that moves a limit upward is the player confirming, in
+    // RgSelfServiceService.confirmPendingChange.
+    pendingKind: limitChangeKind(),
+    // Target value of an `increase`, polymorphic by `type` exactly like amount/minutes
+    // above. Both null for a `removal` (there is no target - the row goes away).
+    pendingAmount: decimal({ precision: 18, scale: 2 }),
+    pendingMinutes: integer(),
+    pendingRequestedAt: timestamp({ withTimezone: true }),
+    // When the cool-down has been served and the player may confirm.
+    pendingEffectiveAt: timestamp({ withTimezone: true }),
+    // When an unconfirmed request lapses and must be filed again from scratch.
+    pendingExpiresAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -53,6 +72,8 @@ export const userLimit = pgTable(
   (t) => [
     uniqueIndex('user_limit_user_id_type_period_key').on(t.userId, t.type, t.period),
     index('user_limit_user_id_idx').on(t.userId),
+    // The expiry sweep scans by deadline across every player, not by player.
+    index('user_limit_pending_expires_at_idx').on(t.pendingExpiresAt),
   ],
 );
 

@@ -18,6 +18,7 @@ import {
   PLAYER_TAGS,
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
+  RG_LIMITS,
   AUDIT_WRITER,
   JOB_QUEUE,
   UuidSchema,
@@ -212,6 +213,9 @@ export default {
           c.get(PLAY_ELIGIBILITY),
           c.get(AUDIT_WRITER),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+          // Optional, never `requiresPorts`: compliance binds it, and an install without
+          // that module has no limits to enforce. See adapters/rg-limits.ts.
+          c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         ),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
@@ -237,6 +241,7 @@ export default {
           ? c.get(TAG_EVALUATION_COMMANDS)
           : undefined,
         audit: c.get(AUDIT_WRITER),
+        rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
       });
 
       const reconciliation = new ReconciliationService({

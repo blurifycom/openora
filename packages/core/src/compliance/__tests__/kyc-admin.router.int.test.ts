@@ -27,6 +27,7 @@ import { KycVerificationService } from '../service/kyc.service.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { RgService } from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import type { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const CTX = {
   request: { headers: {} as Record<string, string | string[] | undefined> },
@@ -82,6 +83,7 @@ function build(guard: AdminGuard) {
     realtime: new InProcessRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
+    rgSelfService: mock<RgSelfServiceService>({}),
   });
   return { router, audit, statusWriter, events };
 }

@@ -13,6 +13,11 @@ export const RG_EVAL_TRIGGERS = [
   'wallet.deposit.completed',
   'gaming.round.ended',
   'rg.exclusion.login_blocked',
+  // A limit change moves the threshold under a spend that has already happened, so the
+  // 80% flag has to be recomputed there and then. Without this a player who LOWERS a
+  // limit below what they have already spent raises no flag until their next deposit
+  // or round - which can be never.
+  'rg.limit.set',
 ] as const;
 export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
@@ -198,9 +203,32 @@ export class RgMonitoringService {
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  private async spendFor(userId: User['id'], type: LimitType, from: Date) {
+  /**
+   * Spend counted against one money limit inside its period window, as a decimal string.
+   *
+   * - `deposit` - completed deposits.
+   * - `wager` - total staked.
+   * - `loss` - NET loss, stakes minus winnings. A player who staked 1000 and won 900 has
+   *   lost 100, not 1000; counting gross would stop them nine times too early. Clamped at
+   *   zero, because a player who is up on the window has not lost anything.
+   *
+   * Public because it is also the read behind the `RG_LIMITS` enforcement port - the gate
+   * and the monitoring flag must agree on what "used" means, so there is exactly one
+   * query for it.
+   *
+   * TODO: currency. `user_limit.amount` carries no currency and neither sum filters by
+   * one, so a player holding several balances has `0.001 BTC + 20 USDT` added up as
+   * `20.001`. Next step, in this order: add `user_limit.currency`, move the unique index
+   * to `(userId, type, period, currency)`, and filter both sums by it. Do NOT patch this
+   * locally (eg by the wallet's own currency) - that breaks silently the moment a player
+   * transacts outside it.
+   */
+  async spendFor(userId: User['id'], type: LimitType, from: Date) {
     if (type === 'deposit') {
       return this.depositsSum(userId, from);
+    }
+    if (type === 'loss') {
+      return this.netLossSum(userId, from);
     }
     return this.betsSum(userId, from);
   }
@@ -233,6 +261,29 @@ export class RgMonitoringService {
       .from(gameRound)
       .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)));
     return rounds?.total ?? '0';
+  }
+
+  // Net loss over the window: staked minus won, floored at zero. Summed and subtracted
+  // in Postgres numeric arithmetic, never in JS floats. An unfinished round contributes
+  // its stake and a winAmount of 0 (the column's default), which is the honest reading
+  // while the outcome is still unknown.
+  private async netLossSum(userId: User['id'], from: Date) {
+    const [rounds] = await this.drizzle.db
+      .select({
+        total: sql<string>`greatest(coalesce(sum(${gameRound.betAmount} - ${gameRound.winAmount}), 0), 0)`,
+      })
+      .from(gameRound)
+      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)));
+    return rounds?.total ?? '0';
+  }
+
+  /**
+   * Clears the 80% flag a money limit raised. Public for the one case `evaluateUser`
+   * cannot cover: a limit that has been REMOVED is no longer in the set it walks, so
+   * without this its flag would sit `active` on the compliance dashboard forever.
+   */
+  clearLimitThresholdFlag(userId: User['id'], limitType: string): Promise<void> {
+    return this.clearFlag(userId, 'limit_threshold', limitType);
   }
 
   private async raiseFlag(

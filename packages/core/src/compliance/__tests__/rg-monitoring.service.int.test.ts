@@ -42,14 +42,14 @@ async function seedDeposit(userId: string, amount: string, createdAt = new Date(
   });
 }
 
-async function seedBet(userId: string, betAmount: string) {
+async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [g] = await db.drizzle.db
     .insert(game)
     .values({ name: 'Slot', provider: 'mock', category: 'slots' })
     .returning();
   await db.drizzle.db
     .insert(gameRound)
-    .values({ gameId: g!.id, userId, betAmount, currency: 'USD' });
+    .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD' });
 }
 
 async function seedSession(userId: string, startedMinutesAgo: number) {
@@ -181,6 +181,65 @@ describe('RgMonitoringService.evaluateUser - wager limits (real PG)', () => {
 
     const [flag] = await flagsOf(userId);
     expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'wager' });
+  });
+});
+
+describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
+  async function seedLossLimit(userId: string, amount: string) {
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'loss', amount, minutes: null, period: 'daily' });
+  }
+
+  it('counts NET loss - stakes minus winnings - not gross stakes', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    // Staked 1000, won 900: the player is down 100, not 1000.
+    await seedBet(userId, '1000', '900');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag?.detail).toMatchObject({ actual: '100.00', limit: '100.00', pct: 100 });
+  });
+
+  it('does not flag a player who is up on the window', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '100', '400');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    expect(await flagsOf(userId)).toHaveLength(0);
+  });
+
+  it('flags a net loss that reaches the 80% band', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '200', '120');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'loss' });
+  });
+});
+
+// An on-chain crypto deposit is credited by webhook when the funds are already on the
+// chain - there is nothing left to refuse, so it is deliberately NOT gated. What it does
+// instead is raise this flag for compliance, through the `wallet.deposit.completed`
+// evaluation the credit already triggers.
+describe('RgMonitoringService.evaluateUser - deposits past the limit (real PG)', () => {
+  it('flags a deposit total that has already passed the limit', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    await seedDeposit(userId, '150');
+
+    await makeService().evaluateUser(userId, 'wallet.deposit.completed');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'deposit' });
+    expect(flag?.detail).toMatchObject({ limit: '100.00', pct: 150 });
   });
 });
 

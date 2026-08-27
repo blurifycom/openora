@@ -31,6 +31,7 @@ import {
   type RateLimitKey,
   type WalletRail,
   type PlayerTags,
+  type RgLimitsPort,
   type AuditWritePort,
   type TagEvaluationCommands,
   type TagKey,
@@ -206,6 +207,30 @@ export const BelowMinimumDepositError = createDomainError(
   (amount, minimum, currency, network) =>
     `Deposit of ${amount} ${currency} on ${network} is below the ${minimum} ${currency} minimum`,
 );
+
+/**
+ * A deposit refused by the player's own responsible-gambling limit. Carries the whole
+ * reason as typed `data` (the router forwards it, see `mapErrors`) so the client can
+ * translate it - the message string never reaches a screen.
+ */
+export type DepositLimitExceededData = {
+  limitType: string;
+  period: string;
+  limit: string;
+  used: string;
+};
+
+export class DepositLimitExceededError extends Error {
+  readonly data: DepositLimitExceededData;
+
+  constructor(data: DepositLimitExceededData) {
+    super(
+      `Deposit refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
+    );
+    this.name = 'DepositLimitExceededError';
+    this.data = data;
+  }
+}
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
@@ -642,6 +667,10 @@ export type WalletServiceDeps = {
   tagEvaluationCommands?: TagEvaluationCommands;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
+  // Optional: bound by the compliance module. Absent = no `user_limit` table exists and
+  // there is nothing to enforce, so deposits pass ungated. Where it IS bound the gate is
+  // fail-closed: a throwing check refuses the deposit rather than letting it through.
+  rgLimits?: RgLimitsPort;
 };
 
 /**
@@ -664,6 +693,7 @@ export class WalletService {
   private readonly riskTags?: PlayerTags;
   private readonly tagEvaluationCommands?: TagEvaluationCommands;
   private readonly audit: AuditWritePort;
+  private readonly rgLimits?: RgLimitsPort;
 
   constructor({
     drizzle,
@@ -677,6 +707,7 @@ export class WalletService {
     riskTags,
     tagEvaluationCommands,
     audit,
+    rgLimits,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -689,6 +720,7 @@ export class WalletService {
     this.riskTags = riskTags;
     this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
+    this.rgLimits = rgLimits;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -734,6 +766,32 @@ export class WalletService {
     assertDepositAllowed(assets, currency, network);
     if (amount !== undefined) {
       assertAboveMinimumDeposit(assets, amount, currency, network);
+    }
+  }
+
+  /**
+   * Refuses a deposit that would take the player past their own RG deposit limit. Runs
+   * BEFORE the PSP call - a refused deposit must never reach a provider, or the player
+   * is charged for money the limit then rejects.
+   *
+   * Only this PSP path is gated. An on-chain crypto deposit arrives by webhook when the
+   * funds are already on the chain (`handlePaymentWebhook`): there is nothing left to
+   * refuse, so that path deliberately stays open and raises an RG flag for compliance
+   * instead, via the `wallet.deposit.completed` evaluation the credit already triggers.
+   * The player-facing copy on the deposit-limit card has to say so.
+   */
+  private async assertWithinRgDepositLimit(userId: User['id'], amount: string) {
+    if (!this.rgLimits) {
+      return;
+    }
+    const decision = await this.rgLimits.checkDeposit(userId, amount);
+    if (!decision.allowed) {
+      throw new DepositLimitExceededError({
+        limitType: decision.limitType,
+        period: decision.period,
+        limit: decision.limit,
+        used: decision.used,
+      });
     }
   }
 
@@ -865,6 +923,7 @@ export class WalletService {
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertDepositable(currency, amount);
+    await this.assertWithinRgDepositLimit(userId, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
     // resends after a timeout) must not re-charge. A genuine concurrent race (two
