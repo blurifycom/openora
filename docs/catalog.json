@@ -98,6 +98,7 @@
         "chat.removeMember",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
+        "chat.setMemberRole",
         "chat.streamMessages",
         "chat.unbanRoomMember",
         "chat.unblockUser",
@@ -898,6 +899,7 @@
     "chat.room.member.joined",
     "chat.room.member.left",
     "chat.room.member.removed",
+    "chat.room.member.role-changed",
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
@@ -1232,6 +1234,10 @@
     },
     {
       "name": "ChatRoomAccessStatusSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomAssignableRoleSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

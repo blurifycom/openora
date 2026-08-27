@@ -359,6 +359,19 @@ export async function mapEventToRecord(
     };
   }
 
+  // actorId = the granting/revoking owner's resolved playerId; resource = the member whose
+  // role moved. after carries the new role, so the trail reads as a role history per member.
+  if (topic === 'chat.room.member.role-changed') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['playerId']),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      after: { roomId: str(p['roomId']), role: str(p['role']) },
+    };
+  }
+
   // actorType = admin (the only path flipping isActive is the back-office route);
   // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
@@ -694,6 +707,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  'chat.room.member.role-changed',
   // chat.gift.sent
   // chat.rain.distributed
   'chat.user.mentioned',

@@ -15,6 +15,7 @@ import {
   ROOM_SLUG_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
+  CHAT_ROOM_ASSIGNABLE_ROLES,
 } from './constants.js';
 
 export * from './constants.js';
@@ -44,6 +45,9 @@ export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LEN
 
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
+
+export const ChatRoomAssignableRoleSchema = z.enum(CHAT_ROOM_ASSIGNABLE_ROLES);
+export type ChatRoomAssignableRole = z.infer<typeof ChatRoomAssignableRoleSchema>;
 
 export const CHAT_ROOM_CATEGORIES = [
   'games-sports',
@@ -468,6 +472,13 @@ export const chatContract = {
   removeMember: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/remove' })
     .input(RoomUserInput)
+    .output(z.object({ success: z.literal(true) })),
+
+  // Grants and revokes the moderator role only - `owner` is deliberately not assignable
+  // here; ownership transfer is a separate route with its own rules.
+  setMemberRole: oc
+    .route({ method: 'POST', path: '/chat/rooms/{roomId}/members/{userId}/role' })
+    .input(RoomUserInput.extend({ role: ChatRoomAssignableRoleSchema }))
     .output(z.object({ success: z.literal(true) })),
 
   banRoomMember: oc

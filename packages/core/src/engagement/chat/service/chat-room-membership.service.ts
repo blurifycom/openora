@@ -10,6 +10,7 @@ import {
   type Uuid,
 } from '@openora/core/contracts';
 import { chatRoom, chatRoomBan, chatRoomMember, chatRoomRemove } from '../schema/index.js';
+import type { ChatRoomAssignableRole } from '../contract/index.js';
 import {
   ChatRoomBannedError,
   ChatRoomJoinCodeNotFoundError,
@@ -236,6 +237,87 @@ export class ChatRoomMembershipService {
     }
     if (removed.length > 0) {
       await this.transport?.revokeClientFromChannel?.(userId, chatChannel(roomId));
+    }
+    return { success: true } as const;
+  }
+
+  /**
+   * Grants or revokes the `moderator` role on a room member. Owner-only: a moderator must not
+   * be able to create peers, so the shared `assertModerator` guard is deliberately not used.
+   * Idempotent - a target already at the requested role is a successful no-op. Zero moderators
+   * is a valid end state, so the last revoke is never blocked.
+   */
+  async setMemberRole({
+    actorId,
+    roomId,
+    userId,
+    role,
+    ip,
+    userAgent,
+  }: {
+    actorId: Uuid;
+    roomId: Uuid;
+    userId: Uuid;
+    role: ChatRoomAssignableRole;
+  } & ClientMeta) {
+    // Same lock leaveRoom takes, so a role write serializes against the last-moderator check.
+    const changed = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const [room] = await t
+          .select({ id: chatRoom.id })
+          .from(chatRoom)
+          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .limit(1);
+        if (!room) {
+          throw new ChatRoomNotFoundError(roomId);
+        }
+        const [actor] = await t
+          .select({ role: chatRoomMember.role })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
+          .limit(1);
+        if (!actor) {
+          throw new ChatRoomNotMemberError(roomId);
+        }
+        if (actor.role !== 'owner') {
+          throw new ChatRoomNotModeratorError(roomId);
+        }
+        const [target] = await t
+          .select({ role: chatRoomMember.role })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .limit(1);
+        if (!target) {
+          throw new ChatRoomNotMemberError(roomId);
+        }
+        if (actorId === userId) {
+          throw new ChatRoomSelfModerationError();
+        }
+        if (target.role === 'owner') {
+          throw new ChatRoomNotModeratorError(roomId);
+        }
+        if (target.role === role) {
+          return false;
+        }
+        await t
+          .update(chatRoomMember)
+          .set({ role, roleAssignedAt: role === 'member' ? null : new Date() })
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+        return true;
+      }),
+    );
+    if (changed) {
+      this.events.emit('chat.room.member.role-changed', {
+        roomId,
+        userId,
+        changedBy: actorId,
+        role,
+        // Actor's resolved playerId, matching the kicked/banned events the audit trail
+        // already attributes this way.
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     }
     return { success: true } as const;
   }

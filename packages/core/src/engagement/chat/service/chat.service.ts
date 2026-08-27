@@ -1486,9 +1486,12 @@ export class ChatService {
           .returning();
         await tx.insert(chatRoomConfiguration).values({ roomId: created.id });
         if (actorId) {
-          await tx
-            .insert(chatRoomMember)
-            .values({ roomId: created.id, userId: actorId, role: 'owner' });
+          await tx.insert(chatRoomMember).values({
+            roomId: created.id,
+            userId: actorId,
+            role: 'owner',
+            roleAssignedAt: new Date(),
+          });
         }
         return created;
       });
@@ -1725,7 +1728,7 @@ export class ChatService {
             await t.insert(chatRoomConfiguration).values({ roomId: room.id });
             await t
               .insert(chatRoomMember)
-              .values({ roomId: room.id, userId, role: 'owner' })
+              .values({ roomId: room.id, userId, role: 'owner', roleAssignedAt: new Date() })
               .onConflictDoNothing();
             return room;
           }),

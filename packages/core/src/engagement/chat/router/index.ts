@@ -444,6 +444,24 @@ export function createChatRouter({
       );
     }),
 
+    setMemberRole: os.setMemberRole.handler(({ input, context }) =>
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatRoomNotModeratorError],
+          BAD_REQUEST: ChatRoomSelfModerationError,
+        },
+        () =>
+          membershipService.setMemberRole({
+            actorId: getUserId(context),
+            roomId: input.roomId,
+            userId: input.userId,
+            role: input.role,
+            ...context.clientMeta,
+          }),
+      ),
+    ),
+
     banRoomMember: os.banRoomMember.handler(({ input, context }) => {
       const moderatorId = getUserId(context);
       return mapErrors(

@@ -306,6 +306,15 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     removedBy: UuidSchema,
   }),
+  // A room owner granted or revoked the moderator role. `role` is the member's new role;
+  // `owner` never appears here - ownership transfer is a separate flow.
+  'chat.room.member.role-changed': authContextBase.extend({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    changedBy: UuidSchema,
+    role: z.enum(['member', 'moderator']),
+    playerId: UuidSchema.nullable(),
+  }),
   'chat.room.member.banned': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,

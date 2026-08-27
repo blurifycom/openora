@@ -122,6 +122,7 @@ function makeService(
       adminJoinRoom: membership.adminJoinRoom.bind(membership),
       leaveRoom: membership.leaveRoom.bind(membership),
       removeMember: membership.removeMember.bind(membership),
+      setMemberRole: membership.setMemberRole.bind(membership),
       banMember: roomBan.banMember.bind(roomBan),
       unbanMember: roomBan.unbanMember.bind(roomBan),
       muteRoomMember: roomMute.muteRoomMember.bind(roomMute),
@@ -1419,6 +1420,321 @@ describe('ChatService.leaveRoom (real PG)', () => {
       'chat.room.member.left',
       expect.objectContaining({ roomId: room.id, userId: memberId }),
     );
+  });
+});
+
+describe('ChatService.setMemberRole (real PG)', () => {
+  async function roomWithMember() {
+    const { svc, events, audit } = makeService();
+    const ownerId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'Room',
+      ...NO_CLIENT_META,
+    });
+    const memberId = randomUUID();
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    return { svc, events, audit, room, ownerId, memberId };
+  }
+
+  function readMember(roomId: string, userId: string) {
+    return db.drizzle.db
+      .select({ role: chatRoomMember.role, roleAssignedAt: chatRoomMember.roleAssignedAt })
+      .from(chatRoomMember)
+      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+      .limit(1)
+      .then(([row]) => row!);
+  }
+
+  it('lets the owner promote a member, stamping the assignment time', async () => {
+    const { svc, events, room, ownerId, memberId } = await roomWithMember();
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    const member = await readMember(room.id, memberId);
+    expect(member.role).toBe('moderator');
+    expect(member.roleAssignedAt).toBeInstanceOf(Date);
+    expect(events.emit).toHaveBeenCalledWith(
+      'chat.room.member.role-changed',
+      expect.objectContaining({
+        roomId: room.id,
+        userId: memberId,
+        changedBy: ownerId,
+        role: 'moderator',
+      }),
+    );
+  });
+
+  it('lets the owner revoke, clearing the assignment time', async () => {
+    const { svc, room, ownerId, memberId } = await roomWithMember();
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'member',
+      ...NO_CLIENT_META,
+    });
+
+    expect(await readMember(room.id, memberId)).toMatchObject({
+      role: 'member',
+      roleAssignedAt: null,
+    });
+  });
+
+  it('refuses a promotion by a moderator - granting is owner-only', async () => {
+    const { svc, room, ownerId, memberId } = await roomWithMember();
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+    const otherId = randomUUID();
+    await svc.joinRoom({ userId: otherId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    await expect(
+      svc.setMemberRole({
+        actorId: memberId,
+        roomId: room.id,
+        userId: otherId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+  });
+
+  it('refuses a promotion by a plain member', async () => {
+    const { svc, room, memberId } = await roomWithMember();
+    const otherId = randomUUID();
+    await svc.joinRoom({ userId: otherId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    await expect(
+      svc.setMemberRole({
+        actorId: memberId,
+        roomId: room.id,
+        userId: otherId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+  });
+
+  it('refuses a non-member actor', async () => {
+    const { svc, room, memberId } = await roomWithMember();
+
+    await expect(
+      svc.setMemberRole({
+        actorId: randomUUID(),
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotMemberError);
+  });
+
+  it('refuses a target that is not a member of the room', async () => {
+    const { svc, room, ownerId } = await roomWithMember();
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: randomUUID(),
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotMemberError);
+  });
+
+  it('refuses an owner targeting themselves', async () => {
+    const { svc, room, ownerId } = await roomWithMember();
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: ownerId,
+        role: 'member',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomSelfModerationError);
+  });
+
+  it('refuses a target that is an owner', async () => {
+    const { svc, room, ownerId } = await roomWithMember();
+    const coOwnerId = randomUUID();
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: room.id, userId: coOwnerId, role: 'owner' });
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: coOwnerId,
+        role: 'member',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+  });
+
+  it('refuses a soft-deleted room', async () => {
+    const { svc, room, ownerId, memberId } = await roomWithMember();
+    await db.drizzle.db
+      .update(chatRoom)
+      .set({ deletedAt: new Date() })
+      .where(eq(chatRoom.id, room.id));
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotFoundError);
+  });
+
+  it('is idempotent on a repeated promote and a repeated revoke', async () => {
+    const { svc, events, room, ownerId, memberId } = await roomWithMember();
+    const roleChanges = () =>
+      events.emit.mock.calls.filter(([topic]) => topic === 'chat.room.member.role-changed').length;
+
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+    expect(await readMember(room.id, memberId)).toMatchObject({ role: 'moderator' });
+    expect(roleChanges()).toBe(1);
+
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'member',
+      ...NO_CLIENT_META,
+    });
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'member',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+    expect(await readMember(room.id, memberId)).toMatchObject({
+      role: 'member',
+      roleAssignedAt: null,
+    });
+    expect(roleChanges()).toBe(2);
+  });
+
+  it('allows revoking the only moderator - zero moderators is a valid end state', async () => {
+    const { svc, room, ownerId, memberId } = await roomWithMember();
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'member',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+  });
+
+  it('gives a promoted moderator power over plain members only', async () => {
+    const { svc, room, ownerId, memberId } = await roomWithMember();
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+    const plainId = randomUUID();
+    const peerId = randomUUID();
+    await svc.joinRoom({ userId: plainId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    await svc.joinRoom({ userId: peerId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: peerId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.muteRoomMember({
+        moderatorId: memberId,
+        roomId: room.id,
+        userId: plainId,
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+    await expect(
+      svc.removeMember({
+        moderatorId: memberId,
+        roomId: room.id,
+        userId: plainId,
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+    await expect(
+      svc.removeMember({
+        moderatorId: memberId,
+        roomId: room.id,
+        userId: peerId,
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+    await expect(
+      svc.removeMember({
+        moderatorId: memberId,
+        roomId: room.id,
+        userId: ownerId,
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
   });
 });
 
