@@ -147,6 +147,10 @@ export const twoFactor = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     verified: boolean().default(true),
+    // Counter and cooldown the plugin maintains itself; the adapter rejects
+    // every twoFactor write while they are missing from the table.
+    failedVerificationCount: integer().notNull().default(0),
+    lockedUntil: timestamp({ withTimezone: true }),
   },
   (t) => [
     index('two_factor_user_id_idx').on(t.userId),

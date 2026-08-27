@@ -119,6 +119,42 @@ function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   return undefined;
 }
 
+function hasTrustDeviceCookie(headers: Headers): boolean {
+  const cookieHeader = headers.get('cookie');
+  if (!cookieHeader) {
+    return false;
+  }
+  for (const [name] of parseCookies(cookieHeader)) {
+    if (name.endsWith('.trust_device')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Drops the one pair and leaves every other byte alone: the cookies that stay carry
+// signed, percent-encoded values better-auth re-verifies exactly as the browser sent them.
+function withoutTrustDeviceCookie(headers: Headers): Headers {
+  const cookieHeader = headers.get('cookie');
+  if (!cookieHeader) {
+    return headers;
+  }
+  const kept = cookieHeader
+    .split(';')
+    .map((pair) => pair.trim())
+    .filter((pair) => {
+      const [name = ''] = pair.split('=');
+      return !name.endsWith('.trust_device');
+    });
+  const next = new Headers(headers);
+  if (kept.length === 0) {
+    next.delete('cookie');
+  } else {
+    next.set('cookie', kept.join('; '));
+  }
+  return next;
+}
+
 // createAuth() is cast to the base better-auth `Auth` type (to dodge the Zod v4
 // $strip portability error), so the twoFactor() plugin endpoints are absent from
 // the static type. We declare the narrow shapes we call and route through a typed
@@ -738,10 +774,21 @@ export class IdentityService {
       }
     }
 
+    // better-auth honours its trust-device cookie on its own and offers no way to revoke
+    // one. The revocable half of a trusted device is the row this module keeps, so a login
+    // presenting the cookie without a live row has to fall back to the full challenge.
+    let signInHeaders = headers;
+    if (existingUser && this.trustedDevices && hasTrustDeviceCookie(headers)) {
+      const trusted = await this.trustedDevices.isTrusted(existingUser.id, userAgent);
+      if (!trusted) {
+        signInHeaders = withoutTrustDeviceCookie(headers);
+      }
+    }
+
     try {
       const authResponse = await this.auth.api.signInEmail({
         body: { email, password: input.password, rememberMe: input.rememberMe },
-        headers,
+        headers: signInHeaders,
         asResponse: true,
       });
       await ensureOk(authResponse);
@@ -1157,7 +1204,9 @@ export class IdentityService {
       await this.twoFactorLockout?.reset(challengedUserId);
     }
     this.forwardCookies(res, resHeaders);
-    const userId = await this.currentUserId(headers);
+    // better-auth rotates the session on a successful challenge, so the request cookie is
+    // already dead here - the actor is the identity resolved before the call.
+    const userId = challengedUserId ?? (await this.currentUserId(headers));
     if (userId) {
       this.events.emit('identity.2fa.enabled', {
         userId,

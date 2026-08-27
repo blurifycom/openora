@@ -64,6 +64,13 @@
       "when": 1787656339386,
       "tag": "0008_pink_bucky",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787830817681,
+      "tag": "0009_hard_sauron",
+      "breakpoints": true
     }
   ]
 }

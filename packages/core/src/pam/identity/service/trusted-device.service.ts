@@ -125,7 +125,7 @@ export class TrustedDeviceService {
     deviceId: AdminTrustedDevice['id'],
     actorId: User['id'],
     meta?: ClientMeta,
-  ): Promise<{ success: true }> {
+  ): Promise<{ success: true; userAgent: string | null }> {
     const revoked = await this.drizzle.db
       .update(adminTrustedDevice)
       .set({ revokedAt: sql`now()`, revokedBy: actorId })
@@ -136,9 +136,10 @@ export class TrustedDeviceService {
           isNull(adminTrustedDevice.revokedAt),
         ),
       )
-      .returning({ id: adminTrustedDevice.id });
+      .returning({ id: adminTrustedDevice.id, userAgent: adminTrustedDevice.userAgent });
 
-    if (revoked.length === 0) {
+    const [row] = revoked;
+    if (!row) {
       throw new TrustedDeviceNotFoundError(deviceId);
     }
 
@@ -149,7 +150,7 @@ export class TrustedDeviceService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    return { success: true };
+    return { success: true, userAgent: row.userAgent };
   }
 
   /**

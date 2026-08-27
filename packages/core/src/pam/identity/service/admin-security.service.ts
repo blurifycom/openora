@@ -1,6 +1,6 @@
 import { ORPCError } from '@orpc/server';
 import { type EventBus, DrizzleService, createLogger } from '@openora/core/server';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import {
   AuthGuardReasonSchema,
   type AdminSecurityPolicy,
@@ -231,13 +231,37 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     return this.trustedDevices.list(userId, userAgent);
   }
 
-  revokeTrustedDevice(
+  async revokeTrustedDevice(
     userId: User['id'],
     deviceId: AdminTrustedDevice['id'],
     actorId: User['id'],
     meta?: ClientMeta,
   ) {
-    return this.trustedDevices.revoke(userId, deviceId, actorId, meta);
+    const { userAgent } = await this.trustedDevices.revoke(userId, deviceId, actorId, meta);
+    await this.endSessionsOnDevice(userId, userAgent, actorId, meta);
+    return { success: true as const };
+  }
+
+  /**
+   * A revoked device loses its live sessions in the same breath, so the grant cannot
+   * outlive the revoke on the browser that already holds one.
+   */
+  private async endSessionsOnDevice(
+    userId: User['id'],
+    deviceUserAgent: string | null,
+    actorId: User['id'],
+    meta?: ClientMeta,
+  ): Promise<void> {
+    const active = await this.drizzle.db
+      .select({ id: session.id, userAgent: session.userAgent })
+      .from(session)
+      .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
+
+    for (const row of active) {
+      if (isSameDevice(row.userAgent, deviceUserAgent)) {
+        await this.sessions.revokeSession(userId, row.id, actorId, meta);
+      }
+    }
   }
 
   isTrustedDevice(userId: User['id'], userAgent: string | null): Promise<boolean> {

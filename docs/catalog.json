@@ -902,6 +902,8 @@
     "identity.2fa.disabled",
     "identity.2fa.enabled",
     "identity.2fa.enrollment_blocked",
+    "identity.2fa.failed",
+    "identity.2fa.lockout.triggered",
     "identity.2fa.verified",
     "identity.email.verified",
     "identity.password.admin_reset_requested",

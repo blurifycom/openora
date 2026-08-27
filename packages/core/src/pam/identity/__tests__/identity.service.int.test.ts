@@ -24,6 +24,7 @@ import {
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { user, session } from '../schema/index.js';
+import { TrustedDeviceService } from '../service/trusted-device.service.js';
 import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
@@ -640,6 +641,81 @@ describe('IdentityService - player-status login gate (real PG)', () => {
       expect.objectContaining({ userId: account.id }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('player.login_blocked', expect.anything());
+  });
+});
+
+describe('IdentityService - trusted device login (real PG)', () => {
+  const TRUSTED_UA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  const trustedHeaders = {
+    cookie: 'better-auth.session_token=tok; better-auth.trust_device=signed-trust-value',
+    'user-agent': TRUSTED_UA,
+  };
+
+  const honourTrustCookie = (userId: string) =>
+    signInEmailMock.mockImplementation(async ({ headers }: { headers: Headers }) =>
+      headers.get('cookie')?.includes('.trust_device')
+        ? signInSuccess(userId)
+        : jsonResponse({ twoFactorRedirect: true }, 200),
+    );
+
+  const makeTrustedDevices = () =>
+    new TrustedDeviceService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      trustedDeviceDays: 30,
+    });
+
+  it('signs in without a second factor while the trusted-device row is live', async () => {
+    const account = await seedUser();
+    const trustedDevices = makeTrustedDevices();
+    await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+    honourTrustCookie(account.id);
+    const svc = buildService({ trustedDevices });
+
+    const result = await svc.login(
+      { email: EMAIL, password: 'rightpass1' },
+      trustedHeaders,
+      new Headers(),
+    );
+
+    expect(result).toMatchObject({ session: { token: 'tok' } });
+  });
+
+  it('challenges again once the trusted device is revoked', async () => {
+    const account = await seedUser();
+    const trustedDevices = makeTrustedDevices();
+    const device = await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+    if (!device) {
+      throw new Error('trust() stored no device');
+    }
+    await trustedDevices.revoke(account.id, device.id, account.id);
+    honourTrustCookie(account.id);
+    const svc = buildService({ trustedDevices });
+
+    const result = await svc.login(
+      { email: EMAIL, password: 'rightpass1' },
+      trustedHeaders,
+      new Headers(),
+    );
+
+    expect(result).toEqual({ twoFactorRedirect: true });
+  });
+
+  it('challenges a device whose cookie was replayed from another browser', async () => {
+    const account = await seedUser();
+    const trustedDevices = makeTrustedDevices();
+    await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+    honourTrustCookie(account.id);
+    const svc = buildService({ trustedDevices });
+
+    const result = await svc.login(
+      { email: EMAIL, password: 'rightpass1' },
+      { ...trustedHeaders, 'user-agent': 'Mozilla/5.0 (Macintosh) Safari/605.1.15' },
+      new Headers(),
+    );
+
+    expect(result).toEqual({ twoFactorRedirect: true });
   });
 });
 
