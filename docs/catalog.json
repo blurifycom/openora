@@ -162,6 +162,7 @@
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
+        "compliance.getMyKyc",
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
@@ -1629,6 +1630,10 @@
     {
       "name": "KycStatusUpdateSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycTierSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
       "name": "KycTriggeredBySchema",

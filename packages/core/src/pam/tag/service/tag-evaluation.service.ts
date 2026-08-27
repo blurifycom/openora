@@ -382,7 +382,10 @@ export class TagEvaluationService {
     if (!parsed.success) {
       return;
     }
-    const { userId } = parsed.data;
+    const { userId, tier } = parsed.data;
+    if (tier !== 'basic') {
+      return;
+    }
     const rule = await this.getEnabledRule('kyc_pending');
     if (!rule) {
       return;
@@ -439,7 +442,10 @@ export class TagEvaluationService {
     if (!parsed.success) {
       return;
     }
-    const { userId, status } = parsed.data;
+    const { userId, status, tier } = parsed.data;
+    if (tier !== 'basic') {
+      return;
+    }
 
     if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
       await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });

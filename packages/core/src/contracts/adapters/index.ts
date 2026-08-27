@@ -108,6 +108,7 @@ export type {
   KycResult,
   KycRiskSignals,
   KycStatusWriter,
+  KycStatusTransition,
   KycWebhookVerifier,
   KycCheckStatus,
   KycCheckResult,

@@ -32,7 +32,7 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
     submit: vi.fn(async () => adapterResult),
     getStatus: vi.fn(async () => adapterResult.status),
   });
-  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) });
+  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) });
   const svc = new KycVerificationService({
     drizzle: db.drizzle,
     events: events,
@@ -44,7 +44,10 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
   return { svc, events, kycAdapter, statusWriter, adapterResult };
 }
 
-const passportSubmission = { documents: [{ type: 'passport' as const, frontUrl: 'https://f' }] };
+const passportSubmission = {
+  tier: 'basic' as const,
+  documents: [{ type: 'passport' as const, frontUrl: 'https://f' }],
+};
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
@@ -98,6 +101,20 @@ beforeEach(async () => {
 });
 
 describe('KycVerificationService.submit (real PG)', () => {
+  it('tracks Advanced independently without changing the player KYC status', async () => {
+    const { svc, statusWriter, events } = makeService();
+    const userId = randomUUID();
+
+    const result = await svc.submit(userId, { ...passportSubmission, tier: 'advanced' });
+
+    expect(result.tier).toBe('advanced');
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.kyc.updated',
+      expect.objectContaining({ userId, tier: 'advanced', previousStatus: 'not_started' }),
+    );
+  });
+
   it('appends a decided record, emits submitted, and pushes the status through the writer', async () => {
     const { svc, events, statusWriter, adapterResult } = makeService();
     const userId = randomUUID();
@@ -203,7 +220,7 @@ describe('KycVerificationService.reconcile (real PG)', () => {
   it('is idempotent when the record already holds the mapped decision', async () => {
     const { svc, statusWriter, adapterResult } = makeService();
     await svc.submit(randomUUID(), passportSubmission);
-    statusWriter.setStatus = vi.fn(async () => undefined);
+    statusWriter.setStatus = vi.fn(async () => null);
 
     await svc.reconcile(adapterResult.referenceId, 'approved');
 
@@ -231,14 +248,17 @@ describe('KycVerificationService.getForPlayer (real PG)', () => {
 
     const view = await svc.getForPlayer(userId);
 
-    expect(view.history).toHaveLength(2);
-    expect(view.current?.referenceId).toBe(adapterResult.referenceId);
+    expect(view.basic.history).toHaveLength(2);
+    expect(view.basic.current?.referenceId).toBe(adapterResult.referenceId);
   });
 
   it('returns an empty view for a player with no submissions', async () => {
     const { svc } = makeService();
 
-    expect(await svc.getForPlayer(randomUUID())).toEqual({ current: null, history: [] });
+    expect(await svc.getForPlayer(randomUUID())).toEqual({
+      basic: { current: null, history: [] },
+      advanced: { current: null, history: [] },
+    });
   });
 });
 
@@ -262,6 +282,7 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
       userId,
       'resubmission_requested',
       expect.objectContaining({ source: 'reverify' }),
+      expect.anything(),
     );
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.kyc.reverify_required',

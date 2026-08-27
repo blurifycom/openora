@@ -10,7 +10,12 @@ import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
-import { KycStatusSchema, KycStatusSourceSchema, PlayerStatusSchema } from './player.js';
+import {
+  KycStatusSchema,
+  KycStatusSourceSchema,
+  KycTierSchema,
+  PlayerStatusSchema,
+} from './player.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -48,6 +53,7 @@ export const KycStatusUpdatedSchema = z.object({
   previousStatus: KycStatusSchema,
   reason: z.string().nullable(),
   source: KycStatusSourceSchema,
+  tier: KycTierSchema,
 });
 
 export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as const;
@@ -481,6 +487,7 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     referenceId: z.string(),
     provider: z.string(),
+    tier: KycTierSchema,
   }),
 
   // A threshold-triggered re-KYC flipped a verified player to resubmission_requested.
@@ -489,6 +496,7 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     reason: z.string(),
+    tier: KycTierSchema,
   }),
 
   'compliance.kyc.high_risk_signal_detected': z.object({
@@ -499,6 +507,7 @@ export const domainEventSchemas = {
     dataCenterIpDetected: z.boolean(),
     duplicateDeviceDetected: z.boolean(),
     highRiskCountryDetected: z.boolean(),
+    tier: KycTierSchema,
   }),
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
@@ -612,7 +621,10 @@ export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof doma
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v3: actorId is nullable - null marks a system-driven flip (vendor/webhook/reverify),
   // which the audit writer records as actorType 'system'.
-  'compliance.kyc.updated': 4,
+  'compliance.kyc.updated': 5,
+  'compliance.kyc.submitted': 2,
+  'compliance.kyc.reverify_required': 2,
+  'compliance.kyc.high_risk_signal_detected': 2,
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,

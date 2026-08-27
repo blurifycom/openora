@@ -113,6 +113,8 @@ export function createComplianceRouter({
       return kyc.getForPlayer(input.userId);
     }),
 
+    getMyKyc: os.getMyKyc.handler(({ context }) => kyc.getForPlayer(getUserId(context))),
+
     submitKyc: os.submitKyc.handler(({ input, context }) => {
       return kyc.submit(getUserId(context), input, context.clientMeta);
     }),
@@ -166,20 +168,20 @@ export function createComplianceRouter({
     requestKycResubmission: os.requestKycResubmission.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
-        kyc.requestResubmission(input.userId, input.reason, caller.userId),
+        kyc.requestResubmission(input.userId, input.tier, input.reason, caller.userId),
       );
     }),
 
     overrideKycStatus: os.overrideKycStatus.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
-        kyc.overrideStatus(input.userId, input.status, input.reason, caller.userId),
+        kyc.overrideStatus(input.userId, input.tier, input.status, input.reason, caller.userId),
       );
     }),
 
     bulkApproveKyc: os.bulkApproveKyc.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
-      const results = await kyc.bulkApprove(input.userIds, input.reason, caller.userId);
+      const results = await kyc.bulkApprove(input.userIds, input.tier, input.reason, caller.userId);
       // A per-item failure never reaches overrideStatus, so it leaves no
       // compliance.kyc.updated trail of its own - record the WHOLE attempted batch here
       // (every userId, success/failure per item) so a probe of nonexistent ids is still
@@ -190,7 +192,7 @@ export function createComplianceRouter({
         action: 'compliance.kyc.bulk_approve',
         resourceType: 'compliance',
         resourceId: null,
-        after: { reason: input.reason, results },
+        after: { tier: input.tier, reason: input.reason, results },
       });
       return { results };
     }),

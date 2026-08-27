@@ -47,6 +47,7 @@ async function readJson(res: Response): Promise<any> {
 
 async function verifyKyc(admin: TestClient, userId: string) {
   const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
+    tier: 'basic',
     status: 'approved',
     reason: 'QA fixture verification',
   });

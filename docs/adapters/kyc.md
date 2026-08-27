@@ -4,6 +4,8 @@
 
 Source of truth: [`packages/core/src/contracts/adapters/kyc.ts`](../../packages/core/src/contracts/adapters/kyc.ts) - `KycAdapter`, `KycDocument`, `KycVendorStatus`, `KycResult`, and the `KYC_ADAPTER` token.
 
+Each `submit(userId, documents, tier)` and `getStatus(userId, tier)` call receives the platform-owned `tier`, either `basic` or `advanced`. An adapter must use it when selecting a provider workflow if its vendor distinguishes workflows. The platform persists the tier independently of the vendor reference, so one vendor workflow can also serve both tiers. Basic alone controls the player's withdrawal KYC status; Advanced is independently tracked.
+
 Two fields drive behavior beyond their types: `KycAdapter.autoApproves` marks a rubber-stamp adapter (the default `MockKycAdapter`) - a boot guard refuses/warns if withdrawals are KYC-gated while it's bound, so the gate can't be on with verification a no-op; real providers omit it. `KycResult.verificationUrl` is set only by hosted-session vendors whose own page collects documents (see recipe 2), and omitted by document-forwarding vendors.
 
 `KycAdapter.resolveDecision(referenceId)` is an optional method: fetches the full decision
@@ -73,14 +75,20 @@ pnpm gen plugin sumsub-kyc
 
 ```ts
 // extensions/sumsub-kyc/src/sumsub-kyc-adapter.ts
-import type { KycAdapter, KycDocument, KycResult, KycVendorStatus } from '@openora/core/contracts';
+import type {
+  KycAdapter,
+  KycDocument,
+  KycResult,
+  KycTier,
+  KycVendorStatus,
+} from '@openora/core/contracts';
 
 export class SumsubKycAdapter implements KycAdapter {
-  async submit(userId: string, documents: KycDocument[]): Promise<KycResult> {
+  async submit(userId: string, documents: KycDocument[], tier: KycTier): Promise<KycResult> {
     // POST to the vendor's applicant API; no verificationUrl - documents were forwarded directly.
   }
 
-  async getStatus(userId: string): Promise<KycVendorStatus> {
+  async getStatus(userId: string, tier: KycTier): Promise<KycVendorStatus> {
     // GET applicant review status from the vendor.
   }
 
@@ -140,16 +148,17 @@ import type {
   KycDocument,
   KycResult,
   KycRiskSignals,
+  KycTier,
   KycVendorStatus,
 } from '@openora/core/contracts';
 
 export class HostedKycAdapter implements KycAdapter {
-  async submit(userId: string, _documents: KycDocument[]): Promise<KycResult> {
+  async submit(userId: string, _documents: KycDocument[], tier: KycTier): Promise<KycResult> {
     // POST to the vendor's "create session" API; the vendor collects documents itself.
     // return { referenceId: session.id, status: 'pending', verificationUrl: session.url };
   }
 
-  async getStatus(userId: string): Promise<KycVendorStatus> {
+  async getStatus(userId: string, tier: KycTier): Promise<KycVendorStatus> {
     // GET the session's current decision from the vendor.
   }
 

@@ -95,6 +95,7 @@ export default {
       return realtimeTransport.publish(kycStatusChannel(parsed.data.userId), {
         eventId: envelope.eventId,
         status: parsed.data.status,
+        tier: parsed.data.tier,
       });
     });
 

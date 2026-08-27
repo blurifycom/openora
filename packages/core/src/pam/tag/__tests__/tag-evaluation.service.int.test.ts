@@ -199,6 +199,7 @@ function kycUpdatedPayload(userId: string, status: KycStatus) {
     userId,
     playerId: null,
     actorId: SYSTEM_ACTOR_ID,
+    tier: 'basic' as const,
     status,
     previousStatus: 'pending',
     reason: null,
@@ -576,6 +577,7 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
       playerId: null,
       referenceId: 'ref-1',
       provider: 'sumsub',
+      tier: 'basic',
     });
 
     expect(await activeTagKeys(userId)).toContain('kyc_pending');
@@ -592,6 +594,7 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
       playerId: null,
       referenceId: 'ref-1',
       provider: 'sumsub',
+      tier: 'basic',
     });
 
     expect(await activeTagKeys(userId)).toContain('kyc_pending');
@@ -610,6 +613,7 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
       playerId: null,
       referenceId: 'ref-1',
       provider: 'sumsub',
+      tier: 'basic',
     });
 
     expect(await activeTagKeys(userId)).toEqual([]);
@@ -625,6 +629,7 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
       playerId: null,
       referenceId: 'ref-1',
       provider: 'sumsub',
+      tier: 'basic',
     });
 
     expect(await activeTagKeys(userId)).toEqual([]);
@@ -637,7 +642,13 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
     await seedActiveAssignment(userId, kycPendingTag);
 
     await expect(
-      service.onKycSubmitted({ userId, playerId: null, referenceId: 'ref-1', provider: 'sumsub' }),
+      service.onKycSubmitted({
+        userId,
+        playerId: null,
+        referenceId: 'ref-1',
+        provider: 'sumsub',
+        tier: 'basic',
+      }),
     ).resolves.toBeUndefined();
 
     const rows = await db.drizzle.db

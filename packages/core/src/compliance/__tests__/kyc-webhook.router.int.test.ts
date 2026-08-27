@@ -109,10 +109,12 @@ describe('compliance streamKycStatus router', () => {
     realtime.publish(kycStatusChannel('other-user'), {
       eventId: '11111111-1111-4111-8111-111111111111',
       status: 'rejected',
+      tier: 'basic',
     });
     realtime.publish(kycStatusChannel('user-1'), {
       eventId: '22222222-2222-4222-8222-222222222222',
       status: 'approved',
+      tier: 'advanced',
     });
 
     await expect(next).resolves.toEqual({
@@ -120,6 +122,7 @@ describe('compliance streamKycStatus router', () => {
       value: {
         eventId: '22222222-2222-4222-8222-222222222222',
         status: 'approved',
+        tier: 'advanced',
       },
     });
     await iterator.return?.(undefined);

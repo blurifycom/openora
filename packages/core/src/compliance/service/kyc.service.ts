@@ -15,6 +15,8 @@ import {
   type KycDocument,
   type KycRiskSignals,
   type KycStatusWriter,
+  type KycStatusTransition,
+  type KycTier,
   type KycVendorStatus,
   type KycStatus,
   type PlatformConfig,
@@ -143,10 +145,42 @@ export class KycVerificationService {
     return this.platformConfig?.kyc?.provider ?? DEFAULT_PROVIDER;
   }
 
+  private async emitUpdated(params: {
+    userId: User['id'];
+    tier: KycTier;
+    status: KycStatus;
+    previousStatus: KycStatus | null;
+    playerTransition: KycStatusTransition | null;
+    actorId: User['id'] | null;
+    reason: string | null;
+    source: 'vendor' | 'manual' | 'webhook' | 'reverify';
+  }) {
+    if (params.tier === 'basic' && !params.playerTransition) {
+      return;
+    }
+    if (params.tier === 'advanced' && params.previousStatus === params.status) {
+      return;
+    }
+    this.events.emit('compliance.kyc.updated', {
+      userId: params.userId,
+      playerId:
+        params.playerTransition?.playerId ??
+        (await this.identityReader.getPlayerIdByUserIdSafe(params.userId)),
+      actorId: params.actorId,
+      status: params.status,
+      previousStatus:
+        params.playerTransition?.previousStatus ?? params.previousStatus ?? 'not_started',
+      reason: params.reason,
+      source: params.source,
+      tier: params.tier,
+    });
+  }
+
   async submit(userId: User['id'], input: SubmitKycInput, meta?: ClientMeta) {
     const result = await this.kycAdapter.submit(
       userId,
       input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
+      input.tier,
     );
     const mappedStatus = mapVendorStatus(result.status);
     const incompleteCheck =
@@ -155,7 +189,12 @@ export class KycVerificationService {
     const decisionReason = incompleteCheck ? describeIncompleteCheck(incompleteCheck) : null;
     const decided = isDecided(status);
 
-    const row = await this.drizzle.db.transaction(async (trx) => {
+    const outcome = await this.drizzle.db.transaction(async (trx) => {
+      const [previous] = await trx
+        .select({ status: kycVerification.status })
+        .from(kycVerification)
+        .where(eq(kycVerification.referenceId, result.referenceId))
+        .for('update');
       const inserted = findOneOrThrow(
         await trx
           .insert(kycVerification)
@@ -163,6 +202,7 @@ export class KycVerificationService {
             userId,
             provider: this.provider,
             referenceId: result.referenceId,
+            tier: input.tier,
             status,
             documentTypes: input.documents.map((d) => d.type),
             decisionReason,
@@ -188,8 +228,16 @@ export class KycVerificationService {
           .returning(),
         new KycVerificationNotFoundError(userId),
       );
-      await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' }, trx);
-      return inserted;
+      const playerTransition =
+        input.tier === 'basic'
+          ? await this.statusWriter.setStatus(
+              userId,
+              status,
+              { actorId: null, source: 'vendor' },
+              trx,
+            )
+          : null;
+      return { row: inserted, previousStatus: previous?.status ?? null, playerTransition };
     });
 
     this.events.emit('compliance.kyc.submitted', {
@@ -197,10 +245,21 @@ export class KycVerificationService {
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       referenceId: result.referenceId,
       provider: this.provider,
+      tier: input.tier,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    return { ...toDto(row), verificationUrl: result.verificationUrl };
+    await this.emitUpdated({
+      userId,
+      tier: input.tier,
+      status,
+      previousStatus: outcome.previousStatus,
+      playerTransition: outcome.playerTransition,
+      actorId: null,
+      reason: decisionReason,
+      source: 'vendor',
+    });
+    return { ...toDto(outcome.row), verificationUrl: result.verificationUrl };
   }
 
   /**
@@ -276,7 +335,7 @@ export class KycVerificationService {
     }
 
     const decided = isDecided(status);
-    const row = await this.drizzle.db.transaction(async (trx) => {
+    const outcome = await this.drizzle.db.transaction(async (trx) => {
       const updated = findOneOrThrow(
         await trx
           .update(kycVerification)
@@ -293,26 +352,40 @@ export class KycVerificationService {
           .returning(),
         new KycVerificationNotFoundError(existing.id),
       );
-      await this.statusWriter.setStatus(
-        existing.userId,
-        status,
-        { actorId: null, source: 'webhook', reason: reasonFromThisReconcile },
-        trx,
-      );
-      return updated;
+      const playerTransition =
+        existing.tier === 'basic'
+          ? await this.statusWriter.setStatus(
+              existing.userId,
+              status,
+              { actorId: null, source: 'webhook', reason: reasonFromThisReconcile },
+              trx,
+            )
+          : null;
+      return { row: updated, playerTransition };
+    });
+    await this.emitUpdated({
+      userId: existing.userId,
+      tier: existing.tier,
+      status,
+      previousStatus: existing.status,
+      playerTransition: outcome.playerTransition,
+      actorId: null,
+      reason: reasonFromThisReconcile ?? null,
+      source: 'webhook',
     });
     if (opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
       this.events.emit('compliance.kyc.high_risk_signal_detected', {
         userId: existing.userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(existing.userId),
         referenceId,
+        tier: existing.tier,
         vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
         dataCenterIpDetected: opts.riskSignals.dataCenterIpDetected,
         duplicateDeviceDetected: opts.riskSignals.duplicateDeviceDetected,
         highRiskCountryDetected: opts.riskSignals.highRiskCountryDetected,
       });
     }
-    return toDto(row);
+    return toDto(outcome.row);
   }
 
   /**
@@ -349,7 +422,12 @@ export class KycVerificationService {
       .from(kycVerification)
       .where(eq(kycVerification.userId, userId))
       .orderBy(desc(kycVerification.createdAt));
-    return { current: rows[0] ? toDto(rows[0]) : null, history: rows.map(toDto) };
+    const basic = rows.filter((row) => row.tier === 'basic').map(toDto);
+    const advanced = rows.filter((row) => row.tier === 'advanced').map(toDto);
+    return {
+      basic: { current: basic[0] ?? null, history: basic },
+      advanced: { current: advanced[0] ?? null, history: advanced },
+    };
   }
 
   /**
@@ -386,6 +464,7 @@ export class KycVerificationService {
       .where(
         and(
           eq(kycVerification.userId, userId),
+          eq(kycVerification.tier, 'basic'),
           eq(kycVerification.triggeredBy, 'reverify_threshold'),
         ),
       )
@@ -404,22 +483,45 @@ export class KycVerificationService {
     }
 
     const reason = `Cumulative deposits ${totalDeposits} ${snapshot.currency} crossed the re-KYC threshold`;
-    await this.drizzle.db.insert(kycVerification).values({
+    const playerTransition = await this.drizzle.db.transaction(async (trx) => {
+      await trx.insert(kycVerification).values({
+        userId,
+        provider: this.provider,
+        referenceId: `reverify-${randomUUID()}`,
+        tier: 'basic',
+        status: 'resubmission_requested',
+        documentTypes: [],
+        triggeredBy: 'reverify_threshold',
+        triggerDeposits: totalDeposits,
+        decisionReason: reason,
+      });
+      return this.statusWriter.setStatus(
+        userId,
+        'resubmission_requested',
+        {
+          actorId: null,
+          source: 'reverify',
+          reason,
+        },
+        trx,
+      );
+    });
+    await this.emitUpdated({
       userId,
-      provider: this.provider,
-      referenceId: `reverify-${randomUUID()}`,
+      tier: 'basic',
       status: 'resubmission_requested',
-      documentTypes: [],
-      triggeredBy: 'reverify_threshold',
-      triggerDeposits: totalDeposits,
-      decisionReason: reason,
-    });
-    await this.statusWriter.setStatus(userId, 'resubmission_requested', {
+      previousStatus: current.kycStatus,
+      playerTransition,
       actorId: null,
-      source: 'reverify',
       reason,
+      source: 'reverify',
     });
-    this.events.emit('compliance.kyc.reverify_required', { userId, playerId: current.id, reason });
+    this.events.emit('compliance.kyc.reverify_required', {
+      userId,
+      playerId: current.id,
+      reason,
+      tier: 'basic',
+    });
   }
 
   /**
@@ -436,6 +538,7 @@ export class KycVerificationService {
       status: KycStatus;
       reason: string;
       actorId: User['id'];
+      tier: KycTier;
       referenceIdPrefix: string;
       decidedAt: Date | null;
     },
@@ -447,6 +550,7 @@ export class KycVerificationService {
           userId: params.userId,
           provider: MANUAL_PROVIDER,
           referenceId: `${params.referenceIdPrefix}-${params.userId}-${randomUUID()}`,
+          tier: params.tier,
           status: params.status,
           documentTypes: [],
           triggeredBy: 'manual',
@@ -456,13 +560,16 @@ export class KycVerificationService {
         .returning(),
       new KycVerificationNotFoundError(params.userId),
     );
-    await this.statusWriter.setStatus(
-      params.userId,
-      params.status,
-      { actorId: params.actorId, reason: params.reason, source: 'manual' },
-      trx,
-    );
-    return toDto(inserted);
+    const playerTransition =
+      params.tier === 'basic'
+        ? await this.statusWriter.setStatus(
+            params.userId,
+            params.status,
+            { actorId: params.actorId, reason: params.reason, source: 'manual' },
+            trx,
+          )
+        : null;
+    return { row: toDto(inserted), playerTransition };
   }
 
   /**
@@ -470,22 +577,51 @@ export class KycVerificationService {
    * call while the player is already at `resubmission_requested` - no duplicate history
    * row or `compliance.kyc.updated` emit.
    */
-  async requestResubmission(userId: User['id'], reason: string, actorId: User['id']) {
-    return this.drizzle.db.transaction(async (trx) => {
+  async requestResubmission(
+    userId: User['id'],
+    tier: KycTier,
+    reason: string,
+    actorId: User['id'],
+  ) {
+    const outcome = await this.drizzle.db.transaction(async (trx) => {
       const current = await this.requirePlayerRowForUpdate(userId, trx);
-      if (normalizeKycStatus(current.kycStatus) === 'resubmission_requested') {
-        return toDto(await this.latestVerificationOrThrow(userId, trx));
+      const latest = await this.latestVerification(userId, tier, trx);
+      const currentStatus = tier === 'basic' ? current.kycStatus : latest?.status;
+      if (currentStatus === 'resubmission_requested') {
+        return {
+          row: latest ? toDto(latest) : null,
+          playerTransition: null,
+          previousStatus: currentStatus,
+          changed: false,
+        };
       }
-
-      return this.applyManualDecision(trx, {
+      const applied = await this.applyManualDecision(trx, {
         userId,
+        tier,
         status: 'resubmission_requested',
         reason,
         actorId,
         referenceIdPrefix: 'manual-resubmit',
         decidedAt: null,
       });
+      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
     });
+    if (!outcome.row) {
+      throw new KycVerificationNotFoundError(userId);
+    }
+    if (outcome.changed) {
+      await this.emitUpdated({
+        userId,
+        tier,
+        status: 'resubmission_requested',
+        previousStatus: outcome.previousStatus,
+        playerTransition: outcome.playerTransition,
+        actorId,
+        reason,
+        source: 'manual',
+      });
+    }
+    return outcome.row;
   }
 
   /**
@@ -496,26 +632,54 @@ export class KycVerificationService {
    */
   async overrideStatus(
     userId: User['id'],
+    tier: KycTier,
     status: KycOverrideStatus,
     reason: string,
     actorId: User['id'],
   ) {
     const resolvedStatus = resolveManualStatus(status);
-    return this.drizzle.db.transaction(async (trx) => {
+    const outcome = await this.drizzle.db.transaction(async (trx) => {
       const current = await this.requirePlayerRowForUpdate(userId, trx);
-      if (normalizeKycStatus(current.kycStatus) === normalizeKycStatus(resolvedStatus)) {
-        return toDto(await this.latestVerificationOrThrow(userId, trx));
+      const latest = await this.latestVerification(userId, tier, trx);
+      const currentStatus = tier === 'basic' ? current.kycStatus : latest?.status;
+      if (
+        currentStatus &&
+        normalizeKycStatus(currentStatus) === normalizeKycStatus(resolvedStatus)
+      ) {
+        return {
+          row: latest ? toDto(latest) : null,
+          playerTransition: null,
+          previousStatus: currentStatus ?? null,
+          changed: false,
+        };
       }
-
-      return this.applyManualDecision(trx, {
+      const applied = await this.applyManualDecision(trx, {
         userId,
+        tier,
         status: resolvedStatus,
         reason,
         actorId,
         referenceIdPrefix: 'manual-override',
         decidedAt: isDecided(resolvedStatus) ? new Date() : null,
       });
+      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
     });
+    if (!outcome.row) {
+      throw new KycVerificationNotFoundError(userId);
+    }
+    if (outcome.changed) {
+      await this.emitUpdated({
+        userId,
+        tier,
+        status: resolvedStatus,
+        previousStatus: outcome.previousStatus,
+        playerTransition: outcome.playerTransition,
+        actorId,
+        reason,
+        source: 'manual',
+      });
+    }
+    return outcome.row;
   }
 
   /**
@@ -527,12 +691,13 @@ export class KycVerificationService {
    */
   async bulkApprove(
     userIds: User['id'][],
+    tier: KycTier,
     reason: string,
     actorId: User['id'],
   ): Promise<BulkApproveKycResult[]> {
     return mapConcurrent(userIds, BULK_APPROVE_CONCURRENCY, async (userId) => {
       try {
-        await this.overrideStatus(userId, 'approved', reason, actorId);
+        await this.overrideStatus(userId, tier, 'approved', reason, actorId);
         return { userId, success: true, error: null };
       } catch (err) {
         // Fixed string on the wire, regardless of error type - never the raw exception
@@ -559,13 +724,17 @@ export class KycVerificationService {
     return row;
   }
 
-  private async latestVerificationOrThrow(userId: User['id'], tx: DrizzleTx = this.drizzle.db) {
+  private async latestVerification(
+    userId: User['id'],
+    tier: KycTier,
+    tx: DrizzleTx = this.drizzle.db,
+  ) {
     const rows = await tx
       .select()
       .from(kycVerification)
-      .where(eq(kycVerification.userId, userId))
+      .where(and(eq(kycVerification.userId, userId), eq(kycVerification.tier, tier)))
       .orderBy(desc(kycVerification.createdAt))
       .limit(1);
-    return findOneOrThrow(rows, new KycVerificationNotFoundError(userId));
+    return rows[0] ?? null;
   }
 }
