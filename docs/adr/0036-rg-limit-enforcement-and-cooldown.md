@@ -55,15 +55,32 @@ install without the compliance module has no `user_limit` table and nothing to e
 declaring it required would refuse to boot instead. Where it IS bound the gate is
 fail-closed - a throwing `check*` refuses the move.
 
-**Two enforcement points:**
+**Three enforcement points**, mirroring how ADR-0032 placed the exclusion dimension:
 
 - `WalletService.deposit`, immediately after `assertDepositable` and **before the PSP
   call**. A refused deposit must never reach a provider.
-- `WalletCommandsService.debit` for `type === 'bet'`, beside the existing exclusion check.
-  A wager is measured against the wager limit AND the loss limit, taking the stake as the
-  worst case the player can lose on it - by settlement time the real loss is known but
-  refusing it would strand the round, exactly as in ADR-0032. `win` and `loss` stay
-  ungated for the same reason.
+- `GamingService.startRound`, beside the existing `playEligibility` check and before a
+  launch token is issued. This is the route the _player_ calls, so it is the one that has
+  to hand back something a client can translate; it owns its own `RgLimitExceededError`
+  rather than reusing wallet's, because casino must not import wallet's internals.
+- `WalletCommandsService.debit` for `type === 'bet'`, beside the existing
+  `WalletRgRestrictedError`. This one is reached by inbound settlement and rarely becomes
+  an HTTP response - it is the layer that holds when a round outlives the call that
+  started it, exactly as in ADR-0032. `win` and `loss` stay ungated for the same reason.
+
+A wager is measured against the wager limit AND the loss limit, taking the stake as the
+worst case the player can lose on it.
+
+**Every refusal carries a `data.reason`** from a shared contract enum
+(`RG_LIMIT_ERROR_REASONS`). Several of them share `CONFLICT` with an unrelated error on
+the same route - `startRound` also returns it for an active exclusion, `deposit` for an
+idempotency-key reuse, and the two limit-change refusals return it for opposite reasons -
+so the status code alone cannot tell a client which sentence to show, and the message
+string never reaches a screen.
+
+`RG_FLAG_THRESHOLD_PCT` moves from the server-side evaluation into the contract layer:
+the player-facing usage bar has to change colour at the same number the back-office flag
+fires at, and two copies of `80` would drift.
 
 **An on-chain crypto deposit is deliberately not gated.** It reaches the ledger through
 `handlePaymentWebhook` when the funds are already on the chain. There is nothing left to

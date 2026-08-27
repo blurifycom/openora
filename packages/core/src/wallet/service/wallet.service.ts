@@ -31,6 +31,7 @@ import {
   type RateLimitKey,
   type WalletRail,
   type PlayerTags,
+  type RgLimitErrorReason,
   type RgLimitsPort,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -214,6 +215,9 @@ export const BelowMinimumDepositError = createDomainError(
  * translate it - the message string never reaches a screen.
  */
 export type DepositLimitExceededData = {
+  // Stable discriminator: `deposit` shares CONFLICT with IdempotencyKeyReuseError, and a
+  // client must never branch on a message string.
+  reason: RgLimitErrorReason;
   limitType: string;
   period: string;
   limit: string;
@@ -223,12 +227,12 @@ export type DepositLimitExceededData = {
 export class DepositLimitExceededError extends Error {
   readonly data: DepositLimitExceededData;
 
-  constructor(data: DepositLimitExceededData) {
+  constructor(data: Omit<DepositLimitExceededData, 'reason'>) {
     super(
       `Deposit refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
     );
     this.name = 'DepositLimitExceededError';
-    this.data = data;
+    this.data = { reason: 'deposit_limit_exceeded', ...data };
   }
 }
 

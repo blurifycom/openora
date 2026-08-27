@@ -42,3 +42,21 @@ export type LimitChangeKind = z.infer<typeof LimitChangeKindSchema>;
 export const RG_INITIATORS = ['player', 'admin', 'system'] as const;
 export const RgInitiatorSchema = z.enum(RG_INITIATORS);
 export type RgInitiator = z.infer<typeof RgInitiatorSchema>;
+
+// The monitoring band an RG money limit is considered "close to breached" at. Lives in
+// the contract layer, not beside the server-side evaluation, because the player-facing
+// usage bar has to colour itself at the SAME number the back-office flag fires at - two
+// copies of 80 would drift and the two surfaces would disagree about the same limit.
+export const RG_FLAG_THRESHOLD_PCT = 80;
+
+// Why an RG gate refused. Carried as `data.reason` on the error, so a client branches on
+// a stable value rather than on an HTTP code (several of these share CONFLICT) or on a
+// message string (which never reaches a screen).
+export const RG_LIMIT_ERROR_REASONS = [
+  'cooldown_not_elapsed',
+  'limit_change_expired',
+  'deposit_limit_exceeded',
+  'wager_limit_exceeded',
+] as const;
+export const RgLimitErrorReasonSchema = z.enum(RG_LIMIT_ERROR_REASONS);
+export type RgLimitErrorReason = z.infer<typeof RgLimitErrorReasonSchema>;

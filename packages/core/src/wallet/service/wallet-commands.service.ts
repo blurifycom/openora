@@ -1,6 +1,7 @@
 import type {
   AuditWritePort,
   PlayEligibilityPort,
+  RgLimitErrorReason,
   RgLimitsPort,
   PlatformConfig,
   Uuid,
@@ -58,6 +59,9 @@ export const WalletRgRestrictedError = makeConflictError(
  * `data` so the client can translate it rather than read the message.
  */
 export type WagerLimitExceededData = {
+  // Stable discriminator: `startRound` returns CONFLICT for this AND for an active
+  // exclusion, and the player needs a different sentence for each.
+  reason: RgLimitErrorReason;
   limitType: string;
   period: string;
   limit: string;
@@ -67,12 +71,12 @@ export type WagerLimitExceededData = {
 export class WagerLimitExceededError extends Error {
   readonly data: WagerLimitExceededData;
 
-  constructor(data: WagerLimitExceededData) {
+  constructor(data: Omit<WagerLimitExceededData, 'reason'>) {
     super(
       `Wager refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
     );
     this.name = 'WagerLimitExceededError';
-    this.data = data;
+    this.data = { reason: 'wager_limit_exceeded', ...data };
   }
 }
 

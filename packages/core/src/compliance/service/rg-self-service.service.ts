@@ -2,7 +2,6 @@ import {
   DrizzleService,
   assertOwnership,
   findOneOrThrow,
-  makeConflictError,
   makeNotFoundError,
   moneyCompare,
   moneySubtract,
@@ -16,6 +15,7 @@ import type {
   IdentityReader,
   LimitPeriod,
   LimitType,
+  RgLimitErrorReason,
   ResponsibleGamingConfig,
   User,
 } from '@openora/core/contracts';
@@ -40,14 +40,30 @@ const HOUR_MS = 60 * 60 * 1000;
 const SELF_SERVICE_REASON = 'Player self-service request';
 
 export const NoPendingLimitChangeError = makeNotFoundError('PendingLimitChange');
-export const CooldownNotElapsedError = makeConflictError(
-  'CooldownNotElapsedError',
-  'The cool-down on this limit change has not elapsed yet',
-);
-export const LimitChangeExpiredError = makeConflictError(
-  'LimitChangeExpiredError',
-  'This limit change was not confirmed in time and has lapsed',
-);
+
+// Both of these refuse the same route with the same HTTP code, and the player needs a
+// different sentence for each ("come back on the 28th" vs "that request lapsed, file it
+// again"). The code alone cannot tell them apart and the message never reaches a screen,
+// so each carries a stable `reason` for the client to branch on.
+export type RgLimitChangeErrorData = { reason: RgLimitErrorReason };
+
+export class CooldownNotElapsedError extends Error {
+  readonly data: RgLimitChangeErrorData = { reason: 'cooldown_not_elapsed' };
+
+  constructor() {
+    super('The cool-down on this limit change has not elapsed yet');
+    this.name = 'CooldownNotElapsedError';
+  }
+}
+
+export class LimitChangeExpiredError extends Error {
+  readonly data: RgLimitChangeErrorData = { reason: 'limit_change_expired' };
+
+  constructor() {
+    super('This limit change was not confirmed in time and has lapsed');
+    this.name = 'LimitChangeExpiredError';
+  }
+}
 
 type LimitRow = typeof userLimit.$inferSelect;
 

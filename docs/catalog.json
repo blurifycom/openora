@@ -824,6 +824,7 @@
       "token": "RG_LIMITS",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
@@ -2041,6 +2042,10 @@
     },
     {
       "name": "RgInitiatorSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgLimitErrorReasonSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
