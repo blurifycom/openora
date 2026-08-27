@@ -14,12 +14,16 @@ import type {
   AdminPlayerSummary,
   AuditWritePort,
   FriendshipDissolvedPayload,
+  RealtimeTransport,
   SocialCommands,
 } from '@openora/core/contracts';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
-import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
+import {
+  CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+  MAX_PRIVATE_ROOMS_PER_PLAYER,
+} from '../contract/constants.js';
 import { migrate } from '../migrate.js';
 // import {
 //   mock,
@@ -86,8 +90,8 @@ function makeService(
       })),
   }),
   socialCommands?: SocialCommands,
+  transport: RealtimeTransport = new InProcessRealtimeTransport(),
 ) {
-  const transport = new InProcessRealtimeTransport();
   const events = makeEventBus();
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
@@ -1229,6 +1233,49 @@ describe('ChatService admin rooms (real PG)', () => {
       }),
     );
   });
+
+  it('cuts every member off the room channel once the room is deleted', async () => {
+    const { svc, transport } = makeService();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'End me',
+      ...NO_CLIENT_META,
+    });
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    const ownerDeliveries: unknown[] = [];
+    const memberDeliveries: unknown[] = [];
+    transport.subscribe(chatChannel(room.id), () => ownerDeliveries.push(true), ownerId);
+    transport.subscribe(chatChannel(room.id), () => memberDeliveries.push(true), memberId);
+
+    await svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META });
+
+    transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
+    expect(ownerDeliveries).toEqual([]);
+    expect(memberDeliveries).toEqual([]);
+  });
+
+  it('leaves the room channel intact when the delete is refused', async () => {
+    const { svc, transport } = makeService();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'Keep me',
+      ...NO_CLIENT_META,
+    });
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    const memberDeliveries: unknown[] = [];
+    transport.subscribe(chatChannel(room.id), () => memberDeliveries.push(true), memberId);
+
+    await expect(
+      svc.deletePrivateRoom({ roomId: room.id, userId: memberId, ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(ChatRoomOwnershipError);
+
+    transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
+    expect(memberDeliveries).toEqual([true]);
+  });
 });
 
 describe('ChatService.createPrivateRoom (real PG)', () => {
@@ -1424,8 +1471,15 @@ describe('ChatService.leaveRoom (real PG)', () => {
 });
 
 describe('ChatService.setMemberRole (real PG)', () => {
-  async function roomWithMember() {
-    const { svc, events, audit } = makeService();
+  // `signal` is an optional transport capability the first-party in-process fan-out does not
+  // implement (it has one payload lane per channel), so the spy stands in for a managed vendor.
+  function transportWithSignal() {
+    const signal = vi.fn();
+    return { transport: Object.assign(new InProcessRealtimeTransport(), { signal }), signal };
+  }
+
+  async function roomWithMember(transport?: RealtimeTransport) {
+    const { svc, events, audit } = makeService(undefined, undefined, transport);
     const ownerId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: ownerId,
@@ -1735,6 +1789,87 @@ describe('ChatService.setMemberRole (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+  });
+
+  it('signals the room channel on both promotion and revoke', async () => {
+    const { transport, signal } = transportWithSignal();
+    const { svc, room, ownerId, memberId } = await roomWithMember(transport);
+
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'member',
+      ...NO_CLIENT_META,
+    });
+
+    expect(signal.mock.calls).toEqual([
+      [
+        chatChannel(room.id),
+        CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+        { roomId: room.id, userId: memberId, role: 'moderator' },
+      ],
+      [
+        chatChannel(room.id),
+        CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+        { roomId: room.id, userId: memberId, role: 'member' },
+      ],
+    ]);
+  });
+
+  it('stays silent when the member already holds the requested role', async () => {
+    const { transport, signal } = transportWithSignal();
+    const { svc, room, ownerId, memberId } = await roomWithMember(transport);
+
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'member',
+      ...NO_CLIENT_META,
+    });
+
+    expect(signal).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when a non-owner is refused the change', async () => {
+    const { transport, signal } = transportWithSignal();
+    const { svc, room, memberId } = await roomWithMember(transport);
+    const otherId = randomUUID();
+    await svc.joinRoom({ userId: otherId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    await expect(
+      svc.setMemberRole({
+        actorId: memberId,
+        roomId: room.id,
+        userId: otherId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+
+    expect(signal).not.toHaveBeenCalled();
+  });
+
+  it('succeeds on a transport that does not implement the signal capability', async () => {
+    const { svc, room, ownerId, memberId } = await roomWithMember();
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
   });
 });
 
@@ -2205,5 +2340,83 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     const members = await svc.listRoomMembers({ roomId: room.id, viewerId: moderatorId });
 
     expect(members).toEqual([expect.objectContaining({ userId: moderatorId, username: null })]);
+  });
+});
+
+describe('ChatService staff visibility in a room roster (real PG)', () => {
+  async function adminOwnedRoom() {
+    const { svc } = makeService();
+    const admin = await seedUser(db, { name: 'Room Admin', role: 'admin' });
+    const player = await seedUser(db, { name: 'Player One', role: 'player' });
+    const room = await svc.createPrivateRoom({
+      userId: admin.id,
+      name: 'Admin room',
+      ...NO_CLIENT_META,
+    });
+    await svc.joinRoom({ userId: player.id, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    return { svc, admin, player, room };
+  }
+
+  it('shows an admin who owns the room to the players in it', async () => {
+    const { svc, admin, player, room } = await adminOwnedRoom();
+
+    const asPlayer = await svc.listRoomMembers({ roomId: room.id, viewerId: player.id });
+
+    expect(asPlayer.map((m) => ({ userId: m.userId, role: m.role }))).toEqual([
+      { userId: admin.id, role: 'owner' },
+      { userId: player.id, role: 'member' },
+    ]);
+  });
+
+  it('still hides an admin who is only a member', async () => {
+    const { svc, admin, player, room } = await adminOwnedRoom();
+    const staffMember = await seedUser(db, { name: 'Support', role: 'super-admin' });
+    await svc.joinRoom({ userId: staffMember.id, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    const asPlayer = await svc.listRoomMembers({ roomId: room.id, viewerId: player.id });
+    const asAdmin = await svc.listRoomMembers({ roomId: room.id, viewerId: admin.id });
+
+    expect(asPlayer.map((m) => m.userId)).toEqual([admin.id, player.id]);
+    expect(asAdmin.map((m) => m.userId)).toEqual([admin.id, player.id, staffMember.id]);
+  });
+
+  it('shows the owner in the moderator roster too', async () => {
+    const { svc, admin, player, room } = await adminOwnedRoom();
+    const staffMember = await seedUser(db, { name: 'Support', role: 'admin' });
+    await svc.joinRoom({ userId: staffMember.id, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    await svc.setMemberRole({
+      actorId: admin.id,
+      roomId: room.id,
+      userId: player.id,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    const asModerator = await svc.listRoomUsers({
+      roomId: room.id,
+      actorId: player.id,
+      status: 'all',
+    });
+
+    expect(asModerator.map((m) => m.userId)).toEqual([admin.id, player.id]);
+  });
+
+  it('keeps an owner-only filter free of the staff members it excludes', async () => {
+    const { svc, admin, player, room } = await adminOwnedRoom();
+    await svc.setMemberRole({
+      actorId: admin.id,
+      roomId: room.id,
+      userId: player.id,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    const owners = await svc.listRoomUsers({
+      roomId: room.id,
+      actorId: player.id,
+      status: 'owner',
+    });
+
+    expect(owners.map((m) => m.userId)).toEqual([admin.id]);
   });
 });

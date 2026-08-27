@@ -82,6 +82,15 @@ export const ChatRoomMemberSchema = z.object({
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
+// Payload of the CHAT_MEMBER_ROLE_CHANGED_SIGNAL realtime signal. Deliberately just the
+// identifiers and the new role: it tells a client what to refetch, it is not the roster.
+export const ChatMemberRoleChangedSignalSchema = z.object({
+  roomId: UuidSchema,
+  userId: UuidSchema,
+  role: ChatRoomRoleSchema,
+});
+export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
+
 export const ChatRoomRuleSchema = z.object({
   id: UuidSchema,
   roomId: UuidSchema,

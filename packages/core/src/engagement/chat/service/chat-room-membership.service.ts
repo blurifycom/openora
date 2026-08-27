@@ -10,7 +10,8 @@ import {
   type Uuid,
 } from '@openora/core/contracts';
 import { chatRoom, chatRoomBan, chatRoomMember, chatRoomRemove } from '../schema/index.js';
-import type { ChatRoomAssignableRole } from '../contract/index.js';
+import type { ChatMemberRoleChangedSignal, ChatRoomAssignableRole } from '../contract/index.js';
+import { CHAT_MEMBER_ROLE_CHANGED_SIGNAL } from '../contract/constants.js';
 import {
   ChatRoomBannedError,
   ChatRoomJoinCodeNotFoundError,
@@ -318,6 +319,14 @@ export class ChatRoomMembershipService {
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
+      // The EventBus is server-side only, so without this the promoted member keeps
+      // rendering as a plain one until their roster cache happens to expire.
+      const signalPayload: ChatMemberRoleChangedSignal = { roomId, userId, role };
+      await this.transport?.signal?.(
+        chatChannel(roomId),
+        CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+        signalPayload,
+      );
     }
     return { success: true } as const;
   }

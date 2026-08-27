@@ -1201,6 +1201,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatMemberRoleChangedSignalSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatMessageSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },

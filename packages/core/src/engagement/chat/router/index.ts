@@ -351,8 +351,13 @@ export function createChatRouter({
 
     leaveRoom: os.leaveRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
-      return mapErrors({ BAD_REQUEST: ChatRoomLastModeratorError }, () =>
-        membershipService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
+      return mapErrors(
+        {
+          BAD_REQUEST: ChatRoomLastModeratorError,
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: ChatRoomNotMemberError,
+        },
+        () => membershipService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
       );
     }),
 

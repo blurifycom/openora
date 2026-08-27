@@ -9,6 +9,7 @@ import {
   DrizzleService,
   findOneOrThrow,
   serializeRow,
+  mapConcurrent,
   pageToOffset,
   withAdvisoryXactLock,
   type DrizzleDb,
@@ -92,6 +93,26 @@ import {
 } from '../contract/constants.js';
 import { moderateContent } from '../moderation/index.js';
 const logger = createLogger('chat');
+
+// Channel revocations on room deletion go one round-trip per member to a managed transport;
+// cap the fan-out so deleting a busy room cannot flood the vendor with parallel requests.
+const ROOM_REVOKE_CONCURRENCY = 10;
+
+// Staff accounts stay out of a player's view of a room roster, with one exception: the member
+// who owns the room. Hiding the owner leaves an admin-created private room reading as ownerless
+// to every player in it - no owner badge, and no visible subject for the ownership rules.
+// `creatorId` covers rooms whose owner row predates the `owner` member role.
+function hideStaffExceptOwner(canSeeAdminUsers: boolean, creatorId: User['id'] | null) {
+  if (canSeeAdminUsers) {
+    return undefined;
+  }
+  return or(
+    isNull(user.id),
+    notInArray(user.role, ['admin', 'super-admin']),
+    eq(chatRoomMember.role, 'owner'),
+    creatorId ? eq(chatRoomMember.userId, creatorId) : undefined,
+  );
+}
 
 function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
   void Promise.resolve()
@@ -800,6 +821,11 @@ export class ChatService {
     await this.assertRoomModerator(roomId, actorId);
     const role = status === 'all' ? undefined : status;
     const canSeeAdminUsers = await this.canSeeAdminUsers(actorId);
+    const [room] = await this.drizzle.db
+      .select({ creatorId: chatRoom.creatorId })
+      .from(chatRoom)
+      .where(eq(chatRoom.id, roomId))
+      .limit(1);
     const members = await this.drizzle.db
       .select({ member: chatRoomMember, username: user.name })
       .from(chatRoomMember)
@@ -808,9 +834,7 @@ export class ChatService {
         and(
           eq(chatRoomMember.roomId, roomId),
           role ? eq(chatRoomMember.role, role) : undefined,
-          canSeeAdminUsers
-            ? undefined
-            : or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
+          hideStaffExceptOwner(canSeeAdminUsers, room?.creatorId ?? null),
         ),
       )
       .orderBy(asc(chatRoomMember.joinedAt));
@@ -1636,7 +1660,23 @@ export class ChatService {
     }
     assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
     const deletedAt = new Date();
-    await this.drizzle.db.update(chatRoom).set({ deletedAt }).where(eq(chatRoom.id, roomId));
+    // Same lock the join/leave paths take, so a member joining concurrently either lands
+    // before the roster snapshot (and gets revoked) or after the soft-delete (and is rejected).
+    const members = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const rows = await t
+          .select({ userId: chatRoomMember.userId })
+          .from(chatRoomMember)
+          .where(eq(chatRoomMember.roomId, roomId));
+        await t.update(chatRoom).set({ deletedAt }).where(eq(chatRoom.id, roomId));
+        return rows;
+      }),
+    );
+    // Only once the delete is committed: the room is gone, so cut every member off the
+    // room channel rather than leaving them subscribed to a room that 404s on every call.
+    await mapConcurrent(members, ROOM_REVOKE_CONCURRENCY, async ({ userId: memberId }) => {
+      await this.transport.revokeClientFromChannel?.(memberId, chatChannel(roomId));
+    });
     this.events.emit('chat.private_room.deleted', {
       roomId,
       creatorId: userId,
@@ -1801,7 +1841,7 @@ export class ChatService {
   }
 
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
-    await this.verifyRoomAccess(roomId, viewerId);
+    const room = await this.verifyRoomAccess(roomId, viewerId);
     const canSeeAdminUsers = viewerId ? await this.canSeeAdminUsers(viewerId) : false;
     const members = await this.drizzle.db
       .select({
@@ -1815,9 +1855,7 @@ export class ChatService {
       .where(
         and(
           eq(chatRoomMember.roomId, roomId),
-          canSeeAdminUsers
-            ? undefined
-            : or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
+          hideStaffExceptOwner(canSeeAdminUsers, room.creatorId),
         ),
       )
       .orderBy(asc(chatRoomMember.joinedAt));

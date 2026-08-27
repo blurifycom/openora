@@ -54,6 +54,16 @@ export type RealtimeTransport = {
    * invoke on teardown (eg an SSE handler on request abort).
    */
   subscribe<T>(channel: string, handler: (event: T) => void, clientId?: string): () => void;
+  /**
+   * Push a NAMED control signal to a channel - "something about this room changed, refetch"
+   * - as opposed to `publish`/`remove`, which carry the channel's payload stream itself (for
+   * chat, `ChatMessage`). A managed transport delivers it as its own named event, the way
+   * `revokeClientFromChannel` already surfaces `chat:access-revoked`, so a signal never
+   * reaches a payload subscriber and cannot corrupt that stream. Optional capability per
+   * ADR-0007: the first-party in-process transport carries one payload lane per channel and
+   * has nowhere to put an out-of-band signal, so it does not implement this.
+   */
+  signal?: (channel: string, name: string, payload: unknown) => void | Promise<void>;
   /** Revoke managed-provider credentials for a client after access is removed. */
   revokeClient?: (clientId: string) => void | Promise<void>;
   /** Revoke a managed client's access to one channel without affecting other chats. */
