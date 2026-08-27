@@ -124,25 +124,22 @@ export default {
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
     });
 
-    // How wide a burst of the same trigger for the same player collapses into one
-    // recompute. The key must NOT be `rg-eval:${userId}` alone: BullMQ dedupes on the
-    // job id and retains completed jobs for 24h (see bullmq-job-queue.ts), so a bare
-    // per-player key silently drops every later evaluation for that player within the
-    // retention window - including the one for the deposit that actually crossed the
-    // threshold. Scoping the key to (player, trigger, short window) keeps the collapsing
-    // it was there for while guaranteeing a genuinely new occasion always runs.
-    const RG_EVAL_COLLAPSE_MS = 5_000;
+    // NO idempotency key, deliberately. Any key coarser than the individual occasion
+    // drops evaluations: `rg-eval:${userId}` collapsed every later one for 24h (BullMQ
+    // dedupes on the job id and retains completed jobs - see bullmq-job-queue.ts), and a
+    // time-bucketed key still loses the crossing whenever the first job in the bucket
+    // runs while the player is below the threshold and the one that takes them over
+    // lands inside the same bucket. An RG evaluation is a full idempotent recompute, so
+    // the cost of running it once per triggering event is a handful of aggregate
+    // queries; the cost of skipping one is a threshold nobody is told about. The worker
+    // sets `serializeByOrderingKey`, so a burst for one player queues rather than piles
+    // up concurrently.
     const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
       if (!jobQueueRef) {
         return;
       }
-      const window = Math.floor(Date.now() / RG_EVAL_COLLAPSE_MS);
       void jobQueueRef
-        .enqueue(
-          RG_EVAL_QUEUE,
-          { userId, trigger },
-          { idempotencyKey: `rg-eval:${userId}:${trigger}:${window}`, orderingKey: userId },
-        )
+        .enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId })
         .catch((err) => logger.error({ err }, 'rg-eval enqueue failed'));
     };
 

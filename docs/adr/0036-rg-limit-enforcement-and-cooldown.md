@@ -68,8 +68,26 @@ fail-closed - a throwing `check*` refuses the move.
   an HTTP response - it is the layer that holds when a round outlives the call that
   started it, exactly as in ADR-0032. `win` and `loss` stay ungated for the same reason.
 
-A wager is measured against the wager limit AND the loss limit, taking the stake as the
-worst case the player can lose on it.
+A wager is measured against the **wager** limit only. The `loss` limit is deliberately
+**not** enforced: net loss is stakes minus winnings, and this platform does not record
+winnings - `game_round.winAmount` stays `'0'` on every row because win-crediting is
+deferred to a sealed `GAME_OUTCOME_AUTHORITY` that does not exist yet (ADR-0034).
+Enforcing against that number would refuse a wager the moment a player's _stakes_ reached
+their loss limit, including for a player who is up on the window; refusing on a number we
+know to be wrong is worse than not refusing. `spendFor` still computes net loss
+correctly, so the 80% review flag becomes right the day payouts start being recorded, and
+`TYPES_BY_MOVE` is the single line to change then.
+
+**The deposit gate is check-then-act and does not serialize.** The stake debit does: its
+check sits inside the debit transaction, after the `FOR UPDATE` on the player's wallet
+row, so two concurrent bets queue and the second reads the first's committed round. The
+deposit path cannot do the same - a PSP round-trip sits between the check and the credit,
+holding a row lock across a vendor network call is not an option, and refusing after the
+charge would strand the player's money. Two deposits started at once can therefore both
+pass and together exceed the limit. Closing that needs a durable reservation taken before
+the PSP call and released on failure, which changes the deposit ledger flow and is tracked
+as its own change. Until then the excess is caught the way an on-chain deposit's is: the
+`wallet.deposit.completed` evaluation raises the `limit_threshold` flag for compliance.
 
 **Every refusal carries a `data.reason`** from a shared contract enum
 (`RG_LIMIT_ERROR_REASONS`). Several of them share `CONFLICT` with an unrelated error on
@@ -98,10 +116,28 @@ stops fiat/PSP deposits and does not stop crypto ones.**
 existing one apply at once, and cancelling a request is always immediate: moving back
 toward more protection is never slowed down.
 
-The invariant, stated once: **nothing raises a limit except the player's own confirm.**
-The expiry sweep only ever clears a lapsed request, reads never promote one lazily, and
-`pendingChangeStatus` - the single reader of those timestamps - reports a request past its
-window as expired whether or not the sweep has run.
+The invariant, stated once and scoped precisely: **on the player's own path, nothing
+raises a limit except their own confirm.** The expiry sweep only ever clears a lapsed
+request, reads never promote one lazily, and `pendingChangeStatus` - the single reader of
+those timestamps - reports a request past its window as expired whether or not the sweep
+has run.
+
+The invariant is about what a _player_ may do to their own protection. It is **not** a
+restraint on the operator's compliance function: `RgService.setPlayerLimit`, the admin
+route, still writes a limit outright in either direction and voids any parked request.
+A compliance officer has to be able to impose a limit on the spot, and the override is
+permissioned (`compliance:manage-rg`) and audited under the admin's own actor - which is
+what makes it accountable rather than a hole. If a jurisdiction later requires the admin
+path to serve the cool-down too, that is a change to this ADR first, not a quiet edit to
+the service.
+
+Every read-then-decide path takes a per-limit advisory lock (`limitSlotKey`), because the
+classification is only meaningful against the value that is still there when the write
+lands: two concurrent lowerings of 100 to 50 and 80 both read 100, both classify as a
+lowering, and the later one applies 80 over 50 as an un-cooled raise. Confirm, cancel and
+expiry additionally pin their write to the exact request that was read
+(`pendingRequestedAt`), so a confirm that raced a lowering applies nothing instead of
+resurrecting a value the player has moved past, and two confirms cannot both emit.
 
 ## Consequences
 

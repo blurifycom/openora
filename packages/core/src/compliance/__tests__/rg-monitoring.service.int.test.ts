@@ -13,6 +13,7 @@ import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import { RgLimitGate } from '../adapters/rg-limit-gate.js';
 
 let db: TestDb;
 
@@ -222,6 +223,47 @@ describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
 
     const [flag] = await flagsOf(userId);
     expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'loss' });
+  });
+});
+
+// The gate deliberately does NOT hold a player to a loss limit while payouts are
+// unrecorded (ADR-0034): net loss would read as gross stakes and refuse a player who is
+// up on the window. The FLAG still uses net, so it is right the day payouts land.
+describe('RgLimitGate loss handling (real PG)', () => {
+  it('never refuses a wager on a loss limit', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'loss', amount: '100', minutes: null, period: 'daily' });
+    await seedBet(userId, '500');
+    const gate = new RgLimitGate(db.drizzle, makeService());
+
+    await expect(gate.checkWager(userId, '400')).resolves.toEqual({ allowed: true });
+  });
+
+  it('still refuses a wager on a wager limit', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'wager', amount: '100', minutes: null, period: 'daily' });
+    await seedBet(userId, '90');
+    const gate = new RgLimitGate(db.drizzle, makeService());
+
+    await expect(gate.checkWager(userId, '20')).resolves.toMatchObject({
+      allowed: false,
+      limitType: 'wager',
+    });
+  });
+
+  it('counts the attempted amount, so a move that exactly fills the limit passes', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'wager', amount: '100', minutes: null, period: 'daily' });
+    await seedBet(userId, '90');
+    const gate = new RgLimitGate(db.drizzle, makeService());
+
+    await expect(gate.checkWager(userId, '10')).resolves.toEqual({ allowed: true });
   });
 });
 

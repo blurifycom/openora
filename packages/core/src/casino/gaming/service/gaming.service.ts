@@ -9,9 +9,9 @@ import {
 } from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import {
+  RgLimitExceededError,
   type GameAdapter,
   type PlayEligibilityPort,
-  type RgLimitErrorReason,
   type RgLimitsPort,
   type WalletCommands,
   type IdentityReader,
@@ -27,33 +27,6 @@ export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
   'play is restricted by an active responsible-gambling exclusion',
 );
-/**
- * The money dimension of the same refusal `RgRestrictedError` makes on the exclusion
- * dimension (ADR-0032, ADR-0036). Owned here rather than reused from wallet: casino must
- * not import wallet's internals, and this is the route the PLAYER calls, so it is the one
- * that has to hand back something a client can translate. Wallet keeps its own refusal at
- * the debit for the inbound settlement path.
- */
-export type RgLimitExceededData = {
-  reason: RgLimitErrorReason;
-  limitType: string;
-  period: string;
-  limit: string;
-  used: string;
-};
-
-export class RgLimitExceededError extends Error {
-  readonly data: RgLimitExceededData;
-
-  constructor(data: Omit<RgLimitExceededData, 'reason'>) {
-    super(
-      `Wager refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
-    );
-    this.name = 'RgLimitExceededError';
-    this.data = { reason: 'wager_limit_exceeded', ...data };
-  }
-}
-
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
@@ -110,17 +83,15 @@ export class GamingService {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
-    // Checked HERE as well as at the debit: the debit's refusal is reached by inbound
-    // settlement and never becomes an HTTP response, so refusing at the player's own call
-    // is the only way they learn WHY - before a launch token is issued, as in ADR-0032.
+    // Advisory, not authoritative: this refuses the ordinary case before a launch token
+    // is issued and before the provider is touched, which is what gives the player a
+    // reason instead of a failed round. The check that actually HOLDS under concurrency
+    // is the identical one inside `WALLET_COMMANDS.debit`, taken under the wallet row
+    // lock - a check out here cannot serialize anything. Both raise the same error, so
+    // either path reaches the player looking the same.
     const decision = await this.rgLimits?.checkWager(userId, betAmount);
     if (decision && !decision.allowed) {
-      throw new RgLimitExceededError({
-        limitType: decision.limitType,
-        period: decision.period,
-        limit: decision.limit,
-        used: decision.used,
-      });
+      throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
     await this.getGame(gameId);

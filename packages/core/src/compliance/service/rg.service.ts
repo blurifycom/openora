@@ -6,6 +6,7 @@ import {
   makeConflictError,
   serializeRow,
   mapConcurrent,
+  withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
@@ -53,6 +54,18 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
 );
 
 const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * One critical section per limit slot, shared by every path that reads a limit and then
+ * decides what to write about it: the player's raise-or-apply classification, confirm and
+ * cancel of a parked request, and the admin's outright write. Split apart, two concurrent
+ * changes both classify against a value that is gone by the time either lands.
+ *
+ * An advisory lock (`withAdvisoryXactLock`) rather than `SELECT ... FOR UPDATE`, because
+ * the row does not exist yet for a player's first limit and there would be nothing to lock.
+ */
+export const limitSlotKey = (userId: User['id'], type: string, period: string) =>
+  `rg-limit:${userId}:${type}:${period}`;
 // The "no request parked on this limit" tuple, spelled once so no write path can clear
 // four of the five columns and leave a half-request behind.
 export const NO_PENDING_CHANGE = {
@@ -122,14 +135,19 @@ export class RgService {
   }
 
   /**
-   * Writes a limit outright: it takes effect immediately and voids any outstanding
-   * player request to weaken it. Used by the admin route, and by the self-service path
-   * for the two changes that need no cool-down (a first limit, or a lower one) - a
-   * player raising a limit goes through `RgSelfServiceService` instead.
+   * The ADMIN write: a compliance officer sets a player's limit outright, in either
+   * direction, effective immediately. It deliberately does NOT serve the cool-down - that
+   * is a control on what a *player* may do to their own protection, not a restraint on
+   * the operator's compliance function, which must be able to impose a limit on the spot.
+   * The override is permissioned (`compliance:manage-rg`) and lands in the audit log
+   * attributed to the admin, which is what makes it accountable. See ADR-0036.
    *
-   * Clearing `pending*` here is deliberate: a directly written limit is the current
-   * decision, and leaving a stale request parked beside it would let the player confirm
-   * their way back to an older, weaker value.
+   * The player's own path never comes through here: `RgSelfServiceService.upsertLimit`
+   * owns the classification and does its own write under the same per-limit lock.
+   *
+   * Clearing `pending*` is deliberate: a directly written limit is the current decision,
+   * and leaving a stale request parked beside it would let the player confirm their way
+   * back to an older, weaker value.
    */
   async setPlayerLimit(
     userId: User['id'],
@@ -138,27 +156,34 @@ export class RgService {
     initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<Limit> {
-    const [prior] = await this.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(
-        and(
-          eq(userLimit.userId, userId),
-          eq(userLimit.type, input.type),
-          eq(userLimit.period, input.period),
-        ),
-      )
-      .limit(1);
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .insert(userLimit)
-        .values({ ...input, userId })
-        .onConflictDoUpdate({
-          target: [userLimit.userId, userLimit.type, userLimit.period],
-          set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
-        })
-        .returning(),
-      new LimitNotFoundError(userId),
+    // Same critical section the player's path takes, so an admin write and a player
+    // request for the same limit cannot interleave into a state neither of them chose.
+    const { prior, row } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
+        const [existing] = await tx
+          .select()
+          .from(userLimit)
+          .where(
+            and(
+              eq(userLimit.userId, userId),
+              eq(userLimit.type, input.type),
+              eq(userLimit.period, input.period),
+            ),
+          )
+          .limit(1);
+        const written = findOneOrThrow(
+          await tx
+            .insert(userLimit)
+            .values({ ...input, userId })
+            .onConflictDoUpdate({
+              target: [userLimit.userId, userLimit.type, userLimit.period],
+              set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
+            })
+            .returning(),
+          new LimitNotFoundError(userId),
+        );
+        return { prior: existing, row: written };
+      }),
     );
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     if (prior?.pendingKind) {

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { PaymentAdapter, RgLimitsPort } from '@openora/core/contracts';
+import {
+  RgLimitExceededError,
+  type PaymentAdapter,
+  type RgLimitsPort,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -12,7 +16,7 @@ import {
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
-import { WalletService, DepositLimitExceededError } from '../service/wallet.service.js';
+import { WalletService } from '../service/wallet.service.js';
 
 let db: TestDb;
 
@@ -66,7 +70,7 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
 
     await expect(
       svc.deposit({ userId: randomUUID(), amount: '30', currency: 'USD' }),
-    ).rejects.toBeInstanceOf(DepositLimitExceededError);
+    ).rejects.toBeInstanceOf(RgLimitExceededError);
     // The player must not be charged for money the limit then rejects.
     expect(payment.processDeposit).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
@@ -94,6 +98,34 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
       svc.deposit({ userId: randomUUID(), amount: '30', currency: 'USD' }),
     ).resolves.toMatchObject({ status: 'completed' });
     expect(payment.processDeposit).toHaveBeenCalled();
+  });
+
+  // The gate must run AFTER the replay short-circuit. Before it, retrying a deposit that
+  // already completed counts the same money twice and refuses a request that should
+  // simply return the original result.
+  it('lets a replay of a completed deposit through even once the limit is used up', async () => {
+    const userId = randomUUID();
+    const idempotencyKey = randomUUID();
+    let used = 0;
+    const gate = mock<RgLimitsPort>({
+      checkWager: vi.fn(),
+      checkDeposit: vi.fn(async (_u: string, amount: string) => {
+        if (used + Number(amount) > 100) {
+          return { ...REFUSED, used: String(used) };
+        }
+        used += Number(amount);
+        return { allowed: true as const };
+      }),
+    });
+    const { svc, payment } = makeService(gate);
+    const first = await svc.deposit({ userId, amount: '100', currency: 'USD', idempotencyKey });
+
+    const replay = await svc.deposit({ userId, amount: '100', currency: 'USD', idempotencyKey });
+
+    expect(replay.transactionId).toBe(first.transactionId);
+    // One PSP charge, one ledger row, one count against the limit.
+    expect(payment.processDeposit).toHaveBeenCalledTimes(1);
+    expect(gate.checkDeposit).toHaveBeenCalledTimes(1);
   });
 
   it('passes deposits through untouched when no gate is bound', async () => {

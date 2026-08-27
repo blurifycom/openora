@@ -7,8 +7,8 @@ import {
   GameRoundNotFoundError,
   RgRestrictedError,
   InsufficientBalanceError,
-  RgLimitExceededError,
 } from '../service/gaming.service.js';
+import { RgLimitExceededError } from '@openora/core/contracts';
 
 export function createGamingRouter(gaming: GamingService) {
   const os = implement(gamingContract).$context<OssContext>();

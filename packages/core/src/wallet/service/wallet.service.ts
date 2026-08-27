@@ -20,6 +20,7 @@ import {
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  RgLimitExceededError,
   DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
   type PaymentProviderRegistry,
@@ -31,7 +32,6 @@ import {
   type RateLimitKey,
   type WalletRail,
   type PlayerTags,
-  type RgLimitErrorReason,
   type RgLimitsPort,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -208,33 +208,6 @@ export const BelowMinimumDepositError = createDomainError(
   (amount, minimum, currency, network) =>
     `Deposit of ${amount} ${currency} on ${network} is below the ${minimum} ${currency} minimum`,
 );
-
-/**
- * A deposit refused by the player's own responsible-gambling limit. Carries the whole
- * reason as typed `data` (the router forwards it, see `mapErrors`) so the client can
- * translate it - the message string never reaches a screen.
- */
-export type DepositLimitExceededData = {
-  // Stable discriminator: `deposit` shares CONFLICT with IdempotencyKeyReuseError, and a
-  // client must never branch on a message string.
-  reason: RgLimitErrorReason;
-  limitType: string;
-  period: string;
-  limit: string;
-  used: string;
-};
-
-export class DepositLimitExceededError extends Error {
-  readonly data: DepositLimitExceededData;
-
-  constructor(data: Omit<DepositLimitExceededData, 'reason'>) {
-    super(
-      `Deposit refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
-    );
-    this.name = 'DepositLimitExceededError';
-    this.data = { reason: 'deposit_limit_exceeded', ...data };
-  }
-}
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
@@ -778,6 +751,17 @@ export class WalletService {
    * BEFORE the PSP call - a refused deposit must never reach a provider, or the player
    * is charged for money the limit then rejects.
    *
+   * **This is check-then-act and it does not serialize.** A PSP round-trip sits between
+   * the check and the credit, so two deposits started at once can both read the same
+   * usage, both pass, and together exceed the limit. It is not fixable with a row lock:
+   * holding one across a vendor network call is not an option, and refusing after the
+   * charge would strand the player's money. Closing it properly needs a durable
+   * reservation taken before the PSP call and released on failure - a change to the
+   * deposit ledger flow, tracked separately. Until then the excess is caught the same
+   * way an on-chain deposit's is: the `wallet.deposit.completed` evaluation raises the
+   * `limit_threshold` flag for compliance. The stake debit has no such constraint and
+   * IS serialized - see `WalletCommandsService.debit`.
+   *
    * Only this PSP path is gated. An on-chain crypto deposit arrives by webhook when the
    * funds are already on the chain (`handlePaymentWebhook`): there is nothing left to
    * refuse, so that path deliberately stays open and raises an RG flag for compliance
@@ -790,12 +774,7 @@ export class WalletService {
     }
     const decision = await this.rgLimits.checkDeposit(userId, amount);
     if (!decision.allowed) {
-      throw new DepositLimitExceededError({
-        limitType: decision.limitType,
-        period: decision.period,
-        limit: decision.limit,
-        used: decision.used,
-      });
+      throw new RgLimitExceededError('deposit_limit_exceeded', decision);
     }
   }
 
@@ -927,7 +906,6 @@ export class WalletService {
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertDepositable(currency, amount);
-    await this.assertWithinRgDepositLimit(userId, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
     // resends after a timeout) must not re-charge. A genuine concurrent race (two
@@ -946,6 +924,10 @@ export class WalletService {
         .from(wallet)
         .where(eq(wallet.userId, userId));
     }
+
+    // AFTER the replay short-circuit: a retry of a deposit that already completed must
+    // not be counted a second time against the limit and refused for it.
+    await this.assertWithinRgDepositLimit(userId, amount);
 
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 

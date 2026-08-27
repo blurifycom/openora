@@ -7,9 +7,11 @@ import {
   moneySubtract,
   moneyToNumber,
   serializeRow,
+  withAdvisoryXactLock,
+  type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, eq, inArray, isNotNull, lte } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lte } from 'drizzle-orm';
 import type {
   ClientMeta,
   IdentityReader,
@@ -21,7 +23,7 @@ import type {
 } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
 import { LimitNotFoundError, LimitOwnershipError } from './compliance.service.js';
-import { NO_PENDING_CHANGE, RgService } from './rg.service.js';
+import { NO_PENDING_CHANGE, RgService, limitSlotKey } from './rg.service.js';
 import { RgMonitoringService } from './rg-monitoring.service.js';
 import { periodWindow, pendingChangeStatus, thresholdPct } from './rg-eval.js';
 import type {
@@ -145,26 +147,86 @@ export class RgSelfServiceService {
     input: UpsertLimitInput,
     meta?: ClientMeta,
   ): Promise<LimitView> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(
-        and(
-          eq(userLimit.userId, userId),
-          eq(userLimit.type, input.type),
-          eq(userLimit.period, input.period),
-        ),
-      )
-      .limit(1);
+    // Read, classify and write in ONE critical section. Split apart, two concurrent
+    // lowerings both measure themselves against the original value and the later one
+    // lands as an immediate RAISE over the earlier: 100 -> {50, 80} in parallel ends at
+    // 80 with no cool-down served. The classification is only meaningful against the
+    // value that is still there when the write happens.
+    const outcome = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
+        const [existing] = await tx
+          .select()
+          .from(userLimit)
+          .where(
+            and(
+              eq(userLimit.userId, userId),
+              eq(userLimit.type, input.type),
+              eq(userLimit.period, input.period),
+            ),
+          )
+          .limit(1);
 
-    if (!existing || !isWeakening(existing, input)) {
-      // setPlayerLimit also voids any request parked on this limit (and says so on the
-      // event bus) - a directly written limit is the current decision.
-      await this.rg.setPlayerLimit(userId, { ...input, userId }, userId, 'player', meta);
-      return this.viewOne(userId, input.type, input.period);
+        if (existing && isWeakening(existing, input)) {
+          return {
+            applied: false as const,
+            existing,
+            row: await this.park(tx, existing, 'increase', input),
+          };
+        }
+        // A first limit or a lower one: it takes effect now, and it voids any request
+        // parked on this limit - a directly written limit is the current decision, and
+        // leaving a stale request beside it would let the player confirm their way back
+        // to an older, weaker value.
+        const row = findOneOrThrow(
+          await tx
+            .insert(userLimit)
+            .values({ ...input, userId })
+            .onConflictDoUpdate({
+              target: [userLimit.userId, userLimit.type, userLimit.period],
+              set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
+            })
+            .returning(),
+          new LimitNotFoundError(userId),
+        );
+        return { applied: true as const, existing: existing ?? null, row };
+      }),
+    );
+
+    // Events and mail only after the transaction commits - never from inside it.
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    if (!outcome.applied) {
+      this.emitRequested(userId, playerId, outcome.existing, outcome.row, meta);
+      return this.toView(userId, outcome.row);
     }
-
-    return this.fileRequest(userId, existing, 'increase', input, meta);
+    if (outcome.existing?.pendingKind) {
+      this.events.emit(
+        'rg.limit.change_cancelled',
+        this.actedPayload(userId, playerId, outcome.existing, meta),
+      );
+    }
+    this.events.emit('rg.limit.set', {
+      userId,
+      playerId,
+      actorId: userId,
+      limitId: outcome.row.id,
+      type: outcome.row.type,
+      period: outcome.row.period,
+      amount: outcome.row.amount,
+      minutes: outcome.row.minutes,
+      previousAmount: outcome.existing?.amount ?? null,
+      previousMinutes: outcome.existing?.minutes ?? null,
+      initiatedBy: 'player',
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
+    await this.rg.notifyLimitUpdated(
+      userId,
+      outcome.row.type,
+      outcome.row.period,
+      outcome.row.amount,
+      outcome.row.minutes,
+    );
+    return this.toView(userId, outcome.row);
   }
 
   /**
@@ -176,8 +238,24 @@ export class RgSelfServiceService {
     userId: User['id'],
     meta?: ClientMeta,
   ): Promise<LimitView> {
-    const existing = await this.ownedLimit(limitId, userId);
-    return this.fileRequest(userId, existing, 'removal', { amount: null, minutes: null }, meta);
+    const target = await this.ownedLimit(limitId, userId);
+    const { existing, row } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
+        const current = await this.reread(tx, limitId, userId);
+        return {
+          existing: current,
+          row: await this.park(tx, current, 'removal', { amount: null, minutes: null }),
+        };
+      }),
+    );
+    this.emitRequested(
+      userId,
+      await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      existing,
+      row,
+      meta,
+    );
+    return this.toView(userId, row);
   }
 
   /**
@@ -190,85 +268,112 @@ export class RgSelfServiceService {
     userId: User['id'],
     meta?: ClientMeta,
   ): Promise<LimitView | null> {
-    const existing = await this.ownedLimit(limitId, userId);
-    const now = new Date();
-    const status = pendingChangeStatus(existing, now);
+    const target = await this.ownedLimit(limitId, userId);
 
-    if (status === null) {
-      throw new NoPendingLimitChangeError(limitId);
-    }
-    if (status === 'waiting') {
-      throw new CooldownNotElapsedError();
-    }
-    if (status === 'expired') {
-      // The sweep had not got to it yet. Clear it here so the player's next attempt
-      // starts from a clean row rather than hitting the same wall again.
-      await this.clearPending(existing, 'rg.limit.change_expired', null, meta);
+    // The whole decision runs under the slot lock and every write is pinned to the exact
+    // request that was read (`pendingRequestedAt`), so a confirm that raced a lowering,
+    // a cancellation, or a second confirm applies nothing at all rather than resurrecting
+    // a stale value or emitting the event twice.
+    const outcome = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
+        const current = await this.reread(tx, limitId, userId);
+        const now = new Date();
+        const status = pendingChangeStatus(current, now);
+
+        if (status === null) {
+          throw new NoPendingLimitChangeError(limitId);
+        }
+        if (status === 'waiting') {
+          throw new CooldownNotElapsedError();
+        }
+        if (status === 'expired') {
+          // The sweep had not got to it yet. Clear it here so the player's next attempt
+          // starts from a clean row rather than hitting the same wall again.
+          await tx
+            .update(userLimit)
+            .set(NO_PENDING_CHANGE)
+            .where(this.pinnedTo(current))
+            .returning({ id: userLimit.id });
+          return { kind: 'expired' as const, existing: current };
+        }
+
+        if (current.pendingKind === 'removal') {
+          const deleted = await tx
+            .delete(userLimit)
+            .where(this.pinnedTo(current))
+            .returning({ id: userLimit.id });
+          if (deleted.length === 0) {
+            throw new NoPendingLimitChangeError(limitId);
+          }
+          return { kind: 'removed' as const, existing: current };
+        }
+
+        // The single write that moves a limit upward: the new amount and the clearing of
+        // the request that authorised it land together, pinned to that request.
+        const row = findOneOrThrow(
+          await tx
+            .update(userLimit)
+            .set({
+              amount: current.pendingAmount,
+              minutes: current.pendingMinutes,
+              ...NO_PENDING_CHANGE,
+            })
+            .where(this.pinnedTo(current))
+            .returning(),
+          new NoPendingLimitChangeError(limitId),
+        );
+        return { kind: 'raised' as const, existing: current, row };
+      }),
+    );
+
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
+    if (outcome.kind === 'expired') {
+      this.events.emit(
+        'rg.limit.change_expired',
+        this.lapsedPayload(userId, playerId, outcome.existing),
+      );
       throw new LimitChangeExpiredError();
     }
 
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    const base = {
-      userId,
-      playerId,
-      actorId: userId,
-      limitId: existing.id,
-      type: existing.type,
-      period: existing.period,
-      kind: existing.pendingKind as 'increase' | 'removal',
-      previousAmount: existing.amount,
-      previousMinutes: existing.minutes,
-      requestedAmount: existing.pendingAmount,
-      requestedMinutes: existing.pendingMinutes,
-      initiatedBy: 'player' as const,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    };
+    this.events.emit(
+      'rg.limit.change_confirmed',
+      this.actedPayload(userId, playerId, outcome.existing, meta),
+    );
 
-    if (existing.pendingKind === 'removal') {
-      await this.drizzle.db.delete(userLimit).where(eq(userLimit.id, existing.id));
-      // Nothing left to breach, so the 80% flag this limit raised has to go with it -
-      // `evaluateUser` only walks limits that still exist and would leave it standing.
-      await this.monitoring.clearLimitThresholdFlag(userId, existing.type);
-      this.events.emit('rg.limit.change_confirmed', base);
+    if (outcome.kind === 'removed') {
+      // Nothing left to breach, so the flag this limit raised has to go - `evaluateUser`
+      // only walks limits that still exist and would leave it standing. Re-evaluating
+      // straight after is what stops the clear from also wiping a flag that ANOTHER
+      // period's limit of the same type is still breaching (rg_flag has no period column).
+      await this.monitoring.clearLimitThresholdFlag(userId, outcome.existing.type);
+      await this.monitoring.evaluateUser(userId, 'rg.limit.set');
       return null;
     }
 
-    // The single write that moves a limit upward: the new amount and the clearing of the
-    // request that authorised it land together, so a retry cannot apply it twice.
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .update(userLimit)
-        .set({
-          amount: existing.pendingAmount,
-          minutes: existing.pendingMinutes,
-          ...NO_PENDING_CHANGE,
-        })
-        .where(and(eq(userLimit.id, existing.id), isNotNull(userLimit.pendingKind)))
-        .returning(),
-      new NoPendingLimitChangeError(limitId),
-    );
-    this.events.emit('rg.limit.change_confirmed', base);
-    // Also the plain "the limit is now X" fact: it is what re-runs the 80% evaluation and
-    // what the admin RG history renders, and it must not depend on knowing this module's
-    // request state machine.
     this.events.emit('rg.limit.set', {
       userId,
       playerId,
       actorId: userId,
-      limitId: row.id,
-      type: row.type,
-      period: row.period,
-      amount: row.amount,
-      minutes: row.minutes,
-      previousAmount: existing.amount,
-      previousMinutes: existing.minutes,
+      limitId: outcome.row.id,
+      type: outcome.row.type,
+      period: outcome.row.period,
+      amount: outcome.row.amount,
+      minutes: outcome.row.minutes,
+      previousAmount: outcome.existing.amount,
+      previousMinutes: outcome.existing.minutes,
       initiatedBy: 'player',
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.rg.notifyLimitUpdated(userId, row.type, row.period, row.amount, row.minutes);
-    return this.toView(userId, row);
+    await this.rg.notifyLimitUpdated(
+      userId,
+      outcome.row.type,
+      outcome.row.period,
+      outcome.row.amount,
+      outcome.row.minutes,
+    );
+    return this.toView(userId, outcome.row);
   }
 
   /** Withdrawing a request restores the stricter state, so it never waits on anything. */
@@ -277,13 +382,34 @@ export class RgSelfServiceService {
     userId: User['id'],
     meta?: ClientMeta,
   ): Promise<LimitView> {
-    const existing = await this.ownedLimit(limitId, userId);
-    if (existing.pendingKind === null) {
-      // Idempotent: cancelling nothing has already achieved what the caller wanted.
-      return this.toView(userId, existing);
+    const target = await this.ownedLimit(limitId, userId);
+    const outcome = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
+        const current = await this.reread(tx, limitId, userId);
+        if (current.pendingKind === null) {
+          // Idempotent: cancelling nothing has already achieved what the caller wanted.
+          return { cleared: false as const, row: current };
+        }
+        const rows = await tx
+          .update(userLimit)
+          .set(NO_PENDING_CHANGE)
+          .where(this.pinnedTo(current))
+          .returning();
+        return { cleared: rows.length > 0, existing: current, row: rows[0] ?? current };
+      }),
+    );
+    if (outcome.cleared && outcome.existing) {
+      this.events.emit(
+        'rg.limit.change_cancelled',
+        this.actedPayload(
+          userId,
+          await this.identityReader.getPlayerIdByUserIdSafe(userId),
+          outcome.existing,
+          meta,
+        ),
+      );
     }
-    await this.clearPending(existing, 'rg.limit.change_cancelled', userId, meta);
-    return this.toView(userId, { ...existing, ...NO_PENDING_CHANGE });
+    return this.toView(userId, outcome.row);
   }
 
   /**
@@ -383,23 +509,24 @@ export class RgSelfServiceService {
     }
   }
 
-  private async fileRequest(
-    userId: User['id'],
+  /**
+   * Parks a request on a limit. Always called inside the slot lock: a new request
+   * REPLACES whatever was there and restarts the clock, and inheriting the old deadline
+   * would let a player file, wait, then swap in a bigger number and confirm it at once.
+   */
+  private async park(
+    tx: DrizzleTx,
     existing: LimitRow,
     kind: 'increase' | 'removal',
     target: { amount: string | null; minutes: number | null },
-    meta?: ClientMeta,
-  ): Promise<LimitView> {
+  ): Promise<LimitRow> {
     const now = new Date();
     const effectiveAt = new Date(now.getTime() + this.config.limitIncreaseCooldownHours * HOUR_MS);
     const expiresAt = new Date(
       effectiveAt.getTime() + this.config.limitChangeConfirmationWindowHours * HOUR_MS,
     );
-    // A new request REPLACES whatever was parked and restarts the clock. Inheriting the
-    // old deadline would let a player file, wait, then swap in a bigger number and
-    // confirm it immediately.
-    const row = findOneOrThrow(
-      await this.drizzle.db
+    return findOneOrThrow(
+      await tx
         .update(userLimit)
         .set({
           pendingKind: kind,
@@ -413,46 +540,76 @@ export class RgSelfServiceService {
         .returning(),
       new LimitNotFoundError(existing.id),
     );
+  }
+
+  /**
+   * Matches the row ONLY while it still carries the exact request that was read - the
+   * compare half of a compare-and-set. `pendingRequestedAt` is the version: a lowering,
+   * a cancellation or a second confirm all replace or clear it, so a write pinned this
+   * way applies to nothing instead of resurrecting a value the player has moved past.
+   */
+  private pinnedTo(row: LimitRow) {
+    return and(
+      eq(userLimit.id, row.id),
+      isNotNull(userLimit.pendingKind),
+      row.pendingRequestedAt === null
+        ? isNull(userLimit.pendingRequestedAt)
+        : eq(userLimit.pendingRequestedAt, row.pendingRequestedAt),
+    );
+  }
+
+  /** Re-reads the row inside the lock; ownership was already asserted by the caller. */
+  private async reread(
+    tx: DrizzleTx,
+    limitId: LimitRow['id'],
+    userId: User['id'],
+  ): Promise<LimitRow> {
+    return findOneOrThrow(
+      await tx
+        .select()
+        .from(userLimit)
+        .where(and(eq(userLimit.id, limitId), eq(userLimit.userId, userId))),
+      new LimitNotFoundError(limitId),
+    );
+  }
+
+  private emitRequested(
+    userId: User['id'],
+    playerId: string | null,
+    previous: LimitRow,
+    row: LimitRow,
+    meta?: ClientMeta,
+  ): void {
     this.events.emit('rg.limit.change_requested', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       actorId: userId,
       limitId: row.id,
       type: row.type,
       period: row.period,
-      kind,
-      previousAmount: existing.amount,
-      previousMinutes: existing.minutes,
-      requestedAmount: target.amount,
-      requestedMinutes: target.minutes,
-      effectiveAt: effectiveAt.toISOString(),
-      expiresAt: expiresAt.toISOString(),
+      kind: row.pendingKind as 'increase' | 'removal',
+      previousAmount: previous.amount,
+      previousMinutes: previous.minutes,
+      requestedAmount: row.pendingAmount,
+      requestedMinutes: row.pendingMinutes,
+      effectiveAt: (row.pendingEffectiveAt ?? new Date()).toISOString(),
+      expiresAt: (row.pendingExpiresAt ?? new Date()).toISOString(),
       initiatedBy: 'player',
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    return this.toView(userId, row);
   }
 
-  private async clearPending(
-    row: LimitRow,
-    topic: 'rg.limit.change_cancelled' | 'rg.limit.change_expired',
-    actorId: User['id'] | null,
-    meta?: ClientMeta,
-  ): Promise<void> {
-    const cleared = await this.drizzle.db
-      .update(userLimit)
-      .set(NO_PENDING_CHANGE)
-      .where(and(eq(userLimit.id, row.id), isNotNull(userLimit.pendingKind)))
-      .returning({ id: userLimit.id });
-    if (cleared.length === 0) {
-      // Someone else cleared it first; emitting a second event for one request would
-      // put a duplicate in the regulatory export.
-      return;
-    }
-    const common = {
-      userId: row.userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(row.userId),
+  /**
+   * The payload shared by the three "this request ended" topics, built from the row as it
+   * was read. Callers emit the topic themselves with a literal - routing the topic
+   * through a parameter would hide it from the catalog generator, which finds events by
+   * scanning for `.emit('<topic>'`.
+   */
+  private endedPayload(userId: User['id'], playerId: string | null, row: LimitRow) {
+    return {
+      userId,
+      playerId,
       limitId: row.id,
       type: row.type,
       period: row.period,
@@ -462,20 +619,30 @@ export class RgSelfServiceService {
       requestedAmount: row.pendingAmount,
       requestedMinutes: row.pendingMinutes,
     };
-    if (topic === 'rg.limit.change_expired') {
-      this.events.emit(topic, {
-        ...common,
-        expiresAt: (row.pendingExpiresAt ?? new Date()).toISOString(),
-      });
-      return;
-    }
-    this.events.emit(topic, {
-      ...common,
-      actorId: actorId ?? row.userId,
-      initiatedBy: 'player',
+  }
+
+  /** The player closed the request themselves: confirmed or cancelled. */
+  private actedPayload(
+    userId: User['id'],
+    playerId: string | null,
+    row: LimitRow,
+    meta?: ClientMeta,
+  ) {
+    return {
+      ...this.endedPayload(userId, playerId, row),
+      actorId: userId,
+      initiatedBy: 'player' as const,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
-    });
+    };
+  }
+
+  /** System-attributed: the window closed and nobody acted. */
+  private lapsedPayload(userId: User['id'], playerId: string | null, row: LimitRow) {
+    return {
+      ...this.endedPayload(userId, playerId, row),
+      expiresAt: (row.pendingExpiresAt ?? new Date()).toISOString(),
+    };
   }
 
   private async ownedLimit(limitId: LimitRow['id'], userId: User['id']): Promise<LimitRow> {

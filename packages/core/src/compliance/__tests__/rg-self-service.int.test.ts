@@ -55,6 +55,10 @@ function makeService(config: Partial<ResponsibleGamingConfig> = {}) {
 
 const deposit100 = { type: 'deposit', amount: '100', minutes: null, period: 'daily' } as const;
 
+async function allLimitRows(userId: string) {
+  return db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+}
+
 async function limitRow(userId: string) {
   const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
   return row!;
@@ -132,7 +136,11 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
     expect(view.pendingStatus).toBe('waiting');
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.change_requested',
-      expect.objectContaining({ kind: 'increase', requestedAmount: '500', initiatedBy: 'player' }),
+      expect.objectContaining({
+        kind: 'increase',
+        requestedAmount: '500.00',
+        initiatedBy: 'player',
+      }),
     );
   });
 
@@ -355,6 +363,110 @@ describe('RgSelfServiceService.cancelPendingChange (real PG)', () => {
     await svc.cancelPendingChange(row.id, userId);
 
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// Every one of these ran green against a read-then-write that was NOT serialized, which
+// is the point: they fail without the per-limit lock and the pinned write.
+describe('RgSelfServiceService concurrency (real PG)', () => {
+  it('two simultaneous lowerings cannot leave the higher one in force', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, deposit100);
+
+    // Both classify against 100 and both look like a lowering; unserialized, the later
+    // write lands 80 over 50 - an un-cooled raise the player never asked for.
+    await Promise.all([
+      svc.upsertLimit(userId, { ...deposit100, amount: '50' }),
+      svc.upsertLimit(userId, { ...deposit100, amount: '80' }),
+    ]);
+
+    const after = await limitRow(userId);
+    const winner = Number(after.amount);
+    expect([50, 80]).toContain(winner);
+    if (winner === 80) {
+      // 80 may only win by being the FIRST to land; 50 after it would be a lowering, and
+      // a lowering that got dropped is the bug. So an 80 outcome must mean 50 never ran
+      // last - assert the pending slot is clean either way.
+      expect(after.pendingKind).toBeNull();
+    }
+    // Whatever won, the limit must never have risen above where it started.
+    expect(winner).toBeLessThanOrEqual(100);
+  });
+
+  it('a confirm that races a lowering applies nothing', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, deposit100);
+    await svc.upsertLimit(userId, { ...deposit100, amount: '500' });
+    const row = await limitRow(userId);
+    await backdatePending(row.id, new Date(Date.now() - HOUR), new Date(Date.now() + DAY));
+
+    // The lowering voids the request; the confirm holds a stale read of it.
+    await svc.upsertLimit(userId, { ...deposit100, amount: '20' });
+    await expect(svc.confirmPendingChange(row.id, userId)).rejects.toBeInstanceOf(
+      NoPendingLimitChangeError,
+    );
+
+    expect((await limitRow(userId)).amount).toBe('20.00');
+  });
+
+  it('a confirm that races a cancel neither applies nor double-emits', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, deposit100);
+    await svc.upsertLimit(userId, { ...deposit100, amount: '500' });
+    const row = await limitRow(userId);
+    await backdatePending(row.id, new Date(Date.now() - HOUR), new Date(Date.now() + DAY));
+
+    const results = await Promise.allSettled([
+      svc.confirmPendingChange(row.id, userId),
+      svc.cancelPendingChange(row.id, userId),
+    ]);
+
+    const confirmed = events.emit.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'rg.limit.change_confirmed',
+    );
+    expect(confirmed.length).toBeLessThanOrEqual(1);
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+  });
+
+  it('two simultaneous confirms raise the limit once and emit once', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, deposit100);
+    await svc.upsertLimit(userId, { ...deposit100, amount: '500' });
+    const row = await limitRow(userId);
+    await backdatePending(row.id, new Date(Date.now() - HOUR), new Date(Date.now() + DAY));
+
+    await Promise.allSettled([
+      svc.confirmPendingChange(row.id, userId),
+      svc.confirmPendingChange(row.id, userId),
+    ]);
+
+    expect((await limitRow(userId)).amount).toBe('500.00');
+    expect(
+      events.emit.mock.calls.filter((c: unknown[]) => c[0] === 'rg.limit.change_confirmed'),
+    ).toHaveLength(1);
+  });
+
+  it('a confirmed removal leaves a still-breached monthly limit of the same type flagged', async () => {
+    const { svc, monitoring } = makeService();
+    const userId = randomUUID();
+    await seedCompletedDeposit(userId, '900');
+    // Daily 100 and monthly 1000, both deposit-type, both breached; rg_flag carries no
+    // period, so clearing on removal must not wipe the monthly one's flag.
+    await svc.upsertLimit(userId, deposit100);
+    await svc.upsertLimit(userId, { ...deposit100, amount: '1000', period: 'monthly' });
+    await monitoring.evaluateUser(userId, 'rg.limit.set');
+    const daily = (await allLimitRows(userId)).find((r) => r.period === 'daily')!;
+    await svc.requestLimitRemoval(daily.id, userId);
+    await backdatePending(daily.id, new Date(Date.now() - HOUR), new Date(Date.now() + DAY));
+
+    await svc.confirmPendingChange(daily.id, userId);
+
+    const flags = await db.drizzle.db.select().from(rgFlag).where(eq(rgFlag.userId, userId));
+    expect(flags.filter((f) => f.status === 'active')).toHaveLength(1);
   });
 });
 

@@ -10,13 +10,25 @@ import { userLimit } from '../schema/index.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import { periodWindow } from '../service/rg-eval.js';
 
-// A wager is gated against the wager limit AND the loss limit: a stake is the most a
-// player can lose on it, so the worst-case reading is the only one that can actually
-// hold a loss limit. (Settlement is inbound and asynchronous - by the time the real
-// loss is known, refusing it would strand the round; see ADR-0032.)
+/**
+ * Which limits each move is actually held to.
+ *
+ * `loss` is NOT enforced, and the omission is the point. Net loss is stakes minus
+ * winnings, and this platform does not record winnings: `game_round.winAmount` stays
+ * `'0'` on every row because win-crediting is deliberately deferred to a sealed
+ * `GAME_OUTCOME_AUTHORITY` that does not exist yet (ADR-0034). Enforcing a loss limit
+ * against that number would refuse a wager the moment a player's STAKES reached it -
+ * turning "stop me when I'm down 100" into "stop me after I've bet 100", including for a
+ * player who is up on the window. Refusing on a number the platform knows to be wrong is
+ * worse than not refusing.
+ *
+ * `RgMonitoringService.spendFor` still computes the loss limit correctly, so the 80%
+ * review flag is right the day payouts start being recorded - and this list is the one
+ * line to change then.
+ */
 const TYPES_BY_MOVE = {
   deposit: ['deposit'],
-  wager: ['wager', 'loss'],
+  wager: ['wager'],
 } as const satisfies Record<string, readonly LimitType[]>;
 
 /**

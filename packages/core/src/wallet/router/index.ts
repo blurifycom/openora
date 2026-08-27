@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_PAYMENT_PROVIDER,
   RATE_LIMIT_KEYS,
+  RgLimitExceededError,
   makeRateLimitKey,
   type AuditWritePort,
   type JobQueueAdapter,
@@ -51,7 +52,6 @@ import {
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
-  DepositLimitExceededError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
 } from '../service/wallet.service.js';
@@ -180,7 +180,7 @@ export function createWalletRouter({
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
           // The RG refusal forwards its typed `.data` (limitType/period/limit/used) so
           // the client renders a translated message, never `ORPCError.message`.
-          CONFLICT: [IdempotencyKeyReuseError, DepositLimitExceededError],
+          CONFLICT: [IdempotencyKeyReuseError, RgLimitExceededError],
         },
         () =>
           wallet.deposit({

@@ -94,8 +94,8 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
     await expect(
       gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
     ).rejects.toMatchObject({
-      name: 'WagerLimitExceededError',
-      data: { limitType: 'wager', period: 'daily', limit: '50', used: '45' },
+      name: 'RgLimitExceededError',
+      data: { reason: 'wager_limit_exceeded', limitType: 'wager', period: 'daily', limit: '50' },
     });
     expect(await balanceOf(w.userId)).toBe(100);
     expect(await txRows(w.id)).toHaveLength(0);
@@ -134,6 +134,46 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
     await expect(
       ungated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
     ).resolves.toMatchObject({ ok: true });
+  });
+
+  // The check must sit INSIDE the debit transaction, after the wallet row's FOR UPDATE.
+  // Before the lock it is a read two concurrent bets can both pass.
+  it('serializes concurrent bets so they cannot jointly pass the same limit', async () => {
+    const w = await seedWallet({ balance: '1000' });
+    let staked = 0;
+    // Stands in for the real spend query: it reports what previous bets in this test
+    // have already committed, so a check taken before the lock would let both through.
+    const limits = mock<RgLimitsPort>({
+      checkDeposit: vi.fn(),
+      checkWager: vi.fn(async (_userId: string, amount: string) => {
+        await new Promise((r) => setTimeout(r, 10));
+        if (staked + Number(amount) > 100) {
+          return {
+            allowed: false as const,
+            limitType: 'wager' as const,
+            period: 'daily' as const,
+            limit: '100',
+            used: String(staked),
+          };
+        }
+        staked += Number(amount);
+        return { allowed: true as const };
+      }),
+    });
+    const gated = new WalletCommandsService(eligibility(false), audit, undefined, limits);
+
+    const results = await Promise.allSettled([
+      db.drizzle.db.transaction((tx) =>
+        gated.debit(tx, { userId: w.userId, amount: '60', type: 'bet' }),
+      ),
+      db.drizzle.db.transaction((tx) =>
+        gated.debit(tx, { userId: w.userId, amount: '60', type: 'bet' }),
+      ),
+    ]);
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(940);
   });
 
   it('refuses on the exclusion before it even asks about the amount', async () => {

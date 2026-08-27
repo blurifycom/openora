@@ -1,16 +1,16 @@
-import type {
-  AuditWritePort,
-  PlayEligibilityPort,
-  RgLimitErrorReason,
-  RgLimitsPort,
-  PlatformConfig,
-  Uuid,
-  WalletCommands,
-  WalletDebitArgs,
-  WalletDebitOutcome,
-  WalletCreditArgs,
-  WalletCreditOutcome,
-  WalletTransactionType,
+import {
+  RgLimitExceededError,
+  type AuditWritePort,
+  type PlayEligibilityPort,
+  type RgLimitsPort,
+  type PlatformConfig,
+  type Uuid,
+  type WalletCommands,
+  type WalletDebitArgs,
+  type WalletDebitOutcome,
+  type WalletCreditArgs,
+  type WalletCreditOutcome,
+  type WalletTransactionType,
 } from '@openora/core/contracts';
 import {
   createDomainError,
@@ -53,33 +53,6 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
-/**
- * A wager refused by the player's own wager or loss limit. The amount dimension of RG,
- * beside `WalletRgRestrictedError`'s exclusion dimension (ADR-0032). Carries typed
- * `data` so the client can translate it rather than read the message.
- */
-export type WagerLimitExceededData = {
-  // Stable discriminator: `startRound` returns CONFLICT for this AND for an active
-  // exclusion, and the player needs a different sentence for each.
-  reason: RgLimitErrorReason;
-  limitType: string;
-  period: string;
-  limit: string;
-  used: string;
-};
-
-export class WagerLimitExceededError extends Error {
-  readonly data: WagerLimitExceededData;
-
-  constructor(data: Omit<WagerLimitExceededData, 'reason'>) {
-    super(
-      `Wager refused: it would exceed the ${data.period} ${data.limitType} limit of ${data.limit} (${data.used} already used)`,
-    );
-    this.name = 'WagerLimitExceededError';
-    this.data = { reason: 'wager_limit_exceeded', ...data };
-  }
-}
-
 const DEFAULT_ROLLOVER_MULTIPLIER = '1';
 
 type CompletedBonusCredit = { id: string; currency: string; creditedAmount: string };
@@ -119,22 +92,8 @@ export class WalletCommandsService implements WalletCommands {
   async debit(tx: unknown, { userId, amount, type }: WalletDebitArgs): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
-    if (type === 'bet') {
-      if (await this.playEligibility.isRestricted(userId)) {
-        throw new WalletRgRestrictedError();
-      }
-      // The only point where the stake is known, so the only place a wager/loss limit can
-      // be applied. `win` and `loss` stay ungated for the ADR-0032 reason: they settle a
-      // round that was already staked, and refusing them strands it.
-      const decision = await this.rgLimits?.checkWager(userId, amount);
-      if (decision && !decision.allowed) {
-        throw new WagerLimitExceededError({
-          limitType: decision.limitType,
-          period: decision.period,
-          limit: decision.limit,
-          used: decision.used,
-        });
-      }
+    if (type === 'bet' && (await this.playEligibility.isRestricted(userId))) {
+      throw new WalletRgRestrictedError();
     }
 
     // `loss` is informational (stake already left at bet time): 0-amount row, balance untouched. Every other debit is real money.
@@ -146,6 +105,22 @@ export class WalletCommandsService implements WalletCommands {
     if (!row) {
       return { ok: false, available: '0' };
     }
+
+    // Deliberately AFTER the `FOR UPDATE` above, not at the top of this method: the limit
+    // check is a read, so checking it before taking the lock lets two concurrent bets see
+    // the same usage and both pass. Under the lock the second one waits for the first to
+    // commit its round, and reads it. This is the only point where the stake is known,
+    // and the only place a wager limit can actually be held.
+    //
+    // `win` and `loss` stay ungated for the ADR-0032 reason: they settle a round that was
+    // already staked, and refusing them strands it.
+    if (type === 'bet' && this.rgLimits) {
+      const decision = await this.rgLimits.checkWager(userId, amount);
+      if (!decision.allowed) {
+        throw new RgLimitExceededError('wager_limit_exceeded', decision);
+      }
+    }
+
     const available = await readWalletBalance(txn, row.id, row.currency);
 
     if (type === 'loss') {
