@@ -249,6 +249,12 @@ export class ChatService {
     private readonly socialCommands?: SocialCommands,
   ) {}
 
+  /**
+   * The room channel's PAYLOAD lane, and the only one the `streamMessages` SSE route serves:
+   * everything delivered here is a `ChatMessage`. Named control signals travel the separate
+   * `RealtimeTransport.signal` lane and are never delivered to this listener - which is why no
+   * filtering is needed here, and why an SSE-only client does not observe them.
+   */
   subscribeMessages(
     roomId: ChatRoom['id'] | null,
     listener: (message: ChatMessage) => void,

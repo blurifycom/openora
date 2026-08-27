@@ -62,6 +62,10 @@ export type RealtimeTransport = {
    * reaches a payload subscriber and cannot corrupt that stream. Optional capability per
    * ADR-0007: the first-party in-process transport carries one payload lane per channel and
    * has nowhere to put an out-of-band signal, so it does not implement this.
+   *
+   * The receiving half is `RealtimeSubscribeHandlers.onSignal` in react/context/realtime-client;
+   * a vendor adapter bridges the two. Both halves are optional, so a transport that publishes
+   * signals and a client that ignores them are each valid on their own.
    */
   signal?: (channel: string, name: string, payload: unknown) => void | Promise<void>;
   /** Revoke managed-provider credentials for a client after access is removed. */
