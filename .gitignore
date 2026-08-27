@@ -5,6 +5,7 @@ dist
 .turbo
 coverage
 *.local
+.idea
 .env
 .env.*
 !.env.example
@@ -30,6 +31,7 @@ CLAUDE.md
 .vscode/mcp.json
 .codex/
 .agents/
+.ai/mcp
 .claude/*
 !.claude/settings.json
 .github/*
