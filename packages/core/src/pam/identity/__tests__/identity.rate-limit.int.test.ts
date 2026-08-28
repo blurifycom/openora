@@ -132,7 +132,7 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
     for (let i = 0; i < 3; i++) {
       await expect(
         svc.verifyTwoFactor(
-          { code: '123456', trustDevice: false },
+          { code: '123456', method: 'totp', trustDevice: false },
           { cookie: `better-auth.two_factor=${twoFactorIdentifier}; junk${i}=${i}` },
           new Headers(),
         ),
@@ -246,7 +246,11 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
-      svc.verifyTwoFactor({ code: '123456', trustDevice: false }, {}, new Headers()),
+      svc.verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        {},
+        new Headers(),
+      ),
     ).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });

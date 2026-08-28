@@ -138,11 +138,31 @@ export const Enable2faResultSchema = z.object({
   backupCodes: z.array(z.string()),
 });
 
+// The two credentials that clear a challenge today. A backup code is single-use and
+// spends itself, which is what makes it the recovery path off a lost authenticator.
+export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code']);
+
 export const Verify2faInputSchema = z.object({
-  code: z.string().min(6).max(10),
+  // A TOTP code is six digits; a backup code is ten characters split by a hyphen.
+  code: z.string().min(6).max(11),
+  method: TwoFactorChallengeMethodSchema.default('totp'),
   // Suppresses the second factor on this browser until the trust window lapses.
   // Honoured only while the operator allows a non-zero trusted-device window.
   trustDevice: z.boolean().default(false),
+});
+
+export const RegenerateBackupCodesInputSchema = z.object({
+  password: z.string().min(8),
+});
+
+export const TrustCurrentDeviceInputSchema = Verify2faInputSchema.omit({
+  trustDevice: true,
+}).extend({
+  password: z.string().min(8),
+});
+
+export const BackupCodesResultSchema = z.object({
+  backupCodes: z.array(z.string()),
 });
 
 export const Disable2faInputSchema = z.object({
@@ -209,6 +229,9 @@ export type UsernameAvailabilityOutput = z.infer<typeof UsernameAvailabilityOutp
 export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
+export type TwoFactorChallengeMethod = z.infer<typeof TwoFactorChallengeMethodSchema>;
+export type RegenerateBackupCodesInput = z.infer<typeof RegenerateBackupCodesInputSchema>;
+export type TrustCurrentDeviceInput = z.infer<typeof TrustCurrentDeviceInputSchema>;
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>;

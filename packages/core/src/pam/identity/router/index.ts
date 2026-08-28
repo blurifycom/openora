@@ -115,6 +115,14 @@ export function createIdentityRouter(
       ),
     ),
 
+    regenerateBackupCodes: os.regenerateBackupCodes.handler(({ input, context }) =>
+      identity.regenerateBackupCodes(
+        input,
+        context.request.headers,
+        context.resHeaders ?? new Headers(),
+      ),
+    ),
+
     requestPasswordReset: os.requestPasswordReset.handler(({ input }) =>
       identity.requestPasswordReset(input),
     ),
@@ -247,12 +255,38 @@ export function createIdentityRouter(
         adminSecurity.listTrustedDevices(getUserId(context), context.clientMeta.userAgent),
       ),
 
+      trustCurrentDevice: os.adminSecurity.trustCurrentDevice.handler(({ input, context }) =>
+        identity.trustCurrentDevice(
+          input,
+          context.request.headers,
+          context.resHeaders ?? new Headers(),
+        ),
+      ),
+
       revokeTrustedDevice: os.adminSecurity.revokeTrustedDevice.handler(({ input, context }) => {
         const userId = getUserId(context);
         return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
-          adminSecurity.revokeTrustedDevice(userId, input.id, userId, context.clientMeta),
+          adminSecurity.revokeTrustedDevice(
+            userId,
+            input.id,
+            userId,
+            context.clientMeta,
+            getSessionId(context),
+          ),
         );
       }),
+
+      resetUserTwoFactor: os.adminSecurity.resetUserTwoFactor.handler(
+        async ({ input, context }) => {
+          const caller = await adminGuard.assert(context, 'admin', 'update');
+          return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+            adminSecurity.resetTwoFactor(input.userId, caller.userId, {
+              ip: caller.ip,
+              userAgent: caller.userAgent,
+            }),
+          );
+        },
+      ),
 
       revokeUserTrustedDevice: os.adminSecurity.revokeUserTrustedDevice.handler(
         async ({ input, context }) => {

@@ -25,10 +25,13 @@ import {
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { user, session } from '../schema/index.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
+import type { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
 import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
   signInEmailMock,
+  verifyTotpMock,
+  verifyBackupCodeMock,
   getSessionMock,
   updateUserMock,
   requestPasswordResetEmailOTPMock,
@@ -37,6 +40,8 @@ const {
   capturedAuthOptions,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
+  verifyTotpMock: vi.fn(),
+  verifyBackupCodeMock: vi.fn(),
   getSessionMock: vi.fn().mockResolvedValue(null),
   updateUserMock: vi.fn(),
   requestPasswordResetEmailOTPMock: vi.fn(),
@@ -63,6 +68,8 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         getSession: getSessionMock,
         signUpEmail: vi.fn(),
         signInEmail: signInEmailMock,
+        verifyTOTP: verifyTotpMock,
+        verifyBackupCode: verifyBackupCodeMock,
         signOut: vi.fn(),
         updateUser: updateUserMock,
         requestPasswordResetEmailOTP: requestPasswordResetEmailOTPMock,
@@ -951,5 +958,145 @@ describe('IdentityService.updateProfile language validation', () => {
       expect.objectContaining({ body: expect.objectContaining({ language: 'fr' }) }),
     );
     expect(result.user.language).toBe('fr');
+  });
+});
+
+describe('IdentityService.verifyTwoFactor', () => {
+  const okResponse = () => jsonResponse({ status: true }, 200);
+
+  const pendingChallenge = (userId: string) =>
+    mock<TwoFactorLockoutService>({
+      resolvePendingUserId: vi.fn(async () => userId),
+      assertNotLocked: vi.fn(async () => undefined),
+      recordFailure: vi.fn(async () => undefined),
+      reset: vi.fn(async () => undefined),
+    });
+
+  it('spends a backup code through better-auth instead of the authenticator', async () => {
+    const account = await seedUser();
+    verifyBackupCodeMock.mockResolvedValue(okResponse());
+    const events = makeEventBus();
+    const svc = buildService({ events, twoFactorLockout: pendingChallenge(account.id) });
+
+    await svc.verifyTwoFactor(
+      { code: 'lH2MN-bvPJb', method: 'backup_code', trustDevice: false },
+      {},
+      new Headers(),
+    );
+
+    expect(verifyBackupCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { code: 'lH2MN-bvPJb', trustDevice: false } }),
+    );
+    expect(verifyTotpMock).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.verified',
+      expect.objectContaining({ userId: account.id, method: 'backup_code' }),
+    );
+  });
+
+  it('counts a rejected backup code against the lockout', async () => {
+    const account = await seedUser();
+    verifyBackupCodeMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const lockout = pendingChallenge(account.id);
+    const svc = buildService({ twoFactorLockout: lockout });
+
+    await expect(
+      svc.verifyTwoFactor(
+        { code: 'lH2MN-bvPJb', method: 'backup_code', trustDevice: false },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(lockout.recordFailure).toHaveBeenCalledWith(account.id, expect.anything());
+  });
+
+  it('announces enrolment only for the challenge answered from a live session', async () => {
+    const account = await seedUser();
+    verifyTotpMock.mockResolvedValue(okResponse());
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    const enrolment = makeEventBus();
+
+    await buildService({ events: enrolment }).verifyTwoFactor(
+      { code: '123456', method: 'totp', trustDevice: false },
+      {},
+      new Headers(),
+    );
+
+    expect(enrolment.emit).toHaveBeenCalledWith(
+      'identity.2fa.enabled',
+      expect.objectContaining({ userId: account.id }),
+    );
+
+    getSessionMock.mockResolvedValue(null);
+    const signIn = makeEventBus();
+
+    await buildService({
+      events: signIn,
+      twoFactorLockout: pendingChallenge(account.id),
+    }).verifyTwoFactor({ code: '123456', method: 'totp', trustDevice: false }, {}, new Headers());
+
+    expect(signIn.emit).toHaveBeenCalledWith(
+      'identity.2fa.verified',
+      expect.objectContaining({ userId: account.id }),
+    );
+    expect(signIn.emit).not.toHaveBeenCalledWith('identity.2fa.enabled', expect.anything());
+  });
+});
+
+describe('IdentityService.trustCurrentDevice', () => {
+  const BROWSER_UA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  const challengeResponse = () => {
+    const res = jsonResponse({ twoFactorRedirect: true }, 200);
+    res.headers.append('set-cookie', 'better-auth.two_factor=pending-value; Path=/; HttpOnly');
+    return res;
+  };
+
+  const makeTrustedDevices = () =>
+    new TrustedDeviceService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      trustedDeviceDays: 30,
+    });
+
+  it('replays the sign-in leg so better-auth issues its trust cookie', async () => {
+    const account = await seedUser();
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    signInEmailMock.mockResolvedValue(challengeResponse());
+    const trusted = jsonResponse({ status: true }, 200);
+    trusted.headers.append('set-cookie', 'better-auth.trust_device=granted; Path=/; HttpOnly');
+    verifyTotpMock.mockResolvedValue(trusted);
+    const trustedDevices = makeTrustedDevices();
+    const resHeaders = new Headers();
+
+    await buildService({ trustedDevices }).trustCurrentDevice(
+      { password: 'rightpass1', code: '123456', method: 'totp' },
+      { cookie: 'better-auth.session_token=live', 'user-agent': BROWSER_UA },
+      resHeaders,
+    );
+
+    const [call] = verifyTotpMock.mock.calls;
+    expect(call?.[0].body).toEqual({ code: '123456', trustDevice: true });
+    expect(call?.[0].headers.get('cookie')).toBe('better-auth.two_factor=pending-value');
+    expect(resHeaders.getSetCookie().join(';')).toContain('trust_device=granted');
+    expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(true);
+  });
+
+  it('refuses an account that has no second factor to trust', async () => {
+    const account = await seedUser();
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const trustedDevices = makeTrustedDevices();
+
+    await expect(
+      buildService({ trustedDevices }).trustCurrentDevice(
+        { password: 'rightpass1', code: '123456', method: 'totp' },
+        { 'user-agent': BROWSER_UA },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(verifyTotpMock).not.toHaveBeenCalled();
+    expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
   });
 });

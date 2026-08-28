@@ -18,7 +18,6 @@ import * as z from 'zod';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
-import { player } from '@openora/core/pam/schema/profile';
 import type {
   CacheAdapter,
   RateLimiterAdapter,
@@ -30,6 +29,8 @@ import type {
   Enable2faInput,
   Verify2faInput,
   Disable2faInput,
+  RegenerateBackupCodesInput,
+  TrustCurrentDeviceInput,
   RequestPasswordResetInput,
   VerifyPasswordResetOtpInput,
   ResetPasswordInput,
@@ -119,6 +120,18 @@ function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   return undefined;
 }
 
+// A web Response exposes Set-Cookie as full attribute strings; a request carries only
+// the name=value pairs.
+function requestCookieHeader(res: globalThis.Response): string {
+  return (res.headers.getSetCookie?.() ?? [])
+    .map((cookie) => {
+      const [pair = ''] = cookie.split(';');
+      return pair.trim();
+    })
+    .filter((pair) => pair.length > 0)
+    .join('; ');
+}
+
 function hasTrustDeviceCookie(headers: Headers): boolean {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
@@ -172,6 +185,8 @@ type ExtendedAuthApi = {
   >;
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string; trustDevice?: boolean }>;
+  verifyBackupCode: AuthCall<{ code: string; trustDevice?: boolean }>;
+  generateBackupCodes: AuthCall<{ password: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
   requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
   checkVerificationOTP: AuthCall<{ email: string; type: 'forget-password'; otp: string }>;
@@ -1191,11 +1206,11 @@ export class IdentityService {
     }
 
     const trustDevice = input.trustDevice && this.trustedDevices !== undefined;
-    const res = await this.api.verifyTOTP({
-      body: { code: input.code, trustDevice },
-      headers,
-      asResponse: true,
-    });
+    const body = { code: input.code, trustDevice };
+    const res =
+      input.method === 'backup_code'
+        ? await this.api.verifyBackupCode({ body, headers, asResponse: true })
+        : await this.api.verifyTOTP({ body, headers, asResponse: true });
     if (!res.ok && challengedUserId) {
       await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
     }
@@ -1208,17 +1223,23 @@ export class IdentityService {
     // already dead here - the actor is the identity resolved before the call.
     const userId = challengedUserId ?? (await this.currentUserId(headers));
     if (userId) {
-      this.events.emit('identity.2fa.enabled', {
-        userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-        method: 'totp',
-        ip,
-        userAgent,
-      });
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+      // A challenge answered from a live session is the enrolment step: better-auth only
+      // flips twoFactorEnabled once the first code clears. Every later verification is a
+      // sign-in, which carries the pending cookie instead and must not re-announce setup.
+      if (sessionUserId) {
+        this.events.emit('identity.2fa.enabled', {
+          userId,
+          playerId,
+          method: input.method,
+          ip,
+          userAgent,
+        });
+      }
       this.events.emit('identity.2fa.verified', {
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-        method: 'totp',
+        playerId,
+        method: input.method,
         trustedDevice: trustDevice,
         ip,
         userAgent,
@@ -1228,6 +1249,104 @@ export class IdentityService {
       }
     }
     return SUCCESS;
+  }
+
+  /**
+   * Grants this browser its trust window without a sign-out. better-auth issues the
+   * trust cookie only on the sign-in leg of a challenge, so the grant has to replay
+   * that leg: the account proves its password and a fresh second factor, and the
+   * cookies better-auth returns are the ones the browser keeps.
+   */
+  async trustCurrentDevice(
+    input: TrustCurrentDeviceInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
+    }
+    await assertRateLimit(this.limiter, `trustDevice:${userId}`, TWO_FACTOR_PASSWORD_RATE_LIMIT);
+
+    const [account] = await this.drizzle.db
+      .select({ email: user.email })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!account) {
+      throw new UserNotFoundError(userId);
+    }
+
+    const signIn = await this.auth.api.signInEmail({
+      body: { email: account.email, password: input.password },
+      headers: withoutTrustDeviceCookie(headers),
+      asResponse: true,
+    });
+    await ensureOk(signIn);
+    const signInBody = (await signIn.json()) as { twoFactorRedirect?: boolean };
+    if (signInBody.twoFactorRedirect !== true) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: 'Two-factor authentication is not enabled for this account',
+      });
+    }
+
+    // Only the cookies the challenge just issued: leaving the live session cookie in
+    // place makes better-auth treat the call as a settings change and skip the trust.
+    const challengeHeaders = new Headers(headers);
+    challengeHeaders.set('cookie', requestCookieHeader(signIn));
+
+    const body = { code: input.code, trustDevice: true };
+    const verified =
+      input.method === 'backup_code'
+        ? await this.api.verifyBackupCode({ body, headers: challengeHeaders, asResponse: true })
+        : await this.api.verifyTOTP({ body, headers: challengeHeaders, asResponse: true });
+    await ensureOk(verified);
+
+    this.forwardCookies(verified, resHeaders);
+    await this.trustedDevices?.trust(userId, { ip, userAgent });
+    this.events.emit('identity.2fa.verified', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      method: input.method,
+      trustedDevice: true,
+      ip,
+      userAgent,
+    });
+    return SUCCESS;
+  }
+
+  async regenerateBackupCodes(
+    input: RegenerateBackupCodesInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `backupCodes:${userId ?? 'anonymous'}`,
+      TWO_FACTOR_PASSWORD_RATE_LIMIT,
+    );
+    const res = await this.api.generateBackupCodes({
+      body: { password: input.password },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    this.forwardCookies(res, resHeaders);
+    const body = (await res.json()) as { backupCodes: string[] };
+    if (userId) {
+      this.events.emit('identity.2fa.backup_codes_regenerated', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        ip,
+        userAgent,
+      });
+    }
+    return { backupCodes: body.backupCodes };
   }
 
   async disableTwoFactor(input: Disable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {

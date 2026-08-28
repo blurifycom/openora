@@ -633,6 +633,8 @@ export async function mapEventToRecord(
     topic === 'identity.2fa.disabled' ||
     topic === 'identity.2fa.verified' ||
     topic === 'identity.2fa.failed' ||
+    topic === 'identity.2fa.backup_codes_regenerated' ||
+    topic === 'identity.2fa.reset' ||
     topic === 'identity.2fa.lockout.triggered' ||
     topic === 'identity.2fa.enrollment_blocked' ||
     topic === 'identity.session.fingerprint_mismatch' ||
@@ -673,6 +675,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.2fa.disabled',
   'identity.2fa.verified',
   'identity.2fa.failed',
+  'identity.2fa.backup_codes_regenerated',
+  'identity.2fa.reset',
   'identity.2fa.lockout.triggered',
   'identity.2fa.enrollment_blocked',
   'identity.session.fingerprint_mismatch',

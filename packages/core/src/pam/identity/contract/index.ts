@@ -11,6 +11,9 @@ import {
   Enable2faResultSchema,
   Verify2faInputSchema,
   Disable2faInputSchema,
+  RegenerateBackupCodesInputSchema,
+  BackupCodesResultSchema,
+  TrustCurrentDeviceInputSchema,
   RequestPasswordResetInputSchema,
   VerifyPasswordResetOtpInputSchema,
   ResetPasswordInputSchema,
@@ -77,9 +80,13 @@ export type TrustedDeviceItem = z.infer<typeof TrustedDeviceItemSchema>;
 
 export const AdminSecurityStatusSchema = z.object({
   twoFactorEnabled: z.boolean(),
+  // Null when no second factor is set up, or when the operator stores backup codes in a
+  // form this process cannot read back.
+  backupCodesRemaining: z.number().int().nonnegative().nullable(),
   // True when the operator requires a second factor and this account has none - the
   // Backoffice renders the enrolment flow and nothing else while it holds.
   enrollmentRequired: z.boolean(),
+  trustedDeviceDays: z.number().int().nonnegative(),
   trustedDeviceUntil: TimestampSchema.nullable(),
   lockedUntil: TimestampSchema.nullable(),
 });
@@ -154,6 +161,13 @@ export const identityContract = {
     .route({ method: 'POST', path: '/identity/2fa/disable' })
     .input(Disable2faInputSchema)
     .output(IdentitySuccessSchema),
+
+  // Backup codes are spent one per use and are shown exactly once, so an account that
+  // burns through them needs a way back to a full set without dropping its second factor.
+  regenerateBackupCodes: oc
+    .route({ method: 'POST', path: '/identity/2fa/backup-codes/regenerate' })
+    .input(RegenerateBackupCodesInputSchema)
+    .output(BackupCodesResultSchema),
 
   requestPasswordReset: oc
     .route({ method: 'POST', path: '/identity/password/forgot' })
@@ -280,9 +294,22 @@ export const identityContract = {
       .route({ method: 'GET', path: '/identity/admin-security/trusted-devices' })
       .output(z.array(TrustedDeviceItemSchema)),
 
+    // better-auth mints its trust cookie only on the sign-in leg of a challenge, so
+    // granting the trust from inside the account re-runs that leg behind this route.
+    trustCurrentDevice: oc
+      .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/trust' })
+      .input(TrustCurrentDeviceInputSchema)
+      .output(IdentitySuccessSchema),
+
     revokeTrustedDevice: oc
       .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/revoke' })
       .input(z.object({ id: UuidSchema }))
+      .output(IdentitySuccessSchema),
+
+    // Clears someone else's second factor entirely, back to the unenrolled state.
+    resetUserTwoFactor: oc
+      .route({ method: 'POST', path: '/identity/admin-security/2fa/reset' })
+      .input(z.object({ userId: UuidSchema }))
       .output(IdentitySuccessSchema),
 
     // Cross-user twin, for a Super Admin cutting off someone else's trusted device.

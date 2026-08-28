@@ -11,11 +11,18 @@ import {
   type IdentityReader,
   type User,
 } from '@openora/core/contracts';
-import { session, user, type AdminTrustedDevice, type Session } from '../schema/index.js';
+import {
+  session,
+  twoFactor,
+  user,
+  type AdminTrustedDevice,
+  type Session,
+} from '../schema/index.js';
 import type { AdminSecurityStatus, TrustedDeviceItem } from '../contract/index.js';
 import { isSameDevice, isSuspiciousIpChange } from './device-fingerprint.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
+import { UserNotFoundError } from './identity.service.js';
 
 const logger = createLogger('admin-security');
 
@@ -221,10 +228,36 @@ export class AdminSecurityService implements AdminSecurityPolicy {
 
     return {
       twoFactorEnabled,
+      backupCodesRemaining: twoFactorEnabled ? await this.countBackupCodes(userId) : null,
       enrollmentRequired: this.config.requireTwoFactor && !twoFactorEnabled,
+      trustedDeviceDays: this.config.trustedDeviceDays,
       trustedDeviceUntil: currentDevice?.expiresAt ?? null,
       lockedUntil: lockedUntil ? lockedUntil.toISOString() : null,
     };
+  }
+
+  /**
+   * Counts what is left of the recovery set. better-auth stores the codes as a JSON
+   * array unless the operator opts into encryption, so an unreadable column is reported
+   * as unknown rather than as zero - claiming no codes remain would be worse than
+   * admitting the count cannot be taken.
+   */
+  private async countBackupCodes(userId: User['id']): Promise<number | null> {
+    const [row] = await this.drizzle.db
+      .select({ backupCodes: twoFactor.backupCodes })
+      .from(twoFactor)
+      .where(eq(twoFactor.userId, userId))
+      .limit(1);
+
+    if (!row) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(row.backupCodes);
+      return Array.isArray(parsed) ? parsed.length : null;
+    } catch {
+      return null;
+    }
   }
 
   listTrustedDevices(userId: User['id'], userAgent: string | null): Promise<TrustedDeviceItem[]> {
@@ -236,21 +269,27 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     deviceId: AdminTrustedDevice['id'],
     actorId: User['id'],
     meta?: ClientMeta,
+    keepSessionId?: Session['id'],
   ) {
     const { userAgent } = await this.trustedDevices.revoke(userId, deviceId, actorId, meta);
-    await this.endSessionsOnDevice(userId, userAgent, actorId, meta);
+    await this.endSessionsOnDevice(userId, userAgent, actorId, meta, keepSessionId);
     return { success: true as const };
   }
 
   /**
    * A revoked device loses its live sessions in the same breath, so the grant cannot
    * outlive the revoke on the browser that already holds one.
+   *
+   * `keepSessionId` spares the caller's own session: revoking trust on the browser you
+   * are sitting in means "ask me for a code next time", not "sign me out now" - the same
+   * line `SessionService.revokeOwnSession` draws for sessions.
    */
   private async endSessionsOnDevice(
     userId: User['id'],
     deviceUserAgent: string | null,
     actorId: User['id'],
     meta?: ClientMeta,
+    keepSessionId?: Session['id'],
   ): Promise<void> {
     const active = await this.drizzle.db
       .select({ id: session.id, userAgent: session.userAgent })
@@ -258,10 +297,50 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
 
     for (const row of active) {
-      if (isSameDevice(row.userAgent, deviceUserAgent)) {
+      if (row.id !== keepSessionId && isSameDevice(row.userAgent, deviceUserAgent)) {
         await this.sessions.revokeSession(userId, row.id, actorId, meta);
       }
     }
+  }
+
+  /**
+   * Returns an account to the unenrolled state so its owner can set a second factor up
+   * again: the shared recovery path for a lost authenticator, since better-auth's own
+   * disable endpoint asks for the account's password and a locked-out admin has no way
+   * to reach it. The trust grants and live sessions go with it - leaving either behind
+   * would let a browser keep the access the reset exists to withdraw.
+   */
+  async resetTwoFactor(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
+    const [account] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!account) {
+      throw new UserNotFoundError(userId);
+    }
+
+    await this.drizzle.db.delete(twoFactor).where(eq(twoFactor.userId, userId));
+    await this.drizzle.db
+      .update(user)
+      .set({
+        twoFactorEnabled: false,
+        failedTwoFactorAttempts: 0,
+        twoFactorLockoutUntil: null,
+      })
+      .where(eq(user.id, userId));
+
+    await this.trustedDevices.revokeAllForUser(userId, actorId);
+    await this.sessions.revokeAllSessions(userId, actorId, meta);
+
+    this.events.emit('identity.2fa.reset', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
+    return { success: true as const };
   }
 
   isTrustedDevice(userId: User['id'], userAgent: string | null): Promise<boolean> {

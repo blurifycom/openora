@@ -179,6 +179,30 @@ export class TrustedDeviceService {
     }
   }
 
+  async revokeAllForUser(userId: User['id'], actorId: User['id']): Promise<void> {
+    const revoked = await this.drizzle.db
+      .update(adminTrustedDevice)
+      .set({ revokedAt: sql`now()`, revokedBy: actorId })
+      .where(
+        and(
+          eq(adminTrustedDevice.userId, userId),
+          isNull(adminTrustedDevice.revokedAt),
+          gt(adminTrustedDevice.expiresAt, sql`now()`),
+        ),
+      )
+      .returning({ id: adminTrustedDevice.id, userAgent: adminTrustedDevice.userAgent });
+
+    for (const row of revoked) {
+      this.events.emit('identity.trusted_device.revoked', {
+        userId,
+        deviceId: row.id,
+        actorId,
+        ip: null,
+        userAgent: row.userAgent,
+      });
+    }
+  }
+
   private activeDeviceWhere(userId: User['id'], hash: string) {
     return and(
       eq(adminTrustedDevice.userId, userId),

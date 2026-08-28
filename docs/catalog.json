@@ -245,9 +245,11 @@
         "identity.me",
         "identity.phoneLoginRequest",
         "identity.phoneLoginVerify",
+        "identity.regenerateBackupCodes",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
+        "identity.resetUserTwoFactor",
         "identity.revoke",
         "identity.revokeAll",
         "identity.revokeMine",
@@ -256,6 +258,7 @@
         "identity.sendEmailVerification",
         "identity.status",
         "identity.streamSession",
+        "identity.trustCurrentDevice",
         "identity.trustedDevices",
         "identity.unlockUser",
         "identity.updateProfile",
@@ -899,11 +902,13 @@
     "iam.role.permissions.changed",
     "iam.role.revoked",
     "iam.role.updated",
+    "identity.2fa.backup_codes_regenerated",
     "identity.2fa.disabled",
     "identity.2fa.enabled",
     "identity.2fa.enrollment_blocked",
     "identity.2fa.failed",
     "identity.2fa.lockout.triggered",
+    "identity.2fa.reset",
     "identity.2fa.verified",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
@@ -1101,6 +1106,10 @@
     {
       "name": "AutoWithdrawalRuleSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BackupCodesResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "BannerSchema",
@@ -1919,6 +1928,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "RegenerateBackupCodesInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "RegisterInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -2131,8 +2144,16 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "TrustCurrentDeviceInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TrustedDeviceItemSchema",
       "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "TwoFactorChallengeMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "TwoFactorMethodSchema",

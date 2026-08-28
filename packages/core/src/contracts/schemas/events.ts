@@ -130,6 +130,19 @@ export const domainEventSchemas = {
     method: TwoFactorMethodSchema,
     attemptsRemaining: z.number().int().nonnegative(),
   }),
+  // The account's recovery credentials were replaced; every previously issued code is
+  // dead from here on.
+  'identity.2fa.backup_codes_regenerated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  // A Super Admin cleared someone else's second factor; the account is back to the
+  // unenrolled state and must set one up before it reaches any admin route again.
+  'identity.2fa.reset': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+  }),
   'identity.2fa.lockout.triggered': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
