@@ -1,43 +1,49 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { MigrationMeta } from 'drizzle-orm/migrator';
 
-const { calls, poolInstances, failOnSql, FakePool, readMigrationFilesMock } = vi.hoisted(() => {
-  const calls: string[] = [];
-  const poolInstances: unknown[] = [];
-  const failOnSql = { value: null as string | null };
+const { appliedHashes, calls, poolInstances, failOnSql, FakePool, readMigrationFilesMock } =
+  vi.hoisted(() => {
+    const calls: string[] = [];
+    const poolInstances: unknown[] = [];
+    const failOnSql = { value: null as string | null };
+    const appliedHashes = { value: [] as string[] };
 
-  class FakeClient {
-    readonly query = vi.fn(async (sql: string) => {
-      if (failOnSql.value !== null && sql === failOnSql.value) {
-        throw new Error(`boom: ${sql}`);
-      }
-      calls.push(sql);
-      return { rows: [] };
-    });
-    readonly release = vi.fn();
-  }
-
-  class FakePool {
-    readonly query = vi.fn(async (sql: string) => {
-      if (failOnSql.value !== null && sql === failOnSql.value) {
-        throw new Error(`boom: ${sql}`);
-      }
-      calls.push(sql);
-      return { rows: [] };
-    });
-    readonly connect = vi.fn(async () => new FakeClient());
-    readonly end = vi.fn(async () => {
-      calls.push('end');
-    });
-    constructor(readonly opts: { connectionString: string }) {
-      poolInstances.push(this);
+    class FakeClient {
+      readonly query = vi.fn(async (sql: string) => {
+        if (failOnSql.value !== null && sql === failOnSql.value) {
+          throw new Error(`boom: ${sql}`);
+        }
+        calls.push(sql);
+        return {
+          rows: sql.startsWith('SELECT hash FROM')
+            ? appliedHashes.value.map((hash) => ({ hash }))
+            : [],
+        };
+      });
+      readonly release = vi.fn();
     }
-  }
 
-  const readMigrationFilesMock = vi.fn(() => [] as MigrationMeta[]);
+    class FakePool {
+      readonly query = vi.fn(async (sql: string) => {
+        if (failOnSql.value !== null && sql === failOnSql.value) {
+          throw new Error(`boom: ${sql}`);
+        }
+        calls.push(sql);
+        return { rows: [] };
+      });
+      readonly connect = vi.fn(async () => new FakeClient());
+      readonly end = vi.fn(async () => {
+        calls.push('end');
+      });
+      constructor(readonly opts: { connectionString: string }) {
+        poolInstances.push(this);
+      }
+    }
 
-  return { calls, poolInstances, failOnSql, FakePool, readMigrationFilesMock };
-});
+    const readMigrationFilesMock = vi.fn(() => [] as MigrationMeta[]);
+
+    return { appliedHashes, calls, poolInstances, failOnSql, FakePool, readMigrationFilesMock };
+  });
 
 vi.mock('pg', () => ({ Pool: FakePool }));
 vi.mock('drizzle-orm/migrator', () => ({ readMigrationFiles: readMigrationFilesMock }));
@@ -50,7 +56,9 @@ describe('runMigrations', () => {
     calls.length = 0;
     poolInstances.length = 0;
     failOnSql.value = null;
-    readMigrationFilesMock.mockClear();
+    appliedHashes.value = [];
+    readMigrationFilesMock.mockReset();
+    readMigrationFilesMock.mockReturnValue([]);
   });
 
   it('runs extensions, then preSql, before reading pending migrations', async () => {
@@ -94,6 +102,23 @@ describe('runMigrations', () => {
 
     expect(readMigrationFilesMock).not.toHaveBeenCalled();
     expect(calls).toContain('end');
+  });
+
+  it('treats current migration hashes aliased from an applied legacy hash as applied', async () => {
+    appliedHashes.value = ['legacy-baseline'];
+    readMigrationFilesMock.mockReturnValue(migrations);
+
+    await runMigrations({
+      migrationsFolder: '/tmp/migrations',
+      databaseUrl: 'postgres://test',
+      migrationHashAliases: {
+        'legacy-baseline': ['one', 'two'],
+      },
+    });
+
+    expect(calls).not.toContain('BEGIN');
+    expect(calls).not.toContain(migrations[0]?.sql[0]);
+    expect(calls).not.toContain(migrations[1]?.sql[0]);
   });
 });
 

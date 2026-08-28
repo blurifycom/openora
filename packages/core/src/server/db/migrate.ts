@@ -19,6 +19,12 @@ export type RunMigrationsOptions = {
   /** Override the DB url; defaults to DATABASE_ADMIN_URL ?? DATABASE_URL. */
   databaseUrl?: string;
   /**
+   * Maps a legacy journal hash to the hashes in the current migration history that produce the
+   * same final schema. Use only when a released migration history was re-baselined: when the
+   * legacy hash is present, its listed current hashes are treated as already applied.
+   */
+  migrationHashAliases?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Postgres extensions to `CREATE EXTENSION IF NOT EXISTS` before applying. drizzle-kit can't
    * express extensions in schema, so a module whose index needs one (eg pg_trgm for a GIN
    * trgm index) declares it here instead of hand-editing a regenerated migration.
@@ -125,6 +131,11 @@ export async function runMigrations(opts: RunMigrationsOptions) {
             `SELECT hash FROM ${schema}.${table}`,
           );
           const appliedHashes = new Set(applied.rows.map(({ hash }) => hash));
+          for (const hash of appliedHashes) {
+            for (const alias of opts.migrationHashAliases?.[hash] ?? []) {
+              appliedHashes.add(alias);
+            }
+          }
           const pending = readMigrationFiles(migrationConfig).filter(
             (migration) => !appliedHashes.has(migration.hash),
           );
