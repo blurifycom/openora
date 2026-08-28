@@ -23,6 +23,14 @@ Sibling rules (load on demand; don't reopen settled questions):
 - `conventions` - the always-on code standard (naming, types, functions, package structure, errors, testing, git, frontend, DB), with a table routing each kind of change to its deep-dive file in `docs/standards/`.
 - `oss-boundaries` - OSS core is read-only; enforced import/module boundaries.
 - `e2e-conventions` - dual-mode Playwright specs, fixtures, mocks, page objects.
+- `db-conventions` - SQL / Drizzle rules for the tables an overlay owns.
+- `frontend-conventions` - React/UI rules for the operator's apps and shared UI package.
+
+## Agent files: generated from the template, or owned here
+
+Most of `.rulesync/` (skills, subagents, commands, hooks, the shared rules) and `docs/standards/` are generated: `pnpm install` renders them from `@openora/create`'s consumer template at the pinned `@openora/*` version, using the variables in `.rulesync/sync.json`. They are gitignored via the managed `synced-agents` block in `.gitignore`, so they never appear in a diff and cannot drift - editing one locally is pointless, the next install overwrites it. Change it upstream in the template instead. This repo owns and tracks the rules and skills the template does not ship, plus the `consumerOwned` overrides in `.rulesync/sync.json`; operator-specific facts belong there or in `sync.json` vars.
+
+Most of `.rulesync/` (skills, subagents, commands, hooks, the shared rules) and `docs/standards/` are template-owned: rendered from `@openora/create`'s consumer template at the pinned `@openora/*` version with the variables in `.rulesync/sync.json`. `pnpm check:agents` fails on any drift, so never edit a synced file here - change it upstream in openora's `tools/templates/consumer/`, take the next canary, run `pnpm sync:agents`. Files this repo owns are listed under `consumerOwned` in `.rulesync/sync.json` plus anything the template does not ship; operator-specific facts go there or into `sync.json` vars, never into a synced file.
 
 ## Tickets and specs
 

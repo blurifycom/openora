@@ -1,11 +1,12 @@
 ---
+targets: ['*']
 description: 'Add an oRPC route stub to an overlay or local add-on. Args: <target> <GET|POST|PUT|PATCH|DELETE> <path>. Example: /scaffold-route promotions GET /active.'
 ---
 
 Parse `$ARGUMENTS` as `<target> <method> <path>`.
 
 First confirm the route does not already exist - `list-routes` (oss MCP) for the namespace, or
-`list-routes` to confirm the route does not already exist.
+`query-openapi` with the path.
 
 Run `pnpm gen route <target> <method> <path>` in the repo root. The generator adds both a contract
 procedure and a matching router handler - no inline Zod in the router.
