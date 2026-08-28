@@ -11,7 +11,7 @@ import { createChatCommandsRouter } from './router/index.js';
 
 export default {
   id: 'chat-commands',
-  dependsOn: ['chat', 'iam', 'audit'],
+  dependsOn: ['chat', 'identity', 'audit'],
   register(ctx) {
     ctx.routers.add('chat-commands', (c) => {
       const svc = new ChatCommandsService(

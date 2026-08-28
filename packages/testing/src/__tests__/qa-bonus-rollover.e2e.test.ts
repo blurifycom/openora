@@ -54,6 +54,9 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
 }
 
 async function creditBonus(client: TestClient, userId: string, amount: string) {
+  // Materializes the player's wallet row before crediting - credit() fails closed
+  // on a missing wallet (wallet-commands.service.ts), it does not create one.
+  // Adds 1 USD of real (non-bonus) balance as a side effect.
   await deposit(client, '1');
   const walletCommands = appMain.container.get(WALLET_COMMANDS);
   await appMain.container.get(DRIZZLE).db.transaction(async (tx) => {
@@ -61,6 +64,10 @@ async function creditBonus(client: TestClient, userId: string, amount: string) {
       userId,
       amount,
       currency: 'USD',
+      // 'gift' is load-bearing: wallet-commands.service.ts only creates a
+      // wallet_bonus_credit row for sourceType 'gift' or 'rain'. Both are now
+      // produced by the downstream social-transfers extension, not by core -
+      // this call stands in for that HTTP path.
       type: 'gift',
     });
     if (!result.ok) {
@@ -156,6 +163,7 @@ describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wageri
     expect(status.credits).toHaveLength(1);
     const credit = status.credits[0]!;
     expect(credit.status).toBe('active');
+    expect(credit.sourceType).toBe('gift');
     expect(Number(credit.creditedAmount)).toBe(40);
     expect(Number(credit.rolloverMultiplier)).toBe(1);
     expect(Number(credit.rolloverRequired)).toBe(40);
@@ -265,7 +273,7 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
 });
 
 describe('bonus-rollover waterfall across multiple simultaneously-active credits (probe #3)', () => {
-  it('a single bet drains the oldest active credit first and cascades the leftover into the next, through the real HTTP surface', async () => {
+  it('a single bet drains the oldest active credit first and cascades the leftover into the next, driving WALLET_COMMANDS directly to fund the credits', async () => {
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-waterfall-recipient-${randomUUID()}@e2e.test`,
     });
@@ -349,6 +357,7 @@ describe('bonus-rollover audit trail (probe #5)', () => {
     expect(createdEntry.after).toMatchObject({
       userId: recipientId,
       currency: 'USD',
+      sourceType: 'gift',
     });
     expect(Number(createdEntry.after.creditedAmount)).toBe(12);
     expect(createdEntry.after.rolloverRequired).toBeDefined();
