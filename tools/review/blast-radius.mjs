@@ -25,8 +25,11 @@ const git = (...cmd) => {
 const lines = (s) => (s ? s.split('\n') : []);
 
 const branchDiff = lines(git('diff', `${base}...HEAD`, '--name-only'));
-const changed =
-  branchDiff.length > 0 ? branchDiff : lines(git('status', '--porcelain')).map((l) => l.slice(3));
+const workingTree = () => [
+  ...lines(git('diff', '--name-only', 'HEAD')),
+  ...lines(git('ls-files', '--others', '--exclude-standard')),
+];
+const changed = branchDiff.length > 0 ? branchDiff : workingTree();
 
 const isSource = (f) =>
   /\.(ts|tsx|mjs)$/.test(f) && !/(__tests__|\.test\.|\.spec\.|\.d\.ts$)/.test(f);
