@@ -47,7 +47,7 @@ Enforced by `pnpm check:lint` (oxlint, per-edit), the pre-commit hook, CI, and t
 - Every import resolves; every npm package used is declared in that package's own `package.json`; no package sits in two dependency sections (a library's devDependency + peerDependency pair is the exception).
 - Production code imports no devDependency and no test/mock/fixture file.
 
-### Structure checks (`pnpm check:shape`)
+### Structure checks (`pnpm check:shape`, in repos that ship it)
 
 Runs the checks a dependency graph cannot make, because they are about files that do not exist or edges that do not exist:
 
@@ -55,6 +55,6 @@ Runs the checks a dependency graph cannot make, because they are about files tha
 - The barrel re-exports only; the single side effect it may carry is `import './locales'`.
 - Every file under a module's `pages|components|hooks|utils` is reachable from the barrel, and every `packages/ui/src` file from the `{{scope}}/ui` barrel - otherwise it is dead code.
 
-Each app/package owns its own `.dependency-cruiser.cjs` (its own tsconfig for `@/*` alias resolution) built on the shared rule/option helpers in `.dependency-cruiser.shared.cjs`. `pnpm gen:boundaries-graph` renders each package's graph (needs Graphviz).
+Each app/package owns its own `.dependency-cruiser.cjs` (its own tsconfig for `@/*` alias resolution) built on the shared rule/option helpers in `.dependency-cruiser.shared.cjs`. Where the repo ships `pnpm gen:boundaries-graph`, it renders each package's graph (needs Graphviz).
 
 The shared options keep npm packages in the graph on purpose - a dependency-type rule can only judge a package that is a node - so build output is excluded per workspace path, never as a bare `/dist/`.

@@ -34,15 +34,15 @@ Decide from where the error appears. Never reach for Chrome DevTools on a build 
 Reproduce with a build, not the dev server (dev caches and lies):
 
 ```bash
-pnpm -C apps/web exec next build   # or apps/backoffice
 pnpm check:types
+pnpm -C apps/web exec next build   # or apps/backoffice, in repos that have those apps
 ```
 
-Known consumer-side causes (this stack links `@openora/*` from `{{ossDir}}`):
+Known consumer-side causes (the link-boundary ones apply only in repos that link a local platform checkout at `{{ossDir}}`; a stock scaffold resolves `@openora/*` from npm):
 
 - `Module not found: Can't resolve '@openora/core/...'` while Node resolves it -> the bundler won't compile across the link boundary (packages live outside the project root): point its root at the common ancestor of both repos and allow imports from outside it - Next.js `turbopack.root` + `experimental.externalDir: true` (see `apps/web/next.config.ts`).
 - `extends "@openora/core/tsconfig/..." doesn't resolve` -> `extends` chain through a symlinked tsconfig; those configs must be self-contained.
-- Resolves but won't import -> `@openora/*` not built: `pnpm build:oss`.
+- Resolves but won't import -> the linked `@openora/*` checkout is not built: rebuild it (`pnpm build:oss` in repos that ship that script, otherwise build from `{{ossDir}}`).
 - Stale error after a fix -> Turbopack cache: `rm -rf apps/*/.next` and rebuild.
 
 Confirm bundler-vs-dependency with:
@@ -74,7 +74,7 @@ The release tag is the short commit SHA, so an issue maps straight back to a com
 
 - Consumer config (next.config, tsconfig, extensions.config, env) -> fix it yourself and verify.
 - Consumer overlay/plugin (fails only with this operator's plugins/adapters active) -> `builder` (hand over cause + repro + file/line).
-- OSS core (reproduces in a clean consumer scaffolded via `pnpm create:app` with no overlays) -> report upstream; do NOT patch `node_modules/@openora/**` or `{{ossDir}}`.
+- OSS core (reproduces in a clean consumer scaffold with no overlays) -> report upstream; do NOT patch `node_modules/@openora/**` or `{{ossDir}}`.
 - Domain rule wrong (consistent behavior that violates igaming rules) -> `expert`.
 
 After a runtime bug is fixed, spawn `qa` for a regression test so it stays fixed.

@@ -15,6 +15,7 @@
   "consumerOwned": [
     ".rulesync/rules/overview.md",
     ".rulesync/mcp.json",
-    ".rulesync/sync.json"
+    ".rulesync/sync.json",
+    "docs/agents/forge.md"
   ]
 }

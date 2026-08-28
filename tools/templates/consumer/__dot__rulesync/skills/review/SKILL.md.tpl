@@ -1,7 +1,7 @@
 ---
 name: review
 targets: ['*']
-description: Multi-agent code review of the working branch against this repo's conventions, OSS-core boundaries, frontend rules, security, and operator-domain fit. Fans out a configurable number of parallel reviewers, each grounded in the rule docs, then synthesizes one verdict. Use on "review this", "code review", "/review", optionally "--agents N", "--base <ref>", "--fix", "--post" (publish findings to the MR as inline comments + a summary verdict), "--yes" (post without confirming), "--ci" (non-interactive, exit code from the verdict), a GitLab MR number, or paths.
+description: Multi-agent code review of the working branch against this repo's conventions, OSS-core boundaries, frontend rules, security, and operator-domain fit. Fans out a configurable number of parallel reviewers, each grounded in the rule docs, then synthesizes one verdict. Use on "review this", "code review", "/review", optionally "--agents N", "--base <ref>", "--fix", "--post" (publish findings to the pull request as inline comments + a summary verdict), "--yes" (post without confirming), "--ci" (non-interactive, exit code from the verdict), a pull-request number, or paths.
 ---
 
 # review ({{name}})
@@ -25,10 +25,10 @@ Checklist - tick as you go:
 
 - `--agents N` - parallel reviewers (1-5); default one per applicable dimension.
 - `--base <ref>` - diff base; default `{{mrTarget}}`.
-- `<number>` - a GitLab MR: `glab mr diff <n>` for the patch, `glab mr view <n>` for intent.
+- `<number>` - a pull request: read its patch and intent with the commands in `docs/agents/forge.md`.
 - paths - restrict review to those files/dirs.
 - `--fix` - apply BLOCK/WARN fixes after the review; default report-only.
-- `--post` - publish findings to the GitLab MR as inline diff-line comments + a one-line summary verdict (§8). Requires an MR number. Draft-and-confirm by default.
+- `--post` - publish findings to the pull request as inline diff-line comments + a one-line summary verdict (§8). Requires a pull-request number. Draft-and-confirm by default.
 - `--yes` - with `--post`, skip the confirmation and publish straight away.
 - `--ci` - non-interactive: never ask, never post, never fix; print only the §7 machine block. The model cannot set the process exit code; the CI job derives it from the last line, e.g. `claude -p '/review --ci' | tee review.txt | grep -q '^VERDICT: APPROVED'`. An empty diff is APPROVED with zero findings.
 
@@ -42,7 +42,7 @@ Distill everything here into ONE context block of at most ~40 lines; it is the o
 
 - **Ticket - read it whole, per `docs/agents/issue-tracker.md`.** Resolve the `{{trackerKey}}-n` key from the MR description (`Closes {{trackerKey}}-n`), MR title, branch, or commit subjects. Read: description + AC, every comment, every attached image viewed as pixels, parent epic, linked issues, and every wiki page the ticket links (their images and comments too). Use a reader that returns image bytes (for Jira + Confluence: the `atlassian-read` skill - `read.py issue {{trackerKey}}-n`, then `page <id>` per linked page - or REST); the Atlassian MCP returns none, so it is never enough on its own. A chat thread is optional: read it (via `slack-reader` when available) only when the ticket or MR points at one ("shared in chat", a Slack link) and the AC depend on it.
 - **Distill:** goal in one line; AC quoted verbatim as bullets (a `CRITERION:` line needs the exact bullet); decisions and open questions from comments (who, when); design references (which screenshot shows what); out-of-scope lines.
-- **MR discussion.** If reviewing an MR: `glab mr view <n>` + unresolved discussion threads. Distill to stated intent + open reviewer asks, so the review doesn't repeat or contradict them. No MR: use branch commit subjects as intent.
+- **Pull-request discussion.** If reviewing one: read its intent and unresolved threads per `docs/agents/forge.md`. Distill to stated intent + open reviewer asks, so the review doesn't repeat or contradict them. No pull request: use branch commit subjects as intent.
 - **No key** -> write `no ticket` in the report and judge against the MR description only. **Fetch failed** -> write `no access`. Never skip silently, never invent AC.
 - A UI change whose ticket carries design screenshots is judged against them: compare the rendered UI (`playwright-cli` screenshot when the stack is up) with the reference; when you cannot, the CRITERION is `not verifiable`, never `met`.
 - The MR description is the author's claim, not the spec. Where it contradicts the ticket or the diff, that contradiction is a finding.
@@ -144,20 +144,16 @@ Severities: `[BLOCK]` must fix before merge (core edit, boundary break, authz/se
 
 If `--fix`: apply BLOCK + WARN fixes in the working tree (smallest diff satisfying the cited rule), run `/check`, report green/red. Leave INFO untouched. Never commit or push.
 
-## 8. Post to the MR (`--post`)
+## 8. Post to the pull request (`--post`)
 
-Only when `--post` is set and the target is an MR number. Turns findings into terse review comments: one line each, brief why, backtick every identifier.
+Only when `--post` is set and the target is a pull-request number. Turns findings into terse review comments: one line each, brief why, backtick every identifier.
 
 Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete `file:line`. One comment per finding, one line each.
 
-1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: BLOCK finding in `x.ts` must be fixed before we push.`
+1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.`
 2. **Confirm.** Show all drafted comments + the summary and stop for approval - UNLESS `--yes`, then skip straight to posting.
-3. **Post inline comments** as positional discussions on the diff. Mechanics + gotchas:
-   - Diff SHAs from `glab api "projects/<project>/merge_requests/<n>" | jq .diff_refs`, where `<project>` is `{{gitRemotePath}}` with `/` encoded as `%2F`.
-   - Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`).
-   - POST JSON (build with Python `json.dumps` to dodge quoting) to `.../merge_requests/<n>/discussions` with a `position` object; `glab api -H "Content-Type: application/json" ... --input -`. Do NOT use `-f "position[...]"` - nested params silently drop the position.
-   - Verify each response's `.notes[0].position.new_line`; if null it fell back to a general note - delete (`glab api -X DELETE .../notes/<id>`) and retry.
-4. **Post the summary** as one general MR note (`glab mr note <n> -m "<one sentence>"`).
+3. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
+4. **Post the summary** as one general comment on the pull request, per the same file.
 5. Report back the count posted + the summary verdict. Never resolve threads; never push.
 
 ## Constraints
