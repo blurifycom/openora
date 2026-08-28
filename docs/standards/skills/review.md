@@ -8,11 +8,11 @@ Report only unless `--fix` or `--post` is passed.
 - `--base <ref>` changes the base; default `dev`.
 - A PR number reviews that PR with `gh pr diff` and `gh pr view`.
 - Paths limit the review scope.
-- `--agents N` selects one to four reviewers; default one reviewer per applicable dimension.
+- `--agents N` selects one to four reviewers; default one reviewer per applicable dimension. When N is below the applicable dimensions, drop `operator` first, then fold contracts and boundaries into `quality-reviewer`; security and money never drops, the orchestrator runs that checklist itself. When N is above, the extra reviewers are `quality-reviewer` instances split by file group, and the report states the split.
 - `--fix` applies BLOCK and WARN fixes in the working tree after the report.
 - `--post` publishes the findings to the PR; it needs a PR number.
 - `--yes` skips the confirmation before posting.
-- `--ci` runs without questions: never ask, never post, never fix; print the report and exit `1` on NO-GO, `0` on GO.
+- `--ci` runs without questions: never ask, never post, never fix; print only the machine-readable block below. The model cannot set the process exit code; the CI job derives it from the last line, for example `claude -p '/review --ci' | tee review.txt | grep -q '^VERDICT: GO'`.
 
 ## Workflow
 
@@ -59,7 +59,7 @@ Use `docs/catalog.json` or the `oss-dev` MCP tools to list the users of a table,
 
 For each changed migration, run `pnpm check:drift` and read the generated SQL.
 
-- A `DROP`, a `RENAME`, or a column type change breaks the code still deployed; it is a BLOCK unless the code that reads the old shape is already gone.
+- A `DROP`, a `RENAME`, or a column type change breaks the instances still running the previous release; it is a BLOCK in the same PR as the reader change. It ships in a later release, after every reader of the old shape is deployed.
 - A new `NOT NULL` column without a default fails on existing rows; it is a BLOCK.
 - Expand first, contract later: add the new shape, migrate readers, then remove the old shape in a later release.
 - A hand-edited migration is a BLOCK; regenerate it with `pnpm regen`.
@@ -68,7 +68,7 @@ For each changed migration, run `pnpm check:drift` and read the generated SQL.
 
 The orchestrator may run the tests of a touched module, never the full gate.
 
-- For each caller found in the blast radius, run its existing test: `pnpm -F @openora/core vitest related <path>`.
+- For each caller found in the blast radius, run the tests that import it, in the workspace that owns them: unit `pnpm -F @openora/core exec vitest related <path> --run`; integration `pnpm -F @openora/core exec vitest related <path> --run --config vitest.integration.config.ts`; E2E `pnpm -F @openora/testing exec vitest related <path> --run`.
 - A failing test is a BLOCK with the test name as evidence.
 - A caller with no test is an INFO, not a request to write one.
 
@@ -87,7 +87,14 @@ The orchestrator may run the tests of a touched module, never the full gate.
 
 ## Output
 
-Print exactly this block; a CI job parses it line by line.
+Default and `--post`: a human-readable report, and the same drafts are what `--post` publishes.
+
+1. Draft comments, most important first, in conversational language without severity markers; each names its `file:line`.
+2. One `TRACE:` line per traced entry point, as below.
+3. One status line per acceptance criterion: met, not met, or not verifiable.
+4. Exactly one GO or NO-GO sentence, last.
+
+`--ci`: print exactly this block and nothing else; a CI job parses it line by line.
 
 ```text
 FINDING: [BLOCK|WARN|INFO] <file>:<line> - <finding> - <evidence> - <rule or ADR> - <fix>
@@ -96,10 +103,8 @@ CRITERION: <acceptance criterion> - <met|not met|not verifiable>
 VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
 ```
 
-- Order findings BLOCK, WARN, INFO.
-- One `TRACE:` line per traced entry point; one `CRITERION:` line per acceptance criterion.
-- Exactly one `VERDICT:` line, last.
-- Money, authz, data-loss, contract-break, unmet-acceptance, or trace BLOCK findings force NO-GO.
+- Order findings BLOCK, WARN, INFO; exactly one `VERDICT:` line, last.
+- In both forms, money, authz, data-loss, contract-break, unmet-acceptance, or trace BLOCK findings force NO-GO.
 
 ## Posting to the PR
 

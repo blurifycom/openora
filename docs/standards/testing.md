@@ -48,4 +48,4 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives.
 - **Deterministic and isolated:** no shared mutable state, no real network, seedable data. Real-infra suites stay parallel-safe - own your database and Redis keys, never assume an empty shared one.
 - `@openora/testing` is test-only. Never import it from production code or point `TEST_DATABASE_URL` at a real or development database: its cleanup truncates data.
-- Run one file or dir with `pnpm -F @openora/core vitest run <path>`; find the tests touching a file with `pnpm -F @openora/core vitest related <path>`.
+- Run one file or dir with `pnpm -F @openora/core exec vitest run <path>`; find the tests touching a file with `pnpm -F @openora/core exec vitest related <path> --run` (add `--config vitest.integration.config.ts` for the integration tier, or run it in `@openora/testing` for E2E).

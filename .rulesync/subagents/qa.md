@@ -4,7 +4,7 @@ targets:
 name: qa
 description: >-
   QA engineer for the OSS platform. Writes and runs automated API-level tests
-  (Vitest via bootTestApp, Playwright request E2E, Bruno) plus a mandatory
+  (one E2E per route via bootTestApp, Playwright request specs) plus a mandatory
   hands-on walkthrough; triages bugs, escalating to expert/dev.
 claudecode:
   model: sonnet
