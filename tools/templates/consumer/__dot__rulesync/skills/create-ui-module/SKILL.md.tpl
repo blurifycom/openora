@@ -8,7 +8,7 @@ description: >
   "add a backoffice/web module", "/create-ui-module <app> <name>".
 ---
 
-# create-ui-module (consumer)
+# create-ui-module ({{name}})
 
 Scaffold a feature module under `src/modules/<name>/` per ADR-0001 (`docs/adr/0001-modular-architecture.md`). The shape is lint-enforced (`tools/oxlint-module-structure.mjs`: folder structure, `use-` hook naming, kebab-case files, client-component naming). Copy an existing module as the reference - `apps/backoffice/src/modules/roles/` is canonical.
 
@@ -32,7 +32,7 @@ src/modules/<name>/
 `locales/index.ts` pattern (exact):
 
 ```ts
-import { registerTranslations } from '@<scope>/ui';
+import { registerTranslations } from '{{scope}}/ui';
 import en from './en.json';
 
 export const locales = { en };
@@ -51,7 +51,7 @@ Components use `useTranslation(ns)`; no hardcoded copy. Non-`en` files mirror `e
 - No cross-module imports - cross-module effects go through query cache invalidation, never a direct import.
 - Outside code imports ONLY the barrel via `@/modules/<name>`; inside the module use relative paths.
 - Hooks take their clients (oRPC/API) as parameters (see `roles/hooks/use-iam-client-deps.ts`) so they're testable without global mocks.
-- Follow `docs/standards/frontend.md` (daisyUI, theme tokens, hoisted `styles` const, React Compiler - no manual memo).
+- Follow `.claude/rules/frontend-conventions.md` + `docs/standards/frontend.md` (daisyUI, theme tokens, hoisted `styles` const, React Compiler - no manual memo).
 
 ## 5. Verify
 
