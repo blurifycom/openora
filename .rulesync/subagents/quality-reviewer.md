@@ -22,11 +22,11 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 
 ## Request trace
 
-Follow the request trace in `docs/standards/skills/review.md`: walk the seven hops for each changed entry point, and check the blast radius from the `review:blast-radius` output the orchestrator passes you. For a changed symbol or table, open every caller listed there, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.
+Follow the request trace in `docs/standards/skills/review.md`: walk the seven hops for each changed entry point, and check the blast radius: `git grep -w` each changed export, table symbol, and SQL table name across `*.ts`, `*.tsx`, `*.sql`, and open every caller found, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.
 
 ## Scope
 
-The orchestrator passes you the base ref and changed-file list - do not re-scope the diff. Read the changed files, the immediate callees a finding depends on, and every caller the blast-radius output lists for a changed symbol. If no file list was passed: `git diff origin/dev...HEAD --name-only`.
+The orchestrator passes you the base ref and changed-file list - do not re-scope the diff. Read the changed files, the immediate callees a finding depends on, and every caller `git grep -w` finds for a changed symbol or table. If no file list was passed: `git diff origin/dev...HEAD --name-only`.
 
 ## Lenses
 

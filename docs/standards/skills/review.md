@@ -18,13 +18,12 @@ Report only unless `--fix` or `--post` is passed.
 
 1. Scope the diff from the supplied PR or `<base>...HEAD`, falling back to the working tree only when the branch diff is empty. Under `--ci` an empty diff is a GO with zero findings; otherwise ask.
 2. Gather ticket acceptance criteria and unresolved PR discussion once, then distill them to a context block of at most 30 lines. Do not expose raw ticket text, internal URLs, attachments, or people's names in review output.
-3. Run `pnpm review:blast-radius --base <ref>` and keep its output; it is the input for the request trace.
-4. Group changed files by package or domain, and read each changed file and the standard governing its dimension before judging it.
-5. Assume each changed behaviour is broken until a concrete happy path and hostile path prove otherwise. Trace empty, falsy, error, unauthorized, concurrent, and repeated inputs.
-6. Run the request trace for each changed entry point and check the blast radius.
-7. Select only dimensions that apply and the roster reviewer that owns each: contracts and boundaries (`contract-reviewer`), security and money (`security-reviewer`), conventions and quality (`quality-reviewer`, always), operator fit (`operator`, only with acceptance criteria). Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
-8. For a diff of at most 150 changed lines, review inline from the reviewer checklists. For a larger diff, fan out one parallel batch, passing each reviewer the scoped files, the context block, and the blast-radius output for its file group.
-9. Deduplicate by `file:line`, apply the evidence gate, and return one verdict.
+3. Group changed files by package or domain, and read each changed file and the standard governing its dimension before judging it.
+4. Assume each changed behaviour is broken until a concrete happy path and hostile path prove otherwise. Trace empty, falsy, error, unauthorized, concurrent, and repeated inputs.
+5. Run the request trace for each changed entry point and check the blast radius.
+6. Select only dimensions that apply and the roster reviewer that owns each: contracts and boundaries (`contract-reviewer`), security and money (`security-reviewer`), conventions and quality (`quality-reviewer`, always), operator fit (`operator`, only with acceptance criteria). Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
+7. For a diff of at most 150 changed lines, review inline from the reviewer checklists. For a larger diff, fan out one parallel batch, passing each reviewer the scoped files, the context block, and the caller list for its file group.
+8. Deduplicate by `file:line`, apply the evidence gate, and return one verdict.
 
 ## Request trace
 
@@ -46,7 +45,7 @@ For each changed route or entry point, list the hops in order and open the code 
 
 ### Check the blast radius
 
-The change must not break a part it does not name. Start from the `review:blast-radius` output, then confirm each use still holds.
+The change must not break a part it does not name. Build the caller list with `git grep -w -- <symbol> -- '*.ts' '*.tsx' '*.sql'` for each changed export, table symbol, and SQL table name, then confirm each use still holds.
 
 - A changed table, column, enum, or constraint: every query, migration, seed, and schema export that touches it.
 - A changed query or repository function: every caller, traced through hops 4 to 7.
@@ -58,7 +57,7 @@ Use `docs/catalog.json` or the `oss-dev` MCP tools to list the users of a table,
 
 ### Check the migration
 
-For each changed migration, run `pnpm check:drift` and read the generated SQL. The script marks the statements to check.
+For each changed migration, run `pnpm check:drift` and read the generated SQL.
 
 - A `DROP`, a `RENAME`, or a column type change breaks the code still deployed; it is a BLOCK unless the code that reads the old shape is already gone.
 - A new `NOT NULL` column without a default fails on existing rows; it is a BLOCK.
