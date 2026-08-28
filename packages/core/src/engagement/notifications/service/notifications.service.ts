@@ -10,7 +10,7 @@ import {
 } from '@openora/core/server';
 import { eq, and, isNull, asc, desc, count, lt } from 'drizzle-orm';
 import type { PaginationOptions, User } from '@openora/core/contracts';
-import { notification } from '../schema/index.js';
+import { notification, type Notification } from '../schema/index.js';
 import type { CreateNotificationInput, NotificationSortBy } from '../contract/index.js';
 
 export const NotificationNotFoundError = makeNotFoundError('Notification');
@@ -28,14 +28,18 @@ export class NotificationsService {
     private readonly events: EventBus,
   ) {}
 
-  async create(input: CreateNotificationInput) {
-    const record = findOneOrThrow(
-      await this.drizzle.db
-        .insert(notification)
-        .values({ ...input, data: input.data ?? null })
-        .returning(),
-      new NotificationInsertFailedError(),
-    );
+  async create(input: CreateNotificationInput): Promise<Notification | null> {
+    const [record] = await this.drizzle.db
+      .insert(notification)
+      .values({ ...input, data: input.data ?? null, eventId: input.eventId ?? null })
+      .onConflictDoNothing({ target: notification.eventId })
+      .returning();
+    if (!record) {
+      if (input.eventId) {
+        return null;
+      }
+      throw new NotificationInsertFailedError();
+    }
     this.events.emit('notifications.created', {
       notificationId: record.id,
       userId: input.userId,
@@ -47,6 +51,7 @@ export class NotificationsService {
     userId,
     page,
     limit,
+    sortBy = 'createdAt',
     sortOrder,
   }: PaginationOptions<{ userId: User['id'] }, NotificationSortBy>) {
     const dir = sortOrder === 'asc' ? asc : desc;
@@ -56,7 +61,7 @@ export class NotificationsService {
         .select()
         .from(notification)
         .where(where)
-        .orderBy(dir(notification.createdAt))
+        .orderBy(dir(notification[sortBy]))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(notification).where(where),
@@ -102,10 +107,9 @@ export class NotificationsService {
   // the retention window regardless of read state.
   async purgeExpired(retentionDays: number) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-    const rows = await this.drizzle.db
+    const result = await this.drizzle.db
       .delete(notification)
-      .where(lt(notification.createdAt, cutoff))
-      .returning({ id: notification.id });
-    return { count: rows.length };
+      .where(lt(notification.createdAt, cutoff));
+    return { count: result.rowCount ?? 0 };
   }
 }

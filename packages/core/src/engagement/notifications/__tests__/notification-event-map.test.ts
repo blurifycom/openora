@@ -157,30 +157,6 @@ describe('notificationEventMap', () => {
     expect(input.data).toBeNull();
   });
 
-  it('includes dormant gaming.bet.settled and bonus.granted mappings that never fire today, carrying their own entity ids', () => {
-    const userId = randomUUID();
-    const roundId = randomUUID();
-    const bonusId = randomUUID();
-
-    const betInput = entryFor('gaming.bet.settled').handle({
-      roundId,
-      userId,
-      playerId: null,
-      outcome: 'win',
-      amount: '100.00',
-      currency: 'USD',
-    });
-    const bonusInput = entryFor('bonus.granted').handle({
-      bonusId,
-      userId,
-      amount: '10.00',
-      currency: 'USD',
-    });
-
-    expect(betInput).toMatchObject({ userId, type: 'bet.settled', data: { roundId } });
-    expect(bonusInput).toMatchObject({ userId, type: 'bonus.granted', data: { bonusId } });
-  });
-
   it('returns null instead of throwing on a payload that fails schema validation', () => {
     const input = entryFor('wallet.withdrawal.approved').handle({ garbage: true });
 
@@ -192,8 +168,8 @@ describe('notificationEventMap', () => {
     expect(entryFor('social.friend_request.accepted').sendEmail).toBe(false);
   });
 
-  it('enables email for every new trigger type added alongside the map, per product decision', () => {
-    const emailedEvents = [
+  it('keeps every newly-mapped trigger type in-app only (no email), per the email scope decision', () => {
+    const inAppOnlyEvents = [
       'wallet.deposit.completed',
       'wallet.manual_adjustment.created',
       'wallet.withdrawal.requested',
@@ -201,12 +177,10 @@ describe('notificationEventMap', () => {
       'wallet.withdrawal.failed',
       'chat.donate.sent',
       'chat.user.mentioned',
-      'gaming.bet.settled',
-      'bonus.granted',
     ] as const;
 
-    for (const event of emailedEvents) {
-      expect(entryFor(event).sendEmail).toBe(true);
+    for (const event of inAppOnlyEvents) {
+      expect(entryFor(event).sendEmail).toBe(false);
     }
   });
 
@@ -279,20 +253,6 @@ describe('notificationEventMap', () => {
         currency: 'EUR',
         roomId: null,
       }),
-      'gaming.bet.settled': (amount: string) => ({
-        roundId: randomUUID(),
-        userId: randomUUID(),
-        playerId: null,
-        outcome: 'win' as const,
-        amount,
-        currency: 'EUR',
-      }),
-      'bonus.granted': (amount: string) => ({
-        bonusId: randomUUID(),
-        userId: randomUUID(),
-        amount,
-        currency: 'EUR',
-      }),
     } as const;
 
     const events = Object.keys(basePayloads) as (keyof typeof basePayloads)[];
@@ -323,6 +283,27 @@ describe('notificationEventMap', () => {
         expect(input?.body).toContain('1,234.5');
       },
     );
+
+    it.each(events)(
+      'does not collapse a tiny 18-decimal-scaled amount to "0" in the %s body',
+      (event) => {
+        const input = entryFor(event).handle(basePayloads[event]('0.000000001000000000'));
+
+        expect(input?.body).toContain('0.000000001');
+      },
+    );
+  });
+
+  it('routes wallet.bonus_rollover.completed through the same amount formatter as every other entry', () => {
+    const input = entryFor('wallet.bonus_rollover.completed').handle({
+      userId: randomUUID(),
+      creditId: randomUUID(),
+      currency: 'EUR',
+      creditedAmount: '1234.500000000000000000',
+    });
+
+    expect(input?.body).toContain('1,234.5');
+    expect(input?.body).not.toContain('1234.500000000000000000');
   });
 
   it('leaves currency and reason untouched while only the amount substring is reformatted', () => {

@@ -747,6 +747,40 @@ describe('ChatService @mention detection (real PG)', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
   });
+
+  it('does not treat the domain part of an email address as a mention', async () => {
+    const acmeId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(acmeId, 'acme')]));
+
+    await expect(
+      svc.sendGlobalMessage(randomUUID(), 'alice', 'contact me at info@acme.com'),
+    ).resolves.toBeDefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('does not emit chat.user.mentioned when the mentioned user has blocked the sender', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    await svc.blockUser(bobId, authorId);
+
+    await svc.sendGlobalMessage(authorId, 'alice', 'hello @bob');
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('fails closed (does not emit) when the block check throws', async () => {
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor('not-a-valid-uuid', 'bob')]));
+
+    await expect(svc.sendGlobalMessage(authorId, 'alice', 'hello @bob')).resolves.toBeDefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
 });
 
 describe('ChatService.deleteMessage (real PG)', () => {

@@ -3,6 +3,7 @@ import {
   ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
   NOTIFICATION_DELIVERY_ADAPTER,
+  PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
   UuidSchema,
   domainEventSchemas,
@@ -23,27 +24,36 @@ import {
   toNotificationDto,
 } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';
-import type { CreateNotificationInput } from './contract/index.js';
+import { CreateNotificationInputSchema, type CreateNotificationInput } from './contract/index.js';
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
-const NOTIFICATION_RETENTION_DAYS = 30;
+const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
+
+const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
+const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
   reason: z.string().nullable(),
 });
 
-// p.amount on every wallet/chat/gaming event payload is a MoneyAmount decimal string
-// scaled to MONEY_SCALE = 18 (crypto-first precision), eg "100.000000000000000000" -
-// display-only trimming for notification text; Number() can lose precision below its
-// ~15-17 significant digits for an extreme 18-decimal value, an accepted tradeoff.
+const NotificationDispatchJobSchema = z.object({
+  event: z.string(),
+  input: CreateNotificationInputSchema,
+  sendEmail: z.boolean(),
+});
+
 function formatMoneyAmount(amount: string): string {
-  const value = Number(amount);
-  if (!Number.isFinite(value)) {
+  const match = /^(-)?(\d+)(?:\.(\d+))?$/.exec(amount);
+  if (!match) {
     return amount;
   }
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(value);
+  const [, sign, integerPart, fractionPart] = match;
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const trimmedFraction = fractionPart ? fractionPart.replace(/0+$/, '') : '';
+  const magnitude = trimmedFraction ? `${groupedInteger}.${trimmedFraction}` : groupedInteger;
+  return sign ? `${sign}${magnitude}` : magnitude;
 }
 
 type NotificationMapEntry = {
@@ -121,7 +131,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   mapEvent(
@@ -133,7 +143,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   mapEvent(
@@ -145,7 +155,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   mapEvent(
@@ -157,7 +167,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   mapEvent(
@@ -169,7 +179,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   mapEvent(
@@ -178,7 +188,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.userId,
       type: 'wallet.bonus_rollover.completed',
       title: 'Bonus unlocked',
-      body: `Your ${p.creditedAmount} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
+      body: `Your ${formatMoneyAmount(p.creditedAmount)} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
       data: null,
     }),
     { sendEmail: false },
@@ -193,7 +203,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `${p.senderUsername} sent you ${formatMoneyAmount(p.amount)} ${p.currency}.`,
       data: compactData({ roomId: p.roomId }),
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   mapEvent(
@@ -205,7 +215,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: 'You were mentioned in a chat message.',
       data: compactData({ roomId: p.roomId, messageId: p.messageId }),
     }),
-    { sendEmail: true },
+    { sendEmail: false },
   ),
 
   // Pre-existing types: in-app only, unchanged from before the declarative-map refactor.
@@ -233,33 +243,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
       data: { accepterId: p.accepterId },
     }),
     { sendEmail: false },
-  ),
-
-  // Dormant: gaming.bet.settled and bonus.granted have no emitter yet (see
-  // contracts/schemas/events.ts). These entries never fire until a future module
-  // publishes them, but the mapping is ready the moment one does.
-  mapEvent(
-    'gaming.bet.settled',
-    (p) => ({
-      userId: p.userId,
-      type: 'bet.settled',
-      title: p.outcome === 'win' ? 'Bet won' : 'Bet settled',
-      body: `Your bet settled as a ${p.outcome} for ${formatMoneyAmount(p.amount)} ${p.currency}.`,
-      data: { roundId: p.roundId },
-    }),
-    { sendEmail: true },
-  ),
-
-  mapEvent(
-    'bonus.granted',
-    (p) => ({
-      userId: p.userId,
-      type: 'bonus.granted',
-      title: 'Bonus granted',
-      body: `You were granted a bonus of ${formatMoneyAmount(p.amount)} ${p.currency}.`,
-      data: { bonusId: p.bonusId },
-    }),
-    { sendEmail: true },
   ),
 ];
 
@@ -293,6 +276,7 @@ export default {
     let directoryRef: AdminUserDirectory | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
+    let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
     // Best-effort email alongside the in-app notification; a missing user or delivery
     // failure is logged, never thrown - the in-app notification already landed.
@@ -313,7 +297,9 @@ export default {
         .catch((err) => logger.error({ err }, 'notification email delivery failed'));
     };
 
-    const publishNotification = (record: Awaited<ReturnType<NotificationsService['create']>>) => {
+    const publishNotification = (
+      record: NonNullable<Awaited<ReturnType<NotificationsService['create']>>>,
+    ) => {
       if (!realtimeRef) {
         return;
       }
@@ -326,22 +312,27 @@ export default {
     };
 
     for (const entry of notificationEventMap) {
-      ctx.events.on(entry.event, (payload) => {
+      ctx.events.on(entry.event, (payload, envelope) => {
         const input = entry.handle(payload);
-        if (!input || !svcRef) {
+        if (!input || !jobQueueRef || !envelope) {
           return;
         }
-        const svc = svcRef;
-        svc
-          .create(input)
-          .then((record) => {
-            publishNotification(record);
-            if (entry.sendEmail) {
-              sendEmail(input.userId, input.title, input.body);
-            }
-          })
+        jobQueueRef
+          .enqueue(
+            NOTIFICATIONS_DISPATCH_QUEUE,
+            {
+              event: entry.event,
+              input: { ...input, eventId: envelope.eventId },
+              sendEmail: entry.sendEmail,
+            },
+            {
+              idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
+              attempts: 5,
+              backoff: { type: 'exponential', delayMs: 1000 },
+            },
+          )
           .catch((err) =>
-            logger.error({ err, event: entry.event }, 'notification dispatch failed'),
+            logger.error({ err, event: entry.event }, 'notification dispatch enqueue failed'),
           );
       });
     }
@@ -355,11 +346,18 @@ export default {
       if (p.status !== 'resubmission_requested' || p.source !== 'manual') {
         return;
       }
+      if (!envelope?.eventId) {
+        logger.warn(
+          { userId: p.userId },
+          'kyc-resubmission-notify enqueue skipped: missing eventId',
+        );
+        return;
+      }
       jobQueueRef
         .enqueue(
           KYC_RESUBMISSION_NOTIFY_QUEUE,
           { userId: p.userId, reason: p.reason },
-          { idempotencyKey: `kyc-resubmission-notify:${envelope?.eventId ?? p.userId}` },
+          { idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}` },
         )
         .catch((err) => logger.error({ err }, 'kyc-resubmission-notify enqueue failed'));
     });
@@ -373,8 +371,35 @@ export default {
         }
         const input = buildKycResubmissionNotification(payload);
         const record = await svcRef.create(input);
+        if (!record) {
+          return;
+        }
         publishNotification(record);
         sendEmail(input.userId, input.title, input.body);
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: NOTIFICATIONS_DISPATCH_QUEUE,
+      schema: NotificationDispatchJobSchema,
+      handler: async ({ payload }) => {
+        if (!svcRef) {
+          return;
+        }
+        const record = await svcRef.create(payload.input);
+        if (!record) {
+          return;
+        }
+        publishNotification(record);
+        if (payload.sendEmail) {
+          sendEmail(record.userId, record.title, record.body);
+        }
+      },
+      onDeadLetter: (jobCtx, error) => {
+        logger.error(
+          { err: error, event: jobCtx.payload.event, jobId: jobCtx.id },
+          'notification dispatch exhausted retries',
+        );
       },
     });
 
@@ -385,7 +410,7 @@ export default {
         if (!svcRef) {
           return;
         }
-        const { count } = await svcRef.purgeExpired(NOTIFICATION_RETENTION_DAYS);
+        const { count } = await svcRef.purgeExpired(retentionDaysRef);
         logger.info({ count }, 'notification retention purge complete');
       },
     });
@@ -397,13 +422,18 @@ export default {
       directoryRef = c.get(ADMIN_USER_DIRECTORY);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
+      const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+      retentionDaysRef =
+        platformConfig?.notifications?.retention?.days ?? DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
+      const purgeCron =
+        platformConfig?.notifications?.retention?.cron ?? DEFAULT_NOTIFICATIONS_RETENTION_CRON;
       // Off-peak, one hour after tag's daily-evaluation (0 2 * * *), so the in-process
       // driver doesn't run both sweeps at once in dev/test.
       void jobQueueRef.schedule(
         NOTIFICATIONS_RETENTION_PURGE_QUEUE,
         'notifications.retention-purge.daily',
         {},
-        { cron: '0 3 * * *' },
+        { cron: purgeCron },
       );
       return createNotificationsRouter({ notifications: svc, realtime: realtimeRef });
     });

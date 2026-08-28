@@ -95,7 +95,7 @@ import {
 import { moderateContent, validateAttachment } from '../moderation/index.js';
 const logger = createLogger('chat');
 
-const MENTION_USERNAME_PATTERN = /@([a-zA-Z0-9_]{2,32})/g;
+const MENTION_USERNAME_PATTERN = /(?<![\w.])@([a-zA-Z0-9_]{2,32})/g;
 const MAX_MENTIONS_PER_MESSAGE = 20;
 const MENTION_RESOLVE_CONCURRENCY = 5;
 

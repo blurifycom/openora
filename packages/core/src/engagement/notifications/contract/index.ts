@@ -17,8 +17,6 @@ export const NOTIFICATION_TYPES = [
   'withdrawal.failed',
   'tip.received',
   'chat.mention',
-  'bet.settled',
-  'bonus.granted',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
@@ -48,6 +46,7 @@ export const CreateNotificationInputSchema = z.object({
   title: z.string(),
   body: z.string(),
   data: NotificationDataSchema.nullable().optional(),
+  eventId: UuidSchema.nullable().optional(),
 });
 export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
 

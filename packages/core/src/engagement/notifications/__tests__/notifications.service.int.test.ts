@@ -59,7 +59,7 @@ describe('NotificationsService.create (real PG)', () => {
     expect(created).toMatchObject({ userId, title: 'Hello', readAt: null });
     expect(await db.drizzle.db.select().from(notification)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledWith('notifications.created', {
-      notificationId: created.id,
+      notificationId: created!.id,
       userId,
     });
   });
@@ -137,11 +137,11 @@ describe('NotificationsService.create (real PG)', () => {
       data: { transactionId },
     });
 
-    expect(created.data).toEqual({ transactionId });
+    expect(created?.data).toEqual({ transactionId });
     const [stored] = await db.drizzle.db
       .select()
       .from(notification)
-      .where(eq(notification.id, created.id));
+      .where(eq(notification.id, created!.id));
     expect(stored?.data).toEqual({ transactionId });
   });
 
@@ -155,7 +155,7 @@ describe('NotificationsService.create (real PG)', () => {
       body: 'body',
     });
 
-    expect(created.data).toBeNull();
+    expect(created?.data).toBeNull();
   });
 
   it.each([
@@ -166,8 +166,6 @@ describe('NotificationsService.create (real PG)', () => {
     ['withdrawal.failed', 'Withdrawal failed'],
     ['tip.received', 'You received a tip'],
     ['chat.mention', 'You were mentioned'],
-    ['bet.settled', 'Bet won'],
-    ['bonus.granted', 'Bonus granted'],
   ] as const)(
     'persists a %s notification produced by the map-driven dispatch',
     async (type, title) => {
@@ -179,6 +177,30 @@ describe('NotificationsService.create (real PG)', () => {
       expect(created).toMatchObject({ userId, type, title, readAt: null });
     },
   );
+
+  it('dedupes a retried delivery of the same eventId to exactly one row, without throwing', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const eventId = randomUUID();
+    const input = {
+      userId,
+      type: 'deposit.completed' as const,
+      title: 'Deposit completed',
+      body: 'body',
+      eventId,
+    };
+
+    const first = await svc.create(input);
+    const second = await svc.create(input);
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    const rows = await db.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.eventId, eventId));
+    expect(rows).toHaveLength(1);
+  });
 });
 
 describe('NotificationsService.listForUser (real PG)', () => {

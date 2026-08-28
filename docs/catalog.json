@@ -1702,6 +1702,10 @@
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
+      "name": "NotificationsConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
       "name": "NotificationSortBySchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },

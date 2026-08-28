@@ -9,6 +9,7 @@ import type { RealtimeTransport, User } from '@openora/core/contracts';
 import {
   notificationsContract,
   NotificationTypeSchema,
+  NotificationDataSchema,
   type Notification,
 } from '../contract/index.js';
 import type { Notification as NotificationRow } from '../schema/index.js';
@@ -27,13 +28,18 @@ export function toNotificationDto(row: NotificationRow): Notification | null {
   if (!type.success) {
     return null;
   }
+  const data =
+    row.data === null || row.data === undefined ? null : NotificationDataSchema.safeParse(row.data);
+  if (data && !data.success) {
+    return null;
+  }
   return {
     id: row.id,
     userId: row.userId,
     type: type.data,
     title: row.title,
     body: row.body,
-    data: row.data ?? null,
+    data: data ? data.data : null,
     readAt: row.readAt ? row.readAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
   };
@@ -61,7 +67,7 @@ export function createNotificationsRouter({
 
   return os.router({
     list: os.list.handler(({ input, context }) =>
-      notifications.listForUser({ userId: getUserId(context), ...input }).then((page) => ({
+      notifications.listForUser({ ...input, userId: getUserId(context) }).then((page) => ({
         ...page,
         items: page.items.flatMap((row) => {
           const dto = toNotificationDto(row);

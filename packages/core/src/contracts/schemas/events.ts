@@ -535,14 +535,6 @@ export const domainEventSchemas = {
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
   }),
-
-  // Reserved: no bonus module exists yet and nothing emits this.
-  'bonus.granted': z.object({
-    bonusId: UuidSchema,
-    userId: UuidSchema,
-    amount: MoneyAmountSchema,
-    currency: CurrencyCodeSchema,
-  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
