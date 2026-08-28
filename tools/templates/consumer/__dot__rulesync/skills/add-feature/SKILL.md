@@ -45,16 +45,15 @@ re-implement their work. The platform-core twin is the `/add-feature` skill in t
 
 Run together; skip any source that returns nothing. Read `handoff.md` only on core-change signals.
 
-| Source        | How                                                                                             |
-| ------------- | ----------------------------------------------------------------------------------------------- |
-| Jira          | the **Atlassian** MCP - read `<KEY>-XXX`: description, AC, comments, parent epic, linked issues |
-| Confluence    | the **Atlassian** (Confluence) MCP - search the space + read pages                              |
-| Slack         | the **Slack** MCP - search public/private, read threads, read canvases                          |
-| Google Drive  | the **Google Drive** MCP - PRDs, specs                                                          |
-| Notion        | `ntn` CLI per `notion-memory` skill - prior decisions, lessons                                  |
-| Local docs    | the OSS checkout's `docs` (ADRs, `architecture.md`, `catalog.json`), repo READMEs, `CLAUDE.md`  |
-| Past sessions | grep `~/.claude/projects/**` and `~/.claude/plans` for the ticket key                           |
-| Codebase      | `oss` MCP (read-only) + Explore - map touchpoints in `apps/api`                                 |
+| Source        | How                                                                                                                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ticket + wiki | per `docs/agents/issue-tracker.md`: `<KEY>-XXX` whole - description, AC, every comment, every image viewed, parent epic, linked issues, every linked wiki page with its images and comments (`atlassian-read` for Jira + Confluence; the MCP returns no image bytes) |
+| Slack         | the **Slack** MCP - search public/private, read threads, read canvases                                                                                                                                                                                               |
+| Google Drive  | the **Google Drive** MCP - PRDs, specs                                                                                                                                                                                                                               |
+| Notion        | `ntn` CLI per `notion-memory` skill - prior decisions, lessons                                                                                                                                                                                                       |
+| Local docs    | the OSS checkout's `docs` (ADRs, `architecture.md`, `catalog.json`), repo READMEs, `CLAUDE.md`                                                                                                                                                                       |
+| Past sessions | grep `~/.claude/projects/**` and `~/.claude/plans` for the ticket key                                                                                                                                                                                                |
+| Codebase      | `oss` MCP (read-only) + Explore - map touchpoints in `apps/api`                                                                                                                                                                                                      |
 
 ### 3. Plan + classify (the gate)
 

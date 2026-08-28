@@ -24,6 +24,10 @@ Sibling rules (load on demand; don't reopen settled questions):
 - `oss-boundaries` - OSS core is read-only; enforced import/module boundaries.
 - `e2e-conventions` - dual-mode Playwright specs, fixtures, mocks, page objects.
 
+## Tickets and specs
+
+`docs/agents/issue-tracker.md` is the read protocol (fill in its placeholders once). Any task that names a ticket key - review, plan, build, fix - starts by reading the whole ticket: description, AC, every comment, every image viewed as pixels, parent, linked issues, and every linked wiki page with its own images and comments. Text-only reads are incomplete when attachments exist. No key: say "no ticket". Fetch failed: say "no access". Never write to the tracker unless the user asks for that exact write.
+
 ## HARD RULE: never modify OSS core
 
 `@openora/*` is a third-party dependency - treat it like any published npm package. You may READ it for reference, never write to it.
