@@ -44,6 +44,14 @@ type DrizzleTx =
   | DrizzleService['db']
   | Parameters<Parameters<DrizzleService['db']['transaction']>[0]>[0];
 
+type KycReconcileOutcome = {
+  row: KycVerification;
+  playerTransition: KycStatusTransition | null;
+  changed: boolean;
+  previousStatus: KycStatus;
+  reason: string | null;
+};
+
 const DEFAULT_PROVIDER = 'mock';
 const MANUAL_PROVIDER = 'manual';
 const BULK_APPROVE_CONCURRENCY = 10;
@@ -193,7 +201,13 @@ export class KycVerificationService {
       const [previous] = await trx
         .select({ status: kycVerification.status })
         .from(kycVerification)
-        .where(eq(kycVerification.referenceId, result.referenceId))
+        .where(
+          and(
+            eq(kycVerification.userId, userId),
+            eq(kycVerification.referenceId, result.referenceId),
+            eq(kycVerification.tier, input.tier),
+          ),
+        )
         .for('update');
       const inserted = findOneOrThrow(
         await trx
@@ -212,7 +226,7 @@ export class KycVerificationService {
             decisionReceivedAt: new Date(),
           })
           .onConflictDoUpdate({
-            target: kycVerification.referenceId,
+            target: [kycVerification.userId, kycVerification.referenceId, kycVerification.tier],
             set: {
               userId,
               provider: this.provider,
@@ -298,94 +312,131 @@ export class KycVerificationService {
       receivedAt?: Date;
     } = {},
   ) {
-    const [existing] = await this.drizzle.db
+    const existing = await this.drizzle.db
       .select()
       .from(kycVerification)
       .where(eq(kycVerification.referenceId, referenceId))
-      .orderBy(desc(kycVerification.createdAt))
-      .limit(1);
-    if (!existing) {
+      .orderBy(desc(kycVerification.createdAt));
+    if (existing.length === 0) {
+      return null;
+    }
+    const firstExisting = existing[0];
+    if (!firstExisting) {
       return null;
     }
 
-    const mappedStatus = mapVendorStatus(vendorStatus);
-    const persistedChecks = opts.checks ?? existing.checks ?? undefined;
-    const incompleteCheck =
-      mappedStatus === 'approved' ? findIncompleteCheck(persistedChecks) : undefined;
-    const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
-    const reasonFromThisReconcile = incompleteCheck
-      ? describeIncompleteCheck(incompleteCheck)
-      : opts.reason;
-    const decisionReason = reasonFromThisReconcile ?? existing.decisionReason;
+    const outcomes = await this.drizzle.db.transaction(async (trx) => {
+      const rows = await trx
+        .select()
+        .from(kycVerification)
+        .where(eq(kycVerification.referenceId, referenceId))
+        .orderBy(desc(kycVerification.createdAt))
+        .for('update');
+      const reconciled: KycReconcileOutcome[] = [];
 
-    if (existing.status === status && existing.decidedAt) {
-      return toDto(existing);
-    }
+      for (const row of rows) {
+        const mappedStatus = mapVendorStatus(vendorStatus);
+        const persistedChecks = opts.checks ?? row.checks ?? undefined;
+        const incompleteCheck =
+          mappedStatus === 'approved' ? findIncompleteCheck(persistedChecks) : undefined;
+        const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
+        const reasonFromThisReconcile = incompleteCheck
+          ? describeIncompleteCheck(incompleteCheck)
+          : opts.reason;
+        const decisionReason = reasonFromThisReconcile ?? row.decisionReason;
 
-    if (
-      opts.receivedAt &&
-      existing.decisionReceivedAt &&
-      opts.receivedAt < existing.decisionReceivedAt
-    ) {
-      logger.warn(
-        { referenceId, incoming: opts.receivedAt, current: existing.decisionReceivedAt },
-        'stale KYC decision refused: a newer decision is already applied for this reference',
-      );
-      return toDto(existing);
-    }
+        if (row.status === status && row.decidedAt) {
+          reconciled.push({
+            row,
+            playerTransition: null,
+            changed: false,
+            previousStatus: row.status,
+            reason: null,
+          });
+          continue;
+        }
 
-    const decided = isDecided(status);
-    const outcome = await this.drizzle.db.transaction(async (trx) => {
-      const updated = findOneOrThrow(
-        await trx
-          .update(kycVerification)
-          .set({
-            status,
-            decisionReason,
-            documentTypes: opts.documentTypes ?? existing.documentTypes,
-            riskSignals: opts.riskSignals ?? existing.riskSignals,
-            checks: persistedChecks ?? null,
-            decidedAt: decided ? new Date() : existing.decidedAt,
-            decisionReceivedAt: opts.receivedAt ?? existing.decisionReceivedAt,
-          })
-          .where(eq(kycVerification.id, existing.id))
-          .returning(),
-        new KycVerificationNotFoundError(existing.id),
-      );
-      const playerTransition =
-        existing.tier === 'basic'
-          ? await this.statusWriter.setStatus(
-              existing.userId,
+        if (opts.receivedAt && row.decisionReceivedAt && opts.receivedAt < row.decisionReceivedAt) {
+          logger.warn(
+            { referenceId, incoming: opts.receivedAt, current: row.decisionReceivedAt },
+            'stale KYC decision refused: a newer decision is already applied for this reference',
+          );
+          reconciled.push({
+            row,
+            playerTransition: null,
+            changed: false,
+            previousStatus: row.status,
+            reason: null,
+          });
+          continue;
+        }
+
+        const updated = findOneOrThrow(
+          await trx
+            .update(kycVerification)
+            .set({
               status,
-              { actorId: null, source: 'webhook', reason: reasonFromThisReconcile },
-              trx,
-            )
-          : null;
-      return { row: updated, playerTransition };
+              decisionReason,
+              documentTypes: opts.documentTypes ?? row.documentTypes,
+              riskSignals: opts.riskSignals ?? row.riskSignals,
+              checks: persistedChecks ?? null,
+              decidedAt: isDecided(status) ? new Date() : row.decidedAt,
+              decisionReceivedAt: opts.receivedAt ?? row.decisionReceivedAt,
+            })
+            .where(eq(kycVerification.id, row.id))
+            .returning(),
+          new KycVerificationNotFoundError(row.id),
+        );
+        const playerTransition =
+          row.tier === 'basic'
+            ? await this.statusWriter.setStatus(
+                row.userId,
+                status,
+                { actorId: null, source: 'webhook', reason: reasonFromThisReconcile },
+                trx,
+              )
+            : null;
+        reconciled.push({
+          row: updated,
+          playerTransition,
+          changed: true,
+          previousStatus: row.status,
+          reason: reasonFromThisReconcile ?? null,
+        });
+      }
+
+      return reconciled;
     });
-    await this.emitUpdated({
-      userId: existing.userId,
-      tier: existing.tier,
-      status,
-      previousStatus: existing.status,
-      playerTransition: outcome.playerTransition,
-      actorId: null,
-      reason: reasonFromThisReconcile ?? null,
-      source: 'webhook',
-    });
-    if (opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
-      this.events.emit('compliance.kyc.high_risk_signal_detected', {
-        userId: existing.userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(existing.userId),
-        referenceId,
-        tier: existing.tier,
-        vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
-        dataCenterIpDetected: opts.riskSignals.dataCenterIpDetected,
-        duplicateDeviceDetected: opts.riskSignals.duplicateDeviceDetected,
-        highRiskCountryDetected: opts.riskSignals.highRiskCountryDetected,
+
+    for (const outcome of outcomes) {
+      if (!outcome.changed) {
+        continue;
+      }
+      await this.emitUpdated({
+        userId: outcome.row.userId,
+        tier: outcome.row.tier,
+        status: outcome.row.status,
+        previousStatus: outcome.previousStatus,
+        playerTransition: outcome.playerTransition,
+        actorId: null,
+        reason: outcome.reason,
+        source: 'webhook',
       });
+      if (opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
+        this.events.emit('compliance.kyc.high_risk_signal_detected', {
+          userId: outcome.row.userId,
+          playerId: await this.identityReader.getPlayerIdByUserIdSafe(outcome.row.userId),
+          referenceId,
+          tier: outcome.row.tier,
+          vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
+          dataCenterIpDetected: opts.riskSignals.dataCenterIpDetected,
+          duplicateDeviceDetected: opts.riskSignals.duplicateDeviceDetected,
+          highRiskCountryDetected: opts.riskSignals.highRiskCountryDetected,
+        });
+      }
     }
-    return toDto(outcome.row);
+
+    return toDto(outcomes[0]?.row ?? firstExisting);
   }
 
   /**

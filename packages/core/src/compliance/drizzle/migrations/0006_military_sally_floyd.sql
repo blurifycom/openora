@@ -1,0 +1,2 @@
+DROP INDEX "kyc_verification_reference_id_key";--> statement-breakpoint
+CREATE UNIQUE INDEX "kyc_verification_user_id_reference_id_tier_key" ON "kyc_verification" USING btree ("user_id","reference_id","tier");

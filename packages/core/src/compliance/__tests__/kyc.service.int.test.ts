@@ -168,6 +168,42 @@ describe('KycVerificationService.submit (real PG)', () => {
     expect(await verificationsOf(userId)).toHaveLength(1);
   });
 
+  it('keeps a shared vendor workflow separate for Basic and Advanced', async () => {
+    const { svc, statusWriter } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+
+    const basic = await svc.submit(userId, passportSubmission);
+    const advanced = await svc.submit(userId, { ...passportSubmission, tier: 'advanced' });
+
+    expect(basic.tier).toBe('basic');
+    expect(advanced.tier).toBe('advanced');
+    const submitted = await verificationsOf(userId);
+    expect(submitted).toHaveLength(2);
+    expect(submitted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tier: 'basic', status: 'pending' }),
+        expect.objectContaining({ tier: 'advanced', status: 'pending' }),
+      ]),
+    );
+
+    await svc.reconcile(basic.referenceId, 'approved');
+
+    const reconciled = await verificationsOf(userId);
+    expect(reconciled).toHaveLength(2);
+    expect(reconciled).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tier: 'basic', status: 'approved' }),
+        expect.objectContaining({ tier: 'advanced', status: 'approved' }),
+      ]),
+    );
+    expect(statusWriter.setStatus).toHaveBeenLastCalledWith(
+      userId,
+      'approved',
+      expect.objectContaining({ source: 'webhook' }),
+      expect.anything(),
+    );
+  });
+
   it('passes a hosted-session verificationUrl through', async () => {
     const { svc } = makeService({
       adapter: { status: 'pending', verificationUrl: 'https://vendor/session' },

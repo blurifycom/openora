@@ -98,7 +98,11 @@ export const kycVerification = pgTable(
   },
   (t) => [
     index('kyc_verification_user_id_tier_created_at_idx').on(t.userId, t.tier, t.createdAt),
-    uniqueIndex('kyc_verification_reference_id_key').on(t.referenceId),
+    uniqueIndex('kyc_verification_user_id_reference_id_tier_key').on(
+      t.userId,
+      t.referenceId,
+      t.tier,
+    ),
     index('kyc_verification_status_idx').on(t.status),
   ],
 );

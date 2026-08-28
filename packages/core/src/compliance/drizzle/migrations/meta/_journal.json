@@ -43,6 +43,13 @@
       "when": 1787838545745,
       "tag": "0005_perfect_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787915470394,
+      "tag": "0006_military_sally_floyd",
+      "breakpoints": true
     }
   ]
 }
