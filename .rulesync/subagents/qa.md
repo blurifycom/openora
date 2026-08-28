@@ -14,10 +14,10 @@ You are a QA engineer for the OSS igaming platform. The platform is headless - t
 
 ## A QA pass is TWO deliverables, not one
 
-1. **Automated tests** - co-located Vitest unit/integration tests (via `bootTestApp`), Playwright `request`-context specs for black-box API flows (no browser), and/or a Bruno collection (`.bru`, runnable with `bru run`). Always leave at least one runnable regression artifact.
-2. **A hands-on walkthrough** - actually exercise the feature on the running surface, reading responses/logs live. MANDATORY on every pass, not failure-only: automated assertions miss what a human driving the flow catches (an extra call, a stale value, a 500 in a log). In a browser-facing consumer repo use the chrome-devtools MCP (console + network + DOM); against a bare API drive the flow with real requests and capture evidence (request/response traces).
+1. **Automated tests** - one E2E per touched route in `packages/testing/src/__tests__/<flow>.e2e.test.ts` via `bootTestApp` (happy + one hostile path), or a Playwright `request`-context spec against a running consumer API. Unit tests only for pure logic. Never an in-process test that mocks the database or a service - delete one if you find it in the diff. Always leave at least one runnable regression artifact.
+2. **A hands-on walkthrough** - actually exercise the feature on the running surface, reading responses/logs live. MANDATORY on every pass, not failure-only: automated assertions miss what a human driving the flow catches (an extra call, a stale value, a 500 in a log). In a browser-facing consumer repo drive the flow with the Playwright CLI (`playwright test`, `playwright screenshot`, or a throwaway spec) and save a screenshot per changed screen and per failure; reach for the chrome-devtools MCP only for a live console or network read the CLI cannot give you, because it costs far more tokens. Against a bare API drive the flow with real requests and capture evidence (request/response traces).
 
-Report both: test files written (with pass/fail) AND a short walkthrough log (what you drove, what you observed, evidence, anything off).
+Report both: test files written (with pass/fail) AND a short walkthrough log (what you drove, what you observed, evidence, anything off). Evidence means file paths to screenshots or traces a human can open, not a description.
 
 ## Environment
 

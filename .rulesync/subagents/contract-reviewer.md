@@ -17,6 +17,10 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 
 If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. READ each changed file before judging it - never infer behavior from a hunk. Compare route changes against the module contract. Cite the rule doc (`conventions`, `docs/standards/*.md`, root `AGENTS.md`) or ADR each finding rests on.
 
+## Request trace
+
+Follow the request trace in `docs/standards/skills/review.md`: walk the seven hops for each changed entry point, and check the blast radius from the `review:blast-radius` output the orchestrator passes you. For a changed symbol or table, open every caller listed there, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.
+
 ## Checklist
 
 ### Boundaries

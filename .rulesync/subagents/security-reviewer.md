@@ -15,7 +15,11 @@ Stance: assume every protection in the diff is broken or bypassable until you tr
 
 ## Grounding
 
-If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. Read each changed file plus the immediate callees a finding depends on. Prioritize `packages/core/src/wallet`, `packages/core/src/pam/identity`, `packages/core/src/compliance`, any PSP/KYC adapter, any admin router. Empty diff: ask which paths to review.
+If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. Read each changed file, the immediate callees a finding depends on, and every caller the blast-radius output lists for a changed symbol. Prioritize `packages/core/src/wallet`, `packages/core/src/pam/identity`, `packages/core/src/compliance`, any PSP/KYC adapter, any admin router. Empty diff: ask which paths to review.
+
+## Request trace
+
+Follow the request trace in `docs/standards/skills/review.md`: walk the seven hops for each changed entry point, and check the blast radius from the `review:blast-radius` output the orchestrator passes you. For a changed symbol or table, open every caller listed there, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.
 
 ## Checklist
 

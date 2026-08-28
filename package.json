@@ -21,6 +21,7 @@
     "check:boundaries": "depcruise apps packages --config .dependency-cruiser.cjs",
     "check:shape": "tsx tools/lint/verify-module-shape.ts",
     "check:hygiene": "tsx tools/lint/verify-oss-hygiene.ts",
+    "review:blast-radius": "node tools/review/blast-radius.mjs",
     "check:deprecations": "depretec --fail-on-found",
     "check:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-catalog.ts && git diff --exit-code -- docs/catalog.json docs/platform/system-design.md",
     "fix:lint": "oxlint . --fix",

@@ -2,6 +2,15 @@
 
 Detail for the testing lines in `conventions`. Read this before adding or restructuring a test.
 
+## Pick the tier
+
+Pick the outermost tier that reaches the behaviour. A test earns its keep by running real code, not by being cheap.
+
+- **A new or changed route** -> one E2E in `packages/testing/src/__tests__/<flow>.e2e.test.ts` through `bootTestApp`: the real Hono + oRPC app against real Postgres, vendors doubled at the port. Cover the happy path and one hostile path (unauthorized, wrong owner, repeated call on a money path). This is the acceptance artifact for the route; the review's request trace reads it as proof.
+- **A service or query that touches the database** -> `<name>.int.test.ts` against `createTestDb`. Only when the behaviour is not reachable through a route.
+- **A pure function** - parser, resolver, mapper, money calculation -> co-located `<name>.test.ts`. Small and complete: every branch.
+- **Never** an in-process test that mocks the database, a repository, or a sibling service. It proves a call order, not a result, and it is the test class a reviewer deletes.
+
 ## Tiers
 
 - **Co-locate as `__tests__/<name>.test.ts` (Vitest).**
