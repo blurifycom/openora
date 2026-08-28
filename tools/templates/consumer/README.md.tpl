@@ -13,7 +13,8 @@ in its own repo and talk to this api over HTTP via `@openora/react`.
 ```
 apps/
   api/          # Hono + oRPC API (:3001) - thin createApp entry + your extensions.config.ts
-.claude/agents/ # AI agents: builder, expert, qa
+.rulesync/      # source of truth for agent rules, subagents, commands, skills
+.claude/agents/ # generated AI agents
 turbo/generators/ # turbo gen: plugin, adapter
 ```
 
@@ -27,15 +28,13 @@ newest release; pin an exact version if you need reproducible installs.
 
 ```bash
 pnpm install               # pulls @openora/* from npm
-pnpm setup:mcp             # trust the MCP server + install the /start onboarding flow
-pnpm regen                 # regenerate catalog + Drizzle client (after schema changes)
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database
 pnpm dev                   # api :3001
 ```
 
-After `pnpm setup:mcp`, restart your editor and run **`/start`** in Claude Code - it asks what
-you want to build and scaffolds it for you.
+The `oss` MCP server is declared in `.mcp.json`. Approve it in your editor, restart, then run
+**`/start`** in Claude Code - it asks what you want to build and scaffolds it for you.
 
 To pull the newest platform release, re-run `pnpm install` (the pin tracks the `latest` stable tag).
 
@@ -52,10 +51,11 @@ a DI token wins).
 
 ## AI agents
 
-`.claude/agents/` ships three agents scoped to this repo:
+`.claude/agents/` ships agents scoped to this repo, generated from `.rulesync/subagents/`:
 
 - `builder` - configure extensions, swap adapters, write overlays, customize UI
 - `expert` - turn product asks into requirements + acceptance criteria
 - `qa` - write/run Playwright E2E tests and triage bugs
+- `debugger`, `deployer`, `quality-reviewer`, `security-reviewer` - root-cause, packaging, review
 
 The `oss` MCP server (`.mcp.json`) gives them read-only inspection of the platform surface.

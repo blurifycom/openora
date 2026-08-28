@@ -17,7 +17,7 @@ Feature-delivery orchestrator for this consumer repo: one Jira key in; a deliver
 ## Coordinates
 
 - Jira: the **Atlassian** MCP, cloudId `{{jiraCloudId}}`, project `{{trackerKey}}` (ticket keys look like `{{trackerKey}}-XXX`). Request/render content as markdown (`contentFormat` + `responseContentFormat: "markdown"`).
-- GitLab: `{{gitRemotePath}}`, MR target `{{mrTarget}}`, `glab` CLI.
+- Code forge: `{{gitRemotePath}}`, default target `{{mrTarget}}` - CLI and commands in `docs/agents/forge.md`.
 - Slack: `{{teamChannel}}`, draft only.
 - Repo: `apps/api` (Hono entry + extensions) consumes `@openora/*` upstream; UI apps, when present, sit beside it under `apps/`.
 - **Hard rule:** `{{ossDir}}` (the linked OSS checkout) is read-only (guard-core hook + permission deny). Extend from the outside; core changes hand off - see `handoff.md`.
@@ -77,7 +77,7 @@ Cheap gates first, prove it works, only then spend review on working code:
 
 ### 6. Open the MR
 
-Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and `glab mr create`s targeting `{{mrTarget}}` with the CODEOWNERS for the changed paths as reviewers. Never bypass its push-consent gate.
+Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Never bypass its push-consent gate.
 
 ### 7. Jira status transition (NOT comments)
 

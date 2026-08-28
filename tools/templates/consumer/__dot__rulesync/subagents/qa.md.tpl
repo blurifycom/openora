@@ -38,7 +38,7 @@ Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test 
 
 Is the bug in OSS core or the operator's overlay?
 
-- Fails in a fresh consumer scaffolded via `pnpm create:app` / with no overlays active -> OSS core -> report upstream.
+- Fails in a fresh consumer scaffold / with no overlays active -> OSS core -> report upstream.
 - Fails only with this operator's plugins/adapters -> `builder`.
 - Technically consistent but violates igaming rules -> `expert`.
 

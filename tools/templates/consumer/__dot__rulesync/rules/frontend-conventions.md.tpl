@@ -6,10 +6,12 @@ globs:
   - 'apps/web/**'
   - 'apps/backoffice/**'
   - 'packages/ui/**'
-description: React/UI conventions (component library, theming, i18n, permission gating, modular architecture) for apps/web, apps/backoffice, packages/ui - the always-on core; full detail in docs/standards/frontend.md.
+description: React/UI conventions (component library, theming, i18n, permission gating, modular architecture) for apps/web, apps/backoffice, packages/ui - applies once those apps exist; full detail in docs/standards/frontend.md.
 ---
 
 # Frontend conventions
+
+Applies once this repo has UI apps (`apps/web`, `apps/backoffice`, `packages/ui`); an api-only repo has none of those paths and this rule is inert there.
 
 UI-specific rules for `apps/web`, `apps/backoffice`, and `packages/ui`. Stack-agnostic rules (naming, types, functions, comments, errors, testing, git) live in `conventions`. Styling, i18n, and the modular architecture are specified in `docs/standards/frontend.md` - read it before touching a component, page, or module. The rules below are the ones that file does not state.
 

@@ -1,6 +1,6 @@
 # Issue tracker: Jira (project `{{trackerKey}}`) + Confluence + Slack
 
-Work for this operator is tracked in Jira project `{{trackerKey}}` on `{{jiraSite}}`. Requirements and reasoning live in Confluence space `{{wikiSpace}}`. Decisions that never made it into a ticket live in Slack `{{teamChannel}}`. Code review happens on GitLab `{{gitRemotePath}}` merge requests (`glab`).
+Work for this operator is tracked in Jira project `{{trackerKey}}` on `{{jiraSite}}`. Requirements and reasoning live in Confluence space `{{wikiSpace}}`. Decisions that never made it into a ticket live in Slack `{{teamChannel}}`. Code review happens on `{{gitRemotePath}}` - see `docs/agents/forge.md`.
 
 Every skill that says "fetch the relevant ticket" reads this file.
 
@@ -37,5 +37,5 @@ Run the protocol above and distill: goal in one line, AC quoted as bullets, deci
 ## Writing
 
 - Never comment on, transition, or edit a Jira issue or Confluence page unless the user asks for that exact write. Reading authorizes nothing.
-- MR comments go through `glab` (`review --post`), draft-and-confirm.
+- Review comments go through `review --post`, draft-and-confirm, using the commands in `docs/agents/forge.md`.
 - Slack: draft only, never send.
