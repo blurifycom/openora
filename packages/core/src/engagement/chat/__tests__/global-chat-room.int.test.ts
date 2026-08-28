@@ -45,6 +45,7 @@ function makeService() {
     audit,
     moderation,
     makeIdentityReader(),
+    [],
   );
 }
 

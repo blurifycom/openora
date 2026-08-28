@@ -57,6 +57,13 @@
       "when": 1787296386010,
       "tag": "0007_seed_global_chat_room",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787913359236,
+      "tag": "0008_robust_korvac",
+      "breakpoints": true
     }
   ]
 }

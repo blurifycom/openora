@@ -141,6 +141,14 @@ export const RegistrationConfigSchema = z
   })
   .strict();
 
+export const ChatConfigSchema = z
+  .object({
+    /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
+    allowedAttachmentHosts: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+export type ChatConfig = z.infer<typeof ChatConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -181,6 +189,8 @@ export const PlatformConfigSchema = z
      * Undefined or empty means no restriction - any value is accepted.
      */
     supportedLanguages: z.array(z.string().min(1)).optional(),
+    /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
+    chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
   })
   .strict()
   .superRefine((cfg, ctx) => {

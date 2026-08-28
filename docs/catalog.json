@@ -1187,12 +1187,24 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "ChatAttachmentKindSchema",
+      "file": "packages/core/src/contracts/schemas/chat-attachment.ts"
+    },
+    {
+      "name": "ChatAttachmentSchema",
+      "file": "packages/core/src/contracts/schemas/chat-attachment.ts"
+    },
+    {
       "name": "ChatCommandDescriptorSchema",
       "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "ChatCommandTypeSchema",
       "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "ChatConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
       "name": "ChatConnectionGrantSchema",
@@ -2021,6 +2033,14 @@
     {
       "name": "SendFriendRequestInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "SendGlobalMessageInputSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "SendRoomMessageInputSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "SessionItemSchema",
