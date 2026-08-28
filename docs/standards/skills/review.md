@@ -17,7 +17,7 @@ Report only unless `--fix` or `--post` is passed.
 ## Workflow
 
 1. Scope the diff from the supplied PR or `<base>...HEAD`, falling back to the working tree only when the branch diff is empty. Under `--ci` an empty diff is a GO with zero findings; otherwise ask.
-2. Gather ticket acceptance criteria and unresolved PR discussion once, then distill them to a context block of at most 30 lines. Do not expose raw ticket text, internal URLs, attachments, or people's names in review output.
+2. Gather the spec once, per `docs/agents/issue-tracker.md`: resolve the ticket from the PR body, title, branch, or commit subjects and read it whole - description, acceptance criteria, every comment, every attached image viewed (not listed), linked spec pages with their own images and comments, and a referenced chat thread only when the criteria depend on it. Add the unresolved PR discussion. Distill to a context block of at most 40 lines: goal, criteria quoted verbatim, decisions from comments, design references, out-of-scope lines. No ticket resolves: state `no ticket` and review against the PR description. The fetch fails: state `no access`. Never infer criteria silently. The PR description is the author's claim, not the spec; a contradiction between it, the ticket, and the diff is a finding. Do not expose raw ticket text, internal URLs, attachments, or people's names in review output.
 3. Group changed files by package or domain, and read each changed file and the standard governing its dimension before judging it.
 4. Assume each changed behaviour is broken until a concrete happy path and hostile path prove otherwise. Trace empty, falsy, error, unauthorized, concurrent, and repeated inputs.
 5. Run the request trace for each changed entry point and check the blast radius.
@@ -91,7 +91,7 @@ Default and `--post`: a human-readable report, and the same drafts are what `--p
 
 1. Draft comments, most important first, in conversational language without severity markers; each names its `file:line`.
 2. One `TRACE:` line per traced entry point, as below.
-3. One status line per acceptance criterion: met, not met, or not verifiable.
+3. One status line per acceptance criterion: met, not met, or not verifiable. A UI criterion backed by a design screenshot is met only after comparing the rendered UI against it. A diff that crosses the ticket's out-of-scope line, or decides an open question in code without recording it on the ticket, is a draft comment citing that line.
 4. Exactly one GO or NO-GO sentence, last.
 
 `--ci`: print exactly this block and nothing else; a CI job parses it line by line.

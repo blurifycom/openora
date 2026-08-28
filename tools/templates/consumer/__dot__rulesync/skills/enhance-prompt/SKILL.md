@@ -27,7 +27,7 @@ Match effort to the ask: a small task gets a one-line restatement, not a full br
 
 1. **Restate the intent** in one line. If your restatement might be wrong, gather context or ask - don't guess.
 2. **Classify**: build (feature / adapter / page / route) · review or audit · debug · refactor · docs · research · ops. For a **build** ask, hand off to the `enhance-intent` MCP tool (server `oss`) - it adds the platform catalog, requirements checklist, and `pnpm gen` playbook - and stop here.
-3. **Gather scoped context** - targeted, never a data dump (token budget matters). Pull only what changes the plan: your issue tracker / roadmap, product specs and design decisions, recent team-chat decisions, local `docs/` + ADRs, past sessions. Scope first (which project, epic, timeframe), then fetch. Roadmap and known-issue threads are signal; general chatter is noise.
+3. **Gather scoped context** - targeted, never a data dump (token budget matters). Pull only what changes the plan: your issue tracker / roadmap and product specs read per `docs/agents/issue-tracker.md` (comments and images included), recent team-chat decisions, local `docs/` + ADRs, past sessions. Scope first (which project, epic, timeframe), then fetch. Roadmap and known-issue threads are signal; general chatter is noise.
 4. **Surface blocking ambiguities only** - the questions whose answers change what you build. Resolve the rest with stated defaults. Don't interrogate.
 5. **Emit the brief**, sized to the task.
 

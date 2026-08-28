@@ -34,13 +34,16 @@ Checklist - tick as you go:
 
 `git diff <base>...HEAD --name-only`; if empty, fall back to `git status -s`; if still empty, ask. Group changed files by app/package so reviewers and any file-split share the same map. Note the total changed-line count - it picks the mode in §4.
 
-## 2b. Collect task context
+## 2b. Collect task context (mandatory - this is the spec axis)
 
-Distill everything here into ONE context block of at most ~30 lines; it is the only task context reviewers receive.
+Distill everything here into ONE context block of at most ~40 lines; it is the only task context reviewers receive.
 
-- **Ticket.** Extract the BF key from the branch name / MR title. Fetch it (Atlassian MCP or REST) and distill: goal in one line + acceptance criteria as bullets. No key or no access: skip silently.
+- **Ticket - read it whole, per `docs/agents/issue-tracker.md`.** Resolve the `<KEY>-n` key from the MR description (`Closes <KEY>-n`), MR title, branch, or commit subjects. Read: description + AC, every comment, every attached image viewed as pixels, parent epic, linked issues, and every wiki page the ticket links (their images and comments too). Use a reader that returns image bytes (for Jira + Confluence: the `atlassian-read` skill, or REST); the Atlassian MCP returns none, so it is never enough on its own. A chat thread is optional: read it only when the ticket or MR points at one and the AC depend on it.
+- **Distill:** goal in one line; AC quoted verbatim as bullets (a `CRITERION:` line needs the exact bullet); decisions and open questions from comments (who, when); design references (which screenshot shows what); out-of-scope lines.
 - **MR discussion.** If reviewing an MR: `glab mr view <n>` + unresolved discussion threads. Distill to stated intent + open reviewer asks, so the review doesn't repeat or contradict them. No MR: use branch commit subjects as intent.
-- The AC bullets feed the verdict (§7) - a finding "AC not met" needs a specific bullet.
+- **No key** -> write `no ticket` in the report and judge against the MR description only. **Fetch failed** -> write `no access`. Never skip silently, never invent AC.
+- A UI change whose ticket carries design screenshots is judged against them: compare the rendered UI with the reference when the stack is up; when you cannot, the criterion is `not verifiable`, never `met`.
+- The MR description is the author's claim, not the spec. Where it contradicts the ticket or the diff, that contradiction is a finding.
 
 ## 3. Ground every reviewer (mandatory)
 
@@ -85,6 +88,8 @@ Dedup by `file:line`, group by dimension, order BLOCK -> WARN -> INFO. Each line
 
 Severities: `[BLOCK]` must fix before merge (core edit, boundary break, authz/secret/PII risk, broken extension wiring); `[WARN]` should fix (convention violation, missing test, weak validation); `[INFO]` FYI / hardening.
 
+After the findings, one `CRITERION: <acceptance criterion> - <met|not met|not verifiable>` line per AC bullet from §2b; an unmet AC forces CHANGES REQUESTED. Spec findings cite the ticket the way code findings cite a rule doc: a diff that crosses a ticket's out-of-scope line, answers an open question in code without recording it on the ticket, or ships behavior no AC asked for is a `[WARN]` with the ticket line quoted as evidence.
+
 If `--fix`: apply BLOCK + WARN fixes in the working tree (smallest diff satisfying the cited rule), run `/check`, report green/red. Leave INFO untouched. Never commit or push.
 
 ## 8. Post to the MR (`--post`)
@@ -106,6 +111,7 @@ Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete 
 ## Constraints
 
 - Reviewers report; only the orchestrator edits, and only under `--fix` (working tree only - no commit, no push).
+- Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
 - NEVER edit `@openora/*` core or `node_modules`.
 - Every finding cites a rule doc - no ungrounded opinions.
 - Cap at 5 parallel reviewers.

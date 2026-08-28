@@ -70,7 +70,7 @@ For infra/DevOps tickets, swap **Scope** for **Provision** (AWS services as bull
 
 ## Flow
 
-1. If rewriting: read the issue via the **Atlassian** MCP (markdown) for current state + summary.
+1. If rewriting: read the issue whole per `docs/agents/issue-tracker.md` (comments and images included) - a rewrite that drops a decision buried in a comment or a screenshot is a regression.
 2. Pull any missing context the ticket references (Slack decision, sibling ticket).
 3. Draft against the template. Confirm scope splits with the user before creating
    new tickets.
