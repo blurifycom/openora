@@ -97,8 +97,8 @@ function makeService(
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
   const identityReader = makeIdentityReader();
-  const chatService = new ChatService(
-    db.drizzle,
+  const chatService = new ChatService({
+    drizzle: db.drizzle,
     events,
     transport,
     directory,
@@ -107,7 +107,7 @@ function makeService(
     identityReader,
     allowedAttachmentHosts,
     socialCommands,
-  );
+  });
   const membership = new ChatRoomMembershipService(
     db.drizzle,
     events,

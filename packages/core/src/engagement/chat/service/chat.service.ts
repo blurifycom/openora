@@ -150,6 +150,18 @@ export const ChatRoomConfigurationNotFoundError = createDomainError(
 
 const CHAT_MODERATOR_ROLES: readonly ChatRoomRole[] = ['moderator', 'owner'];
 
+type ChatServiceDependencies = {
+  drizzle: DrizzleService;
+  events: EventBus;
+  transport: RealtimeTransport;
+  directory: AdminUserDirectory;
+  audit: AuditWritePort;
+  moderation: ChatModeration;
+  identityReader: IdentityReader;
+  allowedAttachmentHosts: readonly string[];
+  socialCommands?: SocialCommands;
+};
+
 function gateContent(content: string): string {
   const result = moderateContent(content);
   if (!result.ok) {
@@ -236,17 +248,37 @@ function isUniqueConstraintViolation(e: unknown): boolean {
 }
 
 export class ChatService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
-    private readonly transport: RealtimeTransport,
-    private readonly directory: AdminUserDirectory,
-    private readonly audit: AuditWritePort,
-    private readonly moderation: ChatModeration,
-    private readonly identityReader: IdentityReader,
-    private readonly allowedAttachmentHosts: readonly string[],
-    private readonly socialCommands?: SocialCommands,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly events: EventBus;
+  private readonly transport: RealtimeTransport;
+  private readonly directory: AdminUserDirectory;
+  private readonly audit: AuditWritePort;
+  private readonly moderation: ChatModeration;
+  private readonly identityReader: IdentityReader;
+  private readonly allowedAttachmentHosts: readonly string[];
+  private readonly socialCommands?: SocialCommands;
+
+  constructor({
+    drizzle,
+    events,
+    transport,
+    directory,
+    audit,
+    moderation,
+    identityReader,
+    allowedAttachmentHosts,
+    socialCommands,
+  }: ChatServiceDependencies) {
+    this.drizzle = drizzle;
+    this.events = events;
+    this.transport = transport;
+    this.directory = directory;
+    this.audit = audit;
+    this.moderation = moderation;
+    this.identityReader = identityReader;
+    this.allowedAttachmentHosts = allowedAttachmentHosts;
+    this.socialCommands = socialCommands;
+  }
 
   subscribeMessages(
     roomId: ChatRoom['id'] | null,

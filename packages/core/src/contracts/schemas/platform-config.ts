@@ -141,10 +141,35 @@ export const RegistrationConfigSchema = z
   })
   .strict();
 
+const AttachmentHostSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (hostname) => {
+      try {
+        const url = new URL(`https://${hostname}`);
+        return (
+          url.hostname === hostname.toLowerCase() &&
+          url.pathname === '/' &&
+          url.port === '' &&
+          url.username === '' &&
+          url.password === '' &&
+          url.search === '' &&
+          url.hash === ''
+        );
+      } catch {
+        return false;
+      }
+    },
+    { message: 'must be a hostname without a protocol, port, credentials, or path' },
+  )
+  .transform((hostname) => hostname.toLowerCase());
+
 export const ChatConfigSchema = z
   .object({
     /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
-    allowedAttachmentHosts: z.array(z.string().min(1)).default([]),
+    allowedAttachmentHosts: z.array(AttachmentHostSchema).default([]),
   })
   .strict();
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
