@@ -21,7 +21,10 @@ import {
   CurrentSessionRevokeError,
 } from '../service/session.service.js';
 import { TrustedDeviceNotFoundError } from '../service/trusted-device.service.js';
-import type { AdminSecurityService } from '../service/admin-security.service.js';
+import {
+  type AdminSecurityService,
+  SelfTwoFactorResetError,
+} from '../service/admin-security.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
 export function createIdentityRouter(
@@ -234,6 +237,9 @@ export function createIdentityRouter(
 
       listAll: os.sessions.listAll.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'sessions', 'view');
+        // The cross-user list returns player email/role/IP with free-text email
+        // search, so it needs the player-data permission on top of session hygiene.
+        await adminGuard.assert(context, 'player', 'view');
         return sessionSvc.listAllActiveSessions({
           role: input.role,
           query: input.query,
@@ -278,19 +284,21 @@ export function createIdentityRouter(
 
       resetUserTwoFactor: os.adminSecurity.resetUserTwoFactor.handler(
         async ({ input, context }) => {
-          const caller = await adminGuard.assert(context, 'admin', 'update');
-          return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
-            adminSecurity.resetTwoFactor(input.userId, caller.userId, {
-              ip: caller.ip,
-              userAgent: caller.userAgent,
-            }),
+          const caller = await adminGuard.assertSuperAdmin(context);
+          return mapErrors(
+            { NOT_FOUND: UserNotFoundError, CONFLICT: SelfTwoFactorResetError },
+            () =>
+              adminSecurity.resetTwoFactor(input.userId, caller.userId, input.reason, {
+                ip: caller.ip,
+                userAgent: caller.userAgent,
+              }),
           );
         },
       ),
 
       revokeUserTrustedDevice: os.adminSecurity.revokeUserTrustedDevice.handler(
         async ({ input, context }) => {
-          const caller = await adminGuard.assert(context, 'sessions', 'revoke');
+          const caller = await adminGuard.assertSuperAdmin(context);
           return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
             adminSecurity.revokeTrustedDevice(input.userId, input.id, caller.userId, {
               ip: caller.ip,

@@ -5,7 +5,10 @@ import { AdminSecurityConfigSchema } from '@openora/core/contracts';
 import { user, session, twoFactor, adminTrustedDevice } from '../schema/index.js';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { AdminSecurityService } from '../service/admin-security.service.js';
+import {
+  AdminSecurityService,
+  SelfTwoFactorResetError,
+} from '../service/admin-security.service.js';
 import { SessionService } from '../service/session.service.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
 
@@ -133,7 +136,7 @@ describe('AdminSecurityService.resetTwoFactor (real PG)', () => {
     await enrol(admin.id);
     const { service } = buildService();
 
-    await service.resetTwoFactor(admin.id, superAdmin.id);
+    await service.resetTwoFactor(admin.id, superAdmin.id, 'lost authenticator');
 
     const status = await service.status(admin.id, CHROME_UA);
     expect(status.twoFactorEnabled).toBe(false);
@@ -150,10 +153,20 @@ describe('AdminSecurityService.resetTwoFactor (real PG)', () => {
     const { service, trustedDevices } = buildService();
     await trustedDevices.trust(admin.id, { ip: null, userAgent: CHROME_UA });
 
-    await service.resetTwoFactor(admin.id, superAdmin.id);
+    await service.resetTwoFactor(admin.id, superAdmin.id, 'lost authenticator');
 
     expect(await isActive(chrome)).toBe(false);
     expect(await isActive(safari)).toBe(false);
     expect(await service.isTrustedDevice(admin.id, CHROME_UA)).toBe(false);
+  });
+
+  it('refuses to reset the acting admin’s own second factor', async () => {
+    const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
+    await enrol(admin.id);
+    const { service } = buildService();
+
+    await expect(service.resetTwoFactor(admin.id, admin.id, 'self')).rejects.toThrow(
+      SelfTwoFactorResetError,
+    );
   });
 });

@@ -1,5 +1,10 @@
 import { ORPCError } from '@orpc/server';
-import { type EventBus, DrizzleService, createLogger } from '@openora/core/server';
+import {
+  type EventBus,
+  DrizzleService,
+  createLogger,
+  makeConflictError,
+} from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import {
   AuthGuardReasonSchema,
@@ -25,6 +30,14 @@ import type { TrustedDeviceService } from './trusted-device.service.js';
 import { UserNotFoundError } from './identity.service.js';
 
 const logger = createLogger('admin-security');
+
+// A Super Admin cannot clear their own second factor - that would let a single
+// compromised account walk itself back to the unenrolled state. The reset always
+// goes through another Super Admin.
+export const SelfTwoFactorResetError = makeConflictError(
+  'SelfTwoFactorResetError',
+  'An admin cannot reset their own second factor - ask another Super Admin',
+);
 
 // Recording activity on every admin request would be one write per call; the session
 // list only needs minute-level resolution.
@@ -310,7 +323,11 @@ export class AdminSecurityService implements AdminSecurityPolicy {
    * to reach it. The trust grants and live sessions go with it - leaving either behind
    * would let a browser keep the access the reset exists to withdraw.
    */
-  async resetTwoFactor(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
+  async resetTwoFactor(userId: User['id'], actorId: User['id'], reason: string, meta?: ClientMeta) {
+    if (userId === actorId) {
+      throw new SelfTwoFactorResetError();
+    }
+
     const [account] = await this.drizzle.db
       .select({ id: user.id })
       .from(user)
@@ -337,6 +354,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
+      reason,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });

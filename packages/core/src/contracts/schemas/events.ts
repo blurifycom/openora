@@ -142,6 +142,8 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     actorId: UuidSchema,
+    // Free-text justification the Super Admin gave when clearing the second factor.
+    reason: z.string(),
   }),
   'identity.2fa.lockout.triggered': authContextBase.extend({
     userId: UuidSchema,

@@ -307,9 +307,11 @@ export const identityContract = {
       .output(IdentitySuccessSchema),
 
     // Clears someone else's second factor entirely, back to the unenrolled state.
+    // Super Admin only; the `reason` is recorded on identity.2fa.reset so the audit
+    // trail carries why an account was put back to the unenrolled state.
     resetUserTwoFactor: oc
       .route({ method: 'POST', path: '/identity/admin-security/2fa/reset' })
-      .input(z.object({ userId: UuidSchema }))
+      .input(z.object({ userId: UuidSchema, reason: z.string().trim().min(10).max(500) }))
       .output(IdentitySuccessSchema),
 
     // Cross-user twin, for a Super Admin cutting off someone else's trusted device.
