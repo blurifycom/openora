@@ -91,6 +91,12 @@ export const ChatMemberRoleChangedSignalSchema = z.object({
 });
 export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
 
+// Envelope of the room channel's SIGNAL lane, served by `streamSignals`. `payload` stays
+// `unknown` because the vocabulary of names is open: a client parses the ones it asked for
+// (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.
+export const ChatSignalSchema = z.object({ name: z.string(), payload: z.unknown() });
+export type ChatSignal = z.infer<typeof ChatSignalSchema>;
+
 export const ChatRoomRuleSchema = z.object({
   id: UuidSchema,
   roomId: UuidSchema,
@@ -318,6 +324,13 @@ export const chatContract = {
     .route({ method: 'GET', path: '/chat/stream' })
     .input(z.object({ roomId: UuidSchema.nullable().optional() }))
     .output(eventIterator(ChatMessageSchema)),
+
+  // The signal lane of the same channel `streamMessages` serves, on its own stream so a
+  // control signal can never arrive as a message. Same access rules as the message stream.
+  streamSignals: oc
+    .route({ method: 'GET', path: '/chat/signals' })
+    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .output(eventIterator(ChatSignalSchema)),
 
   getOnlineCount: oc
     .route({ method: 'GET', path: '/chat/online-count' })

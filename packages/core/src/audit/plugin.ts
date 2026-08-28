@@ -359,15 +359,18 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the granting/revoking owner's resolved playerId; resource = the member whose
-  // role moved. after carries the new role, so the trail reads as a role history per member.
+  // actorId = the granting/revoking owner's resolved playerId, falling back to the raw acting
+  // user id when no player record backs them (the actor must never be lost on a permission
+  // change). resource = the member whose role moved; before/after carry the two roles.
   if (topic === 'chat.room.member.role-changed') {
+    const actorPlayerId = str(p['playerId']);
     return {
       ...base,
-      actorType: 'player',
-      actorId: str(p['playerId']),
+      actorType: actorPlayerId ? 'player' : 'admin',
+      actorId: actorPlayerId ?? str(p['changedBy']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
+      before: { roomId: str(p['roomId']), role: str(p['previousRole']) },
       after: { roomId: str(p['roomId']), role: str(p['role']) },
     };
   }

@@ -252,6 +252,29 @@ export function createChatRouter({
       );
     }),
 
+    streamSignals: os.streamSignals.handler(async ({ input, signal, context }) => {
+      const roomId =
+        input.roomId === '__global' || input.roomId === undefined ? null : input.roomId;
+      const viewerId = resolveViewerId(context);
+      if (roomId) {
+        await mapErrors(
+          {
+            NOT_FOUND: ChatRoomNotFoundError,
+            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+          },
+          () => chatService.verifyRoomAccess(roomId, viewerId),
+        );
+      } else {
+        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
+          chatService.verifyGlobalAccess(viewerId),
+        );
+      }
+      return createEventStreamGenerator(
+        (push) => chatService.subscribeSignals(roomId, push, viewerId),
+        { signal },
+      );
+    }),
+
     getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) => {
       const roomId = input.roomId ?? null;
       if (roomId) {

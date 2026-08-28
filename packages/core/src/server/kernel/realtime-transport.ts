@@ -1,7 +1,8 @@
-import type { RealtimePresence, RealtimeTransport } from '@openora/core/contracts';
+import type { RealtimePresence, RealtimeSignal, RealtimeTransport } from '@openora/core/contracts';
 
 type Handler = (event: unknown) => void;
-type Subscription = { handler: Handler; clientId?: string };
+type Subscription = { handler: Handler; userId?: string };
+type SignalSubscription = { handler: (signal: RealtimeSignal) => void; userId?: string };
 
 class InProcessPresence implements RealtimePresence {
   private readonly members = new Map<string, Map<string, Set<string>>>();
@@ -46,6 +47,9 @@ class InProcessPresence implements RealtimePresence {
 /** First-party process-local fan-out used by the default SSE transport. */
 export class InProcessRealtimeTransport implements RealtimeTransport {
   private readonly channels = new Map<string, Set<Subscription>>();
+  // Second, independent lane per channel: a signal must never reach a payload subscriber,
+  // which is the whole reason `signal` exists next to `publish`.
+  private readonly signalChannels = new Map<string, Set<SignalSubscription>>();
   private readonly inProcessPresence = new InProcessPresence();
   readonly presence: RealtimePresence = this.inProcessPresence;
 
@@ -68,9 +72,9 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     this.publish(channel, event);
   }
 
-  subscribe<T>(channel: string, handler: (event: T) => void, clientId?: string): () => void {
+  subscribe<T>(channel: string, handler: (event: T) => void, userId?: string): () => void {
     const subscribers = this.channels.get(channel) ?? new Set<Subscription>();
-    const subscription = { handler: handler as Handler, clientId };
+    const subscription = { handler: handler as Handler, userId };
     subscribers.add(subscription);
     this.channels.set(channel, subscribers);
     return () => {
@@ -85,18 +89,63 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     };
   }
 
-  revokeClientFromChannel(clientId: string, channel: string): void {
+  signal(channel: string, name: string, payload: unknown): void {
+    const subscribers = this.signalChannels.get(channel);
+    if (!subscribers) {
+      return;
+    }
+    for (const { handler } of Array.from(subscribers)) {
+      try {
+        handler({ name, payload });
+      } catch {
+        // One disconnected subscriber must not stop fan-out to others.
+      }
+    }
+  }
+
+  subscribeSignal(
+    channel: string,
+    handler: (signal: RealtimeSignal) => void,
+    userId?: string,
+  ): () => void {
+    const subscribers = this.signalChannels.get(channel) ?? new Set<SignalSubscription>();
+    const subscription = { handler, userId };
+    subscribers.add(subscription);
+    this.signalChannels.set(channel, subscribers);
+    return () => {
+      const current = this.signalChannels.get(channel);
+      if (!current) {
+        return;
+      }
+      current.delete(subscription);
+      if (current.size === 0) {
+        this.signalChannels.delete(channel);
+      }
+    };
+  }
+
+  /** Cuts every subscription this user holds on the channel, however many connections that is. */
+  revokeUserFromChannel(userId: string, channel: string): void {
     const subscribers = this.channels.get(channel);
     if (!subscribers) {
       return;
     }
     for (const subscription of Array.from(subscribers)) {
-      if (subscription.clientId === clientId) {
+      if (subscription.userId === userId) {
         subscribers.delete(subscription);
       }
     }
     if (subscribers.size === 0) {
       this.channels.delete(channel);
+    }
+    const signalSubscribers = this.signalChannels.get(channel);
+    for (const subscription of Array.from(signalSubscribers ?? [])) {
+      if (subscription.userId === userId) {
+        signalSubscribers?.delete(subscription);
+      }
+    }
+    if (signalSubscribers && signalSubscribers.size === 0) {
+      this.signalChannels.delete(channel);
     }
   }
 

@@ -1,5 +1,10 @@
 import { and, count, eq, gt, inArray, isNull, or } from 'drizzle-orm';
-import { DrizzleService, withAdvisoryXactLock, serializeRow } from '@openora/core/server';
+import {
+  DrizzleService,
+  withAdvisoryXactLock,
+  serializeRow,
+  createLogger,
+} from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
 import {
   chatChannel,
@@ -23,6 +28,8 @@ import {
 } from './errors/chat-moderation.errors.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
+
+const logger = createLogger('chat');
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
   const { deletedAt: _deletedAt, ...room } = record;
@@ -237,16 +244,16 @@ export class ChatRoomMembershipService {
       });
     }
     if (removed.length > 0) {
-      await this.transport?.revokeClientFromChannel?.(userId, chatChannel(roomId));
+      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(roomId));
     }
     return { success: true } as const;
   }
 
   /**
-   * Grants or revokes the `moderator` role on a room member. Owner-only: a moderator must not
-   * be able to create peers, so the shared `assertModerator` guard is deliberately not used.
-   * Idempotent - a target already at the requested role is a successful no-op. Zero moderators
-   * is a valid end state, so the last revoke is never blocked.
+   * Grants or revokes the `moderator` role on a private room's member. Owner-only: a moderator
+   * must not be able to create peers, so the shared `assertModerator` guard is deliberately not
+   * used. Idempotent - a target already at the requested role is a successful no-op. Zero
+   * moderators is a valid end state, so the last revoke is never blocked.
    */
   async setMemberRole({
     actorId,
@@ -267,7 +274,9 @@ export class ChatRoomMembershipService {
         const [room] = await t
           .select({ id: chatRoom.id })
           .from(chatRoom)
-          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .where(
+            and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
+          )
           .limit(1);
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
@@ -298,13 +307,16 @@ export class ChatRoomMembershipService {
           throw new ChatRoomNotModeratorError(roomId);
         }
         if (target.role === role) {
-          return false;
+          return null;
         }
-        await t
+        // `removeMember` does not take this lock, so the row read above can be gone by now.
+        // The update decides whether anything actually changed, not the read.
+        const updated = await t
           .update(chatRoomMember)
           .set({ role, roleAssignedAt: role === 'member' ? null : new Date() })
-          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
-        return true;
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .returning({ id: chatRoomMember.id });
+        return updated.length === 1 ? target.role : null;
       }),
     );
     if (changed) {
@@ -313,20 +325,27 @@ export class ChatRoomMembershipService {
         userId,
         changedBy: actorId,
         role,
-        // Actor's resolved playerId, matching the kicked/banned events the audit trail
-        // already attributes this way.
+        previousRole: changed,
+        // Null when the acting owner has no player record (the audit mapper then falls back
+        // to `changedBy`), matching how the kicked/banned events carry the actor.
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
       // The EventBus is server-side only, so without this the promoted member keeps
-      // rendering as a plain one until their roster cache happens to expire.
+      // rendering as a plain one until their roster cache happens to expire. Best-effort:
+      // the role is already committed, and failing the call here would report failure for
+      // a write that happened and that a retry would no-op.
       const signalPayload: ChatMemberRoleChangedSignal = { roomId, userId, role };
-      await this.transport?.signal?.(
-        chatChannel(roomId),
-        CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
-        signalPayload,
-      );
+      try {
+        await this.transport?.signal?.(
+          chatChannel(roomId),
+          CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+          signalPayload,
+        );
+      } catch (err: unknown) {
+        logger.error({ err, roomId, userId }, 'chat role-change signal failed');
+      }
     }
     return { success: true } as const;
   }

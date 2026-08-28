@@ -14,6 +14,7 @@ import type {
   AdminPlayerSummary,
   AuditWritePort,
   FriendshipDissolvedPayload,
+  RealtimeSignal,
   RealtimeTransport,
   SocialCommands,
 } from '@openora/core/contracts';
@@ -1256,6 +1257,74 @@ describe('ChatService admin rooms (real PG)', () => {
     expect(memberDeliveries).toEqual([]);
   });
 
+  it('cuts every connection the same user holds, not just the first', async () => {
+    const { svc, transport } = makeService();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'End me',
+      ...NO_CLIENT_META,
+    });
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    const firstTab: unknown[] = [];
+    const secondTab: unknown[] = [];
+    transport.subscribe(chatChannel(room.id), () => firstTab.push(true), memberId);
+    transport.subscribe(chatChannel(room.id), () => secondTab.push(true), memberId);
+
+    await svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META });
+
+    transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
+    expect(firstTab).toEqual([]);
+    expect(secondTab).toEqual([]);
+  });
+
+  it('still records the deletion when the channel cleanup rejects', async () => {
+    const transport: RealtimeTransport = Object.assign(new InProcessRealtimeTransport(), {
+      revokeUserFromChannel: vi.fn().mockRejectedValue(new Error('transport down')),
+    });
+    const { svc, events } = makeService(undefined, undefined, transport);
+    const ownerId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'End me',
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META }),
+    ).resolves.toEqual({ success: true });
+
+    const [stored] = await db.drizzle.db.select().from(chatRoom).where(eq(chatRoom.id, room.id));
+    expect(stored?.deletedAt).toBeInstanceOf(Date);
+    expect(events.emit).toHaveBeenCalledWith(
+      'chat.private_room.deleted',
+      expect.objectContaining({ roomId: room.id, creatorId: ownerId }),
+    );
+  });
+
+  it('lets only one of two concurrent deletes through, with one deletion event', async () => {
+    const { svc, events } = makeService();
+    const ownerId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'End me',
+      ...NO_CLIENT_META,
+    });
+
+    const results = await Promise.allSettled([
+      svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META }),
+      svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META }),
+    ]);
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const [rejected] = results.filter((r) => r.status === 'rejected');
+    expect((rejected as PromiseRejectedResult).reason).toBeInstanceOf(ChatRoomNotFoundError);
+    expect(
+      events.emit.mock.calls.filter(([topic]) => topic === 'chat.private_room.deleted'),
+    ).toHaveLength(1);
+  });
+
   it('leaves the room channel intact when the delete is refused', async () => {
     const { svc, transport } = makeService();
     const ownerId = randomUUID();
@@ -1471,15 +1540,13 @@ describe('ChatService.leaveRoom (real PG)', () => {
 });
 
 describe('ChatService.setMemberRole (real PG)', () => {
-  // `signal` is an optional transport capability the first-party in-process fan-out does not
-  // implement (it has one payload lane per channel), so the spy stands in for a managed vendor.
   function transportWithSignal() {
     const signal = vi.fn();
     return { transport: Object.assign(new InProcessRealtimeTransport(), { signal }), signal };
   }
 
   async function roomWithMember(transport?: RealtimeTransport) {
-    const { svc, events, audit } = makeService(undefined, undefined, transport);
+    const { svc, events, audit, transport: bound } = makeService(undefined, undefined, transport);
     const ownerId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: ownerId,
@@ -1488,7 +1555,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
     });
     const memberId = randomUUID();
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
-    return { svc, events, audit, room, ownerId, memberId };
+    return { svc, events, audit, transport: bound, room, ownerId, memberId };
   }
 
   function readMember(roomId: string, userId: string) {
@@ -1523,6 +1590,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
         userId: memberId,
         changedBy: ownerId,
         role: 'moderator',
+        previousRole: 'member',
       }),
     );
   });
@@ -1859,7 +1927,10 @@ describe('ChatService.setMemberRole (real PG)', () => {
   });
 
   it('succeeds on a transport that does not implement the signal capability', async () => {
-    const { svc, room, ownerId, memberId } = await roomWithMember();
+    const transport: RealtimeTransport = Object.assign(new InProcessRealtimeTransport(), {
+      signal: undefined,
+    });
+    const { svc, room, ownerId, memberId } = await roomWithMember(transport);
 
     await expect(
       svc.setMemberRole({
@@ -1870,6 +1941,77 @@ describe('ChatService.setMemberRole (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).resolves.toEqual({ success: true });
+  });
+
+  it('keeps a committed role change when the signal fan-out rejects', async () => {
+    const transport: RealtimeTransport = Object.assign(new InProcessRealtimeTransport(), {
+      signal: vi.fn().mockRejectedValue(new Error('transport down')),
+    });
+    const { svc, events, room, ownerId, memberId } = await roomWithMember(transport);
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    expect(await readMember(room.id, memberId)).toMatchObject({ role: 'moderator' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'chat.room.member.role-changed',
+      expect.objectContaining({ userId: memberId, role: 'moderator' }),
+    );
+  });
+
+  it('refuses to touch roles in a public room', async () => {
+    const { svc } = makeService();
+    const room = await seedRoom({ isPublic: true });
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    await db.drizzle.db.insert(chatRoomMember).values([
+      { roomId: room.id, userId: ownerId, role: 'owner' },
+      { roomId: room.id, userId: memberId, role: 'member' },
+    ]);
+
+    await expect(
+      svc.setMemberRole({
+        actorId: ownerId,
+        roomId: room.id,
+        userId: memberId,
+        role: 'moderator',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomNotFoundError);
+    expect(await readMember(room.id, memberId)).toMatchObject({ role: 'member' });
+  });
+
+  it('delivers the signal over the default transport, on its own lane', async () => {
+    const { svc, transport, room, ownerId, memberId } = await roomWithMember();
+    const signals: RealtimeSignal[] = [];
+    const messages: unknown[] = [];
+    svc.subscribeSignals(room.id, (signal) => signals.push(signal), memberId);
+    svc.subscribeMessages(room.id, (message) => messages.push(message), memberId);
+
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    expect(signals).toEqual([
+      {
+        name: CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+        payload: { roomId: room.id, userId: memberId, role: 'moderator' },
+      },
+    ]);
+    expect(messages).toEqual([]);
+    transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
+    expect(signals).toHaveLength(1);
   });
 });
 

@@ -86,6 +86,7 @@ export { CACHE } from './cache.js';
 export type {
   RealtimeTransport,
   RealtimePresence,
+  RealtimeSignal,
   RealtimeConnectionGrant,
   RealtimeClientAuthorizer,
   RealtimeClientAuthorizerInput,

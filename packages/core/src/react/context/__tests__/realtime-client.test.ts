@@ -13,14 +13,17 @@ type Message = { id: string };
 
 /**
  * Stands in for a vendor adapter: it records what each channel was subscribed with, and
- * `deliver`/`emit` play the two lanes back the way Ably's named events would.
+ * `deliver`/`emit` play the two lanes back the way Ably's named events would. `subscribe` is
+ * generic, so the map cannot know a channel's payload type - it stores the handlers under
+ * `never`, which every `RealtimeSubscribeHandlers<T>` satisfies. Only `deliver` states a
+ * payload type, and it is the one this file subscribes with.
  */
 function fakeAdapter() {
-  const channels = new Map<string, RealtimeSubscribeHandlers<Message>>();
+  const channels = new Map<string, RealtimeSubscribeHandlers<never>>();
   const closed = vi.fn();
   const adapter: RealtimeClientAdapter = {
     subscribe<T>(channel: string, handlers: RealtimeSubscribeHandlers<T>) {
-      channels.set(channel, handlers as RealtimeSubscribeHandlers<Message>);
+      channels.set(channel, handlers);
       return () => channels.delete(channel);
     },
     close: closed,
@@ -28,7 +31,8 @@ function fakeAdapter() {
   return {
     adapter,
     closed,
-    deliver: (channel: string, message: Message) => channels.get(channel)?.onMessage(message),
+    deliver: (channel: string, message: Message) =>
+      channels.get(channel)?.onMessage(message as never),
     emit: (channel: string, name: string, payload: unknown) =>
       channels.get(channel)?.onSignal?.(name, payload),
   };

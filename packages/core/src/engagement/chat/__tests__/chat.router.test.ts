@@ -22,8 +22,6 @@ const ROOM_ID = '9a2f7c11-0000-4000-8000-000000000001';
 const USER_ID = '9a2f7c11-0000-4000-8000-000000000002';
 const CTX = testContext({ auth: { userId: USER_ID } });
 
-// leaveRoom neither reads nor writes a row in the router - it authenticates, then delegates -
-// so a per-test membership double is enough to drive each failure the service can raise.
 function routerWithLeaveRoom(leaveRoom: () => Promise<unknown>) {
   return createChatRouter({
     chatService: mock<ChatService>({}),
@@ -57,8 +55,6 @@ describe('chat router leaveRoom error mapping', () => {
     });
   });
 
-  // Deleting a private room leaves its members holding a room id the lookup no longer finds.
-  // Answering 500 there tells the client nothing; NOT_FOUND lets it drop the room.
   it('answers NOT_FOUND when the room is already deleted', async () => {
     await expect(leaveRoomCode(new ChatRoomNotFoundError(ROOM_ID))).resolves.toBe('NOT_FOUND');
   });

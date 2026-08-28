@@ -100,6 +100,7 @@
         "chat.sendRoomMessage",
         "chat.setMemberRole",
         "chat.streamMessages",
+        "chat.streamSignals",
         "chat.unbanRoomMember",
         "chat.unblockUser",
         "chat.unignoreUser",
@@ -1282,6 +1283,10 @@
     },
     {
       "name": "ChatRoomUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatSignalSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

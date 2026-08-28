@@ -22,9 +22,8 @@ export type RealtimeSubscribeHandlers<T> = {
    * own lane, so it never reaches `onMessage` and cannot corrupt the payload stream. `payload` is
    * `unknown` on purpose: the vocabulary of names is open, so the caller parses what it asked
    * for (eg `ChatMemberRoleChangedSignalSchema` for `chat:member-role-changed`) and ignores the
-   * rest. Only a managed transport delivers these: the first-party SSE path carries one payload
-   * lane per channel, exactly as noted on `RealtimeTransport.signal`, so an SSE-backed adapter
-   * simply never calls this.
+   * rest. A managed adapter feeds this from the vendor's named events; an SSE-backed one feeds
+   * it from the `/chat/signals` stream, which carries the same lane for the default transport.
    */
   onSignal?: (name: string, payload: unknown) => void;
 };

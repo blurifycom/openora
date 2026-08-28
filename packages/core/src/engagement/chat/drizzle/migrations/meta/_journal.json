@@ -64,6 +64,13 @@
       "when": 1787812658947,
       "tag": "0008_majestic_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787910993915,
+      "tag": "0009_backfill_role_assigned_at",
+      "breakpoints": true
     }
   ]
 }

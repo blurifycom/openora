@@ -18,6 +18,7 @@ import {
 import type {
   ClientMeta,
   ChatModeration,
+  RealtimeSignal,
   RealtimeTransport,
   CommandMetadata,
   ChatSystemMessage,
@@ -253,7 +254,7 @@ export class ChatService {
    * The room channel's PAYLOAD lane, and the only one the `streamMessages` SSE route serves:
    * everything delivered here is a `ChatMessage`. Named control signals travel the separate
    * `RealtimeTransport.signal` lane and are never delivered to this listener - which is why no
-   * filtering is needed here, and why an SSE-only client does not observe them.
+   * filtering is needed here. `subscribeSignals` serves that other lane.
    */
   subscribeMessages(
     roomId: ChatRoom['id'] | null,
@@ -306,6 +307,20 @@ export class ChatService {
       unsubscribe();
       presence?.leave(channel, presenceMemberId, connectionId);
     };
+  }
+
+  /**
+   * The room channel's SIGNAL lane, served by `streamSignals`: named control events that tell a
+   * client to refetch, never the channel's payload. Separate from `subscribeMessages` on purpose
+   * - the two lanes cannot cross. Returns a no-op unsubscribe when the bound transport has no
+   * signal lane (a managed vendor delivers its own named events straight to the browser).
+   */
+  subscribeSignals(
+    roomId: ChatRoom['id'] | null,
+    listener: (signal: RealtimeSignal) => void,
+    viewerId?: User['id'],
+  ) {
+    return this.transport.subscribeSignal?.(chatChannel(roomId), listener, viewerId) ?? (() => {});
   }
 
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
@@ -1651,46 +1666,70 @@ export class ChatService {
     roomId: ChatRoom['id'];
     userId: User['id'];
   } & ClientMeta) {
-    const room = findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(chatRoom)
-        .where(
-          and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
-        )
-        .limit(1),
-      new ChatRoomNotFoundError(roomId),
-    );
-    if (!room.creatorId) {
-      throw new ChatRoomOwnershipError();
-    }
-    assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
     const deletedAt = new Date();
-    // Same lock the join/leave paths take, so a member joining concurrently either lands
-    // before the roster snapshot (and gets revoked) or after the soft-delete (and is rejected).
-    const members = await this.drizzle.db.transaction((t) =>
+    // Validation runs inside the lock, not before it: two concurrent deletes would otherwise
+    // both pass the active-room check and both emit a deletion event for one room. The lock
+    // is the same one join/leave take, so a member joining concurrently either lands before
+    // the roster snapshot (and gets revoked) or after the soft-delete (and is rejected).
+    const deleted = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        const rows = await t
+        const room = findOneOrThrow(
+          await t
+            .select()
+            .from(chatRoom)
+            .where(
+              and(
+                eq(chatRoom.id, roomId),
+                eq(chatRoom.isPublic, false),
+                isNull(chatRoom.deletedAt),
+              ),
+            )
+            .limit(1),
+          new ChatRoomNotFoundError(roomId),
+        );
+        if (!room.creatorId) {
+          throw new ChatRoomOwnershipError();
+        }
+        assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
+        const members = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(eq(chatRoomMember.roomId, roomId));
-        await t.update(chatRoom).set({ deletedAt }).where(eq(chatRoom.id, roomId));
-        return rows;
+        const updated = await t
+          .update(chatRoom)
+          .set({ deletedAt })
+          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .returning({ id: chatRoom.id });
+        return updated.length === 1 ? { room, members } : null;
       }),
     );
-    // Only once the delete is committed: the room is gone, so cut every member off the
-    // room channel rather than leaving them subscribed to a room that 404s on every call.
-    await mapConcurrent(members, ROOM_REVOKE_CONCURRENCY, async ({ userId: memberId }) => {
-      await this.transport.revokeClientFromChannel?.(memberId, chatChannel(roomId));
-    });
+    if (!deleted) {
+      throw new ChatRoomNotFoundError(roomId);
+    }
+    // Before the realtime cleanup: the deletion is committed, and an audit trail that depends
+    // on a transport call succeeding would go missing exactly when the transport is down.
     this.events.emit('chat.private_room.deleted', {
       roomId,
       creatorId: userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      before: { name: room.name, slug: room.slug, category: room.category },
+      before: {
+        name: deleted.room.name,
+        slug: deleted.room.slug,
+        category: deleted.room.category,
+      },
       after: { deletedAt: deletedAt.toISOString() },
       ip: ip ?? null,
       userAgent: userAgent ?? null,
+    });
+    // The room is gone, so cut every member off the room channel rather than leaving them
+    // subscribed to a room that 404s on every call. Per-member best-effort: one unreachable
+    // client must not fail a delete that has already happened and cannot be retried.
+    await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, async ({ userId: memberId }) => {
+      try {
+        await this.transport.revokeUserFromChannel?.(memberId, chatChannel(roomId));
+      } catch (err: unknown) {
+        logger.error({ err, roomId, memberId }, 'chat room channel revoke failed');
+      }
     });
     return { success: true } as const;
   }
