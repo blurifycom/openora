@@ -1,0 +1,1 @@
+ALTER TABLE "player" ADD COLUMN "display_currency" text;

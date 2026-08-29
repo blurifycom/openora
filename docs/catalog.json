@@ -186,7 +186,8 @@
         "exchange_rate_quote"
       ],
       "routes": [
-        "exchange-rate.getRate"
+        "exchange-rate.getRate",
+        "exchange-rate.getRates"
       ]
     },
     {
@@ -335,6 +336,8 @@
       ],
       "routes": [
         "profile.get",
+        "profile.getDisplayCurrency",
+        "profile.setDisplayCurrency",
         "profile.update"
       ]
     },
@@ -536,6 +539,7 @@
         "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -651,7 +655,8 @@
       "token": "EXCHANGE_RATE_READER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/fx/exchange-rate/plugin.ts"
+        "packages/core/src/fx/exchange-rate/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts"
       ]
     },
     {
@@ -905,10 +910,11 @@
     },
     {
       "category": "wallet-reader",
-      "interface": "WalletReader",
+      "interface": "WalletBalanceReading",
       "token": "WALLET_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/pam/profile/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
@@ -1385,6 +1391,18 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "DisplayCurrencyCodeSchema",
+      "file": "packages/core/src/contracts/schemas/display-currency.ts"
+    },
+    {
+      "name": "DisplayCurrencyInfoSchema",
+      "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "DisplayCurrencyInputSchema",
+      "file": "packages/core/src/contracts/schemas/display-currency.ts"
+    },
+    {
       "name": "DonateCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
@@ -1411,6 +1429,10 @@
     {
       "name": "EndRoundOutputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "ExchangeRateBatchEntrySchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
     },
     {
       "name": "ExchangeRateConfigSchema",
@@ -1522,6 +1544,10 @@
     },
     {
       "name": "GetExchangeRateInputSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "GetExchangeRatesInputSchema",
       "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
     },
     {
@@ -2091,6 +2117,10 @@
     {
       "name": "SetBonusRolloverConfigInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetDisplayCurrencyInputSchema",
+      "file": "packages/core/src/pam/profile/contract/index.ts"
     },
     {
       "name": "SetPlayerLimitInputSchema",

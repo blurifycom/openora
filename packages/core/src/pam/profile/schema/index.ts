@@ -30,6 +30,12 @@ export const player = pgTable(
     phone: text(),
     country: text(),
     currency: text().notNull().default('USD'),
+    // Player's presentation-only pick for rendering amounts, distinct from `currency`
+    // above (the player's operating currency). NULLABLE and NEVER defaulted: `null`
+    // means "never chosen" and is a different state from "explicitly chose USD" - see
+    // the resolver in service/profile.service.ts, which only falls back to a computed
+    // currency when this column is null.
+    displayCurrency: text(),
     status: playerStatusEnum().notNull().default('active'),
     kycStatus: kycStatusEnum().notNull().default('pending'),
     level: integer().notNull().default(1),

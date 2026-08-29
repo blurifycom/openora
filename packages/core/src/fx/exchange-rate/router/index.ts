@@ -11,5 +11,6 @@ export function createExchangeRateRouter(exchangeRate: ExchangeRateService) {
 
   return os.router({
     getRate: os.getRate.handler(({ input }) => exchangeRate.getRate(input.from, input.to)),
+    getRates: os.getRates.handler(({ input }) => exchangeRate.getRates(input.to, input.from)),
   });
 }

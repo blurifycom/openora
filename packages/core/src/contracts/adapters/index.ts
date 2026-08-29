@@ -44,7 +44,7 @@ export type {
 } from './wallet-commands.js';
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
-export type { WalletReader } from './wallet-reader.js';
+export type { WalletReader, WalletBalanceReading, WalletBalancesReading } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
 export type {
