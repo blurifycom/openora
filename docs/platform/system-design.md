@@ -289,7 +289,7 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 20 modules, 225 routes, 44 adapter ports, 91 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 20 modules, 228 routes, 44 adapter ports, 91 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                          | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
@@ -300,9 +300,9 @@ Generated from `docs/catalog.json` - 20 modules, 225 routes, 44 adapter ports, 9
 | `@openora/core/cms`           | cms                                                              | banner, page                                                                        | 10     |
 | `@openora/core/compliance`    | compliance                                                       | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 20     |
 | `@openora/core/engagement`    | chat · chat-commands · notifications · social · social-transfers | chat_command_config, chat_message, chat_mute, chat_platform_ban + 15 more           | 73     |
-| `fx`                          | exchange-rate                                                    | exchange_rate_quote                                                                 | 1      |
+| `fx`                          | exchange-rate                                                    | exchange_rate_quote                                                                 | 2      |
 | `@openora/core/iam`           | iam                                                              | admin_invitation, admin_role, admin_role_assignment, admin_role_permission          | 17     |
-| `@openora/core/pam`           | identity · player-management · player-note · profile · tag       | account, player, player_note, player_tag + 7 more                                   | 47     |
+| `@openora/core/pam`           | identity · player-management · player-note · profile · tag       | account, player, player_note, player_tag + 7 more                                   | 49     |
 | `@openora/core/wallet`        | wallet                                                           | auto_withdrawal_rule, wallet, wallet_asset, wallet_auto_withdrawal_config + 10 more | 35     |
 
 <!-- /gen:catalog-reference -->

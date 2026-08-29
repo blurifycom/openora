@@ -78,6 +78,7 @@
       "@openora/core/fx/contracts/exchange-rate": ["./src/fx/exchange-rate/contract/index.ts"],
       "@openora/core/fx/migrate/exchange-rate": ["./src/fx/exchange-rate/migrate.ts"],
       "@openora/core/fx/plugins/exchange-rate": ["./src/fx/exchange-rate/plugin.ts"],
+      "@openora/core/fx/react": ["./src/fx/react.ts"],
       "@openora/core/fx/schema/exchange-rate": ["./src/fx/exchange-rate/schema/index.ts"],
       "@openora/core/fx/server": ["./src/fx/server.ts"],
       "@openora/core/iam": ["./src/iam/index.ts"],

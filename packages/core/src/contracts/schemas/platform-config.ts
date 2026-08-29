@@ -205,6 +205,13 @@ export const PlatformConfigSchema = z
      * Undefined or empty means no restriction - any value is accepted.
      */
     supportedLanguages: z.array(z.string().min(1)).optional(),
+    /**
+     * Currency codes a player may pick to have the UI render amounts in (see
+     * `resolveDisplayCurrencies` in display-currency.ts). Absent or empty = the
+     * built-in default list (a broad crypto + fiat set). Case-insensitive; each
+     * code is normalized to uppercase before comparison.
+     */
+    displayCurrencies: z.array(z.string().min(1)).optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {

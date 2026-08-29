@@ -22,5 +22,8 @@ export {
 export {
   usePlayerProfile,
   useUpdatePlayerProfile,
+  useDisplayCurrency,
+  useSetDisplayCurrency,
   type PlayerProfile,
+  type DisplayCurrencyInfo,
 } from './profile/react/profile.js';

@@ -1,10 +1,29 @@
 import { DrizzleService } from '@openora/core/server';
-import { type WalletReader } from '@openora/core/contracts';
+import { type WalletReader, type WalletBalancesReading } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
+
+// Mirrors WalletService.getBalances's own default - no wallet row yet still needs
+// an answer, never a throw.
+const DEFAULT_WALLET_CURRENCY = 'USD';
 
 export class WalletReaderService implements WalletReader {
   constructor(private readonly drizzle: DrizzleService) {}
+
+  async getBalances(userId: string): Promise<WalletBalancesReading> {
+    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+    if (!record) {
+      return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
+    }
+
+    const rows = await this.drizzle.db
+      .select({ currency: walletBalance.currency, balance: walletBalance.amount })
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, record.id))
+      .orderBy(walletBalance.currency);
+
+    return { activeCurrency: record.currency, balances: rows };
+  }
 
   async getLifetimeDeposit(userId: string): Promise<string> {
     const [row] = await this.drizzle.db

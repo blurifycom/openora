@@ -19,6 +19,7 @@ export type DirectAuditAction =
   | 'admin.player.removed'
   | 'admin.player_note.created'
   | 'audit.export'
+  | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
