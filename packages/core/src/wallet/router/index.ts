@@ -44,6 +44,7 @@ import {
   WalletAssetUnsupportedError,
   WalletAssetUnknownProviderError,
   WalletAssetInUseError,
+  WalletAssetHasIssuedAddressesError,
   WalletAssetHasInFlightTransactionsError,
   AmbiguousNetworkError,
   UnsupportedNetworkError,
@@ -418,7 +419,13 @@ export function createWalletRouter({
           userAgent,
         } = await adminGuard.assert(context, 'wallet-asset', 'delete');
         return mapErrors(
-          { CONFLICT: [WalletAssetInUseError, WalletAssetHasInFlightTransactionsError] },
+          {
+            CONFLICT: [
+              WalletAssetInUseError,
+              WalletAssetHasIssuedAddressesError,
+              WalletAssetHasInFlightTransactionsError,
+            ],
+          },
           () => wallet.deleteWalletAsset(adminId, input.currency, input.network, { ip, userAgent }),
         );
       }),

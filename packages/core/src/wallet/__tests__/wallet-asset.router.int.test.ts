@@ -17,7 +17,13 @@ import {
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction, walletAsset } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletAsset,
+  walletDepositAddress,
+} from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
@@ -48,6 +54,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.delete(walletTransaction);
+  await db.drizzle.db.delete(walletDepositAddress);
   await db.drizzle.db.delete(walletBalance);
   await db.drizzle.db.delete(wallet);
   await db.drizzle.db.delete(walletAsset);
@@ -333,6 +340,27 @@ describe('wallet asset catalog routes', () => {
     await expect(
       call(router.assets.delete, { currency: 'USDT', network: 'ERC20' }, { context: CTX }),
     ).rejects.toThrow(ORPCError);
+    expect(await call(router.assets.list, {}, { context: CTX })).toHaveLength(1);
+  });
+
+  it('delete: is blocked by an issued deposit address, not the balance-held error', async () => {
+    const { router } = routerWith(adminGuard());
+    await call(router.assets.create, { ...USDT_ERC20 }, { context: CTX });
+    await seedBalance('USDT', '0');
+    await db.drizzle.db.insert(walletDepositAddress).values({
+      userId: randomUUID(),
+      currency: 'USDT',
+      network: 'ERC20',
+      address: '0xabc',
+      providerName: 'vendor-a',
+    });
+
+    await expect(
+      call(router.assets.delete, { currency: 'USDT', network: 'ERC20' }, { context: CTX }),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      data: { code: 'WALLET_ASSET_ADDRESS_ISSUED' },
+    });
     expect(await call(router.assets.list, {}, { context: CTX })).toHaveLength(1);
   });
 

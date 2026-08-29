@@ -37,7 +37,10 @@ export type DirectAuditAction =
   | 'wallet.reconciliation_run.skipped'
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
-  | 'wallet.reconciliation_finding.resolved';
+  | 'wallet.reconciliation_finding.resolved'
+  | 'wallet.wallet_asset.created'
+  | 'wallet.wallet_asset.updated'
+  | 'wallet.wallet_asset.deleted';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

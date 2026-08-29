@@ -152,6 +152,13 @@ export const WalletAssetUnsupportedError = makeConflictError(
 export const WalletAssetInUseError = makeConflictError(
   'WalletAssetInUseError',
   'Players still hold a balance in this currency',
+  { code: 'WALLET_ASSET_BALANCE_HELD' },
+);
+
+export const WalletAssetHasIssuedAddressesError = makeConflictError(
+  'WalletAssetHasIssuedAddressesError',
+  'A deposit address was already issued for this currency and network',
+  { code: 'WALLET_ASSET_ADDRESS_ISSUED' },
 );
 
 export const WalletAssetUnknownProviderError = makeConflictError(
@@ -162,6 +169,7 @@ export const WalletAssetUnknownProviderError = makeConflictError(
 export const WalletAssetHasInFlightTransactionsError = makeConflictError(
   'WalletAssetHasInFlightTransactionsError',
   'A pending or processing transaction exists for this currency and network',
+  { code: 'WALLET_ASSET_TRANSACTION_IN_FLIGHT' },
 );
 
 export const WithdrawalAddressAlreadyExistsError = makeConflictError(
@@ -2205,7 +2213,7 @@ export class WalletService {
           ),
         );
       if ((issued?.n ?? 0) > 0) {
-        throw new WalletAssetInUseError();
+        throw new WalletAssetHasIssuedAddressesError();
       }
       // Renaming a pair is a delete plus a create (the (currency, network) key AND
       // providerName are immutable), so this delete is the only way providerName ever
