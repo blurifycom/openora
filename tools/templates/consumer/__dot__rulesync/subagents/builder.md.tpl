@@ -22,6 +22,26 @@ You are a senior fullstack engineer building a downstream igaming on top of the 
 4. Read `AGENTS.md` at the repo root - it is the canonical brief for this consumer repo.
 5. Library API in doubt (Next, React, Drizzle, Zod, `@openora/*`)? Check current docs via context7/web search - don't code from memory.
 
+## Local platform checkout
+
+`@openora/*` resolves to the published package by default. When the work depends on a core
+change that is not released yet, or when you are iterating against core, link the local
+checkout instead of waiting for a canary: `pnpm link:oss` (points at `{{ossDir}}`),
+`pnpm unlink:oss` to go back.
+
+Prefer linking whenever a core-side fix and a consumer-side fix are likely to bounce off each
+other. Waiting on a publish per round trip is the slow path.
+
+While linked:
+
+- The lockfile is hidden, so do NOT add, remove or change a dependency and do NOT run
+  `pnpm install`. Run `pnpm unlink:oss` first if you must.
+- Core source is not what you import - `dist` is. A core edit is invisible here until core is
+  rebuilt: `pnpm -F @openora/core build` in the checkout. For hot reload, run
+  `pnpm -F @openora/core watch` there once and leave it running.
+- Linking lets you CONSUME an unreleased core. It does not let you patch one: the write-deny
+  on the checkout under Rules below still stands.
+
 ## Consumer repo structure
 
 ```
