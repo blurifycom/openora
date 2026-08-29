@@ -13,6 +13,7 @@ import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import { RgLimitGate } from '../adapters/rg-limit-gate.js';
 
 let db: TestDb;
 
@@ -42,14 +43,14 @@ async function seedDeposit(userId: string, amount: string, createdAt = new Date(
   });
 }
 
-async function seedBet(userId: string, betAmount: string) {
+async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [g] = await db.drizzle.db
     .insert(game)
     .values({ name: 'Slot', provider: 'mock', category: 'slots' })
     .returning();
   await db.drizzle.db
     .insert(gameRound)
-    .values({ gameId: g!.id, userId, betAmount, currency: 'USD' });
+    .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD' });
 }
 
 async function seedSession(userId: string, startedMinutesAgo: number) {
@@ -181,6 +182,106 @@ describe('RgMonitoringService.evaluateUser - wager limits (real PG)', () => {
 
     const [flag] = await flagsOf(userId);
     expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'wager' });
+  });
+});
+
+describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
+  async function seedLossLimit(userId: string, amount: string) {
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'loss', amount, minutes: null, period: 'daily' });
+  }
+
+  it('counts NET loss - stakes minus winnings - not gross stakes', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    // Staked 1000, won 900: the player is down 100, not 1000.
+    await seedBet(userId, '1000', '900');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag?.detail).toMatchObject({ actual: '100.00', limit: '100.00', pct: 100 });
+  });
+
+  it('does not flag a player who is up on the window', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '100', '400');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    expect(await flagsOf(userId)).toHaveLength(0);
+  });
+
+  it('flags a net loss that reaches the 80% band', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '200', '120');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'loss' });
+  });
+});
+
+// The gate deliberately does NOT hold a player to a loss limit while payouts are
+// unrecorded (ADR-0034): net loss would read as gross stakes and refuse a player who is
+// up on the window. The FLAG still uses net, so it is right the day payouts land.
+describe('RgLimitGate loss handling (real PG)', () => {
+  it('never refuses a wager on a loss limit', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'loss', amount: '100', minutes: null, period: 'daily' });
+    await seedBet(userId, '500');
+    const gate = new RgLimitGate(db.drizzle, makeService());
+
+    await expect(gate.checkWager(userId, '400')).resolves.toEqual({ allowed: true });
+  });
+
+  it('still refuses a wager on a wager limit', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'wager', amount: '100', minutes: null, period: 'daily' });
+    await seedBet(userId, '90');
+    const gate = new RgLimitGate(db.drizzle, makeService());
+
+    await expect(gate.checkWager(userId, '20')).resolves.toMatchObject({
+      allowed: false,
+      limitType: 'wager',
+    });
+  });
+
+  it('counts the attempted amount, so a move that exactly fills the limit passes', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'wager', amount: '100', minutes: null, period: 'daily' });
+    await seedBet(userId, '90');
+    const gate = new RgLimitGate(db.drizzle, makeService());
+
+    await expect(gate.checkWager(userId, '10')).resolves.toEqual({ allowed: true });
+  });
+});
+
+// An on-chain crypto deposit is credited by webhook when the funds are already on the
+// chain - there is nothing left to refuse, so it is deliberately NOT gated. What it does
+// instead is raise this flag for compliance, through the `wallet.deposit.completed`
+// evaluation the credit already triggers.
+describe('RgMonitoringService.evaluateUser - deposits past the limit (real PG)', () => {
+  it('flags a deposit total that has already passed the limit', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    await seedDeposit(userId, '150');
+
+    await makeService().evaluateUser(userId, 'wallet.deposit.completed');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'deposit' });
+    expect(flag?.detail).toMatchObject({ limit: '100.00', pct: 150 });
   });
 });
 

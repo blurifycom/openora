@@ -16,9 +16,11 @@ import {
   LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
+  RG_LIMITS,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
   UuidSchema,
+  defaultResponsibleGamingConfig,
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
@@ -27,6 +29,7 @@ import {
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
+import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
   RG_EVAL_TRIGGERS,
@@ -34,6 +37,7 @@ import {
 } from './service/rg-monitoring.service.js';
 import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
+import { RgLimitGate } from './adapters/rg-limit-gate.js';
 
 const logger = createLogger('compliance');
 
@@ -42,7 +46,6 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(DRIZZLE),
     c.get(EVENT_BUS),
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
-    c.get(IDENTITY_READER),
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');
@@ -68,6 +71,11 @@ export default {
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
+    // The money dimension of RG enforcement, the counterpart to identity's
+    // PLAY_ELIGIBILITY (ADR-0032). Compliance owns `user_limit`, so compliance binds it;
+    // wallet and gaming resolve it optionally, since an install without this module has
+    // no limits to enforce.
+    ctx.provide(RG_LIMITS, (c) => new RgLimitGate(c.get(DRIZZLE), monitoring(c)));
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
@@ -83,7 +91,15 @@ export default {
     // but set before any real event/job arrives. See create-app.ts boot order.
     let kycRef: KycVerificationService | null = null;
     let rgRef: RgService | null = null;
+    let selfServiceRef: RgSelfServiceService | null = null;
+    // One memoized instance backs the eval worker, the RG_LIMITS gate and the router, so
+    // the enforcement decision and the 80% flag always read the same spend query.
     let monitorRef: RgMonitoringService | null = null;
+    const monitoring = (c: TypedContainer<CoreTokenCatalog>) =>
+      (monitorRef ??= new RgMonitoringService({
+        drizzle: c.get(DRIZZLE),
+        directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
+      }));
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
 
@@ -108,16 +124,22 @@ export default {
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
     });
 
+    // NO idempotency key, deliberately. Any key coarser than the individual occasion
+    // drops evaluations: `rg-eval:${userId}` collapsed every later one for 24h (BullMQ
+    // dedupes on the job id and retains completed jobs - see bullmq-job-queue.ts), and a
+    // time-bucketed key still loses the crossing whenever the first job in the bucket
+    // runs while the player is below the threshold and the one that takes them over
+    // lands inside the same bucket. An RG evaluation is a full idempotent recompute, so
+    // the cost of running it once per triggering event is a handful of aggregate
+    // queries; the cost of skipping one is a threshold nobody is told about. The worker
+    // sets `serializeByOrderingKey`, so a burst for one player queues rather than piles
+    // up concurrently.
     const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
       if (!jobQueueRef) {
         return;
       }
       void jobQueueRef
-        .enqueue(
-          RG_EVAL_QUEUE,
-          { userId, trigger },
-          { idempotencyKey: `rg-eval:${userId}`, orderingKey: userId },
-        )
+        .enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId })
         .catch((err) => logger.error({ err }, 'rg-eval enqueue failed'));
     };
 
@@ -139,6 +161,14 @@ export default {
         enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
       }
     });
+    // A changed limit moves the 80% threshold under spend that has already happened, so
+    // the flag has to be recomputed now rather than at the player's next deposit or round.
+    ctx.events.on('rg.limit.set', (payload) => {
+      const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
+      if (parsed.success) {
+        enqueueEval(parsed.data.userId, 'rg.limit.set');
+      }
+    });
 
     ctx.jobs.worker({
       queue: RG_EVAL_QUEUE,
@@ -156,6 +186,11 @@ export default {
       handler: async () => {
         if (rgRef) {
           await rgRef.expireLapsedCoolingOffs();
+        }
+        // Only ever CLEARS a lapsed request - it never applies one, which is what
+        // guarantees a limit cannot rise without the player confirming it.
+        if (selfServiceRef) {
+          await selfServiceRef.expireStaleLimitChanges();
         }
         if (monitorRef) {
           await monitorRef.sweep();
@@ -212,8 +247,16 @@ export default {
         templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
       });
       rgRef = rg;
-      const rgMonitoring = new RgMonitoringService({ drizzle: c.get(DRIZZLE), directory });
-      monitorRef = rgMonitoring;
+      const rgMonitoring = monitoring(c);
+      const rgSelfService = new RgSelfServiceService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        rg,
+        monitoring: rgMonitoring,
+        identityReader: c.get(IDENTITY_READER),
+        config: platformConfig?.responsibleGambling ?? defaultResponsibleGamingConfig,
+      });
+      selfServiceRef = rgSelfService;
 
       jobQueueRef = c.get(JOB_QUEUE);
       void jobQueueRef
@@ -232,6 +275,7 @@ export default {
         realtime: realtimeTransport,
         rg,
         rgMonitoring,
+        rgSelfService,
       });
     });
   },

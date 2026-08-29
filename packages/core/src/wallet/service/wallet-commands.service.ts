@@ -1,14 +1,16 @@
-import type {
-  AuditWritePort,
-  PlayEligibilityPort,
-  PlatformConfig,
-  Uuid,
-  WalletCommands,
-  WalletDebitArgs,
-  WalletDebitOutcome,
-  WalletCreditArgs,
-  WalletCreditOutcome,
-  WalletTransactionType,
+import {
+  RgLimitExceededError,
+  type AuditWritePort,
+  type PlayEligibilityPort,
+  type RgLimitsPort,
+  type PlatformConfig,
+  type Uuid,
+  type WalletCommands,
+  type WalletDebitArgs,
+  type WalletDebitOutcome,
+  type WalletCreditArgs,
+  type WalletCreditOutcome,
+  type WalletTransactionType,
 } from '@openora/core/contracts';
 import {
   createDomainError,
@@ -60,6 +62,9 @@ export class WalletCommandsService implements WalletCommands {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
+    // Optional, like the port itself: an install without the compliance module has no
+    // `user_limit` table and nothing to enforce. Bound, the gate is fail-closed.
+    private readonly rgLimits?: RgLimitsPort,
   ) {}
 
   // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
@@ -100,6 +105,22 @@ export class WalletCommandsService implements WalletCommands {
     if (!row) {
       return { ok: false, available: '0' };
     }
+
+    // Deliberately AFTER the `FOR UPDATE` above, not at the top of this method: the limit
+    // check is a read, so checking it before taking the lock lets two concurrent bets see
+    // the same usage and both pass. Under the lock the second one waits for the first to
+    // commit its round, and reads it. This is the only point where the stake is known,
+    // and the only place a wager limit can actually be held.
+    //
+    // `win` and `loss` stay ungated for the ADR-0032 reason: they settle a round that was
+    // already staked, and refusing them strands it.
+    if (type === 'bet' && this.rgLimits) {
+      const decision = await this.rgLimits.checkWager(userId, amount);
+      if (!decision.allowed) {
+        throw new RgLimitExceededError('wager_limit_exceeded', decision);
+      }
+    }
+
     const available = await readWalletBalance(txn, row.id, row.currency);
 
     if (type === 'loss') {

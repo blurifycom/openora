@@ -676,6 +676,65 @@ describe('mapEventToRecord() player.id resolution', () => {
     }
   });
 
+  it('rg.limit.set: a player self-service change is filed under the PLAYER, not an admin', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: p.userId,
+      initiatedBy: 'player',
+    });
+
+    expect(row.actorType).toBe('player');
+    expect(row.actorId).toBe(p.userId);
+  });
+
+  it('rg.limit.set: an admin change stays filed under the admin', async () => {
+    const p = await seedPlayer();
+    const adminId = randomUUID();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: adminId,
+      initiatedBy: 'admin',
+    });
+
+    expect(row.actorType).toBe('admin');
+    expect(row.actorId).toBe(adminId);
+  });
+
+  it('rg.limit.change_requested / _confirmed: player-attributed, resourceId from playerId', async () => {
+    const p = await seedPlayer();
+
+    for (const topic of ['rg.limit.change_requested', 'rg.limit.change_confirmed']) {
+      const row = await mapAndRecord(topic, {
+        userId: p.userId,
+        playerId: p.id,
+        actorId: p.userId,
+        initiatedBy: 'player',
+      });
+      expect(row.resourceId).toBe(p.id);
+      expect(row.actorType).toBe('player');
+    }
+  });
+
+  it('rg.limit.change_expired: system-attributed - the window closed, nobody acted', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.limit.change_expired', {
+      userId: p.userId,
+      playerId: p.id,
+      limitId: randomUUID(),
+      requestedAmount: '500.00',
+      expiresAt: new Date().toISOString(),
+    });
+
+    expect(row.actorType).toBe('system');
+    expect(row.resourceId).toBe(p.id);
+  });
+
   it('rg.exclusion.login_blocked: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 

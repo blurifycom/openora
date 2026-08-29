@@ -20,6 +20,7 @@ import {
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  RgLimitExceededError,
   DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
   type PaymentProviderRegistry,
@@ -32,6 +33,7 @@ import {
   type WalletRail,
   railFor as sharedRailFor,
   type PlayerTags,
+  type RgLimitsPort,
   type AuditWritePort,
   type TagEvaluationCommands,
   type TagKey,
@@ -638,6 +640,10 @@ export type WalletServiceDeps = {
   tagEvaluationCommands?: TagEvaluationCommands;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
+  // Optional: bound by the compliance module. Absent = no `user_limit` table exists and
+  // there is nothing to enforce, so deposits pass ungated. Where it IS bound the gate is
+  // fail-closed: a throwing check refuses the deposit rather than letting it through.
+  rgLimits?: RgLimitsPort;
 };
 
 /**
@@ -660,6 +666,7 @@ export class WalletService {
   private readonly riskTags?: PlayerTags;
   private readonly tagEvaluationCommands?: TagEvaluationCommands;
   private readonly audit: AuditWritePort;
+  private readonly rgLimits?: RgLimitsPort;
 
   constructor({
     drizzle,
@@ -673,6 +680,7 @@ export class WalletService {
     riskTags,
     tagEvaluationCommands,
     audit,
+    rgLimits,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -685,6 +693,7 @@ export class WalletService {
     this.riskTags = riskTags;
     this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
+    this.rgLimits = rgLimits;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -730,6 +739,38 @@ export class WalletService {
     assertDepositAllowed(assets, currency, network);
     if (amount !== undefined) {
       assertAboveMinimumDeposit(assets, amount, currency, network);
+    }
+  }
+
+  /**
+   * Refuses a deposit that would take the player past their own RG deposit limit. Runs
+   * BEFORE the PSP call - a refused deposit must never reach a provider, or the player
+   * is charged for money the limit then rejects.
+   *
+   * **This is check-then-act and it does not serialize.** A PSP round-trip sits between
+   * the check and the credit, so two deposits started at once can both read the same
+   * usage, both pass, and together exceed the limit. It is not fixable with a row lock:
+   * holding one across a vendor network call is not an option, and refusing after the
+   * charge would strand the player's money. Closing it properly needs a durable
+   * reservation taken before the PSP call and released on failure - a change to the
+   * deposit ledger flow, tracked separately. Until then the excess is caught the same
+   * way an on-chain deposit's is: the `wallet.deposit.completed` evaluation raises the
+   * `limit_threshold` flag for compliance. The stake debit has no such constraint and
+   * IS serialized - see `WalletCommandsService.debit`.
+   *
+   * Only this PSP path is gated. An on-chain crypto deposit arrives by webhook when the
+   * funds are already on the chain (`handlePaymentWebhook`): there is nothing left to
+   * refuse, so that path deliberately stays open and raises an RG flag for compliance
+   * instead, via the `wallet.deposit.completed` evaluation the credit already triggers.
+   * The player-facing copy on the deposit-limit card has to say so.
+   */
+  private async assertWithinRgDepositLimit(userId: User['id'], amount: string) {
+    if (!this.rgLimits) {
+      return;
+    }
+    const decision = await this.rgLimits.checkDeposit(userId, amount);
+    if (!decision.allowed) {
+      throw new RgLimitExceededError('deposit_limit_exceeded', decision);
     }
   }
 
@@ -879,6 +920,10 @@ export class WalletService {
         .from(wallet)
         .where(eq(wallet.userId, userId));
     }
+
+    // AFTER the replay short-circuit: a retry of a deposit that already completed must
+    // not be counted a second time against the limit and refused for it.
+    await this.assertWithinRgDepositLimit(userId, amount);
 
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 

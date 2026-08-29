@@ -4,6 +4,8 @@ import {
   GeoRuleActionSchema,
   LimitTypeSchema,
   LimitPeriodSchema,
+  LimitChangeKindSchema,
+  RgInitiatorSchema,
   ExclusionKindSchema,
 } from './compliance.js';
 import { TagKeySchema } from './tag.js';
@@ -321,6 +323,10 @@ export const domainEventSchemas = {
     actorId: UuidSchema.optional(),
   }),
 
+  // No longer emitted by core: both the player and the admin limit paths emit
+  // `rg.limit.set` (carrying `initiatedBy`), which is the topic the back-office RG
+  // history renders and the audit log attributes from. Kept in the catalog so an
+  // existing downstream subscriber keeps resolving its schema.
   'compliance.limit.upserted': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -350,6 +356,72 @@ export const domainEventSchemas = {
     minutes: z.number().int().nullable(),
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
+    initiatedBy: RgInitiatorSchema,
+  }),
+  // A player asked for a limit INCREASE or REMOVAL. Nothing has changed yet: the
+  // effective limit is still `previousAmount` until `rg.limit.change_confirmed`.
+  // Requested and confirmed are separate topics precisely so a regulator can see
+  // that the cool-down was actually served between them, and that the player - not
+  // the clock, and not an admin - is what closed the change.
+  'rg.limit.change_requested': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+    limitId: UuidSchema,
+    type: LimitTypeSchema,
+    period: LimitPeriodSchema,
+    kind: LimitChangeKindSchema,
+    previousAmount: MoneyAmountSchema.nullable(),
+    previousMinutes: z.number().int().nullable(),
+    requestedAmount: MoneyAmountSchema.nullable(),
+    requestedMinutes: z.number().int().nullable(),
+    effectiveAt: TimestampSchema,
+    expiresAt: TimestampSchema,
+    initiatedBy: RgInitiatorSchema,
+  }),
+  // The player confirmed after the cool-down elapsed; THIS is the moment the limit moved.
+  'rg.limit.change_confirmed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+    limitId: UuidSchema,
+    type: LimitTypeSchema,
+    period: LimitPeriodSchema,
+    kind: LimitChangeKindSchema,
+    previousAmount: MoneyAmountSchema.nullable(),
+    previousMinutes: z.number().int().nullable(),
+    requestedAmount: MoneyAmountSchema.nullable(),
+    requestedMinutes: z.number().int().nullable(),
+    initiatedBy: RgInitiatorSchema,
+  }),
+  'rg.limit.change_cancelled': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+    limitId: UuidSchema,
+    type: LimitTypeSchema,
+    period: LimitPeriodSchema,
+    kind: LimitChangeKindSchema,
+    previousAmount: MoneyAmountSchema.nullable(),
+    previousMinutes: z.number().int().nullable(),
+    requestedAmount: MoneyAmountSchema.nullable(),
+    requestedMinutes: z.number().int().nullable(),
+    initiatedBy: RgInitiatorSchema,
+  }),
+  // The confirmation window ran out with no player action. System-attributed (no actor),
+  // exactly like `rg.cooling_off.expired`: the safe outcome needs no one to choose it.
+  'rg.limit.change_expired': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    limitId: UuidSchema,
+    type: LimitTypeSchema,
+    period: LimitPeriodSchema,
+    kind: LimitChangeKindSchema,
+    previousAmount: MoneyAmountSchema.nullable(),
+    previousMinutes: z.number().int().nullable(),
+    requestedAmount: MoneyAmountSchema.nullable(),
+    requestedMinutes: z.number().int().nullable(),
+    expiresAt: TimestampSchema,
   }),
   'rg.cooling_off.activated': actorReasonBase
     .extend({
@@ -357,6 +429,7 @@ export const domainEventSchemas = {
       playerId: UuidSchema.nullable(),
       exclusionId: UuidSchema,
       expiresAt: TimestampSchema,
+      initiatedBy: RgInitiatorSchema,
     })
     .extend(authContextBase.shape),
   // durationMonths is the admin's chosen term, null when permanent - the regulatory
@@ -369,6 +442,7 @@ export const domainEventSchemas = {
       isPermanent: z.boolean(),
       durationMonths: z.number().int().nullable(),
       expiresAt: TimestampSchema.nullable(),
+      initiatedBy: RgInitiatorSchema,
     })
     .extend(authContextBase.shape),
   'rg.self_exclusion.lifted': actorReasonBase
@@ -594,10 +668,15 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'wallet.manual_adjustment.created': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.
-  'rg.limit.set': 2,
+  // v3: initiatedBy added - the audit log attributes a player self-service change to
+  // the player, not to an admin.
+  'rg.limit.set': 3,
+  // v2: initiatedBy added - a cooling-off can now be started by the player themselves.
+  'rg.cooling_off.activated': 2,
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
   // v3: durationMonths added - the chosen term, explicit for the regulatory export.
-  'rg.self_exclusion.activated': 3,
+  // v4: initiatedBy added - self-exclusion is now player-initiable.
+  'rg.self_exclusion.activated': 4,
 };
 
 export function getEventVersion(event: string): number {

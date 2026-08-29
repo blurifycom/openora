@@ -9,8 +9,10 @@ import {
 } from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import {
+  RgLimitExceededError,
   type GameAdapter,
   type PlayEligibilityPort,
+  type RgLimitsPort,
   type WalletCommands,
   type IdentityReader,
   type User,
@@ -55,6 +57,9 @@ export class GamingService {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly walletCommands: WalletCommands,
     private readonly identityReader: IdentityReader,
+    // Optional, like the port itself: an install without the compliance module has no
+    // limits to enforce. Bound, the gate is fail-closed.
+    private readonly rgLimits?: RgLimitsPort,
   ) {}
 
   async listGames() {
@@ -77,6 +82,16 @@ export class GamingService {
   async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
+    }
+    // Advisory, not authoritative: this refuses the ordinary case before a launch token
+    // is issued and before the provider is touched, which is what gives the player a
+    // reason instead of a failed round. The check that actually HOLDS under concurrency
+    // is the identical one inside `WALLET_COMMANDS.debit`, taken under the wallet row
+    // lock - a check out here cannot serialize anything. Both raise the same error, so
+    // either path reaches the player looking the same.
+    const decision = await this.rgLimits?.checkWager(userId, betAmount);
+    if (decision && !decision.allowed) {
+      throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
     await this.getGame(gameId);

@@ -107,6 +107,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       userId,
       { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       actorId,
+      'admin',
     );
 
     expect(Number(dto.amount)).toBe(100);
@@ -124,12 +125,14 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       userId,
       { userId, type: 'deposit', amount: '50', minutes: null, period: 'daily' },
       actorId,
+      'admin',
     );
 
     await svc.setPlayerLimit(
       userId,
       { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       actorId,
+      'admin',
     );
 
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
@@ -150,11 +153,13 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       userId,
       { userId, type: 'deposit', amount: '50', minutes: null, period: 'daily' },
       actorId,
+      'admin',
     );
     await svc.setPlayerLimit(
       userId,
       { userId, type: 'deposit', amount: '500', minutes: null, period: 'monthly' },
       actorId,
+      'admin',
     );
 
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
@@ -169,6 +174,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       userId,
       { userId, type: 'session', amount: null, minutes: 60, period: 'session' },
       randomUUID(),
+      'admin',
     );
 
     expect(dto).toMatchObject({ minutes: 60, amount: null });
@@ -183,6 +189,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       userId,
       { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       randomUUID(),
+      'admin',
     );
 
     expect(notifier.templateRenderer.render).toHaveBeenCalled();
@@ -202,6 +209,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         userId,
         { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
         randomUUID(),
+        'admin',
       ),
     ).resolves.toMatchObject({ period: 'daily' });
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
@@ -218,6 +226,7 @@ describe('RgService.activateCoolingOff (real PG)', () => {
       userId,
       { userId, durationHours: 24, reason: 'break' },
       randomUUID(),
+      'admin',
     );
 
     const [row] = await exclusionsOf(userId);
@@ -236,7 +245,12 @@ describe('RgService.activateCoolingOff (real PG)', () => {
     await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
 
     await expect(
-      svc.activateCoolingOff(userId, { userId, durationHours: 24, reason: 'break' }, randomUUID()),
+      svc.activateCoolingOff(
+        userId,
+        { userId, durationHours: 24, reason: 'break' },
+        randomUUID(),
+        'admin',
+      ),
     ).rejects.toBeInstanceOf(ActiveExclusionError);
     expect(enforcement.block).not.toHaveBeenCalled();
   });
@@ -255,6 +269,7 @@ describe('RgService.activateCoolingOff (real PG)', () => {
       userId,
       { userId, durationHours: 24, reason: 'again' },
       randomUUID(),
+      'admin',
     );
 
     const rows = await exclusionsOf(userId);
@@ -280,6 +295,7 @@ describe('RgService.activateCoolingOff (real PG)', () => {
       userId,
       { userId, durationHours: 24, reason: 'break' },
       randomUUID(),
+      'admin',
     );
 
     expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
@@ -295,6 +311,7 @@ describe('RgService.activateSelfExclusion (real PG)', () => {
       userId,
       { userId, isPermanent: true, reason: 'stop', confirm: true },
       randomUUID(),
+      'admin',
     );
 
     const [row] = await exclusionsOf(userId);
@@ -315,6 +332,7 @@ describe('RgService.activateSelfExclusion (real PG)', () => {
       userId,
       { userId, isPermanent: false, durationMonths: 6, reason: 'break', confirm: true },
       actorId,
+      'admin',
     );
 
     const [row] = await exclusionsOf(userId);
@@ -342,6 +360,7 @@ describe('RgService.activateSelfExclusion (real PG)', () => {
         userId,
         { userId, isPermanent: true, reason: 'again', confirm: true },
         randomUUID(),
+        'admin',
       ),
     ).rejects.toBeInstanceOf(ActiveExclusionError);
   });
@@ -426,6 +445,7 @@ describe('RgService.liftSelfExclusion (real PG)', () => {
       userId,
       { userId, isPermanent: true, reason: 'relapse', confirm: true },
       randomUUID(),
+      'admin',
     );
 
     const rows = await exclusionsOf(userId);
@@ -479,23 +499,17 @@ describe('RgService.liftCoolingOff (real PG)', () => {
   });
 });
 
-describe('RgService.getRgSection (real PG)', () => {
-  it('returns the player limits alongside the active exclusions', async () => {
+describe('RgService.getActiveExclusions (real PG)', () => {
+  it('returns the active cooling-off and self-exclusion', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
-    await svc.setPlayerLimit(
-      userId,
-      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
-      randomUUID(),
-    );
     await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
     await seedExclusion({ userId, kind: 'self_exclusion', isPermanent: true });
 
-    const section = await svc.getRgSection(userId);
+    const exclusions = await svc.getActiveExclusions(userId);
 
-    expect(section.limits).toHaveLength(1);
-    expect(section.coolingOff).toMatchObject({ kind: 'cooling_off' });
-    expect(section.selfExclusion).toMatchObject({ kind: 'self_exclusion' });
+    expect(exclusions.coolingOff).toMatchObject({ kind: 'cooling_off' });
+    expect(exclusions.selfExclusion).toMatchObject({ kind: 'self_exclusion' });
   });
 
   it('treats a lapsed cooling-off as inactive even before the sweep runs', async () => {
@@ -503,17 +517,17 @@ describe('RgService.getRgSection (real PG)', () => {
     const userId = randomUUID();
     await seedExclusion({ userId, kind: 'cooling_off', expiresAt: past() });
 
-    const section = await svc.getRgSection(userId);
+    const exclusions = await svc.getActiveExclusions(userId);
 
-    expect(section.coolingOff).toBeNull();
+    expect(exclusions.coolingOff).toBeNull();
   });
 
   it('returns empty state for a player with nothing on file', async () => {
     const { svc } = makeService();
 
-    const section = await svc.getRgSection(randomUUID());
+    const exclusions = await svc.getActiveExclusions(randomUUID());
 
-    expect(section).toEqual({ limits: [], coolingOff: null, selfExclusion: null });
+    expect(exclusions).toEqual({ coolingOff: null, selfExclusion: null });
   });
 });
 

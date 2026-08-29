@@ -26,6 +26,7 @@ import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
 import type { RgService } from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import type { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 
@@ -86,6 +87,7 @@ function build(opts: {
     realtime: opts.realtime ?? new InProcessRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
+    rgSelfService: mock<RgSelfServiceService>({}),
   });
 }
 
