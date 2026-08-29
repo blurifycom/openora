@@ -10,6 +10,7 @@ import type {
 import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
+  type CacheAdapter,
   type ClientMeta,
   type IdentityReader,
   type JobQueueAdapter,
@@ -147,6 +148,44 @@ export const makeJobQueue = (): JobQueueAdapter & { enqueue: Mock } =>
     registerWorker: vi.fn(),
     close: vi.fn(async () => undefined),
   });
+
+/**
+ * In-memory CacheAdapter double with real get/set/setIfAbsent/delete + TTL-expiry
+ * semantics (not a vitest mock) - for a unit or int test asserting cache-then-table
+ * fallback ordering, where the test needs the double to actually remember values.
+ */
+export const makeCache = (): CacheAdapter => {
+  const store = new Map<string, { value: unknown; expiresAt: number }>();
+  const read = (key: string): unknown => {
+    const entry = store.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      store.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  };
+  return {
+    get: async <T>(key: string) => read(key) as T | undefined,
+    set: async <T>(key: string, value: T, opts: { ttlMs: number }) => {
+      store.set(key, { value, expiresAt: Date.now() + opts.ttlMs });
+    },
+    setIfAbsent: async <T>(key: string, value: T, opts: { ttlMs: number }) => {
+      if (read(key) !== undefined) {
+        return false;
+      }
+      store.set(key, { value, expiresAt: Date.now() + opts.ttlMs });
+      return true;
+    },
+    delete: async (key: string | string[]) => {
+      for (const k of Array.isArray(key) ? key : [key]) {
+        store.delete(k);
+      }
+    },
+  };
+};
 
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({

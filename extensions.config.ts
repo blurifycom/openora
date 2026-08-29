@@ -15,6 +15,10 @@ export const extensions = [
   { id: 'identity', path: './packages/core/dist/pam/identity/plugin.js' },
   { id: 'notifications', path: './packages/core/dist/engagement/notifications/plugin.js' },
   { id: 'compliance', path: './packages/core/dist/compliance/plugin.js' },
+  // Currency reference data (rate reads/writes go through EXCHANGE_RATE_READER) -
+  // no hard dependency on wallet, but consumed by it (and by chat transfers,
+  // compliance limits) via the port.
+  { id: 'exchange-rate', path: './packages/core/dist/fx/exchange-rate/plugin.js' },
 
   // Player - the player-facing igaming surface
   { id: 'wallet', path: './packages/core/dist/wallet/plugin.js' },

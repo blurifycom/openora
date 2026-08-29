@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LimitsSchema } from './igaming-config.js';
+import { LimitsSchema, CurrencyCodeSchema } from './igaming-config.js';
 import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
@@ -129,6 +129,28 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+export const ExchangeRateConfigSchema = z
+  .object({
+    /**
+     * Comparison currency the fx module derives a cross rate against
+     * (`from/pivot ÷ to/pivot`) when a provider only quotes against one currency.
+     * This is a COMPARISON UNIT, not a system base currency - the platform
+     * deliberately has no global base currency; each player has their own operating
+     * currency (`wallet.currency`). Absent = 'USD'.
+     */
+    pivot: CurrencyCodeSchema.default('USD'),
+    /**
+     * Cron for the refresh job that walks the operator's configured currencies and
+     * upserts a fresh quote per currency (crypto/fiat routed via `railFor`). Rates
+     * are display-only and never need to be current, so this defaults to a wide
+     * interval. Absent = every 6 hours.
+     */
+    refreshCron: z.string().default('0 */6 * * *'),
+  })
+  .strict();
+
+export type ExchangeRateConfig = z.infer<typeof ExchangeRateConfigSchema>;
+
 export const RegistrationConfigSchema = z
   .object({
     /** Version recorded beside the player's affirmative terms acceptance. */
@@ -174,6 +196,8 @@ export const PlatformConfigSchema = z
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
     /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
     wallet: WalletConfigSchema.optional(),
+    /** Exchange-rate refresh knobs (pivot currency, refresh cron). Absent = built-in defaults. */
+    exchangeRate: ExchangeRateConfigSchema.optional(),
     /** Required before public registration is enabled. */
     registration: RegistrationConfigSchema.optional(),
     /**

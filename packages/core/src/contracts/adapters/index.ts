@@ -139,6 +139,15 @@ export {
 export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';
 export { WALLET_ASSET_CATALOG } from './wallet-asset-catalog.js';
 
+export type { ExchangeRateQuote, ExchangeRateProvider } from './exchange-rate-provider.js';
+export {
+  CRYPTO_EXCHANGE_RATE_PROVIDER,
+  FIAT_EXCHANGE_RATE_PROVIDER,
+} from './exchange-rate-provider.js';
+
+export type { ExchangeRateReader } from './exchange-rate-reader.js';
+export { EXCHANGE_RATE_READER } from './exchange-rate-reader.js';
+
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';

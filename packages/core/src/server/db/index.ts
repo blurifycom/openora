@@ -8,6 +8,7 @@ export {
   moneyEquals,
   moneyCompare,
   moneyScaleBy,
+  moneyDivide,
   moneyAdd,
   moneySubtract,
   mapConcurrent,
