@@ -6,6 +6,7 @@ import {
   moneyEquals,
   moneyCompare,
   moneyScaleBy,
+  moneyDivide,
   mapConcurrent,
 } from '../query-helpers.js';
 
@@ -108,6 +109,36 @@ describe('moneyScaleBy', () => {
 
   it('truncates past MONEY_SCALE rather than rounding up', () => {
     expect(moneyScaleBy('1.000000000000000001', '0.5')).toBe('0.500000000000000000');
+  });
+});
+
+describe('moneyDivide', () => {
+  it('divides exactly', () => {
+    expect(moneyDivide('10', '4')).toBe('2.500000000000000000');
+    expect(moneyDivide('1', '3')).toBe('0.333333333333333333');
+  });
+
+  it('is exact where a float division would drift', () => {
+    // 0.3 / 0.1 famously drifts to 2.9999999999999996 in JS float arithmetic.
+    expect(0.3 / 0.1).not.toBe(3);
+    expect(moneyDivide('0.3', '0.1')).toBe('3.000000000000000000');
+  });
+
+  it('is the exact inverse of moneyScaleBy for a whole-dividing pair', () => {
+    expect(moneyDivide(moneyScaleBy('7', '3'), '3')).toBe('7.000000000000000000');
+  });
+
+  it('derives a cross rate as from/pivot ÷ to/pivot', () => {
+    // BTC/USD = 60000, EUR/USD = 1.1 -> BTC/EUR = 60000 / 1.1
+    expect(moneyDivide('60000', '1.1')).toBe('54545.454545454545454545');
+  });
+
+  it('throws on division by zero rather than returning Infinity/NaN', () => {
+    expect(() => moneyDivide('10', '0')).toThrow(RangeError);
+  });
+
+  it('truncates past MONEY_SCALE rather than rounding up', () => {
+    expect(moneyDivide('1', '3')).toBe('0.333333333333333333');
   });
 });
 

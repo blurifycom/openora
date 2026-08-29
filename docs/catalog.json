@@ -180,6 +180,16 @@
       ]
     },
     {
+      "id": "exchange-rate",
+      "group": "fx",
+      "tables": [
+        "exchange_rate_quote"
+      ],
+      "routes": [
+        "exchange-rate.getRate"
+      ]
+    },
+    {
       "id": "gaming",
       "group": "casino",
       "tables": [
@@ -550,6 +560,7 @@
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/social-transfers/plugin.ts",
+        "packages/core/src/fx/exchange-rate/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -626,6 +637,24 @@
       ]
     },
     {
+      "category": "exchange-rate-provider",
+      "interface": "ExchangeRateQuote",
+      "token": "CRYPTO_EXCHANGE_RATE_PROVIDER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/fx/exchange-rate/plugin.ts"
+      ]
+    },
+    {
+      "category": "exchange-rate-reader",
+      "interface": "ExchangeRateReader",
+      "token": "EXCHANGE_RATE_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/fx/exchange-rate/plugin.ts"
+      ]
+    },
+    {
       "category": "game",
       "interface": "GameAdapter",
       "token": "GAME_ADAPTER",
@@ -697,6 +726,7 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/fx/exchange-rate/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts",
         "packages/core/src/wallet/plugin.ts"
@@ -1383,6 +1413,14 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "ExchangeRateConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "ExchangeRateQuoteSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
       "name": "ExclusionKindSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
@@ -1481,6 +1519,10 @@
     {
       "name": "GeoRuleSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "GetExchangeRateInputSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
     },
     {
       "name": "GetRelationshipsInputSchema",

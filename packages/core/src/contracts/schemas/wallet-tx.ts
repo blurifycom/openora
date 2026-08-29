@@ -90,3 +90,21 @@ export type WalletReconciliationFindingKind = z.infer<typeof WalletReconciliatio
 export type WalletReconciliationFindingStatus = z.infer<
   typeof WalletReconciliationFindingStatusSchema
 >;
+
+// Built-in crypto ticker set for `railFor` below - operator-overridable via
+// `platformConfig.wallet.cryptoCurrencies` (case-insensitive on both sides).
+export const DEFAULT_CRYPTO_CURRENCIES = ['BTC', 'ETH', 'USDT', 'USDC'] as const;
+
+/**
+ * Classifies a currency code onto the crypto or fiat settlement rail. Lives here
+ * (not in the wallet module) because it is a shared classification a sibling domain
+ * needs too (eg an fx module routing a rate-provider quote to the crypto or fiat
+ * vendor) - this is one of the four sanctioned cross-module paths (shared contract),
+ * not a reach into wallet internals. `wallet/service/wallet.service.ts` re-exports
+ * this same function so existing wallet call sites are unaffected. Single source of
+ * truth - do not add a second classifier.
+ */
+export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
+  const set = new Set((cryptoCurrencies ?? DEFAULT_CRYPTO_CURRENCIES).map((c) => c.toUpperCase()));
+  return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+}

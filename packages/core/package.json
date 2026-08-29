@@ -613,6 +613,41 @@
       "types": "./dist/engagement/social/migrate.d.ts",
       "import": "./dist/engagement/social/migrate.js",
       "default": "./dist/engagement/social/migrate.js"
+    },
+    "./fx": {
+      "types": "./dist/fx/index.d.ts",
+      "import": "./dist/fx/index.js",
+      "default": "./dist/fx/index.js"
+    },
+    "./fx/contracts": {
+      "types": "./dist/fx/contracts.d.ts",
+      "import": "./dist/fx/contracts.js",
+      "default": "./dist/fx/contracts.js"
+    },
+    "./fx/server": {
+      "types": "./dist/fx/server.d.ts",
+      "import": "./dist/fx/server.js",
+      "default": "./dist/fx/server.js"
+    },
+    "./fx/contracts/exchange-rate": {
+      "types": "./dist/fx/exchange-rate/contract/index.d.ts",
+      "import": "./dist/fx/exchange-rate/contract/index.js",
+      "default": "./dist/fx/exchange-rate/contract/index.js"
+    },
+    "./fx/schema/exchange-rate": {
+      "types": "./dist/fx/exchange-rate/schema/index.d.ts",
+      "import": "./dist/fx/exchange-rate/schema/index.js",
+      "default": "./dist/fx/exchange-rate/schema/index.js"
+    },
+    "./fx/plugins/exchange-rate": {
+      "types": "./dist/fx/exchange-rate/plugin.d.ts",
+      "import": "./dist/fx/exchange-rate/plugin.js",
+      "default": "./dist/fx/exchange-rate/plugin.js"
+    },
+    "./fx/migrate/exchange-rate": {
+      "types": "./dist/fx/exchange-rate/migrate.d.ts",
+      "import": "./dist/fx/exchange-rate/migrate.js",
+      "default": "./dist/fx/exchange-rate/migrate.js"
     }
   },
   "publishConfig": {

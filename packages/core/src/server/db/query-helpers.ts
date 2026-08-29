@@ -60,6 +60,23 @@ export function moneyScaleBy(amount: string, factor: string): string {
   return fromMinorUnits(product);
 }
 
+// Exact decimal division of two non-negative decimal strings (`dividend / divisor`),
+// via the same bigint minor-units path as moneyScaleBy - never JS float, so a
+// derived rate can never drift the way `Number(a) / Number(b)` would. Truncated (not
+// rounded) to MONEY_SCALE places, same contract as moneyScaleBy. Used to derive a
+// cross rate (`from/pivot ÷ to/pivot`) when a provider only quotes against one pivot
+// currency - see the fx module's ExchangeRateReaderService.
+export function moneyDivide(dividend: string, divisor: string): string {
+  const divisorUnits = toMinorUnits(divisor);
+  if (divisorUnits === 0n) {
+    throw new RangeError('moneyDivide: division by zero');
+  }
+  // Scale the dividend up by an extra MONEY_SCALE digits before the integer bigint
+  // divide, so the quotient itself carries MONEY_SCALE fractional digits.
+  const dividendUnits = toMinorUnits(dividend) * 10n ** BigInt(MONEY_SCALE);
+  return fromMinorUnits(dividendUnits / divisorUnits);
+}
+
 // Exact decimal addition and subtraction over the same bigint minor-units path. Used to
 // derive one side of a balance change from the other: reading the balance separately and
 // then updating it leaves a window for a concurrent writer, and an append-only audit row

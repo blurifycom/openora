@@ -30,6 +30,7 @@ import {
   type RateLimiterAdapter,
   type RateLimitKey,
   type WalletRail,
+  railFor as sharedRailFor,
   type PlayerTags,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -215,11 +216,6 @@ export const AmbiguousDepositAddressError = createDomainError(
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
 
-// Crypto currencies settle on the crypto rail through a custody/MPC vendor; everything
-// else on the fiat rail (a PSP). The concrete provider is recorded per transaction, not
-// here. Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
-const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
-
 // A saved-address book, not a payout allowlist: the cap only stops one account turning
 // the table into unbounded free storage. Not operator-configurable until someone asks.
 const WITHDRAWAL_ADDRESS_LIMIT = 50;
@@ -366,12 +362,12 @@ export function assertAboveMinimumDeposit(
   }
 }
 
-export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
-  const set = cryptoCurrencies
-    ? new Set(cryptoCurrencies.map((c) => c.toUpperCase()))
-    : DEFAULT_CRYPTO_CURRENCIES;
-  return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
-}
+// Moved to @openora/core/contracts (wallet-tx.ts) so a sibling domain (eg fx) can
+// reuse the exact same classification via a shared contract instead of reaching into
+// wallet internals - see the doc comment there. Re-exported here so existing call
+// sites in this file and `wallet/__tests__/rail-for.test.ts` are unaffected.
+export const railFor: (currency: string, cryptoCurrencies?: readonly string[]) => WalletRail =
+  sharedRailFor;
 
 // Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
 // wallet. Every read and write of wallet_balance funnels through these three helpers,
