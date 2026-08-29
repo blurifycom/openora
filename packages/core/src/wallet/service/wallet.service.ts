@@ -2729,31 +2729,42 @@ export class WalletService {
     // Shares the wallet mutation budget with deposit/withdraw: the row cap alone does
     // not bound writes, since deleting frees a slot and lets a client churn forever.
     await this.rateLimit(userId);
-    // ponytail: count-then-insert, so N concurrent creates can land N over the cap.
-    // Move to an insert...where (select count) < limit if that ever matters.
-    const [existing] = await this.drizzle.db
-      .select({ total: count() })
-      .from(walletWithdrawalAddress)
-      .where(eq(walletWithdrawalAddress.userId, userId));
-    if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
-      throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
-    }
 
     // Registered with the custody provider BEFORE the row exists, so a rejected or unreachable
     // provider leaves no saved address the player would believe they can withdraw to. The port
-    // is required to be idempotent, so the conflict path below cannot orphan a destination.
+    // is required to be idempotent, so a retry after the cap/conflict check below cannot orphan
+    // a destination.
     const whitelisted = await this.whitelistWithdrawalAddress(userId, input);
 
-    // onConflictDoNothing turns the unique index into a domain conflict rather than a
-    // 500 - a double-submitted form is a 409, not an incident.
-    const [row] = await this.drizzle.db
-      .insert(walletWithdrawalAddress)
-      .values({ userId, ...input, ...whitelisted })
-      .onConflictDoNothing()
-      .returning();
-    if (!row) {
-      throw new WithdrawalAddressAlreadyExistsError();
-    }
+    // The cap and the insert have to be one atomic step: under Postgres's default READ
+    // COMMITTED isolation a count outside a lock takes no lock at all, so two concurrent
+    // creates for the same player can each read 49 and both insert. The per-player advisory
+    // lock is transaction-scoped (auto-released on commit or rollback) and serializes the
+    // pair; a different player's creates are unaffected. Same pattern as the auto-withdrawal
+    // daily-cap flip above, namespaced so it does not queue behind that one.
+    const row = await this.drizzle.db.transaction((txn) =>
+      withAdvisoryXactLock(txn, `withdrawal-address-cap:${userId}`, async () => {
+        const [existing] = await txn
+          .select({ total: count() })
+          .from(walletWithdrawalAddress)
+          .where(eq(walletWithdrawalAddress.userId, userId));
+        if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
+          throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
+        }
+
+        // onConflictDoNothing turns the unique index into a domain conflict rather than a
+        // 500 - a double-submitted form is a 409, not an incident.
+        const [inserted] = await txn
+          .insert(walletWithdrawalAddress)
+          .values({ userId, ...input, ...whitelisted })
+          .onConflictDoNothing()
+          .returning();
+        if (!inserted) {
+          throw new WithdrawalAddressAlreadyExistsError();
+        }
+        return inserted;
+      }),
+    );
 
     await this.audit.record({
       actorId: userId,
