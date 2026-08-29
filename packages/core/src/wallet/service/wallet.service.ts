@@ -428,6 +428,27 @@ export async function readWalletBalance(
   return row?.amount ?? '0';
 }
 
+// A player with no wallet row yet still needs an answer, never a throw, so the
+// no-wallet case resolves to the default currency and an empty balance list.
+export async function readWalletBalances(
+  txn: DrizzleDb,
+  userId: User['id'],
+): Promise<{ activeCurrency: string; balances: { currency: string; balance: string }[] }> {
+  const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+
+  if (!record) {
+    return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
+  }
+
+  const balances = await txn
+    .select({ currency: walletBalance.currency, balance: walletBalance.amount })
+    .from(walletBalance)
+    .where(eq(walletBalance.walletId, record.id))
+    .orderBy(walletBalance.currency);
+
+  return { activeCurrency: record.currency, balances };
+}
+
 export function debitWithdrawableBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -840,19 +861,7 @@ export class WalletService {
   }
 
   async getBalances(userId: User['id']) {
-    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-
-    if (!record) {
-      return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
-    }
-
-    const rows = await this.drizzle.db
-      .select({ currency: walletBalance.currency, balance: walletBalance.amount })
-      .from(walletBalance)
-      .where(eq(walletBalance.walletId, record.id))
-      .orderBy(walletBalance.currency);
-
-    return { activeCurrency: record.currency, balances: rows };
+    return readWalletBalances(this.drizzle.db, userId);
   }
 
   // TODO: validate `currency` against a canonical supported-currency list once one

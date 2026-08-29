@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { AdminPlayerSummary, AdminUserDirectory } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { user, session } from '@openora/core/pam/schema/identity';
@@ -26,22 +26,8 @@ async function seedDepositLimit(userId: string, amount: string, period = 'daily'
     .values({ userId, type: 'deposit', amount, minutes: null, period });
 }
 
-async function seedDeposit(userId: string, amount: string, createdAt = new Date()) {
-  const [walletRow] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId, currency: 'USD' })
-    .onConflictDoNothing()
-    .returning();
-  const [existing] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-  await db.drizzle.db.insert(walletTransaction).values({
-    walletId: (walletRow ?? existing)!.id,
-    type: 'deposit',
-    amount,
-    currency: 'USD',
-    status: 'completed',
-    createdAt,
-  });
-}
+const seedDeposit = (userId: string, amount: string, createdAt = new Date()) =>
+  seedCompletedDeposit(db, userId, amount, { createdAt });
 
 async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [g] = await db.drizzle.db

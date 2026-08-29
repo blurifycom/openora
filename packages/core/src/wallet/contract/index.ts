@@ -1,6 +1,8 @@
 import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   KycStatusSchema,
   MoneyAmountSchema,
   MONEY_PRECISION,
@@ -29,13 +31,9 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
   message: 'must be greater than zero',
 });
 
-// ISO 4217 plus longer crypto tickers (USDT, USDC). Codes are canonically uppercase -
-// normalize on the way in so a `usd` request can never diverge from a `USD` wallet.
-const WalletCurrencyCodeSchema = z
-  .string()
-  .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
+const WalletCurrencyCodeSchema = CurrencyTickerSchema;
 
-const WalletCurrencyInputSchema = WalletCurrencyCodeSchema.transform((c) => c.toUpperCase());
+const WalletCurrencyInputSchema = CurrencyTickerInputSchema;
 
 // A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
 // different addresses, fees and minimums. Free-form rather than an enum because each

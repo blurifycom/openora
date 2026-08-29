@@ -18,3 +18,4 @@ export {
   uniqueUsername,
   type SeedPlayerOverrides,
 } from './seed-player.js';
+export { seedCompletedDeposit } from './seed-wallet.js';

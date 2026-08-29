@@ -1381,6 +1381,14 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "CurrencyTickerInputSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "CurrencyTickerSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "DateRangeSchema",
       "file": "packages/core/src/contracts/schemas/reporting.ts"
     },

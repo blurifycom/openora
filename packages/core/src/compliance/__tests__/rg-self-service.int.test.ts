@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { LoginEnforcementPort, ResponsibleGamingConfig } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
@@ -70,22 +70,6 @@ async function backdatePending(limitId: string, effectiveAt: Date, expiresAt: Da
     .update(userLimit)
     .set({ pendingEffectiveAt: effectiveAt, pendingExpiresAt: expiresAt })
     .where(eq(userLimit.id, limitId));
-}
-
-async function seedCompletedDeposit(userId: string, amount: string) {
-  const [walletRow] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId, currency: 'USD' })
-    .returning();
-  await db.drizzle.db.insert(walletTransaction).values({
-    walletId: walletRow!.id,
-    type: 'deposit',
-    amount,
-    currency: 'USD',
-    status: 'completed',
-    direction: 'credit',
-    rail: 'fiat',
-  });
 }
 
 beforeAll(async () => {
@@ -179,7 +163,7 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
   it('reports usage and headroom against the current window', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
-    await seedCompletedDeposit(userId, '80');
+    await seedCompletedDeposit(db, userId, '80');
     await svc.upsertLimit(userId, deposit100);
 
     const [view] = await svc.getLimits(userId);
@@ -453,7 +437,7 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
   it('a confirmed removal leaves a still-breached monthly limit of the same type flagged', async () => {
     const { svc, monitoring } = makeService();
     const userId = randomUUID();
-    await seedCompletedDeposit(userId, '900');
+    await seedCompletedDeposit(db, userId, '900');
     // Daily 100 and monthly 1000, both deposit-type, both breached; rg_flag carries no
     // period, so clearing on removal must not wipe the monthly one's flag.
     await svc.upsertLimit(userId, deposit100);

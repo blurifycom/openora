@@ -537,13 +537,11 @@ export async function mapEventToRecord(
     topic === 'rg.cooling_off.lifted'
   ) {
     const before =
-      topic === 'rg.limit.set'
+      topic === 'rg.limit.set' || topic === 'rg.limit.change_confirmed'
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
-          : topic === 'rg.limit.change_confirmed'
-            ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
-            : null;
+          : null;
     const initiatedBy = p['initiatedBy'];
     return {
       ...base,

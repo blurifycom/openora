@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { CurrencyTickerInputSchema, CurrencyTickerSchema } from './common.js';
 
 // Canonical, operator-overridable list of currencies a player may pick to have the
 // UI RENDER amounts in. Display is presentation-only: picking one never changes a
@@ -49,20 +50,14 @@ export const DEFAULT_DISPLAY_CURRENCIES = [
   ...DEFAULT_DISPLAY_FIAT_CURRENCIES,
 ] as const;
 
-// ISO 4217 fiat codes plus longer crypto tickers (USDT, USDC, DOGE, ...) - same
-// shape as the wallet module's own (module-private) currency code schema.
-// Duplicated rather than imported: a display currency is a distinct concept from
-// a wallet/settlement currency and this schema lives in the neutral contracts
-// zone, which the wallet module's contract is not.
-export const DisplayCurrencyCodeSchema = z
-  .string()
-  .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
+// A display currency is a distinct concept from a wallet/settlement currency, but
+// it accepts the same ticker shape - both alias the neutral-zone schema so the two
+// can never drift apart.
+export const DisplayCurrencyCodeSchema = CurrencyTickerSchema;
 
 // Codes are canonically uppercase - normalize player input on the way in so a
 // lowercase request can never diverge from the stored/compared value.
-export const DisplayCurrencyInputSchema = DisplayCurrencyCodeSchema.transform((c) =>
-  c.toUpperCase(),
-);
+export const DisplayCurrencyInputSchema = CurrencyTickerInputSchema;
 
 export type DisplayCurrency = z.infer<typeof DisplayCurrencyCodeSchema>;
 
