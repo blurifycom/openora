@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import {
-  LimitsSchema, CurrencyCodeSchema, ResponsibleGamingSchema, defaultResponsibleGamingConfig, } from './igaming-config.js';
+  LimitsSchema,
+  CurrencyCodeSchema,
+  ResponsibleGamingSchema,
+  defaultResponsibleGamingConfig,
+} from './igaming-config.js';
 import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
