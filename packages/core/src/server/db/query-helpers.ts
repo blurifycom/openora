@@ -89,6 +89,35 @@ export function moneySubtract(a: string, b: string): string {
   return fromMinorUnits(toMinorUnits(a) - toMinorUnits(b));
 }
 
+// Round a non-negative decimal-string money amount (up to MONEY_SCALE precision) DOWN to
+// `scale` decimal places, via the same bigint minor-units path as the helpers above - never
+// JS float or `toFixed`, which both round half-to-even/away-from-zero inconsistently and
+// lose precision past ~15 significant digits. Use this for a presentation value derived
+// from a full-precision aggregate (eg a RG spend sum at MONEY_SCALE) that must be shown at
+// a narrower native scale (eg a limit's own numeric(18,2) `amount`) without ever
+// overstating it - the discarded digits are truncated, never rounded up.
+export function moneyFloorToScale(amount: string, scale: number): string {
+  const divisor = 10n ** BigInt(MONEY_SCALE - scale);
+  return fromUnitsAtScale(toMinorUnits(amount) / divisor, scale);
+}
+
+// Same as moneyFloorToScale but rounds UP (ceiling) whenever any discarded digit is
+// nonzero. Use for a presentation value that must never be shown as LESS than its true
+// full-precision amount - eg RG spend, a protective control where under-reporting `used`
+// would show a player more headroom than they actually have.
+export function moneyCeilToScale(amount: string, scale: number): string {
+  const divisor = 10n ** BigInt(MONEY_SCALE - scale);
+  const units = toMinorUnits(amount);
+  const scaledUnits = units / divisor + (units % divisor === 0n ? 0n : 1n);
+  return fromUnitsAtScale(scaledUnits, scale);
+}
+
+function fromUnitsAtScale(units: bigint, scale: number): string {
+  const digits = units.toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale) || '0';
+  return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
+}
+
 // Run `fn` over `items` with at most `concurrency` promises in flight, results in input
 // order. Use this instead of `Promise.all(items.map(fn))` whenever `items` comes from a
 // query (unbounded) and `fn` touches the DB: an uncapped fan-out opens one pool connection

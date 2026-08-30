@@ -12,6 +12,12 @@ export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
       return mapErrors({}, () => svc.list(input));
     }),
 
+    // Player self-service. No adminGuard - the subject is resolved from the SESSION
+    // (getUserId), never from input, exactly like compliance's getMyRgSection.
+    listMyRgHistory: os.listMyRgHistory.handler(({ input, context }) =>
+      svc.listMyRgHistory(getUserId(context), input),
+    ),
+
     exportCsv: os.exportCsv.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'audit', 'export');
       const csv = await svc.exportCsv(input);

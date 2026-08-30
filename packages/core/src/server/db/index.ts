@@ -11,6 +11,8 @@ export {
   moneyDivide,
   moneyAdd,
   moneySubtract,
+  moneyFloorToScale,
+  moneyCeilToScale,
   mapConcurrent,
 } from './query-helpers.js';
 

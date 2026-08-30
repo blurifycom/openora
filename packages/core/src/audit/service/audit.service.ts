@@ -5,11 +5,76 @@ import {
   serializeRow,
   withAdvisoryXactLock,
   type EventBus,
+  type SerializedRow,
 } from '@openora/core/server';
 import { eq, and, or, gt, gte, lte, like, asc, desc, sql } from 'drizzle-orm';
-import type { AuditWritePort } from '@openora/core/contracts';
+import {
+  LimitChangeKindSchema,
+  LimitPeriodSchema,
+  LimitTypeSchema,
+  MoneyAmountSchema,
+  type AuditWritePort,
+  type IdentityReader,
+  type User,
+} from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
-import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
+import type {
+  AuditListFilters,
+  AuditExportFilters,
+  MyRgHistoryEntry,
+  MyRgHistoryFilters,
+} from '../contract/index.js';
+
+// The five `rg.limit.*` topics are the entire scope of the player self-service history
+// route - exclusion topics (`rg.cooling_off.*`, `rg.self_exclusion.*`) are out of scope
+// by design: the acceptance criterion this route satisfies is limit-change history,
+// and the web app already shows exclusion state in its own tab.
+const RG_LIMIT_ACTION_PREFIX = 'rg.limit.';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Narrow a single jsonb field through its owning contract schema - `unknown` at this
+ * boundary (an append-only jsonb blob is untrusted by construction), never `any`. */
+function pick<T>(
+  schema: { safeParse: (v: unknown) => { success: boolean; data?: T } },
+  value: unknown,
+): T | null {
+  const result = schema.safeParse(value);
+  return result.success ? (result.data ?? null) : null;
+}
+
+// Projects a raw audit_log row (whose `after` column is the full rg.limit.* event
+// payload) through the field ALLOWLIST in MyRgHistoryEntrySchema. This is the ONLY
+// place that reads the RG payload for the player-facing route - it must never widen
+// to include reason/actorId/ip/userAgent/limitId/userId/playerId/initiatedBy.
+function toMyRgHistoryEntry(row: SerializedRow<AuditLog, 'createdAt'>): MyRgHistoryEntry {
+  const after = isRecord(row.after) ? row.after : {};
+  // newAmount/newMinutes are polymorphic by action: `rg.limit.set` carries the new
+  // value as amount/minutes, the four change_* topics carry it as requestedAmount/
+  // requestedMinutes (the value only takes effect once `action` is `change_confirmed`;
+  // `change_requested`/`change_cancelled`/`change_expired` mean it never applied).
+  const isSet = row.action === 'rg.limit.set';
+  const newAmountRaw = isSet ? after['amount'] : after['requestedAmount'];
+  const newMinutesRaw = isSet ? after['minutes'] : after['requestedMinutes'];
+
+  return {
+    id: row.id,
+    action: row.action,
+    actorType: row.actorType,
+    createdAt: row.createdAt,
+    type: pick(LimitTypeSchema, after['type']),
+    period: pick(LimitPeriodSchema, after['period']),
+    kind: pick(LimitChangeKindSchema, after['kind']),
+    previousAmount: pick(MoneyAmountSchema, after['previousAmount']),
+    newAmount: pick(MoneyAmountSchema, newAmountRaw),
+    previousMinutes: typeof after['previousMinutes'] === 'number' ? after['previousMinutes'] : null,
+    newMinutes: typeof newMinutesRaw === 'number' ? newMinutesRaw : null,
+    effectiveAt: typeof after['effectiveAt'] === 'string' ? after['effectiveAt'] : null,
+    expiresAt: typeof after['expiresAt'] === 'string' ? after['expiresAt'] : null,
+  };
+}
 
 const AUDIT_SORT_COLS = {
   createdAt: auditLog.createdAt,
@@ -128,6 +193,7 @@ export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   // Hash computed and inserted in a single statement - no read-back UPDATE, so a
@@ -210,6 +276,38 @@ export class AuditService {
       page,
       limit,
     };
+  }
+
+  // Player self-service RG limit history. Resolves the subject's player-profile id
+  // server-side (mirroring how every write path resolves it before emitting), then
+  // reuses list()'s buildWhere/pagination machinery with resourceType/resourceId/
+  // actionPrefix forced - the caller can never pass those. Uses getPlayerIdByUserId
+  // (NOT the Safe variant): a lookup failure must propagate as an error here, not
+  // silently resolve to "you have no limit history" the way best-effort event
+  // enrichment is allowed to.
+  async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
+    const { page, limit } = filters;
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      // No player profile yet (eg an admin-only account, or a race right after
+      // signup) is not a caller error. Return early - do NOT let a null id fall
+      // through into the query as an unfiltered or `resourceId IS NULL` predicate,
+      // either of which would return another subject's rows. Never fall back to
+      // the raw userId either: it would silently match nothing today (audit rows
+      // are keyed by playerId) and could match the wrong subject later.
+      return { items: [], total: 0, page, limit };
+    }
+
+    const { items, total } = await this.list({
+      page,
+      limit,
+      resourceType: 'player',
+      resourceId: playerId,
+      actionPrefix: RG_LIMIT_ACTION_PREFIX,
+      sortOrder: filters.sortOrder,
+    });
+
+    return { items: items.map(toMyRgHistoryEntry), total, page, limit };
   }
 
   // Hard cap to prevent unbounded bulk extraction / OOM; exports exceeding it are

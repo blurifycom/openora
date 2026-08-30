@@ -3,7 +3,9 @@ import {
   assertOwnership,
   findOneOrThrow,
   makeNotFoundError,
+  moneyCeilToScale,
   moneyCompare,
+  moneyFloorToScale,
   moneySubtract,
   moneyToNumber,
   serializeRow,
@@ -36,6 +38,11 @@ import type {
 } from '../contract/index.js';
 
 const HOUR_MS = 60 * 60 * 1000;
+
+// Matches userLimit.amount's column scale (numeric(18,2)) - see schema/index.ts. `used`/
+// `remaining` are rounded to this before they reach LimitView so every consumer gets the
+// same scale `amount` is already at, instead of the MONEY_SCALE(18) the ledger sum carries.
+const RG_LIMIT_MONEY_SCALE = 2;
 
 // The admin schema requires a non-empty reason and the audit trail wants one; a player
 // clicking a self-service button supplies none, so the reason IS that fact.
@@ -690,6 +697,8 @@ export class RgSelfServiceService {
     // Money-type limits only: the session-time limit is measured in minutes by the
     // session sweep, and has no money spend to report here.
     const isMoneyLimit = row.amount !== null && row.period !== 'session';
+    // Full MONEY_SCALE precision, sourced from a wallet-ledger sum - keep this exact for
+    // the pct/remaining math below and for anything gating on it. Never expose it as-is.
     const used = isMoneyLimit
       ? await this.monitoring.spendFor(
           userId,
@@ -698,6 +707,17 @@ export class RgSelfServiceService {
         )
       : null;
     const limit = row.amount;
+    const remaining =
+      used !== null && limit !== null
+        ? moneyCompare(used, limit) >= 0
+          ? '0'
+          : moneySubtract(limit, used)
+        : null;
+    // `user_limit.amount` is numeric(18,2); `used`/`remaining` are derived at MONEY_SCALE
+    // (18) from a raw ledger sum, so the response otherwise leaks 18 decimal places past
+    // the scale the limit itself is set at. This is a protective control, not a balance
+    // display: `used` rounds UP and `remaining` rounds DOWN so a player is never shown
+    // more headroom than they actually have.
     return {
       id: base.id,
       userId: base.userId,
@@ -706,13 +726,8 @@ export class RgSelfServiceService {
       minutes: base.minutes,
       period: base.period,
       createdAt: base.createdAt,
-      used,
-      remaining:
-        used !== null && limit !== null
-          ? moneyCompare(used, limit) >= 0
-            ? '0'
-            : moneySubtract(limit, used)
-          : null,
+      used: used !== null ? moneyCeilToScale(used, RG_LIMIT_MONEY_SCALE) : null,
+      remaining: remaining !== null ? moneyFloorToScale(remaining, RG_LIMIT_MONEY_SCALE) : null,
       pct:
         used !== null && limit !== null
           ? thresholdPct(moneyToNumber(used), moneyToNumber(limit))

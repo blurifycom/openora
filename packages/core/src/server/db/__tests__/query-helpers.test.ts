@@ -7,6 +7,8 @@ import {
   moneyCompare,
   moneyScaleBy,
   moneyDivide,
+  moneyFloorToScale,
+  moneyCeilToScale,
   mapConcurrent,
 } from '../query-helpers.js';
 
@@ -206,5 +208,39 @@ describe('mapConcurrent', () => {
         return n;
       }),
     ).rejects.toThrow('item 2 failed');
+  });
+});
+
+describe('moneyFloorToScale', () => {
+  it('truncates discarded digits rather than rounding them', () => {
+    expect(moneyFloorToScale('66.664999999999999999', 2)).toBe('66.66');
+    expect(moneyFloorToScale('19.999999999999999999', 2)).toBe('19.99');
+  });
+
+  it('leaves an amount already at the target scale unchanged', () => {
+    expect(moneyFloorToScale('20.00', 2)).toBe('20.00');
+  });
+
+  it('pads a whole amount out to the target scale', () => {
+    expect(moneyFloorToScale('20', 2)).toBe('20.00');
+  });
+
+  it('floors a zero amount to zero at scale', () => {
+    expect(moneyFloorToScale('0', 2)).toBe('0.00');
+  });
+});
+
+describe('moneyCeilToScale', () => {
+  it('rounds up whenever any discarded digit is nonzero', () => {
+    expect(moneyCeilToScale('33.335000000000000001', 2)).toBe('33.34');
+    expect(moneyCeilToScale('19.991', 2)).toBe('20.00');
+  });
+
+  it('leaves an exact amount unchanged', () => {
+    expect(moneyCeilToScale('33.340000000000000000', 2)).toBe('33.34');
+  });
+
+  it('leaves a zero amount at zero, never rounding up from nothing', () => {
+    expect(moneyCeilToScale('0', 2)).toBe('0.00');
   });
 });

@@ -1,6 +1,6 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
+import { AUDIT_WRITER, IDENTITY_READER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
@@ -780,7 +780,7 @@ export default {
     let svcRef: AuditService | null = null;
 
     ctx.provideSealed(AUDIT_WRITER, (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
@@ -801,7 +801,7 @@ export default {
     }
 
     ctx.routers.add('audit', (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       svcRef = svc;
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });

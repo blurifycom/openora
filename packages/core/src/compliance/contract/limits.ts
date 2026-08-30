@@ -72,11 +72,21 @@ export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
  * `used`/`remaining`/`pct` are null for the session-time limit, which is measured in
  * minutes by the session sweep rather than in money.
  */
+// `user_limit.amount` is numeric(18,2); `used`/`remaining` are derived from a
+// MONEY_SCALE(18) ledger sum in the service and rounded to this scale before they reach
+// the wire (see rg-self-service.service.ts). MoneyAmountSchema alone allows up to 18
+// decimal places and would silently accept an unrounded value here - this is the tighter
+// bound the RG limit's own scale actually requires.
+const LimitMoneyAmountSchema = MoneyAmountSchema.regex(
+  /^\d+(\.\d{1,2})?$/,
+  'must have at most 2 decimal places',
+);
+
 export const LimitViewSchema = LimitSchema.extend({
   /** Money spent against this limit inside the current period window. */
-  used: MoneyAmountSchema.nullable(),
+  used: LimitMoneyAmountSchema.nullable(),
   /** Clamped at zero: an over-limit player has none left, not a negative allowance. */
-  remaining: MoneyAmountSchema.nullable(),
+  remaining: LimitMoneyAmountSchema.nullable(),
   /** `used` as a percentage of the limit; may exceed 100. */
   pct: z.number().nullable(),
   pendingKind: LimitChangeKindSchema.nullable(),

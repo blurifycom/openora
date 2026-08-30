@@ -33,7 +33,8 @@
       ],
       "routes": [
         "audit.exportCsv",
-        "audit.list"
+        "audit.list",
+        "audit.listMyRgHistory"
       ]
     },
     {
@@ -717,6 +718,7 @@
       "token": "IDENTITY_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/audit/plugin.ts",
         "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
@@ -1819,6 +1821,14 @@
     {
       "name": "MoneyByCurrencySchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "MyRgHistoryEntrySchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "MyRgHistoryFiltersSchema",
+      "file": "packages/core/src/audit/contract/index.ts"
     },
     {
       "name": "NotificationSchema",

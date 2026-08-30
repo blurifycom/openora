@@ -806,3 +806,108 @@ describe('RG audit trail', () => {
     }
   });
 });
+
+describe('GET /audit/me/rg-history (player self-service limit history)', () => {
+  it('returns only the callers own rows, hides another players rows, and leaks no internal field', async () => {
+    const mine = await registerAndMaterializePlayer(app, {
+      email: `rg-history-mine-${randomUUID()}@e2e.test`,
+    });
+    const other = await registerAndMaterializePlayer(app, {
+      email: `rg-history-other-${randomUUID()}@e2e.test`,
+    });
+
+    // player.id (the audit subject) is never the same as the auth userId - the route
+    // must resolve it server-side rather than filtering on the raw userId.
+    expect(mine.playerId).not.toBe(mine.userId);
+
+    const setRes = await admin.put(`/compliance/players/${mine.userId}/limits`, {
+      type: 'deposit',
+      amount: '500',
+      minutes: null,
+      period: 'daily',
+    });
+    expect(setRes.status).toBe(200);
+
+    await admin.put(`/compliance/players/${other.userId}/limits`, {
+      type: 'deposit',
+      amount: '750',
+      minutes: null,
+      period: 'daily',
+    });
+
+    await vi.waitFor(async () => {
+      const res = await mine.client.get('/audit/me/rg-history');
+      expect(res.status).toBe(200);
+      const body = await readJson(res);
+
+      expect(body.items).toHaveLength(1);
+      const entry = body.items[0];
+      expect(entry.action).toBe('rg.limit.set');
+      expect(entry.type).toBe('deposit');
+      expect(entry.period).toBe('daily');
+      expect(entry.newAmount).toBe('500');
+      expect(entry.previousAmount).toBeNull();
+
+      for (const leaked of [
+        'reason',
+        'actorId',
+        'ip',
+        'userAgent',
+        'hash',
+        'prevHash',
+        'seq',
+        'correlationId',
+        'userId',
+        'playerId',
+        'limitId',
+        'resourceId',
+        'resourceType',
+        'initiatedBy',
+      ]) {
+        expect(entry).not.toHaveProperty(leaked);
+      }
+    });
+  });
+
+  it('rejects an unauthenticated call with 401', async () => {
+    const res = await app.app.request('/audit/me/rg-history');
+    expect(res.status).toBe(401);
+  });
+
+  it('is reachable by an ordinary player with no admin permissions', async () => {
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `rg-history-plain-${randomUUID()}@e2e.test`,
+    });
+
+    const res = await client.get('/audit/me/rg-history');
+    expect(res.status).toBe(200);
+    expect((await readJson(res)).items).toEqual([]);
+  });
+
+  it('ignores caller-supplied scoping params - actorId/resourceId/resourceType/actionPrefix/q are not accepted', async () => {
+    const { client, userId, playerId } = await registerAndMaterializePlayer(app, {
+      email: `rg-history-noscope-${randomUUID()}@e2e.test`,
+    });
+    await admin.put(`/compliance/players/${userId}/limits`, {
+      type: 'deposit',
+      amount: '300',
+      minutes: null,
+      period: 'daily',
+    });
+
+    await vi.waitFor(async () => {
+      // Attempting to widen the query via querystring must have no effect - the
+      // route always resolves the subject from the session, never from input.
+      const res = await client.get(
+        `/audit/me/rg-history?resourceId=someone-else&actionPrefix=&q=admin`,
+      );
+      const body = await readJson(res);
+      expect(body.items.length).toBeGreaterThanOrEqual(1);
+      expect(body.items.every((i: { action: string }) => i.action.startsWith('rg.limit.'))).toBe(
+        true,
+      );
+    });
+    // playerId used only to document the subject the row above is actually filed under.
+    expect(playerId).not.toBe(userId);
+  });
+});

@@ -172,6 +172,27 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
     expect(Number(view?.remaining)).toBe(20);
     expect(view?.pct).toBe(80);
   });
+
+  // `used`/`remaining` are summed from wallet_transaction.amount, a numeric(38,18) column,
+  // while user_limit.amount (and this response) are numeric(18,2). Nothing previously
+  // asserted the response actually lands at that scale, so a fractional spend leaked all
+  // 18 raw decimal places onto the wire ("340.000000000000000000" of "400.00"). This is a
+  // protective control, not a balance display: `used` must round UP and `remaining` DOWN,
+  // so a player is never shown more headroom than they actually have.
+  it('rounds a fractional spend to the limit amount scale, used up and remaining down', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedCompletedDeposit(db, userId, '33.336');
+    await svc.upsertLimit(userId, deposit100);
+
+    const [view] = await svc.getLimits(userId);
+
+    expect(view?.amount).toBe('100.00');
+    // True spend is 33.336; must never under-report it, so it rounds up to 33.34.
+    expect(view?.used).toBe('33.34');
+    // True remainder is 66.664; must never over-report it, so it rounds down to 66.66.
+    expect(view?.remaining).toBe('66.66');
+  });
 });
 
 describe('RgSelfServiceService.requestLimitRemoval (real PG)', () => {
