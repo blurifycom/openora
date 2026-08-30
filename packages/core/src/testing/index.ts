@@ -1,4 +1,4 @@
-export { InProcessRealtimeTransport, SseClientAuthorizer } from '@openora/core/server';
+export { RedisPubSubRealtimeTransport, SseClientAuthorizer } from '@openora/core/server';
 export {
   runRealtimeTransportConformanceSuite,
   type RealtimeTransportHarness,

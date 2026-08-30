@@ -7,6 +7,7 @@ import {
   RedisCache,
   RedisRateLimiter,
   RedisStreamsBroker,
+  RedisPubSubRealtimeTransport,
   type CreateAppConfig,
   type Container,
   type CoreTokenCatalog,
@@ -20,7 +21,7 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
 } from '@openora/core/contracts';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
-import { InProcessRealtimeTransport, SseClientAuthorizer } from '@openora/core/testing';
+import { SseClientAuthorizer } from '@openora/core/testing';
 import { acquireTestRedisDatabase } from './redis.js';
 import type { Hono } from 'hono';
 
@@ -45,18 +46,19 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
  * Pass the same plugins the real entrypoint uses (in OSS that is `loadExtensions()`;
  * a consumer passes its own).
  *
- * The four durable seams run on the SAME drivers production uses - Redis Streams,
- * BullMQ, Redis cache and Redis rate limiter - so event fan-out, job retries and
- * throttling are exercised for real rather than through an in-process stand-in.
- * Each booted app claims its own Redis logical database, so several apps in one
- * test file cannot compete for each other's events, jobs or cache entries.
+ * The five durable seams run on the SAME drivers production uses - Redis Streams,
+ * BullMQ, Redis cache, Redis rate limiter and Redis Pub/Sub - so event fan-out, job
+ * retries, throttling and realtime push are exercised for real rather than through
+ * an in-process stand-in. Each booted app claims its own Redis logical database, so
+ * several apps in one test file cannot compete for each other's events, jobs, cache
+ * entries or channels.
  *
  * The broker reads from `startId: '0'` here, unlike production's `$`: a test acts
  * within milliseconds of boot, and a group created lazily at `$` would silently drop
  * anything published before it existed. Replay is harmless against a flushed database.
  *
- * Realtime stays on the in-process fakes - core ships no realtime driver, so there is
- * nothing real to bind (production expects a managed vendor overlay).
+ * `REALTIME_TRANSPORT` binds the same `RedisPubSubRealtimeTransport` production uses
+ * (ADR-0031) - core ships no in-process fallback, so there is nothing else to bind.
  */
 // Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
@@ -98,7 +100,11 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
       container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
 
       if (!container.has(REALTIME_TRANSPORT)) {
-        container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
+        container.register(REALTIME_TRANSPORT, () => {
+          const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
+          container.onDispose(() => transport.close());
+          return transport;
+        });
       }
       if (!container.has(REALTIME_CLIENT_AUTHORIZER)) {
         container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());

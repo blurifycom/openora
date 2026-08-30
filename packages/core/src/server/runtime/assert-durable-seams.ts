@@ -3,11 +3,12 @@ import {
   JOB_QUEUE,
   CACHE,
   RATE_LIMITER,
+  REALTIME_TRANSPORT,
   type AnyToken,
 } from '@openora/core/contracts';
 
 /**
- * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
+ * Production is distributed-only (ADR-0030/0031, superseding ADR-0010/0014/0016/0028):
  * the in-process seam impls no longer ship on the production path, so every
  * always-needed seam must resolve to a durable binding before `createApp` finishes
  * booting. Call this AFTER `loadPlugins` + `configure` so a `REDIS_URL` auto-bind or
@@ -15,9 +16,11 @@ import {
  * Modeled on `assertSealedServicesBound` (`compliance/assert.ts`) - same `has(token)`
  * shape, same "list every gap, don't stop at the first" style.
  *
- * `REALTIME_TRANSPORT` is excluded: `createApp` binds `InProcessRealtimeTransport` as
- * the default for single-process SSE deployments. Infra overlays (e.g. Ably) rebind it
- * via last-wins `container.register`. Not listed here because it always has a binding.
+ * `REALTIME_TRANSPORT` is included as of ADR-0031: `createApp` no longer binds an
+ * in-process default (that was the exact silent-failure shape this guard exists to
+ * catch - a single-instance deployment worked, a second replica behind a load
+ * balancer silently stopped delivering to half its clients). An overlay (e.g. Ably)
+ * still rebinds it via last-wins `container.register`, same as every other seam here.
  */
 export type DurableSeamContainerView = {
   has(token: AnyToken<unknown>): boolean;
@@ -45,6 +48,11 @@ const REQUIRED_DURABLE_SEAMS: readonly SeamRequirement[] = [
     token: RATE_LIMITER,
     name: 'RATE_LIMITER',
     fix: 'set REDIS_URL to auto-bind RedisRateLimiter, or bind a RATE_LIMITER overlay directly',
+  },
+  {
+    token: REALTIME_TRANSPORT,
+    name: 'REALTIME_TRANSPORT',
+    fix: 'set REDIS_URL to auto-bind RedisPubSubRealtimeTransport, or bind a REALTIME_TRANSPORT overlay (eg Ably) directly',
   },
 ];
 

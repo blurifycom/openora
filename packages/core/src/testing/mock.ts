@@ -17,6 +17,7 @@ import {
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookVerifier,
+  type RealtimeTransport,
 } from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
@@ -186,6 +187,21 @@ export const makeCache = (): CacheAdapter => {
     },
   };
 };
+
+/**
+ * No-op RealtimeTransport double for a test whose subject is not realtime delivery -
+ * a router/service under test needs a `REALTIME_TRANSPORT` to construct, but this file
+ * never subscribes or asserts on what it publishes. Reach for
+ * `@openora/core/testing`'s `RedisPubSubRealtimeTransport` (with `createTestRedis`)
+ * instead when a test actually exercises pub/sub delivery, presence, or revocation.
+ */
+export const makeRealtimeTransport = (): RealtimeTransport =>
+  mock<RealtimeTransport>({
+    publish: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
+    subscribe: vi.fn(() => () => undefined),
+    getOnlineUserIds: vi.fn(async () => []),
+  });
 
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({

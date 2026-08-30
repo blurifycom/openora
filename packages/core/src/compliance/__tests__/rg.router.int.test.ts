@@ -13,7 +13,7 @@ import type {
   JobQueueAdapter,
 } from '@openora/core/contracts';
 import { defaultResponsibleGamingConfig, queue } from '@openora/core/contracts';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 // The RG section now reports usage against each money limit, which reads the wallet and
 // gaming tables through `spendFor` - the section is unreadable without them.
@@ -22,6 +22,7 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import {
   makeIdentityReader,
   mock,
+  makeRealtimeTransport,
   makeEventBus,
   makeAdminGuard,
   makeAuditWriter,
@@ -110,7 +111,7 @@ function build(adminGuard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({ enqueue: vi.fn(async () => ({ id: 'job-1' })) }),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
-    realtime: new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
     rg,
     rgMonitoring,
     rgSelfService,
