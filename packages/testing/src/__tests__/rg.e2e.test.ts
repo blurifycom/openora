@@ -138,6 +138,51 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     expect(section.selfExclusion).toBeNull();
   });
 
+  it('notifies the player in-app on an admin limit override, never on their own self-service change', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-admin-notify-${randomUUID()}@e2e.test`,
+    });
+
+    const setRes = await admin.put(`/compliance/players/${userId}/limits`, {
+      type: 'deposit',
+      amount: '500',
+      minutes: null,
+      period: 'daily',
+      reason: 'operator lowered on a support request',
+      confirm: true,
+    });
+    expect(setRes.status).toBe(200);
+
+    await vi.waitFor(async () => {
+      const notifyRes = await client.get('/notifications');
+      const notifications = await readJson(notifyRes);
+      const found = (notifications as Array<{ type: string; body: string }>).find(
+        (n) => n.type === 'rg.limit.admin_updated',
+      );
+      expect(found).toBeTruthy();
+      expect(found?.body).toContain('deposit');
+      expect(found?.body).toContain('daily');
+      expect(found?.body).toContain('500');
+      // The admin's free-text reason is never surfaced to the player.
+      expect(found?.body).not.toContain('operator lowered on a support request');
+    });
+
+    // Lowering again brings the limit within the player's own self-service reach
+    // (still weakening-free since 100 < 500), so the player's OWN change on the
+    // same limit must not raise a second `rg.limit.admin_updated` notification.
+    const beforeCount = (await readJson(await client.get('/notifications'))).length;
+    const selfRes = await client.put('/compliance/limits', {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      period: 'daily',
+    });
+    expect(selfRes.status).toBe(200);
+
+    const afterCount = (await readJson(await client.get('/notifications'))).length;
+    expect(afterCount).toBe(beforeCount);
+  });
+
   it('activates a 24h cooling-off and surfaces it via getRgSection', async () => {
     const { userId } = await registerAndMaterializePlayer(app, {
       email: `rg-cooloff-${randomUUID()}@e2e.test`,

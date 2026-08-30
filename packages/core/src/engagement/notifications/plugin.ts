@@ -14,7 +14,12 @@ import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
-import { NotificationsService } from './service/notifications.service.js';
+import { NotificationsService, perRecipientAmount } from './service/notifications.service.js';
+
+// Money-type RG limits carry `amount`, the session-type limit carries `minutes` -
+// polymorphic by `type`, a row never carries both (compliance/contract/limits.ts).
+const describeLimitValue = (amount: string | null, minutes: number | null): string =>
+  amount !== null ? amount : `${minutes} minutes`;
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 
@@ -129,6 +134,56 @@ export default {
         .catch((err) =>
           logger.error({ err }, 'social.friend_request.accepted notification failed'),
         );
+    });
+
+    // Rain is low-value and high-frequency chat social play, not a transactional
+    // money event like a withdrawal - in-app only, no email (matches
+    // wallet.bonus_rollover.completed above, which is also in-app only).
+    ctx.events.on('chat.rain.distributed', (payload) => {
+      const parsed = domainEventSchemas['chat.rain.distributed'].safeParse(payload);
+      if (!parsed.success || !svcRef) {
+        return;
+      }
+      const p = parsed.data;
+      const svc = svcRef;
+      const amount = perRecipientAmount(p.totalAmount, p.recipientCount);
+      const title = 'You were included in a rain';
+      directoryRef
+        ?.lookupPlayers([p.fromUserId])
+        .then((rows) => {
+          const senderName = rows.find((r) => r.userId === p.fromUserId)?.username ?? 'A player';
+          const body = `${senderName} sent a rain in chat - you received ${amount} ${p.currency}.`;
+          return Promise.all(
+            p.recipients.map((recipientId) =>
+              svc.create({ userId: recipientId, type: 'chat.rain.received', title, body }),
+            ),
+          );
+        })
+        .catch((err) => logger.error({ err }, 'chat.rain.distributed notification failed'));
+    });
+
+    // Non-null `reason` marks an admin override (ADR-0037); the player's own path
+    // always emits `reason: null` and must never trigger this, or a player would be
+    // notified about their own action.
+    ctx.events.on('rg.limit.set', (payload) => {
+      const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
+      if (!parsed.success || !svcRef || parsed.data.reason === null) {
+        return;
+      }
+      const p = parsed.data;
+      const title = 'Your responsible gambling limit was changed';
+      const previous =
+        p.previousAmount !== null || p.previousMinutes !== null
+          ? describeLimitValue(p.previousAmount, p.previousMinutes)
+          : 'no prior limit';
+      const next = describeLimitValue(p.amount, p.minutes);
+      const body = `An administrator changed your ${p.period} ${p.type} limit from ${previous} to ${next}.`;
+      // In-app only. `RgService.setPlayerLimit` already sends the `rgLimitUpdated`
+      // mail on this same write, so mailing again here would put two messages about
+      // one change in the player's inbox.
+      svcRef
+        .create({ userId: p.userId, type: 'rg.limit.admin_updated', title, body })
+        .catch((err) => logger.error({ err }, 'rg.limit.set admin-override notification failed'));
     });
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
