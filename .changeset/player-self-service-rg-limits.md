@@ -42,4 +42,8 @@ New config `platformConfig.responsibleGambling`: `limitIncreaseCooldownHours` (d
 
 New columns on `user_limit` (`pending_kind`, `pending_amount`, `pending_minutes`, `pending_requested_at`, `pending_effective_at`, `pending_expires_at`) - migration included.
 
+**New route `GET /audit/me/rg-history`**, scoped to the caller. A player could change their own limits but had no way to see what they had changed - only an admin could, through the guarded audit list. Its output is a hand-picked field allowlist rather than the admin entry schema: RG audit rows store the whole event payload, which carries the admin's mandatory `reason`, the acting admin's id, and the request's IP and user agent, and the admin schema also exposes the hash-chain fields. None of that may reach a player. The subject resolves through `IDENTITY_READER`, because `rg.limit.*` rows are keyed by the player profile id rather than the auth user id.
+
+**Fix: a player's own RG screen showed usage at raw ledger precision.** `getRgSection` returned `used` and `remaining` as raw `numeric(38,18)` sums beside a 2dp `amount`, so the screen read `340.000000000000000000 of 400.00 used`. Both are now reduced to the limit's own scale, at the response boundary only - the enforcement gate and the threshold evaluation still compare at full precision. `used` rounds **up** and `remaining` rounds **down**, because a protective control must never show a player more headroom than they actually have.
+
 **Known limitation.** Spend sums mix currencies (`0.001 BTC + 20 USDT` counts as `20.001`) because `user_limit` carries no currency. This previously only mis-set a review flag and now makes a money decision. Tracked separately; `TODO`s mark both read sites.
