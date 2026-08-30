@@ -308,6 +308,52 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
     expect(result).toEqual({ ok: false, reason: 'insufficient_balance' });
   });
 
+  // Naming a currency the sender does not hold is not a distinct failure mode - it is the
+  // SAME insufficient-balance path an over-spend takes, because WALLET_COMMANDS.debit finds
+  // no balance row for a currency the player has never held (available: '0') exactly as it
+  // would for an over-spend in a currency they do hold.
+  it('returns { ok: false, reason: "insufficient_balance" } when the sender does not hold the requested currency', async () => {
+    const wallet = mock<WalletCommands>({
+      debit: vi.fn().mockResolvedValue({ ok: false, available: '0' }),
+      credit: vi.fn(),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW]] },
+      wallet,
+    });
+    const result = await svc.sendGift(
+      { amount: '10.00000000', currency: 'BTC', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ currency: 'BTC' }),
+    );
+    expect(result).toEqual({ ok: false, reason: 'insufficient_balance' });
+  });
+
+  it('debits the sender-chosen currency and credits the gift row in that same currency', async () => {
+    const wallet = mock<WalletCommands>({
+      debit: vi.fn().mockResolvedValue({ ok: true, newBalance: '1.00000000', currency: 'BTC' }),
+      credit: vi.fn(),
+    });
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[ENABLED_ROW]],
+        returning: [[{ ...GIFT_ROW, currency: 'BTC' }]],
+      },
+      wallet,
+    });
+    await svc.sendGift(
+      { amount: '0.00100000', currency: 'BTC', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: '0.00100000', currency: 'BTC' }),
+    );
+  });
+
   it('posts a system message with gift metadata and returns { ok: true } on success', async () => {
     const writer = makeWriter();
     const svc = makeSvc({
@@ -338,13 +384,34 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
 
   it('returns { ok: false, reason: "below_minimum" } when amount is under config minAmount', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[{ ...ENABLED_ROW, config: { minAmount: '5.00000000' } }]] },
+      drizzleRows: {
+        select: [[{ ...ENABLED_ROW, config: { minAmount: { USD: '5.00000000' } } }]],
+      },
     });
     const result = await svc.sendGift(
       { amount: '1.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
       ACTOR_ID,
     );
     expect(result).toEqual({ ok: false, reason: 'below_minimum' });
+  });
+
+  // A row written before CommandConfigSchema's minAmount/maxAmount became per-currency maps
+  // (a flat `{ minAmount: '5.00000000' }`, not `{ minAmount: { USD: '5.00000000' } }`) must
+  // not silently disable the limit AND still succeed as if nothing were configured wrong -
+  // it should be treated as unconfigured (logged, not thrown), not crash the whole command.
+  it('treats a legacy flat-shaped config (pre-per-currency) as unconfigured rather than enforcing it wrong', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        // Old shape: minAmount was a bare string, not a Record<currency, MoneyAmount>.
+        select: [[{ ...ENABLED_ROW, config: { minAmount: '5.00000000' } }]],
+        returning: [[{ ...GIFT_ROW }]],
+      },
+    });
+    const result = await svc.sendGift(
+      { amount: '1.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(result).toEqual({ ok: true, message: SYSTEM_MSG });
   });
 });
 
@@ -459,7 +526,7 @@ describe('SocialTransfersService.claimGift', () => {
     expect(wallet.credit).toHaveBeenCalledOnce();
     expect(wallet.credit).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: CLAIMER_ID, type: 'gift' }),
+      expect.objectContaining({ userId: CLAIMER_ID, type: 'gift', allowNewCurrency: true }),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -478,6 +545,42 @@ describe('SocialTransfersService.claimGift', () => {
         }),
       }),
     );
+  });
+
+  // The gift's OWN stored currency is credited, never the claimer's active one -
+  // `allowNewCurrency: true` is what lets a claimer who has never held that currency
+  // still receive it (opens the balance row instead of failing 'currency mismatch').
+  it("credits a claimer who has never held the gift's currency, in that currency", async () => {
+    const wallet = mock<WalletCommands>({
+      credit: vi.fn().mockResolvedValue({ ok: true, newBalance: '0.00100000' }),
+    });
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[{ ...GIFT_ROW, currency: 'BTC', amount: '0.00100000' }]],
+        returning: [
+          [
+            {
+              ...GIFT_ROW,
+              currency: 'BTC',
+              amount: '0.00100000',
+              claimedBy: CLAIMER_ID,
+              claimedByUsername: 'alice',
+              claimedAt: new Date(),
+            },
+          ],
+        ],
+      },
+      wallet,
+    });
+    const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '0.00100000',
+      currency: 'BTC',
+      type: 'gift',
+      allowNewCurrency: true,
+    });
+    expect(result.ok).toBe(true);
   });
 
   it('returns { ok: false, reason: "self_claim" } when the sender tries to claim their own gift', async () => {
@@ -573,6 +676,48 @@ describe('SocialTransfersService.getGift', () => {
 describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
   const RAIN_ROW = { ...ENABLED_ROW, key: 'rain', label: 'Rain' };
 
+  it('debits the sender-chosen currency and credits every recipient in that same currency', async () => {
+    const wallet = mock<WalletCommands>({
+      debit: vi.fn().mockResolvedValue({ ok: true, newBalance: '1.00000000', currency: 'BTC' }),
+      credit: vi.fn().mockResolvedValue({ ok: true, newBalance: '0.00050000' }),
+    });
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[RAIN_ROW]],
+        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        execute: [
+          [
+            {
+              per_recipient_units: '500000000000000',
+              total_distributed_units: '1000000000000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
+      },
+      wallet,
+    });
+    await svc.sendRain(
+      {
+        amount: '0.00100000',
+        currency: 'BTC',
+        recipientCount: 2,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [ACTOR_ID, CLAIMER_ID, RECIPIENT_2],
+      },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ currency: 'BTC' }),
+    );
+    expect(wallet.credit).toHaveBeenCalledTimes(2);
+    for (const call of vi.mocked(wallet.credit).mock.calls) {
+      expect(call[1]).toMatchObject({ currency: 'BTC', allowNewCurrency: true });
+    }
+  });
+
   it('returns { ok: false, reason: "player_not_found" } when a recipient is missing', async () => {
     const directory = mock<AdminUserDirectory>({
       lookupPlayers: vi
@@ -657,8 +802,8 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         execute: [
           [
             {
-              per_recipient: '5.00000000',
-              total_distributed: '10.00000000',
+              per_recipient_units: '5000000000000000000',
+              total_distributed_units: '10000000000000000000',
               has_positive_recipient: true,
             },
           ],
@@ -682,9 +827,10 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     expect(wallet.credit).toHaveBeenCalledTimes(2);
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
-      amount: '5.00000000',
+      amount: '5.000000000000000000',
       currency: 'USD',
       type: 'rain',
+      allowNewCurrency: true,
     });
     expect(writer.postSystemMessage).toHaveBeenCalledOnce();
     expect(writer.postSystemMessage).toHaveBeenCalledWith(
@@ -695,10 +841,10 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
           command: 'rain',
           fromUserId: ACTOR_ID,
           fromUsername: 'bob',
-          amount: '10.00000000',
+          amount: '10.000000000000000000',
           currency: 'USD',
           recipientCount: 2,
-          perRecipient: '5.00000000',
+          perRecipient: '5.000000000000000000',
           recipients: expect.arrayContaining([
             { userId: CLAIMER_ID, username: 'alice' },
             { userId: RECIPIENT_2, username: 'charlie' },
@@ -718,8 +864,8 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         execute: [
           [
             {
-              per_recipient: '1.09000000',
-              total_distributed: '10.90000000',
+              per_recipient_units: '1090000000000000000',
+              total_distributed_units: '10900000000000000000',
               has_positive_recipient: true,
             },
           ],
@@ -747,7 +893,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     );
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
       userId: ACTOR_ID,
-      amount: '10.90000000',
+      amount: '10.900000000000000000',
       type: 'rain',
     });
   });
@@ -761,8 +907,8 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         execute: [
           [
             {
-              per_recipient: '20.00000000',
-              total_distributed: '80.00000000',
+              per_recipient_units: '20000000000000000000',
+              total_distributed_units: '80000000000000000000',
               has_positive_recipient: true,
             },
           ],
@@ -794,13 +940,14 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     expect(wallet.credit).toHaveBeenCalledTimes(4);
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
-      amount: '20.00000000',
+      amount: '20.000000000000000000',
       currency: 'USD',
       type: 'rain',
+      allowNewCurrency: true,
     });
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
       userId: ACTOR_ID,
-      amount: '80.00000000',
+      amount: '80.000000000000000000',
       type: 'rain',
     });
   });
@@ -814,8 +961,8 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         execute: [
           [
             {
-              per_recipient: '5.00000000',
-              total_distributed: '10.00000000',
+              per_recipient_units: '5000000000000000000',
+              total_distributed_units: '10000000000000000000',
               has_positive_recipient: true,
             },
           ],
@@ -842,9 +989,10 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     expect(wallet.credit).toHaveBeenCalledTimes(2);
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
-      amount: '5.00000000',
+      amount: '5.000000000000000000',
       currency: 'USD',
       type: 'rain',
+      allowNewCurrency: true,
     });
   });
 
@@ -857,8 +1005,8 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         execute: [
           [
             {
-              per_recipient: '14.81000000',
-              total_distributed: '44.43000000',
+              per_recipient_units: '14810000000000000000',
+              total_distributed_units: '44430000000000000000',
               has_positive_recipient: true,
             },
           ],
@@ -882,20 +1030,36 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     expect(wallet.credit).toHaveBeenCalledTimes(3);
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
-      amount: '14.81000000',
+      amount: '14.810000000000000000',
       currency: 'USD',
       type: 'rain',
+      allowNewCurrency: true,
     });
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
       userId: ACTOR_ID,
-      amount: '44.43000000',
+      amount: '44.430000000000000000',
       type: 'rain',
     });
   });
 
+  // Below-minimum/exceeds-limit are keyed by currency now, so the check only runs once
+  // the ACTUAL debited currency is known - after `wallet.debit`, inside the transaction
+  // (see assertWithinCommandLimits). That needs at least one resolvable recipient to
+  // reach the transaction at all, unlike the old currency-blind, pre-transaction check.
   it('returns { ok: false, reason: "below_minimum" } when amount is below config minAmount', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[{ ...RAIN_ROW, config: { minAmount: '5.00000000' } }]] },
+      drizzleRows: {
+        select: [[{ ...RAIN_ROW, config: { minAmount: { USD: '5.00000000' } } }]],
+        execute: [
+          [
+            {
+              per_recipient_units: '1000000000000000000',
+              total_distributed_units: '1000000000000000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
+      },
     });
     const result = await svc.sendRain(
       {
@@ -903,7 +1067,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         recipientCount: 1,
         roomId: ROOM_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
-        onlineUserIds: [],
+        onlineUserIds: [CLAIMER_ID],
       },
       ACTOR_ID,
     );
@@ -912,7 +1076,18 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
 
   it('returns { ok: false, reason: "exceeds_limit" } when amount is above config maxAmount', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[{ ...RAIN_ROW, config: { maxAmount: '10.00000000' } }]] },
+      drizzleRows: {
+        select: [[{ ...RAIN_ROW, config: { maxAmount: { USD: '10.00000000' } } }]],
+        execute: [
+          [
+            {
+              per_recipient_units: '50000000000000000000',
+              total_distributed_units: '50000000000000000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
+      },
     });
     const result = await svc.sendRain(
       {
@@ -920,7 +1095,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         recipientCount: 1,
         roomId: ROOM_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
-        onlineUserIds: [],
+        onlineUserIds: [CLAIMER_ID],
       },
       ACTOR_ID,
     );
@@ -1054,6 +1229,7 @@ describe('SocialTransfersService.sendDonate', () => {
       amount: '10.00000000',
       currency: 'USD',
       type: 'tip',
+      allowNewCurrency: true,
     });
     expect(writer.postSystemMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1068,6 +1244,49 @@ describe('SocialTransfersService.sendDonate', () => {
       }),
     );
     expect(result.id).toBe(MSG_ID);
+  });
+
+  it('debits and credits the sender-chosen currency, not the active one', async () => {
+    const wallet = mock<WalletCommands>({
+      debit: vi.fn().mockResolvedValue({ ok: true, newBalance: '1.00000000', currency: 'BTC' }),
+      credit: vi.fn().mockResolvedValue({ ok: true, newBalance: '0.00100000' }),
+    });
+    const writer = mock<ChatSystemWriter>({
+      postSystemMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
+    });
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[DONATE_ROW]],
+        returning: [[{ id: '00000000-0000-0000-0000-0000000000dd' }]],
+      },
+      wallet,
+      writer,
+      directory: makeRecipientDirectory(),
+    });
+    await svc.sendDonate(
+      {
+        targetUsername: 'alice',
+        amount: '0.00100000',
+        currency: 'BTC',
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amount: '0.00100000', currency: 'BTC' }),
+    );
+    // The recipient is credited in the SAME currency the sender was debited in - never
+    // routed through an exchange rate - with allowNewCurrency so a recipient who has
+    // never held BTC still receives it.
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '0.00100000',
+      currency: 'BTC',
+      type: 'tip',
+      allowNewCurrency: true,
+    });
   });
 
   it('throws DonateSelfError when the sender targets themselves', async () => {
@@ -1148,7 +1367,9 @@ describe('SocialTransfersService.sendDonate', () => {
 
   it('throws BelowMinimumError when amount is below config minAmount', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[{ ...DONATE_ROW, config: { minAmount: '5.00000000' } }]] },
+      drizzleRows: {
+        select: [[{ ...DONATE_ROW, config: { minAmount: { USD: '5.00000000' } } }]],
+      },
     });
     await expect(
       svc.sendDonate(
@@ -1161,5 +1382,24 @@ describe('SocialTransfersService.sendDonate', () => {
         ACTOR_ID,
       ),
     ).rejects.toThrow(BelowMinimumError);
+  });
+});
+
+describe('fingerprintCommand currency-awareness', () => {
+  // A replayed idempotency key must never let a caller quietly swap which balance a gift/
+  // rain/donate debits by resubmitting the same amount/room/target under a different
+  // currency - the fingerprint has to treat that as a distinct request.
+  it('produces a different fingerprint for the same gift request in a different currency', () => {
+    const base = {
+      type: 'gift' as const,
+      amount: '10.00000000',
+      roomId: ROOM_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+    };
+    const usd = fingerprintCommand({ ...base, currency: 'USD' });
+    const btc = fingerprintCommand({ ...base, currency: 'BTC' });
+    const omitted = fingerprintCommand(base);
+    expect(usd).not.toBe(btc);
+    expect(usd).not.toBe(omitted);
   });
 });

@@ -12,12 +12,22 @@ file only covers what actually lives here.
 Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a `config` jsonb
 column (`maxAmount`, `minAmount`, `maxRecipients`) - the same row `social-transfers` reads
 read-only via the sanctioned cross-module `/schema` import (`db-conventions`/`clean-architecture`).
-`listCommands` filters to `enabled: true` by default. Seed data lives in `seed/index.ts`
-(`seedChatCommands`). `adminListCommands` (`GET /backoffice/chat-command/commands`, paginated, all
-rows including disabled) and `adminUpdateCommand` (`PATCH /backoffice/chat-command/commands/{key}`,
-upserts by `key`) cover backoffice toggling/reconfiguration - both are `AdminGuard`-gated on the
-`chat-command` resource (`view`/`update`) and `adminUpdateCommand` records a
-`chat.command.updated` audit entry via `AUDIT_WRITER`.
+`maxAmount`/`minAmount` are keyed by currency ticker (`Record<string, MoneyAmount>`, eg
+`{ USD: '1.00000000' }`), not a single flat amount - a minimum sensible in USD is meaningless or
+absurd in BTC, so one constant cannot be correct across every currency. A currency with no entry
+has no limit enforced for it. `listCommands` filters to `enabled: true` by default. Seed data lives
+in `seed/index.ts` (`seedChatCommands`). `adminListCommands` (`GET
+/backoffice/chat-command/commands`, paginated, all rows including disabled) and
+`adminUpdateCommand` (`PATCH /backoffice/chat-command/commands/{key}`, upserts by `key`) cover
+backoffice toggling/reconfiguration - both are `AdminGuard`-gated on the `chat-command` resource
+(`view`/`update`) and `adminUpdateCommand` records a `chat.command.updated` audit entry via
+`AUDIT_WRITER`.
+
+`PostGiftInputSchema`/`PostRainInputSchema` both carry an optional `currency` (a
+`CurrencyTickerInputSchema` ticker) that passes straight through to `GIFT_COMMANDS.sendGift`/
+`RAIN_COMMANDS.sendRain` - this module does no currency logic itself, it is pure wire pass-through
+like every other gift/rain field. See `social-transfers/AGENTS.md` > "Sender-chosen currency for
+gift/rain/donate" for the mechanics and the choices behind it.
 
 `mention` is special: it does not go through a dedicated post route. The `@username` pattern is
 typed inline in a message; `GET /chat-command/mention-search` powers the type-ahead, excluding any

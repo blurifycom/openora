@@ -33,8 +33,12 @@ import type {
   SendRainResult,
   RainCommands,
 } from '@openora/core/contracts';
-import { chatChannel } from '@openora/core/contracts';
+import { chatChannel, MONEY_SCALE } from '@openora/core/contracts';
 import { chatCommandConfig } from '@openora/core/engagement/schema/chat-commands';
+import {
+  CommandConfigSchema,
+  type CommandConfig,
+} from '@openora/core/engagement/contracts/chat-commands';
 import type { SendDonateInput } from '../contract/index.js';
 import { playerGift, playerDonate, playerRain, playerRainReceiver } from '../schema/index.js';
 
@@ -96,7 +100,7 @@ export const BlockedRecipientError = makeConflictError(
 );
 export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
-  'Amount too small: you need at least $1 per recipient',
+  'Amount too small: the per-recipient split would round down to zero',
 );
 export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
   'ChatCommandIdempotencyKeyReuse',
@@ -123,14 +127,15 @@ class GiftRoomAccessError extends Error {
   }
 }
 
-type GiftArgs = { amount: string; roomId: Uuid | null; idempotencyKey: Uuid };
+type GiftArgs = { amount: string; currency?: string; roomId: Uuid | null; idempotencyKey: Uuid };
 type RainFingerprintArgs = Pick<
   SendRainArgs,
-  'amount' | 'recipientCount' | 'roomId' | 'idempotencyKey'
+  'amount' | 'currency' | 'recipientCount' | 'roomId' | 'idempotencyKey'
 >;
 type DonateArgs = {
   targetUsername: string;
   amount: string;
+  currency?: string;
   roomId: Uuid | null;
   idempotencyKey: Uuid;
 };
@@ -139,31 +144,75 @@ type MoneyMovingInput =
   | ({ type: 'rain' } & RainFingerprintArgs)
   | ({ type: 'donate' } & DonateArgs);
 
+// Floors to the platform's own stored precision (MONEY_SCALE, `numeric(38,18)` - the
+// smallest unit any currency here is ever persisted at), not a hardcoded two-decimal
+// ("cents") step. Flooring to cents was fine for fiat but wrong for an 18-decimal crypto
+// currency: a legitimate sub-cent split (eg BTC) would floor to zero every time and
+// wrongly report `TooManyRecipientsError`. Flooring at MONEY_SCALE works identically for
+// every currency without needing a per-currency decimals table - see this module's
+// AGENTS.md.
+// Shifts an exact integer-unit string (smallest unit at MONEY_SCALE, eg "wei"/"satoshi"-like)
+// back into a MONEY_SCALE-decimal string via plain string slicing - never numeric division.
+// Postgres' `numeric / numeric` targets a fixed number of SIGNIFICANT digits (its own
+// heuristic, independent of MONEY_SCALE), not a fixed number of DECIMAL digits - dividing an
+// exact integer by a power of ten can still silently round away trailing digits before this
+// value ever reaches JS. A string insert of the decimal point MONEY_SCALE digits from the
+// right is exact by construction and needs no numeric arithmetic at all.
+function unitsToDecimalString(units: string): string {
+  const padded = units.padStart(MONEY_SCALE + 1, '0');
+  const integerPart = padded.slice(0, -MONEY_SCALE) || '0';
+  const fractionPart = padded.slice(-MONEY_SCALE);
+  return `${integerPart}.${fractionPart}`;
+}
+
 export async function calculateRainSplit(
   tx: DrizzleTx,
   amount: string,
   requestedRecipientCount: number,
   actualRecipientCount: number,
 ): Promise<{ perRecipient: string; totalDistributed: string }> {
+  // A literal scale factor ('1' followed by MONEY_SCALE zeros), not Postgres' `^` operator:
+  // `numeric ^ numeric` loses trailing digits of precision on an 18-zero exponent, which
+  // would silently truncate the very precision this function exists to preserve.
+  const scaleFactor = `1${'0'.repeat(MONEY_SCALE)}`;
+  // `floor(a::numeric / b)` is NOT exact for a non-terminating quotient (eg 44.44/3): numeric
+  // division itself computes a fixed number of significant digits BEFORE floor() ever sees
+  // the result, silently truncating the very precision this function exists to preserve. MOD
+  // is exact regardless of magnitude (it targets an explicit integer quotient internally, not
+  // a significant-digit estimate), so `scaledAmount - MOD(scaledAmount, count)` is an EXACT
+  // multiple of `count`, and dividing that exact multiple by `count` terminates with a zero
+  // remainder - an exact integer, not an estimate. Both results below stay in this exact
+  // integer-of-the-smallest-unit form; `unitsToDecimalString` does the (equally exact) decimal
+  // shift back in JS, never through a second lossy numeric division.
   const splitResult = await tx.execute(
-    sql`SELECT
-      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100)::text AS per_recipient,
-      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 * ${actualRecipientCount})::text AS total_distributed,
-      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 > 0) AS has_positive_recipient`,
+    sql`WITH scaled AS (
+      SELECT ${amount}::numeric * ${scaleFactor}::numeric AS total_units
+    ), floored AS (
+      SELECT (total_units - MOD(total_units, ${requestedRecipientCount})) / ${requestedRecipientCount} AS per_recipient_units
+      FROM scaled
+    )
+    SELECT
+      trunc(per_recipient_units)::text AS per_recipient_units,
+      trunc(per_recipient_units * ${actualRecipientCount})::text AS total_distributed_units,
+      (per_recipient_units > 0) AS has_positive_recipient
+    FROM floored`,
   );
   const {
-    per_recipient: perRecipient,
-    total_distributed: totalDistributed,
+    per_recipient_units: perRecipientUnits,
+    total_distributed_units: totalDistributedUnits,
     has_positive_recipient: hasPositiveRecipient,
   } = splitResult.rows[0] as {
-    per_recipient: string;
-    total_distributed: string;
+    per_recipient_units: string;
+    total_distributed_units: string;
     has_positive_recipient: boolean;
   };
   if (!hasPositiveRecipient) {
     throw new TooManyRecipientsError();
   }
-  return { perRecipient, totalDistributed };
+  return {
+    perRecipient: unitsToDecimalString(perRecipientUnits),
+    totalDistributed: unitsToDecimalString(totalDistributedUnits),
+  };
 }
 
 const COMMAND_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
@@ -173,24 +222,28 @@ type CommandIdempotencyRecord = {
 };
 
 // The replay guard must match on the COMPLETE request, not just the amount - a reused
-// key with a different room, recipient count, or donate target is a distinct request,
-// not a replay of the original. `idempotencyKey` itself is excluded so the fingerprint
-// is stable for the row it guards. The cache-key namespace stays `chat-command:*` even
-// though this logic now lives here - see AGENTS.md.
+// key with a different room, recipient count, donate target, OR CURRENCY is a distinct
+// request, not a replay of the original (a replay must never let a caller quietly swap
+// which balance gets debited by resubmitting with a different `currency`).
+// `idempotencyKey` itself is excluded so the fingerprint is stable for the row it guards.
+// The cache-key namespace stays `chat-command:*` even though this logic now lives here -
+// see AGENTS.md.
 export function fingerprintCommand(input: MoneyMovingInput): string {
   const canonical: Record<string, unknown> =
     input.type === 'gift'
-      ? { type: input.type, amount: input.amount, roomId: input.roomId }
+      ? { type: input.type, amount: input.amount, currency: input.currency, roomId: input.roomId }
       : input.type === 'rain'
         ? {
             type: input.type,
             amount: input.amount,
+            currency: input.currency,
             recipientCount: input.recipientCount,
             roomId: input.roomId,
           }
         : {
             type: input.type,
             amount: input.amount,
+            currency: input.currency,
             targetUsername: input.targetUsername,
             roomId: input.roomId,
           };
@@ -379,7 +432,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     return this.doSendDonate(input, actorId);
   }
 
-  private async loadCommandConfig(key: 'gift' | 'rain' | 'donate') {
+  private async loadCommandConfig(key: 'gift' | 'rain' | 'donate'): Promise<CommandConfig | null> {
     const [row] = await this.drizzle.db
       .select()
       .from(chatCommandConfig)
@@ -388,7 +441,46 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (!row || !row.enabled) {
       throw new CommandDisabledError(key);
     }
-    return row.config ?? null;
+    if (row.config === null) {
+      return null;
+    }
+    // `chatCommandConfig.config` is only typed via Drizzle's `$type<CommandConfig>()`, never
+    // runtime-checked - a row written before CommandConfigSchema's minAmount/maxAmount became
+    // per-currency maps (a flat `{ minAmount: '5.00000000' }`) would otherwise reach
+    // `assertWithinCommandLimits` unvalidated, where indexing a string by a currency key
+    // silently returns undefined and the limit is treated as "not configured" rather than
+    // flagged. Parse it for real so a shape mismatch is visible in logs instead of silently
+    // degrading a real-money spend limit to unlimited.
+    const parsed = CommandConfigSchema.safeParse(row.config);
+    if (!parsed.success) {
+      logger.error(
+        { key, config: row.config, issues: parsed.error.issues },
+        'chat_command_config row does not match CommandConfigSchema - treating as unconfigured',
+      );
+      return null;
+    }
+    return parsed.data;
+  }
+
+  // Config's minAmount/maxAmount are keyed by currency (chat-commands' CommandConfigSchema) -
+  // a currency with no entry has no limit enforced for it. This can only run once the
+  // ACTUAL debited currency is known: when the caller omits `currency`, that is whichever
+  // currency the sender's active balance turns out to be, which is only resolved inside the
+  // wallet debit itself. So this always runs AFTER `wallet.debit` succeeds, inside the same
+  // transaction - a violation throws and rolls the debit back with everything else.
+  private assertWithinCommandLimits(
+    config: CommandConfig | null,
+    currency: string,
+    amount: string,
+  ): void {
+    const max = config?.maxAmount?.[currency];
+    if (max !== undefined && moneyToNumber(amount) > moneyToNumber(max)) {
+      throw new ExceedsLimitError();
+    }
+    const min = config?.minAmount?.[currency];
+    if (min !== undefined && moneyToNumber(amount) < moneyToNumber(min)) {
+      throw new BelowMinimumError();
+    }
   }
 
   private async verifyRoomAccessIfNeeded(roomId: Uuid | null, actorId: Uuid): Promise<void> {
@@ -507,18 +599,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
   private async doSendGift(input: GiftArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('gift');
-    if (
-      config?.maxAmount !== undefined &&
-      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
-    ) {
-      throw new ExceedsLimitError();
-    }
-    if (
-      config?.minAmount !== undefined &&
-      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
-    ) {
-      throw new BelowMinimumError();
-    }
 
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const senderSummary = senderSummaries.find((s) => s.userId === actorId);
@@ -548,10 +628,12 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             userId: actorId,
             amount: input.amount,
             type: 'gift',
+            currency: input.currency,
           });
           if (!debit.ok) {
             throw new InsufficientBalanceError();
           }
+          this.assertWithinCommandLimits(config, debit.currency, input.amount);
 
           const [giftRow] = await tx
             .insert(playerGift)
@@ -602,7 +684,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             resourceType: 'player_gift',
             resourceId: giftRow.id,
             before: null,
-            after: { amount: input.amount, roomId: input.roomId },
+            after: { amount: input.amount, currency: debit.currency, roomId: input.roomId },
           });
 
           return { msg: message, giftId: giftRow.id, currency: debit.currency };
@@ -673,11 +755,15 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
 
         const updated = findOneOrThrow(results, new GiftAlreadyClaimedError());
 
+        // Credits the GIFT'S OWN stored currency, never the claimer's current active one -
+        // `allowNewCurrency` creates the claimer's balance row for it if they have never
+        // held it before, since that is the ordinary case for a gift, not a caller bug.
         const credit = await this.wallet.credit(tx, {
           userId: claimerId,
           amount: updated.amount,
           currency: updated.currency,
           type: 'gift',
+          allowNewCurrency: true,
         });
         if (!credit.ok) {
           throw new GiftCreditError();
@@ -690,7 +776,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           resourceType: 'player_gift',
           resourceId: giftId,
           before: null,
-          after: { claimedBy: claimerId, amount: updated.amount },
+          after: { claimedBy: claimerId, amount: updated.amount, currency: updated.currency },
         });
 
         const updatedMessage = await this.systemWriter.updateSystemMessage({
@@ -774,18 +860,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
   private async doSendRain(input: SendRainArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('rain');
-    if (
-      config?.maxAmount !== undefined &&
-      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
-    ) {
-      throw new ExceedsLimitError();
-    }
-    if (
-      config?.minAmount !== undefined &&
-      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
-    ) {
-      throw new BelowMinimumError();
-    }
 
     const configMax = config?.maxRecipients ?? 50;
     if (input.recipientCount > configMax) {
@@ -841,16 +915,24 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             userId: actorId,
             amount: totalDistributed,
             type: 'rain',
+            currency: input.currency,
           });
           if (!debit.ok) {
             throw new InsufficientBalanceError();
           }
+          // Pre-transaction maxAmount/minAmount still validate against the player-typed
+          // `input.amount`, not `totalDistributed` - see AGENTS.md "Rain has a remainder".
+          this.assertWithinCommandLimits(config, debit.currency, input.amount);
+          // Every recipient is credited in the SAME currency the sender was debited in -
+          // `allowNewCurrency` opens a balance row for a recipient who has never held it,
+          // which is the ordinary case for rain, not a caller bug.
           const credits = await mapConcurrent(recipients, 10, (userId) =>
             this.wallet.credit(tx, {
               userId,
               amount: perRecipient,
               currency: debit.currency,
               type: 'rain',
+              allowNewCurrency: true,
             }),
           );
           if (credits.some((c) => !c.ok)) {
@@ -903,7 +985,11 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             resourceType: 'player_rain',
             resourceId: rainRow.id,
             before: null,
-            after: { amount: totalDistributed, recipientCount: recipients.length },
+            after: {
+              amount: totalDistributed,
+              currency: debit.currency,
+              recipientCount: recipients.length,
+            },
           });
 
           return {
@@ -936,18 +1022,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
   private async doSendDonate(input: DonateArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('donate');
-    if (
-      config?.maxAmount !== undefined &&
-      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
-    ) {
-      throw new ExceedsLimitError();
-    }
-    if (
-      config?.minAmount !== undefined &&
-      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
-    ) {
-      throw new BelowMinimumError();
-    }
 
     const target = await this.resolveExactPlayer(input.targetUsername);
 
@@ -985,16 +1059,22 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             userId: actorId,
             amount: input.amount,
             type: 'tip',
+            currency: input.currency,
           });
           if (!debit.ok) {
             throw new InsufficientBalanceError();
           }
+          this.assertWithinCommandLimits(config, debit.currency, input.amount);
 
+          // Credits the recipient in the SAME currency the sender was debited in -
+          // `allowNewCurrency` opens a balance row for a recipient who has never held it,
+          // which is the ordinary case for a donate, not a caller bug.
           const credit = await this.wallet.credit(tx, {
             userId: target.userId,
             amount: input.amount,
             currency: debit.currency,
             type: 'tip',
+            allowNewCurrency: true,
           });
           if (!credit.ok) {
             throw new ChatPlayerNotFoundError(target.userId);

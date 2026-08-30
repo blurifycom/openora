@@ -15,6 +15,13 @@ export type SendGiftArgs = {
   // null = global chat (the GLOBAL_CHAT_ROOM_ID sentinel on the wire, contracts/schemas/chat-command.ts).
   roomId: Uuid | null;
   idempotencyKey: Uuid;
+  /**
+   * Which of the sender's balances to debit. Omitted, the debit falls on the sender's
+   * active currency (mirrors WALLET_COMMANDS.debit's own default). Whichever currency is
+   * actually debited is exactly what the claimer receives - this never routes through an
+   * exchange rate, by design (see social-transfers/AGENTS.md).
+   */
+  currency?: string;
 };
 
 export type SendGiftFailureReason =

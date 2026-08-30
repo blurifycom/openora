@@ -566,11 +566,11 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
   });
 
   it('updates an existing config row', async () => {
-    const row = { ...ENABLED_ROW, enabled: false, config: { maxAmount: '100.00000000' } };
+    const row = { ...ENABLED_ROW, enabled: false, config: { maxAmount: { USD: '100.00000000' } } };
     const svc = makeSvc({ drizzleRows: { returning: [[row]] } });
 
     const result = await svc.adminUpdateCommand(
-      { key: 'gift', enabled: false, config: { maxAmount: '100.00000000' } },
+      { key: 'gift', enabled: false, config: { maxAmount: { USD: '100.00000000' } } },
       ACTOR_ID,
     );
 
@@ -582,7 +582,7 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
     const svc = makeSvc({ audit, drizzleRows: { returning: [[ENABLED_ROW]] } });
 
     await svc.adminUpdateCommand(
-      { key: 'gift', enabled: true, config: { maxAmount: '50.00000000' } },
+      { key: 'gift', enabled: true, config: { maxAmount: { USD: '50.00000000' } } },
       ACTOR_ID,
     );
 
@@ -593,7 +593,7 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
       resourceType: 'chat_command',
       resourceId: 'gift',
       before: null,
-      after: { enabled: true, config: { maxAmount: '50.00000000' } },
+      after: { enabled: true, config: { maxAmount: { USD: '50.00000000' } } },
     });
   });
 

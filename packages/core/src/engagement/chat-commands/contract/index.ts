@@ -7,6 +7,8 @@ import {
   CommandChatMessageSchema,
   ChatRoomIdSchema,
   TimestampSchema,
+  CurrencyTickerSchema,
+  CurrencyTickerInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -24,9 +26,16 @@ export const CHAT_COMMAND_TYPES = [
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
+// Keyed by currency ticker, not a single flat amount: a minimum sensible in USD ('1.00') is
+// either meaningless or absurd in BTC (18-decimal-scale storage, but real value per unit),
+// so one constant across every currency cannot be correct for both. A currency with no entry
+// has no limit enforced for it - an operator opts a currency INTO a limit, never gets one by
+// accident from a value meant for a different currency.
+const PerCurrencyAmountSchema = z.record(CurrencyTickerSchema, MoneyAmountSchema);
+
 export const CommandConfigSchema = z.object({
-  maxAmount: MoneyAmountSchema.optional(),
-  minAmount: MoneyAmountSchema.optional(),
+  maxAmount: PerCurrencyAmountSchema.optional(),
+  minAmount: PerCurrencyAmountSchema.optional(),
   maxRecipients: z.number().int().positive().optional(),
 });
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;
@@ -55,6 +64,10 @@ export { SystemChatMessageSchema, CommandChatMessageSchema };
 
 export const PostGiftInputSchema = z.object({
   amount: MoneyAmountSchema,
+  // Omit it and the debit falls on the sender's active currency (unchanged, pre-existing
+  // behaviour) - purely additive. The claimer receives this SAME currency; no conversion
+  // ever happens on this path.
+  currency: CurrencyTickerInputSchema.optional(),
   roomId: ChatRoomIdSchema,
   idempotencyKey: UuidSchema,
 });
@@ -63,6 +76,9 @@ export type PostGiftInput = z.infer<typeof PostGiftInputSchema>;
 export const PostRainInputSchema = z.object({
   amount: MoneyAmountSchema,
   recipientCount: z.number().int().positive(),
+  // Omit it and the debit falls on the sender's active currency. Every recipient is
+  // credited in this SAME currency; no conversion ever happens on this path.
+  currency: CurrencyTickerInputSchema.optional(),
   roomId: ChatRoomIdSchema,
   idempotencyKey: UuidSchema,
 });

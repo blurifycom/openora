@@ -21,6 +21,12 @@ export type SendRainArgs = {
   // resolved by the caller BEFORE this port is called. social-transfers
   // filters out the actor, shuffles, and caps to recipientCount itself.
   onlineUserIds: Uuid[];
+  /**
+   * Which of the sender's balances to debit the distributed total from. Omitted, the
+   * debit falls on the sender's active currency. Every recipient is credited in this
+   * SAME currency - no conversion happens anywhere on this path.
+   */
+  currency?: string;
 };
 
 export type SendRainFailureReason =

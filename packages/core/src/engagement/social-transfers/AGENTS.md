@@ -85,19 +85,75 @@ has been retired by the chat-commands migration; new gift rows and all reads use
 
 `/rain <amount>` treats `amount` as the total budget and fixes `perRecipient` from the requested
 `recipientCount` before the live recipient list is reduced. The per-recipient value is floored to
-two decimal places in SQL. If fewer users are available, the same per-recipient amount is paid to
-each selected user; the unused remainder stays with the sender. For example, `100` requested for 5
-users fixes `20` per recipient; if only 4 are available, 4 users receive `20` and `80` is debited.
-`perRecipient` and `totalDistributed` (`perRecipient * actual recipientCount`) are computed in the
-same SQL transaction. The system-message metadata (built by
-`doSendRain` itself), audit `after.amount`, the persisted `player_rain.amount`, and the
-`chat.rain.distributed` event's `totalAmount` all report `totalDistributed`, since that is what
-actually left the sender's wallet. The pre-transaction `maxAmount`/`minAmount` limit checks still
-validate against the player-typed `input.amount`; `maxRecipients` validates the requested count.
-Non-even totals are valid, and there is no whole-unit amount-versus-recipient check. `player_rain` is
-a new header row per rain event (nothing was persisted before
-this module existed); `player_rain_receiver` has one row per recipient, in-module FK to
-`player_rain.id`.
+the platform's own stored precision (`MONEY_SCALE` = 18 decimal places, `numeric(38,18)`), NOT a
+hardcoded two-decimal ("cents") step - flooring to cents was fine for fiat but wrong for an
+18-decimal crypto currency, where a legitimate sub-cent split would always floor to zero and
+wrongly report `TooManyRecipientsError`. `calculateRainSplit` computes this exactly: it multiplies
+up to the smallest unit, takes an EXACT integer floor-division via `MOD` (never `floor(a::numeric /
+b)` - Postgres' `/` targets a fixed number of significant digits before `floor()` ever sees the
+result, silently truncating precision `MOD` does not lose), and shifts the decimal point back with
+a plain string operation in JS (`unitsToDecimalString`) rather than a second numeric division,
+which would reintroduce the same truncation. If fewer users are available, the same per-recipient
+amount is paid to each selected user; the unused remainder (now at most `10^-18`, not `$0.01`)
+stays with the sender. For example, `100` requested for 5 users fixes `20` per recipient; if only 4
+are available, 4 users receive `20` and `80` is debited. `perRecipient` and `totalDistributed`
+(`perRecipient * actual recipientCount`) are computed in the same SQL transaction. The
+system-message metadata (built by `doSendRain` itself), audit `after.amount`, the persisted
+`player_rain.amount`, and the `chat.rain.distributed` event's `totalAmount` all report
+`totalDistributed`, since that is what actually left the sender's wallet. The `maxAmount`/
+`minAmount` limit checks validate against the player-typed `input.amount`; `maxRecipients`
+validates the requested count. Non-even totals are valid, and there is no whole-unit
+amount-versus-recipient check. `player_rain` is a new header row per rain event (nothing was
+persisted before this module existed); `player_rain_receiver` has one row per recipient,
+in-module FK to `player_rain.id`.
+
+## Sender-chosen currency for gift/rain/donate - never a swap
+
+`SendDonateInputSchema`, and the `SendGiftArgs`/`SendRainArgs` the GIFT_COMMANDS/RAIN_COMMANDS
+ports accept, all carry an optional `currency` (a `CurrencyTickerInputSchema` ticker, eg `USD` or
+`BTC`). Omitted, the debit falls on the sender's active currency - unchanged, pre-existing
+behaviour, so this is purely additive. When supplied, `WALLET_COMMANDS.debit` is called with that
+`currency`; whichever currency comes back as `debit.currency` (the one actually debited) is what
+every recipient is credited in, with `allowNewCurrency: true` on every credit call (gift claim,
+every rain recipient, donate) so a recipient who has never held that currency still receives it -
+that flag opens their `wallet_balance` row instead of failing `currency mismatch`. This never
+routes through `EXCHANGE_RATE_READER` or any conversion - the whole point is that the sender's
+choice is exactly what lands in the recipient's balance, unlike a wallet swap.
+
+A sender naming a currency they do not hold gets the SAME `insufficient_balance` failure as an
+over-spend, not a distinct error: `WALLET_COMMANDS.debit` finds no balance row for a currency the
+player has never held (`available: '0'`) exactly as it would for an over-spend in a currency they
+do hold - no separate "do you hold this currency" check exists or is needed.
+
+A currency the operator has disabled for deposit/withdrawal (`wallet_asset.depositEnabled`/
+`withdrawalEnabled`) can still be gifted/rained/donated: those flags gate the deposit/withdrawal
+rails, not spending an already-held balance, and many currencies (fiat) have no `wallet_asset` row
+at all - gating gift/rain/donate on it would silently break every fiat transfer. There is
+deliberately no broader "is this currency supported at all" allowlist check here beyond the
+`CurrencyTickerInputSchema` format regex at the wire boundary: no such platform-wide canonical
+currency list exists yet (see the `TODO` on `WalletService.setActiveCurrency`), and inventing one
+scoped to this module alone would be a speculative abstraction inconsistent with the rest of the
+wallet surface, which accepts any format-valid ticker today.
+
+`chat-commands`' `CommandConfigSchema.minAmount`/`maxAmount` are keyed by currency ticker
+(`Record<string, MoneyAmount>`), not a single flat amount - a minimum sensible in USD is either
+meaningless or absurd in BTC, so one constant across every currency cannot be correct for both. A
+currency with no entry has no limit enforced for it: an operator opts a currency INTO a limit,
+never gets one by accident from a value meant for a different currency. Because the limit check
+needs the ACTUAL debited currency (which, when the caller omits `currency`, is only known once
+`WALLET_COMMANDS.debit` resolves the sender's active balance), `assertWithinCommandLimits` runs
+AFTER `wallet.debit` succeeds, inside the same transaction - a violation throws and rolls the debit
+back with everything else, same as any other in-transaction failure.
+
+`fingerprintCommand`'s canonical replay fingerprint includes `currency`: a reused idempotency key
+with a different currency is a distinct request, not a replay of the original - a replay must never
+let a caller quietly swap which balance gets debited by resubmitting under a different currency.
+
+Gift/rain/donate debits use `WalletTransactionType`s `'gift'`/`'rain'`/`'tip'`, none of which
+`WALLET_COMMANDS.debit` routes through `RG_LIMITS.checkWager` (only `type === 'bet'` does) - so
+these transfers do not count toward any responsible-gambling wager/deposit limit today, by
+pre-existing design, not something this module changes. If that ever changes, the check must pass
+its OWN resolved currency (`debit.currency`), not assume the player's default.
 
 ## Exact username resolution for `/donate`
 
