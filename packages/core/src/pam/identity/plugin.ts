@@ -82,6 +82,14 @@ function makeAdminSecurity(c: IdentityContainer) {
 export default {
   id: 'identity',
   register(ctx) {
+    // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
+    // separate `makeAdminSecurity(c)` calls would construct two independent
+    // instances wrapping the same singletons, harmless today but silently
+    // stranding an overlay's ADMIN_SECURITY_POLICY rebind: the router would keep
+    // calling the original.
+    let adminSecurity: AdminSecurityService | undefined;
+    const resolveAdminSecurity = (c: IdentityContainer) => (adminSecurity ??= makeAdminSecurity(c));
+
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());
     // Platform default SMS transport: logs the OTP to stdout. A consumer overlay
     // rebinds SMS_ADAPTER to a real vendor (Twilio, AWS SNS) after this plugin.
@@ -116,7 +124,7 @@ export default {
     // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every
     // admin request; leaving it unbound turns both checks off, which is why it is bound
     // here rather than behind a feature flag.
-    ctx.provide(ADMIN_SECURITY_POLICY, (c) => makeAdminSecurity(c));
+    ctx.provide(ADMIN_SECURITY_POLICY, (c) => resolveAdminSecurity(c));
     ctx.provide(USER_COMMANDS, (c) => new DrizzleUserCommands(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({
@@ -161,7 +169,7 @@ export default {
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
-        makeAdminSecurity(c),
+        resolveAdminSecurity(c),
       ),
     );
   },

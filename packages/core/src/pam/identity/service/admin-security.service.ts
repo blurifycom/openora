@@ -194,8 +194,10 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     { userId, sessionId, ip, userAgent }: AdminSessionContext & { sessionId: Session['id'] },
     mismatch: 'user_agent' | 'ip',
   ): Promise<never> {
-    await this.sessions.revokeSession(userId, sessionId, userId, { ip, userAgent });
-    await this.trustedDevices.revokeForDevice(userId, userAgent, userId);
+    // No actorId: the guard forced this itself, not the device owner nor an admin -
+    // passing `userId` here would read in the audit trail as a self-revoke.
+    await this.sessions.revokeSession(userId, sessionId, undefined, { ip, userAgent });
+    await this.trustedDevices.revokeForDevice(userId, userAgent, undefined);
     this.events.emit('identity.session.fingerprint_mismatch', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -337,15 +339,21 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       throw new UserNotFoundError(userId);
     }
 
-    await this.drizzle.db.delete(twoFactor).where(eq(twoFactor.userId, userId));
-    await this.drizzle.db
-      .update(user)
-      .set({
-        twoFactorEnabled: false,
-        failedTwoFactorAttempts: 0,
-        twoFactorLockoutUntil: null,
-      })
-      .where(eq(user.id, userId));
+    // Both writes commit together: a process death between them would leave
+    // twoFactorEnabled true with no twoFactor row - locked out with no repair
+    // route, since resetting requires a Super Admin who is themselves gated on
+    // AdminGuard.assertEnrolled.
+    await this.drizzle.db.transaction(async (tx) => {
+      await tx.delete(twoFactor).where(eq(twoFactor.userId, userId));
+      await tx
+        .update(user)
+        .set({
+          twoFactorEnabled: false,
+          failedTwoFactorAttempts: 0,
+          twoFactorLockoutUntil: null,
+        })
+        .where(eq(user.id, userId));
+    });
 
     await this.trustedDevices.revokeAllForUser(userId, actorId);
     await this.sessions.revokeAllSessions(userId, actorId, meta);

@@ -254,17 +254,21 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player/Admin revoked one or all of their own sessions, or an admin forced it.
-  // actorId = the resolved playerId on the self-revoke path, else the acting admin's
-  // raw userId (never resolved - actor is an admin, not the subject player).
-  // Self-revoke sends its own userId as actorId, so only a *different* actor is forced.
+  // Player/Admin revoked one or all of their own sessions, an admin forced it, or
+  // AdminGuard forced it itself on a fingerprint mismatch (no actorId at all - never
+  // read the subject's own userId as a stand-in, that is what mislabels a
+  // system-triggered kill as a self-revoke). Self-revoke sends its own userId as
+  // actorId, so only a *different*, present actorId is an admin acting.
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
     const isSingle = topic === 'identity.session.revoked';
-    const isForced = !!p['actorId'] && p['actorId'] !== p['userId'];
-    const actorId = isForced ? str(p['actorId']) : str(p['playerId']);
+    const rawActorId = p['actorId'];
+    const isSystem = rawActorId === undefined || rawActorId === null;
+    const isForced = !isSystem && rawActorId !== p['userId'];
+    const actorType = isSystem ? 'system' : isForced ? 'admin' : 'player';
+    const actorId = isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']);
     return {
       ...base,
-      actorType: isForced ? 'admin' : 'player',
+      actorType,
       actorId,
       resourceType: isSingle ? 'session' : 'user',
       resourceId: isSingle ? str(p['sessionId']) : str(p['userId']),
@@ -622,6 +626,20 @@ export async function mapEventToRecord(
     return { ...base, resourceType: 'registration' };
   }
 
+  // Admin-on-behalf topics: `userId` names the affected account, not the actor - the
+  // acting admin travels in its own `actorId` field, same as compliance.kyc.updated.
+  // `identity.trusted_device.revoked` can also fire with no actorId at all, when
+  // AdminGuard revokes the trust itself on a fingerprint mismatch.
+  if (topic === 'identity.2fa.reset' || topic === 'identity.trusted_device.revoked') {
+    return {
+      ...base,
+      actorType: p['actorId'] ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -634,12 +652,10 @@ export async function mapEventToRecord(
     topic === 'identity.2fa.verified' ||
     topic === 'identity.2fa.failed' ||
     topic === 'identity.2fa.backup_codes_regenerated' ||
-    topic === 'identity.2fa.reset' ||
     topic === 'identity.2fa.lockout.triggered' ||
     topic === 'identity.2fa.enrollment_blocked' ||
     topic === 'identity.session.fingerprint_mismatch' ||
     topic === 'identity.trusted_device.added' ||
-    topic === 'identity.trusted_device.revoked' ||
     topic === 'identity.password.reset' ||
     topic === 'identity.email.verified' ||
     topic === 'identity.profile.updated'

@@ -157,14 +157,19 @@ export class TrustedDeviceService {
    * Drops the trust granted to the device a compromised session was riding on, so the
    * forced logout is followed by a full re-authentication instead of a silent skip.
    */
+  /**
+   * `actorId` is absent when `AdminGuard` forces this itself (a fingerprint mismatch,
+   * not an admin or the device owner acting) - the audit trail attributes that case to
+   * the system rather than mislabeling it as a self-revoke.
+   */
   async revokeForDevice(
     userId: User['id'],
     userAgent: string | null,
-    actorId: User['id'],
+    actorId?: User['id'],
   ): Promise<void> {
     const revoked = await this.drizzle.db
       .update(adminTrustedDevice)
-      .set({ revokedAt: sql`now()`, revokedBy: actorId })
+      .set({ revokedAt: sql`now()`, revokedBy: actorId ?? null })
       .where(this.activeDeviceWhere(userId, deviceHash(userAgent)))
       .returning({ id: adminTrustedDevice.id });
 

@@ -1297,12 +1297,18 @@ export class IdentityService {
     const challengeHeaders = new Headers(headers);
     challengeHeaders.set('cookie', requestCookieHeader(signIn));
 
+    await this.twoFactorLockout?.assertNotLocked(userId);
+
     const body = { code: input.code, trustDevice: true };
     const verified =
       input.method === 'backup_code'
         ? await this.api.verifyBackupCode({ body, headers: challengeHeaders, asResponse: true })
         : await this.api.verifyTOTP({ body, headers: challengeHeaders, asResponse: true });
+    if (!verified.ok) {
+      await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
+    }
     await ensureOk(verified);
+    await this.twoFactorLockout?.reset(userId);
 
     this.forwardCookies(verified, resHeaders);
     await this.trustedDevices?.trust(userId, { ip, userAgent });
