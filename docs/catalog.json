@@ -570,7 +570,6 @@
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/social-transfers/plugin.ts",
-        "packages/core/src/fx/exchange-rate/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -661,6 +660,7 @@
       "token": "EXCHANGE_RATE_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/fx/exchange-rate/plugin.ts",
         "packages/core/src/pam/profile/plugin.ts"
       ]
@@ -738,7 +738,6 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
-        "packages/core/src/fx/exchange-rate/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts",
         "packages/core/src/wallet/plugin.ts"

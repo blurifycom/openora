@@ -65,3 +65,54 @@ describe('eventCatalog', () => {
     }
   });
 });
+
+describe('event currency fields accept a wallet/gaming money ticker', () => {
+  // Regression for a dropped-event bug: these payloads validated `currency` against the
+  // ISO-3-only `CurrencyCodeSchema`, so any 4+ character asset ticker (USDT, USDC) failed
+  // payload validation and the event was silently dropped. They now use `CurrencyTickerSchema`.
+  const walletDeposit = {
+    userId: crypto.randomUUID(),
+    playerId: null,
+    amount: '10.00',
+    currency: 'USDT',
+    transactionId: crypto.randomUUID(),
+  };
+  const gamingRoundStarted = {
+    roundId: crypto.randomUUID(),
+    gameId: crypto.randomUUID(),
+    userId: crypto.randomUUID(),
+    playerId: null,
+    currency: 'USDT',
+  };
+  const bonusRolloverCompleted = {
+    userId: crypto.randomUUID(),
+    creditId: crypto.randomUUID(),
+    currency: 'USDT',
+    creditedAmount: '10.00',
+  };
+
+  it('accepts a 4-character ticker on wallet.deposit.completed', () => {
+    expect(domainEventSchemas['wallet.deposit.completed'].safeParse(walletDeposit).success).toBe(
+      true,
+    );
+  });
+
+  it('accepts a 4-character ticker on gaming.round.started', () => {
+    expect(domainEventSchemas['gaming.round.started'].safeParse(gamingRoundStarted).success).toBe(
+      true,
+    );
+  });
+
+  it('accepts a 4-character ticker on wallet.bonus_rollover.completed', () => {
+    expect(
+      domainEventSchemas['wallet.bonus_rollover.completed'].safeParse(bonusRolloverCompleted)
+        .success,
+    ).toBe(true);
+  });
+
+  it('still rejects an obviously invalid currency value', () => {
+    const invalid = { ...walletDeposit, currency: '123' };
+
+    expect(domainEventSchemas['wallet.deposit.completed'].safeParse(invalid).success).toBe(false);
+  });
+});

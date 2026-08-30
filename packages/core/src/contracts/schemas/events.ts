@@ -1,5 +1,11 @@
 import * as z from 'zod';
-import { ClientMetaSchema, MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
+import {
+  ClientMetaSchema,
+  CurrencyTickerSchema,
+  MoneyAmountSchema,
+  TimestampSchema,
+  UuidSchema,
+} from './common.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -9,7 +15,7 @@ import {
   ExclusionKindSchema,
 } from './compliance.js';
 import { TagKeySchema } from './tag.js';
-import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
+import { CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
 import { KycStatusSchema, KycStatusSourceSchema, PlayerStatusSchema } from './player.js';
@@ -38,7 +44,7 @@ const permissionLevelEntries = z.array(
 const walletTxnBase = z.object({
   userId: UuidSchema,
   amount: MoneyAmountSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   transactionId: UuidSchema,
 });
 
@@ -205,7 +211,7 @@ export const domainEventSchemas = {
     gameId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
-    currency: CurrencyCodeSchema,
+    currency: CurrencyTickerSchema,
   }),
   'gaming.round.ended': z.object({
     roundId: UuidSchema,
@@ -216,7 +222,7 @@ export const domainEventSchemas = {
   'wallet.bonus_rollover.completed': z.object({
     userId: UuidSchema,
     creditId: UuidSchema,
-    currency: CurrencyCodeSchema,
+    currency: CurrencyTickerSchema,
     creditedAmount: MoneyAmountSchema,
   }),
 
