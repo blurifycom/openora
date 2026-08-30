@@ -2,6 +2,12 @@
 
 **Date**: 2026-08-27
 **Status**: Accepted
+**Amended by ADR-0037 (2026-08-30)**: the admin override (`RgService.setPlayerLimit`) is
+now reduce-only - it may create a first limit or lower an existing one, but a raise is
+refused server-side with a typed error. The paragraph below asserting the admin path
+"still writes a limit outright in either direction" no longer holds; everything else in
+this ADR (the enforcement points, the deposit/wager gates, the player-path cool-down,
+and the concurrency reasoning) is unchanged.
 
 ## Context
 
@@ -130,6 +136,16 @@ permissioned (`compliance:manage-rg`) and audited under the admin's own actor - 
 what makes it accountable rather than a hole. If a jurisdiction later requires the admin
 path to serve the cool-down too, that is a change to this ADR first, not a quiet edit to
 the service.
+
+> **Superseded by ADR-0037.** "Impose a limit on the spot" was read here as licensing a
+> raise; it never needed to. Imposing means creating a limit or lowering one - both still
+> apply outright and immediately, exactly as above. Raising a limit the player set for
+> themselves is not "imposing" one, it is the operator weakening the player's own
+> protection, and the applicable RG policy permits an admin override only to reduce a
+> limit. `setPlayerLimit` is reduce-only as of ADR-0037; a raise attempt is refused
+> server-side with `LimitRaiseNotAllowedError`. The rest of this paragraph - create and
+> lower apply outright, the permission and audit attribution, voiding a parked request -
+> is unchanged.
 
 Every read-then-decide path takes a per-limit advisory lock (`limitSlotKey`), because the
 classification is only meaningful against the value that is still there when the write

@@ -19,6 +19,7 @@ import {
   PermanentExclusionLiftError,
   ExclusionPeriodNotElapsedError,
   ExclusionNotFoundError,
+  LimitRaiseNotAllowedError,
 } from '../service/rg.service.js';
 
 let db: TestDb;
@@ -105,7 +106,15 @@ describe('RgService.setPlayerLimit (real PG)', () => {
 
     const dto = await svc.setPlayerLimit(
       userId,
-      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'player requested via support',
+        confirm: true,
+      },
       actorId,
       'admin',
     );
@@ -113,35 +122,139 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(Number(dto.amount)).toBe(100);
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.set',
-      expect.objectContaining({ userId, actorId, amount: '100', previousAmount: null }),
+      expect.objectContaining({
+        userId,
+        actorId,
+        amount: '100',
+        previousAmount: null,
+        reason: 'player requested via support',
+      }),
     );
   });
 
-  it('upserts on the same type and period, carrying the prior amount into the event', async () => {
+  it('upserts on the same type and period, carrying the prior amount into the event (a lowering)', async () => {
     const { svc, events } = makeService();
     const userId = randomUUID();
     const actorId = randomUUID();
     await svc.setPlayerLimit(
       userId,
-      { userId, type: 'deposit', amount: '50', minutes: null, period: 'daily' },
+      {
+        userId,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
       actorId,
       'admin',
     );
 
     await svc.setPlayerLimit(
       userId,
-      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId,
+        type: 'deposit',
+        amount: '50',
+        minutes: null,
+        period: 'daily',
+        reason: 'reducing exposure',
+        confirm: true,
+      },
       actorId,
       'admin',
     );
 
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
-    expect(Number(rows[0]?.amount)).toBe(100);
+    expect(Number(rows[0]?.amount)).toBe(50);
     expect(events.emit).toHaveBeenLastCalledWith(
       'rg.limit.set',
-      expect.objectContaining({ previousAmount: '50.00' }),
+      expect.objectContaining({ previousAmount: '100.00', reason: 'reducing exposure' }),
     );
+  });
+
+  it('refuses to raise a limit the player controls, server-side, and leaves the row unchanged', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      {
+        userId,
+        type: 'deposit',
+        amount: '50',
+        minutes: null,
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
+      actorId,
+      'admin',
+    );
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        {
+          userId,
+          type: 'deposit',
+          amount: '100',
+          minutes: null,
+          period: 'daily',
+          reason: 'trying to raise it',
+          confirm: true,
+        },
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitRaiseNotAllowedError);
+
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.amount)).toBe(50);
+  });
+
+  it('refuses to raise a session-time limit, classified on minutes not amount', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      {
+        userId,
+        type: 'session',
+        amount: null,
+        minutes: 60,
+        period: 'session',
+        reason: 'initial session limit',
+        confirm: true,
+      },
+      actorId,
+      'admin',
+    );
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        {
+          userId,
+          type: 'session',
+          amount: null,
+          minutes: 120,
+          period: 'session',
+          reason: 'trying to raise it',
+          confirm: true,
+        },
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitRaiseNotAllowedError);
+
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.minutes).toBe(60);
   });
 
   it('keeps a different period as its own row', async () => {
@@ -151,13 +264,29 @@ describe('RgService.setPlayerLimit (real PG)', () => {
 
     await svc.setPlayerLimit(
       userId,
-      { userId, type: 'deposit', amount: '50', minutes: null, period: 'daily' },
+      {
+        userId,
+        type: 'deposit',
+        amount: '50',
+        minutes: null,
+        period: 'daily',
+        reason: 'daily limit',
+        confirm: true,
+      },
       actorId,
       'admin',
     );
     await svc.setPlayerLimit(
       userId,
-      { userId, type: 'deposit', amount: '500', minutes: null, period: 'monthly' },
+      {
+        userId,
+        type: 'deposit',
+        amount: '500',
+        minutes: null,
+        period: 'monthly',
+        reason: 'monthly limit',
+        confirm: true,
+      },
       actorId,
       'admin',
     );
@@ -172,7 +301,15 @@ describe('RgService.setPlayerLimit (real PG)', () => {
 
     const dto = await svc.setPlayerLimit(
       userId,
-      { userId, type: 'session', amount: null, minutes: 60, period: 'session' },
+      {
+        userId,
+        type: 'session',
+        amount: null,
+        minutes: 60,
+        period: 'session',
+        reason: 'session limit',
+        confirm: true,
+      },
       randomUUID(),
       'admin',
     );
@@ -187,7 +324,15 @@ describe('RgService.setPlayerLimit (real PG)', () => {
 
     await svc.setPlayerLimit(
       userId,
-      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'notify test',
+        confirm: true,
+      },
       randomUUID(),
       'admin',
     );
@@ -207,13 +352,90 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     await expect(
       svc.setPlayerLimit(
         userId,
-        { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+        {
+          userId,
+          type: 'deposit',
+          amount: '100',
+          minutes: null,
+          period: 'daily',
+          reason: 'swallow failure test',
+          confirm: true,
+        },
         randomUUID(),
         'admin',
       ),
     ).resolves.toMatchObject({ period: 'daily' });
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
+  });
+
+  // Mirrors the ADR's concurrency reasoning for the player's own path: the raise
+  // classification is only meaningful against the value still present when the write
+  // lands, so the read-then-decide has to happen under the same per-limit lock as the
+  // write. Without that lock, two racing admin writes could both read the ORIGINAL 100,
+  // both decide their own move is a lawful lowering (80 < 100), and whichever commits
+  // last would silently overwrite the other - landing 80 in force even though it is a
+  // RAISE over the 50 the other call had already committed.
+  it('two racing admin writes cannot land a raise through the read-then-decide window', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      {
+        userId,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
+      actorId,
+      'admin',
+    );
+
+    const results = await Promise.allSettled([
+      svc.setPlayerLimit(
+        userId,
+        {
+          userId,
+          type: 'deposit',
+          amount: '50',
+          minutes: null,
+          period: 'daily',
+          reason: 'lowering',
+          confirm: true,
+        },
+        actorId,
+        'admin',
+      ),
+      svc.setPlayerLimit(
+        userId,
+        {
+          userId,
+          type: 'deposit',
+          amount: '80',
+          minutes: null,
+          period: 'daily',
+          reason: 'lowering relative to the original 100, but a raise if 50 lands first',
+          confirm: true,
+        },
+        actorId,
+        'admin',
+      ),
+    ]);
+
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
+    // 80 is only ever a lawful write if it lands BEFORE the lowering to 50, in which case
+    // the lowering runs afterward and still wins. There is no serialized ordering under
+    // which the final value can be 80.
+    expect(Number(rows[0]?.amount)).toBe(50);
+    const raiseAttempt = results[1];
+    if (raiseAttempt.status === 'rejected') {
+      expect(raiseAttempt.reason).toBeInstanceOf(LimitRaiseNotAllowedError);
+    }
   });
 });
 

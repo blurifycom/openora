@@ -110,6 +110,8 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       amount: '500',
       minutes: null,
       period: 'daily',
+      reason: 'initial deposit limit',
+      confirm: true,
     });
     expect(depositRes.status).toBe(200);
     expect((await readJson(depositRes)).amount).toBe('500.00');
@@ -119,6 +121,8 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       amount: null,
       minutes: 60,
       period: 'session',
+      reason: 'initial session-time limit',
+      confirm: true,
     });
     expect(sessionRes.status).toBe(200);
 
@@ -554,7 +558,14 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
 
 describe('RG authz negatives', () => {
   const validBodies: Record<string, unknown> = {
-    limits: { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+    limits: {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      period: 'daily',
+      reason: 'x',
+      confirm: true,
+    },
     coolingOff: { durationHours: 24, reason: 'x' },
     selfExclusion: { isPermanent: true, reason: 'x', confirm: true },
     lift: { reason: 'x', confirm: true },
@@ -619,6 +630,8 @@ describe('RG monitoring (queue-based)', () => {
       amount: '100',
       minutes: null,
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(limitRes.status).toBe(200);
 
@@ -685,6 +698,8 @@ describe('RG audit trail', () => {
       amount: '250',
       minutes: null,
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(limitRes.status).toBe(200);
 
@@ -789,6 +804,8 @@ describe('RG audit trail', () => {
       amount: '300',
       minutes: null,
       period: 'weekly',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(limitRes.status).toBe(200);
 
@@ -825,6 +842,8 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       amount: '500',
       minutes: null,
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(setRes.status).toBe(200);
 
@@ -833,6 +852,8 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       amount: '750',
       minutes: null,
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
 
     await vi.waitFor(async () => {
@@ -893,6 +914,8 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       amount: '300',
       minutes: null,
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
 
     await vi.waitFor(async () => {

@@ -357,6 +357,9 @@ export const domainEventSchemas = {
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
     initiatedBy: RgInitiatorSchema,
+    // Mandatory on the admin override route, null on the player's own path - a player
+    // acting on their own limit never has to justify it to themselves.
+    reason: z.string().nullable(),
   }),
   // A player asked for a limit INCREASE or REMOVAL. Nothing has changed yet: the
   // effective limit is still `previousAmount` until `rg.limit.change_confirmed`.
@@ -670,7 +673,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // pair (money limit vs session-time limit), never a JS number.
   // v3: initiatedBy added - the audit log attributes a player self-service change to
   // the player, not to an admin.
-  'rg.limit.set': 3,
+  // v4: reason added, mandatory on the admin override route and null on the player's
+  // own path (ADR-0036 amendment - the admin route is now reduce-only and requires one).
+  'rg.limit.set': 4,
   // v2: initiatedBy added - a cooling-off can now be started by the player themselves.
   'rg.cooling_off.activated': 2,
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).

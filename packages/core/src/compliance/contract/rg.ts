@@ -37,6 +37,12 @@ export const RgExclusionSchema = z.object({
 });
 export type RgExclusion = z.infer<typeof RgExclusionSchema>;
 
+// Reduce-only (ADR-0036, amended): an admin may create a first limit or lower an
+// existing one, effective immediately, but may never raise one the player controls -
+// that would be the operator weakening the player's own protection. Enforced
+// server-side in RgService.setPlayerLimit, not just here. `reason` is mandatory (every
+// override is audited under it) and `confirm` guards the action the same way
+// ActivateSelfExclusionInputSchema does.
 export const SetPlayerLimitInputSchema = z
   .object({
     userId: UuidSchema,
@@ -44,6 +50,8 @@ export const SetPlayerLimitInputSchema = z
     amount: MoneyAmountSchema.nullable(),
     minutes: z.number().int().positive().nullable(),
     period: LimitPeriodSchema,
+    reason: z.string().trim().min(1),
+    confirm: z.literal(true),
   })
   .refine(isConsistentLimit, {
     message: "type 'session' requires period 'session' and vice versa",

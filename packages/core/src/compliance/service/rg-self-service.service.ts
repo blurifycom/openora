@@ -25,7 +25,13 @@ import type {
 } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
 import { LimitNotFoundError, LimitOwnershipError } from './compliance.service.js';
-import { NO_PENDING_CHANGE, RgService, limitSlotKey } from './rg.service.js';
+import {
+  NO_PENDING_CHANGE,
+  RgService,
+  limitSlotKey,
+  isWeakening,
+  type LimitRow,
+} from './rg.service.js';
 import { RgMonitoringService } from './rg-monitoring.service.js';
 import { periodWindow, pendingChangeStatus, thresholdPct } from './rg-eval.js';
 import type {
@@ -72,23 +78,6 @@ export class LimitChangeExpiredError extends Error {
     super('This limit change was not confirmed in time and has lapsed');
     this.name = 'LimitChangeExpiredError';
   }
-}
-
-type LimitRow = typeof userLimit.$inferSelect;
-
-// A raise and a removal both weaken the protection; a first limit and a lower one do
-// not. Only the weakening direction serves the cool-down.
-function isWeakening(row: LimitRow, next: Pick<UpsertLimitInput, 'amount' | 'minutes'>): boolean {
-  if (next.amount !== null && row.amount !== null) {
-    return moneyCompare(next.amount, row.amount) > 0;
-  }
-  if (next.minutes !== null && row.minutes !== null) {
-    return next.minutes > row.minutes;
-  }
-  // A limit that changes measure (money <-> minutes) cannot happen: `type` fixes which
-  // one applies and `type` is part of the row's identity. Treat the impossible case as
-  // weakening rather than waving it through.
-  return true;
 }
 
 export type RgSelfServiceDeps = {
@@ -223,6 +212,7 @@ export class RgSelfServiceService {
       previousAmount: outcome.existing?.amount ?? null,
       previousMinutes: outcome.existing?.minutes ?? null,
       initiatedBy: 'player',
+      reason: null,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
@@ -370,6 +360,7 @@ export class RgSelfServiceService {
       previousAmount: outcome.existing.amount,
       previousMinutes: outcome.existing.minutes,
       initiatedBy: 'player',
+      reason: null,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });

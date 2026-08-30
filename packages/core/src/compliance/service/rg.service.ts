@@ -4,6 +4,7 @@ import {
   findOneOrThrow,
   makeNotFoundError,
   makeConflictError,
+  moneyCompare,
   serializeRow,
   mapConcurrent,
   withAdvisoryXactLock,
@@ -32,6 +33,7 @@ import type {
   LiftCoolingOffInput,
   ActivateSelfExclusionInput,
   LiftSelfExclusionInput,
+  UpsertLimitInput,
 } from '../contract/index.js';
 
 const logger = createLogger('compliance-rg');
@@ -52,6 +54,64 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
   'ExclusionPeriodNotElapsedError',
   'The self-exclusion minimum period has not elapsed yet',
 );
+
+export type LimitRow = typeof userLimit.$inferSelect;
+
+// A raise and a removal both weaken the protection; a first limit and a lower one do
+// not. Shared by the player's own classification (RgSelfServiceService.upsertLimit,
+// where only a lower/first write applies immediately) and the admin override (below,
+// where a raise is refused outright rather than parked).
+export function isWeakening(
+  row: LimitRow,
+  next: Pick<UpsertLimitInput, 'amount' | 'minutes'>,
+): boolean {
+  if (next.amount !== null && row.amount !== null) {
+    return moneyCompare(next.amount, row.amount) > 0;
+  }
+  if (next.minutes !== null && row.minutes !== null) {
+    return next.minutes > row.minutes;
+  }
+  // A limit that changes measure (money <-> minutes) cannot happen: `type` fixes which
+  // one applies and `type` is part of the row's identity. Treat the impossible case as
+  // weakening rather than waving it through.
+  return true;
+}
+
+/**
+ * ADR-0036 amendment: the admin override is reduce-only. The ADR's original
+ * "impose a limit on the spot" justification only ever needed create-or-lower; letting
+ * an operator RAISE a limit the player set for themselves is the operator weakening the
+ * player's own protection, which the Anjouan-licence RG policy explicitly forbids
+ * (overrides may only reduce). Carries the prior and requested value so the client can
+ * render a precise refusal without a message string reaching the screen.
+ */
+export type LimitRaiseNotAllowedData = {
+  type: LimitRow['type'];
+  period: LimitRow['period'];
+  previousAmount: string | null;
+  previousMinutes: number | null;
+  requestedAmount: string | null;
+  requestedMinutes: number | null;
+};
+
+export class LimitRaiseNotAllowedError extends Error {
+  readonly data: LimitRaiseNotAllowedData;
+
+  constructor(row: LimitRow, input: Pick<SetPlayerLimitInput, 'amount' | 'minutes'>) {
+    super(
+      'An admin override may only create or lower a player limit; raising one the player controls is not permitted',
+    );
+    this.name = 'LimitRaiseNotAllowedError';
+    this.data = {
+      type: row.type,
+      period: row.period,
+      previousAmount: row.amount,
+      previousMinutes: row.minutes,
+      requestedAmount: input.amount,
+      requestedMinutes: input.minutes,
+    };
+  }
+}
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -135,19 +195,26 @@ export class RgService {
   }
 
   /**
-   * The ADMIN write: a compliance officer sets a player's limit outright, in either
-   * direction, effective immediately. It deliberately does NOT serve the cool-down - that
-   * is a control on what a *player* may do to their own protection, not a restraint on
-   * the operator's compliance function, which must be able to impose a limit on the spot.
-   * The override is permissioned (`compliance:manage-rg`) and lands in the audit log
-   * attributed to the admin, which is what makes it accountable. See ADR-0036.
+   * The ADMIN write: a compliance officer creates a player's first limit, or lowers one
+   * that already exists, effective immediately. It deliberately does NOT serve the
+   * cool-down - that is a control on what a *player* may do to their own protection, not
+   * a restraint on the operator's compliance function, which must be able to impose a
+   * limit on the spot. It is also **reduce-only**: raising a limit the player set for
+   * themselves is refused with `LimitRaiseNotAllowedError`, because that direction is the
+   * operator weakening the player's own protection, not imposing one (ADR-0036
+   * amendment). The override is permissioned (`compliance:manage-rg`), requires a
+   * mandatory `reason` and `confirm`, and lands in the audit log attributed to the
+   * admin, which is what makes it accountable. See ADR-0036.
    *
    * The player's own path never comes through here: `RgSelfServiceService.upsertLimit`
    * owns the classification and does its own write under the same per-limit lock.
    *
-   * Clearing `pending*` is deliberate: a directly written limit is the current decision,
-   * and leaving a stale request parked beside it would let the player confirm their way
-   * back to an older, weaker value.
+   * Clearing `pending*` is deliberate: a directly written (create-or-lower) limit is the
+   * current decision, and leaving a stale request parked beside it - including a
+   * player's own pending RAISE - would let the player confirm their way back to a value
+   * the admin just moved past. This is why the raise check and the write share the same
+   * advisory lock and read: the classification is only meaningful against the value
+   * still present when the write lands.
    */
   async setPlayerLimit(
     userId: User['id'],
@@ -171,10 +238,19 @@ export class RgService {
             ),
           )
           .limit(1);
+        if (existing && isWeakening(existing, input)) {
+          throw new LimitRaiseNotAllowedError(existing, input);
+        }
         const written = findOneOrThrow(
           await tx
             .insert(userLimit)
-            .values({ ...input, userId })
+            .values({
+              userId,
+              type: input.type,
+              amount: input.amount,
+              minutes: input.minutes,
+              period: input.period,
+            })
             .onConflictDoUpdate({
               target: [userLimit.userId, userLimit.type, userLimit.period],
               set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
@@ -216,6 +292,7 @@ export class RgService {
       previousAmount: prior?.amount ?? null,
       previousMinutes: prior?.minutes ?? null,
       initiatedBy,
+      reason: input.reason,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });

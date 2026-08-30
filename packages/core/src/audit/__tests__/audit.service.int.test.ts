@@ -706,6 +706,35 @@ describe('mapEventToRecord() player.id resolution', () => {
     expect(row.actorId).toBe(adminId);
   });
 
+  it('rg.limit.set: an admin override reason lands in the audit record', async () => {
+    const p = await seedPlayer();
+    const adminId = randomUUID();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: adminId,
+      initiatedBy: 'admin',
+      reason: 'reducing exposure after a support call',
+    });
+
+    expect(row.after).toMatchObject({ reason: 'reducing exposure after a support call' });
+  });
+
+  it('rg.limit.set: the player self-service path still emits with no reason', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: p.userId,
+      initiatedBy: 'player',
+      reason: null,
+    });
+
+    expect(row.after).toMatchObject({ reason: null });
+  });
+
   it('rg.limit.change_requested / _confirmed: player-attributed, resourceId from playerId', async () => {
     const p = await seedPlayer();
 

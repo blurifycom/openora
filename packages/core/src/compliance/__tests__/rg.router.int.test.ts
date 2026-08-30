@@ -132,7 +132,15 @@ describe('compliance RG router authz', () => {
     await expect(
       call(
         router.setPlayerLimit,
-        { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+        {
+          userId: USER,
+          type: 'deposit',
+          amount: '100',
+          minutes: null,
+          period: 'daily',
+          reason: 'x',
+          confirm: true,
+        },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -183,7 +191,15 @@ describe('compliance RG router writes', () => {
 
     const result = await call(
       router.setPlayerLimit,
-      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'first limit on file',
+        confirm: true,
+      },
       { context: CTX },
     );
 
@@ -193,8 +209,84 @@ describe('compliance RG router writes', () => {
     expect(stored[0]?.period).toBe('daily');
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.set',
-      expect.objectContaining({ userId: USER, actorId: CALLER }),
+      expect.objectContaining({
+        userId: USER,
+        actorId: CALLER,
+        reason: 'first limit on file',
+      }),
     );
+  });
+
+  it('setPlayerLimit lowers an existing player-set limit immediately', async () => {
+    const { router } = build(guardAllowing(['compliance:manage-rg']));
+    await call(
+      router.setPlayerLimit,
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
+      { context: CTX },
+    );
+
+    const result = await call(
+      router.setPlayerLimit,
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '40',
+        minutes: null,
+        period: 'daily',
+        reason: 'reducing exposure',
+        confirm: true,
+      },
+      { context: CTX },
+    );
+
+    expect(Number(result.amount)).toBe(40);
+    const stored = await limitsOf(USER);
+    expect(stored).toHaveLength(1);
+    expect(Number(stored[0]?.amount)).toBe(40);
+  });
+
+  it('setPlayerLimit refuses to raise an existing player-set limit, mapped to CONFLICT', async () => {
+    const { router } = build(guardAllowing(['compliance:manage-rg']));
+    await call(
+      router.setPlayerLimit,
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '40',
+        minutes: null,
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
+      { context: CTX },
+    );
+
+    await expect(
+      call(
+        router.setPlayerLimit,
+        {
+          userId: USER,
+          type: 'deposit',
+          amount: '100',
+          minutes: null,
+          period: 'daily',
+          reason: 'trying to raise it',
+          confirm: true,
+        },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const stored = await limitsOf(USER);
+    expect(Number(stored[0]?.amount)).toBe(40);
   });
 
   it('activateSelfExclusion records the exclusion and blocks login', async () => {
@@ -281,7 +373,15 @@ describe('compliance RG router writes', () => {
     const { router } = build(guardAllowing(['compliance:manage-rg', 'compliance:view']));
     await call(
       router.setPlayerLimit,
-      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        period: 'daily',
+        reason: 'for the section read-back test',
+        confirm: true,
+      },
       { context: CTX },
     );
 

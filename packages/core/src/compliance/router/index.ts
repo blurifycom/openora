@@ -29,6 +29,7 @@ import {
   ActiveExclusionError,
   PermanentExclusionLiftError,
   ExclusionPeriodNotElapsedError,
+  LimitRaiseNotAllowedError,
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import {
@@ -205,7 +206,9 @@ export function createComplianceRouter({
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent });
+      return mapErrors({ CONFLICT: LimitRaiseNotAllowedError }, () =>
+        rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
+      );
     }),
 
     activateCoolingOff: os.activateCoolingOff.handler(async ({ input, context }) => {
