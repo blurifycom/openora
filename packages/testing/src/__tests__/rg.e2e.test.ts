@@ -17,6 +17,7 @@ import {
   asPlayer,
   asAdmin,
   seedMinimal,
+  capturedEmailsFor,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -139,9 +140,8 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
   });
 
   it('notifies the player in-app on an admin limit override, never on their own self-service change', async () => {
-    const { client, userId } = await registerAndMaterializePlayer(app, {
-      email: `rg-admin-notify-${randomUUID()}@e2e.test`,
-    });
+    const email = `rg-admin-notify-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(app, { email });
 
     const setRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
@@ -166,6 +166,16 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       // The admin's free-text reason is never surfaced to the player.
       expect(found?.body).not.toContain('operator lowered on a support request');
     });
+
+    // Two delivery paths exist for an admin override: the `rgLimitUpdated` mail from
+    // RgService.setPlayerLimit and the in-app notification asserted above. They must
+    // not double up into two emails for one change.
+    const rgEmails = capturedEmailsFor(email).filter(
+      (e) => e.subject === 'Your gambling limit was updated',
+    );
+    expect(rgEmails).toHaveLength(1);
+    // The admin's free-text reason is never surfaced in the email either.
+    expect(rgEmails[0]?.body).not.toContain('operator lowered on a support request');
 
     // Lowering again brings the limit within the player's own self-service reach
     // (still weakening-free since 100 < 500), so the player's OWN change on the
