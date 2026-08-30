@@ -145,12 +145,20 @@ export const ExchangeRateConfigSchema = z
      */
     pivot: CurrencyCodeSchema.default('USD'),
     /**
-     * Cron for the refresh job that walks the operator's configured currencies and
-     * upserts a fresh quote per currency (crypto/fiat routed via `railFor`). Rates
-     * are display-only and never need to be current, so this defaults to a wide
-     * interval. Absent = every 6 hours.
+     * Read-through cache thresholds for `EXCHANGE_RATE_READER`, off the stored
+     * quote's own last-write time. Below `freshTtlMs` a read answers from the stored
+     * quote with no vendor call. At/above `hardMaxAgeMs` (or with nothing stored) a
+     * read fetches from the vendor synchronously, bounded by `providerTimeoutMs`,
+     * and fails closed to `null` on error. In between, a read answers from the
+     * stored quote immediately and refreshes in the background.
      */
-    refreshCron: z.string().default('0 */6 * * *'),
+    freshTtlMs: z.number().int().positive().default(60_000),
+    hardMaxAgeMs: z
+      .number()
+      .int()
+      .positive()
+      .default(15 * 60_000),
+    providerTimeoutMs: z.number().int().positive().default(2_000),
   })
   .strict();
 

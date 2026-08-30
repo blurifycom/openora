@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ExchangeRateProvider } from '@openora/core/contracts';
 import { mock } from '../../../testing/mock.js';
-import { selectProvider } from '../service/exchange-rate-refresh.service.js';
+import { selectProvider } from '../adapters/exchange-rate-reader.service.js';
 
 const cryptoProvider = mock<ExchangeRateProvider>({});
 const fiatProvider = mock<ExchangeRateProvider>({});
