@@ -89,7 +89,10 @@ export class WalletCommandsService implements WalletCommands {
     });
   }
 
-  async debit(tx: unknown, { userId, amount, type }: WalletDebitArgs): Promise<WalletDebitOutcome> {
+  async debit(
+    tx: unknown,
+    { userId, amount, type, currency }: WalletDebitArgs,
+  ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
     if (type === 'bet' && (await this.playEligibility.isRestricted(userId))) {
@@ -121,41 +124,48 @@ export class WalletCommandsService implements WalletCommands {
       }
     }
 
-    const available = await readWalletBalance(txn, row.id, row.currency);
+    // Absent `currency` the debit falls on the player's active balance, which is what
+    // every caller wanted before a swap needed to sell a specific asset. `debitRow` only
+    // exists to carry that choice into the ledger row and the rail classification - the
+    // wallet row itself is untouched, so debiting BTC does not move the active currency.
+    const debitCurrency = balanceKey(currency ?? row.currency);
+    const debitRow = { ...row, currency: debitCurrency };
+
+    const available = await readWalletBalance(txn, row.id, debitCurrency);
 
     if (type === 'loss') {
-      await this.writeLedgerRow(txn, row, 'loss', '0', 'debit');
-      return { ok: true, newBalance: available, currency: row.currency };
+      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit');
+      return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
     // arithmetic - no JS float math on either side of the debit.
     const debited =
       type === 'bet'
-        ? await debitWalletBalance(txn, row.id, row.currency, amount)
-        : await debitWithdrawableBalance(txn, row.id, row.currency, amount);
+        ? await debitWalletBalance(txn, row.id, debitCurrency, amount)
+        : await debitWithdrawableBalance(txn, row.id, debitCurrency, amount);
     const newBalance = debited[0]?.amount;
     if (newBalance === undefined) {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, row, type, amount, 'debit');
+    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit');
 
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
         userId,
-        currency: balanceKey(row.currency),
+        currency: debitCurrency,
         amount,
       });
-      return { ok: true, newBalance, currency: row.currency, completedBonusCredits };
+      return { ok: true, newBalance, currency: debitCurrency, completedBonusCredits };
     }
 
-    return { ok: true, newBalance, currency: row.currency };
+    return { ok: true, newBalance, currency: debitCurrency };
   }
 
   async credit(
     tx: unknown,
-    { userId, amount, currency, type }: WalletCreditArgs,
+    { userId, amount, currency, type, allowNewCurrency }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -168,16 +178,21 @@ export class WalletCommandsService implements WalletCommands {
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
-    if (row.currency !== currency) {
+    // A currency that is not the player's own is a caller bug for every path except a
+    // swap, where buying an asset the player has never held is the whole point. Keep the
+    // guard on by default and let the swap opt out explicitly, rather than dropping a
+    // check that has been catching mistakes for every other caller.
+    if (!allowNewCurrency && balanceKey(row.currency) !== balanceKey(currency)) {
       return { ok: false, reason: 'currency mismatch' };
     }
 
+    const creditRow = { ...row, currency: balanceKey(currency) };
     const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
 
-    await this.writeLedgerRow(txn, row, type, amount, 'credit');
+    await this.writeLedgerRow(txn, creditRow, type, amount, 'credit');
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {

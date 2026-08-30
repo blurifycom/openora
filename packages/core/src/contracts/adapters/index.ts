@@ -148,6 +148,16 @@ export {
 export type { ExchangeRateReader } from './exchange-rate-reader.js';
 export { EXCHANGE_RATE_READER } from './exchange-rate-reader.js';
 
+export type {
+  SwapStatus,
+  SwapQuote,
+  SwapExecution,
+  SwapWebhookEvent,
+  SwapAdapter,
+  SwapWebhookVerifier,
+} from './swap.js';
+export { SWAP_ADAPTER, SWAP_WEBHOOK_VERIFIER } from './swap.js';
+
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';

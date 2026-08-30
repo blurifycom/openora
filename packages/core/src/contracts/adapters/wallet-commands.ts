@@ -9,6 +9,17 @@ export type WalletDebitArgs = {
   userId: string;
   amount: string;
   type: WalletTransactionType;
+  /**
+   * Which of the player's balances to take from. Omit it and the debit falls on the
+   * player's active currency (`wallet.currency`), which is what every caller before
+   * multi-currency swaps wanted and still gets.
+   *
+   * A swap is why this exists: it debits the currency being sold and credits the one
+   * being bought, so it cannot let the active currency decide. `wallet_balance` has
+   * always been keyed `(walletId, currency)` and the balance helpers have always taken a
+   * currency - only this port pinned every move to one.
+   */
+  currency?: string;
 };
 
 export type WalletDebitOutcome =
@@ -25,6 +36,14 @@ export type WalletCreditArgs = {
   amount: string;
   currency: string;
   type: WalletTransactionType;
+  /**
+   * Allow crediting a currency the player does not hold a balance in yet, creating the
+   * `wallet_balance` row. Off by default: for every pre-existing caller a currency that
+   * is not the player's own is a caller bug, and the guard that catches it is worth
+   * keeping. A swap sets it, because buying an asset the player has never held is the
+   * ordinary case, not a mistake.
+   */
+  allowNewCurrency?: boolean;
 };
 
 export type WalletCreditOutcome = { ok: true; newBalance: string } | { ok: false; reason: string };

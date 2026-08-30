@@ -897,6 +897,13 @@
       ]
     },
     {
+      "category": "swap",
+      "interface": "SwapAdapter",
+      "token": "SWAP_ADAPTER",
+      "status": "stub",
+      "boundIn": []
+    },
+    {
       "category": "tag-evaluation-commands",
       "interface": "TagEvaluationWithdrawalRequestedArgs",
       "token": "TAG_EVALUATION_COMMANDS",

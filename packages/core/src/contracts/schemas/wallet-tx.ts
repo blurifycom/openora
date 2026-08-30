@@ -19,6 +19,11 @@ export const WALLET_TRANSACTION_TYPES = [
   'rain',
   'manual_credit',
   'manual_debit',
+  // A swap is two ledger rows, not one: the asset sold leaves on `swap_out` and the asset
+  // bought arrives on `swap_in`. One row cannot express it - a ledger row carries a single
+  // currency, and the two sides settle at different moments when the vendor is async.
+  'swap_out',
+  'swap_in',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [
