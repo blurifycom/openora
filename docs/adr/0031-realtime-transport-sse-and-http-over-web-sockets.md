@@ -1,7 +1,26 @@
 # ADR-0031: Realtime Transport - SSE and HTTP over WebSockets
 
 **Date**: 2026-07-16
-**Status**: Proposed
+**Status**: Accepted
+
+> **Update (2026-08-31)**: `RedisPubSubRealtimeTransport` shipped, superseding
+> ADR-0032's note that `InProcessRealtimeTransport` stays as `createApp`'s production
+> default. It is deleted, not kept as a fallback: `REALTIME_TRANSPORT` now joins
+> `MESSAGE_BROKER`/`JOB_QUEUE`/`CACHE`/`RATE_LIMITER` in `assertDurableSeamsBound`
+> (`packages/core/src/server/runtime/assert-durable-seams.ts`) and auto-binds only
+> when `REDIS_URL` is set, exactly like the other four - there is no single-instance
+> "skip Redis" path. This is a breaking change for any operator running without
+> Redis: a deployment that only used it for realtime must now set `REDIS_URL` (it is
+> already a hard requirement for the other four seams in any deployment beyond a
+> single throwaway instance, so the marginal cost is one more seam on a connection
+> most operators already have). Every test tier binds the same driver too
+> (`bootTestApp`, and each `.int.test.ts` that exercises delivery, via
+> `createTestRedis`) - see ADR-0032's own philosophy, now extended to this seam.
+> `LocalPresence` (in the same file) keeps `RealtimePresence`/`getOnlineUserIds`
+> working per-replica rather than shipping a real shared Redis SET, a known,
+> disclosed gap the docstring calls out: correct on one instance, an undercount
+> (never a crash or an over-count) across several, until a feature needs the shared
+> version this ADR always expected as the eventual upgrade.
 
 ## Context
 

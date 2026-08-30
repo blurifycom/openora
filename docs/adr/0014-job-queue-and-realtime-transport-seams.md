@@ -5,6 +5,8 @@
 **Superseded in part by [ADR-0030](./0030-distributed-only-production-seams.md) (2026-07-16)**: `JOB_QUEUE`'s in-process default was removed from the production path - production is distributed-only, `createApp` now requires `REDIS_URL` (auto-binding `BullMqJobQueue`) or an overlay, and throws otherwise. `REALTIME_TRANSPORT` is unchanged: it stays lazy/unbound by default and throws on first use rather than gating boot, since not every deployment serves realtime traffic. Both in-process impls (`InProcessJobQueue`, `InProcessRealtimeTransport`) survive as test-only doubles (`@openora/core/testing`). The seam shapes, the BullMQ driver choice, and the client-push-is-not-inter-module decision still stand.
 
 > **Update (2026-07-25)**: [ADR-0032](./0032-tests-run-the-production-seams.md) deleted `InProcessJobQueue` - the test suite binds `BullMqJobQueue` too. `InProcessRealtimeTransport` stays, but as `createApp`'s production default rather than a test double, since core ships no realtime driver. The seam shapes are unchanged.
+>
+> **Update (2026-08-31)**: [ADR-0031](./0031-realtime-transport-sse-and-http-over-web-sockets.md) shipped `RedisPubSubRealtimeTransport` and deleted `InProcessRealtimeTransport` too - `REALTIME_TRANSPORT` now auto-binds on `REDIS_URL` exactly like `JOB_QUEUE`, with no in-process fallback either. Both seams from this ADR are now fully superseded on the production-default question; the seam shapes and the client-push-is-not-inter-module decision are still unchanged.
 
 ## Context
 

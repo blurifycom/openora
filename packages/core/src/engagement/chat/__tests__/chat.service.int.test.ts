@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
   createTestDb,
-  InProcessRealtimeTransport,
+  createTestRedis,
+  RedisPubSubRealtimeTransport,
   type TestDb,
+  type TestRedis,
   seedUser,
 } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
@@ -71,6 +73,8 @@ import { ChatRoomMembershipService } from '../service/chat-room-membership.servi
 import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 let db: TestDb;
+let redis: TestRedis;
+const transports: RedisPubSubRealtimeTransport[] = [];
 
 function makeService(
   directory: AdminUserDirectory = mock<AdminUserDirectory>({
@@ -87,7 +91,8 @@ function makeService(
   }),
   socialCommands?: SocialCommands,
 ) {
-  const transport = new InProcessRealtimeTransport();
+  const transport = new RedisPubSubRealtimeTransport(redis.client, 'chat-test');
+  transports.push(transport);
   const events = makeEventBus();
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
@@ -170,18 +175,35 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000) {
   }
 }
 
+// Redis Pub/Sub delivery is a real network round trip, unlike the deleted in-process
+// transport's synchronous fan-out - a negative assertion ("this must NOT arrive")
+// needs a real wait, not just the absence of a positive one, or it passes trivially
+// before the message could ever have arrived.
+async function settle(ms = 150) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateIdentity, migrateProfile]);
+  redis = await createTestRedis();
 });
 
 afterAll(async () => {
   await db.drop();
+  await redis.quit();
 });
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
     sql`TRUNCATE ${chatMessage}, ${chatRoomRule}, ${chatRoomConfiguration}, ${chatRoomMember}, ${chatRoomBan}, ${chatRoomMute}, ${chatRoomRemove}, ${chatMute}, ${chatPlatformBan}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
   );
+});
+
+// Every makeService() call opens its own Redis subscriber connection - close them
+// between tests so a channel name reused by a later test (eg the literal 'r1' room
+// id) never has a stale subscriber from a prior test still attached.
+afterEach(async () => {
+  await Promise.allSettled(transports.splice(0).map((t) => t.close()));
 });
 
 describe('Chat contract surface', () => {
@@ -213,19 +235,24 @@ describe('ChatService realtime wiring', () => {
     expect(chatChannel('r1')).toBe('chat:room:r1');
   });
 
-  it('delivers messages published on a room channel, then stops on unsubscribe', () => {
+  it('delivers messages published on a room channel, then stops on unsubscribe', async () => {
     const { svc, transport } = makeService();
     const got: ChatMessage[] = [];
     const unsub = svc.subscribeMessages('r1', (m) => got.push(m));
+    await settle();
 
     transport.publish(chatChannel('r1'), sample);
+    await waitFor(() => got.length === 1);
     expect(got).toEqual([sample]);
 
     transport.publish(chatChannel(null), { ...sample, roomId: null });
+    await settle();
     expect(got).toHaveLength(1);
 
     unsub();
+    await settle();
     transport.publish(chatChannel('r1'), sample);
+    await settle();
     expect(got).toHaveLength(1);
   });
 
@@ -288,10 +315,12 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 
     const got: ChatMessage[] = [];
     svc.subscribeMessages(null, (m) => got.push(m), viewerId);
+    await settle();
     transport.publish(chatChannel(null), { ...sample, userId: 'other-user' });
     await waitFor(() => got.length === 1);
 
     transport.publish(chatChannel(null), { ...sample, userId: blockedId });
+    await settle();
 
     expect(got.map((m) => m.userId)).toEqual(['other-user']);
   });
@@ -304,6 +333,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 
     const got: ChatMessage[] = [];
     svc.subscribeMessages(null, (m) => got.push(m), viewerId);
+    await settle();
     transport.publish(chatChannel(null), { ...sample, userId: blockedId });
     transport.publish(chatChannel(null), { ...sample, userId: 'other-user' });
     expect(got).toHaveLength(0);
@@ -317,8 +347,10 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     const { svc, transport } = makeService();
     const got: ChatMessage[] = [];
     svc.subscribeMessages(null, (m) => got.push(m));
+    await settle();
 
     transport.publish(chatChannel(null), sample);
+    await waitFor(() => got.length === 1);
 
     expect(got).toHaveLength(1);
   });
@@ -331,10 +363,12 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 
     const got: ChatMessage[] = [];
     svc.subscribeMessages(null, (m) => got.push(m), viewerId);
+    await settle();
     transport.publish(chatChannel(null), { ...sample, userId: 'other-user' });
     await waitFor(() => got.length === 1);
 
     transport.publish(chatChannel(null), { ...sample, userId: ignoredId });
+    await settle();
 
     expect(got.map((m) => m.userId)).toEqual(['other-user']);
   });
@@ -394,6 +428,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
 
     const msg = await svc.sendGlobalMessage(randomUUID(), 'Alice', 'hello');
+    await waitFor(() => delivered.length === 1);
 
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
@@ -486,6 +521,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     });
 
     expect(msg).toMatchObject({ roomId: room.id, username: 'alice' });
+    await waitFor(() => delivered.length === 1);
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 
@@ -1440,8 +1476,10 @@ describe('ChatService moderation (real PG)', () => {
     const { svc, room, moderatorId, memberId, transport } = await roomWithMember();
     const received: unknown[] = [];
     transport.subscribe(chatChannel(room.id), () => received.push(true), memberId);
+    await settle();
 
     await svc.removeMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META });
+    await settle();
 
     const afterKick = await db.drizzle.db
       .select()
@@ -1449,6 +1487,7 @@ describe('ChatService moderation (real PG)', () => {
       .where(eq(chatRoomMember.roomId, room.id));
     expect(afterKick.map((m) => m.userId)).not.toContain(memberId);
     transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
+    await settle();
     expect(received).toEqual([]);
     await expect(
       svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META }),
@@ -1775,6 +1814,7 @@ describe('ChatService moderation (real PG)', () => {
     svc.subscribeMessages(null, (event) => received.push(event));
 
     await moderation.deleteMessage(message.id, randomUUID(), NO_CLIENT_META);
+    await waitFor(() => received.length === 1);
 
     expect(received[0]).toMatchObject({ id: message.id, isDeleted: true });
     expect(audit.record).toHaveBeenCalledWith(

@@ -2,10 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import { queue, type PaymentAdapter } from '@openora/core/contracts';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { CreateWithdrawalAddressInput } from '../contract/index.js';
 import {
   mock,
+  makeRealtimeTransport,
   makeEventBus,
   testContext,
   makeAuditWriter,
@@ -66,7 +67,7 @@ function routerWith(payment: Partial<PaymentAdapter> = {}) {
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
     reconciliationQueue: RECONCILIATION_QUEUE,
-    realtime: new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
   });
   return { router, audit, service };
 }

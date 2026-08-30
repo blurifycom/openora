@@ -20,8 +20,9 @@ import {
  * their own per-recipient share. Drives the real POST /chat-command/rain
  * route so the notifications plugin's `chat.rain.distributed` subscriber runs
  * exactly as it would in production. Recipients are marked "online" via the
- * real `RealtimePresence` the test app binds (`InProcessRealtimeTransport`) -
- * no SSE connection needed, see realtime-transport.ts.
+ * real `RealtimePresence` the test app binds (`RedisPubSubRealtimeTransport`'s
+ * process-local presence store) - no SSE connection needed, see
+ * redis-pubsub-realtime-transport.ts.
  */
 
 let db: TestDb;
