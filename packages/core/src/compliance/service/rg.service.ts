@@ -22,8 +22,15 @@ import type {
   RgInitiator,
   User,
   ClientMeta,
+  LimitType,
+  ExchangeRateReader,
 } from '@openora/core/contracts';
-import { userLimit, rgExclusion } from '../schema/index.js';
+import { userLimit, rgExclusion, SESSION_LIMIT_CURRENCY } from '../schema/index.js';
+// Read-only cross-module `/schema` subpath (module-structure.md), not a pam import - the
+// same seam `KycVerificationService` already uses to read `player.currency` (see
+// kyc.service.ts). Resolving a limit's currency needs the player's own currency; adding
+// a new port for a single-column read here would just duplicate a seam that exists.
+import { player } from '@openora/core/pam/schema/profile';
 import { LimitNotFoundError } from './compliance.service.js';
 import type {
   Limit,
@@ -57,16 +64,51 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
 
 export type LimitRow = typeof userLimit.$inferSelect;
 
+// The DB always carries a non-null currency (SESSION_LIMIT_CURRENCY sentinel for the
+// session type, keeping the widened unique index's NOT NULL invariant intact); the wire
+// never shows that sentinel. Both directions live together so no write/read boundary can
+// apply one without the other.
+export function toDbCurrency(type: LimitType, currency: string | null): string {
+  return type === 'session' ? SESSION_LIMIT_CURRENCY : (currency as string);
+}
+// `currency` may still be null on the wire for a money-type row that has not been
+// touched (and therefore not resolved, see resolveLimitCurrency below) since this
+// column was added - a nullable wire field, not a bug.
+export function toWireCurrency(type: LimitType, currency: string | null): string | null {
+  return type === 'session' ? null : currency;
+}
+
+// A `LimitRow` whose currency is known: either the session sentinel, or a money-type
+// row that has been resolved (see resolveLimitCurrency/resolveLimitCurrencyInTx below).
+export type ResolvedLimitRow = Omit<LimitRow, 'currency'> & { currency: string };
+
 // A raise and a removal both weaken the protection; a first limit and a lower one do
 // not. Shared by the player's own classification (RgSelfServiceService.upsertLimit,
 // where only a lower/first write applies immediately) and the admin override (below,
 // where a raise is refused outright rather than parked).
-export function isWeakening(
-  row: LimitRow,
-  next: Pick<UpsertLimitInput, 'amount' | 'minutes'>,
-): boolean {
+//
+// Money-type limits compare in the ROW's currency: same currency is a cheap direct
+// `moneyCompare`; a different currency is converted via `rates.convert` before
+// comparing. Fails CLOSED - if the rate is unavailable (or too stale, which the reader
+// expresses the same way, as `null`), this returns `true` (treat as weakening) rather
+// than letting an unverified raise through. This never throws: both callers run inside
+// the same DB transaction/advisory lock that also performs the write, and "conservatively
+// refuse" is a valid return value there, not an exceptional one.
+export async function isWeakening(
+  row: ResolvedLimitRow,
+  next: Pick<UpsertLimitInput, 'amount' | 'minutes' | 'currency'>,
+  rates: ExchangeRateReader,
+): Promise<boolean> {
   if (next.amount !== null && row.amount !== null) {
-    return moneyCompare(next.amount, row.amount) > 0;
+    const nextCurrency = toDbCurrency(row.type as LimitType, next.currency);
+    if (nextCurrency === row.currency) {
+      return moneyCompare(next.amount, row.amount) > 0;
+    }
+    const converted = await rates.convert(next.amount, nextCurrency, row.currency);
+    if (converted === null) {
+      return true;
+    }
+    return moneyCompare(converted, row.amount) > 0;
   }
   if (next.minutes !== null && row.minutes !== null) {
     return next.minutes > row.minutes;
@@ -132,6 +174,7 @@ export const NO_PENDING_CHANGE = {
   pendingKind: null,
   pendingAmount: null,
   pendingMinutes: null,
+  pendingCurrency: null,
   pendingRequestedAt: null,
   pendingEffectiveAt: null,
   pendingExpiresAt: null,
@@ -140,6 +183,78 @@ export const NO_PENDING_CHANGE = {
 // exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
 const SWEEP_CONCURRENCY = 10;
 
+/**
+ * A pre-existing `user_limit` row (see schema/index.ts) whose currency has never been
+ * resolved, and whose player record cannot be found to resolve it from. Fails the
+ * operation closed - the same rule this module already applies to a missing exchange
+ * rate (`RgRateUnavailableError`, rg-monitoring.service.ts): an unresolvable currency
+ * means the limit cannot be safely evaluated or classified, so the caller refuses
+ * rather than guessing a default currency.
+ */
+export class RgLimitCurrencyUnresolvedError extends Error {
+  constructor(readonly userId: User['id']) {
+    super(
+      `Cannot resolve a currency for this responsible-gambling limit: no player record found for ${userId}`,
+    );
+    this.name = 'RgLimitCurrencyUnresolvedError';
+  }
+}
+
+/**
+ * Resolves and PERSISTS a pre-existing row's null currency (see schema/index.ts) to the
+ * player's own `player.currency`, the first time anything touches it. Assumes the
+ * caller is ALREADY inside the transaction and advisory lock for this limit's slot
+ * (`limitSlotKey`) and re-reads the row under that lock, so a second caller racing the
+ * first sees the already-resolved value instead of resolving (and writing) it twice.
+ */
+export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow> {
+  if (row.currency !== null) {
+    return row as ResolvedLimitRow;
+  }
+  const [current] = await tx.select().from(userLimit).where(eq(userLimit.id, row.id));
+  if (!current) {
+    throw new LimitNotFoundError(row.id);
+  }
+  if (current.currency !== null) {
+    return current as ResolvedLimitRow;
+  }
+  const [playerRow] = await tx
+    .select({ currency: player.currency })
+    .from(player)
+    .where(eq(player.userId, row.userId));
+  if (!playerRow) {
+    throw new RgLimitCurrencyUnresolvedError(row.userId);
+  }
+  const [updated] = await tx
+    .update(userLimit)
+    .set({ currency: playerRow.currency })
+    .where(eq(userLimit.id, row.id))
+    .returning();
+  return { ...(updated ?? current), currency: playerRow.currency };
+}
+
+/**
+ * Same resolution, for a caller that does NOT already hold the slot's advisory lock
+ * (`RgLimitGate.check`, `RgMonitoringService.evaluateUser`, `RgSelfServiceService.toView`)
+ * - opens its own transaction and takes the lock itself. Never call this from inside an
+ * already-open transaction on the same slot (see `resolveLimitCurrencyInTx` above): a
+ * second connection taking the same advisory lock while the outer transaction still
+ * holds it would self-deadlock.
+ */
+export async function resolveLimitCurrency(
+  drizzle: DrizzleService,
+  row: LimitRow,
+): Promise<ResolvedLimitRow> {
+  if (row.currency !== null) {
+    return row as ResolvedLimitRow;
+  }
+  return drizzle.db.transaction((tx) =>
+    withAdvisoryXactLock(tx, limitSlotKey(row.userId, row.type, row.period), () =>
+      resolveLimitCurrencyInTx(tx, row),
+    ),
+  );
+}
+
 function addMonths(from: Date, months: number): Date {
   const d = new Date(from);
   d.setMonth(d.getMonth() + months);
@@ -147,7 +262,10 @@ function addMonths(from: Date, months: number): Date {
 }
 
 function toLimitDto(row: typeof userLimit.$inferSelect) {
-  return serializeRow(row, { dateFields: ['createdAt'] });
+  return {
+    ...serializeRow(row, { dateFields: ['createdAt'] }),
+    currency: toWireCurrency(row.type as LimitType, row.currency),
+  };
 }
 
 function toExclusionDto(row: typeof rgExclusion.$inferSelect) {
@@ -164,6 +282,7 @@ export type RgServiceDeps = {
   directory?: AdminUserDirectory | null;
   identityReader: IdentityReader;
   templateRenderer?: EmailTemplateRenderer | null;
+  rates: ExchangeRateReader;
 };
 
 /**
@@ -183,6 +302,7 @@ export class RgService {
   private readonly directory: AdminUserDirectory | null;
   private readonly identityReader: IdentityReader;
   private readonly templateRenderer: EmailTemplateRenderer | null;
+  private readonly rates: ExchangeRateReader;
 
   constructor(deps: RgServiceDeps) {
     this.drizzle = deps.drizzle;
@@ -192,6 +312,7 @@ export class RgService {
     this.directory = deps.directory ?? null;
     this.identityReader = deps.identityReader;
     this.templateRenderer = deps.templateRenderer ?? null;
+    this.rates = deps.rates;
   }
 
   /**
@@ -225,6 +346,7 @@ export class RgService {
   ): Promise<Limit> {
     // Same critical section the player's path takes, so an admin write and a player
     // request for the same limit cannot interleave into a state neither of them chose.
+    const dbCurrency = toDbCurrency(input.type, input.currency);
     const { prior, row } = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const [existing] = await tx
@@ -238,26 +360,48 @@ export class RgService {
             ),
           )
           .limit(1);
-        if (existing && isWeakening(existing, input)) {
-          throw new LimitRaiseNotAllowedError(existing, input);
+        if (existing) {
+          // Resolve BEFORE classifying: a pre-existing row's null currency must be known
+          // to compare it against `input.currency`, and this is the one place that
+          // touches it under the slot's lock, so it also persists here.
+          const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+          if (await isWeakening(resolvedExisting, input, this.rates)) {
+            throw new LimitRaiseNotAllowedError(existing, input);
+          }
         }
-        const written = findOneOrThrow(
-          await tx
-            .insert(userLimit)
-            .values({
-              userId,
-              type: input.type,
-              amount: input.amount,
-              minutes: input.minutes,
-              period: input.period,
-            })
-            .onConflictDoUpdate({
-              target: [userLimit.userId, userLimit.type, userLimit.period],
-              set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
-            })
-            .returning(),
-          new LimitNotFoundError(userId),
-        );
+        // Not `.onConflictDoUpdate` on the widened (userId, type, period, currency) key:
+        // a write that also CHANGES the currency has no conflict on that key against the
+        // existing (different-currency) row, so an upsert would INSERT a second row
+        // instead of updating the one found above. `existing` was already read under this
+        // same advisory lock, so branch explicitly and pin the update to its id.
+        const written = existing
+          ? findOneOrThrow(
+              await tx
+                .update(userLimit)
+                .set({
+                  amount: input.amount,
+                  minutes: input.minutes,
+                  currency: dbCurrency,
+                  ...NO_PENDING_CHANGE,
+                })
+                .where(eq(userLimit.id, existing.id))
+                .returning(),
+              new LimitNotFoundError(userId),
+            )
+          : findOneOrThrow(
+              await tx
+                .insert(userLimit)
+                .values({
+                  userId,
+                  type: input.type,
+                  amount: input.amount,
+                  minutes: input.minutes,
+                  currency: dbCurrency,
+                  period: input.period,
+                })
+                .returning(),
+              new LimitNotFoundError(userId),
+            );
         return { prior: existing, row: written };
       }),
     );

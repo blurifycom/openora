@@ -110,17 +110,19 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       type: 'deposit',
       amount: '500',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'initial deposit limit',
       confirm: true,
     });
     expect(depositRes.status).toBe(200);
-    expect((await readJson(depositRes)).amount).toBe('500.00');
+    expect((await readJson(depositRes)).amount).toBe('500.000000000000000000');
 
     const sessionRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'session',
       amount: null,
       minutes: 60,
+      currency: null,
       period: 'session',
       reason: 'initial session-time limit',
       confirm: true,
@@ -147,6 +149,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       type: 'deposit',
       amount: '500',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'operator lowered on a support request',
       confirm: true,
@@ -185,6 +188,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       type: 'deposit',
       amount: '100',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
     });
     expect(selfRes.status).toBe(200);
@@ -617,6 +621,7 @@ describe('RG authz negatives', () => {
       type: 'deposit',
       amount: '100',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'x',
       confirm: true,
@@ -684,6 +689,7 @@ describe('RG monitoring (queue-based)', () => {
       type: 'deposit',
       amount: '100',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'initial limit',
       confirm: true,
@@ -752,6 +758,7 @@ describe('RG audit trail', () => {
       type: 'deposit',
       amount: '250',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'initial limit',
       confirm: true,
@@ -858,6 +865,7 @@ describe('RG audit trail', () => {
       type: 'wager',
       amount: '300',
       minutes: null,
+      currency: 'USD',
       period: 'weekly',
       reason: 'initial limit',
       confirm: true,
@@ -896,6 +904,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       type: 'deposit',
       amount: '500',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'initial limit',
       confirm: true,
@@ -906,6 +915,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       type: 'deposit',
       amount: '750',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'initial limit',
       confirm: true,
@@ -968,6 +978,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       type: 'deposit',
       amount: '300',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
       reason: 'initial limit',
       confirm: true,

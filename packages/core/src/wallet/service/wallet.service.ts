@@ -793,11 +793,11 @@ export class WalletService {
    * instead, via the `wallet.deposit.completed` evaluation the credit already triggers.
    * The player-facing copy on the deposit-limit card has to say so.
    */
-  private async assertWithinRgDepositLimit(userId: User['id'], amount: string) {
+  private async assertWithinRgDepositLimit(userId: User['id'], amount: string, currency: string) {
     if (!this.rgLimits) {
       return;
     }
-    const decision = await this.rgLimits.checkDeposit(userId, amount);
+    const decision = await this.rgLimits.checkDeposit(userId, amount, currency);
     if (!decision.allowed) {
       throw new RgLimitExceededError('deposit_limit_exceeded', decision);
     }
@@ -940,7 +940,7 @@ export class WalletService {
 
     // AFTER the replay short-circuit: a retry of a deposit that already completed must
     // not be counted a second time against the limit and refused for it.
-    await this.assertWithinRgDepositLimit(userId, amount);
+    await this.assertWithinRgDepositLimit(userId, amount, currency);
 
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 

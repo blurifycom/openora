@@ -5,6 +5,7 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   AdminUserDirectory,
+  ExchangeRateReader,
   KycAdapter,
   KycWebhookVerifier,
   LoginEnforcementPort,
@@ -61,6 +62,20 @@ beforeEach(async () => {
 const guardAllowing = (allow: readonly string[]) =>
   makeAdminGuard({ allow, caller: { userId: CALLER } });
 
+// Every limit written by this file is USD-only, so an identity-only fake is enough:
+// same-currency conversion is a no-op and this suite never exercises a cross-currency
+// path (see rg.service.int.test.ts / rg-monitoring.service.int.test.ts for that).
+function identityRates(): ExchangeRateReader {
+  return mock<ExchangeRateReader>({
+    getRate: vi.fn(async (from: string, to: string) =>
+      from === to ? { rate: '1', asOf: new Date().toISOString() } : null,
+    ),
+    convert: vi.fn(async (amount: string, from: string, to: string) =>
+      from === to ? amount : null,
+    ),
+  });
+}
+
 function build(adminGuard: AdminGuard) {
   const events = makeEventBus();
   const enforcement = mock<LoginEnforcementPort>({
@@ -74,8 +89,9 @@ function build(adminGuard: AdminGuard) {
     email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
     directory: mock<AdminUserDirectory>({ lookupPlayers: vi.fn(async () => []) }),
     identityReader: makeIdentityReader(),
+    rates: identityRates(),
   });
-  const rgMonitoring = new RgMonitoringService({ drizzle: db.drizzle });
+  const rgMonitoring = new RgMonitoringService({ drizzle: db.drizzle, rates: identityRates() });
   const rgSelfService = new RgSelfServiceService({
     drizzle: db.drizzle,
     events,
@@ -83,6 +99,7 @@ function build(adminGuard: AdminGuard) {
     monitoring: rgMonitoring,
     identityReader: makeIdentityReader(),
     config: defaultResponsibleGamingConfig,
+    rates: identityRates(),
   });
   const router = createComplianceRouter({
     compliance: mock<ComplianceService>({}),
@@ -137,6 +154,7 @@ describe('compliance RG router authz', () => {
           type: 'deposit',
           amount: '100',
           minutes: null,
+          currency: 'USD',
           period: 'daily',
           reason: 'x',
           confirm: true,
@@ -196,6 +214,7 @@ describe('compliance RG router writes', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'first limit on file',
         confirm: true,
@@ -226,6 +245,7 @@ describe('compliance RG router writes', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'initial limit',
         confirm: true,
@@ -240,6 +260,7 @@ describe('compliance RG router writes', () => {
         type: 'deposit',
         amount: '40',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'reducing exposure',
         confirm: true,
@@ -262,6 +283,7 @@ describe('compliance RG router writes', () => {
         type: 'deposit',
         amount: '40',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'initial limit',
         confirm: true,
@@ -277,6 +299,7 @@ describe('compliance RG router writes', () => {
           type: 'deposit',
           amount: '100',
           minutes: null,
+          currency: 'USD',
           period: 'daily',
           reason: 'trying to raise it',
           confirm: true,
@@ -378,6 +401,7 @@ describe('compliance RG router writes', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'for the section read-back test',
         confirm: true,
@@ -395,20 +419,20 @@ describe('compliance RG router writes', () => {
     const { router } = build(guardAllowing(['compliance:view']));
     await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
     await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '500', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
 
     const section = await call(router.getRgSection, { userId: USER }, { context: CTX });
 
     expect(section.limits[0]).toMatchObject({
-      amount: '100.00',
-      pendingAmount: '500.00',
+      amount: '100.000000000000000000',
+      pendingAmount: '500.000000000000000000',
       pendingStatus: 'waiting',
     });
   });
@@ -424,7 +448,7 @@ describe('compliance router - player self-service', () => {
     const { router } = build(guardAllowing([]));
     await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
 
@@ -438,24 +462,28 @@ describe('compliance router - player self-service', () => {
 
     const view = await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
 
-    expect(view).toMatchObject({ userId: USER, amount: '100.00', pendingStatus: null });
+    expect(view).toMatchObject({
+      userId: USER,
+      amount: '100.000000000000000000',
+      pendingStatus: null,
+    });
   });
 
   it('deleteLimit files a removal request and leaves the limit standing', async () => {
     const { router } = build(guardAllowing([]));
     const created = await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
 
     const view = await call(router.deleteLimit, { id: created.id }, { context: playerCtx(USER) });
 
-    expect(view).toMatchObject({ amount: '100.00', pendingKind: 'removal' });
+    expect(view).toMatchObject({ amount: '100.000000000000000000', pendingKind: 'removal' });
     expect(await limitsOf(USER)).toHaveLength(1);
   });
 
@@ -463,12 +491,12 @@ describe('compliance router - player self-service', () => {
     const { router } = build(guardAllowing([]));
     await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
     const raised = await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '500', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
 
@@ -481,12 +509,12 @@ describe('compliance router - player self-service', () => {
     const { router } = build(guardAllowing([]));
     await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
     const raised = await call(
       router.upsertLimit,
-      { type: 'deposit', amount: '500', minutes: null, period: 'daily' },
+      { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
 

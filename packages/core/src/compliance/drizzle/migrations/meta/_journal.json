@@ -43,6 +43,13 @@
       "when": 1787825608428,
       "tag": "0005_familiar_catseye",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788119305733,
+      "tag": "0006_peaceful_jack_flag",
+      "breakpoints": true
     }
   ]
 }

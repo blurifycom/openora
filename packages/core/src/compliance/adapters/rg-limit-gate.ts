@@ -1,13 +1,15 @@
 import { eq, and, ne } from 'drizzle-orm';
 import { moneyAdd, moneyCompare, type DrizzleService } from '@openora/core/server';
 import type {
+  ExchangeRateReader,
   LimitPeriod,
   LimitType,
   RgLimitDecision,
   RgLimitsPort,
 } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
-import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import { RgMonitoringService, RgRateUnavailableError } from '../service/rg-monitoring.service.js';
+import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from '../service/rg.service.js';
 import { periodWindow } from '../service/rg-eval.js';
 
 /**
@@ -43,20 +45,22 @@ export class RgLimitGate implements RgLimitsPort {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly monitoring: RgMonitoringService,
+    private readonly rates: ExchangeRateReader,
   ) {}
 
-  checkDeposit(userId: string, amount: string): Promise<RgLimitDecision> {
-    return this.check(userId, TYPES_BY_MOVE.deposit, amount);
+  checkDeposit(userId: string, amount: string, currency: string): Promise<RgLimitDecision> {
+    return this.check(userId, TYPES_BY_MOVE.deposit, amount, currency);
   }
 
-  checkWager(userId: string, amount: string): Promise<RgLimitDecision> {
-    return this.check(userId, TYPES_BY_MOVE.wager, amount);
+  checkWager(userId: string, amount: string, currency: string): Promise<RgLimitDecision> {
+    return this.check(userId, TYPES_BY_MOVE.wager, amount, currency);
   }
 
   private async check(
     userId: string,
     types: readonly LimitType[],
     amount: string,
+    amountCurrency: string,
   ): Promise<RgLimitDecision> {
     // Money limits only: the session-time limit is minutes, and the sweep owns it.
     const rows = await this.drizzle.db
@@ -74,15 +78,66 @@ export class RgLimitGate implements RgLimitsPort {
       // confirmed yet is deliberately not read here - that is the whole point of the
       // cool-down.
       const limit = row.amount;
-      // TODO: currency. `spendFor` sums across every currency the player holds and this
-      // compares the result to a currency-less limit, so a multi-currency player is
-      // gated on an arithmetically wrong total. Fix at the source (add
-      // `user_limit.currency`, move the unique index to
-      // `(userId, type, period, currency)`, filter both sums by it) - never by guessing
-      // a currency here, which breaks silently the moment a player transacts outside it.
       const { from } = periodWindow(period, now);
-      const used = await this.monitoring.spendFor(userId, row.type as LimitType, from);
-      if (moneyCompare(moneyAdd(used, amount), limit) > 0) {
+
+      // Fail-closed sentinel shared by both conversions below: we don't know the true
+      // usage, so report it as fully consumed. `moneyAdd(used, amount) > limit` then
+      // holds for any positive attempted amount, which is what actually enforces the
+      // refusal via the comparison at the end of this loop - no new RgLimitDecision
+      // variant needed.
+      const rateUnavailable = (): Extract<RgLimitDecision, { allowed: false }> => ({
+        allowed: false,
+        limitType: row.type as LimitType,
+        period,
+        limit,
+        used: limit,
+      });
+
+      // A pre-existing row's null currency resolves (and persists) here on first touch -
+      // see resolveLimitCurrency in rg.service.ts. Fails the move closed the same way a
+      // missing exchange rate does: an unresolvable currency means this limit cannot be
+      // safely evaluated at all.
+      let rowCurrency: string;
+      try {
+        rowCurrency = (await resolveLimitCurrency(this.drizzle, row)).currency;
+      } catch (err) {
+        if (!(err instanceof RgLimitCurrencyUnresolvedError)) {
+          throw err;
+        }
+        return rateUnavailable();
+      }
+
+      // The historical spend, converted into the limit's currency by `spendFor` itself
+      // (grouped per source-currency, fail-closed on a missing rate).
+      let used: string;
+      try {
+        used = await this.monitoring.spendFor(
+          userId,
+          row.type as LimitType,
+          period,
+          from,
+          rowCurrency,
+        );
+      } catch (err) {
+        if (!(err instanceof RgRateUnavailableError)) {
+          throw err;
+        }
+        return rateUnavailable();
+      }
+
+      // The NEW amount being attempted also has to land in the limit's currency before
+      // it is added to `used` - without this, a 100 BTC deposit against a 0-history 100
+      // USD limit would still pass on `used` alone. Same-currency skips the conversion
+      // call; a missing/stale rate refuses the move (fail-closed), same as `spendFor`.
+      const attempted =
+        amountCurrency === rowCurrency
+          ? amount
+          : await this.rates.convert(amount, amountCurrency, rowCurrency);
+      if (attempted === null) {
+        return rateUnavailable();
+      }
+
+      if (moneyCompare(moneyAdd(used, attempted), limit) > 0) {
         return {
           allowed: false,
           limitType: row.type as LimitType,

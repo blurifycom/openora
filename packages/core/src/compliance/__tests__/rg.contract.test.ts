@@ -16,6 +16,7 @@ describe('SetPlayerLimitInputSchema', () => {
     type: 'deposit' as const,
     amount: '100',
     minutes: null,
+    currency: 'USD',
     period: 'daily' as const,
     reason: 'x',
     confirm: true as const,
@@ -23,6 +24,36 @@ describe('SetPlayerLimitInputSchema', () => {
 
   it('accepts a valid override with a reason and confirm', () => {
     expect(SetPlayerLimitInputSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('accepts a session-type override with a null currency', () => {
+    expect(
+      SetPlayerLimitInputSchema.safeParse({
+        ...base,
+        type: 'session' as const,
+        amount: null,
+        minutes: 60,
+        currency: null,
+        period: 'session' as const,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a money-type override with a null currency', () => {
+    expect(SetPlayerLimitInputSchema.safeParse({ ...base, currency: null }).success).toBe(false);
+  });
+
+  it('rejects a session-type override with a non-null currency', () => {
+    expect(
+      SetPlayerLimitInputSchema.safeParse({
+        ...base,
+        type: 'session' as const,
+        amount: null,
+        minutes: 60,
+        currency: 'USD',
+        period: 'session' as const,
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects a missing reason', () => {

@@ -118,7 +118,7 @@ export class WalletCommandsService implements WalletCommands {
     // `win` and `loss` stay ungated for the ADR-0032 reason: they settle a round that was
     // already staked, and refusing them strands it.
     if (type === 'bet' && this.rgLimits) {
-      const decision = await this.rgLimits.checkWager(userId, amount);
+      const decision = await this.rgLimits.checkWager(userId, amount, currency ?? row.currency);
       if (!decision.allowed) {
         throw new RgLimitExceededError('wager_limit_exceeded', decision);
       }

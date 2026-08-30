@@ -82,8 +82,8 @@ export class RgLimitExceededError extends Error {
  * refuses the move rather than letting it through.
  */
 export type RgLimitsPort = {
-  checkDeposit(userId: string, amount: string): Promise<RgLimitDecision>;
-  checkWager(userId: string, amount: string): Promise<RgLimitDecision>;
+  checkDeposit(userId: string, amount: string, currency: string): Promise<RgLimitDecision>;
+  checkWager(userId: string, amount: string, currency: string): Promise<RgLimitDecision>;
 };
 
 export const RG_LIMITS: Token<RgLimitsPort> = createToken<RgLimitsPort>('RG_LIMITS');

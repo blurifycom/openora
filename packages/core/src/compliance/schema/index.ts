@@ -22,6 +22,8 @@ import {
   limitPeriods,
   LIMIT_CHANGE_KINDS,
   geoRuleActions,
+  MONEY_SCALE,
+  MONEY_PRECISION,
   type KycRiskSignals,
   type KycCheckResult,
 } from '@openora/core/contracts';
@@ -36,6 +38,14 @@ export const rgFlagType = pgEnum('rg_flag_type', RG_FLAG_TYPES);
 export const rgFlagStatus = pgEnum('rg_flag_status', RG_FLAG_STATUSES);
 export const limitChangeKind = pgEnum('limit_change_kind', LIMIT_CHANGE_KINDS);
 
+// A session-type `user_limit` row is measured in minutes, not money, and carries no real
+// currency. It always gets this sentinel rather than NULL, which keeps it participating
+// normally in the widened unique index below - Postgres treats every NULL as distinct in
+// a unique index, so a NULL session currency would let a player open unlimited duplicate
+// session-limit rows, which is exactly the thing this table must never allow. The
+// sentinel never reaches the wire (see toDbCurrency/toWireCurrency in rg.service.ts).
+export const SESSION_LIMIT_CURRENCY = 'SESSION';
+
 export const userLimit = pgTable(
   'user_limit',
   {
@@ -44,21 +54,38 @@ export const userLimit = pgTable(
     type: text({ enum: limitTypes }).notNull(),
     // Exactly one of the two is set, discriminated by `type`: money-type limits
     // (deposit/wager/loss) carry amount; the session-type limit carries minutes.
-    amount: decimal({ precision: 18, scale: 2 }),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     minutes: integer(),
+    // The currency `amount` (and `pendingAmount`) is denominated in. The session-type
+    // limit always carries the SESSION_LIMIT_CURRENCY sentinel (see above). A money-type
+    // limit set through this platform's currency-aware contract always carries the real
+    // ticker the player set - NULL here means only one thing: a row written BEFORE this
+    // column existed, whose currency has not been resolved yet. It is resolved lazily,
+    // to the player's own currency, and PERSISTED the first time anything reads or writes
+    // it (see resolveLimitCurrency/resolveLimitCurrencyInTx in rg.service.ts) rather than
+    // backfilled in bulk at migration time: a blanket backfill (eg to USD) would silently
+    // redefine what a player's own limit already meant for every currency that isn't USD.
+    // All spend/attempted-amount conversion (RgMonitoringService.spendFor,
+    // RgLimitGate.check) converts INTO this currency once resolved; an unresolvable
+    // currency (no player record) fails the money move closed rather than guessing one.
+    currency: text(),
     period: text({ enum: limitPeriods }).notNull(),
     // A player's request to WEAKEN this limit (raise it or drop it), parked here rather
-    // than in a table of its own: `(userId, type, period)` is already unique, so a limit
-    // can carry at most one open request. `amount` above stays the effective limit the
-    // whole time a request is pending - nothing here is ever promoted lazily on read,
+    // than in a table of its own: `(userId, type, period, currency)` is already unique, so
+    // a limit can carry at most one open request. `amount` above stays the effective limit
+    // the whole time a request is pending - nothing here is ever promoted lazily on read,
     // and the sweep that expires a stale request never touches `amount` either. The
     // only thing that moves a limit upward is the player confirming, in
     // RgSelfServiceService.confirmPendingChange.
     pendingKind: limitChangeKind(),
     // Target value of an `increase`, polymorphic by `type` exactly like amount/minutes
     // above. Both null for a `removal` (there is no target - the row goes away).
-    pendingAmount: decimal({ precision: 18, scale: 2 }),
+    pendingAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     pendingMinutes: integer(),
+    // Requested currency for an `increase`, alongside pendingAmount: a player may raise
+    // the amount AND change the currency in one request, and both must apply together on
+    // confirm. Null for a `removal` (no target) and for a session-type limit (no currency).
+    pendingCurrency: text(),
     pendingRequestedAt: timestamp({ withTimezone: true }),
     // When the cool-down has been served and the player may confirm.
     pendingEffectiveAt: timestamp({ withTimezone: true }),
@@ -70,7 +97,12 @@ export const userLimit = pgTable(
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    uniqueIndex('user_limit_user_id_type_period_key').on(t.userId, t.type, t.period),
+    uniqueIndex('user_limit_user_id_type_period_currency_key').on(
+      t.userId,
+      t.type,
+      t.period,
+      t.currency,
+    ),
     index('user_limit_user_id_idx').on(t.userId),
     // The expiry sweep scans by deadline across every player, not by player.
     index('user_limit_pending_expires_at_idx').on(t.pendingExpiresAt),

@@ -5,6 +5,7 @@ import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   CACHE,
+  EXCHANGE_RATE_READER,
   GEO_IP_ADAPTER,
   GEO_CHECK_COMMANDS,
   JOB_QUEUE,
@@ -67,7 +68,7 @@ const KycDecisionSyncJobSchema = z.object({
 
 export default {
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
+  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit', 'exchange-rate'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
@@ -75,7 +76,10 @@ export default {
     // PLAY_ELIGIBILITY (ADR-0032). Compliance owns `user_limit`, so compliance binds it;
     // wallet and gaming resolve it optionally, since an install without this module has
     // no limits to enforce.
-    ctx.provide(RG_LIMITS, (c) => new RgLimitGate(c.get(DRIZZLE), monitoring(c)));
+    ctx.provide(
+      RG_LIMITS,
+      (c) => new RgLimitGate(c.get(DRIZZLE), monitoring(c), c.get(EXCHANGE_RATE_READER)),
+    );
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
@@ -99,6 +103,7 @@ export default {
       (monitorRef ??= new RgMonitoringService({
         drizzle: c.get(DRIZZLE),
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
+        rates: c.get(EXCHANGE_RATE_READER),
       }));
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
@@ -245,6 +250,7 @@ export default {
         email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
         directory,
         templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
+        rates: c.get(EXCHANGE_RATE_READER),
       });
       rgRef = rg;
       const rgMonitoring = monitoring(c);
@@ -255,6 +261,7 @@ export default {
         monitoring: rgMonitoring,
         identityReader: c.get(IDENTITY_READER),
         config: platformConfig?.responsibleGambling ?? defaultResponsibleGamingConfig,
+        rates: c.get(EXCHANGE_RATE_READER),
       });
       selfServiceRef = rgSelfService;
 

@@ -10,6 +10,7 @@ import {
   RgFlagTypeSchema,
   RgFlagStatusSchema,
   MoneyAmountSchema,
+  CurrencyTickerInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
@@ -17,6 +18,7 @@ import {
   LimitViewSchema,
   isConsistentLimit,
   isConsistentLimitAmount,
+  isConsistentLimitCurrency,
 } from './limits.js';
 
 export const RgExclusionSchema = z.object({
@@ -49,6 +51,7 @@ export const SetPlayerLimitInputSchema = z
     type: LimitTypeSchema,
     amount: MoneyAmountSchema.nullable(),
     minutes: z.number().int().positive().nullable(),
+    currency: CurrencyTickerInputSchema.nullable(),
     period: LimitPeriodSchema,
     reason: z.string().trim().min(1),
     confirm: z.literal(true),
@@ -60,6 +63,10 @@ export const SetPlayerLimitInputSchema = z
   .refine(isConsistentLimitAmount, {
     message: "type 'session' requires minutes (not amount); other types require amount",
     path: ['amount'],
+  })
+  .refine(isConsistentLimitCurrency, {
+    message: "type 'session' requires no currency; other types require one",
+    path: ['currency'],
   });
 export type SetPlayerLimitInput = z.infer<typeof SetPlayerLimitInputSchema>;
 

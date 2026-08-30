@@ -1,6 +1,7 @@
 import {
   DrizzleService,
   assertOwnership,
+  createLogger,
   findOneOrThrow,
   makeNotFoundError,
   moneyCeilToScale,
@@ -16,6 +17,7 @@ import {
 import { and, eq, inArray, isNotNull, isNull, lte } from 'drizzle-orm';
 import type {
   ClientMeta,
+  ExchangeRateReader,
   IdentityReader,
   LimitPeriod,
   LimitType,
@@ -23,6 +25,7 @@ import type {
   ResponsibleGamingConfig,
   User,
 } from '@openora/core/contracts';
+import { MONEY_SCALE } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
 import { LimitNotFoundError, LimitOwnershipError } from './compliance.service.js';
 import {
@@ -30,9 +33,14 @@ import {
   RgService,
   limitSlotKey,
   isWeakening,
+  toDbCurrency,
+  toWireCurrency,
+  resolveLimitCurrency,
+  resolveLimitCurrencyInTx,
+  RgLimitCurrencyUnresolvedError,
   type LimitRow,
 } from './rg.service.js';
-import { RgMonitoringService } from './rg-monitoring.service.js';
+import { RgMonitoringService, RgRateUnavailableError } from './rg-monitoring.service.js';
 import { periodWindow, pendingChangeStatus, thresholdPct } from './rg-eval.js';
 import type {
   LimitView,
@@ -43,12 +51,16 @@ import type {
   UpsertLimitInput,
 } from '../contract/index.js';
 
+const logger = createLogger('compliance-rg-self-service');
+
 const HOUR_MS = 60 * 60 * 1000;
 
-// Matches userLimit.amount's column scale (numeric(18,2)) - see schema/index.ts. `used`/
-// `remaining` are rounded to this before they reach LimitView so every consumer gets the
-// same scale `amount` is already at, instead of the MONEY_SCALE(18) the ledger sum carries.
-const RG_LIMIT_MONEY_SCALE = 2;
+// `user_limit.amount`/`pendingAmount` are numeric(MONEY_PRECISION, MONEY_SCALE) - the
+// platform-wide money scale (18dp), same as every other money column. `used`/`remaining`
+// are ceil/floor-rounded to this scale before they reach LimitView; at MONEY_SCALE this
+// is close to a no-op against the ledger sum's own precision, but it still protects
+// against any rounding noise introduced by FX conversion in spendFor.
+const RG_LIMIT_MONEY_SCALE = MONEY_SCALE;
 
 // The admin schema requires a non-empty reason and the audit trail wants one; a player
 // clicking a self-service button supplies none, so the reason IS that fact.
@@ -87,6 +99,7 @@ export type RgSelfServiceDeps = {
   monitoring: RgMonitoringService;
   identityReader: IdentityReader;
   config: ResponsibleGamingConfig;
+  rates: ExchangeRateReader;
 };
 
 /**
@@ -109,6 +122,7 @@ export class RgSelfServiceService {
   private readonly monitoring: RgMonitoringService;
   private readonly identityReader: IdentityReader;
   private readonly config: ResponsibleGamingConfig;
+  private readonly rates: ExchangeRateReader;
 
   constructor(deps: RgSelfServiceDeps) {
     this.drizzle = deps.drizzle;
@@ -117,6 +131,7 @@ export class RgSelfServiceService {
     this.monitoring = deps.monitoring;
     this.identityReader = deps.identityReader;
     this.config = deps.config;
+    this.rates = deps.rates;
   }
 
   /** Limits with their usage and any pending request, plus the exclusions in force. */
@@ -162,28 +177,56 @@ export class RgSelfServiceService {
           )
           .limit(1);
 
-        if (existing && isWeakening(existing, input)) {
-          return {
-            applied: false as const,
-            existing,
-            row: await this.park(tx, existing, 'increase', input),
-          };
+        if (existing) {
+          // Resolve BEFORE classifying: a pre-existing row's null currency must be
+          // known to compare it against `input.currency`, and this is the one place
+          // that touches it under the slot's lock, so it also persists here.
+          const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+          if (await isWeakening(resolvedExisting, input, this.rates)) {
+            return {
+              applied: false as const,
+              existing,
+              row: await this.park(tx, existing, 'increase', input),
+            };
+          }
         }
         // A first limit or a lower one: it takes effect now, and it voids any request
         // parked on this limit - a directly written limit is the current decision, and
         // leaving a stale request beside it would let the player confirm their way back
         // to an older, weaker value.
-        const row = findOneOrThrow(
-          await tx
-            .insert(userLimit)
-            .values({ ...input, userId })
-            .onConflictDoUpdate({
-              target: [userLimit.userId, userLimit.type, userLimit.period],
-              set: { amount: input.amount, minutes: input.minutes, ...NO_PENDING_CHANGE },
-            })
-            .returning(),
-          new LimitNotFoundError(userId),
-        );
+        //
+        // Not `.onConflictDoUpdate` on the widened (userId, type, period, currency) key:
+        // see rg.service.ts's setPlayerLimit for why a currency-changing write needs an
+        // explicit branch instead. `existing` was already read under this same lock.
+        const dbCurrency = toDbCurrency(input.type, input.currency);
+        const row = existing
+          ? findOneOrThrow(
+              await tx
+                .update(userLimit)
+                .set({
+                  amount: input.amount,
+                  minutes: input.minutes,
+                  currency: dbCurrency,
+                  ...NO_PENDING_CHANGE,
+                })
+                .where(eq(userLimit.id, existing.id))
+                .returning(),
+              new LimitNotFoundError(userId),
+            )
+          : findOneOrThrow(
+              await tx
+                .insert(userLimit)
+                .values({
+                  userId,
+                  type: input.type,
+                  amount: input.amount,
+                  minutes: input.minutes,
+                  currency: dbCurrency,
+                  period: input.period,
+                })
+                .returning(),
+              new LimitNotFoundError(userId),
+            );
         return { applied: true as const, existing: existing ?? null, row };
       }),
     );
@@ -241,7 +284,11 @@ export class RgSelfServiceService {
         const current = await this.reread(tx, limitId, userId);
         return {
           existing: current,
-          row: await this.park(tx, current, 'removal', { amount: null, minutes: null }),
+          row: await this.park(tx, current, 'removal', {
+            amount: null,
+            minutes: null,
+            currency: null,
+          }),
         };
       }),
     );
@@ -273,7 +320,11 @@ export class RgSelfServiceService {
     // a stale value or emitting the event twice.
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
-        const current = await this.reread(tx, limitId, userId);
+        const reread = await this.reread(tx, limitId, userId);
+        // A pending increase filed before this deploy can still carry a null currency
+        // (the migration never touched it) - resolve it here, before the 'raised' branch
+        // below would otherwise persist that same null again via `current.currency`.
+        const current = await resolveLimitCurrencyInTx(tx, reread);
         const now = new Date();
         const status = pendingChangeStatus(current, now);
 
@@ -313,6 +364,7 @@ export class RgSelfServiceService {
             .set({
               amount: current.pendingAmount,
               minutes: current.pendingMinutes,
+              currency: current.pendingCurrency ?? current.currency,
               ...NO_PENDING_CHANGE,
             })
             .where(this.pinnedTo(current))
@@ -516,7 +568,7 @@ export class RgSelfServiceService {
     tx: DrizzleTx,
     existing: LimitRow,
     kind: 'increase' | 'removal',
-    target: { amount: string | null; minutes: number | null },
+    target: { amount: string | null; minutes: number | null; currency: string | null },
   ): Promise<LimitRow> {
     const now = new Date();
     const effectiveAt = new Date(now.getTime() + this.config.limitIncreaseCooldownHours * HOUR_MS);
@@ -530,6 +582,10 @@ export class RgSelfServiceService {
           pendingKind: kind,
           pendingAmount: target.amount,
           pendingMinutes: target.minutes,
+          pendingCurrency:
+            target.currency === null
+              ? null
+              : toDbCurrency(existing.type as LimitType, target.currency),
           pendingRequestedAt: now,
           pendingEffectiveAt: effectiveAt,
           pendingExpiresAt: expiresAt,
@@ -688,15 +744,37 @@ export class RgSelfServiceService {
     // Money-type limits only: the session-time limit is measured in minutes by the
     // session sweep, and has no money spend to report here.
     const isMoneyLimit = row.amount !== null && row.period !== 'session';
-    // Full MONEY_SCALE precision, sourced from a wallet-ledger sum - keep this exact for
-    // the pct/remaining math below and for anything gating on it. Never expose it as-is.
-    const used = isMoneyLimit
-      ? await this.monitoring.spendFor(
+    // Full MONEY_SCALE precision, sourced from a wallet-ledger sum converted into the
+    // limit's own currency - keep this exact for the pct/remaining math below. Never
+    // expose it as-is. Fail-closed to null/null/null (never a 500) when a needed
+    // exchange rate is unavailable - the wire schema already allows all three nullable
+    // for exactly this reason; a player's own limits read must still succeed.
+    let resolvedCurrency = row.currency;
+    let used: string | null = null;
+    if (isMoneyLimit) {
+      try {
+        const resolved = await resolveLimitCurrency(this.drizzle, row);
+        resolvedCurrency = resolved.currency;
+        used = await this.monitoring.spendFor(
           userId,
           row.type as LimitType,
+          row.period as LimitPeriod,
           periodWindow(row.period as LimitPeriod, now).from,
-        )
-      : null;
+          resolved.currency,
+        );
+      } catch (err) {
+        if (
+          !(err instanceof RgRateUnavailableError) &&
+          !(err instanceof RgLimitCurrencyUnresolvedError)
+        ) {
+          throw err;
+        }
+        logger.warn(
+          { err, userId, limitId: row.id },
+          'RG limit usage unavailable: rate or currency missing',
+        );
+      }
+    }
     const limit = row.amount;
     const remaining =
       used !== null && limit !== null
@@ -704,17 +782,17 @@ export class RgSelfServiceService {
           ? '0'
           : moneySubtract(limit, used)
         : null;
-    // `user_limit.amount` is numeric(18,2); `used`/`remaining` are derived at MONEY_SCALE
-    // (18) from a raw ledger sum, so the response otherwise leaks 18 decimal places past
-    // the scale the limit itself is set at. This is a protective control, not a balance
-    // display: `used` rounds UP and `remaining` rounds DOWN so a player is never shown
-    // more headroom than they actually have.
+    // `user_limit.amount` is numeric(MONEY_PRECISION, MONEY_SCALE); `used`/`remaining` are
+    // derived at the same scale from a raw ledger sum, rounded here as a protective
+    // control rather than a balance display: `used` rounds UP and `remaining` rounds DOWN
+    // so a player is never shown more headroom than they actually have.
     return {
       id: base.id,
       userId: base.userId,
       type: base.type,
       amount: base.amount,
       minutes: base.minutes,
+      currency: toWireCurrency(row.type as LimitType, resolvedCurrency),
       period: base.period,
       createdAt: base.createdAt,
       used: used !== null ? moneyCeilToScale(used, RG_LIMIT_MONEY_SCALE) : null,
@@ -731,6 +809,10 @@ export class RgSelfServiceService {
             pendingKind: row.pendingKind,
             pendingAmount: base.pendingAmount,
             pendingMinutes: row.pendingMinutes,
+            pendingCurrency:
+              row.pendingCurrency === null
+                ? null
+                : toWireCurrency(row.type as LimitType, row.pendingCurrency),
             pendingStatus: status,
             pendingEffectiveAt: base.pendingEffectiveAt,
             pendingExpiresAt: base.pendingExpiresAt,
@@ -739,6 +821,7 @@ export class RgSelfServiceService {
             pendingKind: null,
             pendingAmount: null,
             pendingMinutes: null,
+            pendingCurrency: null,
             pendingStatus: null,
             pendingEffectiveAt: null,
             pendingExpiresAt: null,

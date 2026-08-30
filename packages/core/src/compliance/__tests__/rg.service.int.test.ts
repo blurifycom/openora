@@ -1,15 +1,17 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
   AdminPlayerSummary,
   AdminUserDirectory,
   EmailTemplateRenderer,
+  ExchangeRateReader,
   LoginEnforcementPort,
   SendEmailPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { player } from '@openora/core/pam/schema/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
@@ -20,6 +22,11 @@ import {
   ExclusionPeriodNotElapsedError,
   ExclusionNotFoundError,
   LimitRaiseNotAllowedError,
+  isWeakening,
+  resolveLimitCurrency,
+  RgLimitCurrencyUnresolvedError,
+  type LimitRow,
+  type ResolvedLimitRow,
 } from '../service/rg.service.js';
 
 let db: TestDb;
@@ -44,7 +51,20 @@ function makeNotifier(email = 'player@example.com'): Notifier {
   };
 }
 
-function makeService(notifier?: Notifier) {
+// Identity-only unless a test needs a real cross-currency conversion: same-currency is
+// a no-op, and every other pair is unavailable (fails closed).
+function identityRates(): ExchangeRateReader {
+  return mock<ExchangeRateReader>({
+    getRate: vi.fn(async (from: string, to: string) =>
+      from === to ? { rate: '1', asOf: new Date().toISOString() } : null,
+    ),
+    convert: vi.fn(async (amount: string, from: string, to: string) =>
+      from === to ? amount : null,
+    ),
+  });
+}
+
+function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRates()) {
   const events = makeEventBus();
   const enforcement = mock<LoginEnforcementPort>({
     block: vi.fn(async () => undefined),
@@ -58,6 +78,7 @@ function makeService(notifier?: Notifier) {
     directory: notifier?.directory ?? null,
     templateRenderer: notifier?.templateRenderer ?? null,
     identityReader: makeIdentityReader(),
+    rates,
   });
   return { svc, events, enforcement };
 }
@@ -111,6 +132,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'player requested via support',
         confirm: true,
@@ -143,6 +165,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'initial limit',
         confirm: true,
@@ -158,6 +181,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '50',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'reducing exposure',
         confirm: true,
@@ -171,7 +195,10 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(Number(rows[0]?.amount)).toBe(50);
     expect(events.emit).toHaveBeenLastCalledWith(
       'rg.limit.set',
-      expect.objectContaining({ previousAmount: '100.00', reason: 'reducing exposure' }),
+      expect.objectContaining({
+        previousAmount: '100.000000000000000000',
+        reason: 'reducing exposure',
+      }),
     );
   });
 
@@ -186,6 +213,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '50',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'initial limit',
         confirm: true,
@@ -202,6 +230,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
           type: 'deposit',
           amount: '100',
           minutes: null,
+          currency: 'USD',
           period: 'daily',
           reason: 'trying to raise it',
           confirm: true,
@@ -227,6 +256,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'session',
         amount: null,
         minutes: 60,
+        currency: null,
         period: 'session',
         reason: 'initial session limit',
         confirm: true,
@@ -243,6 +273,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
           type: 'session',
           amount: null,
           minutes: 120,
+          currency: null,
           period: 'session',
           reason: 'trying to raise it',
           confirm: true,
@@ -269,6 +300,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '50',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'daily limit',
         confirm: true,
@@ -283,6 +315,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '500',
         minutes: null,
+        currency: 'USD',
         period: 'monthly',
         reason: 'monthly limit',
         confirm: true,
@@ -306,6 +339,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'session',
         amount: null,
         minutes: 60,
+        currency: null,
         period: 'session',
         reason: 'session limit',
         confirm: true,
@@ -329,6 +363,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'notify test',
         confirm: true,
@@ -357,6 +392,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
           type: 'deposit',
           amount: '100',
           minutes: null,
+          currency: 'USD',
           period: 'daily',
           reason: 'swallow failure test',
           confirm: true,
@@ -387,6 +423,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
         type: 'deposit',
         amount: '100',
         minutes: null,
+        currency: 'USD',
         period: 'daily',
         reason: 'initial limit',
         confirm: true,
@@ -403,6 +440,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
           type: 'deposit',
           amount: '50',
           minutes: null,
+          currency: 'USD',
           period: 'daily',
           reason: 'lowering',
           confirm: true,
@@ -417,6 +455,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
           type: 'deposit',
           amount: '80',
           minutes: null,
+          currency: 'USD',
           period: 'daily',
           reason: 'lowering relative to the original 100, but a raise if 50 lands first',
           confirm: true,
@@ -436,6 +475,246 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     if (raiseAttempt.status === 'rejected') {
       expect(raiseAttempt.reason).toBeInstanceOf(LimitRaiseNotAllowedError);
     }
+  });
+});
+
+describe('isWeakening across currencies', () => {
+  const baseRow = (overrides: Partial<LimitRow> = {}): ResolvedLimitRow =>
+    mock<ResolvedLimitRow>({
+      id: randomUUID(),
+      userId: randomUUID(),
+      type: 'deposit',
+      period: 'daily',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      pendingKind: null,
+      pendingAmount: null,
+      pendingMinutes: null,
+      pendingCurrency: null,
+      pendingRequestedAt: null,
+      pendingEffectiveAt: null,
+      pendingExpiresAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...overrides,
+    });
+
+  // A converted 200 EUR -> 50 USD against a 100 USD limit is a LOWERING, not a raise -
+  // proves the classification is against the CONVERTED value, not the raw number.
+  it('classifies a same-number different-currency change by its converted value, not the raw number', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async (amount: string, from: string, to: string) => {
+        if (from === to) {
+          return amount;
+        }
+        if (from === 'EUR' && to === 'USD') {
+          return '50';
+        }
+        return null;
+      }),
+    });
+
+    const row = baseRow({ amount: '100', currency: 'USD' });
+    await expect(
+      isWeakening(row, { amount: '200', minutes: null, currency: 'EUR' }, rates),
+    ).resolves.toBe(false);
+  });
+
+  it('classifies a converted higher value in another currency as a raise', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async (amount: string, from: string, to: string) => {
+        if (from === to) {
+          return amount;
+        }
+        if (from === 'EUR' && to === 'USD') {
+          return '150';
+        }
+        return null;
+      }),
+    });
+
+    const row = baseRow({ amount: '100', currency: 'USD' });
+    await expect(
+      isWeakening(row, { amount: '140', minutes: null, currency: 'EUR' }, rates),
+    ).resolves.toBe(true);
+  });
+
+  // Fail closed: no rate for the cross-currency comparison means the raise/lower
+  // question cannot be answered, so it is treated as a raise (refused) rather than
+  // silently let through. The reader expresses "unavailable" and "too stale" identically
+  // (both `null`), so a null-returning fake covers both cases.
+  it('fails closed to weakening when no rate is available for the cross-currency comparison', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => null),
+    });
+
+    const row = baseRow({ amount: '100', currency: 'USD' });
+    await expect(
+      isWeakening(row, { amount: '1', minutes: null, currency: 'EUR' }, rates),
+    ).resolves.toBe(true);
+  });
+
+  it('same-currency comparison never calls convert', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => {
+        throw new Error('must not be called for a same-currency comparison');
+      }),
+    });
+
+    const row = baseRow({ amount: '100', currency: 'USD' });
+    await expect(
+      isWeakening(row, { amount: '50', minutes: null, currency: 'USD' }, rates),
+    ).resolves.toBe(false);
+    expect(rates.convert).not.toHaveBeenCalled();
+  });
+
+  // The session-time limit is unaffected by any of this: it compares minutes directly
+  // and never reaches the currency/conversion branch at all.
+  it('session-type limits keep comparing minutes directly, currency untouched', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => {
+        throw new Error('a session-type comparison must never call convert');
+      }),
+    });
+
+    const row = baseRow({
+      type: 'session',
+      period: 'session',
+      amount: null,
+      minutes: 60,
+      currency: 'SESSION',
+    });
+    await expect(
+      isWeakening(row, { amount: null, minutes: 120, currency: null }, rates),
+    ).resolves.toBe(true);
+    await expect(
+      isWeakening(row, { amount: null, minutes: 30, currency: null }, rates),
+    ).resolves.toBe(false);
+    expect(rates.convert).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
+  async function insertPlayer(userId: string, currency: string) {
+    await db.drizzle.db.insert(player).values({ userId, currency });
+  }
+
+  async function insertNullCurrencyLimit(userId: string, overrides: Partial<LimitRow> = {}) {
+    const [row] = await db.drizzle.db
+      .insert(userLimit)
+      .values({
+        userId,
+        type: 'deposit',
+        period: 'daily',
+        amount: '100',
+        minutes: null,
+        currency: null,
+        ...overrides,
+      })
+      .returning();
+    return row!;
+  }
+
+  afterEach(async () => {
+    await db.drizzle.db.execute(sql`TRUNCATE ${player} RESTART IDENTITY CASCADE`);
+  });
+
+  it('resolves a null-currency row to the player currency on first touch, and persists it', async () => {
+    const userId = randomUUID();
+    await insertPlayer(userId, 'JPY');
+    const row = await insertNullCurrencyLimit(userId);
+
+    const resolved = await resolveLimitCurrency(db.drizzle, row);
+    expect(resolved.currency).toBe('JPY');
+
+    // Persisted, not just returned: a fresh read of the same row (not the value handed
+    // back by the resolver) shows the resolved currency.
+    const [persisted] = await db.drizzle.db
+      .select()
+      .from(userLimit)
+      .where(eq(userLimit.id, row.id));
+    expect(persisted?.currency).toBe('JPY');
+  });
+
+  it('resolves exactly once - a second touch does not re-resolve from the player', async () => {
+    const userId = randomUUID();
+    await insertPlayer(userId, 'JPY');
+    const row = await insertNullCurrencyLimit(userId);
+
+    const first = await resolveLimitCurrency(db.drizzle, row);
+    expect(first.currency).toBe('JPY');
+
+    // The player's currency changes AFTER the first resolution. A second touch reading
+    // the now-persisted row must keep the value it already resolved, not re-derive it
+    // from the player's (changed) currency - proving resolution happened once, not on
+    // every touch.
+    await db.drizzle.db.update(player).set({ currency: 'EUR' }).where(eq(player.userId, userId));
+    const [reread] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.id, row.id));
+    const second = await resolveLimitCurrency(db.drizzle, reread!);
+    expect(second.currency).toBe('JPY');
+  });
+
+  it('fails closed when the player currency cannot be determined, and leaves the row null', async () => {
+    const userId = randomUUID();
+    // Deliberately no player row for this userId.
+    const row = await insertNullCurrencyLimit(userId);
+
+    await expect(resolveLimitCurrency(db.drizzle, row)).rejects.toThrow(
+      RgLimitCurrencyUnresolvedError,
+    );
+
+    const [persisted] = await db.drizzle.db
+      .select()
+      .from(userLimit)
+      .where(eq(userLimit.id, row.id));
+    expect(persisted?.currency).toBeNull();
+  });
+
+  it('resolves two concurrent touches of the same row consistently, never a split brain', async () => {
+    const userId = randomUUID();
+    await insertPlayer(userId, 'GBP');
+    const row = await insertNullCurrencyLimit(userId);
+
+    const [a, b] = await Promise.all([
+      resolveLimitCurrency(db.drizzle, row),
+      resolveLimitCurrency(db.drizzle, row),
+    ]);
+    expect(a.currency).toBe('GBP');
+    expect(b.currency).toBe('GBP');
+
+    const [persisted] = await db.drizzle.db
+      .select()
+      .from(userLimit)
+      .where(eq(userLimit.id, row.id));
+    expect(persisted?.currency).toBe('GBP');
+  });
+
+  it('leaves a session-type row (already carrying the sentinel) unaffected', async () => {
+    const userId = randomUUID();
+    const row = await insertNullCurrencyLimit(userId, {
+      type: 'session',
+      period: 'session',
+      amount: null,
+      minutes: 60,
+      currency: 'SESSION',
+    });
+
+    const resolved = await resolveLimitCurrency(db.drizzle, row);
+    expect(resolved.currency).toBe('SESSION');
+
+    // No player row exists at all - if this had gone anywhere near the resolution path
+    // it would have thrown RgLimitCurrencyUnresolvedError instead of returning cleanly.
+    const [persisted] = await db.drizzle.db
+      .select()
+      .from(userLimit)
+      .where(eq(userLimit.id, row.id));
+    expect(persisted?.currency).toBe('SESSION');
   });
 });
 

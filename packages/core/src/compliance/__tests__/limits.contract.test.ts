@@ -7,12 +7,14 @@ const baseView = {
   type: 'deposit' as const,
   amount: '100.00',
   minutes: null,
+  currency: 'USD',
   period: 'daily' as const,
   createdAt: new Date().toISOString(),
   pct: 80,
   pendingKind: null,
   pendingAmount: null,
   pendingMinutes: null,
+  pendingCurrency: null,
   pendingStatus: null,
   pendingEffectiveAt: null,
   pendingExpiresAt: null,
@@ -76,14 +78,24 @@ describe('LimitViewSchema used/remaining scale', () => {
     expect(result.success).toBe(true);
   });
 
-  // The regression this whole change fixes: MoneyAmountSchema alone allows up to 18
-  // decimal places, which is exactly what let a raw ledger-sum aggregate onto the wire
-  // unrounded. The service now rounds before this validates, but the schema itself must
-  // also refuse to widen back to accepting it.
-  it('rejects a raw MONEY_SCALE(18) used value the service should have rounded', () => {
+  // `used`/`remaining` now share the platform-wide MoneyAmountSchema (MONEY_SCALE(18)),
+  // the same scale as `user_limit.amount` itself, so a crypto-scale limit's usage
+  // round-trips onto the wire without losing precision.
+  it('accepts used/remaining at full MONEY_SCALE(18) precision', () => {
     const result = LimitViewSchema.safeParse({
       ...baseView,
       used: '33.336000000000000000',
+      remaining: '66.664000000000000000',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // The schema still bounds decimal places at MONEY_SCALE(18) - one more than that is
+  // never a valid money amount, crypto-scale or not.
+  it('rejects a used value with more than MONEY_SCALE(18) decimal places', () => {
+    const result = LimitViewSchema.safeParse({
+      ...baseView,
+      used: '33.3360000000000000001',
       remaining: '66.664000000000000000',
     });
     expect(result.success).toBe(false);
