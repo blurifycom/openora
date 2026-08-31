@@ -2,8 +2,6 @@ import type { ChatAttachment } from '@openora/core/contracts';
 
 export type AttachmentValidationResult = { ok: true } | { ok: false; reason: string };
 
-// A host is allowed if it matches an allow-list entry exactly or is a subdomain of one,
-// so an operator can allow-list `example.com` once and cover `cdn.example.com` too.
 function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boolean {
   return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`));
 }
@@ -24,14 +22,6 @@ function validateUrl(raw: string, allowedHosts: readonly string[]): AttachmentVa
   return { ok: true };
 }
 
-/**
- * Validates a chat attachment's `url` and `previewUrl` against an operator-configured
- * host allow-list. Pure: the allow-list is passed in, never read from global config.
- * Both URLs must be `https:` and resolve to an allowed host (exact match or subdomain).
- *
- * This is intentionally separate from `moderateContent`/`sanitizeUrls`, which defang
- * freeform user text and are not meant to validate a trusted attachment shape's URLs.
- */
 export function validateAttachment(
   attachment: Pick<ChatAttachment, 'url' | 'previewUrl'>,
   allowedHosts: readonly string[],

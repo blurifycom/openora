@@ -4,7 +4,6 @@ export const CHAT_ATTACHMENT_KINDS = ['gif'] as const;
 export const ChatAttachmentKindSchema = z.enum(CHAT_ATTACHMENT_KINDS);
 export type ChatAttachmentKind = z.infer<typeof ChatAttachmentKindSchema>;
 
-/** A provider-agnostic media attachment a chat message may carry alongside or instead of text content. */
 export const ChatAttachmentSchema = z.object({
   kind: ChatAttachmentKindSchema,
   provider: z.string().trim().min(1).max(32),
