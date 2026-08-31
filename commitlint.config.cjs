@@ -61,6 +61,11 @@ const scopes = [
 
 module.exports = {
   extends: ['@commitlint/config-conventional'],
+  // One-off: PR #109 landed on dev as a merge commit whose GitHub-generated
+  // "Merge pull request ..." subject (which commitlint ignores by default) was
+  // hand-edited to a non-conventional string before merge. The commit is already
+  // on a protected branch, so skip just this one rather than rewrite history.
+  ignores: [(message) => message.startsWith('Fix/chat commands removal (#109)')],
   rules: {
     'scope-enum': [2, 'always', scopes],
     'body-max-line-length': [0, 'always'],
