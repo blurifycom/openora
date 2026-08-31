@@ -9,7 +9,7 @@ import {
   walletTransaction,
   walletBonusCredit,
 } from '@openora/core/wallet/schema';
-import { game } from '@openora/core/casino/schema/gaming';
+import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
   chatRoomMember,
@@ -424,6 +424,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(walletBalance);
   await db.delete(wallet);
   await db.delete(player);
+  // Before `game`: `game_round.game_id` references it, so a round left behind by an
+  // earlier suite makes this delete violate the FK and poisons the shared test database
+  // for every suite that seeds after it.
+  await db.delete(gameRound);
   await db.delete(game);
 
   const adminUser = await ensureUser(db, auth, {
