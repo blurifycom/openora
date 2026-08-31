@@ -44,6 +44,17 @@ export type WalletCreditArgs = {
    * ordinary case, not a mistake.
    */
   allowNewCurrency?: boolean;
+  /**
+   * Allow crediting a player who has no `wallet` row at all yet, creating it in the
+   * caller's transaction. Off by default: a wallet is created lazily on a player's first
+   * deposit, so for every self-initiated flow a missing one really is a caller bug.
+   *
+   * A player-to-player transfer (gift claim, rain, donate) is the exception - the
+   * recipient never chose to receive it and may never have deposited, and refusing the
+   * credit would strand the sender's already-debited money. The created wallet takes the
+   * credited currency as its active one, exactly as a first deposit does.
+   */
+  allowNewWallet?: boolean;
 };
 
 export type WalletCreditOutcome = { ok: true; newBalance: string } | { ok: false; reason: string };

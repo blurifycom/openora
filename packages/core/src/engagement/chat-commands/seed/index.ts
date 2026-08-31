@@ -29,7 +29,7 @@ export async function seedChatCommands(db: DrizzleDb): Promise<void> {
         enabled: true,
         label: 'Rain',
         description: 'Split tokens among online room members',
-        config: { minAmount: { USD: '1.00000000' }, maxRecipients: 50 },
+        config: { minAmount: { USD: '1.00000000' }, maxRecipients: 100 },
       },
       {
         key: 'donate',
