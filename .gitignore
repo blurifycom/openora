@@ -40,3 +40,6 @@ CLAUDE.md
 
 # Per-machine tracker overlays (private coordinates for downstream tickets). Never commit.
 docs/agents/*.local.md
+
+# QA screenshot captures - reproducible, never committed
+.qa-evidence/
