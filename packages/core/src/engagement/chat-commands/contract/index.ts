@@ -3,12 +3,9 @@ import * as z from 'zod';
 import {
   UuidSchema,
   MoneyAmountSchema,
-  SystemChatMessageSchema,
-  CommandChatMessageSchema,
   ChatRoomIdSchema,
   TimestampSchema,
   CurrencyTickerSchema,
-  ChatMoneyCommandInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -60,68 +57,11 @@ export const MentionResultSchema = z.object({
 });
 export type MentionResult = z.infer<typeof MentionResultSchema>;
 
-export { SystemChatMessageSchema, CommandChatMessageSchema };
-
-export const PostGiftInputSchema = ChatMoneyCommandInputSchema;
-export type PostGiftInput = z.infer<typeof PostGiftInputSchema>;
-
-export const PostRainInputSchema = ChatMoneyCommandInputSchema.extend({
-  recipientCount: z.number().int().positive(),
-});
-export type PostRainInput = z.infer<typeof PostRainInputSchema>;
-
-export const ClaimGiftOutputSchema = z.object({
-  claimedBy: UuidSchema,
-  claimedByUsername: z.string(),
-  claimedAt: z.string(),
-});
-export type ClaimGiftOutput = z.infer<typeof ClaimGiftOutputSchema>;
-
-export const GiftStateSchema = z.object({
-  id: UuidSchema,
-  senderId: UuidSchema,
-  senderUsername: z.string(),
-  amount: MoneyAmountSchema,
-  currency: z.string(),
-  claimedBy: UuidSchema.nullable(),
-  claimedByUsername: z.string().nullable(),
-  claimedAt: z.string().nullable(),
-  createdAt: z.string(),
-});
-export type GiftState = z.infer<typeof GiftStateSchema>;
-
 export const chatCommandsContract = {
   listCommands: oc
     .route({ method: 'GET', path: '/chat-command/commands' })
     .input(z.object({}))
     .output(z.array(ChatCommandDescriptorSchema)),
-
-  // Dedicated gift-send operation - money/limit/idempotency logic lives in the
-  // social-transfers module behind the GIFT_COMMANDS port; this module only
-  // wires the route. See AGENTS.md.
-  postGift: oc
-    .route({ method: 'POST', path: '/chat-command/gift' })
-    .input(PostGiftInputSchema)
-    .output(CommandChatMessageSchema),
-
-  claimGift: oc
-    .route({ method: 'POST', path: '/chat-command/gift/{id}/claim' })
-    .input(z.object({ id: UuidSchema }))
-    .output(ClaimGiftOutputSchema),
-
-  getGift: oc
-    .route({ method: 'GET', path: '/chat-command/gift/{id}' })
-    .input(z.object({ id: UuidSchema }))
-    .output(GiftStateSchema),
-
-  // Dedicated rain-send operation - this module resolves the online recipient
-  // list (it owns presence lookups for the chat command surface) and hands it
-  // to the RAIN_COMMANDS port; money/limit/idempotency logic lives in
-  // social-transfers. See AGENTS.md.
-  postRain: oc
-    .route({ method: 'POST', path: '/chat-command/rain' })
-    .input(PostRainInputSchema)
-    .output(CommandChatMessageSchema),
 
   mentionSearch: oc
     .route({ method: 'GET', path: '/chat-command/mention-search' })

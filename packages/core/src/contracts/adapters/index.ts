@@ -270,26 +270,5 @@ export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 export type { PlayerActivityTracker } from './player-activity.js';
 export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
 
-export type {
-  SendGiftArgs,
-  SendGiftFailureReason,
-  SendGiftResult,
-  ClaimGiftFailureReason,
-  ClaimGiftResult,
-  GiftSnapshot,
-  GetGiftFailureReason,
-  GetGiftResult,
-  GiftCommands,
-} from './gift-commands.js';
-export { GIFT_COMMANDS } from './gift-commands.js';
-
-export type {
-  SendRainArgs,
-  SendRainFailureReason,
-  SendRainResult,
-  RainCommands,
-} from './rain-commands.js';
-export { RAIN_COMMANDS } from './rain-commands.js';
-
 export type { SocialCommands, FriendshipDissolvedPayload } from './social-commands.js';
 export { SOCIAL_COMMANDS } from './social-commands.js';

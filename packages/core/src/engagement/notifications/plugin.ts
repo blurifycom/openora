@@ -136,31 +136,6 @@ export default {
         );
     });
 
-    // Rain is low-value and high-frequency chat social play, not a transactional
-    // money event like a withdrawal - in-app only, no email (matches
-    // wallet.bonus_rollover.completed above, which is also in-app only).
-    ctx.events.on('chat.rain.distributed', (payload) => {
-      const parsed = domainEventSchemas['chat.rain.distributed'].safeParse(payload);
-      if (!parsed.success || !svcRef) {
-        return;
-      }
-      const p = parsed.data;
-      const svc = svcRef;
-      const title = 'You were included in a rain';
-      directoryRef
-        ?.lookupPlayers([p.fromUserId])
-        .then((rows) => {
-          const senderName = rows.find((r) => r.userId === p.fromUserId)?.username ?? 'A player';
-          const body = `${senderName} sent a rain in chat - you received ${p.perRecipient} ${p.currency}.`;
-          return Promise.all(
-            p.recipients.map((recipientId) =>
-              svc.create({ userId: recipientId, type: 'chat.rain.received', title, body }),
-            ),
-          );
-        })
-        .catch((err) => logger.error({ err }, 'chat.rain.distributed notification failed'));
-    });
-
     // Non-null `reason` marks an admin override (ADR-0037); the player's own path
     // always emits `reason: null` and must never trigger this, or a player would be
     // notified about their own action.
