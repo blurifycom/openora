@@ -14,6 +14,7 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
   AUDIT_WRITER,
   IDENTITY_READER,
+  PLATFORM_CONFIG,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { ChatModerationService } from './service/chat-moderation.service.js';
@@ -40,16 +41,19 @@ export default {
     const createChatService = (
       c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
     ) =>
-      new ChatService(
-        c.get(DRIZZLE),
-        c.get(EVENT_BUS),
-        c.get(CHAT_REALTIME_TRANSPORT),
-        c.get(ADMIN_USER_DIRECTORY),
-        c.get(AUDIT_WRITER),
-        c.get(CHAT_MODERATION),
-        c.get(IDENTITY_READER),
-        c.has(SOCIAL_COMMANDS) ? c.get(SOCIAL_COMMANDS) : undefined,
-      );
+      new ChatService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        transport: c.get(CHAT_REALTIME_TRANSPORT),
+        directory: c.get(ADMIN_USER_DIRECTORY),
+        audit: c.get(AUDIT_WRITER),
+        moderation: c.get(CHAT_MODERATION),
+        identityReader: c.get(IDENTITY_READER),
+        allowedAttachmentHosts: c.has(PLATFORM_CONFIG)
+          ? c.get(PLATFORM_CONFIG).chat.allowedAttachmentHosts
+          : [],
+        socialCommands: c.has(SOCIAL_COMMANDS) ? c.get(SOCIAL_COMMANDS) : undefined,
+      });
     const createMembershipService = (
       c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
     ) =>

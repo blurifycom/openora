@@ -13,3 +13,4 @@ export * from './events.js';
 export * from './reporting.js';
 export * from './chat-command-metadata.js';
 export * from './chat-command.js';
+export * from './chat-attachment.js';

@@ -6,9 +6,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { walletBonusRolloverConfig, walletBonusCredit } from '@openora/core/wallet/schema';
-import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
-import { migrate as migrateChatCommands } from '@openora/core/engagement/migrate/chat-commands';
-import { migrate as migrateSocialTransfers } from '@openora/core/engagement/migrate/social-transfers';
+import { WALLET_COMMANDS } from '@openora/core/contracts';
 import {
   setupTestDb,
   bootTestApp,
@@ -55,35 +53,27 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
   }
 }
 
-async function sendGift(sender: TestClient, amount: string) {
-  const res = await sender.post('/chat-command/gift', {
-    amount,
-    roomId: '__global',
-    idempotencyKey: randomUUID(),
+async function creditBonus(client: TestClient, userId: string, amount: string) {
+  // Materializes the player's wallet row before crediting - credit() fails closed
+  // on a missing wallet (wallet-commands.service.ts), it does not create one.
+  // Adds 1 USD of real (non-bonus) balance as a side effect.
+  await deposit(client, '1');
+  const walletCommands = appMain.container.get(WALLET_COMMANDS);
+  await appMain.container.get(DRIZZLE).db.transaction(async (tx) => {
+    const result = await walletCommands.credit(tx, {
+      userId,
+      amount,
+      currency: 'USD',
+      // 'gift' is load-bearing: wallet-commands.service.ts only creates a
+      // wallet_bonus_credit row for sourceType 'gift' or 'rain'. Both are now
+      // produced by the downstream social-transfers extension, not by core -
+      // this call stands in for that HTTP path.
+      type: 'gift',
+    });
+    if (!result.ok) {
+      throw new Error(`bonus credit failed: ${result.reason}`);
+    }
   });
-  if (res.status !== 200) {
-    throw new Error(`postGift failed (${res.status}): ${await res.text()}`);
-  }
-  const body = await readJson(res);
-  const giftId = body.metadata?.giftId as string;
-  if (!giftId) {
-    throw new Error(`postGift response had no metadata.giftId: ${JSON.stringify(body)}`);
-  }
-  return giftId;
-}
-
-async function claimGift(claimer: TestClient, giftId: string) {
-  await claimer.post('/wallet/deposit', {
-    amount: '1',
-    currency: 'USD',
-    idempotencyKey: randomUUID(),
-  });
-
-  const res = await claimer.post(`/chat-command/gift/${giftId}/claim`);
-  if (res.status !== 200) {
-    throw new Error(`claimGift failed (${res.status}): ${await res.text()}`);
-  }
-  return readJson(res);
 }
 
 async function bet(client: TestClient, amount: string) {
@@ -125,15 +115,12 @@ beforeAll(async () => {
   process.env['NODE_ENV'] ??= 'test';
 
   db = await setupTestDb();
-  await migrateChatCommands(db.url);
-  await migrateSocialTransfers(db.url);
   const basePlugins = await loadExtensions();
   appMain = await bootTestApp({ plugins: basePlugins, databaseUrl: db.url });
 
   await appMain.container.get(DRIZZLE).db.delete(walletBonusCredit);
 
   await seedMinimal(appMain.container, { playerCount: 0 });
-  await seedChatCommands(appMain.container.get(DRIZZLE).db);
   await appMain.container.get(DRIZZLE).db.delete(walletBonusRolloverConfig);
 
   const superAdminEmail = `bonus-rollover-super-admin-${randomUUID()}@e2e.test`;
@@ -164,24 +151,19 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('bonus-rollover AC end-to-end: gift -> bonus-locked balance -> wagering -> auto-release -> notification -> withdrawal', () => {
+describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wagering -> auto-release -> notification -> withdrawal', () => {
   it('walks the full lifecycle against the real app, with the status endpoint correct at every step (probes #1 and #7)', async () => {
-    const senderEmail = `bf326-sender-${randomUUID()}@e2e.test`;
     const recipientEmail = `bf326-recipient-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: recipientEmail,
     });
-    await deposit(sender, '500');
-
-    const giftId = await sendGift(sender, '40');
-    const claimResult = await claimGift(recipient, giftId);
-    expect(claimResult.claimedBy).toBe(recipientId);
+    await creditBonus(recipient, recipientId, '40');
 
     let status = await rolloverStatus(recipient);
     expect(status.credits).toHaveLength(1);
     const credit = status.credits[0]!;
-    expect(credit).toMatchObject({ sourceType: 'gift', status: 'active' });
+    expect(credit.status).toBe('active');
+    expect(credit.sourceType).toBe('gift');
     expect(Number(credit.creditedAmount)).toBe(40);
     expect(Number(credit.rolloverMultiplier)).toBe(1);
     expect(Number(credit.rolloverRequired)).toBe(40);
@@ -269,17 +251,13 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
   });
 
   it("a player's bonus-rollover status is scoped to their own session - there is no userId parameter to point at someone else's credits", async () => {
-    const senderEmail = `bf326-scope-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
     const { client: ownerClient, userId: ownerId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-scope-owner-${randomUUID()}@e2e.test`,
     });
     const { client: bystander } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-scope-bystander-${randomUUID()}@e2e.test`,
     });
-    await deposit(sender, '50');
-    const giftId = await sendGift(sender, '20');
-    await claimGift(ownerClient, giftId);
+    await creditBonus(ownerClient, ownerId, '20');
 
     const ownerStatus = await rolloverStatus(ownerClient);
     expect(ownerStatus.credits.some((c) => Number(c.creditedAmount) === 20)).toBe(true);
@@ -295,19 +273,13 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
 });
 
 describe('bonus-rollover waterfall across multiple simultaneously-active credits (probe #3)', () => {
-  it('a single bet drains the oldest active credit first and cascades the leftover into the next, through the real HTTP surface', async () => {
-    const senderEmail = `bf326-waterfall-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
-    const { client: recipient } = await registerAndMaterializePlayer(appMain, {
+  it('a single bet drains the oldest active credit first and cascades the leftover into the next, driving WALLET_COMMANDS directly to fund the credits', async () => {
+    const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-waterfall-recipient-${randomUUID()}@e2e.test`,
     });
-    await deposit(sender, '500');
-
-    const gift1 = await sendGift(sender, '30');
-    await claimGift(recipient, gift1);
+    await creditBonus(recipient, recipientId, '30');
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const gift2 = await sendGift(sender, '50');
-    await claimGift(recipient, gift2);
+    await creditBonus(recipient, recipientId, '50');
 
     const status = await rolloverStatus(recipient);
     expect(status.credits.filter((c) => c.status === 'active')).toHaveLength(2);
@@ -343,14 +315,10 @@ describe('bonus-rollover multiplier configurable by Super Admin, forward-only (p
     expect(getRes.status).toBe(200);
     expect(Number((await readJson(getRes)).multiplier)).toBe(3);
 
-    const senderEmail = `bf326-multiplier-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
-    const { client: recipient } = await registerAndMaterializePlayer(appMain, {
+    const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-multiplier-recipient-${randomUUID()}@e2e.test`,
     });
-    await deposit(sender, '100');
-    const giftId = await sendGift(sender, '10');
-    await claimGift(recipient, giftId);
+    await creditBonus(recipient, recipientId, '10');
 
     const status = await rolloverStatus(recipient);
     const newCredit = status.credits[0]!;
@@ -369,14 +337,10 @@ describe('bonus-rollover multiplier configurable by Super Admin, forward-only (p
 
 describe('bonus-rollover audit trail (probe #5)', () => {
   it('wallet.bonus_credit.created, wallet.bonus_credit.completed, and the admin config change all produce audit rows with real before/after state', async () => {
-    const senderEmail = `bf326-audit-sender-${randomUUID()}@e2e.test`;
-    const { client: sender } = await registerAndMaterializePlayer(appMain, { email: senderEmail });
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-audit-recipient-${randomUUID()}@e2e.test`,
     });
-    await deposit(sender, '100');
-    const giftId = await sendGift(sender, '12');
-    await claimGift(recipient, giftId);
+    await creditBonus(recipient, recipientId, '12');
 
     const createdAuditRes = await superAdmin.get(
       `/audit/logs?action=wallet.bonus_credit.created&resourceType=wallet_bonus_credit&limit=50`,

@@ -7,6 +7,7 @@ import {
   GLOBAL_CHAT_ROOM_ID,
   CommandMetadataSchema,
   SystemChatMessageSchema,
+  ChatAttachmentSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
@@ -137,6 +138,7 @@ const UserChatMessageSchema = z.object({
   content: z.string(),
   type: z.literal('user'),
   metadata: CommandMetadataSchema.nullable(),
+  attachment: ChatAttachmentSchema.nullable(),
   isDeleted: z.boolean(),
   createdAt: TimestampSchema,
 });
@@ -158,6 +160,7 @@ export const AdminChatMessageSchema = z.object({
   playerId: UuidSchema.nullable(),
   roomName: z.string(),
   content: z.string(),
+  attachment: ChatAttachmentSchema.nullable(),
   time: z.string(),
 });
 export type AdminChatMessage = z.infer<typeof AdminChatMessageSchema>;
@@ -250,6 +253,31 @@ const RoomModerationInput = RoomUserInput.extend({
 });
 const ChatJoinCodeSchema = z.string().trim().min(1).max(JOIN_CODE_INPUT_MAX_LENGTH);
 
+function hasContentOrAttachment({
+  content,
+  attachment,
+}: {
+  content: string;
+  attachment?: z.infer<typeof ChatAttachmentSchema> | null;
+}): boolean {
+  return content.length > 0 || (attachment !== null && attachment !== undefined);
+}
+
+export const SendRoomMessageInputSchema = z
+  .object({
+    roomId: UuidSchema,
+    content: z.string().trim().max(MAX_MESSAGE_LENGTH).default(''),
+    attachment: ChatAttachmentSchema.nullish(),
+  })
+  .refine(hasContentOrAttachment, { message: 'A message needs content or an attachment' });
+
+export const SendGlobalMessageInputSchema = z
+  .object({
+    content: z.string().trim().max(MAX_MESSAGE_LENGTH).default(''),
+    attachment: ChatAttachmentSchema.nullish(),
+  })
+  .refine(hasContentOrAttachment, { message: 'A message needs content or an attachment' });
+
 export const chatContract = {
   listRooms: oc.route({ method: 'GET', path: '/chat/rooms' }).output(z.array(ChatRoomSchema)),
 
@@ -279,7 +307,7 @@ export const chatContract = {
 
   sendRoomMessage: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/messages' })
-    .input(z.object({ roomId: UuidSchema, content: MessageContentSchema }))
+    .input(SendRoomMessageInputSchema)
     .output(ChatMessageSchema),
 
   deleteMessage: oc
@@ -293,7 +321,7 @@ export const chatContract = {
 
   sendGlobalMessage: oc
     .route({ method: 'POST', path: '/chat/global' })
-    .input(z.object({ content: MessageContentSchema }))
+    .input(SendGlobalMessageInputSchema)
     .output(ChatMessageSchema),
 
   getConnection: oc

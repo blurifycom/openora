@@ -27,6 +27,7 @@ import type {
   IdentityReader,
   SocialCommands,
   Uuid,
+  ChatAttachment,
 } from '@openora/core/contracts';
 import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
@@ -90,7 +91,7 @@ import {
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
-import { moderateContent } from '../moderation/index.js';
+import { moderateContent, validateAttachment } from '../moderation/index.js';
 const logger = createLogger('chat');
 
 function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
@@ -106,6 +107,11 @@ export const ChatRoomOwnershipError = makeOwnershipError('ChatRoom');
 export const ChatMessageBlockedError = createDomainError(
   'ChatMessageBlockedError',
   () => 'Message blocked: it contains prohibited language',
+);
+
+export const ChatAttachmentRejectedError = createDomainError(
+  'ChatAttachmentRejectedError',
+  (reason: string) => `Attachment rejected: ${reason}`,
 );
 
 export const ChatSelfBlockError = createDomainError(
@@ -144,12 +150,37 @@ export const ChatRoomConfigurationNotFoundError = createDomainError(
 
 const CHAT_MODERATOR_ROLES: readonly ChatRoomRole[] = ['moderator', 'owner'];
 
+type ChatServiceDependencies = {
+  drizzle: DrizzleService;
+  events: EventBus;
+  transport: RealtimeTransport;
+  directory: AdminUserDirectory;
+  audit: AuditWritePort;
+  moderation: ChatModeration;
+  identityReader: IdentityReader;
+  allowedAttachmentHosts: readonly string[];
+  socialCommands?: SocialCommands;
+};
+
 function gateContent(content: string): string {
   const result = moderateContent(content);
   if (!result.ok) {
     throw new ChatMessageBlockedError();
   }
   return result.content;
+}
+
+function assertAttachmentAllowed(
+  attachment: ChatAttachment | null,
+  allowedHosts: readonly string[],
+): void {
+  if (!attachment) {
+    return;
+  }
+  const result = validateAttachment(attachment, allowedHosts);
+  if (!result.ok) {
+    throw new ChatAttachmentRejectedError(result.reason);
+  }
 }
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
@@ -217,16 +248,37 @@ function isUniqueConstraintViolation(e: unknown): boolean {
 }
 
 export class ChatService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
-    private readonly transport: RealtimeTransport,
-    private readonly directory: AdminUserDirectory,
-    private readonly audit: AuditWritePort,
-    private readonly moderation: ChatModeration,
-    private readonly identityReader: IdentityReader,
-    private readonly socialCommands?: SocialCommands,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly events: EventBus;
+  private readonly transport: RealtimeTransport;
+  private readonly directory: AdminUserDirectory;
+  private readonly audit: AuditWritePort;
+  private readonly moderation: ChatModeration;
+  private readonly identityReader: IdentityReader;
+  private readonly allowedAttachmentHosts: readonly string[];
+  private readonly socialCommands?: SocialCommands;
+
+  constructor({
+    drizzle,
+    events,
+    transport,
+    directory,
+    audit,
+    moderation,
+    identityReader,
+    allowedAttachmentHosts,
+    socialCommands,
+  }: ChatServiceDependencies) {
+    this.drizzle = drizzle;
+    this.events = events;
+    this.transport = transport;
+    this.directory = directory;
+    this.audit = audit;
+    this.moderation = moderation;
+    this.identityReader = identityReader;
+    this.allowedAttachmentHosts = allowedAttachmentHosts;
+    this.socialCommands = socialCommands;
+  }
 
   subscribeMessages(
     roomId: ChatRoom['id'] | null,
@@ -1000,6 +1052,7 @@ export class ChatService {
           playerId: player.id,
           roomName: chatRoom.name,
           content: chatMessage.content,
+          attachment: chatMessage.attachment,
         })
         .from(chatMessage)
         .leftJoin(player, eq(player.userId, chatMessage.userId))
@@ -1025,6 +1078,7 @@ export class ChatService {
           playerId: row.playerId,
           roomName: row.roomName ?? 'Global',
           content: row.content,
+          attachment: row.attachment,
           time: date.slice(11, 19),
         };
       }),
@@ -1052,16 +1106,19 @@ export class ChatService {
     username,
     roomId,
     content,
+    attachment = null,
   }: {
     userId: User['id'];
     username: string;
     roomId: ChatRoom['id'];
     content: string;
+    attachment?: ChatAttachment | null;
   }) {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
 
+    assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
     const [record] = await this.drizzle.db
@@ -1071,6 +1128,7 @@ export class ChatService {
         userId,
         username: resolvedUsername,
         content: safeContent,
+        attachment,
       })
       .returning();
 
@@ -1123,9 +1181,20 @@ export class ChatService {
     return messages.map(toPublicMessage);
   }
 
-  async sendGlobalMessage(userId: User['id'], username: string, content: string) {
+  async sendGlobalMessage({
+    userId,
+    username,
+    content,
+    attachment = null,
+  }: {
+    userId: User['id'];
+    username: string;
+    content: string;
+    attachment?: ChatAttachment | null;
+  }) {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     await this.moderation.assertCanSend(userId, null);
+    assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
     const [record] = await this.drizzle.db
@@ -1135,6 +1204,7 @@ export class ChatService {
         userId,
         username: resolvedUsername,
         content: safeContent,
+        attachment,
       })
       .returning();
 
