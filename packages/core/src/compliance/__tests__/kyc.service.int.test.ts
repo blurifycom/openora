@@ -168,6 +168,29 @@ describe('KycVerificationService.submit (real PG)', () => {
     expect(await verificationsOf(userId)).toHaveLength(1);
   });
 
+  it('serializes concurrent submits so at most one active session is created', async () => {
+    const { svc, kycAdapter } = makeService();
+    const userId = randomUUID();
+    // Fresh referenceId per call, unlike the shared fixture's fixed adapterResult - this is
+    // what actually exercises the race. A vendor that mints a new session per call (eg
+    // Didit) would let the (userId, referenceId, tier) unique constraint see two distinct
+    // references, so only the advisory lock (not the DB upsert) can close this race.
+    kycAdapter.submit = vi.fn(async () => ({
+      referenceId: randomUUID(),
+      status: 'pending' as const,
+    }));
+
+    const [first, second] = await Promise.all([
+      svc.submit(userId, passportSubmission),
+      svc.submit(userId, passportSubmission),
+    ]);
+
+    expect(kycAdapter.submit).toHaveBeenCalledTimes(1);
+    expect(await verificationsOf(userId)).toHaveLength(1);
+    expect(first.status).toBe('pending');
+    expect(second.status).toBe('pending');
+  });
+
   it('keeps a shared vendor workflow separate for Basic and Advanced', async () => {
     const { svc, statusWriter } = makeService({ adapter: { status: 'pending' } });
     const userId = randomUUID();
@@ -351,7 +374,10 @@ describe('KycVerificationService.reconcile (real PG)', () => {
 
 describe('KycVerificationService.getForPlayer (real PG)', () => {
   it('returns the newest record as current with the full history behind it', async () => {
-    const { svc } = makeService({ adapter: { status: 'pending' } });
+    // First session must be decided (not pending/not_started) before the second submit -
+    // otherwise the duplicate-session guard in submit() correctly collapses the second call
+    // onto the still-active first one instead of creating a second history row.
+    const { svc } = makeService({ adapter: { status: 'rejected' } });
     const userId = randomUUID();
     await svc.submit(userId, passportSubmission);
     await db.drizzle.db

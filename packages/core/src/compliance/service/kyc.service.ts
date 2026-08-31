@@ -7,6 +7,7 @@ import {
   makeNotFoundError,
   mapConcurrent,
   serializeRow,
+  withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
 import {
@@ -230,47 +231,59 @@ export class KycVerificationService {
     });
   }
 
+  /**
+   * The whole body - including the vendor call - runs under a transaction-scoped advisory
+   * lock keyed on (userId, tier), so two concurrent submits (a double-clicked "start
+   * verification", or a retried request) can never both reach the vendor: the second caller
+   * blocks until the first's transaction commits, then sees the first's row and returns it
+   * instead of minting a second vendor session. Scoping the lock (and the DB dedup check) to
+   * referenceId alone wouldn't do this - a vendor that mints a fresh session per call (eg
+   * Didit) gives each concurrent caller a DIFFERENT referenceId, so the
+   * (userId, referenceId, tier) unique constraint never collides. This must gate the vendor
+   * call itself, not just the insert, or the operator still ends up with two live vendor
+   * sessions even though only one row survives here.
+   */
   async submit(userId: User['id'], input: SubmitKycInput, meta?: ClientMeta) {
-    const result = await this.kycAdapter.submit(
-      userId,
-      input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
-      input.tier,
-    );
-    const mappedStatus = mapVendorStatus(result.status);
-    const incompleteCheck =
-      mappedStatus === 'approved' ? findIncompleteCheck(result.checks) : undefined;
-    const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
-    const decisionReason = incompleteCheck ? describeIncompleteCheck(incompleteCheck) : null;
-    const decided = isDecided(status);
+    const outcome = await this.drizzle.db.transaction((trx) =>
+      withAdvisoryXactLock(trx, `kyc-submit:${userId}:${input.tier}`, async () => {
+        // Scoped to (userId, tier), NOT referenceId: a fresh Advanced resubmission gets a
+        // new vendor session/referenceId, so a referenceId-scoped lookup would find nothing
+        // and default previousStatus to 'not_started' even when a prior (rejected) tier
+        // history exists - corrupting the audit-log's before.kycStatus. latestVerification
+        // captures the true prior state across vendor sessions for this tier.
+        const previous = await this.latestVerification(userId, input.tier, trx);
 
-    const outcome = await this.drizzle.db.transaction(async (trx) => {
-      // Scoped to (userId, tier), NOT referenceId: a fresh Advanced resubmission gets a
-      // new vendor session/referenceId, so a referenceId-scoped lookup would find nothing
-      // and default previousStatus to 'not_started' even when a prior (rejected) tier
-      // history exists - corrupting the audit-log's before.kycStatus. latestVerification
-      // captures the true prior state across vendor sessions for this tier.
-      const previous = await this.latestVerification(userId, input.tier, trx);
-      const inserted = findOneOrThrow(
-        await trx
-          .insert(kycVerification)
-          .values({
-            userId,
-            provider: this.provider,
-            referenceId: result.referenceId,
-            tier: input.tier,
-            status,
-            documentTypes: input.documents.map((d) => d.type),
-            decisionReason,
-            checks: result.checks ?? null,
-            triggeredBy: 'submission',
-            decidedAt: decided ? new Date() : null,
-            decisionReceivedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [kycVerification.userId, kycVerification.referenceId, kycVerification.tier],
-            set: {
+        // An active, undecided session already exists - collapse onto it instead of
+        // minting a second one. NOT resubmission_requested: that status explicitly invites
+        // a fresh submission, so it must fall through to a real new vendor call below.
+        if (previous && (previous.status === 'pending' || previous.status === 'not_started')) {
+          logger.info(
+            { userId, tier: input.tier, existingId: previous.id },
+            'kyc submit collapsed onto an in-flight session',
+          );
+          return { duplicate: true as const, row: previous };
+        }
+
+        const result = await this.kycAdapter.submit(
+          userId,
+          input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
+          input.tier,
+        );
+        const mappedStatus = mapVendorStatus(result.status);
+        const incompleteCheck =
+          mappedStatus === 'approved' ? findIncompleteCheck(result.checks) : undefined;
+        const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
+        const decisionReason = incompleteCheck ? describeIncompleteCheck(incompleteCheck) : null;
+        const decided = isDecided(status);
+
+        const inserted = findOneOrThrow(
+          await trx
+            .insert(kycVerification)
+            .values({
               userId,
               provider: this.provider,
+              referenceId: result.referenceId,
+              tier: input.tier,
               status,
               documentTypes: input.documents.map((d) => d.type),
               decisionReason,
@@ -278,46 +291,69 @@ export class KycVerificationService {
               triggeredBy: 'submission',
               decidedAt: decided ? new Date() : null,
               decisionReceivedAt: new Date(),
-            },
-          })
-          .returning(),
-        new KycVerificationNotFoundError(userId),
-      );
-      const playerTransition =
-        input.tier === 'basic'
-          ? await this.statusWriter.setStatus(
-              userId,
-              status,
-              { actorId: null, source: 'vendor' },
-              trx,
-            )
-          : null;
-      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): emitted here, inside the transaction, so it can never be dropped
-      // by a crash between commit and a post-commit emit.
-      await this.emitUpdated({
-        userId,
-        tier: input.tier,
-        status,
-        previousStatus: previous?.status ?? null,
-        playerTransition,
-        actorId: null,
-        reason: decisionReason,
-        source: 'vendor',
-      });
-      return { row: inserted, previousStatus: previous?.status ?? null, playerTransition };
-    });
+            })
+            .onConflictDoUpdate({
+              target: [kycVerification.userId, kycVerification.referenceId, kycVerification.tier],
+              set: {
+                userId,
+                provider: this.provider,
+                status,
+                documentTypes: input.documents.map((d) => d.type),
+                decisionReason,
+                checks: result.checks ?? null,
+                triggeredBy: 'submission',
+                decidedAt: decided ? new Date() : null,
+                decisionReceivedAt: new Date(),
+              },
+            })
+            .returning(),
+          new KycVerificationNotFoundError(userId),
+        );
+        const playerTransition =
+          input.tier === 'basic'
+            ? await this.statusWriter.setStatus(
+                userId,
+                status,
+                { actorId: null, source: 'vendor' },
+                trx,
+              )
+            : null;
+        // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+        // compliance.md): emitted here, inside the transaction, so it can never be dropped
+        // by a crash between commit and a post-commit emit.
+        await this.emitUpdated({
+          userId,
+          tier: input.tier,
+          status,
+          previousStatus: previous?.status ?? null,
+          playerTransition,
+          actorId: null,
+          reason: decisionReason,
+          source: 'vendor',
+        });
+        return {
+          duplicate: false as const,
+          row: inserted,
+          referenceId: result.referenceId,
+          verificationUrl: result.verificationUrl,
+        };
+      }),
+    );
+
+    if (outcome.duplicate) {
+      return { ...toDto(outcome.row), verificationUrl: undefined };
+    }
 
     this.events.emit('compliance.kyc.submitted', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      referenceId: result.referenceId,
+      referenceId: outcome.referenceId,
       provider: this.provider,
       tier: input.tier,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    return { ...toDto(outcome.row), verificationUrl: result.verificationUrl };
+    return { ...toDto(outcome.row), verificationUrl: outcome.verificationUrl };
   }
 
   /**
