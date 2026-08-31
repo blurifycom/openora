@@ -579,6 +579,7 @@ describe('SocialTransfersService.claimGift', () => {
       currency: 'BTC',
       type: 'gift',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
     expect(result.ok).toBe(true);
   });
@@ -831,6 +832,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       currency: 'USD',
       type: 'rain',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
     expect(writer.postSystemMessage).toHaveBeenCalledOnce();
     expect(writer.postSystemMessage).toHaveBeenCalledWith(
@@ -944,6 +946,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       currency: 'USD',
       type: 'rain',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
       userId: ACTOR_ID,
@@ -993,6 +996,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       currency: 'USD',
       type: 'rain',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
   });
 
@@ -1034,6 +1038,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       currency: 'USD',
       type: 'rain',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
       userId: ACTOR_ID,
@@ -1230,6 +1235,7 @@ describe('SocialTransfersService.sendDonate', () => {
       currency: 'USD',
       type: 'tip',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
     expect(writer.postSystemMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1286,6 +1292,7 @@ describe('SocialTransfersService.sendDonate', () => {
       currency: 'BTC',
       type: 'tip',
       allowNewCurrency: true,
+      allowNewWallet: true,
     });
   });
 

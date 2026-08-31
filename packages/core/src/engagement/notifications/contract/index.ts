@@ -24,6 +24,7 @@ export const NotificationSchema = z.object({
   readAt: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+export type Notification = z.infer<typeof NotificationSchema>;
 
 // Internal-only - fed by domain-event handlers in plugin.ts, not a wire route.
 export const CreateNotificationInputSchema = z.object({

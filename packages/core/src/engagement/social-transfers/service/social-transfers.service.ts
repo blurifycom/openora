@@ -215,6 +215,8 @@ export async function calculateRainSplit(
   };
 }
 
+const DEFAULT_RAIN_MAX_RECIPIENTS = 100;
+
 const COMMAND_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 type CommandIdempotencyRecord = {
   fingerprint: string;
@@ -758,12 +760,15 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
         // Credits the GIFT'S OWN stored currency, never the claimer's current active one -
         // `allowNewCurrency` creates the claimer's balance row for it if they have never
         // held it before, since that is the ordinary case for a gift, not a caller bug.
+        // `allowNewWallet` covers the claimer who has never deposited and so has no wallet
+        // row at all - refusing them would strand a gift the sender is already debited for.
         const credit = await this.wallet.credit(tx, {
           userId: claimerId,
           amount: updated.amount,
           currency: updated.currency,
           type: 'gift',
           allowNewCurrency: true,
+          allowNewWallet: true,
         });
         if (!credit.ok) {
           throw new GiftCreditError();
@@ -861,7 +866,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('rain');
 
-    const configMax = config?.maxRecipients ?? 50;
+    // 100 is the platform default an operator overrides downward per room, not a hard
+    // ceiling - it matches the recipient range the /rain command surface advertises.
+    const configMax = config?.maxRecipients ?? DEFAULT_RAIN_MAX_RECIPIENTS;
     if (input.recipientCount > configMax) {
       throw new ExceedsLimitError();
     }
@@ -925,7 +932,10 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           this.assertWithinCommandLimits(config, debit.currency, input.amount);
           // Every recipient is credited in the SAME currency the sender was debited in -
           // `allowNewCurrency` opens a balance row for a recipient who has never held it,
-          // which is the ordinary case for rain, not a caller bug.
+          // which is the ordinary case for rain, not a caller bug. `allowNewWallet` does the
+          // same for a recipient who has never deposited and so has no wallet row at all:
+          // rain picks whoever is online, and one never-funded player in that set would
+          // otherwise abort the whole distribution.
           const credits = await mapConcurrent(recipients, 10, (userId) =>
             this.wallet.credit(tx, {
               userId,
@@ -933,6 +943,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
               currency: debit.currency,
               type: 'rain',
               allowNewCurrency: true,
+              allowNewWallet: true,
             }),
           );
           if (credits.some((c) => !c.ok)) {
@@ -1068,13 +1079,15 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
 
           // Credits the recipient in the SAME currency the sender was debited in -
           // `allowNewCurrency` opens a balance row for a recipient who has never held it,
-          // which is the ordinary case for a donate, not a caller bug.
+          // which is the ordinary case for a donate, not a caller bug. `allowNewWallet`
+          // covers a recipient who has never deposited and so has no wallet row at all.
           const credit = await this.wallet.credit(tx, {
             userId: target.userId,
             amount: input.amount,
             currency: debit.currency,
             type: 'tip',
             allowNewCurrency: true,
+            allowNewWallet: true,
           });
           if (!credit.ok) {
             throw new ChatPlayerNotFoundError(target.userId);

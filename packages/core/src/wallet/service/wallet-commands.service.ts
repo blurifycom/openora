@@ -165,7 +165,7 @@ export class WalletCommandsService implements WalletCommands {
 
   async credit(
     tx: unknown,
-    { userId, amount, currency, type, allowNewCurrency }: WalletCreditArgs,
+    { userId, amount, currency, type, allowNewCurrency, allowNewWallet }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -173,8 +173,11 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletCommandAmountError('credit', amount);
     }
 
-    const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
-    // Fail closed: a credit never creates a wallet - a missing one is a caller bug.
+    const row = allowNewWallet
+      ? await this.resolveOrOpenWallet(txn, userId, currency)
+      : (await txn.select().from(wallet).where(eq(wallet.userId, userId)))[0];
+    // Fail closed: a credit never creates a wallet unless the caller opted in - for every
+    // self-initiated flow a missing one is a caller bug.
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
@@ -205,6 +208,38 @@ export class WalletCommandsService implements WalletCommands {
     }
 
     return { ok: true, newBalance: credited.amount };
+  }
+
+  /**
+   * A wallet is created lazily on a player's first deposit, so a player who has only ever
+   * been registered has no `wallet` row. A player-to-player transfer must still be able to
+   * pay them: the sender is already debited by this point, and refusing here would strand
+   * the money. Opens the row inside the caller's transaction, taking the credited currency
+   * as the new wallet's active one exactly as a first deposit does.
+   *
+   * `onConflictDoNothing` + re-read rather than a bare insert: two concurrent transfers to
+   * the same never-funded player race on `wallet_user_id_unique`, and the loser must adopt
+   * the winner's row instead of failing the whole transfer.
+   */
+  private async resolveOrOpenWallet(
+    txn: DrizzleDb,
+    userId: Uuid,
+    currency: string,
+  ): Promise<Wallet | undefined> {
+    const [existing] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+    if (existing) {
+      return existing;
+    }
+    const [created] = await txn
+      .insert(wallet)
+      .values({ userId, currency: balanceKey(currency) })
+      .onConflictDoNothing()
+      .returning();
+    if (created) {
+      return created;
+    }
+    const [raced] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+    return raced;
   }
 
   private async resolveRolloverMultiplier(txn: DrizzleDb): Promise<string> {
