@@ -172,11 +172,9 @@ describe('AC: recipient gets an in-app notification, type round-trips, and audit
     await vi.waitFor(async () => {
       const listRes = await b.client.get('/notifications');
       expect(listRes.status).toBe(200);
-      const items = (await readJson(listRes)) as Array<{
-        type: string;
-        title: string;
-        body: string;
-      }>;
+      const { items } = (await readJson(listRes)) as {
+        items: Array<{ type: string; title: string; body: string }>;
+      };
       const row = items.find((n) => n.type === 'social.friend_request.received');
       // This is the exact silent-drop failure mode the brief calls out: a
       // notification whose `type` is missing from NOTIFICATION_TYPES is written
@@ -330,10 +328,9 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
 
     // A was the ORIGINAL requester - A gets the accepted notification, not B.
     await vi.waitFor(async () => {
-      const items = (await readJson(await a.client.get('/notifications'))) as Array<{
-        type: string;
-        body: string;
-      }>;
+      const { items } = (await readJson(await a.client.get('/notifications'))) as {
+        items: Array<{ type: string; body: string }>;
+      };
       const row = items.find((n) => n.type === 'social.friend_request.accepted');
       expect(row).toBeTruthy();
       expect(row?.body).toContain(b.username);
@@ -400,9 +397,9 @@ describe('break-it: rapid concurrent double-submit at the same target', () => {
     expect(await friendshipRowCount(app.container, a.userId, b.userId)).toBe(1);
 
     await vi.waitFor(async () => {
-      const items = (await readJson(await b.client.get('/notifications'))) as Array<{
-        type: string;
-      }>;
+      const { items } = (await readJson(await b.client.get('/notifications'))) as {
+        items: Array<{ type: string }>;
+      };
       const matches = items.filter((n) => n.type === 'social.friend_request.received');
       expect(matches.length).toBe(1);
     });

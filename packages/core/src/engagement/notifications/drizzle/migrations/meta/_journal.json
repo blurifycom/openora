@@ -8,6 +8,20 @@
       "when": 1783555224659,
       "tag": "0000_sparkling_kulan_gath",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787595667142,
+      "tag": "0001_classy_pixie",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787911988004,
+      "tag": "0002_open_madame_web",
+      "breakpoints": true
     }
   ]
 }

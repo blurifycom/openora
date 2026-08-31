@@ -59,7 +59,7 @@ describe('NotificationsService.create (real PG)', () => {
     expect(created).toMatchObject({ userId, title: 'Hello', readAt: null });
     expect(await db.drizzle.db.select().from(notification)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledWith('notifications.created', {
-      notificationId: created.id,
+      notificationId: created!.id,
       userId,
     });
   });
@@ -123,10 +123,87 @@ describe('NotificationsService.create (real PG)', () => {
       readAt: null,
     });
   });
+
+  it('persists the data entity-reference bag alongside the notification', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const transactionId = randomUUID();
+
+    const created = await svc.create({
+      userId,
+      type: 'deposit.completed',
+      title: 'Deposit completed',
+      body: 'body',
+      data: { transactionId },
+    });
+
+    expect(created?.data).toEqual({ transactionId });
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.id, created!.id));
+    expect(stored?.data).toEqual({ transactionId });
+  });
+
+  it('defaults data to null when the caller omits it', async () => {
+    const { svc } = makeService();
+
+    const created = await svc.create({
+      userId: randomUUID(),
+      type: 'kyc.resubmission_requested',
+      title: 'Document resubmission required',
+      body: 'body',
+    });
+
+    expect(created?.data).toBeNull();
+  });
+
+  it.each([
+    ['deposit.completed', 'Deposit completed'],
+    ['balance.adjusted', 'Balance adjusted'],
+    ['withdrawal.requested', 'Withdrawal requested'],
+    ['withdrawal.completed', 'Withdrawal completed'],
+    ['withdrawal.failed', 'Withdrawal failed'],
+    ['chat.mention', 'You were mentioned'],
+  ] as const)(
+    'persists a %s notification produced by the map-driven dispatch',
+    async (type, title) => {
+      const { svc } = makeService();
+      const userId = randomUUID();
+
+      const created = await svc.create({ userId, type, title, body: 'body' });
+
+      expect(created).toMatchObject({ userId, type, title, readAt: null });
+    },
+  );
+
+  it('dedupes a retried delivery of the same eventId to exactly one row, without throwing', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const eventId = randomUUID();
+    const input = {
+      userId,
+      type: 'deposit.completed' as const,
+      title: 'Deposit completed',
+      body: 'body',
+      eventId,
+    };
+
+    const first = await svc.create(input);
+    const second = await svc.create(input);
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    const rows = await db.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.eventId, eventId));
+    expect(rows).toHaveLength(1);
+  });
 });
 
 describe('NotificationsService.listForUser (real PG)', () => {
-  it('returns only the requesting player rows, newest first', async () => {
+  it('returns only the requesting player rows, newest first, with a total count', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
     const older = await seedNotification({
@@ -139,18 +216,23 @@ describe('NotificationsService.listForUser (real PG)', () => {
     });
     await seedNotification();
 
-    const rows = await svc.listForUser(userId);
+    const page = await svc.listForUser({ userId, page: 1, limit: 100 });
 
-    expect(rows.map((r) => r.id)).toEqual([newer.id, older.id]);
+    expect(page.items.map((r) => r.id)).toEqual([newer.id, older.id]);
+    expect(page.total).toBe(2);
+    expect(page).toMatchObject({ page: 1, limit: 100 });
   });
 
-  it('returns an empty list for a player with nothing on file', async () => {
+  it('returns an empty page for a player with nothing on file', async () => {
     const { svc } = makeService();
 
-    expect(await svc.listForUser(randomUUID())).toEqual([]);
+    expect(await svc.listForUser({ userId: randomUUID(), page: 1, limit: 100 })).toMatchObject({
+      items: [],
+      total: 0,
+    });
   });
 
-  it('caps the feed at fifty rows', async () => {
+  it('paginates using page/limit and reports the full total', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
     await db.drizzle.db.insert(notification).values(
@@ -162,7 +244,31 @@ describe('NotificationsService.listForUser (real PG)', () => {
       })),
     );
 
-    expect(await svc.listForUser(userId)).toHaveLength(50);
+    const firstPage = await svc.listForUser({ userId, page: 1, limit: 50 });
+    const secondPage = await svc.listForUser({ userId, page: 2, limit: 50 });
+
+    expect(firstPage.items).toHaveLength(50);
+    expect(secondPage.items).toHaveLength(5);
+    expect(firstPage.total).toBe(55);
+  });
+});
+
+describe('NotificationsService.unreadCount (real PG)', () => {
+  it('counts only unread rows for the requesting player', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedNotification({ userId });
+    await seedNotification({ userId });
+    await seedNotification({ userId, readAt: new Date() });
+    await seedNotification();
+
+    expect(await svc.unreadCount(userId)).toBe(2);
+  });
+
+  it('returns zero for a player with nothing unread', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.unreadCount(randomUUID())).toBe(0);
   });
 });
 
@@ -236,5 +342,30 @@ describe('NotificationsService.markAllRead (real PG)', () => {
     await seedNotification({ userId, readAt: new Date() });
 
     expect(await svc.markAllRead(userId)).toEqual({ count: 0 });
+  });
+});
+
+describe('NotificationsService.purgeExpired (real PG)', () => {
+  it('deletes only rows older than the retention window, regardless of readAt', async () => {
+    const { svc } = makeService();
+    const expired = await seedNotification({
+      createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+    });
+    const fresh = await seedNotification({
+      createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+    });
+
+    expect(await svc.purgeExpired(30)).toEqual({ count: 1 });
+
+    const remaining = await db.drizzle.db.select().from(notification);
+    expect(remaining.map((r) => r.id)).toEqual([fresh.id]);
+    expect(remaining.find((r) => r.id === expired.id)).toBeUndefined();
+  });
+
+  it('returns zero when nothing is old enough to purge', async () => {
+    const { svc } = makeService();
+    await seedNotification({ createdAt: new Date() });
+
+    expect(await svc.purgeExpired(30)).toEqual({ count: 0 });
   });
 });

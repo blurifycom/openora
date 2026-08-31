@@ -129,6 +129,24 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+export const NotificationsConfigSchema = z
+  .object({
+    /**
+     * In-app notification retention knobs. Static config, not a DB row - nothing
+     * here is edited during an incident. Absent means the built-in defaults apply.
+     */
+    retention: z
+      .object({
+        days: z.number().int().positive().default(30),
+        cron: z.string().default('0 3 * * *'),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
+
 export const RegistrationConfigSchema = z
   .object({
     /** Version recorded beside the player's affirmative terms acceptance. */
@@ -209,6 +227,8 @@ export const PlatformConfigSchema = z
     wallet: WalletConfigSchema.optional(),
     /** Required before public registration is enabled. */
     registration: RegistrationConfigSchema.optional(),
+    /** In-app notification retention knobs. Absent = built-in default (30 days). */
+    notifications: NotificationsConfigSchema.optional(),
     /**
      * Player-facing language codes the operator supports (eg `['en', 'es']`).
      * Undefined or empty means no restriction - any value is accepted.
