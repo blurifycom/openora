@@ -23,8 +23,6 @@ import { RgLimitGate } from '../adapters/rg-limit-gate.js';
 
 let db: TestDb;
 
-// Identity-only unless a test needs a real cross-currency conversion: same-currency is
-// a no-op, and every other pair is unavailable (fails closed).
 function identityRates(): ExchangeRateReader {
   return mock<ExchangeRateReader>({
     getRate: vi.fn(async (from: string, to: string) =>
@@ -50,9 +48,6 @@ async function seedDepositLimit(
     .values({ userId, type: 'deposit', amount, minutes: null, currency, period });
 }
 
-// Simulates a `user_limit` row written before the `currency` column existed: never
-// producible through the service layer (every write path sets a concrete currency), so
-// this reaches straight into the table.
 async function seedUnresolvedDepositLimit(
   userId: string,
   amount: string,
@@ -234,7 +229,6 @@ describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
   it('counts NET loss - stakes minus winnings - not gross stakes', async () => {
     const userId = randomUUID();
     await seedLossLimit(userId, '100');
-    // Staked 1000, won 900: the player is down 100, not 1000.
     await seedBet(userId, '1000', '900');
 
     await makeService().evaluateUser(userId, 'gaming.round.ended');
@@ -269,9 +263,6 @@ describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
   });
 });
 
-// The gate deliberately does NOT hold a player to a loss limit while payouts are
-// unrecorded (ADR-0034): net loss would read as gross stakes and refuse a player who is
-// up on the window. The FLAG still uses net, so it is right the day payouts land.
 describe('RgLimitGate loss handling (real PG)', () => {
   it('never refuses a wager on a loss limit', async () => {
     const userId = randomUUID();
@@ -329,8 +320,6 @@ describe('RgLimitGate loss handling (real PG)', () => {
   });
 });
 
-// The actual bug this whole change fixes: a spend/attempt in a currency OTHER than the
-// limit's own has to be converted before it counts, not summed raw across currencies.
 describe('RgLimitGate multi-currency enforcement (real PG)', () => {
   const btcToUsd = (rate: number) =>
     mock<ExchangeRateReader>({
@@ -346,9 +335,6 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
       }),
     });
 
-  // Under the old (broken) arithmetic, a 100 BTC deposit summed raw against a 100 USD
-  // limit would compare 100 <= 100 and pass - the exact bug. Converted at 50,000
-  // USD/BTC, 100 BTC is 5,000,000 USD, which must be refused.
   it('refuses a BTC deposit that converts well past a USD deposit limit', async () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
@@ -366,16 +352,11 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     const rates = btcToUsd(50000);
     const gate = new RgLimitGate(makeService(undefined, rates), rates);
 
-    // 0.001 BTC * 50,000 = 50 USD, under the 100 USD limit.
     const decision = await gate.checkDeposit(db.drizzle.db, userId, '0.001', 'BTC');
 
     expect(decision).toEqual({ allowed: true });
   });
 
-  // Fail-closed: no rate for a needed conversion must refuse the move, not silently
-  // allow it. The reader expresses "unavailable" and "too stale" identically (both
-  // `null`), so this same fake covers both - there is no separate staleness signal on
-  // the port to fabricate.
   it('refuses (fails closed) when no rate is available to convert the attempted amount', async () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
@@ -390,8 +371,6 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
   });
 
-  // Same fail-closed behavior when the rate needed to convert PRIOR spend (not the new
-  // attempt) is unavailable - spendFor's own RgRateUnavailableError must also refuse.
   it('refuses (fails closed) when no rate is available to convert prior spend in another currency', async () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
@@ -428,10 +407,6 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
   });
 });
 
-// An on-chain crypto deposit is credited by webhook when the funds are already on the
-// chain - there is nothing left to refuse, so it is deliberately NOT gated. What it does
-// instead is raise this flag for compliance, through the `wallet.deposit.completed`
-// evaluation the credit already triggers.
 describe('RgMonitoringService.evaluateUser - deposits past the limit (real PG)', () => {
   it('flags a deposit total that has already passed the limit', async () => {
     const userId = randomUUID();
@@ -616,10 +591,6 @@ describe('RgMonitoringService.listFlags (real PG)', () => {
   });
 });
 
-// The bug this whole change fixes: a pre-existing (pre-migration) money-type row's
-// currency is never backfilled to a guess (eg USD) - it is resolved lazily, to the
-// player's OWN currency, the first time anything reads or writes it, and persisted so it
-// never happens twice.
 describe('RgLimitGate lazy currency resolution (real PG)', () => {
   it('resolves a null-currency limit to the player currency on first check, and persists it', async () => {
     const userId = randomUUID();
@@ -638,14 +609,12 @@ describe('RgLimitGate lazy currency resolution (real PG)', () => {
 
   it('fails the deposit closed (refuses, does not default to USD) when no player record exists', async () => {
     const userId = randomUUID();
-    // Deliberately no seedPlayer: an orphaned pre-existing row.
     await seedUnresolvedDepositLimit(userId, '100000');
     const gate = new RgLimitGate(makeService(), identityRates());
 
     const decision = await gate.checkDeposit(db.drizzle.db, userId, '1', 'USD');
 
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
-    // Still unresolved - never guessed at.
     const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(row?.currency).toBeNull();
   });
@@ -683,7 +652,6 @@ describe('RgMonitoringService.evaluateUser lazy currency resolution (real PG)', 
 
   it('skips (does not throw) evaluation of a limit whose currency cannot be resolved', async () => {
     const userId = randomUUID();
-    // Deliberately no seedPlayer.
     await seedUnresolvedDepositLimit(userId, '100');
 
     await expect(

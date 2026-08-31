@@ -62,8 +62,6 @@ export class WalletCommandsService implements WalletCommands {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
-    // Optional, like the port itself: an install without the compliance module has no
-    // `user_limit` table and nothing to enforce. Bound, the gate is fail-closed.
     private readonly rgLimits?: RgLimitsPort,
   ) {}
 
@@ -109,18 +107,7 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available: '0' };
     }
 
-    // Deliberately AFTER the `FOR UPDATE` above, not at the top of this method: the limit
-    // check is a read, so checking it before taking the lock lets two concurrent bets see
-    // the same usage and both pass. Under the lock the second one waits for the first to
-    // commit its round, and reads it. This is the only point where the stake is known,
-    // and the only place a wager limit can actually be held.
-    //
-    // `win` and `loss` stay ungated for the ADR-0032 reason: they settle a round that was
-    // already staked, and refusing them strands it.
     if (type === 'bet' && this.rgLimits) {
-      // On `txn`, the caller's own transaction: the gate must read the state this
-      // transaction has already written, and must not occupy a second pooled connection
-      // while this one holds the `FOR UPDATE` above.
       const decision = await this.rgLimits.checkWager(
         txn,
         userId,
@@ -132,10 +119,6 @@ export class WalletCommandsService implements WalletCommands {
       }
     }
 
-    // Absent `currency` the debit falls on the player's active balance, which is what
-    // every caller wanted before a swap needed to sell a specific asset. `debitRow` only
-    // exists to carry that choice into the ledger row and the rail classification - the
-    // wallet row itself is untouched, so debiting BTC does not move the active currency.
     const debitCurrency = balanceKey(currency ?? row.currency);
     const debitRow = { ...row, currency: debitCurrency };
 
@@ -184,15 +167,9 @@ export class WalletCommandsService implements WalletCommands {
     const row = allowNewWallet
       ? await this.resolveOrOpenWallet(txn, userId, currency)
       : (await txn.select().from(wallet).where(eq(wallet.userId, userId)))[0];
-    // Fail closed: a credit never creates a wallet unless the caller opted in - for every
-    // self-initiated flow a missing one is a caller bug.
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
-    // A currency that is not the player's own is a caller bug for every path except a
-    // swap, where buying an asset the player has never held is the whole point. Keep the
-    // guard on by default and let the swap opt out explicitly, rather than dropping a
-    // check that has been catching mistakes for every other caller.
     if (!allowNewCurrency && balanceKey(row.currency) !== balanceKey(currency)) {
       return { ok: false, reason: 'currency mismatch' };
     }
@@ -218,17 +195,6 @@ export class WalletCommandsService implements WalletCommands {
     return { ok: true, newBalance: credited.amount };
   }
 
-  /**
-   * A wallet is created lazily on a player's first deposit, so a player who has only ever
-   * been registered has no `wallet` row. A player-to-player transfer must still be able to
-   * pay them: the sender is already debited by this point, and refusing here would strand
-   * the money. Opens the row inside the caller's transaction, taking the credited currency
-   * as the new wallet's active one exactly as a first deposit does.
-   *
-   * `onConflictDoNothing` + re-read rather than a bare insert: two concurrent transfers to
-   * the same never-funded player race on `wallet_user_id_unique`, and the loser must adopt
-   * the winner's row instead of failing the whole transfer.
-   */
   private async resolveOrOpenWallet(
     txn: DrizzleDb,
     userId: Uuid,

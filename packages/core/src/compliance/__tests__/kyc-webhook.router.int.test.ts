@@ -88,8 +88,6 @@ function build(opts: {
     webhookVerifier: opts.webhookVerifier,
     jobQueue: opts.jobQueue,
     kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
-    // Unexercised in this file - the webhook-enqueue path never publishes; the
-    // dedicated realtime test below builds its own RedisPubSubRealtimeTransport.
     realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
@@ -107,17 +105,15 @@ function bodyHashKey(rawBody: string): string {
 
 const acceptingVerifier = () => mock<KycWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
 
+const REDIS_SUBSCRIBE_SETTLE_MS = 200;
+
 describe('compliance streamKycStatus router', () => {
   it('streams only player-safe updates from the player channel', async () => {
     const realtime = new RedisPubSubRealtimeTransport(redis.client, 'kyc-webhook-test');
     try {
       const iterator = createKycStatusStream(realtime, 'user-1', undefined)[Symbol.asyncIterator]();
       const next = iterator.next();
-      // createKycStatusStream() subscribes synchronously, but the underlying Redis
-      // SUBSCRIBE is a real round trip on a freshly opened connection - give it a
-      // moment to land before publishing, or the publish is dropped as if nobody
-      // were listening yet.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, REDIS_SUBSCRIBE_SETTLE_MS));
 
       await realtime.publish(kycStatusChannel('other-user'), {
         eventId: '11111111-1111-4111-8111-111111111111',

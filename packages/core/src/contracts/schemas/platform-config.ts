@@ -136,22 +136,8 @@ export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
 export const ExchangeRateConfigSchema = z
   .object({
-    /**
-     * Comparison currency the fx module derives a cross rate against
-     * (`from/pivot ÷ to/pivot`) when a provider only quotes against one currency.
-     * This is a COMPARISON UNIT, not a system base currency - the platform
-     * deliberately has no global base currency; each player has their own operating
-     * currency (`wallet.currency`). Absent = 'USD'.
-     */
+    /** Comparison currency the fx module derives a cross rate against. Absent = 'USD'. */
     pivot: CurrencyCodeSchema.default('USD'),
-    /**
-     * Read-through cache thresholds for `EXCHANGE_RATE_READER`, off the stored
-     * quote's own last-write time. Below `freshTtlMs` a read answers from the stored
-     * quote with no vendor call. At/above `hardMaxAgeMs` (or with nothing stored) a
-     * read fetches from the vendor synchronously, bounded by `providerTimeoutMs`,
-     * and fails closed to `null` on error. In between, a read answers from the
-     * stored quote immediately and refreshes in the background.
-     */
     freshTtlMs: z.number().int().positive().default(60_000),
     hardMaxAgeMs: z
       .number()
@@ -233,12 +219,6 @@ export const PlatformConfigSchema = z
      * defaults), reusing the shared LimitsSchema shape.
      */
     rgLimits: z.record(z.string().length(2), LimitsSchema).default({}),
-    /**
-     * RG process knobs - the limit-change cool-down and its confirmation window.
-     * Lives here rather than in `IgamingConfig` because `PLATFORM_CONFIG` is always
-     * bound (`IGAMING_CONFIG` only when an operator passes one), and the cool-down
-     * must have a value on every install or the protection silently disappears.
-     */
     responsibleGambling: ResponsibleGamingSchema.default(defaultResponsibleGamingConfig),
     /**
      * KYC verification knobs: provider id, webhook secret env, withdrawal gating,
@@ -258,12 +238,7 @@ export const PlatformConfigSchema = z
      * Undefined or empty means no restriction - any value is accepted.
      */
     supportedLanguages: z.array(z.string().min(1)).optional(),
-    /**
-     * Currency codes a player may pick to have the UI render amounts in (see
-     * `resolveDisplayCurrencies` in display-currency.ts). Absent or empty = the
-     * built-in default list (a broad crypto + fiat set). Case-insensitive; each
-     * code is normalized to uppercase before comparison.
-     */
+    /** Currencies a player may pick to display amounts in. Absent or empty = built-in default. */
     displayCurrencies: z.array(z.string().min(1)).optional(),
     /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),

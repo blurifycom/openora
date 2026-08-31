@@ -57,8 +57,6 @@ export class GamingService {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly walletCommands: WalletCommands,
     private readonly identityReader: IdentityReader,
-    // Optional, like the port itself: an install without the compliance module has no
-    // limits to enforce. Bound, the gate is fail-closed.
     private readonly rgLimits?: RgLimitsPort,
   ) {}
 
@@ -83,13 +81,6 @@ export class GamingService {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
-    // Advisory, not authoritative: this refuses the ordinary case before a launch token
-    // is issued and before the provider is touched, which is what gives the player a
-    // reason instead of a failed round. The check that actually HOLDS under concurrency
-    // is the identical one inside `WALLET_COMMANDS.debit`, taken under the wallet row
-    // lock - a check out here cannot serialize anything. Both raise the same error, so
-    // either path reaches the player looking the same.
-    // The pool, not a transaction: this advisory check runs before any transaction opens.
     const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
     if (decision && !decision.allowed) {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);

@@ -46,18 +46,10 @@ const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperC
 // them with an exact string equality, so an untrimmed paste on either side would look like
 // an address the player never saved. Deliberately no case transform - base58 rails (BTC
 // legacy, TRC20, Solana) are case-sensitive, so lowercasing would corrupt the address.
-// Format is checked separately, per network, by `isWalletAddressValidForNetwork` below -
-// this schema stays the shared length bound both call sites fall back to.
 const WalletAddressInputSchema = z.string().trim().min(8).max(128);
 
 const BASE58_LEGACY = '[a-km-zA-HJ-NP-Z1-9]{25,39}';
 
-// A first-pass sanity check, not on-chain proof of a live address: the regexes accept the
-// testnet form of each address too (bc1/tb1/bcrt1, XRPL's shared alphabet, etc.), because a
-// sandbox asset table issues testnet addresses and this table has no way to tell "testnet"
-// from "operator hasn't gone live yet". The payment provider is still the only thing that
-// can tell a live address from a well-formed dead one - this only catches an obviously
-// malformed paste before it becomes an irreversible transfer.
 const ADDRESS_PATTERN_BY_NETWORK: Record<string, RegExp> = {
   SEGWIT: new RegExp(`^((bc1|tb1|bcrt1)[a-z0-9]{25,87}|[13mn2]${BASE58_LEGACY})$`),
   BITCOIN_CASH: new RegExp(`^((bitcoincash:|bchtest:)?[qp][a-z0-9]{41}|[13mn2]${BASE58_LEGACY})$`),
@@ -71,13 +63,9 @@ const ADDRESS_PATTERN_BY_NETWORK: Record<string, RegExp> = {
 };
 
 /**
- * Format check for a payout destination, per chain. Looks the pattern up by
- * `network.toUpperCase()`; an address is otherwise passed through as-is (no trim, no case
- * change - callers already own that).
- *
- * A network with no entry in the table is ACCEPTED, falling back to the shared length bound
- * (8-128 chars trimmed): an operator can add a new chain via the Backoffice at any time, and
- * a table shipped inside core must never block a chain core has never heard of.
+ * Format check for a payout destination, per chain, looked up by `network.toUpperCase()`.
+ * A network with no entry in the table is ACCEPTED, falling back to the shared length
+ * bound (8-128 chars trimmed) instead of being rejected.
  */
 export function isWalletAddressValidForNetwork(address: string, network: string): boolean {
   const pattern = ADDRESS_PATTERN_BY_NETWORK[network.toUpperCase()];
@@ -161,23 +149,13 @@ export const WithdrawInputSchema = z
   .object({
     amount: PositiveMoneyAmountSchema,
     currency: WalletCurrencyInputSchema,
-    // Required for any currency the operator settles on more than one chain - a payout is
-    // rejected as ambiguous rather than guessing which chain the player meant.
     network: WalletNetworkInputSchema.optional(),
     provider: z.string().optional(),
     idempotencyKey: UuidSchema,
     destinationAddress: WalletAddressInputSchema.optional(),
-    // Tag/memo networks (XRP, XLM, EOS, and the exchange deposit addresses on them) carry the
-    // beneficiary in a separate field rather than in the address: one address serves every
-    // account behind it. A payout sent without the tag the player was given arrives
-    // unattributed and has to be recovered by hand, so it is carried end to end instead of
-    // being dropped between the request and the custodian. It must match the tag saved on the
-    // whitelisted destination - see `requireWhitelistedWalletId`.
     destinationTag: DestinationTagInputSchema.optional(),
   })
   .superRefine((data, ctx) => {
-    // Only when both are present - `network` is optional here (a single-chain currency does
-    // not need one), and an address with no known chain to check it against cannot be judged.
     if (
       data.network &&
       data.destinationAddress &&
@@ -544,20 +522,12 @@ export const WithdrawalAddressSchema = z.object({
 });
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
 
-// Format-checked against `network` via `isWalletAddressValidForNetwork` below, catching an
-// obviously malformed paste before it is ever whitelisted with the provider. That check is
-// still the only proof this is a well-formed string, not a live one - the payment provider
-// remains the only thing that can tell a live address from a well-formed dead one, and it
-// rejects a bad one at payout time.
 export const CreateWithdrawalAddressInputSchema = z
   .object({
     label: z.string().trim().min(1).max(50),
     currency: WalletCurrencyInputSchema,
     network: WalletNetworkInputSchema,
     address: WalletAddressInputSchema,
-    // Part of the saved destination, for the same reason the address is: on a tag chain the pair
-    // names the beneficiary and the address alone does not. A withdrawal must present the tag it
-    // was saved with, so this is what the payout is checked against.
     destinationTag: DestinationTagInputSchema.optional(),
   })
   .superRefine((data, ctx) => {

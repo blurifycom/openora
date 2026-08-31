@@ -54,10 +54,6 @@ export const SignedMoneyAmountSchema = z
   );
 export type SignedMoneyAmount = z.infer<typeof SignedMoneyAmountSchema>;
 
-// ISO 4217 fiat codes plus longer crypto tickers (USDT, USDC, DOGE). Codes are
-// canonically uppercase - normalize on the way in so a `usd` request can never
-// diverge from a `USD` wallet or a stored display currency. Wider than
-// `CurrencyCodeSchema` (igaming-config), which is ISO-3 only.
 export const CurrencyTickerSchema = z
   .string()
   .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');

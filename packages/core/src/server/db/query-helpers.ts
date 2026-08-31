@@ -60,19 +60,11 @@ export function moneyScaleBy(amount: string, factor: string): string {
   return fromMinorUnits(product);
 }
 
-// Exact decimal division of two non-negative decimal strings (`dividend / divisor`),
-// via the same bigint minor-units path as moneyScaleBy - never JS float, so a
-// derived rate can never drift the way `Number(a) / Number(b)` would. Truncated (not
-// rounded) to MONEY_SCALE places, same contract as moneyScaleBy. Used to derive a
-// cross rate (`from/pivot ÷ to/pivot`) when a provider only quotes against one pivot
-// currency - see the fx module's ExchangeRateReaderService.
 export function moneyDivide(dividend: string, divisor: string): string {
   const divisorUnits = toMinorUnits(divisor);
   if (divisorUnits === 0n) {
     throw new RangeError('moneyDivide: division by zero');
   }
-  // Scale the dividend up by an extra MONEY_SCALE digits before the integer bigint
-  // divide, so the quotient itself carries MONEY_SCALE fractional digits.
   const dividendUnits = toMinorUnits(dividend) * 10n ** BigInt(MONEY_SCALE);
   return fromMinorUnits(dividendUnits / divisorUnits);
 }
@@ -89,22 +81,11 @@ export function moneySubtract(a: string, b: string): string {
   return fromMinorUnits(toMinorUnits(a) - toMinorUnits(b));
 }
 
-// Round a non-negative decimal-string money amount (up to MONEY_SCALE precision) DOWN to
-// `scale` decimal places, via the same bigint minor-units path as the helpers above - never
-// JS float or `toFixed`, which both round half-to-even/away-from-zero inconsistently and
-// lose precision past ~15 significant digits. Use this for a presentation value derived
-// from a full-precision aggregate (eg a RG spend sum at MONEY_SCALE) that must be shown at
-// a narrower native scale (eg a limit's own numeric(18,2) `amount`) without ever
-// overstating it - the discarded digits are truncated, never rounded up.
 export function moneyFloorToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
   return fromUnitsAtScale(toMinorUnits(amount) / divisor, scale);
 }
 
-// Same as moneyFloorToScale but rounds UP (ceiling) whenever any discarded digit is
-// nonzero. Use for a presentation value that must never be shown as LESS than its true
-// full-precision amount - eg RG spend, a protective control where under-reporting `used`
-// would show a player more headroom than they actually have.
 export function moneyCeilToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
   const units = toMinorUnits(amount);

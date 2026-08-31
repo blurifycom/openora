@@ -17,10 +17,8 @@ import {
  * shape, same "list every gap, don't stop at the first" style.
  *
  * `REALTIME_TRANSPORT` is included as of ADR-0031: `createApp` no longer binds an
- * in-process default (that was the exact silent-failure shape this guard exists to
- * catch - a single-instance deployment worked, a second replica behind a load
- * balancer silently stopped delivering to half its clients). An overlay (e.g. Ably)
- * still rebinds it via last-wins `container.register`, same as every other seam here.
+ * in-process default. An overlay (e.g. Ably) still rebinds it via last-wins
+ * `container.register`, same as every other seam here.
  */
 export type DurableSeamContainerView = {
   has(token: AnyToken<unknown>): boolean;

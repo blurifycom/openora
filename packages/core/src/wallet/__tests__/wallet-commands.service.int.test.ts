@@ -67,8 +67,6 @@ beforeEach(async () => {
   );
 });
 
-// The money dimension of RG: a bound gate that refuses, one that allows, and the absent
-// port (an install without the compliance module).
 const refusingLimits = () =>
   mock<RgLimitsPort>({
     checkDeposit: vi.fn(),
@@ -136,13 +134,9 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
     ).resolves.toMatchObject({ ok: true });
   });
 
-  // The check must sit INSIDE the debit transaction, after the wallet row's FOR UPDATE.
-  // Before the lock it is a read two concurrent bets can both pass.
   it('serializes concurrent bets so they cannot jointly pass the same limit', async () => {
     const w = await seedWallet({ balance: '1000' });
     let staked = 0;
-    // Stands in for the real spend query: it reports what previous bets in this test
-    // have already committed, so a check taken before the lock would let both through.
     const limits = mock<RgLimitsPort>({
       checkDeposit: vi.fn(),
       checkWager: vi.fn(async (_tx: unknown, _userId: string, amount: string) => {

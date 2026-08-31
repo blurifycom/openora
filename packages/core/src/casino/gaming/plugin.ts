@@ -32,8 +32,6 @@ export default {
           c.get(PLAY_ELIGIBILITY),
           c.get(WALLET_COMMANDS),
           c.get(IDENTITY_READER),
-          // Optional, never `requiresPorts`: compliance binds it, and an install without
-          // that module has no limits to enforce. See adapters/rg-limits.ts.
           c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         ),
       ),

@@ -86,12 +86,10 @@ export function createComplianceRouter({
   return os.router({
     getLimits: os.getLimits.handler(({ context }) => rgSelfService.getLimits(getUserId(context))),
 
-    // Immediate for a first limit or a lower one; files a cool-down request for a raise.
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
       return rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta);
     }),
 
-    // Files a removal request - the limit keeps applying until the player confirms it.
     deleteLimit: os.deleteLimit.handler(({ input, context }) => {
       return mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
         rgSelfService.requestLimitRemoval(input.id, getUserId(context), context.clientMeta),
@@ -253,9 +251,6 @@ export function createComplianceRouter({
       return rgMonitoring.listFlags(input);
     }),
 
-    // Player self-service. Every handler below resolves the subject from the SESSION and
-    // none of them reads a userId from input: a player acts on themselves and nobody
-    // else. Lifting an exclusion stays admin-only and has no self-service counterpart.
     getMyRgSection: os.getMyRgSection.handler(({ context }) =>
       rgSelfService.getSection(getUserId(context)),
     ),

@@ -26,10 +26,6 @@ import type {
   ExchangeRateReader,
 } from '@openora/core/contracts';
 import { userLimit, rgExclusion, SESSION_LIMIT_CURRENCY } from '../schema/index.js';
-// Read-only cross-module `/schema` subpath (module-structure.md), not a pam import - the
-// same seam `KycVerificationService` already uses to read `player.currency` (see
-// kyc.service.ts). Resolving a limit's currency needs the player's own currency; adding
-// a new port for a single-column read here would just duplicate a seam that exists.
 import { player } from '@openora/core/pam/schema/profile';
 import { LimitNotFoundError } from './compliance.service.js';
 import type {
@@ -64,36 +60,15 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
 
 export type LimitRow = typeof userLimit.$inferSelect;
 
-// The DB always carries a non-null currency (SESSION_LIMIT_CURRENCY sentinel for the
-// session type, keeping the widened unique index's NOT NULL invariant intact); the wire
-// never shows that sentinel. Both directions live together so no write/read boundary can
-// apply one without the other.
 export function toDbCurrency(type: LimitType, currency: string | null): string {
   return type === 'session' ? SESSION_LIMIT_CURRENCY : (currency as string);
 }
-// `currency` may still be null on the wire for a money-type row that has not been
-// touched (and therefore not resolved, see resolveLimitCurrency below) since this
-// column was added - a nullable wire field, not a bug.
 export function toWireCurrency(type: LimitType, currency: string | null): string | null {
   return type === 'session' ? null : currency;
 }
 
-// A `LimitRow` whose currency is known: either the session sentinel, or a money-type
-// row that has been resolved (see resolveLimitCurrency/resolveLimitCurrencyInTx below).
 export type ResolvedLimitRow = Omit<LimitRow, 'currency'> & { currency: string };
 
-// A raise and a removal both weaken the protection; a first limit and a lower one do
-// not. Shared by the player's own classification (RgSelfServiceService.upsertLimit,
-// where only a lower/first write applies immediately) and the admin override (below,
-// where a raise is refused outright rather than parked).
-//
-// Money-type limits compare in the ROW's currency: same currency is a cheap direct
-// `moneyCompare`; a different currency is converted via `rates.convert` before
-// comparing. Fails CLOSED - if the rate is unavailable (or too stale, which the reader
-// expresses the same way, as `null`), this returns `true` (treat as weakening) rather
-// than letting an unverified raise through. This never throws: both callers run inside
-// the same DB transaction/advisory lock that also performs the write, and "conservatively
-// refuse" is a valid return value there, not an exceptional one.
 export async function isWeakening(
   row: ResolvedLimitRow,
   next: Pick<UpsertLimitInput, 'amount' | 'minutes' | 'currency'>,
@@ -113,20 +88,9 @@ export async function isWeakening(
   if (next.minutes !== null && row.minutes !== null) {
     return next.minutes > row.minutes;
   }
-  // A limit that changes measure (money <-> minutes) cannot happen: `type` fixes which
-  // one applies and `type` is part of the row's identity. Treat the impossible case as
-  // weakening rather than waving it through.
   return true;
 }
 
-/**
- * ADR-0036 amendment: the admin override is reduce-only. The ADR's original
- * "impose a limit on the spot" justification only ever needed create-or-lower; letting
- * an operator RAISE a limit the player set for themselves is the operator weakening the
- * player's own protection, which the Anjouan-licence RG policy explicitly forbids
- * (overrides may only reduce). Carries the prior and requested value so the client can
- * render a precise refusal without a message string reaching the screen.
- */
 export type LimitRaiseNotAllowedData = {
   type: LimitRow['type'];
   period: LimitRow['period'];
@@ -157,19 +121,8 @@ export class LimitRaiseNotAllowedError extends Error {
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/**
- * One critical section per limit slot, shared by every path that reads a limit and then
- * decides what to write about it: the player's raise-or-apply classification, confirm and
- * cancel of a parked request, and the admin's outright write. Split apart, two concurrent
- * changes both classify against a value that is gone by the time either lands.
- *
- * An advisory lock (`withAdvisoryXactLock`) rather than `SELECT ... FOR UPDATE`, because
- * the row does not exist yet for a player's first limit and there would be nothing to lock.
- */
 export const limitSlotKey = (userId: User['id'], type: string, period: string) =>
   `rg-limit:${userId}:${type}:${period}`;
-// The "no request parked on this limit" tuple, spelled once so no write path can clear
-// four of the five columns and leave a half-request behind.
 export const NO_PENDING_CHANGE = {
   pendingKind: null,
   pendingAmount: null,
@@ -183,14 +136,6 @@ export const NO_PENDING_CHANGE = {
 // exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
 const SWEEP_CONCURRENCY = 10;
 
-/**
- * A pre-existing `user_limit` row (see schema/index.ts) whose currency has never been
- * resolved, and whose player record cannot be found to resolve it from. Fails the
- * operation closed - the same rule this module already applies to a missing exchange
- * rate (`RgRateUnavailableError`, rg-monitoring.service.ts): an unresolvable currency
- * means the limit cannot be safely evaluated or classified, so the caller refuses
- * rather than guessing a default currency.
- */
 export class RgLimitCurrencyUnresolvedError extends Error {
   constructor(readonly userId: User['id']) {
     super(
@@ -201,11 +146,9 @@ export class RgLimitCurrencyUnresolvedError extends Error {
 }
 
 /**
- * Resolves and PERSISTS a pre-existing row's null currency (see schema/index.ts) to the
- * player's own `player.currency`, the first time anything touches it. Assumes the
- * caller is ALREADY inside the transaction and advisory lock for this limit's slot
- * (`limitSlotKey`) and re-reads the row under that lock, so a second caller racing the
- * first sees the already-resolved value instead of resolving (and writing) it twice.
+ * Resolves and persists a pre-existing row's null currency to the player's own
+ * `player.currency`. Caller must already hold the transaction and advisory lock for
+ * this limit's slot (`limitSlotKey`).
  */
 export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow> {
   if (row.currency !== null) {
@@ -234,13 +177,10 @@ export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<R
 }
 
 /**
- * Same resolution, for a caller that holds NO transaction at all
- * (`RgMonitoringService.evaluateUser`, `RgSelfServiceService.toView`) - opens its own
- * transaction and takes the lock itself. Never call this from inside an already-open
- * transaction on the same slot (see `resolveLimitCurrencyInTx` above): a second
- * connection taking the same advisory lock while the outer transaction still holds it
- * would self-deadlock. `RgLimitGate.check` is exactly that case and so uses
- * `resolveLimitCurrencyInTx` on the caller's own `tx` instead.
+ * Same resolution, for a caller that holds no transaction: opens its own transaction and
+ * takes the lock itself. Never call from inside an already-open transaction on the same
+ * slot - use `resolveLimitCurrencyInTx` there instead, or a second connection taking the
+ * same advisory lock self-deadlocks.
  */
 export async function resolveLimitCurrency(
   drizzle: DrizzleService,
@@ -257,24 +197,9 @@ export async function resolveLimitCurrency(
 }
 
 /**
- * The one write that applies a limit immediately, shared by the admin override
- * (`RgService.setPlayerLimit`) and the player's create-or-lower path
- * (`RgSelfServiceService.upsertLimit`). Only the WRITE is shared: each caller classifies
- * the change itself first and diverges on a weakening one (the admin refuses it, the
- * player parks a request), which is why that decision stays out of here.
- *
- * Both callers must already hold this limit's slot lock (`limitSlotKey`) inside their own
- * transaction and must pass the `existing` row they read under it - the update pins to
- * `existing.id`.
- *
- * Not `.onConflictDoUpdate` on the widened (userId, type, period, currency) key: a write
- * that also CHANGES the currency has no conflict on that key against the existing
- * (different-currency) row, so an upsert would INSERT a second row instead of updating the
- * one the caller found. Hence the explicit branch on `existing`.
- *
- * Clearing `pending*` is deliberate: a directly written limit is the current decision, and
- * leaving a stale request parked beside it would let the player confirm their way back to
- * a value this write just moved past.
+ * Applies a limit immediately and clears any parked pending request. Caller must
+ * already hold this limit's slot lock (`limitSlotKey`) inside their own transaction and
+ * must pass the `existing` row read under it - the update pins to `existing.id`.
  */
 export async function writeLimitRow(
   tx: Tx,
@@ -375,24 +300,9 @@ export class RgService {
   }
 
   /**
-   * The ADMIN write: a compliance officer creates a player's first limit, or lowers one
-   * that already exists, effective immediately. It deliberately does NOT serve the
-   * cool-down - that is a control on what a *player* may do to their own protection, not
-   * a restraint on the operator's compliance function, which must be able to impose a
-   * limit on the spot. It is also **reduce-only**: raising a limit the player set for
-   * themselves is refused with `LimitRaiseNotAllowedError`, because that direction is the
-   * operator weakening the player's own protection, not imposing one (ADR-0036
-   * amendment). The override is permissioned (`compliance:manage-rg`), requires a
-   * mandatory `reason` and `confirm`, and lands in the audit log attributed to the
-   * admin, which is what makes it accountable. See ADR-0036.
-   *
-   * The player's own path never comes through here: `RgSelfServiceService.upsertLimit`
-   * owns the classification and does its own write under the same per-limit lock.
-   *
-   * The raise check and the write share the same advisory lock and the same read: the
-   * classification is only meaningful against the value still present when the write
-   * lands. The write itself (including why it clears any parked request, even a player's
-   * own pending RAISE) is `writeLimitRow`.
+   * Admin override: creates a player's first limit or lowers an existing one, effective
+   * immediately, with no cool-down. Reduce-only - raising a limit the player set for
+   * themselves throws `LimitRaiseNotAllowedError`.
    */
   async setPlayerLimit(
     userId: User['id'],
@@ -401,8 +311,6 @@ export class RgService {
     initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<Limit> {
-    // Same critical section the player's path takes, so an admin write and a player
-    // request for the same limit cannot interleave into a state neither of them chose.
     const { prior, row } = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const [existing] = await tx
@@ -417,16 +325,11 @@ export class RgService {
           )
           .limit(1);
         if (existing) {
-          // Resolve BEFORE classifying: a pre-existing row's null currency must be known
-          // to compare it against `input.currency`, and this is the one place that
-          // touches it under the slot's lock, so it also persists here.
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
           if (await isWeakening(resolvedExisting, input, this.rates)) {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
         }
-        // `existing` was read under this same advisory lock, which is what makes the
-        // shared write safe here - see `writeLimitRow`.
         return { prior: existing, row: await writeLimitRow(tx, userId, existing, input) };
       }),
     );
@@ -469,12 +372,6 @@ export class RgService {
     return toLimitDto(row);
   }
 
-  /**
-   * The player-facing "your limit changed" mail. Public so the self-service confirm
-   * path - which writes the limit itself, atomically with clearing the request that
-   * authorised it - sends the same mail as this class does, rather than re-wiring the
-   * renderer/directory/transport trio a second time.
-   */
   async notifyLimitUpdated(
     userId: User['id'],
     type: SetPlayerLimitInput['type'],
@@ -721,12 +618,7 @@ export class RgService {
 
   /**
    * The exclusions in force for a player right now. A lapsed cooling-off row stays
-   * `active` until the sweep expires it, so it is filtered out here by its expiry -
-   * the section must reflect what is actually enforced, not what the row still says.
-   *
-   * The limits half of the RG section lives in `RgSelfServiceService.getSection`, which
-   * composes this: usage and pending requests need the spend windows, which this class
-   * has no business knowing about.
+   * `active` until the sweep expires it, so it is filtered out here by its expiry.
    */
   async getActiveExclusions(
     userId: User['id'],

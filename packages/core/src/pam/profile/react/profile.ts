@@ -23,7 +23,6 @@ export function useUpdatePlayerProfile() {
 
 export type { DisplayCurrencyInfo };
 
-/** Effective display currency for the current player, plus the operator's supported list. */
 export function useDisplayCurrency() {
   const utils = useOrpcQueryUtils(profileContract);
   return useQuery({ ...utils.getDisplayCurrency.queryOptions(), retry: false });

@@ -29,10 +29,6 @@ export const UnsupportedDisplayCurrencyError = createDomainError<[currency: stri
   (currency) => `Display currency not supported: ${currency}`,
 );
 
-// Comparison currency used only to rank a player's held balances against each
-// other when resolving the "most valuable" fallback below - never returned to
-// the caller, never persisted. Mirrors the fx module's own default pivot
-// (ExchangeRateConfigSchema.pivot).
 const VALUE_COMPARISON_CURRENCY = 'USD';
 
 export class ProfileService implements PlayerProvisioning {
@@ -57,9 +53,7 @@ export class ProfileService implements PlayerProvisioning {
   /**
    * `player.user_id` carries no foreign key (cross-module FKs are not allowed), so the
    * identity row is resolved first: materialising a profile for a missing user would
-   * create an orphan that every downstream join then has to defend against. Returns
-   * the raw row (not the DTO) so callers that only need a column (eg
-   * `displayCurrency`) don't need a second query.
+   * create an orphan that every downstream join then has to defend against.
    */
   private async ensureProfileRow(userId: User['id']) {
     const identity = await fetchIdentityByUserId(this.drizzle, userId);
@@ -102,7 +96,6 @@ export class ProfileService implements PlayerProvisioning {
     return toPlayer(record, email, username);
   }
 
-  /** Effective display currency for the calling player, plus the operator's full supported list. */
   async getMyDisplayCurrency(userId: User['id']): Promise<DisplayCurrencyInfo> {
     const { row } = await this.ensureProfileRow(userId);
     return {
@@ -111,7 +104,6 @@ export class ProfileService implements PlayerProvisioning {
     };
   }
 
-  /** Self-service: always scoped to `userId` resolved from the caller's session. */
   async setMyDisplayCurrency(
     userId: User['id'],
     input: SetDisplayCurrencyInput,
@@ -141,15 +133,6 @@ export class ProfileService implements PlayerProvisioning {
     return { currency: input.currency, supported: [...this.supportedDisplayCurrencies] };
   }
 
-  /**
-   * Resolution order (never throws, never calls a rate provider):
-   *   1. `player.displayCurrency` when the player has explicitly picked one.
-   *   2. Otherwise the currency the player holds the most value in, ranked via
-   *      EXCHANGE_RATE_READER (cache/table-backed only) - a balance whose rate is
-   *      unavailable is skipped, not fatal.
-   *   3. Otherwise the wallet's own (active/operating) currency, which
-   *      `WalletReader.getBalances` always answers even with no wallet row yet.
-   */
   private async resolveEffectiveDisplayCurrency(
     userId: User['id'],
     row: { displayCurrency: string | null },
@@ -167,7 +150,7 @@ export class ProfileService implements PlayerProvisioning {
     let best: { currency: string; value: string } | null = null;
     for (const balance of balances) {
       if (moneyCompare(balance.balance, '0') <= 0) {
-        continue; // nothing "held" in a zero/negative balance
+        continue;
       }
       const converted = await this.exchangeRateReader.convert(
         balance.balance,
@@ -175,7 +158,7 @@ export class ProfileService implements PlayerProvisioning {
         VALUE_COMPARISON_CURRENCY,
       );
       if (converted === null) {
-        continue; // no rate available yet - skip, never fail the resolve
+        continue;
       }
       if (!best || moneyCompare(converted, best.value) > 0) {
         best = { currency: balance.currency, value: converted };

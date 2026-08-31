@@ -1,5 +1,5 @@
 {
-  "id": "c0705371-a9ff-4e2f-a728-1e177115edeb",
+  "id": "3cfef640-3c19-43de-bb6e-5d72a0bbad07",
   "prevId": "848568d2-f6c2-4771-a5ee-b14c583419ff",
   "version": "7",
   "dialect": "postgresql",
@@ -544,13 +544,19 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 2)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": false
         },
         "minutes": {
           "name": "minutes",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -569,13 +575,19 @@
         },
         "pending_amount": {
           "name": "pending_amount",
-          "type": "numeric(18, 2)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": false
         },
         "pending_minutes": {
           "name": "pending_minutes",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_currency": {
+          "name": "pending_currency",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -612,8 +624,8 @@
         }
       },
       "indexes": {
-        "user_limit_user_id_type_period_key": {
-          "name": "user_limit_user_id_type_period_key",
+        "user_limit_user_id_type_period_currency_key": {
+          "name": "user_limit_user_id_type_period_currency_key",
           "columns": [
             {
               "expression": "user_id",
@@ -629,6 +641,12 @@
             },
             {
               "expression": "period",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

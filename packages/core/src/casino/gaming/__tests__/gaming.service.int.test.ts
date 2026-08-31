@@ -124,8 +124,6 @@ describe('GamingService.startRound (real PG)', () => {
       rgLimits: refusingLimits(),
     });
 
-    // A translatable refusal, not a bare status code: startRound returns CONFLICT for an
-    // exclusion too, so the client branches on `data.reason`.
     await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toMatchObject({
       name: 'RgLimitExceededError',
       data: { reason: 'wager_limit_exceeded', limitType: 'wager', limit: '50', used: '45' },

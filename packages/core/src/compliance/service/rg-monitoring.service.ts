@@ -26,14 +26,6 @@ import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 
 const logger = createLogger('compliance-rg-monitoring');
 
-/**
- * `spendFor` cannot produce a trustworthy total when a currency group other than the
- * limit's own has no available conversion rate. Carries enough for a caller to decide
- * what to do about it distinctly from any other failure: `RgLimitGate.check` fails the
- * money move closed, `RgMonitoringService.evaluateUser` skips that one limit's flag for
- * this pass, and `RgSelfServiceService.toView` reports the usage fields as null instead
- * of 500ing a player's own limits read.
- */
 export class RgRateUnavailableError extends Error {
   constructor(
     readonly limitType: LimitType,
@@ -53,10 +45,6 @@ export const RG_EVAL_TRIGGERS = [
   'wallet.deposit.completed',
   'gaming.round.ended',
   'rg.exclusion.login_blocked',
-  // A limit change moves the threshold under a spend that has already happened, so the
-  // 80% flag has to be recomputed there and then. Without this a player who LOWERS a
-  // limit below what they have already spent raises no flag until their next deposit
-  // or round - which can be never.
   'rg.limit.set',
 ] as const;
 export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
@@ -119,11 +107,7 @@ export class RgMonitoringService {
       const { from } = periodWindow(limit.period as LimitPeriod, now);
       let actualAmount: string;
       try {
-        // A pre-existing row's null currency resolves (and persists) here on first
-        // touch - see resolveLimitCurrency in rg.service.ts.
         const limitCurrency = (await resolveLimitCurrency(this.drizzle, limit)).currency;
-        // The sweep owns no transaction of its own - it only reads, and nothing here has
-        // to be atomic with a money move - so it passes the pool directly.
         actualAmount = await this.spendFor(
           this.drizzle.db,
           userId,
@@ -139,9 +123,6 @@ export class RgMonitoringService {
         ) {
           throw err;
         }
-        // A missing rate or an unresolvable currency must not kill the whole sweep for
-        // this user - skip this one limit's flag evaluation for this pass; the next
-        // trigger tries again.
         logger.warn(
           { err, userId, limitType: limit.type },
           'RG flag evaluation skipped: rate or currency missing',
@@ -277,25 +258,10 @@ export class RgMonitoringService {
   }
 
   /**
-   * Spend counted against one money limit inside its period window, as a decimal string.
-   *
-   * - `deposit` - completed deposits.
-   * - `wager` - total staked.
-   * - `loss` - NET loss, stakes minus winnings. A player who staked 1000 and won 900 has
-   *   lost 100, not 1000; counting gross would stop them nine times too early. Clamped at
-   *   zero, because a player who is up on the window has not lost anything.
-   *
-   * Public because it is also the read behind the `RG_LIMITS` enforcement port - the gate
-   * and the monitoring flag must agree on what "used" means, so there is exactly one
-   * query for it.
-   *
-   * Currency-aware: each source table is grouped by its OWN `currency` column (one
-   * aggregate query per table, never a per-row fan-out - `no-unbounded-db-fanout`), and
-   * every group other than `limitCurrency` itself is converted into it via
-   * `EXCHANGE_RATE_READER.convert` before being summed together. Fails CLOSED: a missing
-   * or too-stale rate (the reader expresses both as `null`) for any non-limit-currency
-   * group throws `RgRateUnavailableError` rather than silently treating that group as
-   * zero or as already being in the limit's currency.
+   * Spend counted against one money limit inside its period window, converted into
+   * `limitCurrency` and returned as a decimal string. Throws `RgRateUnavailableError`
+   * when a source currency has no available conversion rate, rather than treating that
+   * group as zero.
    */
   async spendFor(
     db: DrizzleDb | DrizzleTx,
@@ -329,8 +295,6 @@ export class RgMonitoringService {
     );
   }
 
-  // Converts each (currency, total) group into `limitCurrency` and sums the results.
-  // Same-currency groups skip the conversion call entirely.
   private async convertedTotal(
     groups: { currency: string; total: string }[],
     type: LimitType,
@@ -352,10 +316,6 @@ export class RgMonitoringService {
     return total;
   }
 
-  // Decimal string per currency, matching userLimit.amount (same unit as
-  // walletTransaction.amount). Open-ended at the top: the window's `to` is a JS clock
-  // reading, so a row the database stamped microseconds ahead of it would drop out of
-  // the very evaluation that row triggered.
   private async depositsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
     return db
       .select({
@@ -376,7 +336,6 @@ export class RgMonitoringService {
       .groupBy(walletTransaction.currency);
   }
 
-  // Decimal string per currency, matching userLimit.amount (same unit as gameRound.betAmount).
   private async betsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
     return db
       .select({
@@ -388,10 +347,6 @@ export class RgMonitoringService {
       .groupBy(gameRound.currency);
   }
 
-  // Net loss over the window, per currency: staked minus won, floored at zero. Summed
-  // and subtracted in Postgres numeric arithmetic, never in JS floats. An unfinished
-  // round contributes its stake and a winAmount of 0 (the column's default), which is
-  // the honest reading while the outcome is still unknown.
   private async netLossByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
     return db
       .select({
@@ -403,11 +358,6 @@ export class RgMonitoringService {
       .groupBy(gameRound.currency);
   }
 
-  /**
-   * Clears the 80% flag a money limit raised. Public for the one case `evaluateUser`
-   * cannot cover: a limit that has been REMOVED is no longer in the set it walks, so
-   * without this its flag would sit `active` on the compliance dashboard forever.
-   */
   clearLimitThresholdFlag(userId: User['id'], limitType: string): Promise<void> {
     return this.clearFlag(userId, 'limit_threshold', limitType);
   }

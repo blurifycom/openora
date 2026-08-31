@@ -42,8 +42,6 @@ describe('GET /profile/display-currency', () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { currency: string; supported: string[] };
-    // No wallet balances exist yet, so resolution floors out at the wallet's
-    // own operating currency - never throws, never calls a rate vendor.
     expect(typeof body.currency).toBe('string');
     expect(body.supported).toContain('USD');
     expect(body.supported).toContain('BTC');

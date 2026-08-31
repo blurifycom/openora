@@ -13,11 +13,6 @@ function makeTransport(serviceName = 'svc'): RedisPubSubRealtimeTransport {
   return transport;
 }
 
-// Redis SUBSCRIBE is a real round trip on the subscriber's freshly opened
-// connection - settle before the first publish so it isn't dropped as if nobody
-// were listening yet. Publishing exactly once (never retried) avoids the
-// duplicate-delivery hazard of retrying a publish whose only problem was lateness,
-// not loss.
 async function settle(ms = 200): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -79,7 +74,6 @@ describe('RedisPubSubRealtimeTransport', () => {
 
     transport.presence?.leave(room, 'u2', 'tab-1');
     await settle();
-    // u2 still has tab-2 open - one tab closing must not drop the member.
     expect(await transport.presence?.count(room)).toBe(2);
 
     transport.presence?.leave(room, 'u1', 'tab-1');
@@ -124,12 +118,6 @@ describe('RedisPubSubRealtimeTransport', () => {
     expect(seenB).toEqual([]);
   });
 
-  // Definition-of-done proof: two independently connected transports (each opening
-  // its OWN Redis connection, standing in for two separate API processes) against
-  // the SAME logical Redis database, same service name. A deposit webhook landing on
-  // instance A must reach a wallet balance stream held open on instance B - this is
-  // exactly the bug the in-process transport could never pass: fan-out confined to
-  // one process.
   it('cross-process proof: publishing on one instance is received on a separate instance', async () => {
     const redisA = await createTestRedis();
     const redisB = await createTestRedis();
@@ -158,11 +146,6 @@ describe('RedisPubSubRealtimeTransport', () => {
     }
   });
 
-  // Definition-of-done proof for presence: two independently connected transports
-  // against the same logical Redis, same service name, standing in for two API
-  // processes. A member joining on instance A's connection must be visible to
-  // getOnlineUserIds on instance B - the exact case `LocalPresence` could never
-  // pass (a replica-local Map, invisible to any other process).
   describe('cross-process presence', () => {
     it('a member joining on instance A is visible to getOnlineUserIds on instance B', async () => {
       const redisA = await createTestRedis();
@@ -237,13 +220,6 @@ describe('RedisPubSubRealtimeTransport', () => {
       }
     });
 
-    // The failure a naive Redis SET + explicit add/remove would fail: a replica
-    // that dies mid-connection (SIGKILL, OOM) never calls leave() and never runs
-    // again to clean up after itself. Simulated here by joining, then directly
-    // rewriting the zset score to look like the last heartbeat was one full TTL
-    // window ago - exactly the state a dead replica's entry reaches on its own,
-    // without waiting PRESENCE_TTL_MS of real time for it to happen. No `leave()`
-    // call and no cleanup process runs; the read-side cutoff alone must exclude it.
     it('a crashed instance stops contributing members once its entries expire, with no cleanup call', async () => {
       const redisA = await createTestRedis();
       const redisB = await createTestRedis();
@@ -258,9 +234,6 @@ describe('RedisPubSubRealtimeTransport', () => {
             { timeout: 2000 },
           );
 
-          // instanceA "dies": no more heartbeats will ever fire for it. Emulate
-          // the passage of one full TTL window with no renewal by rewriting the
-          // member's score directly, rather than waiting the real 45s out.
           const PRESENCE_TTL_MS = 45_000;
           const staleScore = Date.now() - PRESENCE_TTL_MS - 1000;
           await redisA.client.zAdd(`oss:rt:presence:presence-svc:${channel}`, {

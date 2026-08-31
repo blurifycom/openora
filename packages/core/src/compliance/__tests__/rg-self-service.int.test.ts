@@ -31,8 +31,6 @@ let db: TestDb;
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 
-// Identity-only unless a test needs a real cross-currency conversion: same-currency is
-// a no-op, and every other pair is unavailable (fails closed).
 function identityRates(): ExchangeRateReader {
   return mock<ExchangeRateReader>({
     getRate: vi.fn(async (from: string, to: string) =>
@@ -94,7 +92,6 @@ async function limitRow(userId: string) {
   return row!;
 }
 
-// Rewinds the request's clock so a cool-down that "has elapsed" needs no real waiting.
 async function backdatePending(limitId: string, effectiveAt: Date, expiresAt: Date) {
   await db.drizzle.db
     .update(userLimit)
@@ -106,9 +103,6 @@ async function seedPlayer(userId: string, currency: string) {
   await db.drizzle.db.insert(player).values({ userId, currency, kycStatus: 'verified' });
 }
 
-// Simulates a `user_limit` row written before the `currency` column existed: never
-// producible through the service layer (every write path sets a concrete currency), so
-// this reaches straight into the table.
 async function seedUnresolvedLimit(userId: string, amount = '100') {
   const [row] = await db.drizzle.db
     .insert(userLimit)
@@ -184,8 +178,6 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
     const view = await svc.upsertLimit(userId, { ...deposit100, amount: '900' });
 
     expect(view.pendingAmount).toBe('900.000000000000000000');
-    // Not confirmable any more: the deadline moved forward with the new request rather
-    // than being inherited from the one it replaced.
     expect(view.pendingStatus).toBe('waiting');
   });
 
@@ -218,12 +210,6 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
     expect(view?.pct).toBe(80);
   });
 
-  // `used`/`remaining` are summed from wallet_transaction.amount, a numeric(38,18)
-  // column, and `user_limit.amount` (and this response) are now the SAME scale
-  // (MONEY_SCALE(18)), not the old numeric(18,2). moneyCeilToScale/moneyFloorToScale
-  // still run as a protective control, but at 18dp they preserve the exact spend
-  // rather than truncating it to cents - a fractional/crypto-scale spend round-trips
-  // onto the wire without losing precision.
   it('preserves full MONEY_SCALE(18) precision - no truncation to cents', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
@@ -237,9 +223,6 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
     expect(view?.remaining).toBe('66.664000000000000000');
   });
 
-  // The regression this whole change fixes, at the scale that actually matters: a
-  // crypto-scale limit (18dp) round-trips through set -> read with no rounding loss at
-  // all, unlike the old numeric(18,2) column which would have truncated this to zero.
   it('a crypto-scale (18dp) limit round-trips through set and read without rounding loss', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
@@ -260,12 +243,9 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
   });
 });
 
+const BTC_USD_RATE = 50000;
+
 describe('RgSelfServiceService.getLimits - multi-currency usage', () => {
-  // The actual bug this whole change fixes: a spend in a currency OTHER than the
-  // limit's own must be converted before it counts against the limit, not summed
-  // raw. A 0.002 BTC deposit converted at 50,000 USD/BTC is 100 USD - exactly the
-  // limit - not the tiny raw number 0.002 the old (broken) arithmetic would have
-  // compared USD-for-BTC.
   it('converts a deposit in a different currency into the limit currency before reporting usage', async () => {
     const btcToUsd = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
@@ -274,7 +254,7 @@ describe('RgSelfServiceService.getLimits - multi-currency usage', () => {
           return amount;
         }
         if (from === 'BTC' && to === 'USD') {
-          return (Number(amount) * 50000).toFixed(18);
+          return (Number(amount) * BTC_USD_RATE).toFixed(18);
         }
         return null;
       }),
@@ -290,10 +270,6 @@ describe('RgSelfServiceService.getLimits - multi-currency usage', () => {
     expect(Number(view?.remaining)).toBe(0);
   });
 
-  // Fail-closed READ: a needed rate that is unavailable (or too stale, which the
-  // reader expresses identically as `null`) must not 500 the player's own limits
-  // screen - `used`/`remaining`/`pct` report null instead, per LimitViewSchema's
-  // documented nullability.
   it('reports null usage rather than throwing when a needed rate is unavailable', async () => {
     const noRates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
@@ -327,7 +303,6 @@ describe('RgSelfServiceService session-type limit (real PG)', () => {
 
     expect(view.minutes).toBe(60);
     expect(view.amount).toBeNull();
-    // The DB sentinel (SESSION_LIMIT_CURRENCY) must never leak onto the wire.
     expect(view.currency).toBeNull();
     expect(view.used).toBeNull();
     expect(view.remaining).toBeNull();
@@ -397,7 +372,6 @@ describe('RgSelfServiceService.confirmPendingChange (real PG)', () => {
       'rg.limit.change_confirmed',
       expect.objectContaining({ kind: 'increase', initiatedBy: 'player' }),
     );
-    // Also the plain "the limit is now X" fact, which is what re-runs the 80% evaluation.
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.set',
       expect.objectContaining({ amount: '500.000000000000000000', initiatedBy: 'player' }),
@@ -517,16 +491,12 @@ describe('RgSelfServiceService.cancelPendingChange (real PG)', () => {
   });
 });
 
-// Every one of these ran green against a read-then-write that was NOT serialized, which
-// is the point: they fail without the per-limit lock and the pinned write.
 describe('RgSelfServiceService concurrency (real PG)', () => {
   it('two simultaneous lowerings cannot leave the higher one in force', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
     await svc.upsertLimit(userId, deposit100);
 
-    // Both classify against 100 and both look like a lowering; unserialized, the later
-    // write lands 80 over 50 - an un-cooled raise the player never asked for.
     await Promise.all([
       svc.upsertLimit(userId, { ...deposit100, amount: '50' }),
       svc.upsertLimit(userId, { ...deposit100, amount: '80' }),
@@ -536,12 +506,8 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
     const winner = Number(after.amount);
     expect([50, 80]).toContain(winner);
     if (winner === 80) {
-      // 80 may only win by being the FIRST to land; 50 after it would be a lowering, and
-      // a lowering that got dropped is the bug. So an 80 outcome must mean 50 never ran
-      // last - assert the pending slot is clean either way.
       expect(after.pendingKind).toBeNull();
     }
-    // Whatever won, the limit must never have risen above where it started.
     expect(winner).toBeLessThanOrEqual(100);
   });
 
@@ -553,7 +519,6 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
     const row = await limitRow(userId);
     await backdatePending(row.id, new Date(Date.now() - HOUR), new Date(Date.now() + DAY));
 
-    // The lowering voids the request; the confirm holds a stale read of it.
     await svc.upsertLimit(userId, { ...deposit100, amount: '20' });
     await expect(svc.confirmPendingChange(row.id, userId)).rejects.toBeInstanceOf(
       NoPendingLimitChangeError,
@@ -605,8 +570,6 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
     const { svc, monitoring } = makeService();
     const userId = randomUUID();
     await seedCompletedDeposit(db, userId, '900');
-    // Daily 100 and monthly 1000, both deposit-type, both breached; rg_flag carries no
-    // period, so clearing on removal must not wipe the monthly one's flag.
     await svc.upsertLimit(userId, deposit100);
     await svc.upsertLimit(userId, { ...deposit100, amount: '1000', period: 'monthly' });
     await monitoring.evaluateUser(userId, 'rg.limit.set');
@@ -622,7 +585,6 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
 });
 
 describe('RgSelfServiceService.expireStaleLimitChanges (real PG)', () => {
-  // The single test guarding the whole mechanism: a limit must never rise on a timer.
   it('never applies a lapsed request - the limit is still the old one', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
@@ -678,10 +640,6 @@ describe('RgSelfServiceService exclusions (real PG)', () => {
   });
 });
 
-// The bug this whole change fixes: a pre-existing (pre-migration) money-type row's
-// currency is never backfilled to a guess (eg USD) - it is resolved lazily, to the
-// player's OWN currency, the first time anything reads or writes it, and persisted so it
-// never happens twice. Session-type rows never enter this path at all.
 describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
   it('resolves a null-currency row to the player currency on first read, and persists it', async () => {
     const { svc } = makeService();
@@ -693,7 +651,6 @@ describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
     const [view] = await svc.getLimits(userId);
 
     expect(view?.currency).toBe('JPY');
-    // Not just the response - the row itself must now carry the resolved currency.
     const persisted = await limitRow(userId);
     expect(persisted.currency).toBe('JPY');
   });
@@ -705,7 +662,6 @@ describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
     await seedUnresolvedLimit(userId, '100000');
 
     await svc.getLimits(userId);
-    // If the resolver ran again, this later player currency would leak into the limit.
     await db.drizzle.db.update(player).set({ currency: 'EUR' }).where(eq(player.userId, userId));
     const [view] = await svc.getLimits(userId);
 
@@ -716,7 +672,6 @@ describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
   it('fails closed (reports usage as null, currency as null) when no player record exists', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
-    // Deliberately no seedPlayer: a pre-existing row with no owning player at all.
     await seedUnresolvedLimit(userId, '100000');
 
     const [view] = await svc.getLimits(userId);
@@ -725,7 +680,6 @@ describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
     expect(view?.used).toBeNull();
     expect(view?.remaining).toBeNull();
     expect(view?.pct).toBeNull();
-    // Never guessed at (eg defaulted to USD) - still unresolved in the DB.
     expect((await limitRow(userId)).currency).toBeNull();
   });
 
@@ -745,7 +699,6 @@ describe('RgSelfServiceService lazy currency resolution (real PG)', () => {
   it('never resolves or touches the player table for a session-type limit', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
-    // Deliberately no seedPlayer: a session-type write/read must not need one at all.
 
     const view = await svc.upsertLimit(userId, {
       type: 'session',

@@ -178,10 +178,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000) {
   }
 }
 
-// Redis Pub/Sub delivery is a real network round trip, unlike the deleted in-process
-// transport's synchronous fan-out - a negative assertion ("this must NOT arrive")
-// needs a real wait, not just the absence of a positive one, or it passes trivially
-// before the message could ever have arrived.
 async function settle(ms = 150) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -202,9 +198,6 @@ beforeEach(async () => {
   );
 });
 
-// Every makeService() call opens its own Redis subscriber connection - close them
-// between tests so a channel name reused by a later test (eg the literal 'r1' room
-// id) never has a stale subscriber from a prior test still attached.
 afterEach(async () => {
   await Promise.allSettled(transports.splice(0).map((t) => t.close()));
 });

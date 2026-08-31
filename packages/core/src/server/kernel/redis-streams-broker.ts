@@ -177,18 +177,6 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     // `ready` gates connecting + group creation, and stays false until BOTH have
     // succeeded - so a Redis outage at loop start retries the whole handshake with
     // backoff rather than permanently abandoning this (topic, group)'s consumption.
-    // It IS reset on every later error, not just at cold start: a plain connection
-    // blip is harmless to redo (`connect()` throws 'Socket already opened' once the
-    // socket is open, hence the isOpen guard, and a re-created group comes back
-    // BUSYGROUP, tolerated below) - but if the stream key itself was lost (deleted,
-    // expired, a flushed Redis), the group is gone with it, and every subsequent
-    // XREADGROUP/XAUTOCLAIM throws NOGROUP forever unless the handshake reruns and
-    // MKSTREAM recreates it. An earlier version left `ready` true after the first
-    // successful handshake, reasoning that node-redis owns reconnection from there -
-    // true for the socket, but not for server-side state the socket reconnecting
-    // does nothing to restore. That gap turned one lost stream key into a permanent,
-    // never-recovering delivery outage (every topic, not just the one that lost its
-    // key) until the whole process restarted.
     const done = (async (): Promise<void> => {
       let ready = false;
       while (!stopped) {
@@ -228,13 +216,6 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
           if (stopped) {
             break;
           }
-          // Re-run the handshake next iteration regardless of what failed - a plain
-          // reconnect blip re-creates the (already-existing) group as a harmless
-          // BUSYGROUP no-op, and a lost stream key gets MKSTREAM'd back into
-          // existence, so NOGROUP recovers on its own instead of retrying the same
-          // doomed read forever. logger.error forwards to ERROR_TRACKING (see
-          // logger.ts), so a persistent failure is visible on every retry, not just
-          // logged once and then dropped.
           ready = false;
           this.logger.error({ err, key, group }, 'stream loop error, retrying');
           await delay(RETRY_DELAY_MS);

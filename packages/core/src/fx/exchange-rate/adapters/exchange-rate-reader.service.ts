@@ -10,11 +10,6 @@ import { exchangeRateQuote } from '../schema/index.js';
 
 const logger = createLogger('exchange-rate-reader');
 
-/**
- * Which provider (if any) a currency routes to, via the wallet module's `railFor` -
- * do not invent a second classification. Pure and unit-testable without touching a
- * database or a provider.
- */
 export function selectProvider(
   currency: string,
   cryptoProvider: ExchangeRateProvider | undefined,
@@ -48,31 +43,26 @@ export type ExchangeRateReaderServiceDeps = {
   cryptoProvider?: ExchangeRateProvider;
   fiatProvider?: ExchangeRateProvider;
   cryptoCurrencies?: readonly string[];
-  /** Age below which a stored quote is served with no provider call. */
   freshTtlMs: number;
-  /** Age at/above which a stored quote (or a missing one) is fetched synchronously. */
   hardMaxAgeMs: number;
-  /** Timeout on a single provider call, sync or background. */
   providerTimeoutMs: number;
 };
 
 /**
- * Read-through cache in front of the two exchange-rate provider ports, self-bound by
- * this module's plugin.ts (same pattern as WalletAssetCatalogService/WalletReaderService)
- * - an operator gets a working EXCHANGE_RATE_READER with no wiring. A player request MAY
- * reach a vendor: a hard-stale or missing quote is fetched synchronously (with a short
- * timeout, failing closed to `null` on error) before answering. Three age bands off the
- * stored quote's own last-write time (`exchange_rate_quote.updatedAt`):
+ * Read-through cache in front of the two exchange-rate provider ports. A player
+ * request MAY reach a vendor: a hard-stale or missing quote is fetched
+ * synchronously (with a short timeout, failing closed to `null` on error) before
+ * answering. Three age bands off the stored quote's own last-write time
+ * (`exchange_rate_quote.updatedAt`):
  *   - fresh (age < freshTtlMs): return the stored value, no provider call.
  *   - soft-stale (freshTtlMs <= age < hardMaxAgeMs): return the stored value
- *     immediately, kick a single-flight background refresh that is completely
- *     invisible to the caller (its failure is logged, never thrown).
- *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously through
- *     the same single-flight path; on success persist and return; on failure return
- *     `null` so a caller (a limit check, a deposit) fails closed.
- * Concurrent callers for the same (currency, pivot) leg share one in-flight provider
- * call (`fetchLeg`'s single-flight map) - without this a TTL expiry would turn one
- * refresh into as many provider calls as there are concurrent callers.
+ *     immediately, kick a single-flight background refresh that is invisible to
+ *     the caller (its failure is logged, never thrown).
+ *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously
+ *     through the same single-flight path; on success persist and return; on
+ *     failure return `null`.
+ * Concurrent callers for the same (currency, pivot) leg share one in-flight
+ * provider call.
  */
 export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly drizzle: DrizzleService;
@@ -84,11 +74,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly hardMaxAgeMs: number;
   private readonly providerTimeoutMs: number;
   private readonly inFlight = new Map<string, Promise<ExchangeRateQuote>>();
-  // Leg -> epoch ms until which a synchronous fetch is not retried. Single-flight only
-  // collapses CONCURRENT callers; a pair the provider cannot resolve at all is never
-  // persisted, so without this every sequential request re-issues the vendor call. The
-  // cooldown is the provider timeout, so one unresolvable currency costs at most one
-  // call per timeout window instead of one per request.
   private readonly failedUntil = new Map<string, number>();
 
   constructor(deps: ExchangeRateReaderServiceDeps) {
@@ -106,8 +91,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     const fromCode = from.toUpperCase();
     const toCode = to.toUpperCase();
     if (fromCode === toCode) {
-      // Same currency: the rate is trivially 1, no table involvement, no
-      // provider-sourced `asOf` to report - stamp "now" instead.
       return { rate: '1.000000000000000000', asOf: new Date().toISOString() };
     }
 
@@ -120,7 +103,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
 
     const rate = moneyDivide(fromLeg.rate, toLeg.rate);
-    // The cross pair is only as fresh as its staler leg.
     const asOf = fromLeg.asOf < toLeg.asOf ? fromLeg.asOf : toLeg.asOf;
     return { rate, asOf };
   }
@@ -133,8 +115,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return moneyScaleBy(amount, quote.rate);
   }
 
-  // Resolves one currency's rate against the pivot, applying the fresh/soft-stale/
-  // hard-stale age bands to that leg's own stored row.
   private async resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
     if (currency === this.pivot) {
       return { rate: '1.000000000000000000', asOf: new Date().toISOString() };
@@ -148,9 +128,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
 
     if (row && ageMs < this.hardMaxAgeMs) {
-      // Soft-stale: serve the stored value now, refresh in the background. A slow
-      // or dead provider must never delay this caller - failure is logged, not
-      // thrown or awaited.
       void this.fetchLeg(currency).catch((err: unknown) => {
         logger.warn(
           { err, currency, pivot: this.pivot },
@@ -160,7 +137,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
     }
 
-    // Hard-stale or no row at all: fetch synchronously and fail closed on error.
     const cooldownUntil = this.failedUntil.get(currency);
     if (cooldownUntil !== undefined && Date.now() < cooldownUntil) {
       return null;
@@ -172,8 +148,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       return quote;
     } catch (err) {
       this.failedUntil.set(currency, Date.now() + this.providerTimeoutMs);
-      // Availability event: deposits/limit checks gating on this rail start being
-      // refused from here. Alertable level, not silent.
       logger.error(
         { err, currency, pivot: this.pivot, hadRow: row !== null },
         'exchange rate hard-stale and unavailable; failing closed',
@@ -201,9 +175,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return row ?? null;
   }
 
-  // Single-flight: concurrent callers for the same (currency, pivot) leg share one
-  // in-flight provider call instead of each starting their own - without this, a
-  // TTL expiry under load turns one refresh into hundreds of vendor calls.
   private fetchLeg(currency: string): Promise<ExchangeRateQuote> {
     const key = `${currency}:${this.pivot}`;
     const existing = this.inFlight.get(key);
@@ -244,12 +215,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return quote;
   }
 
-  // No AUDIT_WRITER record: per docs/standards/audit.md, an audit entry is required
-  // for a mutation that changes player, operator, money, KYC, permissions, or
-  // configuration state. This upsert is market-reference-data ingestion sourced
-  // from a vendor - it is none of those (it doesn't move a balance, isn't
-  // operator-authored config, and doesn't touch a player). The structured
-  // `logger` calls above cover observability instead.
   private async persist(base: string, value: ExchangeRateQuote): Promise<void> {
     const providerAsOf = new Date(value.asOf);
     await this.drizzle.db

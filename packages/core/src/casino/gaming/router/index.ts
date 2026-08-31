@@ -24,8 +24,6 @@ export function createGamingRouter(gaming: GamingService) {
       mapErrors(
         {
           NOT_FOUND: GameNotFoundError,
-          // Both RG dimensions: the exclusion (ADR-0032) and the money limit (ADR-0036).
-          // They are told apart by `data.reason`, not by the shared status code.
           CONFLICT: [RgRestrictedError, RgLimitExceededError],
           BAD_REQUEST: InsufficientBalanceError,
         },

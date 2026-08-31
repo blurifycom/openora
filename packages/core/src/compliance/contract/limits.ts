@@ -24,9 +24,6 @@ export const LimitSchema = z.object({
   type: LimitTypeSchema,
   amount: MoneyAmountSchema.nullable(),
   minutes: z.number().int().positive().nullable(),
-  // Null for the session type (measured in minutes, no currency); the real ticker for
-  // every money type. The DB always stores a non-null sentinel for session rows - see
-  // toDbCurrency/toWireCurrency in rg.service.ts for the translation at this boundary.
   currency: CurrencyTickerSchema.nullable(),
   period: LimitPeriodSchema,
   createdAt: TimestampSchema,
@@ -50,15 +47,9 @@ export const isConsistentLimitAmount = (v: {
     ? v.minutes !== null && v.amount === null
     : v.amount !== null && v.minutes === null;
 
-// The session type carries no currency (it is measured in minutes); every money type
-// requires one. Mirrors isConsistentLimitAmount's shape/style exactly.
 export const isConsistentLimitCurrency = (v: { type: string; currency: string | null }) =>
   v.type === 'session' ? v.currency === null : v.currency !== null;
 
-// The three consistency rules always travel together: every schema that carries a
-// limit's polymorphic threshold (the player's upsert below, the admin's
-// SetPlayerLimitInputSchema in rg.ts) must reject the same shapes with the same
-// player-facing message on the same field.
 type LimitConsistencyInput = {
   type: string;
   amount: string | null;
@@ -95,35 +86,14 @@ export const UpsertLimitInputSchema = withLimitConsistencyRefinements(
 );
 export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
 
-/**
- * A limit as both the player and the compliance officer need to see it: the effective
- * limit, how much of it the current period window has already consumed, and any
- * pending request to weaken it.
- *
- * `amount` is ALWAYS the limit in force. A pending increase does not move it - the
- * player is still held to the old value until they confirm - so a UI that shows
- * `pendingAmount` must say so, or the player will read a rejected deposit as a bug.
- *
- * `used`/`remaining`/`pct` are null for the session-time limit, which is measured in
- * minutes by the session sweep rather than in money, and also null when a needed
- * exchange rate was unavailable (fail-closed read, see RgSelfServiceService.toView).
- */
 export const LimitViewSchema = LimitSchema.extend({
-  /** Money spent against this limit inside the current period window. */
   used: MoneyAmountSchema.nullable(),
-  /** Clamped at zero: an over-limit player has none left, not a negative allowance. */
   remaining: MoneyAmountSchema.nullable(),
-  /** `used` as a percentage of the limit; may exceed 100. */
   pct: z.number().nullable(),
   pendingKind: LimitChangeKindSchema.nullable(),
   pendingAmount: MoneyAmountSchema.nullable(),
   pendingMinutes: z.number().int().positive().nullable(),
-  /** Requested currency of a pending `increase`, alongside `pendingAmount`. */
   pendingCurrency: CurrencyTickerSchema.nullable(),
-  /**
-   * Never `'expired'` on the wire: a lapsed request reads as no request at all, so no
-   * client has to know that state exists. See `pendingChangeStatus`.
-   */
   pendingStatus: z.enum(['waiting', 'ready']).nullable(),
   pendingEffectiveAt: TimestampSchema.nullable(),
   pendingExpiresAt: TimestampSchema.nullable(),

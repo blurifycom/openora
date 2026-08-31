@@ -5,12 +5,6 @@ import { WALLET_TRANSACTION_TYPES, type WalletTransactionType } from '@openora/c
 // drizzle/migrations/0014_abandoned_madripoor.sql. Kept in lockstep here so a future type
 // added to WALLET_TRANSACTION_TYPES fails this test instead of silently backfilling as
 // NULL (or, worse, someone guessing a direction for it).
-//
-// `swap_in`/`swap_out` postdate migration 0014, so no historical row can carry them and
-// the backfill CASE never sees one. They are listed anyway because this test's job is to
-// prove every type has a direction somebody decided on: a swap sells one asset and buys
-// another, so the two legs are a debit and a credit respectively, and neither is the
-// same-value-both-legs case that makes a transfer ambiguous below.
 const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = [
   'deposit',
   'win',

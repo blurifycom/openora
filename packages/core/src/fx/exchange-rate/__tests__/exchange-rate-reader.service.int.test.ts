@@ -78,6 +78,10 @@ async function wait(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const SOFT_STALE_AGE_MS = 400;
+const HARD_STALE_AGE_MS = 1_000;
+const PROVIDER_DELAY_PAST_TIMEOUT_MS = 500;
+
 describe('ExchangeRateReaderService.getRate - identity and cross-pair derivation', () => {
   it('returns the identity quote for the same currency on both sides without touching the table', async () => {
     const reader = new ExchangeRateReaderService(baseDeps());
@@ -99,7 +103,6 @@ describe('ExchangeRateReaderService.getRate - identity and cross-pair derivation
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
     const quote = await reader.getRate('EUR', 'GBP');
 
-    // 1.1 / 1.25 = 0.88 exactly - no float drift.
     expect(quote?.rate).toBe('0.880000000000000000');
     expect(fiatProvider.getRate).not.toHaveBeenCalled();
   });
@@ -138,7 +141,7 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
   it('soft-stale: returns the cached value immediately and refreshes in the background', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', {
       asOf: '2026-01-01T00:00:00.000Z',
-      ageMs: 400, // between freshTtlMs(200) and hardMaxAgeMs(800)
+      ageMs: SOFT_STALE_AGE_MS,
     });
     const fiatProvider = delayedProvider('1.500000000000000000', 30, '2026-06-01T00:00:00.000Z');
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
@@ -147,11 +150,9 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
     const quote = await reader.getRate('EUR', 'USD');
     const elapsed = Date.now() - start;
 
-    // Served the stale cached value immediately - did not wait on the provider's delay.
     expect(quote?.rate).toBe('1.100000000000000000');
     expect(elapsed).toBeLessThan(30);
 
-    // Background refresh completes shortly after and persists the new quote.
     await wait(80);
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
     const row = await getRow('EUR', 'USD');
@@ -159,22 +160,20 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
   });
 
   it('soft-stale: a background refresh timeout is completely invisible to the caller', async () => {
-    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: 400 });
-    const fiatProvider = delayedProvider('9.000000000000000000', 500); // exceeds providerTimeoutMs(150)
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: SOFT_STALE_AGE_MS });
+    const fiatProvider = delayedProvider('9.000000000000000000', PROVIDER_DELAY_PAST_TIMEOUT_MS);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     const quote = await reader.getRate('EUR', 'USD');
     expect(quote?.rate).toBe('1.100000000000000000');
 
-    // Wait past the timeout window; the stored row must remain untouched, and the
-    // caller never saw a rejection or a hang.
     await wait(200);
     const row = await getRow('EUR', 'USD');
     expect(row?.rate).toBe('1.100000000000000000');
   });
 
   it('hard-stale: fetches synchronously, persists, and returns the fresh quote', async () => {
-    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: 1_000 }); // past hardMaxAgeMs(800)
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
     const fiatProvider = delayedProvider('1.300000000000000000', 5, '2026-06-01T00:00:00.000Z');
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
@@ -197,7 +196,7 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
   });
 
   it('hard-stale + provider failure (throw) returns null and fails closed, without touching a stored row', async () => {
-    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: 1_000 });
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
     const fiatProvider = mock<ExchangeRateProvider>({
       getRate: vi.fn(async () => {
         throw new Error('vendor unreachable');
@@ -206,8 +205,6 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     expect(await reader.getRate('EUR', 'USD')).toBeNull();
-    // The old (already hard-stale) row is left exactly as it was - a failed fetch
-    // never clobbers the last-known-good value.
     expect((await getRow('EUR', 'USD'))?.rate).toBe('1.100000000000000000');
   });
 
@@ -255,9 +252,6 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
 
   it('a settled in-flight call is removed from the single-flight map so a later call fetches again', async () => {
     const fiatProvider = delayedProvider('1.200000000000000000', 5, '2026-06-01T00:00:00.000Z');
-    // freshTtlMs: 0 and a tiny hardMaxAgeMs force every call past the just-persisted
-    // row's own age band, so this isolates "the in-flight entry is cleared on
-    // settle" from "a fresh row skips the provider entirely".
     const reader = new ExchangeRateReaderService(
       baseDeps({ fiatProvider, freshTtlMs: 0, hardMaxAgeMs: 10 }),
     );
@@ -274,11 +268,11 @@ describe('ExchangeRateReaderService.getRate - cross-pair freshness', () => {
   it('a derived pair is only as fresh as its staler leg', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', {
       asOf: '2026-03-01T00:00:00.000Z',
-      ageMs: 10, // fresh
+      ageMs: 10,
     });
     await seedQuote('GBP', 'USD', '1.250000000000000000', {
-      asOf: '2026-01-01T00:00:00.000Z', // the staler leg
-      ageMs: 400, // soft-stale: served immediately, background-refreshed
+      asOf: '2026-01-01T00:00:00.000Z',
+      ageMs: SOFT_STALE_AGE_MS,
     });
     const fiatProvider = delayedProvider('1.300000000000000000', 30, '2026-06-01T00:00:00.000Z');
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
@@ -286,13 +280,11 @@ describe('ExchangeRateReaderService.getRate - cross-pair freshness', () => {
     const quote = await reader.getRate('EUR', 'GBP');
 
     expect(quote?.rate).toBe('0.880000000000000000');
-    // Combined asOf takes the staler (GBP/USD) leg's asOf, not the fresh EUR/USD one.
     expect(quote?.asOf).toBe('2026-01-01T00:00:00.000Z');
   });
 
   it('returns null when one leg is hard-stale and its fetch fails, even if the other leg is fresh', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: 10 });
-    // GBP/USD has no row at all -> hard-stale path, no provider bound -> fails closed.
     const reader = new ExchangeRateReaderService(baseDeps());
 
     expect(await reader.getRate('EUR', 'GBP')).toBeNull();

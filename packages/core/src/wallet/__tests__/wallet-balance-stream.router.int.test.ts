@@ -8,6 +8,8 @@ import { createWalletBalanceStream, walletBalanceChannel } from '../router/index
 
 let redis: TestRedis;
 
+const SUBSCRIBE_SETTLE_MS = 200;
+
 beforeAll(async () => {
   redis = await createTestRedis();
 });
@@ -24,10 +26,7 @@ describe('wallet streamBalance router', () => {
         Symbol.asyncIterator
       ]();
       const next = iterator.next();
-      // createWalletBalanceStream() subscribes synchronously, but the underlying
-      // Redis SUBSCRIBE is a real round trip on a freshly opened connection - give
-      // it a moment to land before publishing.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_SETTLE_MS));
 
       await realtime.publish(walletBalanceChannel('other-user'), {
         eventId: '11111111-1111-4111-8111-111111111111',

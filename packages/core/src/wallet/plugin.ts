@@ -213,8 +213,6 @@ export default {
           c.get(PLAY_ELIGIBILITY),
           c.get(AUDIT_WRITER),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
-          // Optional, never `requiresPorts`: compliance binds it, and an install without
-          // that module has no limits to enforce. See adapters/rg-limits.ts.
           c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         ),
     );

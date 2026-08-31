@@ -67,9 +67,6 @@ describe('eventCatalog', () => {
 });
 
 describe('event currency fields accept a wallet/gaming money ticker', () => {
-  // Regression for a dropped-event bug: these payloads validated `currency` against the
-  // ISO-3-only `CurrencyCodeSchema`, so any 4+ character asset ticker (USDT, USDC) failed
-  // payload validation and the event was silently dropped. They now use `CurrencyTickerSchema`.
   const walletDeposit = {
     userId: crypto.randomUUID(),
     playerId: null,

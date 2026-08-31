@@ -53,10 +53,9 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
   }
 }
 
+const BONUS_CREDIT_SOURCE_TYPE = 'gift';
+
 async function creditBonus(client: TestClient, userId: string, amount: string) {
-  // Materializes the player's wallet row before crediting - credit() fails closed
-  // on a missing wallet (wallet-commands.service.ts), it does not create one.
-  // Adds 1 USD of real (non-bonus) balance as a side effect.
   await deposit(client, '1');
   const walletCommands = appMain.container.get(WALLET_COMMANDS);
   await appMain.container.get(DRIZZLE).db.transaction(async (tx) => {
@@ -64,11 +63,7 @@ async function creditBonus(client: TestClient, userId: string, amount: string) {
       userId,
       amount,
       currency: 'USD',
-      // 'gift' is load-bearing: wallet-commands.service.ts only creates a
-      // wallet_bonus_credit row for sourceType 'gift' or 'rain'. Both are now
-      // produced by the downstream social-transfers extension, not by core -
-      // this call stands in for that HTTP path.
-      type: 'gift',
+      type: BONUS_CREDIT_SOURCE_TYPE,
     });
     if (!result.ok) {
       throw new Error(`bonus credit failed: ${result.reason}`);

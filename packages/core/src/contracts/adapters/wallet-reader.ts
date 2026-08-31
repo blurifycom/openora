@@ -15,13 +15,7 @@ export type WalletBalancesReading = {
 export type WalletReader = {
   /** Sum of all completed deposits for a player, as a decimal string (same as wallet_transaction.amount). Used for high_roller evaluation. */
   getLifetimeDeposit(userId: string): Promise<string>;
-  /**
-   * Every currency balance the player holds plus their active/operating wallet
-   * currency. Always answers - a player with no wallet row yet gets an empty
-   * `balances` array and the platform's default wallet currency, never a throw.
-   * Used by the display-currency resolver (pam/profile) to find which currency a
-   * player holds the most value in when they have not picked a display currency.
-   */
+  /** Always answers: a player with no wallet row yet gets an empty `balances` array and the platform's default wallet currency, never a throw. */
   getBalances(userId: string): Promise<WalletBalancesReading>;
   /** Count of completed withdrawals for a player within the last windowDays days. Used for high_risk evaluation. */
   getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number>;

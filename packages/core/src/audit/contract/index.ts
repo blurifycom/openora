@@ -84,13 +84,6 @@ export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({
 });
 export type AuditExportFilters = z.infer<typeof AuditExportFiltersSchema>;
 
-// Player self-service history. This is a hand-picked field ALLOWLIST, not a redaction
-// of AuditLogEntrySchema - the RG event payload stored in `after` also carries an
-// admin's mandatory `reason`, the acting admin's `actorId`, request `ip`/`userAgent`/
-// `correlationId` (via `actorReasonBase`/`authContextBase`, see contracts/schemas/events.ts),
-// and AuditLogEntrySchema itself exposes `seq`/`hash`/`prevHash` which leak the hash-chain
-// structure. None of that may reach a player. A newly added `rg.limit.*` topic surfaces
-// NOTHING on this route until its payload is reviewed and its fields are named here.
 export const MyRgHistoryEntrySchema = z.object({
   id: UuidSchema,
   action: z.string(),
@@ -108,8 +101,6 @@ export const MyRgHistoryEntrySchema = z.object({
 });
 export type MyRgHistoryEntry = z.infer<typeof MyRgHistoryEntrySchema>;
 
-// Pagination only - the caller can never pass actorId/resourceType/resourceId/
-// actionPrefix/q. The subject and the `rg.limit.` prefix are forced server-side.
 export const MyRgHistoryFiltersSchema = PageQuerySchema.extend({
   sortOrder: SortOrderSchema.default('desc').optional(),
 });

@@ -71,7 +71,6 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
     await expect(
       svc.deposit({ userId: randomUUID(), amount: '30', currency: 'USD' }),
     ).rejects.toBeInstanceOf(RgLimitExceededError);
-    // The player must not be charged for money the limit then rejects.
     expect(payment.processDeposit).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
   });
@@ -100,9 +99,6 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
     expect(payment.processDeposit).toHaveBeenCalled();
   });
 
-  // The gate must run AFTER the replay short-circuit. Before it, retrying a deposit that
-  // already completed counts the same money twice and refuses a request that should
-  // simply return the original result.
   it('lets a replay of a completed deposit through even once the limit is used up', async () => {
     const userId = randomUUID();
     const idempotencyKey = randomUUID();
@@ -123,7 +119,6 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
     const replay = await svc.deposit({ userId, amount: '100', currency: 'USD', idempotencyKey });
 
     expect(replay.transactionId).toBe(first.transactionId);
-    // One PSP charge, one ledger row, one count against the limit.
     expect(payment.processDeposit).toHaveBeenCalledTimes(1);
     expect(gate.checkDeposit).toHaveBeenCalledTimes(1);
   });

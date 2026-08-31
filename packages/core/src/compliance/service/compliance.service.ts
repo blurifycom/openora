@@ -11,8 +11,6 @@ import { geoRule } from '../schema/index.js';
 import type { AddGeoRuleInput } from '../contract/index.js';
 import type { ClientMeta, GeoIpAdapter, User } from '@openora/core/contracts';
 
-// Owned here rather than beside the self-service state machine that throws them: the
-// limit routes and the RG routes both map them, and both already import this module.
 export const LimitNotFoundError = makeNotFoundError('Limit');
 
 export const LimitOwnershipError = makeOwnershipError('Limit');

@@ -28,29 +28,15 @@ export const LimitsSchema = z
   })
   .strict();
 
-// Responsible-gambling process knobs (as opposed to LimitsSchema's amounts). The
-// cool-down is a jurisdiction number, not a platform constant - Anjouan mandates none,
-// UK/MGA use 24h, SE 72h, DE 7 days - so it belongs in config rather than in code.
 export const ResponsibleGamingSchema = z
   .object({
-    /**
-     * Wait a player must serve before a limit INCREASE or REMOVAL can be confirmed.
-     * Lowering a limit is always immediate and never touches this. `0` means the
-     * confirmation is available at once - it never means "no confirmation": the
-     * change still only lands when the player positively confirms it.
-     */
     limitIncreaseCooldownHours: z.number().int().min(0).default(24),
-    /**
-     * How long the confirmation stays open once the cool-down has elapsed. An
-     * unconfirmed request lapses after this and must be filed again from scratch.
-     */
     limitChangeConfirmationWindowHours: z.number().int().positive().default(168),
   })
   .strict();
 
 export type ResponsibleGamingConfig = z.infer<typeof ResponsibleGamingSchema>;
 
-/** Applied wherever no operator config is bound, so the cool-down always has a value. */
 export const defaultResponsibleGamingConfig: ResponsibleGamingConfig =
   ResponsibleGamingSchema.parse({});
 

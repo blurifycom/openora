@@ -206,11 +206,6 @@ describe('RedisStreamsBroker', () => {
     });
   });
 
-  // Regression for the loop that went `ready` after its first handshake and never
-  // reset it: once the underlying stream key (and with it, the consumer group) is
-  // lost, every later XREADGROUP threw NOGROUP forever with no recovery short of a
-  // process restart. The fix re-runs the handshake after any non-BUSYGROUP error, so
-  // MKSTREAM recreates the stream and the group comes back without help.
   it('recovers on its own after the stream key (and its group) disappear', async () => {
     const broker = makeBroker('svc');
     const topic = uniqueTopic();
@@ -220,12 +215,8 @@ describe('RedisStreamsBroker', () => {
     });
     await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
 
-    // Simulate the stream vanishing mid-session (expiry, a flushed Redis, an operator
-    // mistake) - this deletes the group along with it.
     await redis.client.del(streamOf(topic));
 
-    // The loop must notice (NOGROUP), reset, and re-create the group on its own -
-    // no test-side intervention beyond waiting past the retry backoff.
     await waitForConsumerGroup(redis.client, {
       stream: streamOf(topic),
       group: 'svc',

@@ -166,23 +166,15 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       expect(found?.body).toContain('deposit');
       expect(found?.body).toContain('daily');
       expect(found?.body).toContain('500');
-      // The admin's free-text reason is never surfaced to the player.
       expect(found?.body).not.toContain('operator lowered on a support request');
     });
 
-    // Two delivery paths exist for an admin override: the `rgLimitUpdated` mail from
-    // RgService.setPlayerLimit and the in-app notification asserted above. They must
-    // not double up into two emails for one change.
     const rgEmails = capturedEmailsFor(email).filter(
       (e) => e.subject === 'Your gambling limit was updated',
     );
     expect(rgEmails).toHaveLength(1);
-    // The admin's free-text reason is never surfaced in the email either.
     expect(rgEmails[0]?.body).not.toContain('operator lowered on a support request');
 
-    // Lowering again brings the limit within the player's own self-service reach
-    // (still weakening-free since 100 < 500), so the player's OWN change on the
-    // same limit must not raise a second `rg.limit.admin_updated` notification.
     const beforeCount = (await readJson(await client.get('/notifications'))).length;
     const selfRes = await client.put('/compliance/limits', {
       type: 'deposit',
@@ -896,8 +888,6 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       email: `rg-history-other-${randomUUID()}@e2e.test`,
     });
 
-    // player.id (the audit subject) is never the same as the auth userId - the route
-    // must resolve it server-side rather than filtering on the raw userId.
     expect(mine.playerId).not.toBe(mine.userId);
 
     const setRes = await admin.put(`/compliance/players/${mine.userId}/limits`, {
@@ -985,8 +975,6 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
     });
 
     await vi.waitFor(async () => {
-      // Attempting to widen the query via querystring must have no effect - the
-      // route always resolves the subject from the session, never from input.
       const res = await client.get(
         `/audit/me/rg-history?resourceId=someone-else&actionPrefix=&q=admin`,
       );
@@ -996,7 +984,6 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
         true,
       );
     });
-    // playerId used only to document the subject the row above is actually filed under.
     expect(playerId).not.toBe(userId);
   });
 });

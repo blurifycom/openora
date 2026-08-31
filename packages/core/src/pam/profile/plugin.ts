@@ -22,9 +22,6 @@ const makeProfileService = (c: TypedContainer<CoreTokenCatalog>) =>
 
 export default {
   id: 'profile',
-  // wallet (WALLET_READER) and exchange-rate (EXCHANGE_RATE_READER) back the
-  // display-currency resolver's fallback ranking; audit backs the AUDIT_WRITER
-  // write on setMyDisplayCurrency.
   dependsOn: ['wallet', 'exchange-rate', 'audit'],
   register(ctx) {
     ctx.provide(PLAYER_PROVISIONING, makeProfileService);

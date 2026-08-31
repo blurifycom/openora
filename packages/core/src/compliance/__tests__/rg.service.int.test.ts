@@ -51,8 +51,6 @@ function makeNotifier(email = 'player@example.com'): Notifier {
   };
 }
 
-// Identity-only unless a test needs a real cross-currency conversion: same-currency is
-// a no-op, and every other pair is unavailable (fails closed).
 function identityRates(): ExchangeRateReader {
   return mock<ExchangeRateReader>({
     getRate: vi.fn(async (from: string, to: string) =>
@@ -405,13 +403,6 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(rows).toHaveLength(1);
   });
 
-  // Mirrors the ADR's concurrency reasoning for the player's own path: the raise
-  // classification is only meaningful against the value still present when the write
-  // lands, so the read-then-decide has to happen under the same per-limit lock as the
-  // write. Without that lock, two racing admin writes could both read the ORIGINAL 100,
-  // both decide their own move is a lawful lowering (80 < 100), and whichever commits
-  // last would silently overwrite the other - landing 80 in force even though it is a
-  // RAISE over the 50 the other call had already committed.
   it('two racing admin writes cannot land a raise through the read-then-decide window', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
@@ -467,9 +458,6 @@ describe('RgService.setPlayerLimit (real PG)', () => {
 
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
-    // 80 is only ever a lawful write if it lands BEFORE the lowering to 50, in which case
-    // the lowering runs afterward and still wins. There is no serialized ordering under
-    // which the final value can be 80.
     expect(Number(rows[0]?.amount)).toBe(50);
     const raiseAttempt = results[1];
     if (raiseAttempt.status === 'rejected') {
@@ -500,8 +488,6 @@ describe('isWeakening across currencies', () => {
       ...overrides,
     });
 
-  // A converted 200 EUR -> 50 USD against a 100 USD limit is a LOWERING, not a raise -
-  // proves the classification is against the CONVERTED value, not the raw number.
   it('classifies a same-number different-currency change by its converted value, not the raw number', async () => {
     const rates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
@@ -542,10 +528,6 @@ describe('isWeakening across currencies', () => {
     ).resolves.toBe(true);
   });
 
-  // Fail closed: no rate for the cross-currency comparison means the raise/lower
-  // question cannot be answered, so it is treated as a raise (refused) rather than
-  // silently let through. The reader expresses "unavailable" and "too stale" identically
-  // (both `null`), so a null-returning fake covers both cases.
   it('fails closed to weakening when no rate is available for the cross-currency comparison', async () => {
     const rates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
@@ -573,8 +555,6 @@ describe('isWeakening across currencies', () => {
     expect(rates.convert).not.toHaveBeenCalled();
   });
 
-  // The session-time limit is unaffected by any of this: it compares minutes directly
-  // and never reaches the currency/conversion branch at all.
   it('session-type limits keep comparing minutes directly, currency untouched', async () => {
     const rates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
@@ -633,8 +613,6 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
     const resolved = await resolveLimitCurrency(db.drizzle, row);
     expect(resolved.currency).toBe('JPY');
 
-    // Persisted, not just returned: a fresh read of the same row (not the value handed
-    // back by the resolver) shows the resolved currency.
     const [persisted] = await db.drizzle.db
       .select()
       .from(userLimit)
@@ -650,10 +628,6 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
     const first = await resolveLimitCurrency(db.drizzle, row);
     expect(first.currency).toBe('JPY');
 
-    // The player's currency changes AFTER the first resolution. A second touch reading
-    // the now-persisted row must keep the value it already resolved, not re-derive it
-    // from the player's (changed) currency - proving resolution happened once, not on
-    // every touch.
     await db.drizzle.db.update(player).set({ currency: 'EUR' }).where(eq(player.userId, userId));
     const [reread] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.id, row.id));
     const second = await resolveLimitCurrency(db.drizzle, reread!);
@@ -662,7 +636,6 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
 
   it('fails closed when the player currency cannot be determined, and leaves the row null', async () => {
     const userId = randomUUID();
-    // Deliberately no player row for this userId.
     const row = await insertNullCurrencyLimit(userId);
 
     await expect(resolveLimitCurrency(db.drizzle, row)).rejects.toThrow(
@@ -708,8 +681,6 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
     const resolved = await resolveLimitCurrency(db.drizzle, row);
     expect(resolved.currency).toBe('SESSION');
 
-    // No player row exists at all - if this had gone anywhere near the resolution path
-    // it would have thrown RgLimitCurrencyUnresolvedError instead of returning cleanly.
     const [persisted] = await db.drizzle.db
       .select()
       .from(userLimit)

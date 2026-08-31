@@ -19,9 +19,6 @@ export const WALLET_TRANSACTION_TYPES = [
   'rain',
   'manual_credit',
   'manual_debit',
-  // A swap is two ledger rows, not one: the asset sold leaves on `swap_out` and the asset
-  // bought arrives on `swap_in`. One row cannot express it - a ledger row carries a single
-  // currency, and the two sides settle at different moments when the vendor is async.
   'swap_out',
   'swap_in',
 ] as const;
@@ -96,19 +93,8 @@ export type WalletReconciliationFindingStatus = z.infer<
   typeof WalletReconciliationFindingStatusSchema
 >;
 
-// Built-in crypto ticker set for `railFor` below - operator-overridable via
-// `platformConfig.wallet.cryptoCurrencies` (case-insensitive on both sides).
 export const DEFAULT_CRYPTO_CURRENCIES = ['BTC', 'ETH', 'USDT', 'USDC'] as const;
 
-/**
- * Classifies a currency code onto the crypto or fiat settlement rail. Lives here
- * (not in the wallet module) because it is a shared classification a sibling domain
- * needs too (eg an fx module routing a rate-provider quote to the crypto or fiat
- * vendor) - this is one of the four sanctioned cross-module paths (shared contract),
- * not a reach into wallet internals. `wallet/service/wallet.service.ts` re-exports
- * this same function so existing wallet call sites are unaffected. Single source of
- * truth - do not add a second classifier.
- */
 export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
   const set = new Set((cryptoCurrencies ?? DEFAULT_CRYPTO_CURRENCIES).map((c) => c.toUpperCase()));
   return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';

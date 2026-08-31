@@ -15,8 +15,6 @@ import type {
 import { defaultResponsibleGamingConfig, queue } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-// The RG section now reports usage against each money limit, which reads the wallet and
-// gaming tables through `spendFor` - the section is unreadable without them.
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import {
@@ -38,7 +36,6 @@ import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const CTX = testContext();
-// A plain logged-in player: no admin permission anywhere, subject resolved from the session.
 const playerCtx = (userId: string) => testContext({ auth: { userId } });
 const USER = '11111111-1111-4111-8111-111111111111';
 const CALLER = '33333333-3333-4333-8333-333333333333';
@@ -63,9 +60,6 @@ beforeEach(async () => {
 const guardAllowing = (allow: readonly string[]) =>
   makeAdminGuard({ allow, caller: { userId: CALLER } });
 
-// Every limit written by this file is USD-only, so an identity-only fake is enough:
-// same-currency conversion is a no-op and this suite never exercises a cross-currency
-// path (see rg.service.int.test.ts / rg-monitoring.service.int.test.ts for that).
 function identityRates(): ExchangeRateReader {
   return mock<ExchangeRateReader>({
     getRate: vi.fn(async (from: string, to: string) =>
@@ -439,9 +433,6 @@ describe('compliance RG router writes', () => {
   });
 });
 
-// Every self-service route resolves the subject from the session. These act on the
-// caller and take no userId, so the only authorization question worth asking is whether
-// one player can reach another's state - and the answer has to be no.
 describe('compliance router - player self-service', () => {
   const OTHER = '44444444-4444-4444-8444-444444444444';
 

@@ -33,12 +33,6 @@ export const RgExclusionSchema = z.object({
 });
 export type RgExclusion = z.infer<typeof RgExclusionSchema>;
 
-// Reduce-only (ADR-0036, amended): an admin may create a first limit or lower an
-// existing one, effective immediately, but may never raise one the player controls -
-// that would be the operator weakening the player's own protection. Enforced
-// server-side in RgService.setPlayerLimit, not just here. `reason` is mandatory (every
-// override is audited under it) and `confirm` guards the action the same way
-// ActivateSelfExclusionInputSchema does.
 export const SetPlayerLimitInputSchema = withLimitConsistencyRefinements(
   z.object({
     userId: UuidSchema,
@@ -90,9 +84,6 @@ export const LiftCoolingOffInputSchema = z.object({
 });
 export type LiftCoolingOffInput = z.infer<typeof LiftCoolingOffInputSchema>;
 
-// One shape for both audiences. The admin section carries the pending request too:
-// "this player has asked to raise their deposit limit and the cool-down is running" is
-// exactly the thing a compliance officer opens this section to see.
 export const RgSectionSchema = z.object({
   limits: z.array(LimitViewSchema),
   coolingOff: RgExclusionSchema.nullable(),
@@ -100,13 +91,8 @@ export const RgSectionSchema = z.object({
 });
 export type RgSection = z.infer<typeof RgSectionSchema>;
 
-// Player self-service. Every route below acts on the CALLER (`getUserId(context)`) and
-// none of them accepts a userId: a player can only ever reach their own RG state.
-
 const PendingChangeTargetSchema = z.object({ id: UuidSchema });
 
-// The three break lengths the player-facing screen offers. The admin route keeps its
-// free 24h..1008h range; a self-service button is a fixed choice, not a free number.
 export const SELF_SERVICE_BREAK_HOURS = [24, 168, 720] as const;
 export const SELF_SERVICE_EXCLUSION_MONTHS = [6, 12, 24, 60] as const;
 
@@ -115,8 +101,6 @@ export const RequestCoolingOffInputSchema = z.object({
 });
 export type RequestCoolingOffInput = z.infer<typeof RequestCoolingOffInputSchema>;
 
-// Fixed terms only, plus permanent. `confirm` is the deliberate second step in front of
-// an action nobody can undo - not even support (see RgService.liftSelfExclusion).
 export const RequestSelfExclusionInputSchema = z
   .object({
     isPermanent: z.boolean(),
@@ -226,18 +210,13 @@ export const rgContract = {
     .input(ListRgFlagsInputSchema)
     .output(paginated(RgFlagListItemSchema)),
 
-  // One read for the whole player-facing RG screen: limits with their usage, any
-  // pending change, and the active exclusions.
   getMyRgSection: oc.route({ method: 'GET', path: '/compliance/rg/me' }).output(RgSectionSchema),
 
-  // Null when the confirmed request was a REMOVAL: the limit is gone, so there is no
-  // view left to return.
   confirmPendingLimitChange: oc
     .route({ method: 'POST', path: '/compliance/limits/{id}/pending/confirm' })
     .input(PendingChangeTargetSchema)
     .output(LimitViewSchema.nullable()),
 
-  // Withdrawing a request restores the stricter state, so it never waits on anything.
   cancelPendingLimitChange: oc
     .route({ method: 'DELETE', path: '/compliance/limits/{id}/pending' })
     .input(PendingChangeTargetSchema)

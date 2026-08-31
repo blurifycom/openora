@@ -204,7 +204,6 @@ describe('ProfileService.getMyDisplayCurrency (real PG)', () => {
         }),
       }),
       exchangeRateReader: mock<ExchangeRateReader>({
-        // 1 BTC "converts" to 50000 USD-equivalent units - worth more than the 10 USD balance.
         convert: async (amount: string, from: string) => (from === 'BTC' ? '50000' : amount),
       }),
     });

@@ -225,17 +225,6 @@ export async function createApp(
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
-  // When REDIS_URL is set, JOB_QUEUE, the rate limiter, the cache, the message broker
-  // and REALTIME_TRANSPORT bind to the shipped Redis reference adapters: BullMQ-backed
-  // durable jobs (survive restarts, real cron), distributed throttling, cross-replica
-  // cache invalidation, cross-replica events over Redis Streams, and cross-replica
-  // client push over Redis Pub/Sub (ADR-0031) - the wallet balance stream and chat
-  // published on one replica must reach a subscriber held on another. There is no
-  // in-process fallback for any of the five (ADR-0030, ADR-0031) - a deployment
-  // without REDIS_URL must bind these itself (an overlay, or a test's `configure`
-  // callback), or `assertDurableSeamsBound` below throws. The JOB_QUEUE disposer
-  // drains in-flight jobs before the DB closes (DRIZZLE is resolved before JOB_QUEUE
-  // below, and disposers run in reverse).
   const redisUrl = process.env['REDIS_URL'];
   if (redisUrl) {
     // Resolved eagerly, before any client is opened: a misconfigured service name is

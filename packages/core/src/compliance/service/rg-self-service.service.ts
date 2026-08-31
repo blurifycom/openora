@@ -56,23 +56,12 @@ const logger = createLogger('compliance-rg-self-service');
 
 const HOUR_MS = 60 * 60 * 1000;
 
-// `user_limit.amount`/`pendingAmount` are numeric(MONEY_PRECISION, MONEY_SCALE) - the
-// platform-wide money scale (18dp), same as every other money column. `used`/`remaining`
-// are ceil/floor-rounded to this scale before they reach LimitView; at MONEY_SCALE this
-// is close to a no-op against the ledger sum's own precision, but it still protects
-// against any rounding noise introduced by FX conversion in spendFor.
 const RG_LIMIT_MONEY_SCALE = MONEY_SCALE;
 
-// The admin schema requires a non-empty reason and the audit trail wants one; a player
-// clicking a self-service button supplies none, so the reason IS that fact.
 const SELF_SERVICE_REASON = 'Player self-service request';
 
 export const NoPendingLimitChangeError = makeNotFoundError('PendingLimitChange');
 
-// Both of these refuse the same route with the same HTTP code, and the player needs a
-// different sentence for each ("come back on the 28th" vs "that request lapsed, file it
-// again"). The code alone cannot tell them apart and the message never reaches a screen,
-// so each carries a stable `reason` for the client to branch on.
 export type RgLimitChangeErrorData = { reason: RgLimitErrorReason };
 
 export class CooldownNotElapsedError extends Error {
@@ -107,14 +96,10 @@ export type RgSelfServiceDeps = {
  * Player self-service responsible-gambling: setting, lowering, raising, dropping and
  * confirming limits, plus starting a break or a self-exclusion on oneself.
  *
- * The one invariant everything here exists to protect: **a limit never moves upward
- * without the player confirming it after the cool-down**. `user_limit.amount` is
- * therefore the effective limit at all times - nothing is promoted lazily on read, and
- * the expiry sweep only ever CLEARS a request, never applies one. A request is parked in
- * the `pending*` columns and stays inert until `confirmPendingChange` runs.
- *
- * Lowering a limit, and cancelling a request, are always immediate: moving back toward
- * more protection never needs to be slowed down.
+ * A limit never moves upward without the player confirming it after the cool-down.
+ * `user_limit.amount` is the effective limit at all times; a raise or removal is parked
+ * in the `pending*` columns until `confirmPendingChange` runs. Lowering a limit, and
+ * cancelling a request, are always immediate.
  */
 export class RgSelfServiceService {
   private readonly drizzle: DrizzleService;
@@ -135,7 +120,6 @@ export class RgSelfServiceService {
     this.rates = deps.rates;
   }
 
-  /** Limits with their usage and any pending request, plus the exclusions in force. */
   async getSection(userId: User['id']): Promise<RgSection> {
     const [rows, exclusions] = await Promise.all([
       this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId)),
@@ -150,20 +134,15 @@ export class RgSelfServiceService {
   }
 
   /**
-   * A first limit or a lower one is written immediately; a raise files a request that
-   * serves the cool-down. Either way the returned view's `amount` is the limit in force
-   * right now, which for a raise is still the OLD value.
+   * A first limit or a lower one is written immediately; a raise files a request instead.
+   * The returned view's `amount` is the limit in force right now, which for a raise is
+   * still the OLD value.
    */
   async upsertLimit(
     userId: User['id'],
     input: UpsertLimitInput,
     meta?: ClientMeta,
   ): Promise<LimitView> {
-    // Read, classify and write in ONE critical section. Split apart, two concurrent
-    // lowerings both measure themselves against the original value and the later one
-    // lands as an immediate RAISE over the earlier: 100 -> {50, 80} in parallel ends at
-    // 80 with no cool-down served. The classification is only meaningful against the
-    // value that is still there when the write happens.
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const [existing] = await tx
@@ -179,9 +158,6 @@ export class RgSelfServiceService {
           .limit(1);
 
         if (existing) {
-          // Resolve BEFORE classifying: a pre-existing row's null currency must be
-          // known to compare it against `input.currency`, and this is the one place
-          // that touches it under the slot's lock, so it also persists here.
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
           if (await isWeakening(resolvedExisting, input, this.rates)) {
             return {
@@ -191,15 +167,11 @@ export class RgSelfServiceService {
             };
           }
         }
-        // A first limit or a lower one: it takes effect now, and it voids any request
-        // parked on this limit. `existing` was already read under this same lock, which
-        // is what the shared write requires - see `writeLimitRow`.
         const row = await writeLimitRow(tx, userId, existing, input);
         return { applied: true as const, existing: existing ?? null, row };
       }),
     );
 
-    // Events and mail only after the transaction commits - never from inside it.
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     if (!outcome.applied) {
       this.emitRequested(userId, playerId, outcome.existing, outcome.row, meta);
@@ -237,10 +209,7 @@ export class RgSelfServiceService {
     return this.toView(userId, outcome.row);
   }
 
-  /**
-   * Files a REMOVAL request. The row stays and the limit keeps applying until the player
-   * confirms - dropping a limit is exactly the change the cool-down exists for.
-   */
+  /** Files a removal request. The row stays and the limit keeps applying until the player confirms. */
   async requestLimitRemoval(
     limitId: LimitRow['id'],
     userId: User['id'],
@@ -271,9 +240,8 @@ export class RgSelfServiceService {
   }
 
   /**
-   * Applies a request whose cool-down has elapsed - the ONLY path that raises a limit or
-   * deletes one. Returns null when the confirmed request was a removal (the limit is
-   * gone); the limit's new state otherwise.
+   * Applies a request whose cool-down has elapsed. Returns null when the confirmed
+   * request was a removal; the limit's new state otherwise.
    */
   async confirmPendingChange(
     limitId: LimitRow['id'],
@@ -282,16 +250,9 @@ export class RgSelfServiceService {
   ): Promise<LimitView | null> {
     const target = await this.ownedLimit(limitId, userId);
 
-    // The whole decision runs under the slot lock and every write is pinned to the exact
-    // request that was read (`pendingRequestedAt`), so a confirm that raced a lowering,
-    // a cancellation, or a second confirm applies nothing at all rather than resurrecting
-    // a stale value or emitting the event twice.
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const reread = await this.reread(tx, limitId, userId);
-        // A pending increase filed before this deploy can still carry a null currency
-        // (the migration never touched it) - resolve it here, before the 'raised' branch
-        // below would otherwise persist that same null again via `current.currency`.
         const current = await resolveLimitCurrencyInTx(tx, reread);
         const now = new Date();
         const status = pendingChangeStatus(current, now);
@@ -303,8 +264,6 @@ export class RgSelfServiceService {
           throw new CooldownNotElapsedError();
         }
         if (status === 'expired') {
-          // The sweep had not got to it yet. Clear it here so the player's next attempt
-          // starts from a clean row rather than hitting the same wall again.
           await tx
             .update(userLimit)
             .set(NO_PENDING_CHANGE)
@@ -324,8 +283,6 @@ export class RgSelfServiceService {
           return { kind: 'removed' as const, existing: current };
         }
 
-        // The single write that moves a limit upward: the new amount and the clearing of
-        // the request that authorised it land together, pinned to that request.
         const row = findOneOrThrow(
           await tx
             .update(userLimit)
@@ -359,10 +316,6 @@ export class RgSelfServiceService {
     );
 
     if (outcome.kind === 'removed') {
-      // Nothing left to breach, so the flag this limit raised has to go - `evaluateUser`
-      // only walks limits that still exist and would leave it standing. Re-evaluating
-      // straight after is what stops the clear from also wiping a flag that ANOTHER
-      // period's limit of the same type is still breaching (rg_flag has no period column).
       await this.monitoring.clearLimitThresholdFlag(userId, outcome.existing.type);
       await this.monitoring.evaluateUser(userId, 'rg.limit.set');
       return null;
@@ -394,7 +347,6 @@ export class RgSelfServiceService {
     return this.toView(userId, outcome.row);
   }
 
-  /** Withdrawing a request restores the stricter state, so it never waits on anything. */
   async cancelPendingChange(
     limitId: LimitRow['id'],
     userId: User['id'],
@@ -405,7 +357,6 @@ export class RgSelfServiceService {
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const current = await this.reread(tx, limitId, userId);
         if (current.pendingKind === null) {
-          // Idempotent: cancelling nothing has already achieved what the caller wanted.
           return { cleared: false as const, row: current };
         }
         const rows = await tx
@@ -430,10 +381,6 @@ export class RgSelfServiceService {
     return this.toView(userId, outcome.row);
   }
 
-  /**
-   * A short break the player starts on themselves. Goes through `RgService` so it gets
-   * the same session kill, login block and mail as an admin-activated one.
-   */
   requestCoolingOff(
     userId: User['id'],
     input: RequestCoolingOffInput,
@@ -449,9 +396,9 @@ export class RgSelfServiceService {
   }
 
   /**
-   * Self-exclusion the player starts on themselves. Irreversible before its term - the
+   * Self-exclusion the player starts on themselves. Irreversible before its term: the
    * platform refuses to lift a permanent one at all, and a fixed-term one before it has
-   * elapsed, for a player and an admin alike (see `RgService.liftSelfExclusion`).
+   * elapsed, for a player and an admin alike.
    */
   requestSelfExclusion(
     userId: User['id'],
@@ -473,11 +420,7 @@ export class RgSelfServiceService {
     );
   }
 
-  /**
-   * Background hygiene: drop requests nobody confirmed in time. This never touches
-   * `amount` - that is the whole guarantee that a limit cannot rise on a timer. Runs in
-   * the rg-monitor sweep beside `expireLapsedCoolingOffs`.
-   */
+  /** Drops requests nobody confirmed in time. Never touches `amount`. */
   async expireStaleLimitChanges(): Promise<void> {
     const now = new Date();
     const candidates = await this.drizzle.db
@@ -487,8 +430,6 @@ export class RgSelfServiceService {
     if (candidates.length === 0) {
       return;
     }
-    // Re-assert the deadline in the UPDATE: a request confirmed and re-filed between the
-    // read and the write carries a future deadline and must survive this sweep.
     const cleared = await this.drizzle.db
       .update(userLimit)
       .set(NO_PENDING_CHANGE)
@@ -527,11 +468,6 @@ export class RgSelfServiceService {
     }
   }
 
-  /**
-   * Parks a request on a limit. Always called inside the slot lock: a new request
-   * REPLACES whatever was there and restarts the clock, and inheriting the old deadline
-   * would let a player file, wait, then swap in a bigger number and confirm it at once.
-   */
   private async park(
     tx: DrizzleTx,
     existing: LimitRow,
@@ -564,12 +500,6 @@ export class RgSelfServiceService {
     );
   }
 
-  /**
-   * Matches the row ONLY while it still carries the exact request that was read - the
-   * compare half of a compare-and-set. `pendingRequestedAt` is the version: a lowering,
-   * a cancellation or a second confirm all replace or clear it, so a write pinned this
-   * way applies to nothing instead of resurrecting a value the player has moved past.
-   */
   private pinnedTo(row: LimitRow) {
     return and(
       eq(userLimit.id, row.id),
@@ -580,7 +510,6 @@ export class RgSelfServiceService {
     );
   }
 
-  /** Re-reads the row inside the lock; ownership was already asserted by the caller. */
   private async reread(
     tx: DrizzleTx,
     limitId: LimitRow['id'],
@@ -622,12 +551,6 @@ export class RgSelfServiceService {
     });
   }
 
-  /**
-   * The payload shared by the three "this request ended" topics, built from the row as it
-   * was read. Callers emit the topic themselves with a literal - routing the topic
-   * through a parameter would hide it from the catalog generator, which finds events by
-   * scanning for `.emit('<topic>'`.
-   */
   private endedPayload(userId: User['id'], playerId: string | null, row: LimitRow) {
     return {
       userId,
@@ -643,7 +566,6 @@ export class RgSelfServiceService {
     };
   }
 
-  /** The player closed the request themselves: confirmed or cancelled. */
   private actedPayload(
     userId: User['id'],
     playerId: string | null,
@@ -659,7 +581,6 @@ export class RgSelfServiceService {
     };
   }
 
-  /** System-attributed: the window closed and nobody acted. */
   private lapsedPayload(userId: User['id'], playerId: string | null, row: LimitRow) {
     return {
       ...this.endedPayload(userId, playerId, row),
@@ -695,8 +616,6 @@ export class RgSelfServiceService {
 
   private async toViews(userId: User['id'], rows: LimitRow[]): Promise<LimitView[]> {
     const views: LimitView[] = [];
-    // Sequential rather than a fan-out: a player has a handful of limits, and each view
-    // costs one aggregate query (see no-unbounded-db-fanout).
     for (const row of rows) {
       views.push(await this.toView(userId, row));
     }
@@ -709,21 +628,13 @@ export class RgSelfServiceService {
     const base = serializeRow(row, {
       dateFields: ['createdAt', 'pendingEffectiveAt', 'pendingExpiresAt'],
     });
-    // Money-type limits only: the session-time limit is measured in minutes by the
-    // session sweep, and has no money spend to report here.
     const isMoneyLimit = row.amount !== null && row.period !== 'session';
-    // Full MONEY_SCALE precision, sourced from a wallet-ledger sum converted into the
-    // limit's own currency - keep this exact for the pct/remaining math below. Never
-    // expose it as-is. Fail-closed to null/null/null (never a 500) when a needed
-    // exchange rate is unavailable - the wire schema already allows all three nullable
-    // for exactly this reason; a player's own limits read must still succeed.
     let resolvedCurrency = row.currency;
     let used: string | null = null;
     if (isMoneyLimit) {
       try {
         const resolved = await resolveLimitCurrency(this.drizzle, row);
         resolvedCurrency = resolved.currency;
-        // A read-only view with no transaction of its own, so it passes the pool.
         used = await this.monitoring.spendFor(
           this.drizzle.db,
           userId,
@@ -752,10 +663,6 @@ export class RgSelfServiceService {
           ? '0'
           : moneySubtract(limit, used)
         : null;
-    // `user_limit.amount` is numeric(MONEY_PRECISION, MONEY_SCALE); `used`/`remaining` are
-    // derived at the same scale from a raw ledger sum, rounded here as a protective
-    // control rather than a balance display: `used` rounds UP and `remaining` rounds DOWN
-    // so a player is never shown more headroom than they actually have.
     return {
       id: base.id,
       userId: base.userId,
@@ -771,9 +678,6 @@ export class RgSelfServiceService {
         used !== null && limit !== null
           ? thresholdPct(moneyToNumber(used), moneyToNumber(limit))
           : null,
-      // An expired-but-unswept request reads as no request at all - every pending field
-      // goes null together, so a client never has to know that state exists and can
-      // never render a Confirm button for a request the API would refuse.
       ...(status === 'waiting' || status === 'ready'
         ? {
             pendingKind: row.pendingKind,

@@ -518,14 +518,7 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
-  // RG actions. `userId` = subject player (resource), `actorId` = whoever acted.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
-  //
-  // The actor comes from the payload's `initiatedBy`, NOT from a hard-coded 'admin':
-  // these topics are now emitted by the player's own self-service path too, and filing
-  // a player's limit change under an admin actor is exactly the attribution error a
-  // regulator would catch. Topics that predate `initiatedBy` (the lifts, which stay
-  // admin-only) fall back to 'admin'.
   if (
     topic === 'rg.limit.set' ||
     topic === 'rg.limit.change_requested' ||
@@ -557,8 +550,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // The confirmation window ran out with nobody acting - system-attributed, like
-  // rg.cooling_off.expired below. The parked request is dropped; the limit never moved.
   if (topic === 'rg.limit.change_expired') {
     return {
       ...base,

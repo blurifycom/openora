@@ -84,8 +84,6 @@ describe('moneyCompare', () => {
   });
 
   it('orders correctly at the margin where a float compare gives the wrong answer', () => {
-    // moneyToNumber demonstrably breaks here: both round to the same float, so a
-    // float-based compare reports them equal (or reverses order) instead of a<b.
     const a = '123456789012345678.000000000000000001';
     const b = '123456789012345678.000000000000000002';
     expect(moneyCompare(a, b)).toBe(-1);
@@ -104,7 +102,6 @@ describe('moneyScaleBy', () => {
   });
 
   it('is exact where a float multiplication would drift', () => {
-    // 0.1 * 3 famously drifts to 0.30000000000000004 in JS float arithmetic.
     expect(0.1 * 3).not.toBe(0.3);
     expect(moneyScaleBy('0.1', '3')).toBe('0.300000000000000000');
   });
@@ -121,7 +118,6 @@ describe('moneyDivide', () => {
   });
 
   it('is exact where a float division would drift', () => {
-    // 0.3 / 0.1 famously drifts to 2.9999999999999996 in JS float arithmetic.
     expect(0.3 / 0.1).not.toBe(3);
     expect(moneyDivide('0.3', '0.1')).toBe('3.000000000000000000');
   });
@@ -131,7 +127,6 @@ describe('moneyDivide', () => {
   });
 
   it('derives a cross rate as from/pivot ÷ to/pivot', () => {
-    // BTC/USD = 60000, EUR/USD = 1.1 -> BTC/EUR = 60000 / 1.1
     expect(moneyDivide('60000', '1.1')).toBe('54545.454545454545454545');
   });
 

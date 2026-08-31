@@ -30,13 +30,6 @@ export type RealtimeTransportHarness = {
   simulateFailure?: (transport: RealtimeTransport) => void;
 };
 
-// The only shipped driver (`RedisPubSubRealtimeTransport`) subscribes over a real
-// Redis round trip, not a synchronous in-process call - `subscribe()` returns before
-// the far side has necessarily registered it. Settling before the FIRST publish (and
-// waiting for delivery, not retrying the publish itself) avoids the alternative of
-// retrying publish-then-assert: once a first attempt's delivery merely arrives late
-// rather than being truly dropped, a retried publish delivers a second time and an
-// exact-array assertion never stabilizes.
 const SUBSCRIBE_SETTLE_MS = 200;
 function settle(ms = SUBSCRIBE_SETTLE_MS): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -188,13 +188,6 @@ export const makeCache = (): CacheAdapter => {
   };
 };
 
-/**
- * No-op RealtimeTransport double for a test whose subject is not realtime delivery -
- * a router/service under test needs a `REALTIME_TRANSPORT` to construct, but this file
- * never subscribes or asserts on what it publishes. Reach for
- * `@openora/core/testing`'s `RedisPubSubRealtimeTransport` (with `createTestRedis`)
- * instead when a test actually exercises pub/sub delivery, presence, or revocation.
- */
 export const makeRealtimeTransport = (): RealtimeTransport =>
   mock<RealtimeTransport>({
     publish: vi.fn(async () => undefined),

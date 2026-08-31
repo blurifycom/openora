@@ -23,11 +23,6 @@ export const CHAT_COMMAND_TYPES = [
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
-// Keyed by currency ticker, not a single flat amount: a minimum sensible in USD ('1.00') is
-// either meaningless or absurd in BTC (18-decimal-scale storage, but real value per unit),
-// so one constant across every currency cannot be correct for both. A currency with no entry
-// has no limit enforced for it - an operator opts a currency INTO a limit, never gets one by
-// accident from a value meant for a different currency.
 const PerCurrencyAmountSchema = z.record(CurrencyTickerSchema, MoneyAmountSchema);
 
 export const CommandConfigSchema = z.object({

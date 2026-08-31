@@ -372,10 +372,6 @@ export function assertAboveMinimumDeposit(
   }
 }
 
-// Moved to @openora/core/contracts (wallet-tx.ts) so a sibling domain (eg fx) can
-// reuse the exact same classification via a shared contract instead of reaching into
-// wallet internals - see the doc comment there. Re-exported here so existing call
-// sites in this file and `wallet/__tests__/rail-for.test.ts` are unaffected.
 export const railFor: (currency: string, cryptoCurrencies?: readonly string[]) => WalletRail =
   sharedRailFor;
 
@@ -436,8 +432,6 @@ export async function readWalletBalance(
   return row?.amount ?? '0';
 }
 
-// A player with no wallet row yet still needs an answer, never a throw, so the
-// no-wallet case resolves to the default currency and an empty balance list.
 export async function readWalletBalances(
   txn: DrizzleDb,
   userId: User['id'],
@@ -669,9 +663,6 @@ export type WalletServiceDeps = {
   tagEvaluationCommands?: TagEvaluationCommands;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
-  // Optional: bound by the compliance module. Absent = no `user_limit` table exists and
-  // there is nothing to enforce, so deposits pass ungated. Where it IS bound the gate is
-  // fail-closed: a throwing check refuses the deposit rather than letting it through.
   rgLimits?: RgLimitsPort;
 };
 
@@ -771,36 +762,10 @@ export class WalletService {
     }
   }
 
-  /**
-   * Refuses a deposit that would take the player past their own RG deposit limit. Runs
-   * BEFORE the PSP call - a refused deposit must never reach a provider, or the player
-   * is charged for money the limit then rejects.
-   *
-   * **This is check-then-act and it does not serialize.** A PSP round-trip sits between
-   * the check and the credit, so two deposits started at once can both read the same
-   * usage, both pass, and together exceed the limit. It is not fixable with a row lock:
-   * holding one across a vendor network call is not an option, and refusing after the
-   * charge would strand the player's money. Closing it properly needs a durable
-   * reservation taken before the PSP call and released on failure - a change to the
-   * deposit ledger flow, tracked separately. Until then the excess is caught the same
-   * way an on-chain deposit's is: the `wallet.deposit.completed` evaluation raises the
-   * `limit_threshold` flag for compliance. The stake debit has no such constraint and
-   * IS serialized - see `WalletCommandsService.debit`.
-   *
-   * Only this PSP path is gated. An on-chain crypto deposit arrives by webhook when the
-   * funds are already on the chain (`handlePaymentWebhook`): there is nothing left to
-   * refuse, so that path deliberately stays open and raises an RG flag for compliance
-   * instead, via the `wallet.deposit.completed` evaluation the credit already triggers.
-   * The player-facing copy on the deposit-limit card has to say so.
-   */
   private async assertWithinRgDepositLimit(userId: User['id'], amount: string, currency: string) {
     if (!this.rgLimits) {
       return;
     }
-    // The pool, not a transaction: this check runs BEFORE the PSP round-trip, so there is
-    // no transaction open to join - holding one across a vendor call is exactly what the
-    // money standard forbids. The check-then-act window that leaves is the documented
-    // trade-off above, not an oversight.
     const decision = await this.rgLimits.checkDeposit(this.drizzle.db, userId, amount, currency);
     if (!decision.allowed) {
       throw new RgLimitExceededError('deposit_limit_exceeded', decision);
@@ -942,8 +907,6 @@ export class WalletService {
         .where(eq(wallet.userId, userId));
     }
 
-    // AFTER the replay short-circuit: a retry of a deposit that already completed must
-    // not be counted a second time against the limit and refused for it.
     await this.assertWithinRgDepositLimit(userId, amount, currency);
 
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
@@ -2798,12 +2761,6 @@ export class WalletService {
     // a destination.
     const whitelisted = await this.whitelistWithdrawalAddress(userId, input);
 
-    // The cap and the insert have to be one atomic step: under Postgres's default READ
-    // COMMITTED isolation a count outside a lock takes no lock at all, so two concurrent
-    // creates for the same player can each read 49 and both insert. The per-player advisory
-    // lock is transaction-scoped (auto-released on commit or rollback) and serializes the
-    // pair; a different player's creates are unaffected. Same pattern as the auto-withdrawal
-    // daily-cap flip above, namespaced so it does not queue behind that one.
     const row = await this.drizzle.db.transaction((txn) =>
       withAdvisoryXactLock(txn, `withdrawal-address-cap:${userId}`, async () => {
         const [existing] = await txn
@@ -2814,8 +2771,6 @@ export class WalletService {
           throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
         }
 
-        // onConflictDoNothing turns the unique index into a domain conflict rather than a
-        // 500 - a double-submitted form is a 409, not an incident.
         const [inserted] = await txn
           .insert(walletWithdrawalAddress)
           .values({ userId, ...input, ...whitelisted })
