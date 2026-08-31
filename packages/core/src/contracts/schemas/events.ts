@@ -477,42 +477,6 @@ export const domainEventSchemas = {
     after: z.record(z.string(), z.unknown()),
   }),
 
-  // Chat command events. amount is a decimal string; giftId is the player_gift row id.
-  'chat.gift.sent': z.object({
-    giftId: UuidSchema,
-    senderId: UuidSchema,
-    senderUsername: z.string(),
-    amount: MoneyAmountSchema,
-    currency: z.string(),
-    roomId: UuidSchema.nullable(),
-    messageId: UuidSchema,
-  }),
-  'chat.gift.claimed': z.object({
-    giftId: UuidSchema,
-    claimerId: UuidSchema,
-    claimerUsername: z.string(),
-    senderId: UuidSchema,
-    amount: MoneyAmountSchema,
-    currency: z.string(),
-    roomId: UuidSchema.nullable(),
-  }),
-  'chat.rain.distributed': z.object({
-    fromUserId: UuidSchema,
-    recipients: z.array(UuidSchema),
-    recipientCount: z.number().int(),
-    totalAmount: MoneyAmountSchema,
-    currency: z.string(),
-    roomId: UuidSchema.nullable(),
-  }),
-  'chat.donate.sent': z.object({
-    senderId: UuidSchema,
-    senderUsername: z.string(),
-    recipientId: UuidSchema,
-    recipientUsername: z.string(),
-    amount: MoneyAmountSchema,
-    currency: z.string(),
-    roomId: UuidSchema.nullable(),
-  }),
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
     byUserId: UuidSchema,
@@ -576,14 +540,6 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
-  // v2: claimable gift-card mechanic - giftId/senderId/senderUsername/roomId replaces fromUserId/toUserId.
-  // v3: roomId nullable - a gift can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
-  'chat.gift.sent': 3,
-  // v2: roomId nullable - a claimed gift's room can be global chat.
-  'chat.gift.claimed': 2,
-  // v2: recipients array added for per-player notification delivery.
-  // v3: roomId nullable - rain can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
-  'chat.rain.distributed': 3,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,
