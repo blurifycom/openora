@@ -217,15 +217,6 @@ export const domainEventSchemas = {
     currency: CurrencyCodeSchema,
     creditedAmount: MoneyAmountSchema,
   }),
-  // Reserved: no emitter exists yet. A future settlement engine publishes this.
-  'gaming.bet.settled': z.object({
-    roundId: UuidSchema,
-    userId: UuidSchema,
-    playerId: UuidSchema.nullable(),
-    outcome: z.enum(['win', 'loss']),
-    amount: MoneyAmountSchema,
-    currency: CurrencyCodeSchema,
-  }),
 
   'chat.message.sent': z.object({
     messageId: UuidSchema,

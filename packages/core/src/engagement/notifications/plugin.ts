@@ -195,18 +195,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
   ),
 
   mapEvent(
-    'chat.donate.sent',
-    (p) => ({
-      userId: p.recipientId,
-      type: 'tip.received',
-      title: 'You received a tip',
-      body: `${p.senderUsername} sent you ${formatMoneyAmount(p.amount)} ${p.currency}.`,
-      data: compactData({ roomId: p.roomId }),
-    }),
-    { sendEmail: false },
-  ),
-
-  mapEvent(
     'chat.user.mentioned',
     (p) => ({
       userId: p.mentionedUserId,

@@ -699,7 +699,11 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
     const authorId = randomUUID();
 
-    const msg = await svc.sendGlobalMessage(authorId, 'alice', 'hey @bob');
+    const msg = await svc.sendGlobalMessage({
+      userId: authorId,
+      username: 'alice',
+      content: 'hey @bob',
+    });
 
     await waitFor(() =>
       vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
@@ -716,7 +720,11 @@ describe('ChatService @mention detection (real PG)', () => {
     const authorId = randomUUID();
     const { svc, events } = makeService(mentionDirectory([summaryFor(authorId, 'alice')]));
 
-    await svc.sendGlobalMessage(authorId, 'alice', 'talking to myself @alice');
+    await svc.sendGlobalMessage({
+      userId: authorId,
+      username: 'alice',
+      content: 'talking to myself @alice',
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
@@ -726,7 +734,11 @@ describe('ChatService @mention detection (real PG)', () => {
     const bobId = randomUUID();
     const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
 
-    await svc.sendGlobalMessage(randomUUID(), 'alice', '@bob @bob are you there @Bob?');
+    await svc.sendGlobalMessage({
+      userId: randomUUID(),
+      username: 'alice',
+      content: '@bob @bob are you there @Bob?',
+    });
 
     await waitFor(() =>
       vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
@@ -741,7 +753,7 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([]));
 
     await expect(
-      svc.sendGlobalMessage(randomUUID(), 'alice', 'hello @nobody'),
+      svc.sendGlobalMessage({ userId: randomUUID(), username: 'alice', content: 'hello @nobody' }),
     ).resolves.toBeDefined();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -753,7 +765,11 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([summaryFor(acmeId, 'acme')]));
 
     await expect(
-      svc.sendGlobalMessage(randomUUID(), 'alice', 'contact me at info@acme.com'),
+      svc.sendGlobalMessage({
+        userId: randomUUID(),
+        username: 'alice',
+        content: 'contact me at info@acme.com',
+      }),
     ).resolves.toBeDefined();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -766,7 +782,7 @@ describe('ChatService @mention detection (real PG)', () => {
     const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
     await svc.blockUser(bobId, authorId);
 
-    await svc.sendGlobalMessage(authorId, 'alice', 'hello @bob');
+    await svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' });
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
@@ -776,7 +792,9 @@ describe('ChatService @mention detection (real PG)', () => {
     const authorId = randomUUID();
     const { svc, events } = makeService(mentionDirectory([summaryFor('not-a-valid-uuid', 'bob')]));
 
-    await expect(svc.sendGlobalMessage(authorId, 'alice', 'hello @bob')).resolves.toBeDefined();
+    await expect(
+      svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' }),
+    ).resolves.toBeDefined();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());

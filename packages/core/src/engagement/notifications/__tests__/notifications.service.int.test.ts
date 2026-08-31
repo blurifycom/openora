@@ -164,7 +164,6 @@ describe('NotificationsService.create (real PG)', () => {
     ['withdrawal.requested', 'Withdrawal requested'],
     ['withdrawal.completed', 'Withdrawal completed'],
     ['withdrawal.failed', 'Withdrawal failed'],
-    ['tip.received', 'You received a tip'],
     ['chat.mention', 'You were mentioned'],
   ] as const)(
     'persists a %s notification produced by the map-driven dispatch',

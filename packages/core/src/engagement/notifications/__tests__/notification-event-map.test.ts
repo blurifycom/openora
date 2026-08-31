@@ -57,39 +57,6 @@ describe('notificationEventMap', () => {
     expect(input?.body).toContain('goodwill credit');
   });
 
-  it('maps chat.donate.sent to the recipient only, never the sender, carrying the room id', () => {
-    const senderId = randomUUID();
-    const recipientId = randomUUID();
-    const roomId = randomUUID();
-    const input = entryFor('chat.donate.sent').handle({
-      senderId,
-      senderUsername: 'alice',
-      recipientId,
-      recipientUsername: 'bob',
-      amount: '2.00',
-      currency: 'USD',
-      roomId,
-    });
-
-    expect(input?.userId).toBe(recipientId);
-    expect(input?.userId).not.toBe(senderId);
-    expect(input).toMatchObject({ type: 'tip.received', data: { roomId } });
-  });
-
-  it('omits a null roomId from chat.donate.sent data instead of carrying a null value', () => {
-    const input = entryFor('chat.donate.sent').handle({
-      senderId: randomUUID(),
-      senderUsername: 'alice',
-      recipientId: randomUUID(),
-      recipientUsername: 'bob',
-      amount: '2.00',
-      currency: 'USD',
-      roomId: null,
-    });
-
-    expect(input?.data).toBeNull();
-  });
-
   it('maps chat.user.mentioned to the mentioned user, not the author, carrying room and message ids', () => {
     const byUserId = randomUUID();
     const mentionedUserId = randomUUID();
@@ -175,7 +142,6 @@ describe('notificationEventMap', () => {
       'wallet.withdrawal.requested',
       'wallet.withdrawal.completed',
       'wallet.withdrawal.failed',
-      'chat.donate.sent',
       'chat.user.mentioned',
     ] as const;
 
@@ -243,15 +209,6 @@ describe('notificationEventMap', () => {
         adminId: randomUUID(),
         direction: 'credit' as const,
         reason: 'goodwill credit',
-      }),
-      'chat.donate.sent': (amount: string) => ({
-        senderId: randomUUID(),
-        senderUsername: 'alice',
-        recipientId: randomUUID(),
-        recipientUsername: 'bob',
-        amount,
-        currency: 'EUR',
-        roomId: null,
       }),
     } as const;
 

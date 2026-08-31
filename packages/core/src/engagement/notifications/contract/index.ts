@@ -15,7 +15,6 @@ export const NOTIFICATION_TYPES = [
   'withdrawal.requested',
   'withdrawal.completed',
   'withdrawal.failed',
-  'tip.received',
   'chat.mention',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
