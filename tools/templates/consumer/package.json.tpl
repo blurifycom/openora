@@ -8,13 +8,17 @@
     "build": "turbo run build",
     "check:types": "turbo run check:types",
     "check:lint": "oxlint .",
+    "test:unit": "turbo run test:unit",
+    "verify": "turbo run check:types check:lint test:unit",
     "gen:agents": "rulesync generate",
-    "prepare": "rulesync generate",
+    "sync:agents": "node tools/sync-agents.mjs",
+    "prepare": "node tools/sync-agents.mjs && rulesync generate",
     "db:migrate": "pnpm -F @{{name}}/api exec openora-migrate",
     "db:seed": "pnpm -F @{{name}}/api db:seed",
     "gen": "turbo gen"
   },
   "devDependencies": {
+    "@openora/create": "{{coreVersion}}",
     "@openora/mcp": "latest",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",

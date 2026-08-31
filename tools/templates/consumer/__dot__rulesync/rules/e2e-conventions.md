@@ -9,6 +9,8 @@ description: Playwright E2E conventions - specs run against the real stack; mock
 
 # E2E conventions (`apps/e2e`)
 
+Applies once this repo has an `apps/e2e` Playwright suite; a repo without one is not covered by this rule, and adding the suite is what turns it on.
+
 Two kinds of spec live here:
 
 - **Browser specs** (`tests/<app>/**`) - a player or admin journey through the UI.

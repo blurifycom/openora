@@ -41,7 +41,7 @@ Your prompt contains requirements + acceptance criteria. Build to those. If the 
 
 - `pnpm verify --filter <package>` exits 0; schema changes have a generated migration.
 - New module/plugin registered in `extensions.config.ts`; core contract slice composed in `tools/build-contract.ts`.
-- New logic covered by co-located tests (authz negatives included).
+- A new or changed route has one E2E in `packages/testing` (happy + one hostile path); pure logic has a unit test; nothing mocks the database or a sibling service in-process (`docs/standards/testing.md`).
 - Every acceptance criterion satisfied - list them and confirm each.
 - Every state-changing action audited: domain event declared in `domainEventSchemas` + topic in `SUBSCRIBED_TOPICS` (`packages/core/src/audit/plugin.ts`), or `AUDIT_WRITER.record(...)`. No audit entry = not done.
 

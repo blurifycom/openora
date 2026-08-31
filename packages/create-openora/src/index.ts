@@ -10,7 +10,7 @@ const templateRoot = join(here, '..', 'template');
 
 const MCP_COMMAND = 'node';
 const MCP_ARGS = ['node_modules/@openora/mcp/dist/main.js'];
-const SKIPPED_BASENAMES = new Set(['guard-core.mjs.tpl', 'guard-core.mjs']);
+const SKIPPED_BASENAMES = new Set();
 
 type ParsedArgs = {
   target: string;
@@ -127,11 +127,26 @@ function main(): void {
     die(`template missing at ${templateRoot}`);
   }
 
+  // Operator coordinates the agent files reference. A fresh scaffold gets placeholders;
+  // the consumer fills them in once in .rulesync/sync.json and `pnpm sync:agents`
+  // re-renders every template-owned file from them.
   const vars: Record<string, string> = {
     name,
     coreVersion: CORE_VERSION,
     mcpCommand: MCP_COMMAND,
     mcpArgsJson: JSON.stringify(MCP_ARGS),
+    scope: `@${name}`,
+    trackerKey: 'KEY',
+    jiraSite: '<your-site>.atlassian.net',
+    jiraCloudId: '<your-jira-cloud-id>',
+    wikiSpace: '<your-wiki-space>',
+    teamChannel: '#<your-team-channel>',
+    gitRemotePath: '<group>/<repo>',
+    ossDir: '../openora',
+    // Only meaningful once the consumer links a local platform checkout; until then the
+    // guard-core hook simply never matches.
+    ossFromRoot: '../openora',
+    mrTarget: 'dev',
   };
 
   console.log(`\n  Creating ${name} at ${targetDir}`);

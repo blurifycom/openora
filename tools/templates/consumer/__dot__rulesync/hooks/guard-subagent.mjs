@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // PreToolUse(Task) guard: keep the orchestrator from spawning a GENERIC subagent
 // (general-purpose / claude) for work a roster agent is purpose-built for. The
-// Agent roster in AGENTS.md is prose the model sometimes skips out of habit; this
-// is the deterministic backstop.
+// Agent roster in the workflow rule is prose the model sometimes skips out of
+// habit; this is the deterministic backstop.
 //
 // Conservative by design: it acts ONLY when (a) the chosen subagent is generic AND
 // (b) the task text contains a HIGH-SIGNAL phrase that maps unambiguously to one
@@ -16,7 +16,9 @@ const ti = payload.tool_input ?? {};
 const sub = String(ti.subagent_type ?? '').toLowerCase();
 
 const GENERIC = new Set(['general-purpose', 'claude', '']);
-if (!GENERIC.has(sub)) process.exit(0);
+if (!GENERIC.has(sub)) {
+  process.exit(0);
+}
 
 const text = `${ti.description ?? ''}\n${ti.prompt ?? ''}`.toLowerCase();
 
@@ -40,14 +42,24 @@ const ROUTES = [
     agent: 'deployer',
     re: /\b(dockerfile|containerize|deploy pipeline|deploy to (ecs|kubernetes|fly|railway|render)|ci\/cd deploy|helm chart)\b/,
   },
+  {
+    agent: 'quality-reviewer',
+    re: /\b(quality review|code quality|over-engineer(ed|ing)?|simplification review|duplication review)\b|\breview (the )?(mr|pr|diff|changed files)\b/,
+  },
+  {
+    agent: 'security-reviewer',
+    re: /\bsecurity (review|audit)\b|\baudit\b[^.]*\bvulnerabilit|\b(authz|owasp)\b/,
+  },
 ];
 
 const hit = ROUTES.find((r) => r.re.test(text));
-if (!hit) process.exit(0);
+if (!hit) {
+  process.exit(0);
+}
 
 process.stderr.write(
   `Use the \`${hit.agent}\` subagent for this task, not \`${sub || 'general-purpose'}\`. ` +
-    `It is pre-scoped for this work (tools + model + brief) - see the Agent roster in AGENTS.md. ` +
+    `It is pre-scoped for this work (tools + model + brief) - see the Agents list in the workflow rule. ` +
     `Re-issue the Task with subagent_type: "${hit.agent}". ` +
     `If it genuinely does not fit ${hit.agent}, rephrase the description to say why.\n`,
 );

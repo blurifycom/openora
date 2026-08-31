@@ -1,8 +1,14 @@
 ---
 name: review
-description: Context-aware PR review with draft comments and a GO or NO-GO verdict. Use on "review", "/review", "review this PR", optionally a PR number, "--base <ref>", "--post" (publish findings to the PR as inline comments plus a verdict), or "--yes" (post without confirming).
+description: >-
+  Context-aware, convention-grounded review of the current branch or a given PR
+  with a request trace, blast-radius check, and a GO or NO-GO verdict. Use on
+  "review", "/review", "review this", "code review", optionally a PR number,
+  "--base <ref>", paths, "--agents N", "--fix" (apply BLOCK and WARN fixes),
+  "--post" (publish findings to the PR), "--yes" (post without confirming), or
+  "--ci" (non-interactive, exit code from the verdict).
 ---
 
 # review
 
-Read [Review workflows - Pull request review](../../../docs/standards/skills/review.md#pull-request-review) in full before acting.
+Read [Review workflow](../../../docs/standards/skills/review.md) in full before acting.

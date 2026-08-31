@@ -7,7 +7,7 @@ Read-only until the plan is explicitly approved.
 
 ### Workflow
 
-1. Resolve the input and collect scoped context from the ticket, relevant ADRs, generated contract surfaces, matching standards, source, and prior design discussion.
+1. Resolve the input and collect scoped context from the ticket (read whole per `docs/agents/issue-tracker.md`: comments, images, linked spec pages), relevant ADRs, generated contract surfaces, matching standards, source, and prior design discussion.
 2. Run prompt enhancement before gathering deeply so the work remains scoped.
 3. Grill every design choice that would change the build: scope, domain and seam ownership, data-model forks, regulatory and audit requirements, reuse, in-flight collisions, and config surface.
 4. Present goal, acceptance criteria, locked decisions with sources, exact surface, boundary impact, risks, and a task breakdown mapped to roster agents.

@@ -1,5 +1,6 @@
 ---
-description: 'Generate a self-contained local add-on package (schema, service, router, plugin.ts) and register it. Args: <name>. Consumers rarely need this - prefer an overlay plugin.'
+targets: ['*']
+description: 'Generate a self-contained local add-on package (schema, service, router, plugin.ts, AGENTS.md) and register it. Args: <name>. Consumers rarely need this - prefer an overlay plugin.'
 ---
 
 > A consumer extends the platform with **overlay plugins** (`scaffold-plugin`) almost always. Reach
