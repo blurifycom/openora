@@ -281,6 +281,12 @@ describe('ExchangeRateReaderService.getRate - cross-pair freshness', () => {
 
     expect(quote?.rate).toBe('0.880000000000000000');
     expect(quote?.asOf).toBe('2026-01-01T00:00:00.000Z');
+
+    // The staler leg refreshes in the background. Let that write land before the next
+    // test truncates, or it lands after the truncate and leaves a fresh GBP/USD row.
+    await vi.waitFor(async () =>
+      expect((await getRow('GBP', 'USD'))?.rate).toBe('1.300000000000000000'),
+    );
   });
 
   it('returns null when one leg is hard-stale and its fetch fails, even if the other leg is fresh', async () => {

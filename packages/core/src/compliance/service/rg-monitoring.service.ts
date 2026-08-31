@@ -330,7 +330,10 @@ export class RgMonitoringService {
           eq(walletTransaction.type, 'deposit'),
           eq(walletTransaction.status, 'completed'),
           gte(walletTransaction.createdAt, from),
-          lte(walletTransaction.createdAt, new Date()),
+          // The database stamps createdAt, so the upper bound reads the same clock. An
+          // app-side new Date() that trails the database by a millisecond would drop a
+          // just-committed deposit out of the player's spend.
+          lte(walletTransaction.createdAt, sql`now()`),
         ),
       )
       .groupBy(walletTransaction.currency);
