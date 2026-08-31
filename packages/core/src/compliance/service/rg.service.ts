@@ -255,6 +255,64 @@ export async function resolveLimitCurrency(
   );
 }
 
+/**
+ * The one write that applies a limit immediately, shared by the admin override
+ * (`RgService.setPlayerLimit`) and the player's create-or-lower path
+ * (`RgSelfServiceService.upsertLimit`). Only the WRITE is shared: each caller classifies
+ * the change itself first and diverges on a weakening one (the admin refuses it, the
+ * player parks a request), which is why that decision stays out of here.
+ *
+ * Both callers must already hold this limit's slot lock (`limitSlotKey`) inside their own
+ * transaction and must pass the `existing` row they read under it - the update pins to
+ * `existing.id`.
+ *
+ * Not `.onConflictDoUpdate` on the widened (userId, type, period, currency) key: a write
+ * that also CHANGES the currency has no conflict on that key against the existing
+ * (different-currency) row, so an upsert would INSERT a second row instead of updating the
+ * one the caller found. Hence the explicit branch on `existing`.
+ *
+ * Clearing `pending*` is deliberate: a directly written limit is the current decision, and
+ * leaving a stale request parked beside it would let the player confirm their way back to
+ * a value this write just moved past.
+ */
+export async function writeLimitRow(
+  tx: Tx,
+  userId: User['id'],
+  existing: LimitRow | undefined,
+  input: Pick<UpsertLimitInput, 'type' | 'amount' | 'minutes' | 'currency' | 'period'>,
+): Promise<LimitRow> {
+  const currency = toDbCurrency(input.type, input.currency);
+  if (existing) {
+    return findOneOrThrow(
+      await tx
+        .update(userLimit)
+        .set({
+          amount: input.amount,
+          minutes: input.minutes,
+          currency,
+          ...NO_PENDING_CHANGE,
+        })
+        .where(eq(userLimit.id, existing.id))
+        .returning(),
+      new LimitNotFoundError(userId),
+    );
+  }
+  return findOneOrThrow(
+    await tx
+      .insert(userLimit)
+      .values({
+        userId,
+        type: input.type,
+        amount: input.amount,
+        minutes: input.minutes,
+        currency,
+        period: input.period,
+      })
+      .returning(),
+    new LimitNotFoundError(userId),
+  );
+}
+
 function addMonths(from: Date, months: number): Date {
   const d = new Date(from);
   d.setMonth(d.getMonth() + months);
@@ -330,12 +388,10 @@ export class RgService {
    * The player's own path never comes through here: `RgSelfServiceService.upsertLimit`
    * owns the classification and does its own write under the same per-limit lock.
    *
-   * Clearing `pending*` is deliberate: a directly written (create-or-lower) limit is the
-   * current decision, and leaving a stale request parked beside it - including a
-   * player's own pending RAISE - would let the player confirm their way back to a value
-   * the admin just moved past. This is why the raise check and the write share the same
-   * advisory lock and read: the classification is only meaningful against the value
-   * still present when the write lands.
+   * The raise check and the write share the same advisory lock and the same read: the
+   * classification is only meaningful against the value still present when the write
+   * lands. The write itself (including why it clears any parked request, even a player's
+   * own pending RAISE) is `writeLimitRow`.
    */
   async setPlayerLimit(
     userId: User['id'],
@@ -346,7 +402,6 @@ export class RgService {
   ): Promise<Limit> {
     // Same critical section the player's path takes, so an admin write and a player
     // request for the same limit cannot interleave into a state neither of them chose.
-    const dbCurrency = toDbCurrency(input.type, input.currency);
     const { prior, row } = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
         const [existing] = await tx
@@ -369,40 +424,9 @@ export class RgService {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
         }
-        // Not `.onConflictDoUpdate` on the widened (userId, type, period, currency) key:
-        // a write that also CHANGES the currency has no conflict on that key against the
-        // existing (different-currency) row, so an upsert would INSERT a second row
-        // instead of updating the one found above. `existing` was already read under this
-        // same advisory lock, so branch explicitly and pin the update to its id.
-        const written = existing
-          ? findOneOrThrow(
-              await tx
-                .update(userLimit)
-                .set({
-                  amount: input.amount,
-                  minutes: input.minutes,
-                  currency: dbCurrency,
-                  ...NO_PENDING_CHANGE,
-                })
-                .where(eq(userLimit.id, existing.id))
-                .returning(),
-              new LimitNotFoundError(userId),
-            )
-          : findOneOrThrow(
-              await tx
-                .insert(userLimit)
-                .values({
-                  userId,
-                  type: input.type,
-                  amount: input.amount,
-                  minutes: input.minutes,
-                  currency: dbCurrency,
-                  period: input.period,
-                })
-                .returning(),
-              new LimitNotFoundError(userId),
-            );
-        return { prior: existing, row: written };
+        // `existing` was read under this same advisory lock, which is what makes the
+        // shared write safe here - see `writeLimitRow`.
+        return { prior: existing, row: await writeLimitRow(tx, userId, existing, input) };
       }),
     );
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);

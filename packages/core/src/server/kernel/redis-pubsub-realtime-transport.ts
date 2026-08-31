@@ -133,10 +133,7 @@ class RedisPresenceStore implements RealtimePresence {
     }
     this.client
       .eval(LEAVE_SCRIPT, {
-        keys: [
-          presenceConnsKey(this.serviceName, channel, memberId),
-          presenceZsetKey(this.serviceName, channel),
-        ],
+        keys: this.presenceKeys(channel, memberId),
         arguments: [connectionId, memberId],
       })
       .catch((err: unknown) => this.logger.error({ err, channel }, 'presence leave failed'));
@@ -193,6 +190,19 @@ class RedisPresenceStore implements RealtimePresence {
     await Promise.allSettled(keys.map((key) => this.evictHeartbeatKey(key)));
   }
 
+  /**
+   * The KEYS array both presence scripts take, in the order they index it:
+   * KEYS[1] is the member's connection set, KEYS[2] the channel's zset. The order
+   * is part of the scripts' contract - swapping the pair would have HEARTBEAT_SCRIPT
+   * SADD a connection id into the zset and ZADD a member into the connection set.
+   */
+  private presenceKeys(channel: string, memberId: string): [string, string] {
+    return [
+      presenceConnsKey(this.serviceName, channel, memberId),
+      presenceZsetKey(this.serviceName, channel),
+    ];
+  }
+
   private heartbeatKey(channel: string, memberId: string, connectionId: string): string {
     return `${channel} ${memberId} ${connectionId}`;
   }
@@ -201,10 +211,7 @@ class RedisPresenceStore implements RealtimePresence {
     const [channel, memberId, connectionId] = key.split(' ') as [string, string, string];
     return this.client
       .eval(LEAVE_SCRIPT, {
-        keys: [
-          presenceConnsKey(this.serviceName, channel, memberId),
-          presenceZsetKey(this.serviceName, channel),
-        ],
+        keys: this.presenceKeys(channel, memberId),
         arguments: [connectionId, memberId],
       })
       .catch((err: unknown) => this.logger.error({ err, channel }, 'presence evict failed'));
@@ -217,10 +224,7 @@ class RedisPresenceStore implements RealtimePresence {
     const now = Date.now();
     this.client
       .eval(HEARTBEAT_SCRIPT, {
-        keys: [
-          presenceConnsKey(this.serviceName, channel, memberId),
-          presenceZsetKey(this.serviceName, channel),
-        ],
+        keys: this.presenceKeys(channel, memberId),
         arguments: [connectionId, memberId, String(now), String(PRESENCE_TTL_MS)],
       })
       .catch((err: unknown) => this.logger.error({ err, channel }, 'presence heartbeat failed'));

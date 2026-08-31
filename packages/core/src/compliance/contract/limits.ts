@@ -55,26 +55,44 @@ export const isConsistentLimitAmount = (v: {
 export const isConsistentLimitCurrency = (v: { type: string; currency: string | null }) =>
   v.type === 'session' ? v.currency === null : v.currency !== null;
 
-export const UpsertLimitInputSchema = LimitSchema.pick({
-  type: true,
-  amount: true,
-  minutes: true,
-  currency: true,
-  period: true,
-})
-  .extend({ currency: CurrencyTickerInputSchema.nullable() })
-  .refine(isConsistentLimit, {
-    message: "type 'session' requires period 'session' and vice versa",
-    path: ['period'],
-  })
-  .refine(isConsistentLimitAmount, {
-    message: "type 'session' requires minutes (not amount); other types require amount",
-    path: ['amount'],
-  })
-  .refine(isConsistentLimitCurrency, {
-    message: "type 'session' requires no currency; other types require one",
-    path: ['currency'],
-  });
+// The three consistency rules always travel together: every schema that carries a
+// limit's polymorphic threshold (the player's upsert below, the admin's
+// SetPlayerLimitInputSchema in rg.ts) must reject the same shapes with the same
+// player-facing message on the same field.
+type LimitConsistencyInput = {
+  type: string;
+  amount: string | null;
+  minutes: number | null;
+  currency: string | null;
+  period: string;
+};
+
+export const withLimitConsistencyRefinements = <T extends z.ZodType<LimitConsistencyInput>>(
+  schema: T,
+): T =>
+  schema
+    .refine(isConsistentLimit, {
+      message: "type 'session' requires period 'session' and vice versa",
+      path: ['period'],
+    })
+    .refine(isConsistentLimitAmount, {
+      message: "type 'session' requires minutes (not amount); other types require amount",
+      path: ['amount'],
+    })
+    .refine(isConsistentLimitCurrency, {
+      message: "type 'session' requires no currency; other types require one",
+      path: ['currency'],
+    });
+
+export const UpsertLimitInputSchema = withLimitConsistencyRefinements(
+  LimitSchema.pick({
+    type: true,
+    amount: true,
+    minutes: true,
+    currency: true,
+    period: true,
+  }).extend({ currency: CurrencyTickerInputSchema.nullable() }),
+);
 export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
 
 /**

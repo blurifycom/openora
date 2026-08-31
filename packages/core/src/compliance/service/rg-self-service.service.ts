@@ -37,6 +37,7 @@ import {
   toWireCurrency,
   resolveLimitCurrency,
   resolveLimitCurrencyInTx,
+  writeLimitRow,
   RgLimitCurrencyUnresolvedError,
   type LimitRow,
 } from './rg.service.js';
@@ -191,42 +192,9 @@ export class RgSelfServiceService {
           }
         }
         // A first limit or a lower one: it takes effect now, and it voids any request
-        // parked on this limit - a directly written limit is the current decision, and
-        // leaving a stale request beside it would let the player confirm their way back
-        // to an older, weaker value.
-        //
-        // Not `.onConflictDoUpdate` on the widened (userId, type, period, currency) key:
-        // see rg.service.ts's setPlayerLimit for why a currency-changing write needs an
-        // explicit branch instead. `existing` was already read under this same lock.
-        const dbCurrency = toDbCurrency(input.type, input.currency);
-        const row = existing
-          ? findOneOrThrow(
-              await tx
-                .update(userLimit)
-                .set({
-                  amount: input.amount,
-                  minutes: input.minutes,
-                  currency: dbCurrency,
-                  ...NO_PENDING_CHANGE,
-                })
-                .where(eq(userLimit.id, existing.id))
-                .returning(),
-              new LimitNotFoundError(userId),
-            )
-          : findOneOrThrow(
-              await tx
-                .insert(userLimit)
-                .values({
-                  userId,
-                  type: input.type,
-                  amount: input.amount,
-                  minutes: input.minutes,
-                  currency: dbCurrency,
-                  period: input.period,
-                })
-                .returning(),
-              new LimitNotFoundError(userId),
-            );
+        // parked on this limit. `existing` was already read under this same lock, which
+        // is what the shared write requires - see `writeLimitRow`.
+        const row = await writeLimitRow(tx, userId, existing, input);
         return { applied: true as const, existing: existing ?? null, row };
       }),
     );

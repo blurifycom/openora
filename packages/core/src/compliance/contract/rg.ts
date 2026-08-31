@@ -13,13 +13,7 @@ import {
   CurrencyTickerInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
-import {
-  LimitSchema,
-  LimitViewSchema,
-  isConsistentLimit,
-  isConsistentLimitAmount,
-  isConsistentLimitCurrency,
-} from './limits.js';
+import { LimitSchema, LimitViewSchema, withLimitConsistencyRefinements } from './limits.js';
 
 export const RgExclusionSchema = z.object({
   id: UuidSchema,
@@ -45,8 +39,8 @@ export type RgExclusion = z.infer<typeof RgExclusionSchema>;
 // server-side in RgService.setPlayerLimit, not just here. `reason` is mandatory (every
 // override is audited under it) and `confirm` guards the action the same way
 // ActivateSelfExclusionInputSchema does.
-export const SetPlayerLimitInputSchema = z
-  .object({
+export const SetPlayerLimitInputSchema = withLimitConsistencyRefinements(
+  z.object({
     userId: UuidSchema,
     type: LimitTypeSchema,
     amount: MoneyAmountSchema.nullable(),
@@ -55,19 +49,8 @@ export const SetPlayerLimitInputSchema = z
     period: LimitPeriodSchema,
     reason: z.string().trim().min(1),
     confirm: z.literal(true),
-  })
-  .refine(isConsistentLimit, {
-    message: "type 'session' requires period 'session' and vice versa",
-    path: ['period'],
-  })
-  .refine(isConsistentLimitAmount, {
-    message: "type 'session' requires minutes (not amount); other types require amount",
-    path: ['amount'],
-  })
-  .refine(isConsistentLimitCurrency, {
-    message: "type 'session' requires no currency; other types require one",
-    path: ['currency'],
-  });
+  }),
+);
 export type SetPlayerLimitInput = z.infer<typeof SetPlayerLimitInputSchema>;
 
 // 24h .. 6 weeks (1008h) per the Confluence cooling-off window.
