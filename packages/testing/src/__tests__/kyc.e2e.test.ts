@@ -9,6 +9,7 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
+import { kycVerification } from '@openora/core/compliance/schema';
 import {
   setupTestDb,
   bootTestApp,
@@ -266,6 +267,79 @@ describe('KYC tiers (gated stack)', () => {
     expect((await readJson(await admin.get(`/players/by-user/${userId}`))).kycStatus).toBe(
       'pending',
     );
+  });
+
+  it('getMyKyc returns only status/tier/documentTypes/timestamps, never risk-signal internals', async () => {
+    const email = `kyc-summary-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email });
+    const admin = await asAdmin(appGated.app);
+
+    const submitRes = await client.post('/compliance/kyc', {
+      tier: 'basic',
+      documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
+    });
+    const submitted = await readJson(submitRes);
+
+    // Populate the fraud-detection fields directly - the test adapter's webhook has no
+    // way to supply them, but a real hosted-session vendor's decision would.
+    await appGated.container
+      .get(DRIZZLE)
+      .db.update(kycVerification)
+      .set({
+        riskSignals: {
+          vpnOrTorDetected: true,
+          dataCenterIpDetected: false,
+          duplicateDeviceDetected: false,
+          highRiskCountryDetected: false,
+          deviceFingerprints: ['fp-1'],
+        },
+        checks: [{ step: 'ID_VERIFICATION', status: 'approved' }],
+        decisionReason: 'internal fraud note',
+      })
+      .where(eq(kycVerification.userId, userId));
+
+    const mine = await readJson(await client.get('/compliance/kyc/me'));
+    const mineCurrent = mine.basic.current;
+    expect(mineCurrent).toEqual({
+      tier: 'basic',
+      status: submitted.status,
+      documentTypes: ['passport'],
+      submittedAt: expect.any(String),
+      decidedAt: mineCurrent.decidedAt,
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String),
+    });
+    expect(mineCurrent.riskSignals).toBeUndefined();
+    expect(mineCurrent.checks).toBeUndefined();
+    expect(mineCurrent.decisionReason).toBeUndefined();
+    expect(mineCurrent.provider).toBeUndefined();
+    expect(mineCurrent.referenceId).toBeUndefined();
+
+    const adminView = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
+    expect(adminView.basic.current.riskSignals.vpnOrTorDetected).toBe(true);
+    expect(adminView.basic.current.decisionReason).toBe('internal fraud note');
+  });
+
+  it('getMyKyc scopes to the session user, never another players verification', async () => {
+    const submitterEmail = `kyc-scope-submitter-${randomUUID()}@e2e.test`;
+    const { client: submitterClient } = await registerAndMaterializePlayer(appGated, {
+      email: submitterEmail,
+    });
+    await submitterClient.post('/compliance/kyc', {
+      tier: 'basic',
+      documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
+    });
+
+    const bystanderEmail = `kyc-scope-bystander-${randomUUID()}@e2e.test`;
+    const { client: bystanderClient } = await registerAndMaterializePlayer(appGated, {
+      email: bystanderEmail,
+    });
+
+    const bystanderView = await readJson(await bystanderClient.get('/compliance/kyc/me'));
+    expect(bystanderView).toEqual({
+      basic: { current: null, history: [] },
+      advanced: { current: null, history: [] },
+    });
   });
 });
 

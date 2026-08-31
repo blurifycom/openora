@@ -22,7 +22,11 @@ import {
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
-import { KycVerificationService, PlayerNotFoundError } from '../service/kyc.service.js';
+import {
+  KycVerificationService,
+  PlayerNotFoundError,
+  toPlayerSummaryView,
+} from '../service/kyc.service.js';
 import {
   RgService,
   ExclusionNotFoundError,
@@ -113,7 +117,9 @@ export function createComplianceRouter({
       return kyc.getForPlayer(input.userId);
     }),
 
-    getMyKyc: os.getMyKyc.handler(({ context }) => kyc.getForPlayer(getUserId(context))),
+    getMyKyc: os.getMyKyc.handler(({ context }) =>
+      kyc.getForPlayer(getUserId(context)).then(toPlayerSummaryView),
+    ),
 
     submitKyc: os.submitKyc.handler(({ input, context }) => {
       return kyc.submit(getUserId(context), input, context.clientMeta);
@@ -153,7 +159,12 @@ export function createComplianceRouter({
         const receivedAt = new Date().toISOString();
         await jobQueue.enqueue(
           kycDecisionSyncQueue,
-          { referenceId: decision.referenceId, status: decision.status, receivedAt },
+          {
+            referenceId: decision.referenceId,
+            status: decision.status,
+            tier: decision.tier,
+            receivedAt,
+          },
           {
             idempotencyKey,
             orderingKey: decision.referenceId,

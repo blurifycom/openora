@@ -331,7 +331,10 @@ export default {
         return;
       }
       const p = parsed.data;
-      if (p.status !== 'resubmission_requested' || p.source !== 'manual') {
+      // Generic copy below assumes basic-tier document requirements; advanced-tier
+      // resubmission has no tier-specific copy yet (see tag-evaluation.service.ts's
+      // same guard).
+      if (p.status !== 'resubmission_requested' || p.source !== 'manual' || p.tier !== 'basic') {
         return;
       }
       if (!envelope?.eventId) {

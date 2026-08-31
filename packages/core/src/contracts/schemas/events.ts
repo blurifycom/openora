@@ -53,7 +53,11 @@ export const KycStatusUpdatedSchema = z.object({
   previousStatus: KycStatusSchema,
   reason: z.string().nullable(),
   source: KycStatusSourceSchema,
-  tier: KycTierSchema,
+  // Forward-compatible (ADR-0016): every deployment binds RedisStreamsBroker (ADR-0030/
+  // 0032), so a durable backlog survives a restart. A pre-tiering (v4) payload in that
+  // backlog at rollout has no `tier` at all - everything WAS basic-only before tiering,
+  // so default it rather than let safeParse silently drop the event.
+  tier: KycTierSchema.default('basic'),
 });
 
 export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as const;
@@ -487,7 +491,8 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     referenceId: z.string(),
     provider: z.string(),
-    tier: KycTierSchema,
+    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
+    tier: KycTierSchema.default('basic'),
   }),
 
   // A threshold-triggered re-KYC flipped a verified player to resubmission_requested.
@@ -496,7 +501,8 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     reason: z.string(),
-    tier: KycTierSchema,
+    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
+    tier: KycTierSchema.default('basic'),
   }),
 
   'compliance.kyc.high_risk_signal_detected': z.object({
@@ -507,7 +513,8 @@ export const domainEventSchemas = {
     dataCenterIpDetected: z.boolean(),
     duplicateDeviceDetected: z.boolean(),
     highRiskCountryDetected: z.boolean(),
-    tier: KycTierSchema,
+    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
+    tier: KycTierSchema.default('basic'),
   }),
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),

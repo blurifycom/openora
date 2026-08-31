@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   DrizzleService,
+  createDomainError,
   createLogger,
   findOneOrThrow,
   makeNotFoundError,
@@ -33,6 +34,8 @@ import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import type {
   SubmitKycInput,
   PlayerKycView,
+  PlayerKycSummaryView,
+  KycVerificationSummary,
   KycOverrideStatus,
   BulkApproveKycResult,
 } from '../contract/index.js';
@@ -59,6 +62,24 @@ const BULK_APPROVE_CONCURRENCY = 10;
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
 export const KycVerificationNotFoundError = makeNotFoundError('KycVerification');
+
+// Fail-closed: a referenceId is supposed to belong to one player. If rows sharing one
+// ever don't, that's a vendor reference collision - refuse to touch any of them rather
+// than risk writing one player's decision onto another player's kyc_verification row.
+export const KycReferenceOwnerMismatchError = createDomainError<[referenceId: string]>(
+  'KycReferenceOwnerMismatchError',
+  (referenceId) =>
+    `kyc_verification rows sharing referenceId ${referenceId} belong to different users`,
+);
+
+// The webhook-supplied tier and KycAdapter.resolveDecision's tier disagree for the same
+// referenceId - the vendor's own signals are inconsistent, so refuse the decision rather
+// than guess which tier it actually belongs to.
+export const KycReferenceTierMismatchError = createDomainError<[referenceId: string]>(
+  'KycReferenceTierMismatchError',
+  (referenceId) =>
+    `webhook-supplied tier and resolveDecision-supplied tier disagree for referenceId ${referenceId}`,
+);
 
 function mapVendorStatus(vendor: KycVendorStatus) {
   switch (vendor) {
@@ -113,6 +134,31 @@ function toDto(row: KycVerification) {
   return serializeRow(row, {
     dateFields: ['submittedAt', 'decidedAt', 'createdAt', 'updatedAt'],
   });
+}
+
+function toSummaryDto(dto: NonNullable<PlayerKycView['basic']['current']>): KycVerificationSummary {
+  return {
+    tier: dto.tier,
+    status: dto.status,
+    documentTypes: dto.documentTypes,
+    submittedAt: dto.submittedAt,
+    decidedAt: dto.decidedAt,
+    createdAt: dto.createdAt,
+    updatedAt: dto.updatedAt,
+  };
+}
+
+// Player-facing projection: strips riskSignals, checks, decisionReason, provider, and
+// referenceId - those are fraud-detection internals, admin-only via getPlayerKyc.
+export function toPlayerSummaryView(view: PlayerKycView): PlayerKycSummaryView {
+  const summarizeTier = (tier: PlayerKycView['basic']) => ({
+    current: tier.current ? toSummaryDto(tier.current) : null,
+    history: tier.history.map(toSummaryDto),
+  });
+  return {
+    basic: summarizeTier(view.basic),
+    advanced: summarizeTier(view.advanced),
+  };
 }
 
 /**
@@ -198,17 +244,12 @@ export class KycVerificationService {
     const decided = isDecided(status);
 
     const outcome = await this.drizzle.db.transaction(async (trx) => {
-      const [previous] = await trx
-        .select({ status: kycVerification.status })
-        .from(kycVerification)
-        .where(
-          and(
-            eq(kycVerification.userId, userId),
-            eq(kycVerification.referenceId, result.referenceId),
-            eq(kycVerification.tier, input.tier),
-          ),
-        )
-        .for('update');
+      // Scoped to (userId, tier), NOT referenceId: a fresh Advanced resubmission gets a
+      // new vendor session/referenceId, so a referenceId-scoped lookup would find nothing
+      // and default previousStatus to 'not_started' even when a prior (rejected) tier
+      // history exists - corrupting the audit-log's before.kycStatus. latestVerification
+      // captures the true prior state across vendor sessions for this tier.
+      const previous = await this.latestVerification(userId, input.tier, trx);
       const inserted = findOneOrThrow(
         await trx
           .insert(kycVerification)
@@ -251,6 +292,19 @@ export class KycVerificationService {
               trx,
             )
           : null;
+      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+      // compliance.md): emitted here, inside the transaction, so it can never be dropped
+      // by a crash between commit and a post-commit emit.
+      await this.emitUpdated({
+        userId,
+        tier: input.tier,
+        status,
+        previousStatus: previous?.status ?? null,
+        playerTransition,
+        actorId: null,
+        reason: decisionReason,
+        source: 'vendor',
+      });
       return { row: inserted, previousStatus: previous?.status ?? null, playerTransition };
     });
 
@@ -262,16 +316,6 @@ export class KycVerificationService {
       tier: input.tier,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
-    });
-    await this.emitUpdated({
-      userId,
-      tier: input.tier,
-      status,
-      previousStatus: outcome.previousStatus,
-      playerTransition: outcome.playerTransition,
-      actorId: null,
-      reason: decisionReason,
-      source: 'vendor',
     });
     return { ...toDto(outcome.row), verificationUrl: result.verificationUrl };
   }
@@ -299,12 +343,20 @@ export class KycVerificationService {
    * when the caller supplies none - the SAME value written below, so the gate can never
    * evaluate a different set of checks than the one that ends up on the row) contain any
    * non-`approved` entry.
+   *
+   * `opts.tier` scopes the decision to one tier's row when the adapter could attribute it
+   * (see `KycResult.tier`); when absent, the decision fans out to every row sharing this
+   * referenceId - the documented "shared vendor workflow" behavior. Either way, every row
+   * found for `referenceId` must belong to the same `userId` - a vendor reference is
+   * supposed to identify one player, and a collision (one vendor reference reused across
+   * players) must fail closed rather than let one player's decision write another's row.
    */
   // referenceId is the KYC vendor's own reference, not an internal Uuid - stays a plain string.
   async reconcile(
     referenceId: string,
     vendorStatus: KycVendorStatus,
     opts: {
+      tier?: KycTier;
       reason?: string;
       documentTypes?: KycDocument['type'][];
       riskSignals?: KycRiskSignals;
@@ -312,19 +364,6 @@ export class KycVerificationService {
       receivedAt?: Date;
     } = {},
   ) {
-    const existing = await this.drizzle.db
-      .select()
-      .from(kycVerification)
-      .where(eq(kycVerification.referenceId, referenceId))
-      .orderBy(desc(kycVerification.createdAt));
-    if (existing.length === 0) {
-      return null;
-    }
-    const firstExisting = existing[0];
-    if (!firstExisting) {
-      return null;
-    }
-
     const outcomes = await this.drizzle.db.transaction(async (trx) => {
       const rows = await trx
         .select()
@@ -332,9 +371,18 @@ export class KycVerificationService {
         .where(eq(kycVerification.referenceId, referenceId))
         .orderBy(desc(kycVerification.createdAt))
         .for('update');
+      const [firstRow] = rows;
+      if (!firstRow) {
+        return [];
+      }
+      const ownerUserId = firstRow.userId;
+      if (rows.some((row) => row.userId !== ownerUserId)) {
+        throw new KycReferenceOwnerMismatchError(referenceId);
+      }
+      const targetRows = opts.tier ? rows.filter((row) => row.tier === opts.tier) : rows;
       const reconciled: KycReconcileOutcome[] = [];
 
-      for (const row of rows) {
+      for (const row of targetRows) {
         const mappedStatus = mapVendorStatus(vendorStatus);
         const persistedChecks = opts.checks ?? row.checks ?? undefined;
         const incompleteCheck =
@@ -396,6 +444,19 @@ export class KycVerificationService {
                 trx,
               )
             : null;
+        // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+        // compliance.md): emitted here, inside the transaction, so it can never be dropped
+        // by a crash between commit and a post-commit emit.
+        await this.emitUpdated({
+          userId: row.userId,
+          tier: row.tier,
+          status,
+          previousStatus: row.status,
+          playerTransition,
+          actorId: null,
+          reason: reasonFromThisReconcile ?? null,
+          source: 'webhook',
+        });
         reconciled.push({
           row: updated,
           playerTransition,
@@ -408,26 +469,22 @@ export class KycVerificationService {
       return reconciled;
     });
 
-    for (const outcome of outcomes) {
-      if (!outcome.changed) {
-        continue;
-      }
-      await this.emitUpdated({
-        userId: outcome.row.userId,
-        tier: outcome.row.tier,
-        status: outcome.row.status,
-        previousStatus: outcome.previousStatus,
-        playerTransition: outcome.playerTransition,
-        actorId: null,
-        reason: outcome.reason,
-        source: 'webhook',
-      });
-      if (opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
+    if (outcomes.length === 0) {
+      return null;
+    }
+
+    // Emitted once per reconcile() call, not once per row: the signal describes the
+    // vendor SESSION (referenceId), not a tier - a shared-workflow decision touching
+    // both tiers is still exactly one real signal.
+    const anyChanged = outcomes.some((outcome) => outcome.changed);
+    if (anyChanged && opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
+      const [primaryOutcome] = outcomes;
+      if (primaryOutcome) {
         this.events.emit('compliance.kyc.high_risk_signal_detected', {
-          userId: outcome.row.userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(outcome.row.userId),
+          userId: primaryOutcome.row.userId,
+          playerId: await this.identityReader.getPlayerIdByUserIdSafe(primaryOutcome.row.userId),
           referenceId,
-          tier: outcome.row.tier,
+          tier: primaryOutcome.row.tier,
           vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
           dataCenterIpDetected: opts.riskSignals.dataCenterIpDetected,
           duplicateDeviceDetected: opts.riskSignals.duplicateDeviceDetected,
@@ -436,7 +493,8 @@ export class KycVerificationService {
       }
     }
 
-    return toDto(outcomes[0]?.row ?? firstExisting);
+    const primary = outcomes.find((outcome) => outcome.changed) ?? outcomes[0];
+    return primary ? toDto(primary.row) : null;
   }
 
   /**
@@ -449,16 +507,32 @@ export class KycVerificationService {
    * passed through to `reconcile` as the monotonicity watermark so a job that runs
    * out of arrival order (the driver ignores `orderingKey`) can't overwrite a newer
    * decision with a stale one.
+   *
+   * `webhookTier` is whatever `parseWebhook` attributed the decision to, carried on the
+   * job payload. When `resolveDecision` ALSO reports a tier and it disagrees with
+   * `webhookTier`, the vendor's own signals are inconsistent - refuse the decision rather
+   * than guess. The resolved tier (webhook's, falling back to resolveDecision's) is what
+   * scopes `reconcile` to one row; absent both, `reconcile` keeps the shared-workflow
+   * fan-out.
    */
-  async syncDecision(referenceId: string, status: KycVendorStatus, receivedAt?: Date) {
+  async syncDecision(
+    referenceId: string,
+    status: KycVendorStatus,
+    receivedAt?: Date,
+    webhookTier?: KycTier,
+  ) {
     const riskSignals = this.kycAdapter.resolveRiskSignals
       ? await this.kycAdapter.resolveRiskSignals(referenceId)
       : undefined;
     if (!this.kycAdapter.resolveDecision) {
-      return this.reconcile(referenceId, status, { riskSignals, receivedAt });
+      return this.reconcile(referenceId, status, { tier: webhookTier, riskSignals, receivedAt });
     }
     const decision = await this.kycAdapter.resolveDecision(referenceId);
+    if (webhookTier && decision.tier && webhookTier !== decision.tier) {
+      throw new KycReferenceTierMismatchError(referenceId);
+    }
     return this.reconcile(referenceId, decision.status, {
+      tier: webhookTier ?? decision.tier,
       reason: decision.decisionReason,
       documentTypes: decision.documentTypes,
       checks: decision.checks,
@@ -534,7 +608,7 @@ export class KycVerificationService {
     }
 
     const reason = `Cumulative deposits ${totalDeposits} ${snapshot.currency} crossed the re-KYC threshold`;
-    const playerTransition = await this.drizzle.db.transaction(async (trx) => {
+    await this.drizzle.db.transaction(async (trx) => {
       await trx.insert(kycVerification).values({
         userId,
         provider: this.provider,
@@ -546,7 +620,7 @@ export class KycVerificationService {
         triggerDeposits: totalDeposits,
         decisionReason: reason,
       });
-      return this.statusWriter.setStatus(
+      const playerTransition = await this.statusWriter.setStatus(
         userId,
         'resubmission_requested',
         {
@@ -556,16 +630,19 @@ export class KycVerificationService {
         },
         trx,
       );
-    });
-    await this.emitUpdated({
-      userId,
-      tier: 'basic',
-      status: 'resubmission_requested',
-      previousStatus: current.kycStatus,
-      playerTransition,
-      actorId: null,
-      reason,
-      source: 'reverify',
+      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+      // compliance.md): emitted here, inside the transaction, so it can never be dropped
+      // by a crash between commit and a post-commit emit.
+      await this.emitUpdated({
+        userId,
+        tier: 'basic',
+        status: 'resubmission_requested',
+        previousStatus: current.kycStatus,
+        playerTransition,
+        actorId: null,
+        reason,
+        source: 'reverify',
+      });
     });
     this.events.emit('compliance.kyc.reverify_required', {
       userId,
@@ -655,22 +732,23 @@ export class KycVerificationService {
         referenceIdPrefix: 'manual-resubmit',
         decidedAt: null,
       });
-      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
-    });
-    if (!outcome.row) {
-      throw new KycVerificationNotFoundError(userId);
-    }
-    if (outcome.changed) {
+      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+      // compliance.md): emitted here, inside the transaction, so it can never be dropped
+      // by a crash between commit and a post-commit emit.
       await this.emitUpdated({
         userId,
         tier,
         status: 'resubmission_requested',
-        previousStatus: outcome.previousStatus,
-        playerTransition: outcome.playerTransition,
+        previousStatus: currentStatus ?? null,
+        playerTransition: applied.playerTransition,
         actorId,
         reason,
         source: 'manual',
       });
+      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
+    });
+    if (!outcome.row) {
+      throw new KycVerificationNotFoundError(userId);
     }
     return outcome.row;
   }
@@ -713,22 +791,23 @@ export class KycVerificationService {
         referenceIdPrefix: 'manual-override',
         decidedAt: isDecided(resolvedStatus) ? new Date() : null,
       });
-      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
-    });
-    if (!outcome.row) {
-      throw new KycVerificationNotFoundError(userId);
-    }
-    if (outcome.changed) {
+      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+      // compliance.md): emitted here, inside the transaction, so it can never be dropped
+      // by a crash between commit and a post-commit emit.
       await this.emitUpdated({
         userId,
         tier,
         status: resolvedStatus,
-        previousStatus: outcome.previousStatus,
-        playerTransition: outcome.playerTransition,
+        previousStatus: currentStatus ?? null,
+        playerTransition: applied.playerTransition,
         actorId,
         reason,
         source: 'manual',
       });
+      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
+    });
+    if (!outcome.row) {
+      throw new KycVerificationNotFoundError(userId);
     }
     return outcome.row;
   }

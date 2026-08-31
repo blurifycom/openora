@@ -268,6 +268,85 @@ describe('KycVerificationService.reconcile (real PG)', () => {
 
     expect(await svc.reconcile(randomUUID(), 'approved')).toBeNull();
   });
+
+  it('scopes a tiered decision to only the named tier, leaving the other tier untouched', async () => {
+    const { svc, statusWriter } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+    const basic = await svc.submit(userId, passportSubmission);
+    await svc.submit(userId, { ...passportSubmission, tier: 'advanced' });
+    const callsFromSubmit = vi.mocked(statusWriter.setStatus).mock.calls.length;
+
+    await svc.reconcile(basic.referenceId, 'approved', { tier: 'advanced' });
+
+    const rows = await verificationsOf(userId);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tier: 'basic', status: 'pending' }),
+        expect.objectContaining({ tier: 'advanced', status: 'approved' }),
+      ]),
+    );
+    // Advanced never touches player.kycStatus - reconcile scoped to 'advanced' must not
+    // add a further writer call beyond whatever submit() already made for Basic.
+    expect(statusWriter.setStatus).toHaveBeenCalledTimes(callsFromSubmit);
+  });
+
+  it('refuses a reference id shared across two different players, updating neither row', async () => {
+    const { svc } = makeService();
+    const referenceId = randomUUID();
+    const [playerA] = await db.drizzle.db
+      .insert(kycVerification)
+      .values({
+        userId: randomUUID(),
+        provider: 'mock',
+        referenceId,
+        tier: 'basic',
+        status: 'pending',
+        documentTypes: ['passport'],
+        triggeredBy: 'submission',
+      })
+      .returning();
+    const [playerB] = await db.drizzle.db
+      .insert(kycVerification)
+      .values({
+        userId: randomUUID(),
+        provider: 'mock',
+        referenceId,
+        tier: 'basic',
+        status: 'pending',
+        documentTypes: ['passport'],
+        triggeredBy: 'submission',
+      })
+      .returning();
+
+    await expect(svc.reconcile(referenceId, 'approved')).rejects.toThrow(
+      'belong to different users',
+    );
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(kycVerification)
+      .where(eq(kycVerification.referenceId, referenceId));
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: playerA!.id, status: 'pending' }),
+        expect.objectContaining({ id: playerB!.id, status: 'pending' }),
+      ]),
+    );
+  });
+
+  it('rejects a decision when the webhook tier and resolveDecision tier disagree', async () => {
+    const { svc, kycAdapter, adapterResult } = makeService({ adapter: { status: 'pending' } });
+    await svc.submit(randomUUID(), passportSubmission);
+    kycAdapter.resolveDecision = vi.fn(async () => ({
+      referenceId: adapterResult.referenceId,
+      status: 'approved' as const,
+      tier: 'advanced' as const,
+    }));
+
+    await expect(
+      svc.syncDecision(adapterResult.referenceId, 'approved', undefined, 'basic'),
+    ).rejects.toThrow('disagree');
+  });
 });
 
 describe('KycVerificationService.getForPlayer (real PG)', () => {

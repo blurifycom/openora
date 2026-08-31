@@ -194,12 +194,16 @@ function withdrawalPayload(userId: string, amount: number) {
     transactionId: randomUUID(),
   };
 }
-function kycUpdatedPayload(userId: string, status: KycStatus) {
+function kycUpdatedPayload(
+  userId: string,
+  status: KycStatus,
+  tier: 'basic' | 'advanced' = 'basic',
+) {
   return {
     userId,
     playerId: null,
     actorId: SYSTEM_ACTOR_ID,
-    tier: 'basic' as const,
+    tier,
     status,
     previousStatus: 'pending',
     reason: null,
@@ -657,6 +661,23 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
       .where(and(eq(playerTag.playerId, userId), eq(playerTag.tagId, kycPendingTag.id)));
     expect(rows).toHaveLength(1);
   });
+
+  it('clears advanced_kyc_needed on an Advanced submission', async () => {
+    const userId = randomUUID();
+    const { service } = makeServices();
+    const advancedKycNeededTag = await seedRule('advanced_kyc_needed');
+    await seedActiveAssignment(userId, advancedKycNeededTag);
+
+    await service.onKycSubmitted({
+      userId,
+      playerId: null,
+      referenceId: 'ref-1',
+      provider: 'sumsub',
+      tier: 'advanced',
+    });
+
+    expect(await activeTagKeys(userId)).toEqual([]);
+  });
 });
 
 describe('TagEvaluationService.onKycStatusUpdated (real PG)', () => {
@@ -771,6 +792,29 @@ describe('TagEvaluationService.onKycStatusUpdated (real PG)', () => {
       .from(playerTag)
       .where(and(eq(playerTag.playerId, userId), eq(playerTag.tagId, kycPendingTag.id)));
     expect(rows).toHaveLength(1);
+  });
+
+  it('clears advanced_kyc_needed on an Advanced approval', async () => {
+    const userId = randomUUID();
+    const { service } = makeServices();
+    const advancedKycNeededTag = await seedRule('advanced_kyc_needed');
+    await seedActiveAssignment(userId, advancedKycNeededTag);
+
+    await service.onKycStatusUpdated(kycUpdatedPayload(userId, 'verified', 'advanced'));
+
+    expect(await activeTagKeys(userId)).toEqual([]);
+  });
+
+  it('does not clear advanced_kyc_needed on a Basic approval', async () => {
+    const userId = randomUUID();
+    const { service } = makeServices();
+    await seedKycPendingRule();
+    const advancedKycNeededTag = await seedRule('advanced_kyc_needed');
+    await seedActiveAssignment(userId, advancedKycNeededTag);
+
+    await service.onKycStatusUpdated(kycUpdatedPayload(userId, 'verified', 'basic'));
+
+    expect(await activeTagKeys(userId)).toContain('advanced_kyc_needed');
   });
 });
 

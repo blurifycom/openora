@@ -73,6 +73,31 @@ export const PlayerKycViewSchema = z.object({
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
+// Player-facing projection of KycVerificationSchema: no riskSignals, checks, decisionReason,
+// provider, or referenceId - those are fraud-detection internals, admin-only via getPlayerKyc.
+export const KycVerificationSummarySchema = z.object({
+  tier: KycTierSchema,
+  status: KycStatusSchema,
+  documentTypes: z.array(KycDocumentTypeSchema),
+  submittedAt: TimestampSchema,
+  decidedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type KycVerificationSummary = z.infer<typeof KycVerificationSummarySchema>;
+
+export const PlayerKycSummaryViewSchema = z.object({
+  basic: z.object({
+    current: KycVerificationSummarySchema.nullable(),
+    history: z.array(KycVerificationSummarySchema),
+  }),
+  advanced: z.object({
+    current: KycVerificationSummarySchema.nullable(),
+    history: z.array(KycVerificationSummarySchema),
+  }),
+});
+export type PlayerKycSummaryView = z.infer<typeof PlayerKycSummaryViewSchema>;
+
 export const KycStatusUpdateSchema = z.object({
   eventId: UuidSchema,
   status: KycStatusSchema,
@@ -173,7 +198,9 @@ export const complianceContract = {
     .input(z.object({ userId: UuidSchema }))
     .output(PlayerKycViewSchema),
 
-  getMyKyc: oc.route({ method: 'GET', path: '/compliance/kyc/me' }).output(PlayerKycViewSchema),
+  getMyKyc: oc
+    .route({ method: 'GET', path: '/compliance/kyc/me' })
+    .output(PlayerKycSummaryViewSchema),
 
   submitKyc: oc
     .route({ method: 'POST', path: '/compliance/kyc' })

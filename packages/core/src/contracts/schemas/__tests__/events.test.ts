@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import {
   getEventVersion,
@@ -62,6 +63,60 @@ describe('eventCatalog', () => {
   it('namespaces every topic by its owning module', () => {
     for (const { topic } of eventCatalog()) {
       expect(topic).toMatch(/^[a-z][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$/);
+    }
+  });
+});
+
+// ADR-0016 requires forward-compatible payload evolution, and every deployment binds a
+// durable broker (ADR-0030/0032) - a pre-tiering (v4) compliance.kyc.* payload with no
+// `tier` at all can still be sitting in the backlog at rollout. Basic-tier is what every
+// payload meant before tiering existed, so a missing `tier` must default to it rather
+// than fail the parse and drop the event.
+describe('compliance.kyc.* tier forward-compat', () => {
+  const topics = [
+    'compliance.kyc.updated',
+    'compliance.kyc.submitted',
+    'compliance.kyc.reverify_required',
+    'compliance.kyc.high_risk_signal_detected',
+  ] as const;
+
+  const basePayloads: Record<(typeof topics)[number], Record<string, unknown>> = {
+    'compliance.kyc.updated': {
+      userId: randomUUID(),
+      playerId: null,
+      actorId: null,
+      status: 'approved',
+      previousStatus: 'pending',
+      reason: null,
+      source: 'webhook',
+    },
+    'compliance.kyc.submitted': {
+      userId: randomUUID(),
+      playerId: null,
+      referenceId: 'ref-1',
+      provider: 'mock',
+    },
+    'compliance.kyc.reverify_required': {
+      userId: randomUUID(),
+      playerId: null,
+      reason: 'threshold crossed',
+    },
+    'compliance.kyc.high_risk_signal_detected': {
+      userId: randomUUID(),
+      playerId: null,
+      referenceId: 'ref-1',
+      vpnOrTorDetected: false,
+      dataCenterIpDetected: false,
+      duplicateDeviceDetected: false,
+      highRiskCountryDetected: false,
+    },
+  };
+
+  it('defaults a payload with no tier field to basic, instead of failing the parse', () => {
+    for (const topic of topics) {
+      const result = domainEventSchemas[topic].safeParse(basePayloads[topic]);
+      expect(result.success).toBe(true);
+      expect(result.success && (result.data as { tier: string }).tier).toBe('basic');
     }
   });
 });

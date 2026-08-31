@@ -1644,6 +1644,10 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "KycVerificationSummarySchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "LanguageSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1850,6 +1854,10 @@
     {
       "name": "PlayerEmailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerKycSummaryViewSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "PlayerKycViewSchema",

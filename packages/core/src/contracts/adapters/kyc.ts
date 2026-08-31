@@ -47,6 +47,15 @@ export type KycResult = {
   referenceId: string;
   status: KycVendorStatus;
   /**
+   * The tier this decision belongs to, when the adapter/vendor can attribute it. Omit when
+   * the vendor session is a shared workflow that decides both tiers together (see
+   * `docs/adapters/kyc.md`) - `KycVerificationService.reconcile` then fans the decision out
+   * to every `kyc_verification` row sharing this `referenceId`, exactly as before this field
+   * existed. Set it whenever the vendor CAN tell tiers apart, so reconcile only ever touches
+   * the row that actually ran that tier's checks.
+   */
+  tier?: KycTier;
+  /**
    * Hosted verification URL to redirect the end user to, for vendors whose flow collects
    * documents on their own hosted page (eg Didit) rather than accepting them from our
    * backend. Omitted by document-forwarding vendors (eg SumSub, MockKycAdapter).

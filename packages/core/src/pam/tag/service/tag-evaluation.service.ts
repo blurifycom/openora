@@ -4,6 +4,7 @@ import {
   type WalletReader,
   type IdentityReader,
   type KycStatus,
+  type KycTier,
   type AdminUserDirectory,
   type TagKey,
   type TagRule,
@@ -374,8 +375,9 @@ export class TagEvaluationService {
 
   /**
    * Applies kyc_pending on KYC submission only while the profile still has a pending-like
-   * status, and clears basic_kyc_needed / advanced_kyc_needed. Does not clear kyc_rejected:
-   * that sticky tag remains until a later approved state explicitly clears it.
+   * status (Basic only - `player.kycStatus` is a Basic-only concept), and clears the
+   * submitting tier's own *_kyc_needed tag. Does not clear kyc_rejected: that sticky tag
+   * remains until a later approved state explicitly clears it.
    */
   async onKycSubmitted(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.submitted'].safeParse(payload);
@@ -383,6 +385,9 @@ export class TagEvaluationService {
       return;
     }
     const { userId, tier } = parsed.data;
+    // Each tier clears only its own *_kyc_needed tag - completing one tier says nothing
+    // about the other's state.
+    await this.removeKycNeededTag(userId, tier, 'kyc resubmitted');
     if (tier !== 'basic') {
       return;
     }
@@ -390,7 +395,6 @@ export class TagEvaluationService {
     if (!rule) {
       return;
     }
-    await this.removeKycNeededTags(userId, 'kyc resubmitted');
     const status = await this.identityReader.getPlayerKycStatusByUserId(userId);
     if (!status || !isPendingKycStatus(status)) {
       return;
@@ -402,12 +406,11 @@ export class TagEvaluationService {
     });
   }
 
-  private async removeKycNeededTags(userId: User['id'], reason: string) {
-    for (const tagKey of ['basic_kyc_needed', 'advanced_kyc_needed'] as const) {
-      const rule = await this.getEnabledRule(tagKey);
-      if (rule) {
-        await this.tryRemoveTag({ userId, tagKey, reason });
-      }
+  private async removeKycNeededTag(userId: User['id'], tier: KycTier, reason: string) {
+    const tagKey = tier === 'basic' ? 'basic_kyc_needed' : 'advanced_kyc_needed';
+    const rule = await this.getEnabledRule(tagKey);
+    if (rule) {
+      await this.tryRemoveTag({ userId, tagKey, reason });
     }
   }
 
@@ -433,9 +436,14 @@ export class TagEvaluationService {
    * active rows.
    *
    * Transitions:
-   *   approved / manually_overridden -> remove kyc_pending + kyc_rejected + basic_kyc_needed + advanced_kyc_needed
-   *   rejected                       -> remove kyc_pending, assign kyc_rejected, evaluate basic_kyc_needed
-   *   resubmission_requested         -> assign kyc_pending, keep kyc_rejected sticky
+   *   approved / manually_overridden -> remove the tier's own *_kyc_needed tag; Basic also
+   *                                      removes kyc_pending + kyc_rejected
+   *   rejected                       -> Basic only: remove kyc_pending, assign kyc_rejected,
+   *                                      evaluate basic_kyc_needed
+   *   resubmission_requested         -> Basic only: assign kyc_pending, keep kyc_rejected sticky
+   *
+   * kyc_pending/kyc_rejected track `player.kycStatus`, a Basic-only concept, so every
+   * branch below Basic-tier-only-clearing bails for Advanced.
    */
   async onKycStatusUpdated(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
@@ -443,14 +451,20 @@ export class TagEvaluationService {
       return;
     }
     const { userId, status, tier } = parsed.data;
-    if (tier !== 'basic') {
+
+    if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
+      // Each tier clears only its own *_kyc_needed tag - an Advanced approval must be
+      // able to clear advanced_kyc_needed on its own, same as Basic clears its own.
+      await this.removeKycNeededTag(userId, tier, 'kyc approved');
+      if (tier !== 'basic') {
+        return;
+      }
+      await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });
+      await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc approved' });
       return;
     }
 
-    if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
-      await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });
-      await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc approved' });
-      await this.removeKycNeededTags(userId, 'kyc approved');
+    if (tier !== 'basic') {
       return;
     }
 
