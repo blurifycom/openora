@@ -2,15 +2,17 @@
 name: create-ui-module
 targets: ['*']
 description: >
-  Create a frontend feature module in apps/backoffice or apps/web following ADR-0001's
-  modular architecture: standard folder shape, co-located locales, DI hooks, pure
-  components, barrel entry, route wiring. Use on "create module", "new feature module",
+  Create a frontend feature module in apps/backoffice or apps/web following the modular
+  architecture in the `frontend-conventions` rule: standard folder shape, co-located
+  locales, DI hooks, pure components, barrel entry, route wiring. Use on "create module", "new feature module",
   "add a backoffice/web module", "/create-ui-module <app> <name>".
 ---
 
-# create-ui-module (consumer)
+# create-ui-module ({{name}})
 
-Scaffold a feature module under `src/modules/<name>/` per ADR-0001 (`docs/adr/0001-modular-architecture.md`). The shape is lint-enforced (`tools/oxlint-module-structure.mjs`: folder structure, `use-` hook naming, kebab-case files, client-component naming). Copy an existing module as the reference - `apps/backoffice/src/modules/roles/` is canonical.
+Applies once this repo has UI apps (`apps/web` / `apps/backoffice`); an api-only repo has no `src/modules/` to scaffold into.
+
+Scaffold a feature module under `src/modules/<name>/` per the modular architecture in `frontend-conventions` and `docs/standards/frontend.md`. Where the repo ships a module-structure lint rule, it enforces the shape (folder structure, `use-` hook naming, kebab-case files, client-component naming). Copy an existing module in the same app as the reference.
 
 ## 1. Resolve input
 
@@ -32,7 +34,7 @@ src/modules/<name>/
 `locales/index.ts` pattern (exact):
 
 ```ts
-import { registerTranslations } from '@<scope>/ui';
+import { registerTranslations } from '{{scope}}/ui';
 import en from './en.json';
 
 export const locales = { en };
@@ -43,16 +45,16 @@ Components use `useTranslation(ns)`; no hardcoded copy. Non-`en` files mirror `e
 
 ## 3. Wire the route
 
-- backoffice: `src/routes/_authed/<name>.tsx` -> `createFileRoute` with `component` imported from `@/modules/<name>` (see `src/routes/_authed/roles.tsx`).
+- backoffice: `src/routes/_authed/<name>.tsx` -> `createFileRoute` with `component` imported from `@/modules/<name>`; mirror a sibling route file.
 - web: the App Router page under `app/(shell)/<name>/` imports from `@/modules/<name>`; client components get `'use client'` line 1 + `.client.tsx` suffix.
 
 ## 4. Non-negotiables
 
 - No cross-module imports - cross-module effects go through query cache invalidation, never a direct import.
 - Outside code imports ONLY the barrel via `@/modules/<name>`; inside the module use relative paths.
-- Hooks take their clients (oRPC/API) as parameters (see `roles/hooks/use-iam-client-deps.ts`) so they're testable without global mocks.
-- Follow `docs/standards/frontend.md` (daisyUI, theme tokens, hoisted `styles` const, React Compiler - no manual memo).
+- Hooks take their clients (oRPC/API) as parameters via a `use-<domain>-client-deps.ts` hook so they're testable without global mocks.
+- Follow the `frontend-conventions` rule + `docs/standards/frontend.md` (daisyUI, theme tokens, hoisted `styles` const, React Compiler - no manual memo).
 
 ## 5. Verify
 
-`/check` green (the structure lint runs inside `pnpm check:lint`); route renders (`pnpm dev`). Hand to `review` before an MR.
+`/check` green (any structure lint runs inside `pnpm check:lint`); route renders (`pnpm dev`). Hand to `review` before an MR.

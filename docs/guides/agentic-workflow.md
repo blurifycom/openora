@@ -48,16 +48,9 @@ Everyday review of your branch (cheap, works on capped plans):
 /review                       # current branch vs dev
 /review 123                   # a GitHub PR by number
 /review --base stage          # different base branch
-```
-
-Output: paste-ready line comments + an AC check + one-sentence GO/NO-GO. Nothing is posted or edited - you paste the comments you agree with.
-
-Deep sweep of a large or risky change set (token-heavy):
-
-```
-/oss-review                   # one reviewer per applicable dimension
-/oss-review --agents 6        # force the fan-out width
-/oss-review --fix             # also apply the fixes in the working tree
+/review --agents 4            # force the fan-out width
+/review --fix                 # also apply BLOCK and WARN fixes in the working tree
+/review --ci                  # non-interactive; exit 1 on NO-GO
 ```
 
 ## Add a module / route / plugin by hand

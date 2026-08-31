@@ -29,3 +29,6 @@ coverage
 .github/agents/
 .github/prompts/
 .github/hooks/
+
+# Agent files rendered from the @openora/create consumer template on install.
+# The block below is rewritten by tools/sync-agents.mjs - do not edit by hand.
