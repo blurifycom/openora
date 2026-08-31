@@ -1297,6 +1297,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatMoneyCommandInputSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
       "name": "ChatOnlineCountSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },

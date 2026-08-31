@@ -100,7 +100,9 @@ are available, 4 users receive `20` and `80` is debited. `perRecipient` and `tot
 (`perRecipient * actual recipientCount`) are computed in the same SQL transaction. The
 system-message metadata (built by `doSendRain` itself), audit `after.amount`, the persisted
 `player_rain.amount`, and the `chat.rain.distributed` event's `totalAmount` all report
-`totalDistributed`, since that is what actually left the sender's wallet. The `maxAmount`/
+`totalDistributed`, since that is what actually left the sender's wallet. The event also carries
+`perRecipient` verbatim, so a subscriber renders the credited share rather than re-deriving it from
+`totalAmount / recipientCount`. The `maxAmount`/
 `minAmount` limit checks validate against the player-typed `input.amount`; `maxRecipients`
 validates the requested count. Non-even totals are valid, and there is no whole-unit
 amount-versus-recipient check. `player_rain` is a new header row per rain event (nothing was

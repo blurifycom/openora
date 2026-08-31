@@ -598,16 +598,23 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     return summary;
   }
 
+  // The sender-side twin of resolveExactPlayer: every money-moving command needs the actor's
+  // own username for the system message it posts, and an actor the directory cannot resolve
+  // must stop the command before any money moves.
+  private async resolveSender(actorId: Uuid) {
+    const summaries = await this.directory.lookupPlayers([actorId]);
+    const summary = summaries.find((s) => s.userId === actorId);
+    if (!summary) {
+      throw new ChatPlayerNotFoundError(actorId);
+    }
+    return summary;
+  }
+
   private async doSendGift(input: GiftArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('gift');
 
-    const senderSummaries = await this.directory.lookupPlayers([actorId]);
-    const senderSummary = senderSummaries.find((s) => s.userId === actorId);
-    if (!senderSummary) {
-      throw new ChatPlayerNotFoundError(actorId);
-    }
-    const senderUsername = senderSummary.username;
+    const senderUsername = (await this.resolveSender(actorId)).username;
 
     // Sender resolved BEFORE reserving (mirrors doSendDonate): runWithCommandReservation
     // only releases the reservation on a failure inside its own callback, so anything
@@ -872,11 +879,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (input.recipientCount > configMax) {
       throw new ExceedsLimitError();
     }
-    const senderSummaries = await this.directory.lookupPlayers([actorId]);
-    const sender = senderSummaries.find((s) => s.userId === actorId);
-    if (!sender) {
-      throw new ChatPlayerNotFoundError(actorId);
-    }
+    const sender = await this.resolveSender(actorId);
     const fingerprint = fingerprintCommand({ type: 'rain', ...input });
     const replay = await this.findCommandReplay('rain', actorId, input.idempotencyKey, fingerprint);
     if (replay) {
@@ -891,11 +894,8 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     // for the full TTL. It must also stay after findCommandReplay/reserveCommandIdempotency so a
     // replay with a now-empty onlineUserIds list (the caller retried after everyone left) still
     // returns the original stored result instead of a spurious NoOnlineUsersError.
-    const { msg, currency, totalDistributed, recipientIds } = await this.runWithCommandReservation(
-      'rain',
-      actorId,
-      input.idempotencyKey,
-      async () => {
+    const { msg, currency, totalDistributed, perRecipient, recipientIds } =
+      await this.runWithCommandReservation('rain', actorId, input.idempotencyKey, async () => {
         const recipients = shuffleArray(input.onlineUserIds.filter((id) => id !== actorId)).slice(
           0,
           input.recipientCount,
@@ -1011,8 +1011,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             recipientIds: recipients,
           };
         });
-      },
-    );
+      });
     await this.completeCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint, msg);
 
     // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
@@ -1024,6 +1023,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       recipients: recipientIds,
       recipientCount: recipientIds.length,
       totalAmount: totalDistributed,
+      perRecipient,
       currency,
       roomId: input.roomId,
     });
@@ -1039,11 +1039,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (target.userId === actorId) {
       throw new DonateSelfError();
     }
-    const senderSummaries = await this.directory.lookupPlayers([actorId]);
-    const sender = senderSummaries.find((s) => s.userId === actorId);
-    if (!sender) {
-      throw new ChatPlayerNotFoundError(actorId);
-    }
+    const sender = await this.resolveSender(actorId);
 
     const fingerprint = fingerprintCommand({ type: 'donate', ...input });
     const replay = await this.findCommandReplay(

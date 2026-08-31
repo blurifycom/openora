@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
-import { REALTIME_TRANSPORT, chatChannel } from '@openora/core/contracts';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
-import { migrate as migrateChatCommands } from '@openora/core/engagement/migrate/chat-commands';
-import { migrate as migrateSocialTransfers } from '@openora/core/engagement/migrate/social-transfers';
+import { markOnline } from './fixtures/presence.js';
 import {
   setupTestDb,
   bootTestApp,
@@ -55,19 +53,12 @@ async function getBalance(client: TestClient): Promise<number> {
   return Number(body.balance);
 }
 
-function markOnline(app: TestApp, roomId: string | null, userId: string) {
-  const transport = app.container.get(REALTIME_TRANSPORT);
-  transport.presence?.join(chatChannel(roomId), userId, `conn-${userId}`);
-}
-
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
   process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
   process.env['NODE_ENV'] ??= 'test';
 
   db = await setupTestDb();
-  await migrateChatCommands(db.url);
-  await migrateSocialTransfers(db.url);
   const plugins = await loadExtensions();
   app = await bootTestApp({ plugins, databaseUrl: db.url });
   await seedMinimal(app.container, { playerCount: 0 });

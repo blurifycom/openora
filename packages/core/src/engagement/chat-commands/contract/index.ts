@@ -8,7 +8,7 @@ import {
   ChatRoomIdSchema,
   TimestampSchema,
   CurrencyTickerSchema,
-  CurrencyTickerInputSchema,
+  ChatMoneyCommandInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -62,25 +62,11 @@ export type MentionResult = z.infer<typeof MentionResultSchema>;
 
 export { SystemChatMessageSchema, CommandChatMessageSchema };
 
-export const PostGiftInputSchema = z.object({
-  amount: MoneyAmountSchema,
-  // Omit it and the debit falls on the sender's active currency (unchanged, pre-existing
-  // behaviour) - purely additive. The claimer receives this SAME currency; no conversion
-  // ever happens on this path.
-  currency: CurrencyTickerInputSchema.optional(),
-  roomId: ChatRoomIdSchema,
-  idempotencyKey: UuidSchema,
-});
+export const PostGiftInputSchema = ChatMoneyCommandInputSchema;
 export type PostGiftInput = z.infer<typeof PostGiftInputSchema>;
 
-export const PostRainInputSchema = z.object({
-  amount: MoneyAmountSchema,
+export const PostRainInputSchema = ChatMoneyCommandInputSchema.extend({
   recipientCount: z.number().int().positive(),
-  // Omit it and the debit falls on the sender's active currency. Every recipient is
-  // credited in this SAME currency; no conversion ever happens on this path.
-  currency: CurrencyTickerInputSchema.optional(),
-  roomId: ChatRoomIdSchema,
-  idempotencyKey: UuidSchema,
 });
 export type PostRainInput = z.infer<typeof PostRainInputSchema>;
 

@@ -2,8 +2,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
-import { migrate as migrateChatCommands } from '@openora/core/engagement/migrate/chat-commands';
-import { migrate as migrateSocialTransfers } from '@openora/core/engagement/migrate/social-transfers';
 import {
   setupTestDb,
   bootTestApp,
@@ -52,8 +50,6 @@ beforeAll(async () => {
   process.env['NODE_ENV'] ??= 'test';
 
   db = await setupTestDb();
-  await migrateChatCommands(db.url);
-  await migrateSocialTransfers(db.url);
   const plugins = await loadExtensions();
   app = await bootTestApp({ plugins, databaseUrl: db.url });
   await seedMinimal(app.container, { playerCount: 0 });

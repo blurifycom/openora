@@ -48,6 +48,23 @@ const walletTxnBase = z.object({
   transactionId: UuidSchema,
 });
 
+// Shared shape for the RG limit-change lifecycle (requested -> confirmed/cancelled/expired).
+// Every stage names the same subject, the same limit identity, and the same
+// previous-versus-requested pair a regulator reads the change from; each topic below extends
+// only its own delta (who acted, when it becomes effective, when it lapses).
+const limitChangeBase = authContextBase.extend({
+  userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
+  limitId: UuidSchema,
+  type: LimitTypeSchema,
+  period: LimitPeriodSchema,
+  kind: LimitChangeKindSchema,
+  previousAmount: MoneyAmountSchema.nullable(),
+  previousMinutes: z.number().int().nullable(),
+  requestedAmount: MoneyAmountSchema.nullable(),
+  requestedMinutes: z.number().int().nullable(),
+});
+
 export const KycStatusUpdatedSchema = z.object({
   userId: UuidSchema,
   playerId: UuidSchema.nullable(),
@@ -372,66 +389,24 @@ export const domainEventSchemas = {
   // Requested and confirmed are separate topics precisely so a regulator can see
   // that the cool-down was actually served between them, and that the player - not
   // the clock, and not an admin - is what closed the change.
-  'rg.limit.change_requested': authContextBase.extend({
-    userId: UuidSchema,
-    playerId: UuidSchema.nullable(),
+  'rg.limit.change_requested': limitChangeBase.extend({
     actorId: UuidSchema,
-    limitId: UuidSchema,
-    type: LimitTypeSchema,
-    period: LimitPeriodSchema,
-    kind: LimitChangeKindSchema,
-    previousAmount: MoneyAmountSchema.nullable(),
-    previousMinutes: z.number().int().nullable(),
-    requestedAmount: MoneyAmountSchema.nullable(),
-    requestedMinutes: z.number().int().nullable(),
     effectiveAt: TimestampSchema,
     expiresAt: TimestampSchema,
     initiatedBy: RgInitiatorSchema,
   }),
   // The player confirmed after the cool-down elapsed; THIS is the moment the limit moved.
-  'rg.limit.change_confirmed': authContextBase.extend({
-    userId: UuidSchema,
-    playerId: UuidSchema.nullable(),
+  'rg.limit.change_confirmed': limitChangeBase.extend({
     actorId: UuidSchema,
-    limitId: UuidSchema,
-    type: LimitTypeSchema,
-    period: LimitPeriodSchema,
-    kind: LimitChangeKindSchema,
-    previousAmount: MoneyAmountSchema.nullable(),
-    previousMinutes: z.number().int().nullable(),
-    requestedAmount: MoneyAmountSchema.nullable(),
-    requestedMinutes: z.number().int().nullable(),
     initiatedBy: RgInitiatorSchema,
   }),
-  'rg.limit.change_cancelled': authContextBase.extend({
-    userId: UuidSchema,
-    playerId: UuidSchema.nullable(),
+  'rg.limit.change_cancelled': limitChangeBase.extend({
     actorId: UuidSchema,
-    limitId: UuidSchema,
-    type: LimitTypeSchema,
-    period: LimitPeriodSchema,
-    kind: LimitChangeKindSchema,
-    previousAmount: MoneyAmountSchema.nullable(),
-    previousMinutes: z.number().int().nullable(),
-    requestedAmount: MoneyAmountSchema.nullable(),
-    requestedMinutes: z.number().int().nullable(),
     initiatedBy: RgInitiatorSchema,
   }),
   // The confirmation window ran out with no player action. System-attributed (no actor),
   // exactly like `rg.cooling_off.expired`: the safe outcome needs no one to choose it.
-  'rg.limit.change_expired': authContextBase.extend({
-    userId: UuidSchema,
-    playerId: UuidSchema.nullable(),
-    limitId: UuidSchema,
-    type: LimitTypeSchema,
-    period: LimitPeriodSchema,
-    kind: LimitChangeKindSchema,
-    previousAmount: MoneyAmountSchema.nullable(),
-    previousMinutes: z.number().int().nullable(),
-    requestedAmount: MoneyAmountSchema.nullable(),
-    requestedMinutes: z.number().int().nullable(),
-    expiresAt: TimestampSchema,
-  }),
+  'rg.limit.change_expired': limitChangeBase.extend({ expiresAt: TimestampSchema }),
   'rg.cooling_off.activated': actorReasonBase
     .extend({
       userId: UuidSchema,
@@ -566,7 +541,7 @@ export const domainEventSchemas = {
     senderId: UuidSchema,
     senderUsername: z.string(),
     amount: MoneyAmountSchema,
-    currency: z.string(),
+    currency: CurrencyTickerSchema,
     roomId: UuidSchema.nullable(),
     messageId: UuidSchema,
   }),
@@ -576,15 +551,20 @@ export const domainEventSchemas = {
     claimerUsername: z.string(),
     senderId: UuidSchema,
     amount: MoneyAmountSchema,
-    currency: z.string(),
+    currency: CurrencyTickerSchema,
     roomId: UuidSchema.nullable(),
   }),
+  // `perRecipient` is the exact amount each recipient was credited, as the money
+  // transaction computed it - a subscriber must never re-derive it from
+  // `totalAmount / recipientCount`, or it risks telling a player a number the
+  // ledger did not credit.
   'chat.rain.distributed': z.object({
     fromUserId: UuidSchema,
     recipients: z.array(UuidSchema),
     recipientCount: z.number().int(),
     totalAmount: MoneyAmountSchema,
-    currency: z.string(),
+    perRecipient: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
     roomId: UuidSchema.nullable(),
   }),
   'chat.donate.sent': z.object({
@@ -593,7 +573,7 @@ export const domainEventSchemas = {
     recipientId: UuidSchema,
     recipientUsername: z.string(),
     amount: MoneyAmountSchema,
-    currency: z.string(),
+    currency: CurrencyTickerSchema,
     roomId: UuidSchema.nullable(),
   }),
   'chat.user.mentioned': z.object({
@@ -666,7 +646,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'chat.gift.claimed': 2,
   // v2: recipients array added for per-player notification delivery.
   // v3: roomId nullable - rain can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
-  'chat.rain.distributed': 3,
+  // v4: perRecipient added - the credited per-recipient share is now carried, so no subscriber
+  // re-derives it by dividing totalAmount.
+  'chat.rain.distributed': 4,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

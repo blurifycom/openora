@@ -14,7 +14,7 @@ import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
-import { NotificationsService, perRecipientAmount } from './service/notifications.service.js';
+import { NotificationsService } from './service/notifications.service.js';
 
 // Money-type RG limits carry `amount`, the session-type limit carries `minutes` -
 // polymorphic by `type`, a row never carries both (compliance/contract/limits.ts).
@@ -146,13 +146,12 @@ export default {
       }
       const p = parsed.data;
       const svc = svcRef;
-      const amount = perRecipientAmount(p.totalAmount, p.recipientCount);
       const title = 'You were included in a rain';
       directoryRef
         ?.lookupPlayers([p.fromUserId])
         .then((rows) => {
           const senderName = rows.find((r) => r.userId === p.fromUserId)?.username ?? 'A player';
-          const body = `${senderName} sent a rain in chat - you received ${amount} ${p.currency}.`;
+          const body = `${senderName} sent a rain in chat - you received ${p.perRecipient} ${p.currency}.`;
           return Promise.all(
             p.recipients.map((recipientId) =>
               svc.create({ userId: recipientId, type: 'chat.rain.received', title, body }),

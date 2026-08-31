@@ -1,25 +1,15 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
-  UuidSchema,
-  MoneyAmountSchema,
   SystemChatMessageSchema,
   CommandChatMessageSchema,
-  ChatRoomIdSchema,
-  CurrencyTickerInputSchema,
+  ChatMoneyCommandInputSchema,
 } from '@openora/core/contracts';
 
 export { SystemChatMessageSchema, CommandChatMessageSchema };
 
-export const SendDonateInputSchema = z.object({
+export const SendDonateInputSchema = ChatMoneyCommandInputSchema.extend({
   targetUsername: z.string().min(1),
-  amount: MoneyAmountSchema,
-  // Omit it and the debit falls on the sender's active currency (unchanged, pre-existing
-  // behaviour) - this is purely additive. When supplied, the recipient is credited in this
-  // SAME currency; no conversion ever happens on this path.
-  currency: CurrencyTickerInputSchema.optional(),
-  roomId: ChatRoomIdSchema,
-  idempotencyKey: UuidSchema,
 });
 export type SendDonateInput = z.infer<typeof SendDonateInputSchema>;
 
