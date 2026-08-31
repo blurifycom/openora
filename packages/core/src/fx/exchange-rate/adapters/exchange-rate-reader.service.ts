@@ -84,6 +84,12 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly hardMaxAgeMs: number;
   private readonly providerTimeoutMs: number;
   private readonly inFlight = new Map<string, Promise<ExchangeRateQuote>>();
+  // Leg -> epoch ms until which a synchronous fetch is not retried. Single-flight only
+  // collapses CONCURRENT callers; a pair the provider cannot resolve at all is never
+  // persisted, so without this every sequential request re-issues the vendor call. The
+  // cooldown is the provider timeout, so one unresolvable currency costs at most one
+  // call per timeout window instead of one per request.
+  private readonly failedUntil = new Map<string, number>();
 
   constructor(deps: ExchangeRateReaderServiceDeps) {
     this.drizzle = deps.drizzle;
@@ -155,9 +161,17 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
 
     // Hard-stale or no row at all: fetch synchronously and fail closed on error.
+    const cooldownUntil = this.failedUntil.get(currency);
+    if (cooldownUntil !== undefined && Date.now() < cooldownUntil) {
+      return null;
+    }
+
     try {
-      return await this.fetchLeg(currency);
+      const quote = await this.fetchLeg(currency);
+      this.failedUntil.delete(currency);
+      return quote;
     } catch (err) {
+      this.failedUntil.set(currency, Date.now() + this.providerTimeoutMs);
       // Availability event: deposits/limit checks gating on this rail start being
       // refused from here. Alertable level, not silent.
       logger.error(

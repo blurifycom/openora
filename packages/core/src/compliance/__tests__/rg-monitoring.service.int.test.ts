@@ -284,9 +284,11 @@ describe('RgLimitGate loss handling (real PG)', () => {
       period: 'daily',
     });
     await seedBet(userId, '500');
-    const gate = new RgLimitGate(db.drizzle, makeService(), identityRates());
+    const gate = new RgLimitGate(makeService(), identityRates());
 
-    await expect(gate.checkWager(userId, '400', 'USD')).resolves.toEqual({ allowed: true });
+    await expect(gate.checkWager(db.drizzle.db, userId, '400', 'USD')).resolves.toEqual({
+      allowed: true,
+    });
   });
 
   it('still refuses a wager on a wager limit', async () => {
@@ -300,9 +302,9 @@ describe('RgLimitGate loss handling (real PG)', () => {
       period: 'daily',
     });
     await seedBet(userId, '90');
-    const gate = new RgLimitGate(db.drizzle, makeService(), identityRates());
+    const gate = new RgLimitGate(makeService(), identityRates());
 
-    await expect(gate.checkWager(userId, '20', 'USD')).resolves.toMatchObject({
+    await expect(gate.checkWager(db.drizzle.db, userId, '20', 'USD')).resolves.toMatchObject({
       allowed: false,
       limitType: 'wager',
     });
@@ -319,9 +321,11 @@ describe('RgLimitGate loss handling (real PG)', () => {
       period: 'daily',
     });
     await seedBet(userId, '90');
-    const gate = new RgLimitGate(db.drizzle, makeService(), identityRates());
+    const gate = new RgLimitGate(makeService(), identityRates());
 
-    await expect(gate.checkWager(userId, '10', 'USD')).resolves.toEqual({ allowed: true });
+    await expect(gate.checkWager(db.drizzle.db, userId, '10', 'USD')).resolves.toEqual({
+      allowed: true,
+    });
   });
 });
 
@@ -349,9 +353,9 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
     const rates = btcToUsd(50000);
-    const gate = new RgLimitGate(db.drizzle, makeService(undefined, rates), rates);
+    const gate = new RgLimitGate(makeService(undefined, rates), rates);
 
-    const decision = await gate.checkDeposit(userId, '100', 'BTC');
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '100', 'BTC');
 
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
   });
@@ -360,10 +364,10 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
     const rates = btcToUsd(50000);
-    const gate = new RgLimitGate(db.drizzle, makeService(undefined, rates), rates);
+    const gate = new RgLimitGate(makeService(undefined, rates), rates);
 
     // 0.001 BTC * 50,000 = 50 USD, under the 100 USD limit.
-    const decision = await gate.checkDeposit(userId, '0.001', 'BTC');
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '0.001', 'BTC');
 
     expect(decision).toEqual({ allowed: true });
   });
@@ -379,9 +383,9 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
       getRate: vi.fn(async () => null),
       convert: vi.fn(async () => null),
     });
-    const gate = new RgLimitGate(db.drizzle, makeService(undefined, noRates), noRates);
+    const gate = new RgLimitGate(makeService(undefined, noRates), noRates);
 
-    const decision = await gate.checkDeposit(userId, '0.001', 'BTC');
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '0.001', 'BTC');
 
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
   });
@@ -396,9 +400,9 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
       getRate: vi.fn(async () => null),
       convert: vi.fn(async () => null),
     });
-    const gate = new RgLimitGate(db.drizzle, makeService(undefined, noRates), noRates);
+    const gate = new RgLimitGate(makeService(undefined, noRates), noRates);
 
-    const decision = await gate.checkDeposit(userId, '1', 'USD');
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '1', 'USD');
 
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
   });
@@ -412,7 +416,14 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     });
 
     await expect(
-      makeService(undefined, noRates).spendFor(userId, 'deposit', 'daily', new Date(0), 'USD'),
+      makeService(undefined, noRates).spendFor(
+        db.drizzle.db,
+        userId,
+        'deposit',
+        'daily',
+        new Date(0),
+        'USD',
+      ),
     ).rejects.toBeInstanceOf(RgRateUnavailableError);
   });
 });
@@ -615,9 +626,11 @@ describe('RgLimitGate lazy currency resolution (real PG)', () => {
     await seedPlayer(userId, 'JPY');
     const seeded = await seedUnresolvedDepositLimit(userId, '100000');
     expect(seeded.currency).toBeNull();
-    const gate = new RgLimitGate(db.drizzle, makeService(), identityRates());
+    const gate = new RgLimitGate(makeService(), identityRates());
 
-    await expect(gate.checkDeposit(userId, '1000', 'JPY')).resolves.toEqual({ allowed: true });
+    await expect(gate.checkDeposit(db.drizzle.db, userId, '1000', 'JPY')).resolves.toEqual({
+      allowed: true,
+    });
 
     const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(row?.currency).toBe('JPY');
@@ -627,9 +640,9 @@ describe('RgLimitGate lazy currency resolution (real PG)', () => {
     const userId = randomUUID();
     // Deliberately no seedPlayer: an orphaned pre-existing row.
     await seedUnresolvedDepositLimit(userId, '100000');
-    const gate = new RgLimitGate(db.drizzle, makeService(), identityRates());
+    const gate = new RgLimitGate(makeService(), identityRates());
 
-    const decision = await gate.checkDeposit(userId, '1', 'USD');
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '1', 'USD');
 
     expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
     // Still unresolved - never guessed at.
@@ -641,11 +654,11 @@ describe('RgLimitGate lazy currency resolution (real PG)', () => {
     const userId = randomUUID();
     await seedPlayer(userId, 'GBP');
     await seedUnresolvedDepositLimit(userId, '100000');
-    const gate = new RgLimitGate(db.drizzle, makeService(), identityRates());
+    const gate = new RgLimitGate(makeService(), identityRates());
 
     const [a, b] = await Promise.all([
-      gate.checkDeposit(userId, '10', 'GBP'),
-      gate.checkDeposit(userId, '10', 'GBP'),
+      gate.checkDeposit(db.drizzle.db, userId, '10', 'GBP'),
+      gate.checkDeposit(db.drizzle.db, userId, '10', 'GBP'),
     ]);
 
     expect(a).toEqual({ allowed: true });

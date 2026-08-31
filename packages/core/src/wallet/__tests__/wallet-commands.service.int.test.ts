@@ -145,7 +145,7 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
     // have already committed, so a check taken before the lock would let both through.
     const limits = mock<RgLimitsPort>({
       checkDeposit: vi.fn(),
-      checkWager: vi.fn(async (_userId: string, amount: string) => {
+      checkWager: vi.fn(async (_tx: unknown, _userId: string, amount: string) => {
         await new Promise((r) => setTimeout(r, 10));
         if (staked + Number(amount) > 100) {
           return {

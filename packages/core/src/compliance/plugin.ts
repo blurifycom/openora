@@ -76,10 +76,7 @@ export default {
     // PLAY_ELIGIBILITY (ADR-0032). Compliance owns `user_limit`, so compliance binds it;
     // wallet and gaming resolve it optionally, since an install without this module has
     // no limits to enforce.
-    ctx.provide(
-      RG_LIMITS,
-      (c) => new RgLimitGate(c.get(DRIZZLE), monitoring(c), c.get(EXCHANGE_RATE_READER)),
-    );
+    ctx.provide(RG_LIMITS, (c) => new RgLimitGate(monitoring(c), c.get(EXCHANGE_RATE_READER)));
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';

@@ -47,9 +47,11 @@ export const ExchangeRateBatchEntrySchema = z.object({
 export type ExchangeRateBatchEntry = z.infer<typeof ExchangeRateBatchEntrySchema>;
 
 export const exchangeRateContract = {
-  // Read-only, cache/table-backed - never calls a vendor. Returns `null` when no
-  // rate is available yet (nothing stored, or the pair can't be derived from what
-  // is stored). See the fx module's ExchangeRateReaderService.
+  // Read-only and authenticated. Table-backed on a fresh quote, but a hard-stale or
+  // missing pair fetches synchronously from the provider before answering - so these
+  // routes CAN reach a vendor, which is why both resolve a caller. Returns `null` when
+  // no rate is available (nothing stored and nothing fetchable, or the pair can't be
+  // derived from what is stored). See the fx module's ExchangeRateReaderService.
   getRate: oc
     .route({ method: 'GET', path: '/exchange-rate/rate' })
     .input(GetExchangeRateInputSchema)

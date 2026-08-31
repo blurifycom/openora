@@ -89,7 +89,8 @@ export class GamingService {
     // is the identical one inside `WALLET_COMMANDS.debit`, taken under the wallet row
     // lock - a check out here cannot serialize anything. Both raise the same error, so
     // either path reaches the player looking the same.
-    const decision = await this.rgLimits?.checkWager(userId, betAmount, currency);
+    // The pool, not a transaction: this advisory check runs before any transaction opens.
+    const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
     if (decision && !decision.allowed) {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }

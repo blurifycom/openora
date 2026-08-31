@@ -723,7 +723,9 @@ export class RgSelfServiceService {
       try {
         const resolved = await resolveLimitCurrency(this.drizzle, row);
         resolvedCurrency = resolved.currency;
+        // A read-only view with no transaction of its own, so it passes the pool.
         used = await this.monitoring.spendFor(
+          this.drizzle.db,
           userId,
           row.type as LimitType,
           row.period as LimitPeriod,

@@ -234,12 +234,13 @@ export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<R
 }
 
 /**
- * Same resolution, for a caller that does NOT already hold the slot's advisory lock
- * (`RgLimitGate.check`, `RgMonitoringService.evaluateUser`, `RgSelfServiceService.toView`)
- * - opens its own transaction and takes the lock itself. Never call this from inside an
- * already-open transaction on the same slot (see `resolveLimitCurrencyInTx` above): a
- * second connection taking the same advisory lock while the outer transaction still
- * holds it would self-deadlock.
+ * Same resolution, for a caller that holds NO transaction at all
+ * (`RgMonitoringService.evaluateUser`, `RgSelfServiceService.toView`) - opens its own
+ * transaction and takes the lock itself. Never call this from inside an already-open
+ * transaction on the same slot (see `resolveLimitCurrencyInTx` above): a second
+ * connection taking the same advisory lock while the outer transaction still holds it
+ * would self-deadlock. `RgLimitGate.check` is exactly that case and so uses
+ * `resolveLimitCurrencyInTx` on the caller's own `tx` instead.
  */
 export async function resolveLimitCurrency(
   drizzle: DrizzleService,

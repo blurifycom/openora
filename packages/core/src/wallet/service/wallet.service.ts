@@ -797,7 +797,11 @@ export class WalletService {
     if (!this.rgLimits) {
       return;
     }
-    const decision = await this.rgLimits.checkDeposit(userId, amount, currency);
+    // The pool, not a transaction: this check runs BEFORE the PSP round-trip, so there is
+    // no transaction open to join - holding one across a vendor call is exactly what the
+    // money standard forbids. The check-then-act window that leaves is the documented
+    // trade-off above, not an oversight.
+    const decision = await this.rgLimits.checkDeposit(this.drizzle.db, userId, amount, currency);
     if (!decision.allowed) {
       throw new RgLimitExceededError('deposit_limit_exceeded', decision);
     }

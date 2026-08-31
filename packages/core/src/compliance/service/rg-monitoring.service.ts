@@ -5,6 +5,8 @@ import {
   moneyAdd,
   moneyToNumber,
   mapConcurrent,
+  type DrizzleDb,
+  type DrizzleTx,
 } from '@openora/core/server';
 import { and, eq, or, gt, gte, lte, isNull, inArray, asc, desc, sql, type SQL } from 'drizzle-orm';
 import type {
@@ -120,7 +122,10 @@ export class RgMonitoringService {
         // A pre-existing row's null currency resolves (and persists) here on first
         // touch - see resolveLimitCurrency in rg.service.ts.
         const limitCurrency = (await resolveLimitCurrency(this.drizzle, limit)).currency;
+        // The sweep owns no transaction of its own - it only reads, and nothing here has
+        // to be atomic with a money move - so it passes the pool directly.
         actualAmount = await this.spendFor(
+          this.drizzle.db,
           userId,
           limit.type as LimitType,
           limit.period as LimitPeriod,
@@ -293,6 +298,7 @@ export class RgMonitoringService {
    * zero or as already being in the limit's currency.
    */
   async spendFor(
+    db: DrizzleDb | DrizzleTx,
     userId: User['id'],
     type: LimitType,
     period: LimitPeriod,
@@ -301,7 +307,7 @@ export class RgMonitoringService {
   ) {
     if (type === 'deposit') {
       return this.convertedTotal(
-        await this.depositsByCurrency(userId, from),
+        await this.depositsByCurrency(db, userId, from),
         type,
         period,
         limitCurrency,
@@ -309,14 +315,14 @@ export class RgMonitoringService {
     }
     if (type === 'loss') {
       return this.convertedTotal(
-        await this.netLossByCurrency(userId, from),
+        await this.netLossByCurrency(db, userId, from),
         type,
         period,
         limitCurrency,
       );
     }
     return this.convertedTotal(
-      await this.betsByCurrency(userId, from),
+      await this.betsByCurrency(db, userId, from),
       type,
       period,
       limitCurrency,
@@ -350,8 +356,8 @@ export class RgMonitoringService {
   // walletTransaction.amount). Open-ended at the top: the window's `to` is a JS clock
   // reading, so a row the database stamped microseconds ahead of it would drop out of
   // the very evaluation that row triggered.
-  private async depositsByCurrency(userId: User['id'], from: Date) {
-    return this.drizzle.db
+  private async depositsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    return db
       .select({
         currency: walletTransaction.currency,
         total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
@@ -371,8 +377,8 @@ export class RgMonitoringService {
   }
 
   // Decimal string per currency, matching userLimit.amount (same unit as gameRound.betAmount).
-  private async betsByCurrency(userId: User['id'], from: Date) {
-    return this.drizzle.db
+  private async betsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    return db
       .select({
         currency: gameRound.currency,
         total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`,
@@ -386,8 +392,8 @@ export class RgMonitoringService {
   // and subtracted in Postgres numeric arithmetic, never in JS floats. An unfinished
   // round contributes its stake and a winAmount of 0 (the column's default), which is
   // the honest reading while the outcome is still unknown.
-  private async netLossByCurrency(userId: User['id'], from: Date) {
-    return this.drizzle.db
+  private async netLossByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    return db
       .select({
         currency: gameRound.currency,
         total: sql<string>`greatest(coalesce(sum(${gameRound.betAmount} - ${gameRound.winAmount}), 0), 0)`,

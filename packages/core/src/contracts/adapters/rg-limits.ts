@@ -76,14 +76,33 @@ export class RgLimitExceededError extends Error {
  * (the `wallet` row's `FOR UPDATE`); the deposit path cannot, because a PSP round-trip
  * sits between the check and the credit - see `assertWithinRgDepositLimit`.
  *
+ * **`tx` is the caller's transaction, and it is mandatory** - the same leading-`tx`
+ * convention as `WALLET_COMMANDS.debit`. Every read the gate makes runs on it. Without
+ * it the gate read on its own pooled connection while the caller held the wallet row
+ * locked, which was wrong twice over: the check could not see the caller's uncommitted
+ * state (so it was never really "inside the transaction"), and each in-flight move
+ * occupied two connections at once - enough concurrent debits to exhaust the pool left
+ * every one of them waiting for a connection that could only be freed by another. A
+ * caller with no transaction of its own (the PSP deposit path) passes `drizzle.db`.
+ *
  * Deliberately OPTIONAL for its consumers (`c.has(RG_LIMITS)`), not `requiresPorts`: an
  * install without the compliance module has no `user_limit` table and therefore nothing
  * to enforce. Where the port IS bound the gate is fail-closed - a throwing `check*`
  * refuses the move rather than letting it through.
  */
 export type RgLimitsPort = {
-  checkDeposit(userId: string, amount: string, currency: string): Promise<RgLimitDecision>;
-  checkWager(userId: string, amount: string, currency: string): Promise<RgLimitDecision>;
+  checkDeposit(
+    tx: unknown,
+    userId: string,
+    amount: string,
+    currency: string,
+  ): Promise<RgLimitDecision>;
+  checkWager(
+    tx: unknown,
+    userId: string,
+    amount: string,
+    currency: string,
+  ): Promise<RgLimitDecision>;
 };
 
 export const RG_LIMITS: Token<RgLimitsPort> = createToken<RgLimitsPort>('RG_LIMITS');

@@ -1,5 +1,5 @@
 import { eq, and, ne } from 'drizzle-orm';
-import { moneyAdd, moneyCompare, type DrizzleService } from '@openora/core/server';
+import { moneyAdd, moneyCompare, withAdvisoryXactLock, type DrizzleTx } from '@openora/core/server';
 import type {
   ExchangeRateReader,
   LimitPeriod,
@@ -9,7 +9,11 @@ import type {
 } from '@openora/core/contracts';
 import { userLimit } from '../schema/index.js';
 import { RgMonitoringService, RgRateUnavailableError } from '../service/rg-monitoring.service.js';
-import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from '../service/rg.service.js';
+import {
+  resolveLimitCurrencyInTx,
+  limitSlotKey,
+  RgLimitCurrencyUnresolvedError,
+} from '../service/rg.service.js';
 import { periodWindow } from '../service/rg-eval.js';
 
 /**
@@ -42,28 +46,46 @@ const TYPES_BY_MOVE = {
  * on the total, not a ceiling on what has already settled.
  */
 export class RgLimitGate implements RgLimitsPort {
+  // No DrizzleService: every read runs on the caller's `tx`, so this gate can never open
+  // a connection of its own while a caller holds one.
   constructor(
-    private readonly drizzle: DrizzleService,
     private readonly monitoring: RgMonitoringService,
     private readonly rates: ExchangeRateReader,
   ) {}
 
-  checkDeposit(userId: string, amount: string, currency: string): Promise<RgLimitDecision> {
-    return this.check(userId, TYPES_BY_MOVE.deposit, amount, currency);
+  checkDeposit(
+    tx: unknown,
+    userId: string,
+    amount: string,
+    currency: string,
+  ): Promise<RgLimitDecision> {
+    return this.check(tx, userId, TYPES_BY_MOVE.deposit, amount, currency);
   }
 
-  checkWager(userId: string, amount: string, currency: string): Promise<RgLimitDecision> {
-    return this.check(userId, TYPES_BY_MOVE.wager, amount, currency);
+  checkWager(
+    tx: unknown,
+    userId: string,
+    amount: string,
+    currency: string,
+  ): Promise<RgLimitDecision> {
+    return this.check(tx, userId, TYPES_BY_MOVE.wager, amount, currency);
   }
 
   private async check(
+    tx: unknown,
     userId: string,
     types: readonly LimitType[],
     amount: string,
     amountCurrency: string,
   ): Promise<RgLimitDecision> {
+    // Library boundary: the port types `tx` as `unknown` so a consumer never has to name
+    // a Drizzle type (same as WALLET_COMMANDS.debit). Every read below runs on the
+    // caller's transaction, so the gate sees the caller's own uncommitted state and
+    // occupies no second pooled connection while the caller holds its row locks.
+    const txn = tx as DrizzleTx;
+
     // Money limits only: the session-time limit is minutes, and the sweep owns it.
-    const rows = await this.drizzle.db
+    const rows = await txn
       .select()
       .from(userLimit)
       .where(and(eq(userLimit.userId, userId), ne(userLimit.period, 'session')));
@@ -94,12 +116,22 @@ export class RgLimitGate implements RgLimitsPort {
       });
 
       // A pre-existing row's null currency resolves (and persists) here on first touch -
-      // see resolveLimitCurrency in rg.service.ts. Fails the move closed the same way a
-      // missing exchange rate does: an unresolvable currency means this limit cannot be
+      // see resolveLimitCurrencyInTx in rg.service.ts. Fails the move closed the same way
+      // a missing exchange rate does: an unresolvable currency means this limit cannot be
       // safely evaluated at all.
+      //
+      // The lock is taken on the CALLER's transaction, never on a fresh one: an advisory
+      // lock acquired on a second connection while the caller's transaction is open would
+      // wait on a transaction that cannot commit until this call returns.
       let rowCurrency: string;
       try {
-        rowCurrency = (await resolveLimitCurrency(this.drizzle, row)).currency;
+        rowCurrency = (
+          await withAdvisoryXactLock(
+            txn,
+            limitSlotKey(row.userId, row.type as LimitType, period),
+            () => resolveLimitCurrencyInTx(txn, row),
+          )
+        ).currency;
       } catch (err) {
         if (!(err instanceof RgLimitCurrencyUnresolvedError)) {
           throw err;
@@ -112,6 +144,7 @@ export class RgLimitGate implements RgLimitsPort {
       let used: string;
       try {
         used = await this.monitoring.spendFor(
+          txn,
           userId,
           row.type as LimitType,
           period,
