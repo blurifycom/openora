@@ -1,1 +1,0 @@
-ALTER TABLE "chat_room_member" ADD COLUMN "role_assigned_at" timestamp with time zone;

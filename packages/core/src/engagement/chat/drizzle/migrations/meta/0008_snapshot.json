@@ -1,5 +1,5 @@
 {
-  "id": "72963708-9d40-43cd-99ba-190bbb07ba42",
+  "id": "e350a845-95e3-410e-b415-f232b320780a",
   "prevId": "6af09461-5ea9-4381-b5d9-a4e6caf872f5",
   "version": "7",
   "dialect": "postgresql",
@@ -49,6 +49,12 @@
         },
         "metadata": {
           "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attachment": {
+          "name": "attachment",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -834,12 +840,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'member'"
-        },
-        "role_assigned_at": {
-          "name": "role_assigned_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         },
         "joined_at": {
           "name": "joined_at",

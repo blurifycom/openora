@@ -37,15 +37,16 @@ function makeService() {
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
   const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
-  return new ChatService(
-    db.drizzle,
+  return new ChatService({
+    drizzle: db.drizzle,
     events,
     transport,
     directory,
     audit,
     moderation,
-    makeIdentityReader(),
-  );
+    identityReader: makeIdentityReader(),
+    allowedAttachmentHosts: [],
+  });
 }
 
 describe('global chat room invariant', () => {

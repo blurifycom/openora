@@ -38,6 +38,7 @@ import { chatChannel } from '@openora/core/contracts';
 import {
   ChatService,
   ChatMessageBlockedError,
+  ChatAttachmentRejectedError,
   ChatSelfBlockError,
   ChatSelfIgnoreError,
   ChatRoomSlugConflictError,
@@ -91,6 +92,7 @@ function makeService(
       })),
   }),
   socialCommands?: SocialCommands,
+  allowedAttachmentHosts: readonly string[] = [],
   transport: RealtimeTransport = new InProcessRealtimeTransport(),
 ) {
   const events = makeEventBus();
@@ -100,16 +102,17 @@ function makeService(
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
   const identityReader = makeIdentityReader();
-  const chatService = new ChatService(
-    db.drizzle,
+  const chatService = new ChatService({
+    drizzle: db.drizzle,
     events,
     transport,
     directory,
     audit,
     moderation,
     identityReader,
+    allowedAttachmentHosts,
     socialCommands,
-  );
+  });
   const membership = new ChatRoomMembershipService(
     db.drizzle,
     events,
@@ -210,6 +213,7 @@ describe('ChatService realtime wiring', () => {
     content: 'hi',
     type: 'user',
     metadata: null,
+    attachment: null,
     isDeleted: false,
     createdAt: '2026-05-29T00:00:00.000Z',
   };
@@ -282,6 +286,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     content: 'hi',
     type: 'user',
     metadata: null,
+    attachment: null,
     isDeleted: false,
     createdAt: '2026-05-29T00:00:00.000Z',
   };
@@ -351,7 +356,11 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const { svc, events } = makeService();
     const account = await seedUser(db, { name: 'Platform Admin', username: 'platform_admin' });
 
-    const msg = await svc.sendGlobalMessage(account.id, 'spoofed-header-name', 'hi');
+    const msg = await svc.sendGlobalMessage({
+      userId: account.id,
+      username: 'spoofed-header-name',
+      content: 'hi',
+    });
 
     expect(msg.username).toBe('platform_admin');
     const [stored] = await db.drizzle.db.select().from(chatMessage);
@@ -367,8 +376,12 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const { svc } = makeService();
     const userId = randomUUID();
 
-    expect((await svc.sendGlobalMessage(userId, 'fallback', 'hi')).username).toBe('fallback');
-    expect((await svc.sendGlobalMessage(userId, '', 'hi')).username).toBe('anonymous');
+    expect(
+      (await svc.sendGlobalMessage({ userId, username: 'fallback', content: 'hi' })).username,
+    ).toBe('fallback');
+    expect((await svc.sendGlobalMessage({ userId, username: '', content: 'hi' })).username).toBe(
+      'anonymous',
+    );
   });
 
   it('blocks profane messages before they are stored or published', async () => {
@@ -376,9 +389,9 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
 
-    await expect(svc.sendGlobalMessage(randomUUID(), 'Alice', 'this is shit')).rejects.toThrow(
-      ChatMessageBlockedError,
-    );
+    await expect(
+      svc.sendGlobalMessage({ userId: randomUUID(), username: 'Alice', content: 'this is shit' }),
+    ).rejects.toThrow(ChatMessageBlockedError);
 
     expect(delivered).toHaveLength(0);
     expect(await db.drizzle.db.select().from(chatMessage)).toHaveLength(0);
@@ -387,7 +400,11 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
   it('persists URL-sanitized content', async () => {
     const { svc } = makeService();
 
-    const msg = await svc.sendGlobalMessage(randomUUID(), 'Alice', 'click javascript:alert(1)');
+    const msg = await svc.sendGlobalMessage({
+      userId: randomUUID(),
+      username: 'Alice',
+      content: 'click javascript:alert(1)',
+    });
 
     expect(msg.content).toBe('click javascript alert(1)');
     const [stored] = await db.drizzle.db.select().from(chatMessage);
@@ -399,9 +416,68 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
 
-    const msg = await svc.sendGlobalMessage(randomUUID(), 'Alice', 'hello');
+    const msg = await svc.sendGlobalMessage({
+      userId: randomUUID(),
+      username: 'Alice',
+      content: 'hello',
+    });
 
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
+  });
+
+  it('persists an attachment whose host is on the allow-list and publishes it', async () => {
+    const { svc, transport } = makeService(undefined, undefined, ['media.example.com']);
+    const delivered: ChatMessage[] = [];
+    transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
+    const attachment = {
+      kind: 'gif' as const,
+      provider: 'example',
+      externalId: 'abc123',
+      url: 'https://media.example.com/abc123.gif',
+      previewUrl: 'https://media.example.com/abc123-preview.gif',
+      width: 320,
+      height: 240,
+      title: 'a gif',
+    };
+
+    const msg = await svc.sendGlobalMessage({
+      userId: randomUUID(),
+      username: 'Alice',
+      content: '',
+      attachment,
+    });
+
+    expect(msg.type).toBe('user');
+    if (msg.type === 'user') {
+      expect(msg.attachment).toEqual(attachment);
+    }
+    const [stored] = await db.drizzle.db.select().from(chatMessage);
+    expect(stored?.attachment).toEqual(attachment);
+    expect(delivered.map((m) => m.id)).toEqual([msg.id]);
+  });
+
+  it('rejects an attachment whose host is not on the allow-list', async () => {
+    const { svc } = makeService(undefined, undefined, ['media.example.com']);
+
+    await expect(
+      svc.sendGlobalMessage({
+        userId: randomUUID(),
+        username: 'Alice',
+        content: '',
+        attachment: {
+          kind: 'gif' as const,
+          provider: 'example',
+          externalId: 'abc123',
+          url: 'https://evil.example.net/abc123.gif',
+          previewUrl: 'https://evil.example.net/abc123-preview.gif',
+          width: 320,
+          height: 240,
+          title: 'a gif',
+        },
+      }),
+    ).rejects.toThrow(ChatAttachmentRejectedError);
+
+    expect(await db.drizzle.db.select().from(chatMessage)).toHaveLength(0);
   });
 });
 
@@ -507,6 +583,67 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
         content: 'hi',
       }),
     ).rejects.toBeInstanceOf(ChatRoomNotMemberError);
+    expect(await db.drizzle.db.select().from(chatMessage)).toHaveLength(0);
+  });
+
+  it('persists an attachment whose host is on the allow-list and publishes it', async () => {
+    const { svc, transport } = makeService(undefined, undefined, ['media.example.com']);
+    const room = await seedRoom();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const delivered: ChatMessage[] = [];
+    transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
+    const attachment = {
+      kind: 'gif' as const,
+      provider: 'example',
+      externalId: 'abc123',
+      url: 'https://media.example.com/abc123.gif',
+      previewUrl: 'https://media.example.com/abc123-preview.gif',
+      width: 320,
+      height: 240,
+      title: 'a gif',
+    };
+
+    const msg = await svc.sendRoomMessage({
+      userId: account.id,
+      username: 'ignored',
+      roomId: room.id,
+      content: '',
+      attachment,
+    });
+
+    expect(msg.type).toBe('user');
+    if (msg.type === 'user') {
+      expect(msg.attachment).toEqual(attachment);
+    }
+    const [stored] = await db.drizzle.db.select().from(chatMessage);
+    expect(stored?.attachment).toEqual(attachment);
+    expect(delivered.map((m) => m.id)).toEqual([msg.id]);
+  });
+
+  it('rejects an attachment whose host is not on the allow-list', async () => {
+    const { svc } = makeService(undefined, undefined, ['media.example.com']);
+    const room = await seedRoom();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+
+    await expect(
+      svc.sendRoomMessage({
+        userId: account.id,
+        username: 'ignored',
+        roomId: room.id,
+        content: '',
+        attachment: {
+          kind: 'gif' as const,
+          provider: 'example',
+          externalId: 'abc123',
+          url: 'https://evil.example.net/abc123.gif',
+          previewUrl: 'https://evil.example.net/abc123-preview.gif',
+          width: 320,
+          height: 240,
+          title: 'a gif',
+        },
+      }),
+    ).rejects.toThrow(ChatAttachmentRejectedError);
+
     expect(await db.drizzle.db.select().from(chatMessage)).toHaveLength(0);
   });
 });
@@ -1283,7 +1420,7 @@ describe('ChatService admin rooms (real PG)', () => {
     const transport: RealtimeTransport = Object.assign(new InProcessRealtimeTransport(), {
       revokeUserFromChannel: vi.fn().mockRejectedValue(new Error('transport down')),
     });
-    const { svc, events } = makeService(undefined, undefined, transport);
+    const { svc, events } = makeService(undefined, undefined, [], transport);
     const ownerId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: ownerId,
@@ -1546,7 +1683,12 @@ describe('ChatService.setMemberRole (real PG)', () => {
   }
 
   async function roomWithMember(transport?: RealtimeTransport) {
-    const { svc, events, audit, transport: bound } = makeService(undefined, undefined, transport);
+    const {
+      svc,
+      events,
+      audit,
+      transport: bound,
+    } = makeService(undefined, undefined, [], transport);
     const ownerId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: ownerId,
@@ -2195,9 +2337,9 @@ describe('ChatService moderation (real PG)', () => {
       readOnlyMode: true,
     });
 
-    await expect(svc.sendGlobalMessage(randomUUID(), 'ReadOnly', 'hello')).rejects.toBeInstanceOf(
-      ChatPlayerMutedError,
-    );
+    await expect(
+      svc.sendGlobalMessage({ userId: randomUUID(), username: 'ReadOnly', content: 'hello' }),
+    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
   });
 
   it.each(['__all_public', '__all'] as const)(
@@ -2214,9 +2356,9 @@ describe('ChatService moderation (real PG)', () => {
       });
       const [mute] = await db.drizzle.db.select().from(chatMute).limit(1);
 
-      await expect(svc.sendGlobalMessage(mute.userId, 'Muted', 'hello')).rejects.toBeInstanceOf(
-        ChatPlayerMutedError,
-      );
+      await expect(
+        svc.sendGlobalMessage({ userId: mute.userId, username: 'Muted', content: 'hello' }),
+      ).rejects.toBeInstanceOf(ChatPlayerMutedError);
     },
   );
 
@@ -2235,9 +2377,9 @@ describe('ChatService moderation (real PG)', () => {
       }),
     ).resolves.toEqual({ success: true });
 
-    await expect(svc.sendGlobalMessage(userId, 'Muted', 'hello')).rejects.toBeInstanceOf(
-      ChatPlayerMutedError,
-    );
+    await expect(
+      svc.sendGlobalMessage({ userId, username: 'Muted', content: 'hello' }),
+    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
   });
 
   it('enforces an all-chat mute in private rooms', async () => {
@@ -2298,9 +2440,9 @@ describe('ChatService moderation (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    await expect(svc.sendGlobalMessage(userId, 'Banned', 'hello')).rejects.toBeInstanceOf(
-      ChatPlayerBannedError,
-    );
+    await expect(
+      svc.sendGlobalMessage({ userId, username: 'Banned', content: 'hello' }),
+    ).rejects.toBeInstanceOf(ChatPlayerBannedError);
     await expect(
       svc.sendRoomMessage({ userId, username: 'Banned', roomId: room.id, content: 'hello' }),
     ).resolves.toMatchObject({ userId });
@@ -2311,7 +2453,9 @@ describe('ChatService moderation (real PG)', () => {
       actorId: randomUUID(),
       ...NO_CLIENT_META,
     });
-    await expect(svc.sendGlobalMessage(userId, 'Banned', 'hello')).resolves.toMatchObject({
+    await expect(
+      svc.sendGlobalMessage({ userId, username: 'Banned', content: 'hello' }),
+    ).resolves.toMatchObject({
       userId,
     });
   });

@@ -1,4 +1,4 @@
--- 0008 added role_assigned_at nullable, so every row that already carried an elevated role
+-- 0009 added role_assigned_at nullable, so every row that already carried an elevated role
 -- kept NULL - the value the column otherwise reserves for a plain member. Ownership transfer
 -- picks the successor by the earliest assignment, so an upgraded database would order its
 -- moderators differently from a fresh one. joined_at is the only assignment time those rows

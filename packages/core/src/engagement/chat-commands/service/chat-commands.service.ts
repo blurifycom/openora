@@ -1,19 +1,14 @@
 import { eq, asc, desc, count } from 'drizzle-orm';
 import {
   DrizzleService,
-  makeNotFoundError,
-  makeConflictError,
-  createDomainError,
   findOneOrThrow,
   pageToOffset,
+  makeNotFoundError,
 } from '@openora/core/server';
 import type {
   Uuid,
-  CommandChatMessage,
   ChatBlockWriter,
   AdminUserDirectory,
-  GiftCommands,
-  RainCommands,
   RealtimeTransport,
   AuditWritePort,
 } from '@openora/core/contracts';
@@ -23,71 +18,11 @@ import type {
   ChatCommandDescriptor,
   ChatCommandType,
   CommandConfig,
-  PostGiftInput,
-  PostRainInput,
-  ClaimGiftOutput,
-  GiftState,
   AdminCommandSortBy,
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
-
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
-export const ChatPlayerNotFoundError = makeNotFoundError('ChatPlayer');
-export const InsufficientBalanceError = makeConflictError(
-  'InsufficientBalance',
-  'Not enough balance',
-);
-export const ExceedsLimitError = makeConflictError(
-  'ExceedsLimit',
-  'Amount exceeds the command limit',
-);
-export const BelowMinimumError = makeConflictError(
-  'BelowMinimum',
-  'Amount is below the minimum for this command',
-);
-export const NoOnlineUsersError = makeConflictError(
-  'NoOnlineUsers',
-  'No other users are online in this room',
-);
-export const TooManyRecipientsError = makeConflictError(
-  'TooManyRecipients',
-  'Amount too small: you need at least $1 per recipient',
-);
-export const RainCreditError = makeConflictError(
-  'RainCreditError',
-  'A recipient wallet is unavailable; rain aborted',
-);
-export const GiftNotFoundError = makeNotFoundError('ChatGift');
-export const GiftAlreadyClaimedError = makeConflictError(
-  'GiftAlreadyClaimed',
-  'This gift has already been claimed',
-);
-export const GiftSelfClaimError = makeConflictError(
-  'GiftSelfClaim',
-  'You cannot claim your own gift',
-);
-export const BlockedRecipientError = makeConflictError(
-  'BlockedRecipient',
-  'You cannot receive money from a user you blocked',
-);
-export const GiftCreditError = makeConflictError(
-  'GiftCreditError',
-  'Recipient wallet is unavailable; gift claim aborted',
-);
-export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
-  'ChatCommandIdempotencyKeyReuse',
-  'This idempotency key was already used with different request parameters',
-);
-export const ConcurrentCommandReplayError = makeConflictError(
-  'ConcurrentCommandReplay',
-  'This request is already being processed - please retry',
-);
-export const ChatRoomNotMemberError = createDomainError(
-  'ChatRoomNotMemberError',
-  (roomId: Uuid | null) =>
-    roomId ? `You are not a member of room: ${roomId}` : 'You are not a member of global chat',
-);
 
 function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {
   return {
@@ -110,8 +45,6 @@ export class ChatCommandsService {
     private readonly drizzle: DrizzleService,
     private readonly directory: AdminUserDirectory,
     private readonly blockWriter: ChatBlockWriter,
-    private readonly giftCommands: GiftCommands,
-    private readonly rainCommands: RainCommands,
     private readonly transport: RealtimeTransport,
     private readonly audit: AuditWritePort,
   ) {}
@@ -256,110 +189,5 @@ export class ChatCommandsService {
     }
     const viewer = await this.directory.get(viewerId);
     return viewer?.role === 'admin' || viewer?.role === 'super-admin';
-  }
-
-  async postGift(input: PostGiftInput, actorId: Uuid): Promise<CommandChatMessage> {
-    const result = await this.giftCommands.sendGift(input, actorId);
-    if (result.ok) {
-      return result.message;
-    }
-    switch (result.reason) {
-      case 'disabled':
-        throw new CommandDisabledError('gift');
-      case 'player_not_found':
-        throw new ChatPlayerNotFoundError(result.playerId);
-      case 'insufficient_balance':
-        throw new InsufficientBalanceError();
-      case 'exceeds_limit':
-        throw new ExceedsLimitError();
-      case 'below_minimum':
-        throw new BelowMinimumError();
-      case 'idempotency_key_reuse':
-        throw new ChatCommandIdempotencyKeyReuseError();
-      case 'concurrent_replay':
-        throw new ConcurrentCommandReplayError();
-      case 'room_not_member':
-        throw new ChatRoomNotMemberError(input.roomId);
-    }
-  }
-
-  async claimGift(giftId: Uuid, claimerId: Uuid): Promise<ClaimGiftOutput> {
-    const result = await this.giftCommands.claimGift(giftId, claimerId);
-    if (result.ok) {
-      return {
-        claimedBy: result.claimedBy,
-        claimedByUsername: result.claimedByUsername,
-        claimedAt: result.claimedAt,
-      };
-    }
-    switch (result.reason) {
-      case 'gift_not_found':
-        throw new GiftNotFoundError(giftId);
-      case 'already_claimed':
-        throw new GiftAlreadyClaimedError();
-      case 'self_claim':
-        throw new GiftSelfClaimError();
-      case 'blocked_recipient':
-        throw new BlockedRecipientError();
-      case 'room_not_member':
-        throw new ChatRoomNotMemberError(result.roomId ?? null);
-      case 'gift_credit_failed':
-        throw new GiftCreditError();
-    }
-  }
-
-  async getGift(giftId: Uuid, viewerId: Uuid): Promise<GiftState> {
-    const result = await this.giftCommands.getGift(giftId, viewerId);
-    if (result.ok) {
-      return result.gift;
-    }
-    switch (result.reason) {
-      case 'gift_not_found':
-        throw new GiftNotFoundError(giftId);
-      case 'room_not_member':
-        throw new ChatRoomNotMemberError(result.roomId ?? null);
-    }
-  }
-
-  // Zero rain business logic here - the RAIN_COMMANDS port (bound by
-  // social-transfers) owns money movement, limit checks, idempotency, and
-  // posting/publishing the resulting chat message. This module only resolves
-  // who is online (it owns presence for the whole chat-command surface via
-  // its own dependency on `chat`) and translates the port's discriminated
-  // result into the typed errors this module's router maps to transport codes.
-  async postRain(input: PostRainInput, actorId: Uuid): Promise<CommandChatMessage> {
-    const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(input.roomId));
-    const visiblePlayers = await this.directory.lookupPlayers(onlineUserIds);
-    const result = await this.rainCommands.sendRain(
-      { ...input, onlineUserIds: visiblePlayers.map((player) => player.userId) },
-      actorId,
-    );
-    if (result.ok) {
-      return result.message;
-    }
-    switch (result.reason) {
-      case 'disabled':
-        throw new CommandDisabledError('rain');
-      case 'player_not_found':
-        throw new ChatPlayerNotFoundError(result.playerId);
-      case 'insufficient_balance':
-        throw new InsufficientBalanceError();
-      case 'exceeds_limit':
-        throw new ExceedsLimitError();
-      case 'below_minimum':
-        throw new BelowMinimumError();
-      case 'no_online_users':
-        throw new NoOnlineUsersError();
-      case 'too_many_recipients':
-        throw new TooManyRecipientsError();
-      case 'rain_credit_failed':
-        throw new RainCreditError();
-      case 'idempotency_key_reuse':
-        throw new ChatCommandIdempotencyKeyReuseError();
-      case 'concurrent_replay':
-        throw new ConcurrentCommandReplayError();
-      case 'room_not_member':
-        throw new ChatRoomNotMemberError(input.roomId);
-    }
   }
 }

@@ -711,8 +711,6 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.kicked',
   'chat.room.member.banned',
   'chat.room.member.role-changed',
-  // chat.gift.sent
-  // chat.rain.distributed
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',

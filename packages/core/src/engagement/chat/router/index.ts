@@ -27,6 +27,7 @@ import {
   ChatRoomLimitReachedError,
   ChatRoomProtectedError,
   ChatMessageBlockedError,
+  ChatAttachmentRejectedError,
   ChatSelfBlockError,
   ChatSelfIgnoreError,
   ChatRoomSlugConflictError,
@@ -131,7 +132,7 @@ export function createChatRouter({
         {
           NOT_FOUND: ChatRoomNotFoundError,
           FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerMutedError, ChatPlayerBannedError],
-          BAD_REQUEST: ChatMessageBlockedError,
+          BAD_REQUEST: [ChatMessageBlockedError, ChatAttachmentRejectedError],
         },
         () =>
           chatService.sendRoomMessage({
@@ -139,6 +140,7 @@ export function createChatRouter({
             username,
             roomId: input.roomId,
             content: input.content,
+            attachment: input.attachment ?? null,
           }),
       );
     }),
@@ -193,10 +195,16 @@ export function createChatRouter({
       );
       return mapErrors(
         {
-          BAD_REQUEST: ChatMessageBlockedError,
+          BAD_REQUEST: [ChatMessageBlockedError, ChatAttachmentRejectedError],
           FORBIDDEN: [ChatPlayerMutedError, ChatPlayerBannedError],
         },
-        () => chatService.sendGlobalMessage(userId, username, input.content),
+        () =>
+          chatService.sendGlobalMessage({
+            userId,
+            username,
+            content: input.content,
+            attachment: input.attachment ?? null,
+          }),
       );
     }),
 
