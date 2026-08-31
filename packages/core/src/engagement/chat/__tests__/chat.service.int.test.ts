@@ -482,6 +482,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     }
     const [stored] = await db.drizzle.db.select().from(chatMessage);
     expect(stored?.attachment).toEqual(attachment);
+    await waitFor(() => delivered.length === 1);
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 
@@ -647,6 +648,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     }
     const [stored] = await db.drizzle.db.select().from(chatMessage);
     expect(stored?.attachment).toEqual(attachment);
+    await waitFor(() => delivered.length === 1);
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 
