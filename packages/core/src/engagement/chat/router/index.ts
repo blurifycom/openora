@@ -24,6 +24,7 @@ import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
+  ChatRoomOwnerCannotLeaveError,
   ChatRoomLimitReachedError,
   ChatRoomProtectedError,
   ChatMessageBlockedError,
@@ -384,7 +385,7 @@ export function createChatRouter({
       const userId = getUserId(context);
       return mapErrors(
         {
-          BAD_REQUEST: ChatRoomLastModeratorError,
+          BAD_REQUEST: [ChatRoomLastModeratorError, ChatRoomOwnerCannotLeaveError],
           NOT_FOUND: ChatRoomNotFoundError,
           FORBIDDEN: ChatRoomNotMemberError,
         },

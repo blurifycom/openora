@@ -4,6 +4,26 @@ type Handler = (event: unknown) => void;
 type Subscription = { handler: Handler; userId?: string };
 type SignalSubscription = { handler: (signal: RealtimeSignal) => void; userId?: string };
 
+/** Drops one user's subscriptions from a single lane, forgetting the channel once empty. */
+function pruneUser<T extends { userId?: string }>(
+  lanes: Map<string, Set<T>>,
+  channel: string,
+  userId: string,
+): void {
+  const subscribers = lanes.get(channel);
+  if (!subscribers) {
+    return;
+  }
+  for (const subscription of Array.from(subscribers)) {
+    if (subscription.userId === userId) {
+      subscribers.delete(subscription);
+    }
+  }
+  if (subscribers.size === 0) {
+    lanes.delete(channel);
+  }
+}
+
 class InProcessPresence implements RealtimePresence {
   private readonly members = new Map<string, Map<string, Set<string>>>();
 
@@ -124,29 +144,14 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     };
   }
 
-  /** Cuts every subscription this user holds on the channel, however many connections that is. */
+  /**
+   * Cuts every subscription this user holds on the channel. Both lanes are pruned
+   * independently: a client can hold a signal stream without a message stream, and revoked
+   * access has to end both.
+   */
   revokeUserFromChannel(userId: string, channel: string): void {
-    const subscribers = this.channels.get(channel);
-    if (!subscribers) {
-      return;
-    }
-    for (const subscription of Array.from(subscribers)) {
-      if (subscription.userId === userId) {
-        subscribers.delete(subscription);
-      }
-    }
-    if (subscribers.size === 0) {
-      this.channels.delete(channel);
-    }
-    const signalSubscribers = this.signalChannels.get(channel);
-    for (const subscription of Array.from(signalSubscribers ?? [])) {
-      if (subscription.userId === userId) {
-        signalSubscribers?.delete(subscription);
-      }
-    }
-    if (signalSubscribers && signalSubscribers.size === 0) {
-      this.signalChannels.delete(channel);
-    }
+    pruneUser(this.channels, channel, userId);
+    pruneUser(this.signalChannels, channel, userId);
   }
 
   getOnlineUserIds(channel: string): Promise<string[]> {

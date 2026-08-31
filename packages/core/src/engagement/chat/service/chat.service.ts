@@ -67,6 +67,7 @@ export {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
+  ChatRoomOwnerCannotLeaveError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
   ChatPlayerBannedError,

@@ -24,6 +24,7 @@ import {
   ChatRoomNotFoundError,
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
+  ChatRoomOwnerCannotLeaveError,
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
 
@@ -155,7 +156,16 @@ export class ChatRoomMembershipService {
         if (!room.isPublic && !member) {
           throw new ChatRoomNotMemberError(roomId);
         }
-        if (member && (member.role === 'moderator' || member.role === 'owner')) {
+        // The owner is the only member who can manage or delete the room, and `creatorId`
+        // keeps pointing at them once their membership row is gone - so letting them walk
+        // out strands the room with no one able to administer it. Promoting a moderator
+        // raises the count below past 1, which is exactly what used to make this reachable.
+        if (member?.role === 'owner') {
+          throw new ChatRoomOwnerCannotLeaveError();
+        }
+        // An owner can no longer be here, so this is the moderator case alone. The count
+        // still spans both roles: what must not drop to zero is anyone able to moderate.
+        if (member?.role === 'moderator') {
           const [{ modCount }] = await t
             .select({ modCount: count() })
             .from(chatRoomMember)

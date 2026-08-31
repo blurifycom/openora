@@ -46,6 +46,7 @@ import {
   ChatRoomBannedError,
   ChatRoomLimitReachedError,
   ChatRoomLastModeratorError,
+  ChatRoomOwnerCannotLeaveError,
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
@@ -1638,7 +1639,7 @@ describe('ChatService.joinRoom (real PG)', () => {
 });
 
 describe('ChatService.leaveRoom (real PG)', () => {
-  it('refuses to let the sole moderator leave', async () => {
+  it('refuses to let the owner leave', async () => {
     const { svc } = makeService();
     const creatorId = randomUUID();
     const room = await svc.createPrivateRoom({
@@ -1649,6 +1650,47 @@ describe('ChatService.leaveRoom (real PG)', () => {
 
     await expect(
       svc.leaveRoom({ userId: creatorId, roomId: room.id, ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(ChatRoomOwnerCannotLeaveError);
+  });
+
+  it('still refuses the owner once a moderator exists to cover the room', async () => {
+    const { svc } = makeService();
+    const ownerId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'Room',
+      ...NO_CLIENT_META,
+    });
+    const memberId = randomUUID();
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    await svc.setMemberRole({
+      actorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      role: 'moderator',
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.leaveRoom({ userId: ownerId, roomId: room.id, ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(ChatRoomOwnerCannotLeaveError);
+    const [owner] = await db.drizzle.db
+      .select({ userId: chatRoomMember.userId })
+      .from(chatRoomMember)
+      .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, ownerId)));
+    expect(owner).toBeDefined();
+  });
+
+  it('refuses to let the sole moderator of an ownerless room leave', async () => {
+    const { svc } = makeService();
+    const room = await seedRoom({ isPublic: false });
+    const moderatorId = randomUUID();
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: room.id, userId: moderatorId, role: 'moderator' });
+
+    await expect(
+      svc.leaveRoom({ userId: moderatorId, roomId: room.id, ...NO_CLIENT_META }),
     ).rejects.toBeInstanceOf(ChatRoomLastModeratorError);
   });
 
@@ -2128,6 +2170,26 @@ describe('ChatService.setMemberRole (real PG)', () => {
       }),
     ).rejects.toBeInstanceOf(ChatRoomNotFoundError);
     expect(await readMember(room.id, memberId)).toMatchObject({ role: 'member' });
+  });
+
+  it('cuts a signals-only subscriber when the member is removed', async () => {
+    const { svc, transport, room, ownerId, memberId } = await roomWithMember();
+    const signals: RealtimeSignal[] = [];
+    svc.subscribeSignals(room.id, (signal) => signals.push(signal), memberId);
+
+    await svc.removeMember({
+      moderatorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      ...NO_CLIENT_META,
+    });
+    transport.signal?.(chatChannel(room.id), CHAT_MEMBER_ROLE_CHANGED_SIGNAL, {
+      roomId: room.id,
+      userId: randomUUID(),
+      role: 'moderator',
+    });
+
+    expect(signals).toEqual([]);
   });
 
   it('delivers the signal over the default transport, on its own lane', async () => {
