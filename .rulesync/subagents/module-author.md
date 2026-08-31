@@ -54,7 +54,7 @@ Headless repo: build no UI. After filling in: `pnpm regen` (migration + catalog)
 
 - `pnpm verify` exits 0; migration generated into the module's own `drizzle/migrations/` (ADR-0027).
 - Registered in `extensions.config.ts`; core contract slice composed in `tools/build-contract.ts`.
-- At least one unit test in `__tests__/` (authz negatives for guarded routes).
+- One E2E per route in `packages/testing` (happy + one hostile path, authz negatives for guarded routes); unit tests only for pure logic. No in-process mock of the database or a service (`docs/standards/testing.md`).
 - Every state-changing action audited: domain event in `domainEventSchemas` + topic in `SUBSCRIBED_TOPICS` (`packages/core/src/audit/plugin.ts`), or `AUDIT_WRITER.record(...)`. No audit entry = not done.
 
 ## Rules

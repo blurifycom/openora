@@ -2,10 +2,28 @@
   "version": 1,
   "hooks": {
     "preToolUse": [
-      { "type": "command", "command": "node .rulesync/hooks/guard-core.mjs" },
-      { "type": "command", "command": "node .rulesync/hooks/guard-generated.mjs" },
-      { "type": "command", "matcher": "Task", "command": "node .rulesync/hooks/guard-subagent.mjs" }
+      {
+        "type": "command",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-core.mjs\""
+      },
+      {
+        "type": "command",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-generated.mjs\""
+      },
+      {
+        "type": "command",
+        "matcher": "Task|Agent",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-subagent.mjs\""
+      }
     ],
-    "postToolUse": [{ "type": "command", "command": "node .rulesync/hooks/post-edit.mjs" }]
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/post-edit.mjs\""
+      }
+    ]
   }
 }

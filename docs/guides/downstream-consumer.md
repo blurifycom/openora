@@ -213,6 +213,16 @@ pnpm -F @openora/core --parallel build --watch
 Paths in the consumer's `extensions.config.ts` resolve relative to that config file's own
 directory.
 
+## Keeping the agent files in sync
+
+The scaffold's `.rulesync/` (skills, subagents, commands, hooks, shared rules) and `docs/standards/` are rendered from `@openora/create`'s consumer template, and the scaffold keeps that link alive:
+
+- `tools/sync-agents.mjs` runs on `pnpm install` (via `prepare`) and renders every template-owned file at the pinned `@openora/create` version. It also rewrites a managed `synced-agents` block in `.gitignore` listing exactly what it wrote, so those files are generated artifacts: never committed, never in a diff, unable to drift.
+- `.rulesync/sync.json` holds the operator's variables (`name`, `scope`, tracker key, wiki space, team channel, git remote path) and a `consumerOwned` list - template files the operator keeps its own tracked version of (`overview`, `mcp.json`, `sync.json` by default).
+- The consumer tracks only what it owns: the rules and skills the template does not ship, plus those overrides. Operator-specific facts belong there or in `sync.json` vars, never in a generated file.
+- An improvement to a generated file is made upstream in `tools/templates/consumer/`, lands with the next canary, and reaches the consumer on its next `@openora/*` bump and install.
+- Under `pnpm link:oss` the script reads the checkout's `tools/templates/consumer` directly, so a template edit can be tried in the consumer before it is published.
+
 ## Tooling notes
 
 - Drizzle tables live in each module's `src/schema/index.ts`. `drizzle.config.ts` (in `@openora/core/server`)

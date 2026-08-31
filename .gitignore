@@ -39,3 +39,6 @@ CLAUDE.md
 !.github/actions/
 !.github/ISSUE_TEMPLATE/
 !.github/pull_request_template.md
+
+# Per-machine tracker overlays (private coordinates for downstream tickets). Never commit.
+docs/agents/*.local.md

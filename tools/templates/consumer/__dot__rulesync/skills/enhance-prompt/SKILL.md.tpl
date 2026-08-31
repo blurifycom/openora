@@ -3,14 +3,14 @@ name: enhance-prompt
 targets: ['*']
 description: >
   Normalize any raw request into a grounded, structured brief before acting. The auto pre-step
-  for orchestration skills and subagents: extract the real intent, gather scoped context (your
-  tracker + roadmap + team chat + local docs), surface only blocking ambiguities, and emit
+  for orchestration skills and subagents: extract the real intent, gather scoped context (Jira +
+  Confluence + Slack + roadmap + local docs), surface only blocking ambiguities, and emit
   objective / scope / constraints / deliverables / guardrails. Routes build-type asks into
   `enhance-intent`. Skips asks that are already precise. Use on any fuzzy, broad, or multi-part
   request, or at the start of a skill or agent that received a raw ask.
 ---
 
-# enhance-prompt
+# enhance-prompt ({{name}})
 
 Turn a raw, rambling ask into a brief a stranger could execute - before any file is touched. A one-line ask is a starting point, not a spec; a wrong reading executed confidently wastes far more than the enhancement costs.
 
@@ -27,7 +27,7 @@ Match effort to the ask: a small task gets a one-line restatement, not a full br
 
 1. **Restate the intent** in one line. If your restatement might be wrong, gather context or ask - don't guess.
 2. **Classify**: build (feature / adapter / page / route) · review or audit · debug · refactor · docs · research · ops. For a **build** ask, hand off to the `enhance-intent` MCP tool (server `oss`) - it adds the platform catalog, requirements checklist, and `pnpm gen` playbook - and stop here.
-3. **Gather scoped context** - targeted, never a data dump (token budget matters). Pull only what changes the plan: your issue tracker / roadmap, product specs and design decisions, recent team-chat decisions, local `docs/` + ADRs, past sessions. Scope first (which project, epic, timeframe), then fetch. Roadmap and known-issue threads are signal; general chatter is noise.
+3. **Gather scoped context** - targeted, never a data dump (token budget matters). Pull only what changes the plan: Jira + Confluence via `atlassian-read` per `docs/agents/issue-tracker.md` (roadmap + related tickets, specs / decisions - comments and images included), Slack (recent decisions, `slack-reader`), local `docs/` + ADRs, past sessions. Scope first (which project, epic, timeframe), then fetch. Roadmap and known-issue threads are signal; general chatter is noise.
 4. **Surface blocking ambiguities only** - the questions whose answers change what you build. Resolve the rest with stated defaults. Don't interrogate.
 5. **Emit the brief**, sized to the task.
 

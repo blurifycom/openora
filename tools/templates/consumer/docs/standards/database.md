@@ -67,7 +67,7 @@ await db.select().from(wallet).where(inArray(wallet.playerId, ids));
 ```ts
 await db.transaction(async (t) => {
   if (await ledgerExists(t, idempotencyKey)) return; // guard, not just a key
-  await insertLedger(t, { idempotencyKey, amountCents });
+  await insertLedger(t, { idempotencyKey, amount, currency });
 });
 ```
 

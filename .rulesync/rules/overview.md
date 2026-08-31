@@ -33,6 +33,7 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 ## Load the right owner
 
 - Universal engineering baseline and a topical routing table: `conventions`.
+- Ticket, spec, or design context: `docs/agents/issue-tracker.md` - read the whole ticket, comments and images included, before planning or reviewing against it.
 - Events, jobs, realtime, and outbox choices: `messaging-and-microservices`.
 - Module boundaries, DI, ports, and shared helpers: `docs/standards/module-structure.md`.
 - Money, compliance, and audit: read `docs/standards/{money,compliance,audit}.md` before changing those paths.

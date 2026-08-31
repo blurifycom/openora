@@ -39,6 +39,9 @@
   "simulateCommands": false,
   "simulateSubagents": false,
 
-  // Never bulk-delete output dirs (eg .github also holds workflows).
-  "delete": false,
+  // Remove a mirror whose source left .rulesync/ (a renamed or deleted skill or
+  // subagent). rulesync deletes only files it recognises as its own output;
+  // .github workflows and .claude/settings.json are never touched (verified with
+  // `rulesync generate --delete --dry-run`).
+  "delete": true,
 }
