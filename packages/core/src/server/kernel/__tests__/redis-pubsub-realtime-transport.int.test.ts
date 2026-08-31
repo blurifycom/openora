@@ -69,16 +69,21 @@ describe('RedisPubSubRealtimeTransport', () => {
     await vi.waitFor(() => expect(got).toEqual([7]));
   });
 
-  it('tracks presence counts per channel', () => {
+  it('tracks presence counts per channel', async () => {
     const transport = makeTransport();
-    transport.presence?.join('room', 'u1', 'tab-1');
-    transport.presence?.join('room', 'u2', 'tab-1');
-    transport.presence?.join('room', 'u2', 'tab-2');
-    expect(transport.presence?.count('room')).toBe(2);
-    transport.presence?.leave('room', 'u2', 'tab-1');
-    expect(transport.presence?.count('room')).toBe(2);
-    transport.presence?.leave('room', 'u1', 'tab-1');
-    expect(transport.presence?.count('room')).toBe(1);
+    const room = `room-${randomUUID()}`;
+    transport.presence?.join(room, 'u1', 'tab-1');
+    transport.presence?.join(room, 'u2', 'tab-1');
+    transport.presence?.join(room, 'u2', 'tab-2');
+    await vi.waitFor(async () => expect(await transport.presence?.count(room)).toBe(2));
+
+    transport.presence?.leave(room, 'u2', 'tab-1');
+    await settle();
+    // u2 still has tab-2 open - one tab closing must not drop the member.
+    expect(await transport.presence?.count(room)).toBe(2);
+
+    transport.presence?.leave(room, 'u1', 'tab-1');
+    await vi.waitFor(async () => expect(await transport.presence?.count(room)).toBe(1));
   });
 
   it('revokeClientFromChannel drops only that client’s subscription', async () => {
@@ -151,5 +156,125 @@ describe('RedisPubSubRealtimeTransport', () => {
     } finally {
       await Promise.allSettled([redisA.quit(), redisB.quit()]);
     }
+  });
+
+  // Definition-of-done proof for presence: two independently connected transports
+  // against the same logical Redis, same service name, standing in for two API
+  // processes. A member joining on instance A's connection must be visible to
+  // getOnlineUserIds on instance B - the exact case `LocalPresence` could never
+  // pass (a replica-local Map, invisible to any other process).
+  describe('cross-process presence', () => {
+    it('a member joining on instance A is visible to getOnlineUserIds on instance B', async () => {
+      const redisA = await createTestRedis();
+      const redisB = await createTestRedis();
+      try {
+        const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
+        const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'presence-svc');
+        try {
+          const channel = `room:${randomUUID()}`;
+          instanceA.presence?.join(channel, 'player-1', 'tab-1');
+
+          await vi.waitFor(
+            async () => expect(await instanceB.getOnlineUserIds(channel)).toEqual(['player-1']),
+            { timeout: 2000 },
+          );
+        } finally {
+          await Promise.allSettled([instanceA.close(), instanceB.close()]);
+        }
+      } finally {
+        await Promise.allSettled([redisA.quit(), redisB.quit()]);
+      }
+    });
+
+    it('two connections for one member count once, and closing one leaves them online', async () => {
+      const redisA = await createTestRedis();
+      try {
+        const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
+        try {
+          const channel = `room:${randomUUID()}`;
+          instanceA.presence?.join(channel, 'player-1', 'tab-1');
+          instanceA.presence?.join(channel, 'player-1', 'tab-2');
+          await vi.waitFor(async () =>
+            expect(await instanceA.getOnlineUserIds(channel)).toEqual(['player-1']),
+          );
+
+          instanceA.presence?.leave(channel, 'player-1', 'tab-1');
+          await settle();
+          expect(await instanceA.getOnlineUserIds(channel)).toEqual(['player-1']);
+
+          instanceA.presence?.leave(channel, 'player-1', 'tab-2');
+          await vi.waitFor(async () =>
+            expect(await instanceA.getOnlineUserIds(channel)).toEqual([]),
+          );
+        } finally {
+          await instanceA.close();
+        }
+      } finally {
+        await redisA.quit();
+      }
+    });
+
+    it('excludes anonymous members across instances', async () => {
+      const redisA = await createTestRedis();
+      const redisB = await createTestRedis();
+      try {
+        const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
+        const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'presence-svc');
+        try {
+          const channel = `room:${randomUUID()}`;
+          instanceA.presence?.join(channel, 'player-1', 'tab-1');
+          instanceA.presence?.join(channel, `anonymous:${randomUUID()}`, 'tab-2');
+
+          await vi.waitFor(
+            async () => expect(await instanceB.getOnlineUserIds(channel)).toEqual(['player-1']),
+            { timeout: 2000 },
+          );
+        } finally {
+          await Promise.allSettled([instanceA.close(), instanceB.close()]);
+        }
+      } finally {
+        await Promise.allSettled([redisA.quit(), redisB.quit()]);
+      }
+    });
+
+    // The failure a naive Redis SET + explicit add/remove would fail: a replica
+    // that dies mid-connection (SIGKILL, OOM) never calls leave() and never runs
+    // again to clean up after itself. Simulated here by joining, then directly
+    // rewriting the zset score to look like the last heartbeat was one full TTL
+    // window ago - exactly the state a dead replica's entry reaches on its own,
+    // without waiting PRESENCE_TTL_MS of real time for it to happen. No `leave()`
+    // call and no cleanup process runs; the read-side cutoff alone must exclude it.
+    it('a crashed instance stops contributing members once its entries expire, with no cleanup call', async () => {
+      const redisA = await createTestRedis();
+      const redisB = await createTestRedis();
+      try {
+        const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
+        const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'presence-svc');
+        try {
+          const channel = `room:${randomUUID()}`;
+          instanceA.presence?.join(channel, 'player-1', 'tab-1');
+          await vi.waitFor(
+            async () => expect(await instanceB.getOnlineUserIds(channel)).toEqual(['player-1']),
+            { timeout: 2000 },
+          );
+
+          // instanceA "dies": no more heartbeats will ever fire for it. Emulate
+          // the passage of one full TTL window with no renewal by rewriting the
+          // member's score directly, rather than waiting the real 45s out.
+          const PRESENCE_TTL_MS = 45_000;
+          const staleScore = Date.now() - PRESENCE_TTL_MS - 1000;
+          await redisA.client.zAdd(`oss:rt:presence:presence-svc:${channel}`, {
+            score: staleScore,
+            value: 'player-1',
+          });
+
+          expect(await instanceB.getOnlineUserIds(channel)).toEqual([]);
+        } finally {
+          await Promise.allSettled([instanceA.close(), instanceB.close()]);
+        }
+      } finally {
+        await Promise.allSettled([redisA.quit(), redisB.quit()]);
+      }
+    });
   });
 });
