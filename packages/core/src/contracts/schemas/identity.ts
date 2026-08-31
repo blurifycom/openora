@@ -142,22 +142,30 @@ export const Enable2faResultSchema = z.object({
 // spends itself, which is what makes it the recovery path off a lost authenticator.
 export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code']);
 
+// A live authenticator code, six digits. Used as the fresh second factor a step-up
+// action (disable 2FA, regenerate backup codes, trust this device) has to clear on
+// top of the account password - a backup code is deliberately not accepted here.
+export const TotpStepUpCodeSchema = z.string().length(6);
+
 export const Verify2faInputSchema = z.object({
   // A TOTP code is six digits; a backup code is ten characters split by a hyphen.
   code: z.string().min(6).max(11),
   method: TwoFactorChallengeMethodSchema.default('totp'),
   // Suppresses the second factor on this browser until the trust window lapses.
-  // Honoured only while the operator allows a non-zero trusted-device window.
+  // Honoured only for `method: 'totp'` - a spent recovery code buys a session, not
+  // a 30-day bypass - and only while the operator allows a non-zero window.
   trustDevice: z.boolean().default(false),
 });
 
 export const RegenerateBackupCodesInputSchema = z.object({
   password: z.string().min(8),
+  // A fresh authenticator code: rotating the standing recovery credentials is a
+  // step-up action, not something a stolen session plus a reused password can do.
+  code: TotpStepUpCodeSchema,
 });
 
-export const TrustCurrentDeviceInputSchema = Verify2faInputSchema.omit({
-  trustDevice: true,
-}).extend({
+export const TrustCurrentDeviceInputSchema = z.object({
+  code: TotpStepUpCodeSchema,
   password: z.string().min(8),
 });
 
@@ -167,6 +175,10 @@ export const BackupCodesResultSchema = z.object({
 
 export const Disable2faInputSchema = z.object({
   password: z.string().min(8),
+  // Disabling the second factor tears down every standing bypass with it, so it
+  // takes a fresh authenticator code on top of the password - the same bar as a
+  // Super Admin reset, just self-served.
+  code: TotpStepUpCodeSchema,
 });
 
 export const RequestPasswordResetInputSchema = z.object({

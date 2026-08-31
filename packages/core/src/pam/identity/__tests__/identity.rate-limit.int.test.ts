@@ -213,7 +213,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
-      svc.disableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
+      svc.disableTwoFactor({ password: 'currentpw1', code: '123456' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });

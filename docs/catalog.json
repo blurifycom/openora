@@ -2136,6 +2136,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "TotpStepUpCodeSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TransactionFilterSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },

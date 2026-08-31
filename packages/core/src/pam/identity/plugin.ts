@@ -136,8 +136,13 @@ export default {
         revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
       };
     });
-    ctx.routers.add('identity', (c) =>
-      createIdentityRouter(
+    ctx.routers.add('identity', (c) => {
+      const sessions = new SessionService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        identityReader: c.get(IDENTITY_READER),
+      });
+      return createIdentityRouter(
         new IdentityService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
@@ -152,12 +157,9 @@ export default {
           cache: c.get(CACHE),
           trustedDevices: makeTrustedDevices(c),
           twoFactorLockout: makeTwoFactorLockout(c),
+          sessions,
         }),
-        new SessionService({
-          drizzle: c.get(DRIZZLE),
-          events: c.get(EVENT_BUS),
-          identityReader: c.get(IDENTITY_READER),
-        }),
+        sessions,
         new PhoneLoginService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
@@ -170,7 +172,7 @@ export default {
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
         resolveAdminSecurity(c),
-      ),
-    );
+      );
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

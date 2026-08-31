@@ -16,6 +16,7 @@ import { parseCookies } from 'better-auth/cookies';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
 import type {
@@ -344,6 +345,9 @@ export type IdentityServiceDeps = {
   cache?: CacheAdapter;
   trustedDevices?: TrustedDeviceService;
   twoFactorLockout?: TwoFactorLockoutService;
+  // Used by the step-up self-service routes (disable 2FA, regenerate backup codes) to
+  // tear down live sessions once the account's standing credentials have changed.
+  sessions?: SessionService;
 };
 
 /**
@@ -376,6 +380,7 @@ export class IdentityService {
   private readonly existingAccountSignUps = new Set<string>();
   private readonly trustedDevices?: TrustedDeviceService;
   private readonly twoFactorLockout?: TwoFactorLockoutService;
+  private readonly sessions?: SessionService;
 
   constructor({
     drizzle,
@@ -391,6 +396,7 @@ export class IdentityService {
     cache,
     trustedDevices,
     twoFactorLockout,
+    sessions,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -405,6 +411,7 @@ export class IdentityService {
     this.cache = cache;
     this.trustedDevices = trustedDevices;
     this.twoFactorLockout = twoFactorLockout;
+    this.sessions = sessions;
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
@@ -1205,7 +1212,10 @@ export class IdentityService {
       await this.twoFactorLockout?.assertNotLocked(challengedUserId);
     }
 
-    const trustDevice = input.trustDevice && this.trustedDevices !== undefined;
+    // A backup code is a single-use recovery credential, not a second factor to bind a
+    // browser to: it clears the challenge but never buys the trust window.
+    const trustDevice =
+      input.trustDevice && input.method === 'totp' && this.trustedDevices !== undefined;
     const body = { code: input.code, trustDevice };
     const res =
       input.method === 'backup_code'
@@ -1299,11 +1309,13 @@ export class IdentityService {
 
     await this.twoFactorLockout?.assertNotLocked(userId);
 
-    const body = { code: input.code, trustDevice: true };
-    const verified =
-      input.method === 'backup_code'
-        ? await this.api.verifyBackupCode({ body, headers: challengeHeaders, asResponse: true })
-        : await this.api.verifyTOTP({ body, headers: challengeHeaders, asResponse: true });
+    // Only a live authenticator earns the trust window - a backup code is a recovery
+    // credential and the schema never lets one reach this route.
+    const verified = await this.api.verifyTOTP({
+      body: { code: input.code, trustDevice: true },
+      headers: challengeHeaders,
+      asResponse: true,
+    });
     if (!verified.ok) {
       await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
     }
@@ -1315,12 +1327,37 @@ export class IdentityService {
     this.events.emit('identity.2fa.verified', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      method: input.method,
+      method: 'totp',
       trustedDevice: true,
       ip,
       userAgent,
     });
     return SUCCESS;
+  }
+
+  /**
+   * A step-up gate for the self-service routes that change standing 2FA state: the
+   * caller has to clear a live authenticator code, not just the account password.
+   * Routed through TwoFactorLockoutService so a hijacked session plus a reused
+   * password cannot grind the second factor here the way the password-only paths let it.
+   */
+  private async assertFreshSecondFactor(
+    userId: User['id'],
+    headers: Headers,
+    meta: ClientMeta,
+    code: string,
+  ): Promise<void> {
+    await this.twoFactorLockout?.assertNotLocked(userId);
+    const res = await this.api.verifyTOTP({
+      body: { code, trustDevice: false },
+      headers,
+      asResponse: true,
+    });
+    if (!res.ok) {
+      await this.twoFactorLockout?.recordFailure(userId, meta);
+    }
+    await ensureOk(res, { genericMessage: 'Invalid authenticator code' });
+    await this.twoFactorLockout?.reset(userId);
   }
 
   async regenerateBackupCodes(
@@ -1336,6 +1373,11 @@ export class IdentityService {
       `backupCodes:${userId ?? 'anonymous'}`,
       TWO_FACTOR_PASSWORD_RATE_LIMIT,
     );
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
+    }
+    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+
     const res = await this.api.generateBackupCodes({
       body: { password: input.password },
       headers,
@@ -1344,14 +1386,17 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { backupCodes: string[] };
-    if (userId) {
-      this.events.emit('identity.2fa.backup_codes_regenerated', {
-        userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-        ip,
-        userAgent,
-      });
-    }
+
+    // The old set is void the moment a new one is minted, so any device still trusted
+    // off the old recovery flow re-verifies on its next login.
+    await this.trustedDevices?.revokeAllForUser(userId, userId);
+
+    this.events.emit('identity.2fa.backup_codes_regenerated', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      ip,
+      userAgent,
+    });
     return { backupCodes: body.backupCodes };
   }
 
@@ -1364,6 +1409,11 @@ export class IdentityService {
       `disable2fa:${userId ?? 'anonymous'}`,
       TWO_FACTOR_PASSWORD_RATE_LIMIT,
     );
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
+    }
+    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+
     const res = await this.api.disableTwoFactor({
       body: { password: input.password },
       headers,
@@ -1371,15 +1421,19 @@ export class IdentityService {
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    if (userId) {
-      this.events.emit('identity.2fa.disabled', {
-        userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-        method: 'totp',
-        ip,
-        userAgent,
-      });
-    }
+
+    // Dropping the second factor takes every standing bypass with it, the same teardown
+    // a Super Admin reset performs - a browser must not keep the access 2FA was guarding.
+    await this.trustedDevices?.revokeAllForUser(userId, userId);
+    await this.sessions?.revokeAllSessions(userId, userId, { ip, userAgent });
+
+    this.events.emit('identity.2fa.disabled', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      method: 'totp',
+      ip,
+      userAgent,
+    });
     return SUCCESS;
   }
 
