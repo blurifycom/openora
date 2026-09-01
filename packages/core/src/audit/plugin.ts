@@ -491,22 +491,30 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
+  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page, banner
+  // configuration, or banner image (whichever id that topic's payload carries).
   if (
     topic === 'cms.page.created' ||
     topic === 'cms.page.updated' ||
     topic === 'cms.page.deleted' ||
-    topic === 'cms.banner.created' ||
-    topic === 'cms.banner.updated' ||
-    topic === 'cms.banner.deleted'
+    topic === 'cms.banner.configuration.created' ||
+    topic === 'cms.banner.configuration.deleted' ||
+    topic === 'cms.banner.configuration.set_default' ||
+    topic === 'cms.banner.configuration.unset_default' ||
+    topic === 'cms.banner.image.set' ||
+    topic === 'cms.banner.image.deleted'
   ) {
     const isBanner = topic.startsWith('cms.banner.');
+    const bannerResourceId =
+      topic === 'cms.banner.configuration.unset_default'
+        ? (str(p['previousBannerConfigurationId']) ?? str(p['placement']))
+        : (str(p['bannerImageId']) ?? str(p['bannerConfigurationId']));
     return {
       ...base,
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: isBanner ? 'banner' : 'page',
-      resourceId: str(isBanner ? p['bannerId'] : p['pageId']),
+      resourceId: isBanner ? bannerResourceId : str(p['pageId']),
     };
   }
 
@@ -800,9 +808,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'cms.page.created',
   'cms.page.updated',
   'cms.page.deleted',
-  'cms.banner.created',
-  'cms.banner.updated',
-  'cms.banner.deleted',
+  'cms.banner.configuration.created',
+  'cms.banner.configuration.deleted',
+  'cms.banner.configuration.set_default',
+  'cms.banner.configuration.unset_default',
+  'cms.banner.image.set',
+  'cms.banner.image.deleted',
   'notifications.created',
   'iam.invitation.accepted',
   'iam.role.created',
