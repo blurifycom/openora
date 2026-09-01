@@ -20,6 +20,25 @@ export type SendEmail = (args: {
   body: string;
 }) => Promise<void> | void;
 
+// Transport-agnostic second-factor OTP hook. The identity plugin binds the
+// implementation and fans the code out over whichever delivery port the operator has
+// bound, so core never names a delivery vendor. Omitted = the code is generated but
+// never delivered (eg tests).
+export type SendTwoFactorOtp = (args: {
+  userId: string;
+  email: string;
+  phoneNumber: string | null;
+  code: string;
+}) => Promise<void> | void;
+
+export type TwoFactorOptions = {
+  /** Seconds a device stays trusted after a successful second factor. */
+  trustDeviceMaxAgeSec?: number;
+  /** Minutes a delivered OTP stays valid. */
+  otpPeriodMinutes?: number;
+  sendOtp?: SendTwoFactorOtp;
+};
+
 export type AuthOptions = {
   db: DrizzleDb;
   schema?: Record<string, unknown>;
@@ -42,6 +61,7 @@ export type AuthOptions = {
    */
   isExistingAccountSignUp?: (email: string) => boolean;
   cookieDomain?: string;
+  twoFactor?: TwoFactorOptions;
 };
 
 // Used only by SessionResolver's createAuth() call, which never sends email (getSession
@@ -129,7 +149,24 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     plugins: [
       organization(),
       adminPlugin({ ac, roles, defaultRole: 'player' }),
-      twoFactor(),
+      twoFactor({
+        ...(options.twoFactor?.trustDeviceMaxAgeSec !== undefined
+          ? { trustDeviceMaxAge: options.twoFactor.trustDeviceMaxAgeSec }
+          : {}),
+        otpOptions: {
+          ...(options.twoFactor?.otpPeriodMinutes !== undefined
+            ? { period: options.twoFactor.otpPeriodMinutes }
+            : {}),
+          sendOTP: async ({ user, otp }) => {
+            await options.twoFactor?.sendOtp?.({
+              userId: user.id,
+              email: user.email,
+              phoneNumber: (user as { phoneNumber?: string | null }).phoneNumber ?? null,
+              code: otp,
+            });
+          },
+        },
+      }),
       emailOTP({
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,

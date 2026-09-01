@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   KYC_STATUSES,
+  KYC_TIERS,
   EXCLUSION_KINDS,
   EXCLUSION_STATUSES,
   RG_FLAG_TYPES,
@@ -31,6 +32,7 @@ import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
 
 export const kycVerificationStatus = pgEnum('kyc_verification_status', KYC_STATUSES);
+export const kycVerificationTier = pgEnum('kyc_verification_tier', KYC_TIERS);
 export const kycTriggeredBy = pgEnum('kyc_triggered_by', KYC_TRIGGERED_BY);
 export const rgExclusionKind = pgEnum('rg_exclusion_kind', EXCLUSION_KINDS);
 export const rgExclusionStatus = pgEnum('rg_exclusion_status', EXCLUSION_STATUSES);
@@ -93,6 +95,7 @@ export const kycVerification = pgTable(
     userId: uuid().notNull(),
     provider: text().notNull(),
     referenceId: text().notNull(),
+    tier: kycVerificationTier().notNull().default('basic'),
     status: kycVerificationStatus().notNull(),
     documentTypes: jsonb().$type<(typeof KYC_DOCUMENT_TYPES)[number][]>().notNull().default([]),
     decisionReason: text(),
@@ -116,8 +119,12 @@ export const kycVerification = pgTable(
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    index('kyc_verification_user_id_created_at_idx').on(t.userId, t.createdAt),
-    uniqueIndex('kyc_verification_reference_id_key').on(t.referenceId),
+    index('kyc_verification_user_id_tier_created_at_idx').on(t.userId, t.tier, t.createdAt),
+    uniqueIndex('kyc_verification_user_id_reference_id_tier_key').on(
+      t.userId,
+      t.referenceId,
+      t.tier,
+    ),
     index('kyc_verification_status_idx').on(t.status),
   ],
 );

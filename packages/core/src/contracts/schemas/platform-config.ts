@@ -213,6 +213,50 @@ export const ChatConfigSchema = z
   .strict();
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
 
+export const AdminSecurityConfigSchema = z
+  .object({
+    /**
+     * Every Backoffice account must hold a second factor before it can reach any
+     * admin route. Operator-level switch with no per-user opt-out: an operator under
+     * a licence that mandates 2FA turns this on, and no account can then bypass it.
+     *
+     * Off by default. Whether Backoffice 2FA is mandatory is a licensing decision the
+     * operator owns, and defaulting it on would lock every existing deployment out of
+     * its own back office on upgrade.
+     */
+    requireTwoFactor: z.boolean().default(false),
+    /**
+     * Ties a Backoffice session to the browser it was issued to: a mid-session
+     * User-Agent change (or an IP change, per `ipChangePolicy`) ends the session and
+     * forces full re-authentication. Off by default for the same reason as above.
+     */
+    bindSessionToDevice: z.boolean().default(false),
+    /** How long a device stays trusted after a successful second factor. */
+    trustedDeviceDays: z.number().int().min(0).max(90).default(30),
+    /**
+     * Which mid-session IP change invalidates a Backoffice session, once
+     * `bindSessionToDevice` is on. `country` needs a bound GEO_IP_ADAPTER and degrades
+     * to `off` without one - never to `any`, which would end a session on every NAT or
+     * mobile-network hop.
+     */
+    ipChangePolicy: z.enum(['off', 'country', 'any']).default('off'),
+    /** Consecutive failed second-factor attempts before the account locks. */
+    twoFactorLockout: z
+      .object({
+        maxAttempts: z.number().int().min(1).max(20).default(5),
+        durationMs: z
+          .number()
+          .int()
+          .min(0)
+          .default(15 * 60 * 1000),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict();
+
+export type AdminSecurityConfig = z.infer<typeof AdminSecurityConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -262,6 +306,8 @@ export const PlatformConfigSchema = z
     displayCurrencies: z.array(z.string().min(1)).optional(),
     /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
+    /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */
+    adminSecurity: AdminSecurityConfigSchema.prefault({}),
   })
   .strict()
   .superRefine((cfg, ctx) => {

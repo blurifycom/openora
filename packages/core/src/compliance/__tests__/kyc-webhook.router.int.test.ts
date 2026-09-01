@@ -118,10 +118,12 @@ describe('compliance streamKycStatus router', () => {
       await realtime.publish(kycStatusChannel('other-user'), {
         eventId: '11111111-1111-4111-8111-111111111111',
         status: 'rejected',
+        tier: 'basic',
       });
       const callerUpdate = {
         eventId: '22222222-2222-4222-8222-222222222222',
         status: 'approved',
+        tier: 'advanced',
       };
       await realtime.publish(kycStatusChannel('user-1'), callerUpdate);
 

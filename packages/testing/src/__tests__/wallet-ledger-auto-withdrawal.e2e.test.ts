@@ -45,6 +45,7 @@ async function setRole(container: Container<CoreTokenCatalog>, userId: string, r
 
 async function verifyKyc(admin: TestClient, userId: string) {
   const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
+    tier: 'basic',
     status: 'approved',
     reason: 'e2e fixture verification',
   });

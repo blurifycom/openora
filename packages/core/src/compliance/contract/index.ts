@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   UuidSchema,
   KycStatusSchema,
+  KycTierSchema,
   KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
@@ -35,6 +36,7 @@ export const KycVerificationSchema = z.object({
   userId: UuidSchema,
   provider: z.string(),
   referenceId: z.string(),
+  tier: KycTierSchema,
   status: KycStatusSchema,
   documentTypes: z.array(KycDocumentTypeSchema),
   decisionReason: z.string().nullable(),
@@ -48,6 +50,7 @@ export const KycVerificationSchema = z.object({
 });
 
 export const SubmitKycInputSchema = z.object({
+  tier: KycTierSchema,
   documents: z.array(KycDocumentSchema),
 });
 export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
@@ -58,15 +61,47 @@ export const SubmitKycOutputSchema = KycVerificationSchema.extend({
 export type SubmitKycOutput = z.infer<typeof SubmitKycOutputSchema>;
 
 export const PlayerKycViewSchema = z.object({
-  current: KycVerificationSchema.nullable(),
-  history: z.array(KycVerificationSchema),
+  basic: z.object({
+    current: KycVerificationSchema.nullable(),
+    history: z.array(KycVerificationSchema),
+  }),
+  advanced: z.object({
+    current: KycVerificationSchema.nullable(),
+    history: z.array(KycVerificationSchema),
+  }),
 });
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
+// Player-facing projection of KycVerificationSchema: no riskSignals, checks, decisionReason,
+// provider, or referenceId - those are fraud-detection internals, admin-only via getPlayerKyc.
+export const KycVerificationSummarySchema = z.object({
+  tier: KycTierSchema,
+  status: KycStatusSchema,
+  documentTypes: z.array(KycDocumentTypeSchema),
+  submittedAt: TimestampSchema,
+  decidedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type KycVerificationSummary = z.infer<typeof KycVerificationSummarySchema>;
+
+export const PlayerKycSummaryViewSchema = z.object({
+  basic: z.object({
+    current: KycVerificationSummarySchema.nullable(),
+    history: z.array(KycVerificationSummarySchema),
+  }),
+  advanced: z.object({
+    current: KycVerificationSummarySchema.nullable(),
+    history: z.array(KycVerificationSummarySchema),
+  }),
+});
+export type PlayerKycSummaryView = z.infer<typeof PlayerKycSummaryViewSchema>;
+
 export const KycStatusUpdateSchema = z.object({
   eventId: UuidSchema,
   status: KycStatusSchema,
+  tier: KycTierSchema,
 });
 export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;
 
@@ -74,6 +109,7 @@ const NonEmptyReasonSchema = z.string().trim().min(1);
 
 export const RequestKycResubmissionInputSchema = z.object({
   userId: UuidSchema,
+  tier: KycTierSchema,
   reason: NonEmptyReasonSchema,
 });
 export type RequestKycResubmissionInput = z.infer<typeof RequestKycResubmissionInputSchema>;
@@ -83,6 +119,7 @@ export type KycOverrideStatus = z.infer<typeof KycOverrideStatusSchema>;
 
 export const OverrideKycStatusInputSchema = z.object({
   userId: UuidSchema,
+  tier: KycTierSchema,
   status: KycOverrideStatusSchema,
   reason: NonEmptyReasonSchema,
 });
@@ -97,6 +134,7 @@ export const BulkApproveKycInputSchema = z.object({
     .max(MAX_BULK_KYC_APPROVE_USERS)
     .refine((ids) => new Set(ids).size === ids.length, { message: 'userIds must be unique' }),
   reason: NonEmptyReasonSchema,
+  tier: KycTierSchema,
 });
 export type BulkApproveKycInput = z.infer<typeof BulkApproveKycInputSchema>;
 
@@ -161,6 +199,10 @@ export const complianceContract = {
     .route({ method: 'GET', path: '/compliance/players/{userId}/kyc' })
     .input(z.object({ userId: UuidSchema }))
     .output(PlayerKycViewSchema),
+
+  getMyKyc: oc
+    .route({ method: 'GET', path: '/compliance/kyc/me' })
+    .output(PlayerKycSummaryViewSchema),
 
   submitKyc: oc
     .route({ method: 'POST', path: '/compliance/kyc' })

@@ -5,6 +5,7 @@ import {
   type Token,
   type AdminPermissionResolver,
   type AdminGrant,
+  type AdminSecurityPolicy,
   type IdentityReader,
   type ClientMeta,
 } from '@openora/core/contracts';
@@ -46,6 +47,9 @@ export class AdminGuard {
     // player-role denial's audit attribution. This engine-zone file must not import
     // the player schema directly (ADR-0019/0025), so it goes through this port instead.
     private readonly identityReader?: IdentityReader,
+    // When bound (identity module loaded), enforces mandatory 2FA enrolment and the
+    // session's device fingerprint. Same layering reason as identityReader.
+    private readonly securityPolicy?: AdminSecurityPolicy,
   ) {}
 
   async assert(context: unknown): Promise<AdminCaller>;
@@ -76,7 +80,8 @@ export class AdminGuard {
       }
       headers.set(k, Array.isArray(v) ? v.join(', ') : v);
     }
-    const userId = await this.sessions.resolveUserId(headers);
+    const resolvedSession = await this.sessions.resolveSession(headers);
+    const userId = resolvedSession?.userId;
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', {
         message: 'Authentication required',
@@ -127,6 +132,17 @@ export class AdminGuard {
           },
         });
       }
+    }
+
+    if (this.securityPolicy) {
+      const securityContext = {
+        userId,
+        sessionId: resolvedSession?.sessionId ?? null,
+        ip,
+        userAgent,
+      };
+      await this.securityPolicy.assertEnrolled(securityContext);
+      await this.securityPolicy.assertSessionIntact(securityContext);
     }
 
     return { userId, role: userRecord.role, ip, userAgent };

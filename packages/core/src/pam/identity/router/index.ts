@@ -15,7 +15,16 @@ import {
   UsernameConflictError,
   UserNotFoundError,
 } from '../service/identity.service.js';
-import { SessionService, SessionNotFoundError } from '../service/session.service.js';
+import {
+  SessionService,
+  SessionNotFoundError,
+  CurrentSessionRevokeError,
+} from '../service/session.service.js';
+import { TrustedDeviceNotFoundError } from '../service/trusted-device.service.js';
+import {
+  type AdminSecurityService,
+  SelfTwoFactorResetError,
+} from '../service/admin-security.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
 export function createIdentityRouter(
@@ -24,6 +33,7 @@ export function createIdentityRouter(
   phoneLogin: PhoneLoginService,
   adminGuard: AdminGuard,
   eventBus: EventBus,
+  adminSecurity: AdminSecurityService,
 ) {
   const os = implement(identityContract).$context<OssContext>();
 
@@ -102,6 +112,14 @@ export function createIdentityRouter(
 
     disable2fa: os.disable2fa.handler(({ input, context }) =>
       identity.disableTwoFactor(
+        input,
+        context.request.headers,
+        context.resHeaders ?? new Headers(),
+      ),
+    ),
+
+    regenerateBackupCodes: os.regenerateBackupCodes.handler(({ input, context }) =>
+      identity.regenerateBackupCodes(
         input,
         context.request.headers,
         context.resHeaders ?? new Headers(),
@@ -205,10 +223,90 @@ export function createIdentityRouter(
       // else's device - a miss is a 404, not a cross-user revoke.
       revokeMine: os.sessions.revokeMine.handler(({ input, context }) => {
         const userId = getUserId(context);
-        return mapErrors({ NOT_FOUND: SessionNotFoundError }, () =>
-          sessionSvc.revokeSession(userId, input.id, userId, context.clientMeta),
+        return mapErrors(
+          { NOT_FOUND: SessionNotFoundError, CONFLICT: CurrentSessionRevokeError },
+          () =>
+            sessionSvc.revokeOwnSession(
+              userId,
+              input.id,
+              getSessionId(context),
+              context.clientMeta,
+            ),
         );
       }),
+
+      listAll: os.sessions.listAll.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'view');
+        // The cross-user list returns player email/role/IP with free-text email
+        // search, so it needs the player-data permission on top of session hygiene.
+        await adminGuard.assert(context, 'player', 'view');
+        return sessionSvc.listAllActiveSessions({
+          role: input.role,
+          query: input.query,
+          currentSessionId: getSessionId(context),
+          page: input.page,
+          limit: input.limit,
+          sortBy: input.sortBy,
+          sortOrder: input.sortOrder,
+        });
+      }),
+    },
+
+    adminSecurity: {
+      status: os.adminSecurity.status.handler(({ context }) =>
+        adminSecurity.status(getUserId(context), context.clientMeta.userAgent),
+      ),
+
+      trustedDevices: os.adminSecurity.trustedDevices.handler(({ context }) =>
+        adminSecurity.listTrustedDevices(getUserId(context), context.clientMeta.userAgent),
+      ),
+
+      trustCurrentDevice: os.adminSecurity.trustCurrentDevice.handler(({ input, context }) =>
+        identity.trustCurrentDevice(
+          input,
+          context.request.headers,
+          context.resHeaders ?? new Headers(),
+        ),
+      ),
+
+      revokeTrustedDevice: os.adminSecurity.revokeTrustedDevice.handler(({ input, context }) => {
+        const userId = getUserId(context);
+        return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
+          adminSecurity.revokeTrustedDevice(
+            userId,
+            input.id,
+            userId,
+            context.clientMeta,
+            getSessionId(context),
+          ),
+        );
+      }),
+
+      resetUserTwoFactor: os.adminSecurity.resetUserTwoFactor.handler(
+        async ({ input, context }) => {
+          const caller = await adminGuard.assertSuperAdmin(context);
+          return mapErrors(
+            { NOT_FOUND: UserNotFoundError, CONFLICT: SelfTwoFactorResetError },
+            () =>
+              adminSecurity.resetTwoFactor(input.userId, caller.userId, input.reason, {
+                ip: caller.ip,
+                userAgent: caller.userAgent,
+              }),
+          );
+        },
+      ),
+
+      revokeUserTrustedDevice: os.adminSecurity.revokeUserTrustedDevice.handler(
+        async ({ input, context }) => {
+          const caller = await adminGuard.assertSuperAdmin(context);
+          return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
+            adminSecurity.revokeTrustedDevice(input.userId, input.id, caller.userId, {
+              ip: caller.ip,
+              userAgent: caller.userAgent,
+            }),
+          );
+        },
+      ),
     },
   });
 }

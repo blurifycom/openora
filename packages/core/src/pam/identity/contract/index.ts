@@ -11,6 +11,9 @@ import {
   Enable2faResultSchema,
   Verify2faInputSchema,
   Disable2faInputSchema,
+  RegenerateBackupCodesInputSchema,
+  BackupCodesResultSchema,
+  TrustCurrentDeviceInputSchema,
   RequestPasswordResetInputSchema,
   VerifyPasswordResetOtpInputSchema,
   ResetPasswordInputSchema,
@@ -40,13 +43,54 @@ export const SessionItemSchema = z.object({
   createdAt: TimestampSchema,
   // Last time better-auth refreshed the session - "last used" in a device list.
   updatedAt: TimestampSchema,
+  // Last admin request seen on this session. Finer-grained than `updatedAt`, which
+  // better-auth only refreshes once per updateAge window.
+  lastSeenAt: TimestampSchema.nullable(),
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
+  // Human-readable rendering of userAgent for the session list.
+  deviceLabel: z.string(),
+  browser: z.string().nullable(),
+  os: z.string().nullable(),
   // True for the session making the request; false everywhere it cannot be known
   // (eg an admin listing someone else's devices).
   current: z.boolean(),
 });
 export type SessionItem = z.infer<typeof SessionItemSchema>;
+
+// A session row plus who it belongs to - the cross-user list is useless without it.
+export const ActiveSessionItemSchema = SessionItemSchema.extend({
+  userId: UuidSchema,
+  email: z.email(),
+  role: z.string(),
+});
+export type ActiveSessionItem = z.infer<typeof ActiveSessionItemSchema>;
+
+export const TrustedDeviceItemSchema = z.object({
+  id: UuidSchema,
+  label: z.string(),
+  browser: z.string().nullable(),
+  os: z.string().nullable(),
+  ipAddress: z.string().nullable(),
+  lastUsedAt: TimestampSchema,
+  expiresAt: TimestampSchema,
+  isCurrent: z.boolean(),
+});
+export type TrustedDeviceItem = z.infer<typeof TrustedDeviceItemSchema>;
+
+export const AdminSecurityStatusSchema = z.object({
+  twoFactorEnabled: z.boolean(),
+  // Null when no second factor is set up, or when the operator stores backup codes in a
+  // form this process cannot read back.
+  backupCodesRemaining: z.number().int().nonnegative().nullable(),
+  // True when the operator requires a second factor and this account has none - the
+  // Backoffice renders the enrolment flow and nothing else while it holds.
+  enrollmentRequired: z.boolean(),
+  trustedDeviceDays: z.number().int().nonnegative(),
+  trustedDeviceUntil: TimestampSchema.nullable(),
+  lockedUntil: TimestampSchema.nullable(),
+});
+export type AdminSecurityStatus = z.infer<typeof AdminSecurityStatusSchema>;
 
 export const SESSION_SORT_BY_VALUES = ['createdAt', 'expiresAt', 'updatedAt'] as const;
 export const SessionSortBySchema = z.enum(SESSION_SORT_BY_VALUES).default('createdAt');
@@ -117,6 +161,13 @@ export const identityContract = {
     .route({ method: 'POST', path: '/identity/2fa/disable' })
     .input(Disable2faInputSchema)
     .output(IdentitySuccessSchema),
+
+  // Backup codes are spent one per use and are shown exactly once, so an account that
+  // burns through them needs a way back to a full set without dropping its second factor.
+  regenerateBackupCodes: oc
+    .route({ method: 'POST', path: '/identity/2fa/backup-codes/regenerate' })
+    .input(RegenerateBackupCodesInputSchema)
+    .output(BackupCodesResultSchema),
 
   requestPasswordReset: oc
     .route({ method: 'POST', path: '/identity/password/forgot' })
@@ -216,6 +267,57 @@ export const identityContract = {
     revokeMine: oc
       .route({ method: 'POST', path: '/identity/sessions/me/revoke' })
       .input(z.object({ id: UuidSchema }))
+      .output(IdentitySuccessSchema),
+
+    // Cross-user view: every active session on the platform, for the admin who holds
+    // sessions:view. The per-user route above needs a userId and so cannot answer
+    // "who is logged in right now".
+    listAll: oc
+      .route({ method: 'GET', path: '/identity/sessions/all' })
+      .input(
+        PageQuerySchema.extend({
+          role: z.string().optional(),
+          query: z.string().optional(),
+          sortBy: SessionSortBySchema.optional(),
+          sortOrder: SortOrderSchema.default('desc').optional(),
+        }),
+      )
+      .output(paginated(ActiveSessionItemSchema)),
+  },
+
+  adminSecurity: {
+    status: oc
+      .route({ method: 'GET', path: '/identity/admin-security/status' })
+      .output(AdminSecurityStatusSchema),
+
+    trustedDevices: oc
+      .route({ method: 'GET', path: '/identity/admin-security/trusted-devices' })
+      .output(z.array(TrustedDeviceItemSchema)),
+
+    // better-auth mints its trust cookie only on the sign-in leg of a challenge, so
+    // granting the trust from inside the account re-runs that leg behind this route.
+    trustCurrentDevice: oc
+      .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/trust' })
+      .input(TrustCurrentDeviceInputSchema)
+      .output(IdentitySuccessSchema),
+
+    revokeTrustedDevice: oc
+      .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/revoke' })
+      .input(z.object({ id: UuidSchema }))
+      .output(IdentitySuccessSchema),
+
+    // Clears someone else's second factor entirely, back to the unenrolled state.
+    // Super Admin only; the `reason` is recorded on identity.2fa.reset so the audit
+    // trail carries why an account was put back to the unenrolled state.
+    resetUserTwoFactor: oc
+      .route({ method: 'POST', path: '/identity/admin-security/2fa/reset' })
+      .input(z.object({ userId: UuidSchema, reason: z.string().trim().min(10).max(500) }))
+      .output(IdentitySuccessSchema),
+
+    // Cross-user twin, for a Super Admin cutting off someone else's trusted device.
+    revokeUserTrustedDevice: oc
+      .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/revoke-for-user' })
+      .input(z.object({ userId: UuidSchema, id: UuidSchema }))
       .output(IdentitySuccessSchema),
   },
 };

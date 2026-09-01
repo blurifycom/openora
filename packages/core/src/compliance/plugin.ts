@@ -14,6 +14,7 @@ import {
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
+  KycTierSchema,
   LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
@@ -61,6 +62,9 @@ const RgMonitorJobSchema = z.object({});
 const KycDecisionSyncJobSchema = z.object({
   referenceId: z.string().min(1),
   status: z.enum(KYC_VENDOR_STATUSES),
+  // Set only when the adapter's parseWebhook attributed the decision to one tier; absent
+  // for a shared-workflow vendor session, where reconcile fans the decision across tiers.
+  tier: KycTierSchema.optional(),
   // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
   // watermark `reconcile` compares against, immune to job-processing reordering.
   receivedAt: z.iso.datetime(),
@@ -101,12 +105,15 @@ export default {
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
-      if (!parsed.success || !realtimeTransport || !envelope) {
+      // kycStatusChannel is the basic-tier withdrawal-status stream; advanced-tier
+      // updates have no consumer here yet (see tag-evaluation.service.ts's same guard).
+      if (!parsed.success || !realtimeTransport || !envelope || parsed.data.tier !== 'basic') {
         return;
       }
       return realtimeTransport.publish(kycStatusChannel(parsed.data.userId), {
         eventId: envelope.eventId,
         status: parsed.data.status,
+        tier: parsed.data.tier,
       });
     });
 
@@ -188,6 +195,7 @@ export default {
             payload.referenceId,
             payload.status,
             new Date(payload.receivedAt),
+            payload.tier,
           );
         }
       },

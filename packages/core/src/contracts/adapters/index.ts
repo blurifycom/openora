@@ -108,6 +108,7 @@ export type {
   KycResult,
   KycRiskSignals,
   KycStatusWriter,
+  KycStatusTransition,
   KycWebhookVerifier,
   KycCheckStatus,
   KycCheckResult,
@@ -194,6 +195,8 @@ export { ERROR_TRACKING } from './error-tracking.js';
 export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';
 export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
 
+export type { AdminSecurityPolicy, AdminSessionContext } from './admin-security.js';
+export { ADMIN_SECURITY_POLICY } from './admin-security.js';
 export type { AuditWritePort, AuditAction, DirectAuditAction } from './audit.js';
 export { AUDIT_WRITER } from './audit.js';
 
