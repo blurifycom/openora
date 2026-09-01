@@ -23,7 +23,9 @@ function makeGuard({
   superAdmin?: boolean | null;
 } = {}) {
   const events = makeEventBus();
-  const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => userId) });
+  const sessions = mock<SessionResolver>({
+    resolveSession: vi.fn(async () => (userId ? { userId, sessionId: randomUUID() } : undefined)),
+  });
   const permissionResolver = grants
     ? mock<AdminPermissionResolver>({
         getGrants: vi.fn(async () => grants),

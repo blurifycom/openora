@@ -226,6 +226,7 @@
       "group": "pam",
       "tables": [
         "account",
+        "admin_trusted_device",
         "session",
         "sms_otp_session",
         "two_factor",
@@ -239,20 +240,28 @@
         "identity.disable2fa",
         "identity.enable2fa",
         "identity.list",
+        "identity.listAll",
         "identity.listMine",
         "identity.login",
         "identity.logout",
         "identity.me",
         "identity.phoneLoginRequest",
         "identity.phoneLoginVerify",
+        "identity.regenerateBackupCodes",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
+        "identity.resetUserTwoFactor",
         "identity.revoke",
         "identity.revokeAll",
         "identity.revokeMine",
+        "identity.revokeTrustedDevice",
+        "identity.revokeUserTrustedDevice",
         "identity.sendEmailVerification",
+        "identity.status",
         "identity.streamSession",
+        "identity.trustCurrentDevice",
+        "identity.trustedDevices",
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.usernameAvailable",
@@ -465,6 +474,16 @@
       ]
     },
     {
+      "category": "admin-security",
+      "interface": "AdminSessionContext",
+      "token": "ADMIN_SECURITY_POLICY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
       "category": "admin-user-directory",
       "interface": "AdminUserRow",
       "token": "ADMIN_USER_DIRECTORY",
@@ -631,7 +650,8 @@
       "token": "GEO_IP_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/compliance/plugin.ts"
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -885,16 +905,25 @@
     "iam.role.permissions.changed",
     "iam.role.revoked",
     "iam.role.updated",
+    "identity.2fa.backup_codes_regenerated",
     "identity.2fa.disabled",
     "identity.2fa.enabled",
+    "identity.2fa.enrollment_blocked",
+    "identity.2fa.failed",
+    "identity.2fa.lockout.triggered",
+    "identity.2fa.reset",
+    "identity.2fa.verified",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
     "identity.password.reset",
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.session.fingerprint_mismatch",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
+    "identity.trusted_device.added",
+    "identity.trusted_device.revoked",
     "identity.user.deactivated",
     "identity.user.lockout.triggered",
     "identity.user.login",
@@ -950,6 +979,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "ActiveSessionItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
       "name": "ActiveUsersTrendPointSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1000,6 +1033,14 @@
     {
       "name": "AdminRoomSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminSecurityConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "AdminSecurityStatusSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
       "name": "AdminTransactionDetailSchema",
@@ -1068,6 +1109,10 @@
     {
       "name": "AutoWithdrawalRuleSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BackupCodesResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "BannerSchema",
@@ -1898,6 +1943,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "RegenerateBackupCodesInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "RegisterInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -2102,12 +2151,32 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "TotpStepUpCodeSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TransactionFilterSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "TransactionResultSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "TrustCurrentDeviceInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TrustedDeviceItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "TwoFactorChallengeMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TwoFactorMethodSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
     },
     {
       "name": "UnblockCommandMetadataSchema",
