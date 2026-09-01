@@ -24,20 +24,23 @@ beforeEach(async () => {
   await db.drizzle.db.execute(sql`TRUNCATE ${exchangeRateQuote} RESTART IDENTITY CASCADE`);
 });
 
+/** An ISO timestamp `ageMs` in the past. The reader ages a quote off its provider stamp. */
+function agedIso(ageMs: number): string {
+  return new Date(Date.now() - ageMs).toISOString();
+}
+
 async function seedQuote(
   base: string,
   quote: string,
   rate: string,
   opts: { asOf?: string; ageMs?: number } = {},
 ) {
-  const asOf = opts.asOf ?? '2026-01-01T00:00:00.000Z';
-  const updatedAt = new Date(Date.now() - (opts.ageMs ?? 0));
   await db.drizzle.db.insert(exchangeRateQuote).values({
     baseCurrency: base,
     quoteCurrency: quote,
     rate,
-    providerAsOf: new Date(asOf),
-    updatedAt,
+    providerAsOf: new Date(opts.asOf ?? agedIso(opts.ageMs ?? 0)),
+    updatedAt: new Date(),
   });
 }
 
@@ -51,11 +54,11 @@ async function getRow(base: string, quote: string) {
   return row ?? null;
 }
 
-function delayedProvider(rate: string, delayMs: number, asOf = '2026-06-01T00:00:00.000Z') {
+function delayedProvider(rate: string, delayMs: number, asOf?: string) {
   const getRate = vi.fn(
     () =>
       new Promise<ExchangeRateQuote>((resolve) => {
-        setTimeout(() => resolve({ rate, asOf }), delayMs);
+        setTimeout(() => resolve({ rate, asOf: asOf ?? new Date().toISOString() }), delayMs);
       }),
   );
   return mock<ExchangeRateProvider>({ getRate });
@@ -139,11 +142,8 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
   });
 
   it('soft-stale: returns the cached value immediately and refreshes in the background', async () => {
-    await seedQuote('EUR', 'USD', '1.100000000000000000', {
-      asOf: '2026-01-01T00:00:00.000Z',
-      ageMs: SOFT_STALE_AGE_MS,
-    });
-    const fiatProvider = delayedProvider('1.500000000000000000', 30, '2026-06-01T00:00:00.000Z');
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: SOFT_STALE_AGE_MS });
+    const fiatProvider = delayedProvider('1.500000000000000000', 30);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     const start = Date.now();
@@ -174,19 +174,20 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 
   it('hard-stale: fetches synchronously, persists, and returns the fresh quote', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
-    const fiatProvider = delayedProvider('1.300000000000000000', 5, '2026-06-01T00:00:00.000Z');
+    const providerAsOf = agedIso(0);
+    const fiatProvider = delayedProvider('1.300000000000000000', 5, providerAsOf);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     const quote = await reader.getRate('EUR', 'USD');
 
-    expect(quote).toEqual({ rate: '1.300000000000000000', asOf: '2026-06-01T00:00:00.000Z' });
+    expect(quote).toEqual({ rate: '1.300000000000000000', asOf: providerAsOf });
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
     const row = await getRow('EUR', 'USD');
     expect(row?.rate).toBe('1.300000000000000000');
   });
 
   it('hard-stale with no row at all: fetches synchronously and persists a first row', async () => {
-    const fiatProvider = delayedProvider('1.400000000000000000', 5, '2026-06-01T00:00:00.000Z');
+    const fiatProvider = delayedProvider('1.400000000000000000', 5);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     const quote = await reader.getRate('EUR', 'USD');
@@ -235,7 +236,8 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 
 describe('ExchangeRateReaderService.getRate - single-flight', () => {
   it('collapses concurrent hard-stale callers for the same leg into one provider call', async () => {
-    const fiatProvider = delayedProvider('1.200000000000000000', 40, '2026-06-01T00:00:00.000Z');
+    const providerAsOf = agedIso(0);
+    const fiatProvider = delayedProvider('1.200000000000000000', 40, providerAsOf);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     const [a, b, c] = await Promise.all([
@@ -244,20 +246,20 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
       reader.getRate('EUR', 'USD'),
     ]);
 
-    expect(a).toEqual({ rate: '1.200000000000000000', asOf: '2026-06-01T00:00:00.000Z' });
+    expect(a).toEqual({ rate: '1.200000000000000000', asOf: providerAsOf });
     expect(b).toEqual(a);
     expect(c).toEqual(a);
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
   });
 
   it('a settled in-flight call is removed from the single-flight map so a later call fetches again', async () => {
-    const fiatProvider = delayedProvider('1.200000000000000000', 5, '2026-06-01T00:00:00.000Z');
+    const fiatProvider = delayedProvider('1.200000000000000000', 5);
     const reader = new ExchangeRateReaderService(
-      baseDeps({ fiatProvider, freshTtlMs: 0, hardMaxAgeMs: 10 }),
+      baseDeps({ fiatProvider, freshTtlMs: 0, hardMaxAgeMs: 50 }),
     );
 
     await reader.getRate('EUR', 'USD');
-    await wait(30);
+    await wait(80);
     await reader.getRate('EUR', 'USD');
 
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(2);
@@ -266,21 +268,16 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
 
 describe('ExchangeRateReaderService.getRate - cross-pair freshness', () => {
   it('a derived pair is only as fresh as its staler leg', async () => {
-    await seedQuote('EUR', 'USD', '1.100000000000000000', {
-      asOf: '2026-03-01T00:00:00.000Z',
-      ageMs: 10,
-    });
-    await seedQuote('GBP', 'USD', '1.250000000000000000', {
-      asOf: '2026-01-01T00:00:00.000Z',
-      ageMs: SOFT_STALE_AGE_MS,
-    });
-    const fiatProvider = delayedProvider('1.300000000000000000', 30, '2026-06-01T00:00:00.000Z');
+    const stalerAsOf = agedIso(SOFT_STALE_AGE_MS);
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: 10 });
+    await seedQuote('GBP', 'USD', '1.250000000000000000', { asOf: stalerAsOf });
+    const fiatProvider = delayedProvider('1.300000000000000000', 30);
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     const quote = await reader.getRate('EUR', 'GBP');
 
     expect(quote?.rate).toBe('0.880000000000000000');
-    expect(quote?.asOf).toBe('2026-01-01T00:00:00.000Z');
+    expect(quote?.asOf).toBe(stalerAsOf);
 
     // The staler leg refreshes in the background. Let that write land before the next
     // test truncates, or it lands after the truncate and leaves a fresh GBP/USD row.

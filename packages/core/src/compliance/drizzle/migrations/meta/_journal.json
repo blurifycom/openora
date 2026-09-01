@@ -43,6 +43,13 @@
       "when": 1788210298790,
       "tag": "0005_reflective_magma",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788210298791,
+      "tag": "0006_backfill_session_limit_currency",
+      "breakpoints": true
     }
   ]
 }

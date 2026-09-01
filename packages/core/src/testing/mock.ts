@@ -109,7 +109,10 @@ type MockedEventBus = EventBus & { emit: Mock; on: Mock; emitInTransaction: Mock
 export const makeEventBus = (): MockedEventBus =>
   mock<MockedEventBus>({ emit: vi.fn(), on: vi.fn(), emitInTransaction: vi.fn() });
 
-export const makeAuditWriter = (): AuditWritePort & { record: Mock } => ({
+export const makeAuditWriter = (): AuditWritePort & {
+  record: Mock;
+  recordInTransaction: Mock;
+} => ({
   record: vi.fn(async () => undefined),
   recordInTransaction: vi.fn(async () => undefined),
 });

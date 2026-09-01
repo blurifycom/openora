@@ -5,6 +5,7 @@ import {
   FIAT_EXCHANGE_RATE_PROVIDER,
   EXCHANGE_RATE_READER,
   PLATFORM_CONFIG,
+  resolveDisplayCurrencies,
   type PlatformConfig,
 } from '@openora/core/contracts';
 import { ExchangeRateService } from './service/exchange-rate.service.js';
@@ -43,7 +44,16 @@ export default {
     });
 
     ctx.routers.add('exchangeRate', (c) => {
-      return createExchangeRateRouter(new ExchangeRateService(c.get(EXCHANGE_RATE_READER)));
+      const platformConfig = c.get(PLATFORM_CONFIG);
+      // The pivot joins the list even when the operator does not offer it for display:
+      // every cross rate is computed through it, so a quote against it is always legitimate.
+      const supported = [
+        ...resolveDisplayCurrencies(platformConfig.displayCurrencies),
+        resolvePivot(platformConfig),
+      ];
+      return createExchangeRateRouter(
+        new ExchangeRateService(c.get(EXCHANGE_RATE_READER), supported),
+      );
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

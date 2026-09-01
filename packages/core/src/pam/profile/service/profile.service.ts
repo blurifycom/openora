@@ -115,19 +115,23 @@ export class ProfileService implements PlayerProvisioning {
     const { row } = await this.ensureProfileRow(userId);
     const before = row.displayCurrency;
 
-    await this.drizzle.db
-      .update(player)
-      .set({ displayCurrency: input.currency })
-      .where(eq(player.userId, userId));
+    // One transaction: a display-currency change without its audit record is an
+    // unexplained change, so the write and the record commit together or not at all.
+    await this.drizzle.db.transaction(async (tx) => {
+      await tx
+        .update(player)
+        .set({ displayCurrency: input.currency })
+        .where(eq(player.userId, userId));
 
-    await this.audit.record({
-      actorId: userId,
-      actorType: 'player',
-      action: 'player.display_currency.set',
-      resourceType: 'player',
-      resourceId: row.id,
-      before: { displayCurrency: before },
-      after: { displayCurrency: input.currency },
+      await this.audit.recordInTransaction(tx, {
+        actorId: userId,
+        actorType: 'player',
+        action: 'player.display_currency.set',
+        resourceType: 'player',
+        resourceId: row.id,
+        before: { displayCurrency: before },
+        after: { displayCurrency: input.currency },
+      });
     });
 
     return { currency: input.currency, supported: [...this.supportedDisplayCurrencies] };

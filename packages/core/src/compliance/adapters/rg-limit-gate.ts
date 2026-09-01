@@ -13,6 +13,7 @@ import {
   resolveLimitCurrencyInTx,
   limitSlotKey,
   RgLimitCurrencyUnresolvedError,
+  type ResolvedLimitRow,
 } from '../service/rg.service.js';
 import { periodWindow } from '../service/rg-eval.js';
 
@@ -71,8 +72,39 @@ export class RgLimitGate implements RgLimitsPort {
         continue;
       }
       const period = row.period as LimitPeriod;
-      const limit = row.amount;
       const { from } = periodWindow(period, now);
+
+      // Re-read under the slot lock: the scan above is unlocked, so a concurrent lower
+      // limit can commit between the two and the scanned amount would allow a move the
+      // new limit must refuse. The lock is transaction-scoped, so this stays the truth
+      // for the rest of the caller's transaction.
+      let resolved: ResolvedLimitRow | undefined;
+      try {
+        resolved = await withAdvisoryXactLock(
+          txn,
+          limitSlotKey(row.userId, row.type as LimitType, period),
+          async () => {
+            const [fresh] = await txn.select().from(userLimit).where(eq(userLimit.id, row.id));
+            return fresh ? await resolveLimitCurrencyInTx(txn, fresh) : undefined;
+          },
+        );
+      } catch (err) {
+        if (!(err instanceof RgLimitCurrencyUnresolvedError)) {
+          throw err;
+        }
+        return {
+          allowed: false,
+          limitType: row.type as LimitType,
+          period,
+          limit: row.amount,
+          used: row.amount,
+        };
+      }
+      if (!resolved || resolved.amount === null) {
+        continue;
+      }
+      const limit = resolved.amount;
+      const rowCurrency = resolved.currency;
 
       const rateUnavailable = (): Extract<RgLimitDecision, { allowed: false }> => ({
         allowed: false,
@@ -81,22 +113,6 @@ export class RgLimitGate implements RgLimitsPort {
         limit,
         used: limit,
       });
-
-      let rowCurrency: string;
-      try {
-        rowCurrency = (
-          await withAdvisoryXactLock(
-            txn,
-            limitSlotKey(row.userId, row.type as LimitType, period),
-            () => resolveLimitCurrencyInTx(txn, row),
-          )
-        ).currency;
-      } catch (err) {
-        if (!(err instanceof RgLimitCurrencyUnresolvedError)) {
-          throw err;
-        }
-        return rateUnavailable();
-      }
 
       let used: string;
       try {

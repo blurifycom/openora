@@ -10,6 +10,13 @@ import { exchangeRateQuote } from '../schema/index.js';
 
 const logger = createLogger('exchange-rate-reader');
 
+/** Tolerated forward clock skew between the provider's `asOf` and this process. */
+const MAX_PROVIDER_CLOCK_SKEW_MS = 60_000;
+/** Upper bound on a plausible pivot-denominated rate; anything beyond is a provider defect. */
+const MAX_PLAUSIBLE_RATE = 1e12;
+/** Hard cap on the failure-cooldown map, so an unbounded code space cannot grow it. */
+const MAX_FAILURE_ENTRIES = 512;
+
 export function selectProvider(
   currency: string,
   cryptoProvider: ExchangeRateProvider | undefined,
@@ -52,8 +59,9 @@ export type ExchangeRateReaderServiceDeps = {
  * Read-through cache in front of the two exchange-rate provider ports. A player
  * request MAY reach a vendor: a hard-stale or missing quote is fetched
  * synchronously (with a short timeout, failing closed to `null` on error) before
- * answering. Three age bands off the stored quote's own last-write time
- * (`exchange_rate_quote.updatedAt`):
+ * answering. Three age bands off the quote's own provider timestamp
+ * (`exchange_rate_quote.providerAsOf`), never off the local write time - re-persisting
+ * an old quote must not make it look fresh:
  *   - fresh (age < freshTtlMs): return the stored value, no provider call.
  *   - soft-stale (freshTtlMs <= age < hardMaxAgeMs): return the stored value
  *     immediately, kick a single-flight background refresh that is invisible to
@@ -121,7 +129,10 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
 
     const row = await this.readRow(currency);
-    const ageMs = row ? Date.now() - row.updatedAt.getTime() : Number.POSITIVE_INFINITY;
+    // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
+    const ageMs = row
+      ? Math.max(0, Date.now() - row.providerAsOf.getTime())
+      : Number.POSITIVE_INFINITY;
 
     if (row && ageMs < this.freshTtlMs) {
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
@@ -147,7 +158,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       this.failedUntil.delete(currency);
       return quote;
     } catch (err) {
-      this.failedUntil.set(currency, Date.now() + this.providerTimeoutMs);
+      this.rememberFailure(currency);
       logger.error(
         { err, currency, pivot: this.pivot, hadRow: row !== null },
         'exchange rate hard-stale and unavailable; failing closed',
@@ -156,14 +167,29 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
   }
 
-  private async readRow(
-    currency: string,
-  ): Promise<{ rate: string; providerAsOf: Date; updatedAt: Date } | null> {
+  /** Records a cooldown, evicting expired entries first so the map cannot grow without bound. */
+  private rememberFailure(currency: string): void {
+    const now = Date.now();
+    for (const [key, until] of this.failedUntil) {
+      if (until <= now) {
+        this.failedUntil.delete(key);
+      }
+    }
+    while (this.failedUntil.size >= MAX_FAILURE_ENTRIES) {
+      const [oldest] = this.failedUntil.keys();
+      if (oldest === undefined) {
+        break;
+      }
+      this.failedUntil.delete(oldest);
+    }
+    this.failedUntil.set(currency, now + this.providerTimeoutMs);
+  }
+
+  private async readRow(currency: string): Promise<{ rate: string; providerAsOf: Date } | null> {
     const [row] = await this.drizzle.db
       .select({
         rate: exchangeRateQuote.rate,
         providerAsOf: exchangeRateQuote.providerAsOf,
-        updatedAt: exchangeRateQuote.updatedAt,
       })
       .from(exchangeRateQuote)
       .where(
@@ -210,9 +236,34 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     if (!quote) {
       throw new Error(`exchange rate provider returned no quote for ${currency}/${this.pivot}`);
     }
+    this.assertUsableQuote(currency, quote);
 
     await this.persist(currency, quote);
     return quote;
+  }
+
+  /**
+   * A rate is money arithmetic: a zero, negative, absurd or unparseable one would silently
+   * convert a wager to nothing and walk it past an RG limit, and a timestamp we cannot trust
+   * would age wrong. Refuse before persisting, so the bad value never enters the cache.
+   */
+  private assertUsableQuote(currency: string, quote: ExchangeRateQuote): void {
+    const pair = `${currency}/${this.pivot}`;
+    const rate = Number(quote.rate);
+    if (!Number.isFinite(rate) || rate <= 0 || rate > MAX_PLAUSIBLE_RATE) {
+      throw new Error(`exchange rate provider returned an out-of-range rate for ${pair}`);
+    }
+    const asOf = new Date(quote.asOf).getTime();
+    if (Number.isNaN(asOf)) {
+      throw new Error(`exchange rate provider returned an unparseable timestamp for ${pair}`);
+    }
+    const now = Date.now();
+    if (asOf > now + MAX_PROVIDER_CLOCK_SKEW_MS) {
+      throw new Error(`exchange rate provider returned a future timestamp for ${pair}`);
+    }
+    if (now - asOf >= this.hardMaxAgeMs) {
+      throw new Error(`exchange rate provider returned an already hard-stale quote for ${pair}`);
+    }
   }
 
   private async persist(base: string, value: ExchangeRateQuote): Promise<void> {

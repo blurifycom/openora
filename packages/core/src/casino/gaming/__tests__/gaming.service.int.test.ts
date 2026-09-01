@@ -186,6 +186,7 @@ describe('GamingService.startRound (real PG)', () => {
     expect(walletCommands.debit).toHaveBeenCalledWith(expect.anything(), {
       userId,
       amount: '10',
+      currency: 'USD',
       type: 'bet',
     });
     expect(launchGame).toHaveBeenCalledWith(created.id, userId, 'USD');

@@ -328,7 +328,10 @@ export class RgMonitoringService {
         and(
           eq(wallet.userId, userId),
           eq(walletTransaction.type, 'deposit'),
-          eq(walletTransaction.status, 'completed'),
+          // A pending deposit is a reservation the wallet took under the player's deposit
+          // lock before charging the PSP. Counting it is what stops two concurrent deposits
+          // from spending the same headroom; it is released to `failed` if the charge fails.
+          inArray(walletTransaction.status, ['completed', 'pending']),
           gte(walletTransaction.createdAt, from),
           // The database stamps createdAt, so the upper bound reads the same clock. An
           // app-side new Date() that trails the database by a millisecond would drop a

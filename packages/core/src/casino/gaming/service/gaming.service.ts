@@ -89,9 +89,12 @@ export class GamingService {
     await this.getGame(gameId);
 
     const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
+      // The same currency the RG pre-check above weighed. Left off, the debit falls on the
+      // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
         userId,
         amount: betAmount,
+        currency,
         type: 'bet',
       });
       if (!outcome.ok) {

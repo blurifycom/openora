@@ -269,7 +269,8 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
     expect(result).toEqual({ currency: 'EUR', supported: DEFAULT_SUPPORTED });
     const [row] = await playersFor(account.id);
     expect(row?.displayCurrency).toBe('EUR');
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         actorId: account.id,
         actorType: 'player',
