@@ -39,6 +39,8 @@ export const AUTH_GUARD_REASONS = [
   'authentication_required',
   'admin_required',
   'permission_denied',
+  'two_factor_required',
+  'session_fingerprint_mismatch',
 ] as const;
 export const AuthGuardReasonSchema = z.enum(AUTH_GUARD_REASONS);
 export type AuthGuardReason = z.infer<typeof AuthGuardReasonSchema>;

@@ -9,6 +9,7 @@ import {
   DrizzleService,
   findOneOrThrow,
   serializeRow,
+  mapConcurrent,
   pageToOffset,
   withAdvisoryXactLock,
   type DrizzleDb,
@@ -17,6 +18,7 @@ import {
 import type {
   ClientMeta,
   ChatModeration,
+  RealtimeSignal,
   RealtimeTransport,
   CommandMetadata,
   ChatSystemMessage,
@@ -65,6 +67,7 @@ export {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
+  ChatRoomOwnerCannotLeaveError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
   ChatPlayerBannedError,
@@ -93,6 +96,80 @@ import {
 } from '../contract/constants.js';
 import { moderateContent, validateAttachment } from '../moderation/index.js';
 const logger = createLogger('chat');
+
+const MENTION_USERNAME_PATTERN = /(?<![\w.])@([a-zA-Z0-9_]{2,32})/g;
+const MAX_MENTIONS_PER_MESSAGE = 20;
+const MENTION_RESOLVE_CONCURRENCY = 5;
+const ROOM_REVOKE_CONCURRENCY = 10;
+
+function parseMentionedUsernames(content: string): string[] {
+  const usernames = new Set<string>();
+  for (const match of content.matchAll(MENTION_USERNAME_PATTERN)) {
+    const username = match[1];
+    if (username) {
+      usernames.add(username.toLowerCase());
+    }
+    if (usernames.size >= MAX_MENTIONS_PER_MESSAGE) {
+      break;
+    }
+  }
+  return [...usernames];
+}
+
+function hideStaffExceptOwner(canSeeAdminUsers: boolean, creatorId: User['id'] | null) {
+  if (canSeeAdminUsers) {
+    return undefined;
+  }
+  return or(
+    isNull(user.id),
+    notInArray(user.role, ['admin', 'super-admin']),
+    eq(chatRoomMember.role, 'owner'),
+    creatorId ? eq(chatRoomMember.userId, creatorId) : undefined,
+  );
+}
+
+function emitMentions({
+  events,
+  directory,
+  isBlockedByMentioned,
+  content,
+  byUserId,
+  roomId,
+  messageId,
+}: {
+  events: EventBus;
+  directory: AdminUserDirectory;
+  isBlockedByMentioned: (mentionedUserId: User['id']) => Promise<boolean>;
+  content: string;
+  byUserId: User['id'];
+  roomId: ChatRoom['id'] | null;
+  messageId: ChatMessage['id'];
+}): void {
+  const usernames = parseMentionedUsernames(content);
+  if (usernames.length === 0) {
+    return;
+  }
+  void mapConcurrent(usernames, MENTION_RESOLVE_CONCURRENCY, async (username) => {
+    const summary = await directory.getPlayerByUsername(username).catch((err: unknown) => {
+      logger.error({ err, username, messageId }, 'chat mention lookup failed');
+      return null;
+    });
+    if (!summary || summary.userId === byUserId) {
+      return;
+    }
+    const mentionedUserId = summary.userId;
+    const blocked = await isBlockedByMentioned(mentionedUserId).catch((err: unknown) => {
+      logger.error({ err, mentionedUserId, messageId }, 'chat mention block check failed');
+      return true;
+    });
+    if (blocked) {
+      return;
+    }
+    events.emit('chat.user.mentioned', { mentionedUserId, byUserId, roomId, messageId });
+  }).catch((err: unknown) => {
+    logger.error({ err, messageId }, 'chat mention resolution failed');
+  });
+}
 
 function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
   void Promise.resolve()
@@ -331,6 +408,14 @@ export class ChatService {
       unsubscribe();
       presence?.leave(channel, presenceMemberId, connectionId);
     };
+  }
+
+  subscribeSignals(
+    roomId: ChatRoom['id'] | null,
+    listener: (signal: RealtimeSignal) => void,
+    viewerId?: User['id'],
+  ) {
+    return this.transport.subscribeSignal?.(chatChannel(roomId), listener, viewerId) ?? (() => {});
   }
 
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
@@ -852,6 +937,11 @@ export class ChatService {
     await this.assertRoomModerator(roomId, actorId);
     const role = status === 'all' ? undefined : status;
     const canSeeAdminUsers = await this.canSeeAdminUsers(actorId);
+    const [room] = await this.drizzle.db
+      .select({ creatorId: chatRoom.creatorId })
+      .from(chatRoom)
+      .where(eq(chatRoom.id, roomId))
+      .limit(1);
     const members = await this.drizzle.db
       .select({ member: chatRoomMember, username: user.name })
       .from(chatRoomMember)
@@ -860,9 +950,7 @@ export class ChatService {
         and(
           eq(chatRoomMember.roomId, roomId),
           role ? eq(chatRoomMember.role, role) : undefined,
-          canSeeAdminUsers
-            ? undefined
-            : or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
+          hideStaffExceptOwner(canSeeAdminUsers, room?.creatorId ?? null),
         ),
       )
       .orderBy(asc(chatRoomMember.joinedAt));
@@ -1140,6 +1228,16 @@ export class ChatService {
 
     const message = toPublicMessage(record);
     publishChatEvent(this.transport, roomId, message);
+    emitMentions({
+      events: this.events,
+      directory: this.directory,
+      isBlockedByMentioned: (mentionedUserId) =>
+        this.isBlocked(this.drizzle.db, mentionedUserId, userId),
+      content: safeContent,
+      byUserId: userId,
+      roomId,
+      messageId: record.id,
+    });
     return message;
   }
 
@@ -1216,6 +1314,16 @@ export class ChatService {
 
     const message = toPublicMessage(record);
     publishChatEvent(this.transport, null, message);
+    emitMentions({
+      events: this.events,
+      directory: this.directory,
+      isBlockedByMentioned: (mentionedUserId) =>
+        this.isBlocked(this.drizzle.db, mentionedUserId, userId),
+      content: safeContent,
+      byUserId: userId,
+      roomId: null,
+      messageId: record.id,
+    });
     return message;
   }
 
@@ -1511,7 +1619,11 @@ export class ChatService {
     return [...(await this.blockedIdsFor(viewerId))];
   }
 
-  async isBlocked(tx: DrizzleTx, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
+  async isBlocked(
+    tx: DrizzleDb | DrizzleTx,
+    blockerId: User['id'],
+    blockedId: User['id'],
+  ): Promise<boolean> {
     const [row] = await tx
       .select({ blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
@@ -1556,9 +1668,12 @@ export class ChatService {
           .returning();
         await tx.insert(chatRoomConfiguration).values({ roomId: created.id });
         if (actorId) {
-          await tx
-            .insert(chatRoomMember)
-            .values({ roomId: created.id, userId: actorId, role: 'owner' });
+          await tx.insert(chatRoomMember).values({
+            roomId: created.id,
+            userId: actorId,
+            role: 'owner',
+            roleAssignedAt: new Date(),
+          });
         }
         return created;
       });
@@ -1688,30 +1803,70 @@ export class ChatService {
     roomId: ChatRoom['id'];
     userId: User['id'];
   } & ClientMeta) {
-    const room = findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(chatRoom)
-        .where(
-          and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
-        )
-        .limit(1),
-      new ChatRoomNotFoundError(roomId),
-    );
-    if (!room.creatorId) {
-      throw new ChatRoomOwnershipError();
-    }
-    assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
     const deletedAt = new Date();
-    await this.drizzle.db.update(chatRoom).set({ deletedAt }).where(eq(chatRoom.id, roomId));
+    // Validation runs inside the lock, not before it: two concurrent deletes would otherwise
+    // both pass the active-room check and both emit a deletion event for one room. The lock
+    // is the same one join/leave take, so a member joining concurrently either lands before
+    // the roster snapshot (and gets revoked) or after the soft-delete (and is rejected).
+    const deleted = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const room = findOneOrThrow(
+          await t
+            .select()
+            .from(chatRoom)
+            .where(
+              and(
+                eq(chatRoom.id, roomId),
+                eq(chatRoom.isPublic, false),
+                isNull(chatRoom.deletedAt),
+              ),
+            )
+            .limit(1),
+          new ChatRoomNotFoundError(roomId),
+        );
+        if (!room.creatorId) {
+          throw new ChatRoomOwnershipError();
+        }
+        assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
+        const members = await t
+          .select({ userId: chatRoomMember.userId })
+          .from(chatRoomMember)
+          .where(eq(chatRoomMember.roomId, roomId));
+        const updated = await t
+          .update(chatRoom)
+          .set({ deletedAt })
+          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .returning({ id: chatRoom.id });
+        return updated.length === 1 ? { room, members } : null;
+      }),
+    );
+    if (!deleted) {
+      throw new ChatRoomNotFoundError(roomId);
+    }
+    // Before the realtime cleanup: the deletion is committed, and an audit trail that depends
+    // on a transport call succeeding would go missing exactly when the transport is down.
     this.events.emit('chat.private_room.deleted', {
       roomId,
       creatorId: userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      before: { name: room.name, slug: room.slug, category: room.category },
+      before: {
+        name: deleted.room.name,
+        slug: deleted.room.slug,
+        category: deleted.room.category,
+      },
       after: { deletedAt: deletedAt.toISOString() },
       ip: ip ?? null,
       userAgent: userAgent ?? null,
+    });
+    // The room is gone, so cut every member off the room channel rather than leaving them
+    // subscribed to a room that 404s on every call. Per-member best-effort: one unreachable
+    // client must not fail a delete that has already happened and cannot be retried.
+    await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, async ({ userId: memberId }) => {
+      try {
+        await this.transport.revokeUserFromChannel?.(memberId, chatChannel(roomId));
+      } catch (err: unknown) {
+        logger.error({ err, roomId, memberId }, 'chat room channel revoke failed');
+      }
     });
     return { success: true } as const;
   }
@@ -1795,7 +1950,7 @@ export class ChatService {
             await t.insert(chatRoomConfiguration).values({ roomId: room.id });
             await t
               .insert(chatRoomMember)
-              .values({ roomId: room.id, userId, role: 'owner' })
+              .values({ roomId: room.id, userId, role: 'owner', roleAssignedAt: new Date() })
               .onConflictDoNothing();
             return room;
           }),
@@ -1868,7 +2023,7 @@ export class ChatService {
   }
 
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
-    await this.verifyRoomAccess(roomId, viewerId);
+    const room = await this.verifyRoomAccess(roomId, viewerId);
     const canSeeAdminUsers = viewerId ? await this.canSeeAdminUsers(viewerId) : false;
     const members = await this.drizzle.db
       .select({
@@ -1882,9 +2037,7 @@ export class ChatService {
       .where(
         and(
           eq(chatRoomMember.roomId, roomId),
-          canSeeAdminUsers
-            ? undefined
-            : or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
+          hideStaffExceptOwner(canSeeAdminUsers, room.creatorId),
         ),
       )
       .orderBy(asc(chatRoomMember.joinedAt));

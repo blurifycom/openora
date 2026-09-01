@@ -6,11 +6,12 @@ import {
   assertOwnership,
   DrizzleService,
   findOneOrThrow,
+  pageToOffset,
 } from '@openora/core/server';
-import { eq, and, isNull, desc } from 'drizzle-orm';
-import type { User } from '@openora/core/contracts';
-import { notification } from '../schema/index.js';
-import type { CreateNotificationInput } from '../contract/index.js';
+import { eq, and, isNull, asc, desc, count, lt } from 'drizzle-orm';
+import type { PaginationOptions, User } from '@openora/core/contracts';
+import { notification, type Notification } from '../schema/index.js';
+import type { CreateNotificationInput, NotificationSortBy } from '../contract/index.js';
 
 export const NotificationNotFoundError = makeNotFoundError('Notification');
 
@@ -27,14 +28,18 @@ export class NotificationsService {
     private readonly events: EventBus,
   ) {}
 
-  async create(input: CreateNotificationInput) {
-    const record = findOneOrThrow(
-      await this.drizzle.db
-        .insert(notification)
-        .values({ ...input })
-        .returning(),
-      new NotificationInsertFailedError(),
-    );
+  async create(input: CreateNotificationInput): Promise<Notification | null> {
+    const [record] = await this.drizzle.db
+      .insert(notification)
+      .values({ ...input, data: input.data ?? null, eventId: input.eventId ?? null })
+      .onConflictDoNothing({ target: notification.eventId })
+      .returning();
+    if (!record) {
+      if (input.eventId) {
+        return null;
+      }
+      throw new NotificationInsertFailedError();
+    }
     this.events.emit('notifications.created', {
       notificationId: record.id,
       userId: input.userId,
@@ -42,13 +47,34 @@ export class NotificationsService {
     return record;
   }
 
-  async listForUser(userId: User['id']) {
-    return this.drizzle.db
-      .select()
+  async listForUser({
+    userId,
+    page,
+    limit,
+    sortBy = 'createdAt',
+    sortOrder,
+  }: PaginationOptions<{ userId: User['id'] }, NotificationSortBy>) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const where = eq(notification.userId, userId);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select()
+        .from(notification)
+        .where(where)
+        .orderBy(dir(notification[sortBy]))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(notification).where(where),
+    ]);
+    return { items: rows, total: Number(n), page, limit };
+  }
+
+  async unreadCount(userId: User['id']) {
+    const [{ n }] = await this.drizzle.db
+      .select({ n: count() })
       .from(notification)
-      .where(eq(notification.userId, userId))
-      .orderBy(desc(notification.createdAt))
-      .limit(50);
+      .where(and(eq(notification.userId, userId), isNull(notification.readAt)));
+    return Number(n);
   }
 
   async markRead(id: string, userId: User['id']) {
@@ -75,5 +101,15 @@ export class NotificationsService {
       .where(and(eq(notification.userId, userId), isNull(notification.readAt)))
       .returning({ id: notification.id });
     return { count: rows.length };
+  }
+
+  // Unconditional on age (read or unread), not gated on readAt - deletes anything past
+  // the retention window regardless of read state.
+  async purgeExpired(retentionDays: number) {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const result = await this.drizzle.db
+      .delete(notification)
+      .where(lt(notification.createdAt, cutoff));
+    return { count: result.rowCount ?? 0 };
   }
 }

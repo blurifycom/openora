@@ -30,6 +30,49 @@ describe('mapEventToRecord: identity.session.revoked', () => {
   });
 });
 
+describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
+  const deviceId = '55555555-5555-5555-5555-555555555555';
+
+  it('marks a self-service trust teardown a player action, not an admin one', async () => {
+    const row = await mapEventToRecord('identity.trusted_device.revoked', {
+      userId,
+      deviceId,
+      actorId: userId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'player', resourceType: 'user', resourceId: userId });
+  });
+
+  it('marks a cross-user device revoke an admin action', async () => {
+    const row = await mapEventToRecord('identity.trusted_device.revoked', {
+      userId,
+      deviceId,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: userId });
+  });
+
+  it('attributes an AdminGuard-forced trust revoke to the system', async () => {
+    const row = await mapEventToRecord('identity.trusted_device.revoked', {
+      userId,
+      deviceId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'system', actorId: null, resourceId: userId });
+  });
+
+  it('marks a Super Admin 2FA reset an admin action against the target account', async () => {
+    const row = await mapEventToRecord('identity.2fa.reset', {
+      userId,
+      playerId: null,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: userId });
+  });
+});
+
 describe('mapEventToRecord: identity.user.registration.failed', () => {
   it('records a rejected attempt as a failure against the registration resource', async () => {
     const row = await mapEventToRecord('identity.user.registration.failed', {

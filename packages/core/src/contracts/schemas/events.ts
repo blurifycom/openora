@@ -50,6 +50,10 @@ export const KycStatusUpdatedSchema = z.object({
   source: KycStatusSourceSchema,
 });
 
+export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as const;
+export const TwoFactorMethodSchema = z.enum(TWO_FACTOR_METHODS);
+export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
+
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
@@ -107,10 +111,69 @@ export const domainEventSchemas = {
   'identity.2fa.enabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
   }),
   'identity.2fa.disabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
+  }),
+  'identity.2fa.verified': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
+    trustedDevice: z.boolean(),
+  }),
+  'identity.2fa.failed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    method: TwoFactorMethodSchema,
+    attemptsRemaining: z.number().int().nonnegative(),
+  }),
+  // The account's recovery credentials were replaced; every previously issued code is
+  // dead from here on.
+  'identity.2fa.backup_codes_regenerated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  // A Super Admin cleared someone else's second factor; the account is back to the
+  // unenrolled state and must set one up before it reaches any admin route again.
+  'identity.2fa.reset': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    actorId: UuidSchema,
+    // Free-text justification the Super Admin gave when clearing the second factor.
+    reason: z.string(),
+  }),
+  'identity.2fa.lockout.triggered': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    lockoutUntil: TimestampSchema,
+  }),
+  // An admin account reached an admin route without a second factor configured.
+  'identity.2fa.enrollment_blocked': authContextBase.extend({
+    userId: UuidSchema,
+  }),
+  // A session was used from a device or network that no longer matches the one it
+  // was issued to; the session is revoked before this is emitted.
+  'identity.session.fingerprint_mismatch': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    sessionId: UuidSchema,
+    mismatch: z.enum(['user_agent', 'ip']),
+  }),
+  'identity.trusted_device.added': authContextBase.extend({
+    userId: UuidSchema,
+    deviceId: UuidSchema,
+    label: z.string(),
+    expiresAt: TimestampSchema,
+  }),
+  'identity.trusted_device.revoked': authContextBase.extend({
+    userId: UuidSchema,
+    deviceId: UuidSchema,
+    // Absent when the guard itself forces the revoke (fingerprint mismatch) rather
+    // than an admin or the device owner acting.
+    actorId: UuidSchema.optional(),
   }),
   'identity.password.reset': authContextBase.extend({
     userId: UuidSchema,
@@ -305,6 +368,19 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     userId: UuidSchema,
     removedBy: UuidSchema,
+  }),
+  // A room owner granted or revoked the moderator role. `role` is the member's new role and
+  // `previousRole` the one it replaced - a permission change is only auditable with both.
+  // `owner` never appears in either - ownership transfer is a separate flow. `playerId` is the
+  // acting owner's, null when no player record backs them; `changedBy` always carries the raw
+  // acting user id so the actor survives that case.
+  'chat.room.member.role-changed': authContextBase.extend({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    changedBy: UuidSchema,
+    role: z.enum(['member', 'moderator']),
+    previousRole: z.enum(['member', 'moderator']),
+    playerId: UuidSchema.nullable(),
   }),
   'chat.room.member.banned': authContextBase.extend({
     roomId: UuidSchema,
@@ -540,6 +616,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
+  // v2: `method` records which factor was used, required by the audit trail.
+  'identity.2fa.enabled': 2,
+  'identity.2fa.disabled': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

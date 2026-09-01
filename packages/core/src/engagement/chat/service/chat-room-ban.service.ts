@@ -114,7 +114,7 @@ export class ChatRoomBanService {
       resourceId: null,
       after: { roomId, userId, durationSeconds, reason },
     });
-    await this.transport.revokeClientFromChannel?.(userId, `chat:room:${roomId}`);
+    await this.transport.revokeUserFromChannel?.(userId, `chat:room:${roomId}`);
     return { success: true } as const;
   }
 

@@ -254,17 +254,21 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player/Admin revoked one or all of their own sessions, or an admin forced it.
-  // actorId = the resolved playerId on the self-revoke path, else the acting admin's
-  // raw userId (never resolved - actor is an admin, not the subject player).
-  // Self-revoke sends its own userId as actorId, so only a *different* actor is forced.
+  // Player/Admin revoked one or all of their own sessions, an admin forced it, or
+  // AdminGuard forced it itself on a fingerprint mismatch (no actorId at all - never
+  // read the subject's own userId as a stand-in, that is what mislabels a
+  // system-triggered kill as a self-revoke). Self-revoke sends its own userId as
+  // actorId, so only a *different*, present actorId is an admin acting.
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
     const isSingle = topic === 'identity.session.revoked';
-    const isForced = !!p['actorId'] && p['actorId'] !== p['userId'];
-    const actorId = isForced ? str(p['actorId']) : str(p['playerId']);
+    const rawActorId = p['actorId'];
+    const isSystem = rawActorId === undefined || rawActorId === null;
+    const isForced = !isSystem && rawActorId !== p['userId'];
+    const actorType = isSystem ? 'system' : isForced ? 'admin' : 'player';
+    const actorId = isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']);
     return {
       ...base,
-      actorType: isForced ? 'admin' : 'player',
+      actorType,
       actorId,
       resourceType: isSingle ? 'session' : 'user',
       resourceId: isSingle ? str(p['sessionId']) : str(p['userId']),
@@ -356,6 +360,22 @@ export async function mapEventToRecord(
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },
+    };
+  }
+
+  // actorId = the granting/revoking owner's resolved playerId, falling back to the raw acting
+  // user id when no player record backs them (the actor must never be lost on a permission
+  // change). resource = the member whose role moved; before/after carry the two roles.
+  if (topic === 'chat.room.member.role-changed') {
+    const actorPlayerId = str(p['playerId']);
+    return {
+      ...base,
+      actorType: actorPlayerId ? 'player' : 'admin',
+      actorId: actorPlayerId ?? str(p['changedBy']),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      before: { roomId: str(p['roomId']), role: str(p['previousRole']) },
+      after: { roomId: str(p['roomId']), role: str(p['role']) },
     };
   }
 
@@ -622,6 +642,27 @@ export async function mapEventToRecord(
     return { ...base, resourceType: 'registration' };
   }
 
+  // Admin-on-behalf topics: `userId` names the affected account, not the actor - the
+  // acting admin travels in its own `actorId` field, same as compliance.kyc.updated.
+  // Both also fire self-service: `disableTwoFactor` / `regenerateBackupCodes` tear down
+  // the caller's own trust with `actorId === userId`, and
+  // `identity.trusted_device.revoked` fires with no actorId at all when AdminGuard
+  // revokes the trust itself on a fingerprint mismatch. Same system/forced/self split
+  // as the session-revoked mapper above, so a self-teardown is never logged as an
+  // admin acting on the account.
+  if (topic === 'identity.2fa.reset' || topic === 'identity.trusted_device.revoked') {
+    const rawActorId = p['actorId'];
+    const isSystem = rawActorId === undefined || rawActorId === null;
+    const isForced = !isSystem && rawActorId !== p['userId'];
+    return {
+      ...base,
+      actorType: isSystem ? 'system' : isForced ? 'admin' : 'player',
+      actorId: isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -631,6 +672,13 @@ export async function mapEventToRecord(
     topic === 'identity.user.logout' ||
     topic === 'identity.2fa.enabled' ||
     topic === 'identity.2fa.disabled' ||
+    topic === 'identity.2fa.verified' ||
+    topic === 'identity.2fa.failed' ||
+    topic === 'identity.2fa.backup_codes_regenerated' ||
+    topic === 'identity.2fa.lockout.triggered' ||
+    topic === 'identity.2fa.enrollment_blocked' ||
+    topic === 'identity.session.fingerprint_mismatch' ||
+    topic === 'identity.trusted_device.added' ||
     topic === 'identity.password.reset' ||
     topic === 'identity.email.verified' ||
     topic === 'identity.profile.updated'
@@ -664,6 +712,15 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.phone_otp.cancelled',
   'identity.2fa.enabled',
   'identity.2fa.disabled',
+  'identity.2fa.verified',
+  'identity.2fa.failed',
+  'identity.2fa.backup_codes_regenerated',
+  'identity.2fa.reset',
+  'identity.2fa.lockout.triggered',
+  'identity.2fa.enrollment_blocked',
+  'identity.session.fingerprint_mismatch',
+  'identity.trusted_device.added',
+  'identity.trusted_device.revoked',
   'identity.password.reset',
   'identity.email.verified',
   'identity.profile.updated',
@@ -694,6 +751,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  'chat.room.member.role-changed',
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
