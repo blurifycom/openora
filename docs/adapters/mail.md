@@ -40,7 +40,7 @@ import { SmtpSender } from './smtp-sender.js';
 import { ReactEmailRenderer } from './react-email-renderer.js';
 
 export default {
-  id: 'mail',
+  id: 'operator-mail',
   dependsOn: ['mail'],
   register(ctx) {
     ctx.provide(EMAIL_SENDER, () => new SmtpSender(process.env.SMTP_URL));
@@ -54,7 +54,7 @@ last-wins).
 
 ## Template keys
 
-`verifyEmail`, `resetPasswordOtp`, `existingAccountSignUp`, `rgLimitUpdated`,
+`verifyEmail`, `resetPasswordOtp`, `adminResetPasswordOtp`, `existingAccountSignUp`, `rgLimitUpdated`,
 `rgCoolingOffActivated`, `rgCoolingOffLifted`, `rgSelfExclusionActivated`,
 `rgSelfExclusionLifted`, `withdrawalApproved`, `withdrawalRejected`,
 `kycResubmissionRequested`, `adminInvitation`.
@@ -65,6 +65,8 @@ plain-text default, and CI fails a renderer that has no entry for one.
 ## Delivery guarantee
 
 `MAIL_DISPATCH` enqueues (with a short enqueue-retry); the `mail-send` worker retries the
-send five times with a growing gap and a bounded concurrency. On exhausted delivery of a
+send five times with a growing gap and a bounded concurrency. The durable queue envelope is
+authenticated-encrypted with `AUTH_SECRET`, so addresses, OTPs, and invitation tokens are not
+readable from the queue backend. On exhausted delivery of a
 responsible-gambling or `kycResubmissionRequested` template, the worker writes an
 `AUDIT_WRITER` entry - the regulator asks about the notification at those events.

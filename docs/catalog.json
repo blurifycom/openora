@@ -1349,6 +1349,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "EncryptedMailSendJobSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
       "name": "EndRoundInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },

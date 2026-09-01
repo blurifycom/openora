@@ -69,6 +69,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Reset your password',
     text: `Your password reset code is: ${data.otp}`,
   }),
+  adminResetPasswordOtp: (data) => ({
+    subject: 'Password reset requested by an administrator',
+    text: `An administrator requested a password reset for your account. Your reset code is: ${data.otp}`,
+  }),
   // Sent when someone tries to sign up with an address that already has an account. It
   // must never confirm or deny that the account exists to anyone but its owner, so the
   // wording addresses the owner and the sign-up response stays identical either way.

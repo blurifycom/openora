@@ -29,6 +29,9 @@ export type EmailSenderPort = {
   send(message: EmailMessage): Promise<void>;
 };
 
+// Generator-friendly alias: adapter scaffolds derive their port type from the token name.
+export type EmailSender = EmailSenderPort;
+
 export const EMAIL_SENDER: Token<EmailSenderPort> = createToken<EmailSenderPort>('EMAIL_SENDER');
 
 export type MailToUserInput = {

@@ -9,7 +9,7 @@ import type {
 } from '@openora/core/contracts';
 import { mock } from '../../testing/mock.js';
 import { MailService } from '../service/mail.service.js';
-import { MAIL_SEND_QUEUE } from '../contract/index.js';
+import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from '../contract/index.js';
 
 const verify: MailTemplate = { key: 'verifyEmail', data: { otp: '123456' } };
 const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: {} };
@@ -50,7 +50,14 @@ function build(
     over.audit === undefined
       ? mock<AuditWritePort>({ record: vi.fn(async () => undefined) })
       : over.audit;
-  const svc = new MailService({ sender, renderer, directory, jobQueue, audit });
+  const svc = new MailService({
+    sender,
+    renderer,
+    directory,
+    jobQueue,
+    audit,
+    encryptionSecret: 'test-mail-encryption-secret-32chars',
+  });
   return { svc, sender, renderer, directory, jobQueue, audit };
 }
 
@@ -62,9 +69,11 @@ describe('MailService', () => {
 
     expect(jobQueue.enqueue).toHaveBeenCalledWith(
       MAIL_SEND_QUEUE,
-      { recipient: { kind: 'user', userId: 'u-1' }, template: verify },
+      expect.objectContaining({ ciphertext: expect.any(String) }),
       expect.objectContaining({ idempotencyKey: 'k-1', attempts: 5 }),
     );
+    const payload = vi.mocked(jobQueue.enqueue).mock.calls[0]?.[1];
+    expect(JSON.stringify(payload)).not.toContain('123456');
     expect(sender.send).not.toHaveBeenCalled();
     expect(renderer.render).not.toHaveBeenCalled();
   });
@@ -79,6 +88,26 @@ describe('MailService', () => {
     await svc.enqueueToAddress({ email: 'a@b.com', template: verify, idempotencyKey: 'k-2' });
 
     expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it('decrypts a queued payload before rendering and delivery', async () => {
+    const { svc, jobQueue, renderer, sender } = build();
+
+    await svc.enqueueToAddress({
+      email: 'de@b.com',
+      locale: 'de',
+      template: verify,
+      idempotencyKey: 'k-3',
+    });
+
+    const encrypted = vi.mocked(jobQueue.enqueue).mock.calls[0]?.[1];
+    if (!encrypted) {
+      throw new Error('mail job was not queued');
+    }
+    await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
+
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de');
+    expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'de@b.com' }));
   });
 
   it('delivers to an explicit address, rendering with the given locale and sending html + text', async () => {

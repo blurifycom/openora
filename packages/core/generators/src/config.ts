@@ -370,12 +370,11 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         choices: [
           'PAYMENT_ADAPTER',
           'KYC_ADAPTER',
-          'NOTIFICATION_DELIVERY_ADAPTER',
+          'EMAIL_SENDER',
           'GEO_IP_ADAPTER',
           'GAME_ADAPTER',
           'AGGREGATOR_ADAPTER',
           'RNG_ADAPTER',
-          'SEND_EMAIL',
         ],
       },
       {

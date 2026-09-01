@@ -13,6 +13,7 @@ import type {
   LoginEnforcementPort,
   MailDispatchPort,
   MailTemplate,
+  MailToUserInput,
   IdentityReader,
   User,
   ClientMeta,
@@ -152,7 +153,7 @@ export class RgService {
         key: 'rgLimitUpdated',
         data: { period: input.period, type: input.type, description: limitDescription },
       },
-      row.id,
+      `${row.id}:${row.updatedAt.toISOString()}`,
     );
     return toLimitDto(row);
   }
@@ -527,7 +528,7 @@ export class RgService {
   private async notify(
     userId: User['id'],
     template: MailTemplate,
-    rowId: RgExclusion['id'] | Limit['id'],
+    notificationId: MailToUserInput['idempotencyKey'],
   ) {
     if (!this.mailDispatch) {
       return;
@@ -536,7 +537,7 @@ export class RgService {
       await this.mailDispatch.toUser({
         userId,
         template,
-        idempotencyKey: `rg-notify:${template.key}:${rowId}`,
+        idempotencyKey: `rg-notify:${template.key}:${notificationId}`,
       });
     } catch (err) {
       logger.error({ err, userId, key: template.key }, 'RG player mail enqueue failed');

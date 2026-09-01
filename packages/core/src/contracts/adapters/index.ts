@@ -156,6 +156,7 @@ export { RNG_ADAPTER } from './rng.js';
 
 export type {
   EmailMessage,
+  EmailSender,
   EmailSenderPort,
   MailDispatchPort,
   MailToUserInput,

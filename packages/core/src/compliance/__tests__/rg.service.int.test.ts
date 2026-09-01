@@ -159,7 +159,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(dto).toMatchObject({ minutes: 60, amount: null });
   });
 
-  it('dispatches an RG mail keyed by the row when the mail port is bound', async () => {
+  it('dispatches an RG mail keyed by this limit version when the mail port is bound', async () => {
     const notifier = makeNotifier();
     const { svc } = makeService(notifier);
     const userId = randomUUID();
@@ -174,9 +174,29 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       expect.objectContaining({
         userId,
         template: expect.objectContaining({ key: 'rgLimitUpdated' }),
-        idempotencyKey: `rg-notify:rgLimitUpdated:${dto.id}`,
+        idempotencyKey: expect.stringMatching(new RegExp(`^rg-notify:rgLimitUpdated:${dto.id}:`)),
       }),
     );
+  });
+
+  it('uses a distinct mail idempotency key after updating the same limit', async () => {
+    const notifier = makeNotifier();
+    const { svc } = makeService(notifier);
+    const userId = randomUUID();
+    const input = {
+      userId,
+      type: 'deposit' as const,
+      amount: '100',
+      minutes: null,
+      period: 'daily' as const,
+    };
+
+    await svc.setPlayerLimit(userId, input, randomUUID());
+    await svc.setPlayerLimit(userId, { ...input, amount: '200' }, randomUUID());
+
+    const calls = vi.mocked(notifier.mailDispatch.toUser).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[0].idempotencyKey).not.toBe(calls[1]?.[0].idempotencyKey);
   });
 
   it('swallows a notification failure once the limit has committed', async () => {

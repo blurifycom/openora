@@ -72,6 +72,31 @@ describe('createAuth', () => {
       });
     });
 
+    it('carries the admin-reset origin in the queued template', async () => {
+      const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
+
+      createAuth({
+        db: {} as never,
+        dispatchOtpMail,
+        isAdminPasswordReset: async (email) => email === 'test@example.com',
+      });
+
+      const emailOtpOpts = emailOTPMock.mock.calls[0][0];
+      await emailOtpOpts.sendVerificationOTP({
+        email: 'test@example.com',
+        otp: '123456',
+        type: 'forget-password',
+      });
+
+      expect(dispatchOtpMail).toHaveBeenCalledWith({
+        to: 'test@example.com',
+        template: {
+          key: 'adminResetPasswordOtp',
+          data: { otp: '123456', email: 'test@example.com' },
+        },
+      });
+    });
+
     it('dispatches the verification code template for an email-verification OTP', async () => {
       const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
 

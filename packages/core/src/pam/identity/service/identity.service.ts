@@ -363,6 +363,7 @@ export class IdentityService {
         this.platformConfig?.registration?.requireEmailVerification ?? false,
       isExistingAccountSignUp: (lookupEmail) =>
         this.existingAccountSignUps.has(lookupEmail.toLowerCase()),
+      isAdminPasswordReset: (lookupEmail) => this.isAdminPasswordReset(lookupEmail),
       onExistingUserSignUp: async (existing) => {
         const key = existing.email.toLowerCase();
         this.existingAccountSignUps.add(key);
@@ -1001,11 +1002,23 @@ export class IdentityService {
     }
   }
 
-  // Read by a downstream custom EmailTemplateRenderer (same CACHE binding) to tell an
-  // admin-triggered reset apart from a self-service one within the synchronous
-  // sendVerificationOTP -> templateRenderer.render call chain below.
+  // Read while Better Auth selects the queued template. Unlike the former renderer
+  // marker, this value does not need to survive until mail delivery: the resulting
+  // `adminResetPasswordOtp` discriminator travels in the validated job payload.
   private adminPasswordResetMarkerKey(email: string): string {
     return `admin-password-reset:${email.toLowerCase()}`;
+  }
+
+  private async isAdminPasswordReset(email: string): Promise<boolean> {
+    if (!this.cache) {
+      return false;
+    }
+    try {
+      return (await this.cache.get<boolean>(this.adminPasswordResetMarkerKey(email))) === true;
+    } catch (err) {
+      identityLogger.warn({ email, err }, 'admin password reset marker cache read failed');
+      return false;
+    }
   }
 
   async adminRequestPasswordReset(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
@@ -1025,8 +1038,8 @@ export class IdentityService {
       identityLogger.warn({ email, err }, 'admin password reset marker cache write failed');
     }
 
-    // Mirrors requestPasswordReset: the OTP email (if any) is delivered through the
-    // sendEmail hook -> notifications; any underlying error is swallowed the same way.
+    // Mirrors requestPasswordReset: the OTP email (if any) is handed to the mail queue;
+    // any underlying error is swallowed the same way.
     try {
       await this.api.requestPasswordResetEmailOTP({
         body: { email },

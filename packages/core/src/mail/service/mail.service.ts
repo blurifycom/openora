@@ -9,7 +9,8 @@ import type {
   MailToAddressInput,
   MailToUserInput,
 } from '@openora/core/contracts';
-import { MAIL_SEND_QUEUE, type MailSendJob } from '../contract/index.js';
+import { MAIL_SEND_QUEUE, type EncryptedMailSendJob, type MailSendJob } from '../contract/index.js';
+import { createMailPayloadCipher, type MailPayloadCipher } from './mail-payload.service.js';
 
 const logger = createLogger('mail');
 
@@ -60,6 +61,7 @@ export type MailServiceDeps = {
   directory: AdminUserDirectory;
   jobQueue: JobQueueAdapter;
   audit: AuditWritePort | null;
+  encryptionSecret: string;
 };
 
 /**
@@ -75,6 +77,7 @@ export class MailService {
   private readonly directory: AdminUserDirectory;
   private readonly jobQueue: JobQueueAdapter;
   private readonly audit: AuditWritePort | null;
+  private readonly payloadCipher: MailPayloadCipher;
 
   constructor(deps: MailServiceDeps) {
     this.sender = deps.sender;
@@ -82,13 +85,14 @@ export class MailService {
     this.directory = deps.directory;
     this.jobQueue = deps.jobQueue;
     this.audit = deps.audit;
+    this.payloadCipher = createMailPayloadCipher(deps.encryptionSecret);
   }
 
   async enqueueToUser({ userId, template, idempotencyKey }: MailToUserInput): Promise<void> {
     await withEnqueueRetry(() =>
       this.jobQueue.enqueue(
         MAIL_SEND_QUEUE,
-        { recipient: { kind: 'user', userId }, template } satisfies MailSendJob,
+        this.encrypt({ recipient: { kind: 'user', userId }, template }),
         { idempotencyKey, ...MAIL_ENQUEUE_OPTS },
       ),
     );
@@ -103,10 +107,10 @@ export class MailService {
     await withEnqueueRetry(() =>
       this.jobQueue.enqueue(
         MAIL_SEND_QUEUE,
-        {
+        this.encrypt({
           recipient: { kind: 'address', email, ...(locale ? { locale } : {}) },
           template,
-        } satisfies MailSendJob,
+        }),
         { idempotencyKey, ...MAIL_ENQUEUE_OPTS },
       ),
     );
@@ -128,6 +132,10 @@ export class MailService {
     });
   }
 
+  async deliverEncrypted(job: EncryptedMailSendJob): Promise<void> {
+    await this.deliver(this.payloadCipher.decrypt(job));
+  }
+
   async onDeliveryExhausted(job: MailSendJob, error: Error): Promise<void> {
     logger.error(
       { err: error, key: job.template.key, recipient: job.recipient.kind },
@@ -145,6 +153,14 @@ export class MailService {
         after: { templateKey: job.template.key, error: error.message },
       })
       .catch((err) => logger.error({ err }, 'mail regulatory-failure audit write failed'));
+  }
+
+  async onEncryptedDeliveryExhausted(job: EncryptedMailSendJob, error: Error): Promise<void> {
+    await this.onDeliveryExhausted(this.payloadCipher.decrypt(job), error);
+  }
+
+  private encrypt(job: MailSendJob): EncryptedMailSendJob {
+    return this.payloadCipher.encrypt(job);
   }
 
   private async resolveRecipient(

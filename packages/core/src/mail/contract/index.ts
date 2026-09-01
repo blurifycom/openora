@@ -20,3 +20,12 @@ export const MailSendJobSchema = z.object({
   template: MailTemplateSchema,
 });
 export type MailSendJob = z.infer<typeof MailSendJobSchema>;
+
+// Mail can carry password-reset OTPs and invitation tokens. The queue persists this
+// envelope, never the plaintext recipient or template payload.
+export const EncryptedMailSendJobSchema = z.object({
+  ciphertext: z.string().min(1),
+  iv: z.string().min(1),
+  tag: z.string().min(1),
+});
+export type EncryptedMailSendJob = z.infer<typeof EncryptedMailSendJobSchema>;

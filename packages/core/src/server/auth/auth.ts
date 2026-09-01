@@ -35,6 +35,12 @@ export type AuthOptions = {
    * them apart on its own - and the two need different copy.
    */
   isExistingAccountSignUp?: (email: string) => boolean;
+  /**
+   * Marks a password-reset OTP initiated by an administrator. The selected template
+   * is carried over the mail queue, so renderer behavior never depends on a cache
+   * value still being present when the worker runs.
+   */
+  isAdminPasswordReset?: (email: string) => boolean | Promise<boolean>;
   cookieDomain?: string;
 };
 
@@ -131,7 +137,9 @@ export function createAuth(options: AuthOptions): BetterAuthType {
               ? { key: 'verifyEmail', data: { otp } }
               : options.isExistingAccountSignUp?.(email)
                 ? { key: 'existingAccountSignUp', data: { otp, email } }
-                : { key: 'resetPasswordOtp', data: { otp, email } };
+                : (await options.isAdminPasswordReset?.(email))
+                  ? { key: 'adminResetPasswordOtp', data: { otp, email } }
+                  : { key: 'resetPasswordOtp', data: { otp, email } };
           await dispatchOtpMail({ to: email, template });
         },
       }),

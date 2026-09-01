@@ -24,6 +24,16 @@ describe('DefaultEmailTemplateRenderer', () => {
     expect(result.text).toBe('Your password reset code is: 123456');
   });
 
+  it('renders an admin-reset template that identifies its origin', () => {
+    const result = renderer.render(
+      { key: 'adminResetPasswordOtp', data: { otp: '123456', email: 'test@example.com' } },
+      'en',
+    );
+
+    expect(result.subject).toContain('administrator');
+    expect(result.text).toContain('123456');
+  });
+
   it('renders existingAccountSignUp without naming it a password reset', () => {
     const result = renderer.render(
       { key: 'existingAccountSignUp', data: { otp: '123456', email: 'test@example.com' } },
@@ -41,6 +51,7 @@ describe('DefaultEmailTemplateRenderer', () => {
     const samples: MailTemplate[] = [
       { key: 'verifyEmail', data: { otp: '111111' } },
       { key: 'resetPasswordOtp', data: { otp: '111111', email: 'a@b.com' } },
+      { key: 'adminResetPasswordOtp', data: { otp: '111111', email: 'a@b.com' } },
       { key: 'existingAccountSignUp', data: { otp: '111111', email: 'a@b.com' } },
       { key: 'rgLimitUpdated', data: { period: 'daily', type: 'deposit', description: '100 EUR' } },
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-01-01T00:00:00.000Z' } },

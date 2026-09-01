@@ -11,7 +11,7 @@ import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/ser
 import { MailService } from './service/mail.service.js';
 import { DefaultEmailTemplateRenderer } from './adapters/default-email-template-renderer.js';
 import { StdoutEmailSender } from './adapters/stdout-email-sender.js';
-import { MAIL_SEND_QUEUE, MailSendJobSchema } from './contract/index.js';
+import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from './contract/index.js';
 
 const logger = createLogger('mail');
 
@@ -37,6 +37,7 @@ export default {
         directory: c.get(ADMIN_USER_DIRECTORY),
         jobQueue: c.get(JOB_QUEUE),
         audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
+        encryptionSecret: process.env['AUTH_SECRET'] ?? '',
       }));
 
     // Platform defaults: log-to-stdout transport, English-only plain-text renderer.
@@ -53,21 +54,21 @@ export default {
 
     ctx.jobs.worker({
       queue: MAIL_SEND_QUEUE,
-      schema: MailSendJobSchema,
+      schema: EncryptedMailSendJobSchema,
       // Mail providers rate-limit; keep the fan-out modest.
       options: { concurrency: 5 },
       handler: async ({ payload }) => {
         if (!svcRef) {
           throw new Error('mail: service not constructed yet');
         }
-        await svcRef.deliver(payload);
+        await svcRef.deliverEncrypted(payload);
       },
       onDeadLetter: (jobCtx, error) => {
         if (!svcRef) {
           logger.error({ err: error }, 'mail delivery exhausted retries before service init');
           return;
         }
-        return svcRef.onDeliveryExhausted(jobCtx.payload, error);
+        return svcRef.onEncryptedDeliveryExhausted(jobCtx.payload, error);
       },
     });
   },
