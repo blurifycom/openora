@@ -628,13 +628,20 @@ export async function mapEventToRecord(
 
   // Admin-on-behalf topics: `userId` names the affected account, not the actor - the
   // acting admin travels in its own `actorId` field, same as compliance.kyc.updated.
-  // `identity.trusted_device.revoked` can also fire with no actorId at all, when
-  // AdminGuard revokes the trust itself on a fingerprint mismatch.
+  // Both also fire self-service: `disableTwoFactor` / `regenerateBackupCodes` tear down
+  // the caller's own trust with `actorId === userId`, and
+  // `identity.trusted_device.revoked` fires with no actorId at all when AdminGuard
+  // revokes the trust itself on a fingerprint mismatch. Same system/forced/self split
+  // as the session-revoked mapper above, so a self-teardown is never logged as an
+  // admin acting on the account.
   if (topic === 'identity.2fa.reset' || topic === 'identity.trusted_device.revoked') {
+    const rawActorId = p['actorId'];
+    const isSystem = rawActorId === undefined || rawActorId === null;
+    const isForced = !isSystem && rawActorId !== p['userId'];
     return {
       ...base,
-      actorType: p['actorId'] ? 'admin' : 'system',
-      actorId: str(p['actorId']),
+      actorType: isSystem ? 'system' : isForced ? 'admin' : 'player',
+      actorId: isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']),
       resourceType: 'user',
       resourceId: str(p['userId']),
     };
