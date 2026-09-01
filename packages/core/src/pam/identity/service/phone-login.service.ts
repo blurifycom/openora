@@ -108,6 +108,7 @@ type UserRow = Pick<
   | 'language'
   | 'phoneNumber'
   | 'phoneVerified'
+  | 'twoFactorEnabled'
   | 'createdAt'
   | 'updatedAt'
 >;
@@ -123,6 +124,7 @@ function serializeUser(u: UserRow): User {
     language: u.language,
     phoneNumber: u.phoneNumber,
     phoneVerified: u.phoneVerified,
+    twoFactorEnabled: u.twoFactorEnabled ?? false,
     createdAt: u.createdAt.toISOString(),
     updatedAt: u.updatedAt.toISOString(),
   };
@@ -330,6 +332,7 @@ export class PhoneLoginService {
         language: user.language,
         phoneNumber: user.phoneNumber,
         phoneVerified: user.phoneVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         rgBlocked: user.rgBlocked,

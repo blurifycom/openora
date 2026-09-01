@@ -28,6 +28,7 @@ export const UserSchema = z.object({
   language: LanguageSchema,
   phoneNumber: z.string().nullable().optional(),
   phoneVerified: z.boolean().optional(),
+  twoFactorEnabled: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -137,12 +138,47 @@ export const Enable2faResultSchema = z.object({
   backupCodes: z.array(z.string()),
 });
 
+// The two credentials that clear a challenge today. A backup code is single-use and
+// spends itself, which is what makes it the recovery path off a lost authenticator.
+export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code']);
+
+// A live authenticator code, six digits. Used as the fresh second factor a step-up
+// action (disable 2FA, regenerate backup codes, trust this device) has to clear on
+// top of the account password - a backup code is deliberately not accepted here.
+export const TotpStepUpCodeSchema = z.string().length(6);
+
 export const Verify2faInputSchema = z.object({
-  code: z.string().min(6).max(10),
+  // A TOTP code is six digits; a backup code is ten characters split by a hyphen.
+  code: z.string().min(6).max(11),
+  method: TwoFactorChallengeMethodSchema.default('totp'),
+  // Suppresses the second factor on this browser until the trust window lapses.
+  // Honoured only for `method: 'totp'` - a spent recovery code buys a session, not
+  // a 30-day bypass - and only while the operator allows a non-zero window.
+  trustDevice: z.boolean().default(false),
+});
+
+export const RegenerateBackupCodesInputSchema = z.object({
+  password: z.string().min(8),
+  // A fresh authenticator code: rotating the standing recovery credentials is a
+  // step-up action, not something a stolen session plus a reused password can do.
+  code: TotpStepUpCodeSchema,
+});
+
+export const TrustCurrentDeviceInputSchema = z.object({
+  code: TotpStepUpCodeSchema,
+  password: z.string().min(8),
+});
+
+export const BackupCodesResultSchema = z.object({
+  backupCodes: z.array(z.string()),
 });
 
 export const Disable2faInputSchema = z.object({
   password: z.string().min(8),
+  // Disabling the second factor tears down every standing bypass with it, so it
+  // takes a fresh authenticator code on top of the password - the same bar as a
+  // Super Admin reset, just self-served.
+  code: TotpStepUpCodeSchema,
 });
 
 export const RequestPasswordResetInputSchema = z.object({
@@ -205,6 +241,9 @@ export type UsernameAvailabilityOutput = z.infer<typeof UsernameAvailabilityOutp
 export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
+export type TwoFactorChallengeMethod = z.infer<typeof TwoFactorChallengeMethodSchema>;
+export type RegenerateBackupCodesInput = z.infer<typeof RegenerateBackupCodesInputSchema>;
+export type TrustCurrentDeviceInput = z.infer<typeof TrustCurrentDeviceInputSchema>;
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>;
