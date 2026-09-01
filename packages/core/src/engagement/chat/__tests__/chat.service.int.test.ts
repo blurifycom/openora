@@ -673,6 +673,165 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
   });
 });
 
+describe('ChatService @mention detection (real PG)', () => {
+  function mentionDirectory(summaries: AdminPlayerSummary[]) {
+    return mock<AdminUserDirectory>({
+      lookupPlayers: async () => [],
+      getPlayerByUsername: vi
+        .fn()
+        .mockImplementation((username: string) =>
+          Promise.resolve(
+            summaries.find((s) => s.username.toLowerCase() === username.toLowerCase()) ?? null,
+          ),
+        ),
+    });
+  }
+
+  function summaryFor(userId: string, username: string): AdminPlayerSummary {
+    return {
+      playerId: randomUUID(),
+      userId,
+      username,
+      email: `${username}@example.com`,
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: new Date(),
+      level: 1,
+      currency: 'USD',
+    };
+  }
+
+  it('resolves an @username in a room message and emits chat.user.mentioned', async () => {
+    const bobId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const room = await seedRoom();
+
+    const msg = await svc.sendRoomMessage({
+      userId: randomUUID(),
+      username: 'alice',
+      roomId: room.id,
+      content: 'hello @bob, welcome',
+    });
+
+    await waitFor(() =>
+      vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
+    );
+    expect(events.emit).toHaveBeenCalledWith('chat.user.mentioned', {
+      mentionedUserId: bobId,
+      byUserId: msg.userId,
+      roomId: room.id,
+      messageId: msg.id,
+    });
+  });
+
+  it('resolves an @username in a global message with a null roomId', async () => {
+    const bobId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    const authorId = randomUUID();
+
+    const msg = await svc.sendGlobalMessage({
+      userId: authorId,
+      username: 'alice',
+      content: 'hey @bob',
+    });
+
+    await waitFor(() =>
+      vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
+    );
+    expect(events.emit).toHaveBeenCalledWith('chat.user.mentioned', {
+      mentionedUserId: bobId,
+      byUserId: authorId,
+      roomId: null,
+      messageId: msg.id,
+    });
+  });
+
+  it('excludes a self-mention', async () => {
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(authorId, 'alice')]));
+
+    await svc.sendGlobalMessage({
+      userId: authorId,
+      username: 'alice',
+      content: 'talking to myself @alice',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('emits once per uniquely mentioned user even when repeated in the message', async () => {
+    const bobId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+
+    await svc.sendGlobalMessage({
+      userId: randomUUID(),
+      username: 'alice',
+      content: '@bob @bob are you there @Bob?',
+    });
+
+    await waitFor(() =>
+      vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
+    );
+    const mentionCalls = vi
+      .mocked(events.emit)
+      .mock.calls.filter(([topic]) => topic === 'chat.user.mentioned');
+    expect(mentionCalls).toHaveLength(1);
+  });
+
+  it('silently drops an @token that does not resolve to a known username', async () => {
+    const { svc, events } = makeService(mentionDirectory([]));
+
+    await expect(
+      svc.sendGlobalMessage({ userId: randomUUID(), username: 'alice', content: 'hello @nobody' }),
+    ).resolves.toBeDefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('does not treat the domain part of an email address as a mention', async () => {
+    const acmeId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(acmeId, 'acme')]));
+
+    await expect(
+      svc.sendGlobalMessage({
+        userId: randomUUID(),
+        username: 'alice',
+        content: 'contact me at info@acme.com',
+      }),
+    ).resolves.toBeDefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('does not emit chat.user.mentioned when the mentioned user has blocked the sender', async () => {
+    const bobId = randomUUID();
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor(bobId, 'bob')]));
+    await svc.blockUser(bobId, authorId);
+
+    await svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+
+  it('fails closed (does not emit) when the block check throws', async () => {
+    const authorId = randomUUID();
+    const { svc, events } = makeService(mentionDirectory([summaryFor('not-a-valid-uuid', 'bob')]));
+
+    await expect(
+      svc.sendGlobalMessage({ userId: authorId, username: 'alice', content: 'hello @bob' }),
+    ).resolves.toBeDefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.emit).not.toHaveBeenCalledWith('chat.user.mentioned', expect.anything());
+  });
+});
+
 describe('ChatService.deleteMessage (real PG)', () => {
   it('soft-deletes a message for a room owner and publishes a tombstone', async () => {
     const { svc } = makeService();

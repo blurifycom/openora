@@ -189,11 +189,13 @@ describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wageri
     await vi.waitFor(async () => {
       const notifRes = await recipient.get('/notifications');
       expect(notifRes.status).toBe(200);
-      const notifications = (await readJson(notifRes)) as Array<{
-        type: string;
-        title: string;
-        body: string;
-      }>;
+      const { items: notifications } = (await readJson(notifRes)) as {
+        items: Array<{
+          type: string;
+          title: string;
+          body: string;
+        }>;
+      };
       const releaseNotif = notifications.find((n) => n.type === 'wallet.bonus_rollover.completed');
       expect(
         releaseNotif,

@@ -300,7 +300,9 @@
       "routes": [
         "notifications.list",
         "notifications.markAllRead",
-        "notifications.markRead"
+        "notifications.markRead",
+        "notifications.stream",
+        "notifications.unreadCount"
       ]
     },
     {
@@ -808,6 +810,7 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -913,6 +916,7 @@
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
+    "chat.user.mentioned",
     "chat.user.unblocked",
     "chat.user.unignored",
     "cms.banner.created",
@@ -1761,6 +1765,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "MarkNotificationReadOutputSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
       "name": "MemberSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1797,7 +1805,23 @@
       "file": "packages/core/src/audit/contract/index.ts"
     },
     {
+      "name": "NotificationCountSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationDataSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
       "name": "NotificationSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationsConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "NotificationSortBySchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
