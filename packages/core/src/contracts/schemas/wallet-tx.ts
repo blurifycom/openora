@@ -21,6 +21,7 @@ export const WALLET_TRANSACTION_TYPES = [
   'manual_debit',
   'swap_out',
   'swap_in',
+  'bet_reversal',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [

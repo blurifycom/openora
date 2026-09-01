@@ -5,12 +5,23 @@
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 
+export type WalletProviderRef = {
+  providerName: string;
+  providerRefId: string;
+  externalRoundId?: string;
+  /** Serialized into wallet_transaction.metadata. Exists so a replayed provider callback can
+   *  return the *exact original* response (incl. balance-at-the-time) via findByProviderRef,
+   *  instead of reconstructing one from current state that may have drifted since. */
+  responseSnapshot?: unknown;
+};
+
 export type WalletDebitArgs = {
   userId: string;
   amount: string;
   type: WalletTransactionType;
   /** Which of the player's balances to take from. Omit it and the debit falls on the player's active currency (`wallet.currency`). */
   currency?: string;
+  providerRef?: WalletProviderRef;
 };
 
 export type WalletDebitOutcome =
@@ -31,6 +42,7 @@ export type WalletCreditArgs = {
   allowNewCurrency?: boolean;
   /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
   allowNewWallet?: boolean;
+  providerRef?: WalletProviderRef;
 };
 
 export type WalletCreditOutcome = { ok: true; newBalance: string } | { ok: false; reason: string };

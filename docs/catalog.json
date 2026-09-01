@@ -925,7 +925,7 @@
     },
     {
       "category": "wallet-commands",
-      "interface": "WalletDebitArgs",
+      "interface": "WalletProviderRef",
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
@@ -935,7 +935,7 @@
     },
     {
       "category": "wallet-reader",
-      "interface": "WalletBalanceReading",
+      "interface": "WalletProviderTransaction",
       "token": "WALLET_READER",
       "status": "wired",
       "boundIn": [
