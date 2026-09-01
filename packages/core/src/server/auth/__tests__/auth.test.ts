@@ -26,19 +26,10 @@ describe('createAuth', () => {
   });
 
   describe('emailOTP plugin - sendVerificationOTP', () => {
-    it('sends an email when type is forget-password', async () => {
-      const sendEmail = vi.fn().mockResolvedValue(undefined);
-      const templateRenderer = {
-        render: vi.fn().mockResolvedValue({ subject: 'Reset', body: 'Code: 123456' }),
-      };
-      const getUserLanguage = vi.fn().mockResolvedValue('pl');
+    it('dispatches the reset-password template when type is forget-password', async () => {
+      const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
 
-      createAuth({
-        db: {} as never,
-        sendEmail,
-        templateRenderer,
-        getUserLanguage,
-      });
+      createAuth({ db: {} as never, dispatchOtpMail });
 
       const emailOtpOpts = emailOTPMock.mock.calls[0][0];
       await emailOtpOpts.sendVerificationOTP({
@@ -47,32 +38,21 @@ describe('createAuth', () => {
         type: 'forget-password',
       });
 
-      expect(getUserLanguage).toHaveBeenCalledWith('test@example.com');
-      expect(templateRenderer.render).toHaveBeenCalledWith(
-        'resetPasswordOtp',
-        { otp: '123456', email: 'test@example.com' },
-        'pl',
-      );
-      expect(sendEmail).toHaveBeenCalledWith({
+      expect(dispatchOtpMail).toHaveBeenCalledWith({
         to: 'test@example.com',
-        subject: 'Reset',
-        body: 'Code: 123456',
+        template: { key: 'resetPasswordOtp', data: { otp: '123456', email: 'test@example.com' } },
       });
     });
 
-    it('renders the existing-account template when the reset came from a sign-up', async () => {
+    it('dispatches the existing-account template when the reset came from a sign-up', async () => {
       // better-auth issues both through the same `forget-password` type, so without the
       // predicate a duplicate sign-up mails a bare "Reset your password" to someone who
       // never asked to reset anything.
-      const sendEmail = vi.fn().mockResolvedValue(undefined);
-      const templateRenderer = {
-        render: vi.fn().mockResolvedValue({ subject: 'Exists', body: 'Code: 123456' }),
-      };
+      const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
 
       createAuth({
         db: {} as never,
-        sendEmail,
-        templateRenderer,
+        dispatchOtpMail,
         isExistingAccountSignUp: (email) => email === 'test@example.com',
       });
 
@@ -83,20 +63,19 @@ describe('createAuth', () => {
         type: 'forget-password',
       });
 
-      expect(templateRenderer.render).toHaveBeenCalledWith(
-        'existingAccountSignUp',
-        { otp: '123456', email: 'test@example.com' },
-        'en',
-      );
+      expect(dispatchOtpMail).toHaveBeenCalledWith({
+        to: 'test@example.com',
+        template: {
+          key: 'existingAccountSignUp',
+          data: { otp: '123456', email: 'test@example.com' },
+        },
+      });
     });
 
-    it('renders the verification code template for an email-verification OTP', async () => {
-      const sendEmail = vi.fn().mockResolvedValue(undefined);
-      const templateRenderer = {
-        render: vi.fn().mockResolvedValue({ subject: 'Verify your email', body: 'code' }),
-      };
+    it('dispatches the verification code template for an email-verification OTP', async () => {
+      const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
 
-      createAuth({ db: {} as never, sendEmail, templateRenderer });
+      createAuth({ db: {} as never, dispatchOtpMail });
 
       const emailOtpOpts = emailOTPMock.mock.calls[0][0];
       await emailOtpOpts.sendVerificationOTP({
@@ -105,27 +84,16 @@ describe('createAuth', () => {
         type: 'email-verification',
       });
 
-      expect(templateRenderer.render).toHaveBeenCalledWith('verifyEmail', { otp: '123456' }, 'en');
-      expect(sendEmail).toHaveBeenCalledWith({
+      expect(dispatchOtpMail).toHaveBeenCalledWith({
         to: 'test@example.com',
-        subject: 'Verify your email',
-        body: 'code',
+        template: { key: 'verifyEmail', data: { otp: '123456' } },
       });
     });
 
-    it('returns early without sending an email for other types', async () => {
-      const sendEmail = vi.fn().mockResolvedValue(undefined);
-      const templateRenderer = {
-        render: vi.fn(),
-      };
-      const getUserLanguage = vi.fn();
+    it('returns early without dispatching mail for other types', async () => {
+      const dispatchOtpMail = vi.fn();
 
-      createAuth({
-        db: {} as never,
-        sendEmail,
-        templateRenderer,
-        getUserLanguage,
-      });
+      createAuth({ db: {} as never, dispatchOtpMail });
 
       const emailOtpOpts = emailOTPMock.mock.calls[0][0];
       await emailOtpOpts.sendVerificationOTP({
@@ -134,9 +102,7 @@ describe('createAuth', () => {
         type: 'sign-in',
       });
 
-      expect(getUserLanguage).not.toHaveBeenCalled();
-      expect(templateRenderer.render).not.toHaveBeenCalled();
-      expect(sendEmail).not.toHaveBeenCalled();
+      expect(dispatchOtpMail).not.toHaveBeenCalled();
     });
   });
 

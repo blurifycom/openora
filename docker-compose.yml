@@ -39,9 +39,24 @@ services:
   # See ADR-0028.
   redis:
     image: redis:7-alpine
-    command: ['redis-server', '--maxmemory-policy', 'noeviction']
+    # noeviction: the job queue shares this instance; evicting a queued key would
+    # silently drop a pending email/notification. appendonly + everysec: an fsync'd
+    # on-disk journal so a container restart does not lose what is still queued.
+    # A dedicated queue instance is a later infra ticket (ADR-0036).
+    command:
+      [
+        'redis-server',
+        '--maxmemory-policy',
+        'noeviction',
+        '--appendonly',
+        'yes',
+        '--appendfsync',
+        'everysec',
+      ]
     ports:
       - '6379:6379'
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -50,3 +65,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

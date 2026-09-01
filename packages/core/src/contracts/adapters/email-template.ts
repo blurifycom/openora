@@ -1,97 +1,153 @@
 import { createToken, type Token } from './token.js';
+import type { EmailTemplateData, EmailTemplateKey, MailTemplate } from '../schemas/mail.js';
 
-export type EmailTemplateKey =
-  | 'verifyEmail'
-  | 'resetPasswordOtp'
-  | 'existingAccountSignUp'
-  | 'rgLimitUpdated'
-  | 'rgCoolingOffActivated'
-  | 'rgCoolingOffLifted'
-  | 'rgSelfExclusionActivated'
-  | 'rgSelfExclusionLifted';
+/**
+ * A rendered email: subject plus BOTH bodies. HTML and text are separate fields,
+ * never one string the transport has to sniff (`body.trim().startsWith('<')`).
+ * The default renderer fills `text` with the copy and `html` with a minimal
+ * escaped wrapper; an operator overlay returns a designed HTML body and a
+ * generated plain-text alternative.
+ */
+export type RenderedEmail = { subject: string; html: string; text: string };
 
-export type EmailTemplateData = {
-  verifyEmail: { otp: string };
-  resetPasswordOtp: { otp: string; email: string };
-  existingAccountSignUp: { otp: string; email: string };
-  rgLimitUpdated: { period: string; type: string; description: string };
-  rgCoolingOffActivated: { expiresAt: Date };
-  rgCoolingOffLifted: Record<string, never>;
-  rgSelfExclusionActivated: { expiresAt: Date | null; isPermanent: boolean };
-  rgSelfExclusionLifted: Record<string, never>;
-};
-
-const formatEmailDate = (value: Date | null): string =>
-  value === null
-    ? 'further notice'
-    : `${new Intl.DateTimeFormat('en-GB', {
-        dateStyle: 'long',
-        timeStyle: 'short',
-        timeZone: 'UTC',
-      }).format(value)} UTC`;
-
+/**
+ * Renders one `{ key, data }` template into a subject + HTML + text for a locale.
+ * Takes the tagged union whole (not a key/data pair) so an implementation switches
+ * on `template.key` with `data` already narrowed, and no caller has to bridge the
+ * key/data generic across a port boundary.
+ */
 export type EmailTemplateRenderer = {
-  render<K extends EmailTemplateKey>(
-    key: K,
-    data: EmailTemplateData[K],
-    locale: string,
-  ): Promise<{ subject: string; body: string }> | { subject: string; body: string };
+  render(template: MailTemplate, locale: string): Promise<RenderedEmail> | RenderedEmail;
 };
 
 export const EMAIL_TEMPLATE_RENDERER: Token<EmailTemplateRenderer> =
   createToken<EmailTemplateRenderer>('EMAIL_TEMPLATE_RENDERER');
 
+const escapeHtml = (value: string): string =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Wraps the plain-text fallback in the smallest valid HTML body: each blank-line
+// block becomes a <p>, single newlines become <br>. Keeps the platform shippable
+// without an operator renderer; an overlay replaces this wholesale.
+const textToHtml = (text: string): string =>
+  text
+    .split(/\n{2,}/)
+    .map((block) => `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`)
+    .join('\n');
+
+const formatEmailDate = (iso: string | null, locale: string): string =>
+  iso === null
+    ? 'further notice'
+    : `${new Intl.DateTimeFormat(locale, {
+        dateStyle: 'long',
+        timeStyle: 'short',
+        timeZone: 'UTC',
+      }).format(new Date(iso))} UTC`;
+
+const formatMoney = (amount: string, currency: string): string => `${amount} ${currency}`;
+
+type PlainTemplate<K extends EmailTemplateKey> = (
+  data: EmailTemplateData[K],
+  locale: string,
+) => { subject: string; text: string };
+
 /**
- * Production-safe English-only copy, shared by `DefaultEmailTemplateRenderer`
- * (packages/core/src/pam/identity/adapters/) and the SessionResolver-only createAuth()
- * fallback in server/auth/auth.ts - single source of truth so the two never drift.
- * Openora core intentionally ships English-only; overlays that need other languages
- * replace the renderer via ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new MyRenderer()) -
- * `render`'s `locale` param (sourced from IdentityService.resolveUserLanguage) exists for exactly that seam.
+ * Production-safe English-only copy for every template key. Shared by the mail
+ * module's `DefaultEmailTemplateRenderer` and any caller that needs a fallback -
+ * single source of truth so no two copies drift. Openora core intentionally
+ * ships English-only plain text; an operator overlay rebinds
+ * `EMAIL_TEMPLATE_RENDERER` for other languages and HTML design. The `locale`
+ * argument still reaches every entry so date and number formatting follows the
+ * recipient even before an overlay is installed.
  */
-export const DEFAULT_EMAIL_TEMPLATES: {
-  [K in EmailTemplateKey]: (data: EmailTemplateData[K]) => { subject: string; body: string };
-} = {
+const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   verifyEmail: (data) => ({
     subject: 'Verify your email',
-    body: `Your email verification code is: ${data.otp}`,
+    text: `Your email verification code is: ${data.otp}`,
   }),
   resetPasswordOtp: (data) => ({
     subject: 'Reset your password',
-    body: `Your password reset code is: ${data.otp}`,
+    text: `Your password reset code is: ${data.otp}`,
   }),
   // Sent when someone tries to sign up with an address that already has an account. It
   // must never confirm or deny that the account exists to anyone but its owner, so the
   // wording addresses the owner and the sign-up response stays identical either way.
-  // Carries a reset code rather than only a notice: whoever tried is most likely the
-  // owner having forgotten they registered.
   existingAccountSignUp: (data) => ({
     subject: 'You already have an account',
-    body:
+    text:
       `Someone tried to create an account with this email address. ` +
       `You already have one, so no new account was created. ` +
       `If it was you, sign in as usual - or use this code to reset your password: ${data.otp}`,
   }),
   rgLimitUpdated: (data) => ({
     subject: 'Your gambling limit was updated',
-    body: `A ${data.period} ${data.type} limit of ${data.description} is now active on your account.`,
+    text: `A ${data.period} ${data.type} limit of ${data.description} is now active on your account.`,
   }),
-  rgCoolingOffActivated: (data) => ({
+  rgCoolingOffActivated: (data, locale) => ({
     subject: 'Your cooling-off period has started',
-    body: `A cooling-off period is active on your account until ${formatEmailDate(data.expiresAt)}.\n\nYou will not be able to log in or place bets until then.`,
+    text: `A cooling-off period is active on your account until ${formatEmailDate(
+      data.expiresAt,
+      locale,
+    )}.\n\nYou will not be able to log in or place bets until then.`,
   }),
   rgCoolingOffLifted: () => ({
     subject: 'Your cooling-off period has ended',
-    body: 'Your cooling-off period has been ended and you can log in again.',
+    text: 'Your cooling-off period has been ended and you can log in again.',
   }),
-  rgSelfExclusionActivated: (data) => ({
+  rgSelfExclusionActivated: (data, locale) => ({
     subject: 'Your self-exclusion has started',
-    body: data.isPermanent
+    text: data.isPermanent
       ? 'Your account has been permanently self-excluded and you will not be able to log in.'
-      : `Your account is self-excluded until ${formatEmailDate(data.expiresAt)}.\n\nYou will not be able to log in until then.`,
+      : `Your account is self-excluded until ${formatEmailDate(
+          data.expiresAt,
+          locale,
+        )}.\n\nYou will not be able to log in until then.`,
   }),
   rgSelfExclusionLifted: () => ({
     subject: 'Your self-exclusion has been lifted',
-    body: 'Your self-exclusion has been lifted and you can log in again.',
+    text: 'Your self-exclusion has been lifted and you can log in again.',
+  }),
+  withdrawalApproved: (data, locale) => ({
+    subject: 'Your withdrawal was approved',
+    text:
+      `Your withdrawal of ${formatMoney(data.amount, data.currency)} has been approved and is being processed.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
+  }),
+  withdrawalRejected: (data, locale) => ({
+    subject: 'Your withdrawal was rejected',
+    text:
+      `Your withdrawal of ${formatMoney(data.amount, data.currency)} was rejected and the funds were returned to your balance.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}` +
+      (data.reason ? `\nReason: ${data.reason}` : ''),
+  }),
+  kycResubmissionRequested: (data) => ({
+    subject: 'Document resubmission required',
+    text:
+      `An admin has requested you resubmit your verification documents.` +
+      (data.reason ? ` Reason: ${data.reason}.` : ''),
+  }),
+  adminInvitation: (data, locale) => ({
+    subject: 'You have been invited as an administrator',
+    text: `Your admin invitation token: ${data.token}. It expires at ${formatEmailDate(
+      data.expiresAt,
+      locale,
+    )}.`,
   }),
 };
+
+/**
+ * The English-only fallback render for one `{ key, data }` template.
+ * `DefaultEmailTemplateRenderer` (the mail module's platform-default
+ * `EMAIL_TEMPLATE_RENDERER` binding) is a thin wrapper over this; keeping it a
+ * pure function means a caller that needs the fallback copy without the DI
+ * plumbing can reach it directly.
+ */
+export function renderDefaultEmail(template: MailTemplate, locale: string): RenderedEmail {
+  // The tagged union pairs `key` with `data` by construction, but indexing the
+  // template map by a union key produces a union of functions TS will not call
+  // with the union data. This is the single sanctioned variance cast (see conventions);
+  // MailTemplateSchema guarantees the pairing at every entry point.
+  const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
+  const { subject, text } = plain(template.data, locale);
+  return { subject, text, html: textToHtml(text) };
+}

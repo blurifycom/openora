@@ -5,9 +5,7 @@ import {
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
   PLAY_ELIGIBILITY,
-  NOTIFICATION_DELIVERY_ADAPTER,
-  SEND_EMAIL,
-  EMAIL_TEMPLATE_RENDERER,
+  MAIL_DISPATCH,
   GEO_CHECK_COMMANDS,
   PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
@@ -23,7 +21,6 @@ import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
-import { DefaultEmailTemplateRenderer } from './adapters/default-email-template-renderer.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
@@ -46,12 +43,6 @@ export default {
     );
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
     ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
-    // Resolved lazily so identity does not depend on the notifications plugin's load order.
-    ctx.provide(SEND_EMAIL, (c) => ({
-      send: ({ to, subject, body }) =>
-        c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
-    }));
-    ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new DefaultEmailTemplateRenderer());
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
@@ -83,8 +74,9 @@ export default {
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           identityReader: c.get(IDENTITY_READER),
-          email: c.get(SEND_EMAIL),
-          templateRenderer: c.get(EMAIL_TEMPLATE_RENDERER),
+          // Resolved lazily (router factory runs after every plugin registered) so identity
+          // does not depend on the mail plugin's load order. See ADR-0036.
+          mailDispatch: c.get(MAIL_DISPATCH),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,

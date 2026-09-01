@@ -90,6 +90,9 @@ flowchart TB
   subgraph DCOMP["@openora/core/compliance · RG/KYC"]
     COMP["compliance ⟨geo_rule·user_limit⟩"]:::core
   end
+  subgraph DMAIL["@openora/core/mail · outbound email (no tables)"]
+    MAILM["mail ⟨mail-send queue⟩"]:::core
+  end
   subgraph D3["@openora/core/wallet · money"]
     WAL["wallet ⟨wallet·wallet_transaction⟩"]:::core
   end
@@ -113,8 +116,8 @@ flowchart TB
     P_GAME["GAME_ADAPTER"]:::port
     P_RNG["RNG_ADAPTER"]:::port
     P_AGG["AGGREGATOR_ADAPTER"]:::port
-    P_MAIL["SEND_EMAIL"]:::port
-    P_NOTI["NOTIFICATION_DELIVERY_ADAPTER"]:::port
+    P_MAIL["EMAIL_SENDER"]:::port
+    P_DISP["MAIL_DISPATCH"]:::port
     P_ADMIN["ADMIN_PERMISSION_RESOLVER"]:::port
     P_AUD["AUDIT_WRITER"]:::port
     P_WCMD["WALLET_COMMANDS (sync cmd port)"]:::port
@@ -156,13 +159,15 @@ flowchart TB
   LOB -.->|reads /schema| GAM
 
   WAL --> P_PAY
-  IDENT --> P_KYC & P_MAIL & P_NOTI
-  IAM --> P_ADMIN & P_MAIL
+  IDENT --> P_KYC & P_DISP
+  IAM --> P_ADMIN & P_DISP
+  MAILM --> P_MAIL
+  MAILM -.->|owns| P_DISP
   COMP --> P_GEO
   AUDIT --> P_AUD
   GAM --> P_GAME & P_RNG
   CHAT --> P_RT
-  NOT --> P_NOTI
+  NOT --> P_DISP
 
   D1 & D2 & D3 & D4 & D6 & D7 -->|after commit| BUS
   BUS --- P_BROK
@@ -231,7 +236,7 @@ flowchart LR
   subgraph TOKENS["@openora/core/contracts adapter tokens"]
     t1["PAYMENT_ADAPTER"]; t2["KYC_ADAPTER"]; t3["GAME_ADAPTER"]; t4["RNG_ADAPTER"]
     t5["GEO_IP_ADAPTER"]; t6["AGGREGATOR_ADAPTER"]; t7["REALTIME_TRANSPORT"]
-    t8["SEND_EMAIL"]; t9["NOTIFICATION_DELIVERY_ADAPTER"]; t10["ADMIN_PERMISSION_RESOLVER"]; t11["AUDIT_WRITER"]
+    t8["EMAIL_SENDER"]; t9["MAIL_DISPATCH"]; t10["ADMIN_PERMISSION_RESOLVER"]; t11["AUDIT_WRITER"]
   end
   subgraph DEFAULT["Default impl (in plugin - dev/test/CI)"]
     d1["MockPaymentAdapter"]; d2["MockKycAdapter"]; d3["MockGameAdapter"]; d4["DefaultRng"]
@@ -289,7 +294,7 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 18 modules, 223 routes, 40 adapter ports, 89 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 19 modules, 223 routes, 39 adapter ports, 89 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                    | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
@@ -301,6 +306,7 @@ Generated from `docs/catalog.json` - 18 modules, 223 routes, 40 adapter ports, 8
 | `@openora/core/compliance`    | compliance                                                 | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 20     |
 | `@openora/core/engagement`    | chat · chat-commands · notifications · social              | chat_command_config, chat_message, chat_mute, chat_platform_ban + 11 more           | 72     |
 | `@openora/core/iam`           | iam                                                        | admin_invitation, admin_role, admin_role_assignment, admin_role_permission          | 17     |
+| `@openora/core/mail`          | mail                                                       | (owns none - reads through ports)                                                   | 0      |
 | `@openora/core/pam`           | identity · player-management · player-note · profile · tag | account, player, player_note, player_tag + 7 more                                   | 47     |
 | `@openora/core/wallet`        | wallet                                                     | auto_withdrawal_rule, wallet, wallet_asset, wallet_auto_withdrawal_config + 10 more | 35     |
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   createAuth,
@@ -20,8 +21,7 @@ import type {
   CacheAdapter,
   RateLimiterAdapter,
   RateLimitKey,
-  SendEmailPort,
-  EmailTemplateRenderer,
+  MailDispatchPort,
   LoginInput,
   RegisterInput,
   Enable2faInput,
@@ -279,8 +279,8 @@ export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   identityReader: IdentityReader;
-  email?: SendEmailPort;
-  templateRenderer: EmailTemplateRenderer;
+  /** Enqueues OTP mail (verification / reset). Omitted only in tests that never send. */
+  mailDispatch?: MailDispatchPort;
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
@@ -303,8 +303,7 @@ export class IdentityService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly identityReader: IdentityReader;
-  private readonly email?: SendEmailPort;
-  private readonly templateRenderer: EmailTemplateRenderer;
+  private readonly mailDispatch?: MailDispatchPort;
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
@@ -322,8 +321,7 @@ export class IdentityService {
     drizzle,
     events,
     identityReader,
-    email,
-    templateRenderer,
+    mailDispatch,
     options,
     limiter,
     platformConfig,
@@ -334,8 +332,7 @@ export class IdentityService {
     this.drizzle = drizzle;
     this.events = events;
     this.identityReader = identityReader;
-    this.email = email;
-    this.templateRenderer = templateRenderer;
+    this.mailDispatch = mailDispatch;
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
@@ -345,9 +342,23 @@ export class IdentityService {
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
-      ...(email ? { sendEmail: (args) => email.send(args) } : {}),
-      templateRenderer: this.templateRenderer,
-      getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      ...(mailDispatch
+        ? {
+            dispatchOtpMail: async ({ to, template }) => {
+              // identity owns the `user` table, so it resolves the account locale here
+              // and passes it explicitly; the mail module never reads the identity schema.
+              const locale = (await this.resolveUserLanguage(to)) ?? 'en';
+              await mailDispatch.toAddress({
+                email: to,
+                locale,
+                template,
+                // OTP sends are request-driven, not event-driven: every send is a new
+                // code and must go through, so the key is unique per call.
+                idempotencyKey: `otp:${template.key}:${randomUUID()}`,
+              });
+            },
+          }
+        : {}),
       requireEmailVerification:
         this.platformConfig?.registration?.requireEmailVerification ?? false,
       isExistingAccountSignUp: (lookupEmail) =>

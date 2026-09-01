@@ -148,26 +148,25 @@ export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
 export type { PlayerProvisioning, PlayerRegistrationRecord } from './player-provisioning.js';
 export { PLAYER_PROVISIONING } from './player-provisioning.js';
 
-export type { NotificationDeliveryAdapter } from './notification.js';
-export { NOTIFICATION_DELIVERY_ADAPTER } from './notification.js';
-
 export type { AggregatorAdapter, AggregatorGame, AggregatorWebhookVerifier } from './aggregator.js';
 export { AGGREGATOR_ADAPTER, AGGREGATOR_WEBHOOK_VERIFIER } from './aggregator.js';
 
 export type { RngAdapter } from './rng.js';
 export { RNG_ADAPTER } from './rng.js';
 
-export type { SendEmailPort } from './email.js';
-export { SEND_EMAIL } from './email.js';
+export type {
+  EmailMessage,
+  EmailSenderPort,
+  MailDispatchPort,
+  MailToUserInput,
+  MailToAddressInput,
+} from './mail.js';
+export { EMAIL_SENDER, MAIL_DISPATCH } from './mail.js';
 
 export type { SmsAdapter } from './sms.js';
 export { SMS_ADAPTER } from './sms.js';
-export type {
-  EmailTemplateKey,
-  EmailTemplateData,
-  EmailTemplateRenderer,
-} from './email-template.js';
-export { EMAIL_TEMPLATE_RENDERER, DEFAULT_EMAIL_TEMPLATES } from './email-template.js';
+export type { EmailTemplateRenderer, RenderedEmail } from './email-template.js';
+export { EMAIL_TEMPLATE_RENDERER, renderDefaultEmail } from './email-template.js';
 
 export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
 export { ERROR_TRACKING } from './error-tracking.js';

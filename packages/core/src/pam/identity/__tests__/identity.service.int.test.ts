@@ -12,11 +12,7 @@ import {
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import type {
-  EmailTemplateRenderer,
-  PlatformConfig,
-  RateLimiterAdapter,
-} from '@openora/core/contracts';
+import type { PlatformConfig, RateLimiterAdapter } from '@openora/core/contracts';
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
@@ -83,13 +79,8 @@ const allowLimiter = () =>
     reset: vi.fn().mockResolvedValue(undefined),
   });
 
-const testTemplateRenderer: EmailTemplateRenderer = {
-  render: () => ({ subject: 'subject', body: 'body' }),
-};
-
-function buildService(deps: Partial<Omit<IdentityServiceDeps, 'templateRenderer'>> = {}) {
+function buildService(deps: Partial<IdentityServiceDeps> = {}) {
   return new IdentityService({
-    templateRenderer: testTemplateRenderer,
     drizzle: db.drizzle,
     events: makeEventBus(),
     identityReader: makeIdentityReader(),

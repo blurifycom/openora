@@ -1,23 +1,22 @@
 import * as z from 'zod';
 import {
-  ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
-  NOTIFICATION_DELIVERY_ADAPTER,
+  MAIL_DISPATCH,
+  MailTemplateSchema,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
   UuidSchema,
   domainEventSchemas,
   queue,
-  type AdminUserDirectory,
   type DomainEventName,
   type DomainEventPayload,
   type JobQueueAdapter,
-  type NotificationDeliveryAdapter,
+  type MailDispatchPort,
+  type MailTemplate,
   type RealtimeTransport,
 } from '@openora/core/contracts';
 import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import {
   createNotificationsRouter,
   notificationsChannel,
@@ -36,12 +35,17 @@ const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
   reason: z.string().nullable(),
+  eventId: UuidSchema,
 });
 
 const NotificationDispatchJobSchema = z.object({
   event: z.string(),
   input: CreateNotificationInputSchema,
-  sendEmail: z.boolean(),
+  // The `{ key, data }` mail template to enqueue alongside the in-app notification,
+  // or null for an in-app-only event. Replaces the old `sendEmail: boolean` - a flag
+  // can't carry the template key or its data (that's why four mails used to go out as
+  // the notification's English body). See ADR-0036.
+  email: MailTemplateSchema.nullable(),
 });
 
 function formatMoneyAmount(amount: string): string {
@@ -58,8 +62,11 @@ function formatMoneyAmount(amount: string): string {
 
 type NotificationMapEntry = {
   event: DomainEventName;
-  sendEmail: boolean;
   handle: (payload: unknown) => CreateNotificationInput | null;
+  // Builds the mail template for this event, or null when the event is in-app only.
+  // `occurredAt` is the envelope timestamp - the mail must date from when the event
+  // happened, never from when the (possibly retried) worker ran.
+  buildEmail: (payload: unknown, occurredAt: string) => MailTemplate | null;
 };
 
 // Drops null/undefined entity refs (eg a nullable roomId) so `data` only ever carries
@@ -79,20 +86,27 @@ function compactData(
 function mapEvent<K extends DomainEventName>(
   event: K,
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
-  options: { sendEmail: boolean },
+  options?: { email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate },
 ): NotificationMapEntry {
+  // Library boundary: TS cannot narrow a domainEventSchemas lookup keyed by this
+  // function's own generic K to that one event's payload type; the pairing holds
+  // by domainEventSchemas' own definition (DomainEventPayload<K> is inferred from it).
+  const parse = (payload: unknown): DomainEventPayload<K> | null => {
+    const parsed = domainEventSchemas[event].safeParse(payload);
+    return parsed.success ? (parsed.data as DomainEventPayload<K>) : null;
+  };
   return {
     event,
-    sendEmail: options.sendEmail,
     handle: (payload) => {
-      const parsed = domainEventSchemas[event].safeParse(payload);
-      if (!parsed.success) {
+      const data = parse(payload);
+      return data ? buildNotification(data) : null;
+    },
+    buildEmail: (payload, occurredAt) => {
+      if (!options?.email) {
         return null;
       }
-      // Library boundary: TS cannot narrow a domainEventSchemas lookup keyed by this
-      // function's own generic K to that one event's payload type; the pairing holds
-      // by domainEventSchemas' own definition (DomainEventPayload<K> is inferred from it).
-      return buildNotification(parsed.data as DomainEventPayload<K>);
+      const data = parse(payload);
+      return data ? options.email(data, occurredAt) : null;
     },
   };
 }
@@ -107,7 +121,18 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been approved and is being processed.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    {
+      email: (p, occurredAt) => ({
+        key: 'withdrawalApproved',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+          status: 'approved',
+        },
+      }),
+    },
   ),
 
   mapEvent(
@@ -119,119 +144,95 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} was rejected and the funds were returned to your balance.${p.reason ? ` Reason: ${p.reason}.` : ''}`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    {
+      email: (p, occurredAt) => ({
+        key: 'withdrawalRejected',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+          status: 'rejected',
+          reason: p.reason,
+        },
+      }),
+    },
   ),
 
-  mapEvent(
-    'wallet.withdrawal.requested',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.requested',
-      title: 'Withdrawal requested',
-      body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.withdrawal.requested', (p) => ({
+    userId: p.userId,
+    type: 'withdrawal.requested',
+    title: 'Withdrawal requested',
+    body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.withdrawal.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.completed',
-      title: 'Withdrawal completed',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.withdrawal.completed', (p) => ({
+    userId: p.userId,
+    type: 'withdrawal.completed',
+    title: 'Withdrawal completed',
+    body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.withdrawal.failed',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.failed',
-      title: 'Withdrawal failed',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.withdrawal.failed', (p) => ({
+    userId: p.userId,
+    type: 'withdrawal.failed',
+    title: 'Withdrawal failed',
+    body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.deposit.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'deposit.completed',
-      title: 'Deposit completed',
-      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.deposit.completed', (p) => ({
+    userId: p.userId,
+    type: 'deposit.completed',
+    title: 'Deposit completed',
+    body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.manual_adjustment.created',
-    (p) => ({
-      userId: p.userId,
-      type: 'balance.adjusted',
-      title: 'Balance adjusted',
-      body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.manual_adjustment.created', (p) => ({
+    userId: p.userId,
+    type: 'balance.adjusted',
+    title: 'Balance adjusted',
+    body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.bonus_rollover.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'wallet.bonus_rollover.completed',
-      title: 'Bonus unlocked',
-      body: `Your ${formatMoneyAmount(p.creditedAmount)} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
-      data: null,
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.bonus_rollover.completed', (p) => ({
+    userId: p.userId,
+    type: 'wallet.bonus_rollover.completed',
+    title: 'Bonus unlocked',
+    body: `Your ${formatMoneyAmount(p.creditedAmount)} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
+    data: null,
+  })),
 
-  mapEvent(
-    'chat.user.mentioned',
-    (p) => ({
-      userId: p.mentionedUserId,
-      type: 'chat.mention',
-      title: 'You were mentioned',
-      body: 'You were mentioned in a chat message.',
-      data: compactData({ roomId: p.roomId, messageId: p.messageId }),
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('chat.user.mentioned', (p) => ({
+    userId: p.mentionedUserId,
+    type: 'chat.mention',
+    title: 'You were mentioned',
+    body: 'You were mentioned in a chat message.',
+    data: compactData({ roomId: p.roomId, messageId: p.messageId }),
+  })),
 
   // Pre-existing types: in-app only, unchanged from before the declarative-map refactor.
-  mapEvent(
-    'social.friend_request.sent',
-    (p) => ({
-      userId: p.addresseeId,
-      type: 'social.friend_request.received',
-      title: 'New friend request',
-      body: `${p.requesterUsername} sent you a friend request.`,
-      data: { requesterId: p.requesterId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('social.friend_request.sent', (p) => ({
+    userId: p.addresseeId,
+    type: 'social.friend_request.received',
+    title: 'New friend request',
+    body: `${p.requesterUsername} sent you a friend request.`,
+    data: { requesterId: p.requesterId },
+  })),
 
-  mapEvent(
-    'social.friend_request.accepted',
-    (p) => ({
-      userId: p.requesterId,
-      type: 'social.friend_request.accepted',
-      title: 'Friend request accepted',
-      body: `${p.accepterUsername} accepted your friend request.`,
-      // accepterId, not requesterId: the recipient of THIS notification is the
-      // requester, so the linkable "other party" is whoever just accepted.
-      data: { accepterId: p.accepterId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('social.friend_request.accepted', (p) => ({
+    userId: p.requesterId,
+    type: 'social.friend_request.accepted',
+    title: 'Friend request accepted',
+    body: `${p.accepterUsername} accepted your friend request.`,
+    // accepterId, not requesterId: the recipient of THIS notification is the
+    // requester, so the linkable "other party" is whoever just accepted.
+    data: { accepterId: p.accepterId },
+  })),
 ];
 
 export function buildKycResubmissionNotification(payload: {
@@ -249,40 +250,40 @@ export function buildKycResubmissionNotification(payload: {
 
 export default {
   id: 'notifications',
-  // ADMIN_USER_DIRECTORY (owned by identity) resolves the player's email for the
-  // delivery emails; pin load order so a split still finds the port. See ADR-0017.
-  dependsOn: ['identity'],
   register(ctx) {
-    ctx.provide(NOTIFICATION_DELIVERY_ADAPTER, () => new MockNotificationDeliveryAdapter());
-
     const logger = createLogger('notifications');
 
     // Subscriptions are wired before router factories run (boot order), so these refs are
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
-    let deliveryRef: NotificationDeliveryAdapter | null = null;
-    let directoryRef: AdminUserDirectory | null = null;
+    // Resolved lazily (router factory) so notifications does not depend on the mail
+    // plugin's load order. The mail module OWNS address + locale resolution and the
+    // send path - this module only names the template. See ADR-0036.
+    let mailDispatchRef: MailDispatchPort | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
-    // Best-effort email alongside the in-app notification; a missing user or delivery
-    // failure is logged, never thrown - the in-app notification already landed.
-    const sendEmail = (userId: string, title: string, body: string) => {
-      if (!deliveryRef || !directoryRef) {
+    // Hands a template to the mail module keyed by the source event, so a redelivered
+    // event never doubles the mail. Never throws into the caller - the in-app
+    // notification has already landed; the enqueue is retried inside the mail module.
+    const dispatchMail = async (
+      userId: string,
+      template: MailTemplate,
+      eventId: string,
+    ): Promise<void> => {
+      if (!mailDispatchRef) {
         return;
       }
-      const delivery = deliveryRef;
-      directoryRef
-        .get(userId)
-        .then((user) => {
-          if (!user?.email) {
-            logger.warn({ userId }, 'notification email skipped: no email for user');
-            return;
-          }
-          return delivery.sendEmail(user.email, title, body);
-        })
-        .catch((err) => logger.error({ err }, 'notification email delivery failed'));
+      try {
+        await mailDispatchRef.toUser({
+          userId,
+          template,
+          idempotencyKey: `notifications-mail:${eventId}`,
+        });
+      } catch (err) {
+        logger.error({ err, key: template.key }, 'notification mail enqueue failed');
+      }
     };
 
     const publishNotification = (
@@ -311,7 +312,7 @@ export default {
             {
               event: entry.event,
               input: { ...input, eventId: envelope.eventId },
-              sendEmail: entry.sendEmail,
+              email: entry.buildEmail(payload, envelope.occurredAt),
             },
             {
               idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
@@ -344,7 +345,7 @@ export default {
       jobQueueRef
         .enqueue(
           KYC_RESUBMISSION_NOTIFY_QUEUE,
-          { userId: p.userId, reason: p.reason },
+          { userId: p.userId, reason: p.reason, eventId: envelope.eventId },
           { idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}` },
         )
         .catch((err) => logger.error({ err }, 'kyc-resubmission-notify enqueue failed'));
@@ -363,7 +364,11 @@ export default {
           return;
         }
         publishNotification(record);
-        sendEmail(input.userId, input.title, input.body);
+        await dispatchMail(
+          payload.userId,
+          { key: 'kycResubmissionRequested', data: { reason: payload.reason } },
+          payload.eventId,
+        );
       },
     });
 
@@ -379,8 +384,8 @@ export default {
           return;
         }
         publishNotification(record);
-        if (payload.sendEmail) {
-          sendEmail(record.userId, record.title, record.body);
+        if (payload.email) {
+          await dispatchMail(record.userId, payload.email, payload.input.eventId ?? record.id);
         }
       },
       onDeadLetter: (jobCtx, error) => {
@@ -406,8 +411,7 @@ export default {
     ctx.routers.add('notifications', (c) => {
       const svc = new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;
-      deliveryRef = c.get(NOTIFICATION_DELIVERY_ADAPTER);
-      directoryRef = c.get(ADMIN_USER_DIRECTORY);
+      mailDispatchRef = c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null;
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;

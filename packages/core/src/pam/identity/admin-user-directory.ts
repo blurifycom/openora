@@ -19,6 +19,7 @@ function toRow(r: typeof user.$inferSelect) {
     createdAt: r.createdAt,
     isActive: r.isActive,
     role: r.role,
+    language: r.language ?? null,
     failedLoginAttempts: r.failedLoginAttempts,
     lockoutUntil: r.lockoutUntil,
   };

@@ -11,11 +11,8 @@ import {
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
 import type {
   LoginEnforcementPort,
-  SendEmailPort,
-  EmailTemplateRenderer,
-  EmailTemplateData,
-  EmailTemplateKey,
-  AdminUserDirectory,
+  MailDispatchPort,
+  MailTemplate,
   IdentityReader,
   User,
   ClientMeta,
@@ -77,10 +74,9 @@ export type RgServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   loginEnforcement: LoginEnforcementPort;
-  email?: SendEmailPort | null;
-  directory?: AdminUserDirectory | null;
   identityReader: IdentityReader;
-  templateRenderer?: EmailTemplateRenderer | null;
+  /** Enqueues the player-facing RG email. Null in tests that don't assert on mail. */
+  mailDispatch?: MailDispatchPort | null;
 };
 
 /**
@@ -96,19 +92,15 @@ export class RgService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly loginEnforcement: LoginEnforcementPort;
-  private readonly email: SendEmailPort | null;
-  private readonly directory: AdminUserDirectory | null;
   private readonly identityReader: IdentityReader;
-  private readonly templateRenderer: EmailTemplateRenderer | null;
+  private readonly mailDispatch: MailDispatchPort | null;
 
   constructor(deps: RgServiceDeps) {
     this.drizzle = deps.drizzle;
     this.events = deps.events;
     this.loginEnforcement = deps.loginEnforcement;
-    this.email = deps.email ?? null;
-    this.directory = deps.directory ?? null;
     this.identityReader = deps.identityReader;
-    this.templateRenderer = deps.templateRenderer ?? null;
+    this.mailDispatch = deps.mailDispatch ?? null;
   }
 
   async setPlayerLimit(
@@ -154,11 +146,14 @@ export class RgService {
       userAgent: meta?.userAgent ?? null,
     });
     const limitDescription = input.amount ?? `${input.minutes} minutes`;
-    await this.notify(userId, 'rgLimitUpdated', {
-      period: input.period,
-      type: input.type,
-      description: limitDescription,
-    });
+    await this.notify(
+      userId,
+      {
+        key: 'rgLimitUpdated',
+        data: { period: input.period, type: input.type, description: limitDescription },
+      },
+      row.id,
+    );
     return toLimitDto(row);
   }
 
@@ -211,7 +206,11 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgCoolingOffActivated', { expiresAt });
+    await this.notify(
+      userId,
+      { key: 'rgCoolingOffActivated', data: { expiresAt: expiresAt.toISOString() } },
+      row.id,
+    );
     return toExclusionDto(row);
   }
 
@@ -265,10 +264,17 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgSelfExclusionActivated', {
-      expiresAt,
-      isPermanent: input.isPermanent,
-    });
+    await this.notify(
+      userId,
+      {
+        key: 'rgSelfExclusionActivated',
+        data: {
+          expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          isPermanent: input.isPermanent,
+        },
+      },
+      row.id,
+    );
     return toExclusionDto(row);
   }
 
@@ -331,7 +337,7 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgSelfExclusionLifted', {});
+    await this.notify(userId, { key: 'rgSelfExclusionLifted', data: {} }, row.id);
     return toExclusionDto(row);
   }
 
@@ -384,7 +390,7 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgCoolingOffLifted', {});
+    await this.notify(userId, { key: 'rgCoolingOffLifted', data: {} }, row.id);
     return toExclusionDto(row);
   }
 
@@ -512,27 +518,28 @@ export class RgService {
     }
   }
 
-  private async notify<K extends EmailTemplateKey>(
+  // Hands the RG email to the mail module: it resolves the address and locale, renders
+  // and sends off the request path, and - because these keys are regulatory - writes an
+  // audit entry if delivery is ultimately exhausted. `rowId` (the limit or exclusion row)
+  // is the idempotency key, so a retried mutation never doubles the mail. The enqueue is
+  // itself retried inside the mail module; a final failure here is logged, not thrown -
+  // the exclusion is already committed and enforced.
+  private async notify(
     userId: User['id'],
-    key: K,
-    data: EmailTemplateData[K],
+    template: MailTemplate,
+    rowId: RgExclusion['id'] | Limit['id'],
   ) {
-    if (!this.email || !this.directory || !this.templateRenderer) {
+    if (!this.mailDispatch) {
       return;
     }
     try {
-      const [summary] = await this.directory.lookupPlayers([userId]);
-      if (!summary?.email) {
-        return;
-      }
-      const { subject, body } = await this.templateRenderer.render(
-        key,
-        data,
-        summary.language ?? 'en',
-      );
-      await this.email.send({ to: summary.email, subject, body });
+      await this.mailDispatch.toUser({
+        userId,
+        template,
+        idempotencyKey: `rg-notify:${template.key}:${rowId}`,
+      });
     } catch (err) {
-      logger.warn({ err, userId }, 'RG player notification failed');
+      logger.error({ err, userId, key: template.key }, 'RG player mail enqueue failed');
     }
   }
 }

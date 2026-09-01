@@ -130,9 +130,11 @@ describe('notificationEventMap', () => {
     expect(input).toBeNull();
   });
 
-  it('keeps email disabled for the pre-existing friend-request types, unchanged from before the map refactor', () => {
-    expect(entryFor('social.friend_request.sent').sendEmail).toBe(false);
-    expect(entryFor('social.friend_request.accepted').sendEmail).toBe(false);
+  const OCCURRED_AT = '2026-01-02T03:04:05.000Z';
+
+  it('builds no mail for the pre-existing friend-request types, unchanged from before the map refactor', () => {
+    expect(entryFor('social.friend_request.sent').buildEmail({}, OCCURRED_AT)).toBeNull();
+    expect(entryFor('social.friend_request.accepted').buildEmail({}, OCCURRED_AT)).toBeNull();
   });
 
   it('keeps every newly-mapped trigger type in-app only (no email), per the email scope decision', () => {
@@ -146,13 +148,34 @@ describe('notificationEventMap', () => {
     ] as const;
 
     for (const event of inAppOnlyEvents) {
-      expect(entryFor(event).sendEmail).toBe(false);
+      expect(entryFor(event).buildEmail({}, OCCURRED_AT)).toBeNull();
     }
   });
 
-  it('keeps email enabled for the pre-existing withdrawal approve/reject types', () => {
-    expect(entryFor('wallet.withdrawal.approved').sendEmail).toBe(true);
-    expect(entryFor('wallet.withdrawal.rejected').sendEmail).toBe(true);
+  it('builds a withdrawal mail dated from the envelope, not the worker clock', () => {
+    const userId = randomUUID();
+    const transactionId = randomUUID();
+    const payload = {
+      userId,
+      amount: '10.00',
+      currency: 'USD',
+      transactionId,
+      adminId: randomUUID(),
+    };
+
+    expect(entryFor('wallet.withdrawal.approved').buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'withdrawalApproved',
+      data: {
+        amount: '10.00',
+        currency: 'USD',
+        transactionId,
+        occurredAt: OCCURRED_AT,
+        status: 'approved',
+      },
+    });
+    expect(
+      entryFor('wallet.withdrawal.rejected').buildEmail({ ...payload, reason: 'AML' }, OCCURRED_AT),
+    ).toMatchObject({ key: 'withdrawalRejected', data: { reason: 'AML', status: 'rejected' } });
   });
 
   describe('amount formatting in notification body text', () => {

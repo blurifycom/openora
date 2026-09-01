@@ -1,0 +1,158 @@
+import { describe, it, expect, vi } from 'vitest';
+import type {
+  AdminUserDirectory,
+  AuditWritePort,
+  EmailSenderPort,
+  EmailTemplateRenderer,
+  JobQueueAdapter,
+  MailTemplate,
+} from '@openora/core/contracts';
+import { mock } from '../../testing/mock.js';
+import { MailService } from '../service/mail.service.js';
+import { MAIL_SEND_QUEUE } from '../contract/index.js';
+
+const verify: MailTemplate = { key: 'verifyEmail', data: { otp: '123456' } };
+const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: {} };
+const withdrawal: MailTemplate = {
+  key: 'withdrawalApproved',
+  data: {
+    amount: '10.00',
+    currency: 'USDT',
+    transactionId: '00000000-0000-0000-0000-000000000000',
+    occurredAt: '2026-01-01T00:00:00.000Z',
+    status: 'approved',
+  },
+};
+
+function build(
+  over: {
+    sender?: Partial<EmailSenderPort>;
+    renderer?: Partial<EmailTemplateRenderer>;
+    directory?: Partial<AdminUserDirectory>;
+    jobQueue?: Partial<JobQueueAdapter>;
+    audit?: AuditWritePort | null;
+  } = {},
+) {
+  const sender = mock<EmailSenderPort>({ send: vi.fn(async () => undefined), ...over.sender });
+  const renderer = mock<EmailTemplateRenderer>({
+    render: vi.fn(() => ({ subject: 's', html: '<p>h</p>', text: 't' })),
+    ...over.renderer,
+  });
+  const directory = mock<AdminUserDirectory>({
+    get: vi.fn(async () => null),
+    ...over.directory,
+  });
+  const jobQueue = mock<JobQueueAdapter>({
+    enqueue: vi.fn(async () => ({ id: 'job-1' })),
+    ...over.jobQueue,
+  });
+  const audit =
+    over.audit === undefined
+      ? mock<AuditWritePort>({ record: vi.fn(async () => undefined) })
+      : over.audit;
+  const svc = new MailService({ sender, renderer, directory, jobQueue, audit });
+  return { svc, sender, renderer, directory, jobQueue, audit };
+}
+
+describe('MailService', () => {
+  it('enqueues a job and never renders or sends on the caller thread', async () => {
+    const { svc, jobQueue, sender, renderer } = build();
+
+    await svc.enqueueToUser({ userId: 'u-1', template: verify, idempotencyKey: 'k-1' });
+
+    expect(jobQueue.enqueue).toHaveBeenCalledWith(
+      MAIL_SEND_QUEUE,
+      { recipient: { kind: 'user', userId: 'u-1' }, template: verify },
+      expect.objectContaining({ idempotencyKey: 'k-1', attempts: 5 }),
+    );
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(renderer.render).not.toHaveBeenCalled();
+  });
+
+  it('retries the enqueue on a transient queue failure', async () => {
+    const enqueue = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('queue down'))
+      .mockResolvedValueOnce({ id: 'job-1' });
+    const { svc } = build({ jobQueue: { enqueue } });
+
+    await svc.enqueueToAddress({ email: 'a@b.com', template: verify, idempotencyKey: 'k-2' });
+
+    expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it('delivers to an explicit address, rendering with the given locale and sending html + text', async () => {
+    const { svc, renderer, sender } = build();
+
+    await svc.deliver({
+      recipient: { kind: 'address', email: 'de@b.com', locale: 'de' },
+      template: verify,
+    });
+
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de');
+    expect(sender.send).toHaveBeenCalledWith({
+      to: 'de@b.com',
+      subject: 's',
+      html: '<p>h</p>',
+      text: 't',
+    });
+  });
+
+  it('resolves a user recipient to its address and account locale', async () => {
+    const { svc, renderer, sender } = build({
+      directory: {
+        get: vi.fn(async () => ({
+          id: 'u-1',
+          email: 'user@b.com',
+          name: null,
+          createdAt: new Date(),
+          isActive: true,
+          role: 'player',
+          language: 'fr',
+        })),
+      },
+    });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
+
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr');
+    expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'user@b.com' }));
+  });
+
+  it('skips - without throwing - when the user has no address (nothing to retry)', async () => {
+    const { svc, sender } = build({ directory: { get: vi.fn(async () => null) } });
+
+    await expect(
+      svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: verify }),
+    ).resolves.toBeUndefined();
+    expect(sender.send).not.toHaveBeenCalled();
+  });
+
+  it('audits an exhausted delivery for a regulatory key', async () => {
+    const { svc, audit } = build();
+
+    await svc.onDeliveryExhausted(
+      { recipient: { kind: 'user', userId: 'u-1' }, template: rgLifted },
+      new Error('smtp 550'),
+    );
+
+    expect((audit as AuditWritePort).record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorType: 'system',
+        action: 'mail.regulatory_delivery.failed',
+        resourceId: 'u-1',
+      }),
+    );
+  });
+
+  it('does not audit an exhausted delivery for a non-regulatory key', async () => {
+    const { svc, audit } = build();
+
+    await svc.onDeliveryExhausted(
+      { recipient: { kind: 'user', userId: 'u-1' }, template: withdrawal },
+      new Error('smtp 550'),
+    );
+
+    expect((audit as AuditWritePort).record).not.toHaveBeenCalled();
+  });
+});

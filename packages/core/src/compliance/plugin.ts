@@ -14,10 +14,9 @@ import {
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
   LOGIN_ENFORCEMENT,
+  MAIL_DISPATCH,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
-  SEND_EMAIL,
-  EMAIL_TEMPLATE_RENDERER,
   UuidSchema,
   domainEventSchemas,
   queue,
@@ -207,9 +206,8 @@ export default {
         events: c.get(EVENT_BUS),
         loginEnforcement: c.get(LOGIN_ENFORCEMENT),
         identityReader: c.get(IDENTITY_READER),
-        email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
-        directory,
-        templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
+        // Lazy: the router factory runs after every plugin registered, so mail is bound.
+        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
       });
       rgRef = rg;
       const rgMonitoring = new RgMonitoringService({ drizzle: c.get(DRIZZLE), directory });

@@ -5,7 +5,7 @@ import {
   ADMIN_PLAYER_ACTIVITY,
   ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
   IDENTITY_READER,
-  SEND_EMAIL,
+  MAIL_DISPATCH,
   SESSION_COMMANDS,
   CACHE,
   RATE_LIMITER,
@@ -72,7 +72,8 @@ export default {
         new IamService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
-          c.get(SEND_EMAIL),
+          // Lazy resolve: router factories run after every plugin registered. See ADR-0036.
+          c.get(MAIL_DISPATCH),
           c.get(IDENTITY_READER),
           c.get(SESSION_COMMANDS),
           c.get(RATE_LIMITER),

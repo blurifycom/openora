@@ -13,6 +13,9 @@ export const extensions = [
   { id: 'iam', path: './packages/core/dist/iam/plugin.js' },
   // Platform - shared substrate used by both surfaces
   { id: 'identity', path: './packages/core/dist/pam/identity/plugin.js' },
+  // Owns the outbound-mail seams + the mail-send queue. No dependsOn (would cycle
+  // identity <-> notifications); consumers resolve MAIL_DISPATCH lazily. See ADR-0036.
+  { id: 'mail', path: './packages/core/dist/mail/plugin.js' },
   { id: 'notifications', path: './packages/core/dist/engagement/notifications/plugin.js' },
   { id: 'compliance', path: './packages/core/dist/compliance/plugin.js' },
 

@@ -1,13 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type {
-  AdminPlayerSummary,
-  AdminUserDirectory,
-  EmailTemplateRenderer,
-  LoginEnforcementPort,
-  SendEmailPort,
-} from '@openora/core/contracts';
+import type { LoginEnforcementPort, MailDispatchPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
@@ -24,21 +18,14 @@ import {
 let db: TestDb;
 
 type Notifier = {
-  email: SendEmailPort;
-  directory: AdminUserDirectory;
-  templateRenderer: EmailTemplateRenderer;
+  mailDispatch: MailDispatchPort;
 };
 
-function makeNotifier(email = 'player@example.com'): Notifier {
+function makeNotifier(): Notifier {
   return {
-    email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
-    directory: mock<AdminUserDirectory>({
-      lookupPlayers: vi.fn(async (ids: string[]) =>
-        ids.map((userId) => mock<AdminPlayerSummary>({ userId, email, language: 'en' })),
-      ),
-    }),
-    templateRenderer: mock<EmailTemplateRenderer>({
-      render: vi.fn(async () => ({ subject: 'subject', body: 'body' })),
+    mailDispatch: mock<MailDispatchPort>({
+      toUser: vi.fn(async () => undefined),
+      toAddress: vi.fn(async () => undefined),
     }),
   };
 }
@@ -53,9 +40,7 @@ function makeService(notifier?: Notifier) {
     drizzle: db.drizzle,
     events,
     loginEnforcement: enforcement,
-    email: notifier?.email ?? null,
-    directory: notifier?.directory ?? null,
-    templateRenderer: notifier?.templateRenderer ?? null,
+    mailDispatch: notifier?.mailDispatch ?? null,
     identityReader: makeIdentityReader(),
   });
   return { svc, events, enforcement };
@@ -174,26 +159,29 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(dto).toMatchObject({ minutes: 60, amount: null });
   });
 
-  it('emails the player when a mail port, directory, and template renderer are bound', async () => {
+  it('dispatches an RG mail keyed by the row when the mail port is bound', async () => {
     const notifier = makeNotifier();
     const { svc } = makeService(notifier);
     const userId = randomUUID();
 
-    await svc.setPlayerLimit(
+    const dto = await svc.setPlayerLimit(
       userId,
       { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       randomUUID(),
     );
 
-    expect(notifier.templateRenderer.render).toHaveBeenCalled();
-    expect(notifier.email.send).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 'player@example.com', subject: 'subject', body: 'body' }),
+    expect(notifier.mailDispatch.toUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId,
+        template: expect.objectContaining({ key: 'rgLimitUpdated' }),
+        idempotencyKey: `rg-notify:rgLimitUpdated:${dto.id}`,
+      }),
     );
   });
 
   it('swallows a notification failure once the limit has committed', async () => {
     const notifier = makeNotifier();
-    vi.mocked(notifier.email.send).mockRejectedValueOnce(new Error('smtp down'));
+    vi.mocked(notifier.mailDispatch.toUser).mockRejectedValueOnce(new Error('queue down'));
     const { svc } = makeService(notifier);
     const userId = randomUUID();
 

@@ -24,7 +24,7 @@ import {
 } from '@openora/core/server';
 import { eq, and, gt, inArray, sql, asc, desc } from 'drizzle-orm';
 import type {
-  SendEmailPort,
+  MailDispatchPort,
   AdminPermissionResolver,
   AdminGrant,
   IdentityReader,
@@ -284,7 +284,7 @@ export class IamService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    private readonly email: SendEmailPort,
+    private readonly mailDispatch: MailDispatchPort,
     private readonly identityReader: IdentityReader,
     private readonly sessionCommands?: SessionCommands,
     private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
@@ -857,10 +857,18 @@ export class IamService {
       new InvitationNotFoundError(input.email),
     );
 
-    await this.email.send({
-      to: input.email,
-      subject: 'You have been invited as an administrator',
-      body: `Your admin invitation token: ${token}. It expires at ${expiresAt.toISOString()}.`,
+    // The platform carries only the token + expiry; the operator's renderer builds the
+    // back-office link. Always English: the invitee has no account yet, so no locale
+    // (and the back-office ships en-only). Keyed by the invitation row so a retry can't
+    // double-send. Rendering + transport happen off this request in the mail worker.
+    await this.mailDispatch.toAddress({
+      email: input.email,
+      locale: 'en',
+      template: {
+        key: 'adminInvitation',
+        data: { token, expiresAt: expiresAt.toISOString() },
+      },
+      idempotencyKey: `admin-invitation:${row.id}`,
     });
 
     return toInvitationDto(row);
