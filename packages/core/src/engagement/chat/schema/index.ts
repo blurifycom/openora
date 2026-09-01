@@ -122,6 +122,9 @@ export const chatRoomMember = pgTable(
       .references(() => chatRoom.id, { onDelete: 'cascade' }),
     userId: uuid().notNull(), // bare id - cross-module (user from pam/identity), no FK
     role: chatRoomRole().notNull().default('member'),
+    // Null for plain members; set when a role above `member` is granted, cleared on revoke.
+    // Ownership transfer picks the successor by the earliest assignment among moderators.
+    roleAssignedAt: timestamp({ withTimezone: true }),
     joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

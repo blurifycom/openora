@@ -107,18 +107,18 @@ export class ChatBanService {
       userAgent: userAgent ?? null,
     });
     if (concreteRoomId) {
-      await this.transport?.revokeClientFromChannel?.(userId, `chat:room:${concreteRoomId}`);
+      await this.transport?.revokeUserFromChannel?.(userId, `chat:room:${concreteRoomId}`);
     } else if (scope === '__global') {
-      await this.transport?.revokeClientFromChannel?.(userId, chatChannel(null));
+      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(null));
     } else if (scope === '__all_public') {
       const publicRooms = await this.drizzle.db
         .select({ id: chatRoom.id })
         .from(chatRoom)
         .where(and(eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)));
       await Promise.all([
-        this.transport?.revokeClientFromChannel?.(userId, chatChannel(null)),
+        this.transport?.revokeUserFromChannel?.(userId, chatChannel(null)),
         ...publicRooms.map(({ id }) =>
-          this.transport?.revokeClientFromChannel?.(userId, `chat:room:${id}`),
+          this.transport?.revokeUserFromChannel?.(userId, `chat:room:${id}`),
         ),
       ]);
     } else if (scope === '__all') {
@@ -127,10 +127,8 @@ export class ChatBanService {
         .from(chatRoom)
         .where(isNull(chatRoom.deletedAt));
       await Promise.all([
-        this.transport?.revokeClientFromChannel?.(userId, chatChannel(null)),
-        ...rooms.map(({ id }) =>
-          this.transport?.revokeClientFromChannel?.(userId, chatChannel(id)),
-        ),
+        this.transport?.revokeUserFromChannel?.(userId, chatChannel(null)),
+        ...rooms.map(({ id }) => this.transport?.revokeUserFromChannel?.(userId, chatChannel(id))),
       ]);
     }
     return { success: true } as const;

@@ -99,7 +99,9 @@
         "chat.removeMember",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
+        "chat.setMemberRole",
         "chat.streamMessages",
+        "chat.streamSignals",
         "chat.unbanRoomMember",
         "chat.unblockUser",
         "chat.unignoreUser",
@@ -913,6 +915,7 @@
     "chat.room.member.joined",
     "chat.room.member.left",
     "chat.room.member.removed",
+    "chat.room.member.role-changed",
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
@@ -1229,6 +1232,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatMemberRoleChangedSignalSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatMessageSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
@@ -1269,6 +1276,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatRoomAssignableRoleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomBanSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
@@ -1306,6 +1317,10 @@
     },
     {
       "name": "ChatRoomUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatSignalSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

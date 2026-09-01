@@ -52,6 +52,10 @@ export const ChatRoomLastModeratorError = createDomainError(
   'ChatRoomLastModeratorError',
   () => 'Cannot leave: you are the sole moderator of this room',
 );
+export const ChatRoomOwnerCannotLeaveError = createDomainError(
+  'ChatRoomOwnerCannotLeaveError',
+  () => 'Cannot leave: transfer ownership or delete the room first',
+);
 export const ChatRoomJoinCodeNotFoundError = createDomainError(
   'ChatRoomJoinCodeNotFoundError',
   (code: string) => `No room found with join code: ${code}`,

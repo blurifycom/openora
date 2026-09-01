@@ -24,6 +24,7 @@ import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
+  ChatRoomOwnerCannotLeaveError,
   ChatRoomLimitReachedError,
   ChatRoomProtectedError,
   ChatMessageBlockedError,
@@ -260,6 +261,29 @@ export function createChatRouter({
       );
     }),
 
+    streamSignals: os.streamSignals.handler(async ({ input, signal, context }) => {
+      const roomId =
+        input.roomId === '__global' || input.roomId === undefined ? null : input.roomId;
+      const viewerId = resolveViewerId(context);
+      if (roomId) {
+        await mapErrors(
+          {
+            NOT_FOUND: ChatRoomNotFoundError,
+            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+          },
+          () => chatService.verifyRoomAccess(roomId, viewerId),
+        );
+      } else {
+        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
+          chatService.verifyGlobalAccess(viewerId),
+        );
+      }
+      return createEventStreamGenerator(
+        (push) => chatService.subscribeSignals(roomId, push, viewerId),
+        { signal },
+      );
+    }),
+
     getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) => {
       const roomId = input.roomId ?? null;
       if (roomId) {
@@ -359,8 +383,13 @@ export function createChatRouter({
 
     leaveRoom: os.leaveRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
-      return mapErrors({ BAD_REQUEST: ChatRoomLastModeratorError }, () =>
-        membershipService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
+      return mapErrors(
+        {
+          BAD_REQUEST: [ChatRoomLastModeratorError, ChatRoomOwnerCannotLeaveError],
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: ChatRoomNotMemberError,
+        },
+        () => membershipService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
       );
     }),
 
@@ -451,6 +480,24 @@ export function createChatRouter({
           }),
       );
     }),
+
+    setMemberRole: os.setMemberRole.handler(({ input, context }) =>
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatRoomNotModeratorError],
+          BAD_REQUEST: ChatRoomSelfModerationError,
+        },
+        () =>
+          membershipService.setMemberRole({
+            actorId: getUserId(context),
+            roomId: input.roomId,
+            userId: input.userId,
+            role: input.role,
+            ...context.clientMeta,
+          }),
+      ),
+    ),
 
     banRoomMember: os.banRoomMember.handler(({ input, context }) => {
       const moderatorId = getUserId(context);

@@ -37,6 +37,9 @@ export type RealtimePresence = {
   count(channel: string): number | Promise<number>;
 };
 
+/** A named control signal on a channel: "something here changed, refetch". */
+export type RealtimeSignal = { name: string; payload: unknown };
+
 export type RealtimeTransport = {
   /**
    * Fan a message out to every subscriber of `channel`. Best-effort, at-most-once
@@ -53,11 +56,43 @@ export type RealtimeTransport = {
    * Subscribe a handler to a channel. Returns an unsubscribe fn the caller MUST
    * invoke on teardown (eg an SSE handler on request abort).
    */
-  subscribe<T>(channel: string, handler: (event: T) => void, clientId?: string): () => void;
+  subscribe<T>(channel: string, handler: (event: T) => void, userId?: string): () => void;
+  /**
+   * Push a NAMED control signal to a channel - "something about this room changed, refetch"
+   * - as opposed to `publish`/`remove`, which carry the channel's payload stream itself (for
+   * chat, `ChatMessage`). A managed transport delivers it as its own named event, the way
+   * `revokeUserFromChannel` already surfaces `chat:access-revoked`, so a signal never
+   * reaches a payload subscriber and cannot corrupt that stream. The first-party in-process
+   * transport implements it over a second lane per channel, which the `/chat/signals` SSE route
+   * serves, so the default deployment carries signals too. Optional per ADR-0007 all the same:
+   * a transport that only fans out payloads is still a valid transport.
+   *
+   * `subscribeSignal` below is the server-side receiving half; on the client it is
+   * `RealtimeSubscribeHandlers.onSignal` in react/context/realtime-client, which a vendor
+   * adapter feeds from the vendor's own named events. Every half is optional on its own.
+   */
+  signal?: (channel: string, name: string, payload: unknown) => void | Promise<void>;
+  /**
+   * Server-side receiving half of `signal`, and the reason the first-party path can carry one:
+   * the signal lane is separate from the payload lane, so subscribing here never sees a
+   * `ChatMessage` and subscribing to `subscribe` never sees a signal. The default SSE route
+   * reads this lane and streams it to browsers; a managed transport delivers its own named
+   * events to the client directly and need not implement this.
+   */
+  subscribeSignal?: (
+    channel: string,
+    handler: (signal: RealtimeSignal) => void,
+    userId?: string,
+  ) => () => void;
   /** Revoke managed-provider credentials for a client after access is removed. */
   revokeClient?: (clientId: string) => void | Promise<void>;
-  /** Revoke a managed client's access to one channel without affecting other chats. */
-  revokeClientFromChannel?: (clientId: string, channel: string) => void | Promise<void>;
+  /**
+   * Revoke a user's access to one channel without affecting other chats. Keyed on the
+   * AUTHENTICATED user, not on a connection: `getConnection` lets a caller pick its own
+   * per-connection `clientId`, so revoking one of those would leave the same person's other
+   * tabs subscribed. A managed adapter must cut every connection it issued under `userId`.
+   */
+  revokeUserFromChannel?: (userId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;
   /**
    * Returns the set of authenticated user IDs currently online in `channel`.

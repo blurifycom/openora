@@ -80,12 +80,12 @@ describe('RedisPubSubRealtimeTransport', () => {
     await vi.waitFor(async () => expect(await transport.presence?.count(room)).toBe(1));
   });
 
-  it('revokeClientFromChannel drops only that client’s subscription', async () => {
+  it('revokeUserFromChannel drops only that user’s subscription', async () => {
     const transport = makeTransport();
     const kicked: unknown[] = [];
     const kept: unknown[] = [];
-    transport.subscribe('c', () => kicked.push(true), 'client-a');
-    transport.subscribe('c', () => kept.push(true), 'client-b');
+    transport.subscribe('c', () => kicked.push(true), 'user-a');
+    transport.subscribe('c', () => kept.push(true), 'user-b');
     await settle();
 
     await transport.publish('c', 1);
@@ -94,7 +94,7 @@ describe('RedisPubSubRealtimeTransport', () => {
       expect(kept).toEqual([true]);
     });
 
-    transport.revokeClientFromChannel('client-a', 'c');
+    transport.revokeUserFromChannel('user-a', 'c');
     await settle();
 
     await transport.publish('c', 2);
