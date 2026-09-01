@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { RealtimeSignal } from '@openora/core/contracts';
 import { InProcessRealtimeTransport } from '../realtime-transport.js';
 import { runRealtimeTransportConformanceSuite } from '../../../testing/realtime-transport-conformance.js';
 
@@ -60,6 +61,57 @@ describe('InProcessRealtimeTransport', () => {
     t.subscribe<number>('c', (e) => got.push(e));
     expect(() => t.publish('c', 7)).not.toThrow();
     expect(got).toEqual([7]);
+  });
+
+  it('notifies only the affected user before pruning every message and signal subscription', () => {
+    const t = new InProcessRealtimeTransport();
+    const channel = 'chat:room:private-room';
+    const revokedUserId = 'revoked-user';
+    const otherUserId = 'other-user';
+    const firstMessages: string[] = [];
+    const secondMessages: string[] = [];
+    const otherMessages: string[] = [];
+    const firstSignals: RealtimeSignal[] = [];
+    const secondSignals: RealtimeSignal[] = [];
+    const otherSignals: RealtimeSignal[] = [];
+
+    t.subscribe<string>(channel, (event) => firstMessages.push(event), revokedUserId);
+    t.subscribe<string>(channel, (event) => secondMessages.push(event), revokedUserId);
+    t.subscribe<string>(channel, (event) => otherMessages.push(event), otherUserId);
+    t.subscribeSignal(
+      channel,
+      (signal) => {
+        firstSignals.push(signal);
+        t.publish(channel, 'before-prune');
+        throw new Error('disconnected');
+      },
+      revokedUserId,
+    );
+    t.subscribeSignal(channel, (signal) => secondSignals.push(signal), revokedUserId);
+    t.subscribeSignal(channel, (signal) => otherSignals.push(signal), otherUserId);
+
+    expect(() => t.revokeUserFromChannel(revokedUserId, channel)).not.toThrow();
+
+    const revocationSignal = {
+      name: 'chat:access-revoked',
+      payload: { channel },
+    };
+    expect(firstSignals).toEqual([revocationSignal]);
+    expect(secondSignals).toEqual([revocationSignal]);
+    expect(otherSignals).toEqual([]);
+    expect(firstMessages).toEqual(['before-prune']);
+    expect(secondMessages).toEqual(['before-prune']);
+    expect(otherMessages).toEqual(['before-prune']);
+
+    t.publish(channel, 'after-prune');
+    t.signal(channel, 'chat:room-changed', { channel });
+
+    expect(firstMessages).toEqual(['before-prune']);
+    expect(secondMessages).toEqual(['before-prune']);
+    expect(otherMessages).toEqual(['before-prune', 'after-prune']);
+    expect(firstSignals).toEqual([revocationSignal]);
+    expect(secondSignals).toEqual([revocationSignal]);
+    expect(otherSignals).toEqual([{ name: 'chat:room-changed', payload: { channel } }]);
   });
 
   it('tracks presence counts per channel', () => {

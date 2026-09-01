@@ -90,7 +90,12 @@ export type RealtimeTransport = {
    * Revoke a user's access to one channel without affecting other chats. Keyed on the
    * AUTHENTICATED user, not on a connection: `getConnection` lets a caller pick its own
    * per-connection `clientId`, so revoking one of those would leave the same person's other
-   * tabs subscribed. A managed adapter must cut every connection it issued under `userId`.
+   * tabs subscribed. Before cutting access, the transport delivers
+   * `{ name: 'chat:access-revoked', payload: { channel } }` to every signal subscription for
+   * that user on the channel. It must not send the signal to other users or include `userId`
+   * in its payload. Message and signal lanes remain separate, and every connection on both
+   * lanes is removed even when a signal handler fails. A managed adapter must provide the
+   * equivalent targeted notification before cutting every connection it issued under `userId`.
    */
   revokeUserFromChannel?: (userId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;

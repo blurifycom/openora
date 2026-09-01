@@ -4,6 +4,8 @@ type Handler = (event: unknown) => void;
 type Subscription = { handler: Handler; userId?: string };
 type SignalSubscription = { handler: (signal: RealtimeSignal) => void; userId?: string };
 
+const ACCESS_REVOKED_SIGNAL_NAME = 'chat:access-revoked';
+
 /** Drops one user's subscriptions from a single lane, forgetting the channel once empty. */
 function pruneUser<T extends { userId?: string }>(
   lanes: Map<string, Set<T>>,
@@ -21,6 +23,28 @@ function pruneUser<T extends { userId?: string }>(
   }
   if (subscribers.size === 0) {
     lanes.delete(channel);
+  }
+}
+
+function notifyUser(
+  lanes: Map<string, Set<SignalSubscription>>,
+  channel: string,
+  userId: string,
+  signal: RealtimeSignal,
+): void {
+  const subscribers = lanes.get(channel);
+  if (!subscribers) {
+    return;
+  }
+  for (const { handler, userId: subscriberUserId } of Array.from(subscribers)) {
+    if (subscriberUserId !== userId) {
+      continue;
+    }
+    try {
+      handler(signal);
+    } catch {
+      continue;
+    }
   }
 }
 
@@ -145,11 +169,14 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
   }
 
   /**
-   * Cuts every subscription this user holds on the channel. Both lanes are pruned
-   * independently: a client can hold a signal stream without a message stream, and revoked
-   * access has to end both.
+   * Notifies the affected user's signal connections, then cuts every subscription that user
+   * holds on the channel. Both lanes are pruned independently.
    */
   revokeUserFromChannel(userId: string, channel: string): void {
+    notifyUser(this.signalChannels, channel, userId, {
+      name: ACCESS_REVOKED_SIGNAL_NAME,
+      payload: { channel },
+    });
     pruneUser(this.channels, channel, userId);
     pruneUser(this.signalChannels, channel, userId);
   }
