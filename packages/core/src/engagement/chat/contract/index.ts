@@ -16,6 +16,7 @@ import {
   ROOM_SLUG_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
+  CHAT_ROOM_ASSIGNABLE_ROLES,
 } from './constants.js';
 
 export * from './constants.js';
@@ -45,6 +46,9 @@ export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LEN
 
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
+
+export const ChatRoomAssignableRoleSchema = z.enum(CHAT_ROOM_ASSIGNABLE_ROLES);
+export type ChatRoomAssignableRole = z.infer<typeof ChatRoomAssignableRoleSchema>;
 
 export const CHAT_ROOM_CATEGORIES = [
   'games-sports',
@@ -78,6 +82,21 @@ export const ChatRoomMemberSchema = z.object({
   username: z.string().nullable(),
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
+
+// Payload of the CHAT_MEMBER_ROLE_CHANGED_SIGNAL realtime signal. Deliberately just the
+// identifiers and the new role: it tells a client what to refetch, it is not the roster.
+export const ChatMemberRoleChangedSignalSchema = z.object({
+  roomId: UuidSchema,
+  userId: UuidSchema,
+  role: ChatRoomRoleSchema,
+});
+export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
+
+// Envelope of the room channel's SIGNAL lane, served by `streamSignals`. `payload` stays
+// `unknown` because the vocabulary of names is open: a client parses the ones it asked for
+// (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.
+export const ChatSignalSchema = z.object({ name: z.string(), payload: z.unknown() });
+export type ChatSignal = z.infer<typeof ChatSignalSchema>;
 
 export const ChatRoomRuleSchema = z.object({
   id: UuidSchema,
@@ -334,6 +353,13 @@ export const chatContract = {
     .input(z.object({ roomId: UuidSchema.nullable().optional() }))
     .output(eventIterator(ChatMessageSchema)),
 
+  // The signal lane of the same channel `streamMessages` serves, on its own stream so a
+  // control signal can never arrive as a message. Same access rules as the message stream.
+  streamSignals: oc
+    .route({ method: 'GET', path: '/chat/signals' })
+    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .output(eventIterator(ChatSignalSchema)),
+
   getOnlineCount: oc
     .route({ method: 'GET', path: '/chat/online-count' })
     .input(z.object({ roomId: UuidSchema.nullable().optional() }))
@@ -496,6 +522,13 @@ export const chatContract = {
   removeMember: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/remove' })
     .input(RoomUserInput)
+    .output(z.object({ success: z.literal(true) })),
+
+  // Grants and revokes the moderator role only - `owner` is deliberately not assignable
+  // here; ownership transfer is a separate route with its own rules.
+  setMemberRole: oc
+    .route({ method: 'POST', path: '/chat/rooms/{roomId}/members/{userId}/role' })
+    .input(RoomUserInput.extend({ role: ChatRoomAssignableRoleSchema }))
     .output(z.object({ success: z.literal(true) })),
 
   banRoomMember: oc
