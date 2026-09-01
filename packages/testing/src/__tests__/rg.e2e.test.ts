@@ -159,7 +159,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     await vi.waitFor(async () => {
       const notifyRes = await client.get('/notifications');
       const notifications = await readJson(notifyRes);
-      const found = (notifications as Array<{ type: string; body: string }>).find(
+      const found = (notifications as { items: Array<{ type: string; body: string }> }).items.find(
         (n) => n.type === 'rg.limit.admin_updated',
       );
       expect(found).toBeTruthy();
@@ -175,7 +175,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     expect(rgEmails).toHaveLength(1);
     expect(rgEmails[0]?.body).not.toContain('operator lowered on a support request');
 
-    const beforeCount = (await readJson(await client.get('/notifications'))).length;
+    const beforeCount = (await readJson(await client.get('/notifications'))).total;
     const selfRes = await client.put('/compliance/limits', {
       type: 'deposit',
       amount: '100',
@@ -185,7 +185,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     });
     expect(selfRes.status).toBe(200);
 
-    const afterCount = (await readJson(await client.get('/notifications'))).length;
+    const afterCount = (await readJson(await client.get('/notifications'))).total;
     expect(afterCount).toBe(beforeCount);
   });
 
