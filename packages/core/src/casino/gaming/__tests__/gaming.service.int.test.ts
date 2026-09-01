@@ -278,3 +278,88 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
   });
 });
+
+describe('GamingService.accumulateExternalRound (real PG)', () => {
+  it('creates a game_round row on the first call for a given externalRoundId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b1', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000501';
+
+    const result = await svc.accumulateExternalRound({
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-1',
+      betDelta: '10',
+      winDelta: '0',
+    });
+
+    expect(result.betAmount).toBe('10.00');
+    expect(result.winAmount).toBe('0.00');
+    const rows = await db.drizzle.db.select().from(gameRound);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: result.roundId,
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-1',
+      status: 'active',
+    });
+  });
+
+  it('accumulates betAmount/winAmount on every subsequent call for the same externalRoundId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b2', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000502';
+
+    const first = await svc.accumulateExternalRound({
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-2',
+      betDelta: '10',
+    });
+    const second = await svc.accumulateExternalRound({
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-2',
+      betDelta: '5',
+      winDelta: '20',
+    });
+
+    expect(second.roundId).toBe(first.roundId);
+    expect(second.betAmount).toBe('15.00');
+    expect(second.winAmount).toBe('20.00');
+    const rows = await db.drizzle.db.select().from(gameRound);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('loses no update when two calls race against the same externalRoundId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b3', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000503';
+
+    await Promise.all([
+      svc.accumulateExternalRound({
+        gameId: created.id,
+        userId,
+        currency: 'USD',
+        externalRoundId: 'ext-round-3',
+        betDelta: '10',
+      }),
+      svc.accumulateExternalRound({
+        gameId: created.id,
+        userId,
+        currency: 'USD',
+        externalRoundId: 'ext-round-3',
+        betDelta: '7',
+      }),
+    ]);
+
+    const rows = await db.drizzle.db.select().from(gameRound);
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.betAmount)).toBe(17);
+  });
+});

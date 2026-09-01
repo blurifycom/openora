@@ -253,6 +253,86 @@ describe('WalletCommandsService ledger direction (real PG)', () => {
   });
 });
 
+describe('WalletCommandsService providerRef tagging (real PG)', () => {
+  it('debit writes providerName/providerRefId/externalRoundId/metadata exactly as passed', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef: {
+        providerName: 'aggregator-x',
+        providerRefId: 'ref-debit-1',
+        externalRoundId: 'round-1',
+        responseSnapshot: { balance: '90.00', currency: 'USD' },
+      },
+    });
+
+    const rows = await txRows(w.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      providerName: 'aggregator-x',
+      providerRefId: 'ref-debit-1',
+      externalRoundId: 'round-1',
+    });
+    expect(JSON.parse(rows[0]?.metadata ?? 'null')).toEqual({ balance: '90.00', currency: 'USD' });
+  });
+
+  it('credit writes providerName/providerRefId/externalRoundId/metadata exactly as passed', async () => {
+    const w = await seedWallet({ balance: '50' });
+
+    await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef: {
+        providerName: 'aggregator-x',
+        providerRefId: 'ref-credit-1',
+        externalRoundId: 'round-2',
+        responseSnapshot: { balance: '70.00' },
+      },
+    });
+
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({
+      providerName: 'aggregator-x',
+      providerRefId: 'ref-credit-1',
+      externalRoundId: 'round-2',
+    });
+    expect(JSON.parse(rows[0]?.metadata ?? 'null')).toEqual({ balance: '70.00' });
+  });
+
+  it('the loss branch never gets tagged with a providerRef even when one is passed', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '0',
+      type: 'loss',
+      providerRef: { providerName: 'aggregator-x', providerRefId: 'ref-loss-1' },
+    });
+
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({ type: 'loss', providerName: null, providerRefId: null });
+  });
+
+  it('leaves providerName/providerRefId/externalRoundId/metadata null when no providerRef is passed', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
+
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({
+      providerName: null,
+      providerRefId: null,
+      externalRoundId: null,
+      metadata: null,
+    });
+  });
+});
+
 describe('WalletCommandsService ledger sequence (real PG)', () => {
   it('nets a deposit-like credit, a bet debit, and a win credit into one running balance', async () => {
     const w = await seedWallet({ balance: '0' });

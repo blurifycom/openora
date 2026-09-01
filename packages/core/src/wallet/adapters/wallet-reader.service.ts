@@ -1,7 +1,30 @@
 import { DrizzleService } from '@openora/core/server';
-import { type WalletReader } from '@openora/core/contracts';
+import { type WalletReader, type WalletProviderTransaction } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
+
+// The caller only ever hands this a row matched by a WHERE on providerName/providerRefId
+// both equal to non-null args, so a null here means the query itself is broken - guard
+// rather than assert-away the column's nullability.
+function toProviderTransaction(
+  row: typeof walletTransaction.$inferSelect,
+): WalletProviderTransaction {
+  if (row.providerName === null || row.providerRefId === null) {
+    throw new Error('toProviderTransaction: matched row is missing its provider ref columns');
+  }
+  return {
+    id: row.id,
+    type: row.type,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    providerName: row.providerName,
+    providerRefId: row.providerRefId,
+    externalRoundId: row.externalRoundId,
+    metadata: row.metadata,
+    createdAt: row.createdAt,
+  };
+}
 
 export class WalletReaderService implements WalletReader {
   constructor(private readonly drizzle: DrizzleService) {}
@@ -65,5 +88,21 @@ export class WalletReaderService implements WalletReader {
       result.set(row.userId, Number(row.n));
     }
     return result;
+  }
+
+  async findByProviderRef(
+    providerName: string,
+    providerRefId: string,
+  ): Promise<WalletProviderTransaction | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.providerName, providerName),
+          eq(walletTransaction.providerRefId, providerRefId),
+        ),
+      );
+    return row ? toProviderTransaction(row) : null;
   }
 }

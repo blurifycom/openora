@@ -132,6 +132,10 @@ export const walletTransaction = pgTable(
     // reconciliation rather than buried in free-form JSON.
     providerName: text(),
     providerRefId: text(),
+    // The aggregator-side round this leg belongs to. Lets a caller correlate a debit/credit
+    // with a `game_round.externalRoundId` accumulated via GamingService.accumulateExternalRound,
+    // without joining through the round row (this leg may settle before or after it exists).
+    externalRoundId: text(),
     destinationAddress: text(),
     destinationTag: text(),
     destinationWalletId: text(),
@@ -158,6 +162,7 @@ export const walletTransaction = pgTable(
     uniqueIndex('wallet_transaction_provider_ref_id_idx')
       .on(t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
+    index('wallet_transaction_external_round_id_idx').on(t.externalRoundId),
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),

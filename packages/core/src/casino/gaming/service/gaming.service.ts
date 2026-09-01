@@ -7,7 +7,7 @@ import {
   findOneOrThrow,
   serializeRow,
 } from '@openora/core/server';
-import { eq, and, asc, desc } from 'drizzle-orm';
+import { eq, and, asc, desc, sql } from 'drizzle-orm';
 import {
   type GameAdapter,
   type PlayEligibilityPort,
@@ -155,6 +155,53 @@ export class GamingService {
     });
 
     return { success: true };
+  }
+
+  // Atomic upsert for a downstream aggregator's synchronous wallet-callback bridge: each
+  // callback settles its own debit/credit via WalletCommands, then calls this to accumulate
+  // the round total, inside its own transaction pairing the two. The partial unique index
+  // on externalRoundId (schema/index.ts) requires targetWhere here - Postgres rejects
+  // ON CONFLICT against a partial index without repeating its predicate. Deltas reference
+  // the *input* values (not `excluded.<col>`) so two concurrent calls both apply their own
+  // delta rather than one clobbering the other - see creditWalletBalance for the same idiom.
+  async accumulateExternalRound(args: {
+    gameId: Game['id'];
+    userId: User['id'];
+    currency: string;
+    externalRoundId: NonNullable<GameRound['externalRoundId']>;
+    betDelta?: string;
+    winDelta?: string;
+  }): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
+    const betDelta = args.betDelta ?? '0';
+    const winDelta = args.winDelta ?? '0';
+    const [row] = await this.drizzle.db
+      .insert(gameRound)
+      .values({
+        gameId: args.gameId,
+        userId: args.userId,
+        currency: args.currency,
+        externalRoundId: args.externalRoundId,
+        betAmount: betDelta,
+        winAmount: winDelta,
+        status: 'active',
+      })
+      .onConflictDoUpdate({
+        target: gameRound.externalRoundId,
+        targetWhere: sql`${gameRound.externalRoundId} IS NOT NULL`,
+        set: {
+          betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
+          winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
+        },
+      })
+      .returning({
+        id: gameRound.id,
+        betAmount: gameRound.betAmount,
+        winAmount: gameRound.winAmount,
+      });
+    if (!row) {
+      throw new Error('accumulateExternalRound: no row');
+    }
+    return { roundId: row.id, betAmount: row.betAmount, winAmount: row.winAmount };
   }
 
   async getUserRounds(userId: User['id']) {

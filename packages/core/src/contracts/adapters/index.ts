@@ -41,10 +41,11 @@ export type {
   WalletDebitOutcome,
   WalletCreditArgs,
   WalletCreditOutcome,
+  WalletProviderRef,
 } from './wallet-commands.js';
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
-export type { WalletReader } from './wallet-reader.js';
+export type { WalletReader, WalletProviderTransaction } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
 export type {
