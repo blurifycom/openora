@@ -1,5 +1,5 @@
 {
-  "id": "05b0366a-d26a-44a1-899c-01da401bd419",
+  "id": "918ac796-d97d-44f2-8fd9-b697d0030390",
   "prevId": "848568d2-f6c2-4771-a5ee-b14c583419ff",
   "version": "7",
   "dialect": "postgresql",
@@ -192,11 +192,23 @@
           "method": "btree",
           "with": {}
         },
-        "kyc_verification_reference_id_key": {
-          "name": "kyc_verification_reference_id_key",
+        "kyc_verification_user_id_reference_id_tier_key": {
+          "name": "kyc_verification_user_id_reference_id_tier_key",
           "columns": [
             {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
               "expression": "reference_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "tier",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
