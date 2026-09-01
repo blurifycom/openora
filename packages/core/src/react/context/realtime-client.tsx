@@ -9,9 +9,23 @@ import { createContext, useContext, useEffect, type ReactNode } from 'react';
 export type RealtimeClientStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
 export type RealtimeSubscribeHandlers<T> = {
+  /**
+   * The channel's payload stream - for chat, a `ChatMessage`. Its shape is the channel's
+   * contract, which is why it is typed and `onSignal`'s payload is not.
+   */
   onMessage: (event: T) => void;
   // Optional: drives "reconnecting" UX (eg internal).
   onStatus?: (status: RealtimeClientStatus) => void;
+  /**
+   * Optional: the receiving half of `RealtimeTransport.signal` (contracts/adapters/realtime.ts).
+   * A named control signal - "something about this channel changed, refetch" - delivered on its
+   * own lane, so it never reaches `onMessage` and cannot corrupt the payload stream. `payload` is
+   * `unknown` on purpose: the vocabulary of names is open, so the caller parses what it asked
+   * for (eg `ChatMemberRoleChangedSignalSchema` for `chat:member-role-changed`) and ignores the
+   * rest. A managed adapter feeds this from the vendor's named events; an SSE-backed one feeds
+   * it from the `/chat/signals` stream, which carries the same lane for the default transport.
+   */
+  onSignal?: (name: string, payload: unknown) => void;
 };
 
 export type RealtimeClientAdapter = {
