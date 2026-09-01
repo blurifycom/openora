@@ -63,6 +63,7 @@
       "@openora/core/engagement/plugins/chat-commands": ["./src/engagement/chat-commands/plugin.ts"],
       "@openora/core/engagement/plugins/notifications": ["./src/engagement/notifications/plugin.ts"],
       "@openora/core/engagement/plugins/social": ["./src/engagement/social/plugin.ts"],
+      "@openora/core/engagement/react": ["./src/engagement/react.ts"],
       "@openora/core/engagement/schema/chat": ["./src/engagement/chat/schema/index.ts"],
       "@openora/core/engagement/schema/chat-commands": ["./src/engagement/chat-commands/schema/index.ts"],
       "@openora/core/engagement/schema/notifications": ["./src/engagement/notifications/schema/index.ts"],

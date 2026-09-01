@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const notification = pgTable(
   'notification',
@@ -8,10 +8,15 @@ export const notification = pgTable(
     type: text().notNull(),
     title: text().notNull(),
     body: text().notNull(),
+    data: jsonb().$type<Record<string, string>>(),
     readAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    eventId: uuid(),
   },
-  (t) => [index('notification_user_id_idx').on(t.userId)],
+  (t) => [
+    index('notification_user_id_idx').on(t.userId),
+    uniqueIndex('notification_event_id_idx').on(t.eventId),
+  ],
 );
 
 export type Notification = typeof notification.$inferSelect;
