@@ -277,6 +277,13 @@ export class PlayerService implements PlayerActivityTracker {
     );
     await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
     await this.sessionCommands.revokeAll(existing.userId, actorId);
+    // Emitted after the status write commits: subscribers (chat's room-ownership handover)
+    // act on a closure that has actually happened, never on one that could still roll back.
+    this.events.emit('player.account.closed', {
+      playerId,
+      userId: existing.userId,
+      actorId,
+    });
     return { success: true };
   }
 

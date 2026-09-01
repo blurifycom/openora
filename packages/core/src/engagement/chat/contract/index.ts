@@ -68,8 +68,13 @@ export const ChatRoomSchema = z.object({
   isPublic: z.boolean(),
   // Null for public rooms; populated for private rooms when the viewer is a member.
   joinCode: z.string().nullable(),
+  // Null once the owner's account was closed with no moderator to inherit the room:
+  // nobody can rename or delete it from then on, and the client renders no owner controls.
   creatorId: UuidSchema.nullable(),
   createdAt: TimestampSchema,
+  // Non-null only while the room is on its 30-day owner-less countdown. Never moves once
+  // set, so a client can render it as a fixed deadline rather than a resettable timer.
+  scheduledDeletionAt: TimestampSchema.nullable(),
   isBanned: z.boolean(),
   bannedUntil: TimestampSchema.nullable(),
 });
@@ -80,6 +85,11 @@ export const ChatRoomMemberSchema = z.object({
   role: ChatRoomRoleSchema,
   joinedAt: TimestampSchema,
   username: z.string().nullable(),
+  // The account behind this member was closed or deactivated. The row stays on the roster
+  // so the room's history keeps its author names; the client renders it as "Deleted user".
+  // A flag rather than the timestamp: a client only ever branches on it, and a date here
+  // would invite a second countdown UI unrelated to the room's own deadline.
+  isDeletedAccount: z.boolean(),
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
@@ -91,6 +101,16 @@ export const ChatMemberRoleChangedSignalSchema = z.object({
   role: ChatRoomRoleSchema,
 });
 export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
+
+// Payload of the CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL realtime signal. The deadline
+// travels with it so the banner can render immediately, without a room refetch.
+export const ChatRoomScheduledForDeletionSignalSchema = z.object({
+  roomId: UuidSchema,
+  scheduledDeletionAt: TimestampSchema,
+});
+export type ChatRoomScheduledForDeletionSignal = z.infer<
+  typeof ChatRoomScheduledForDeletionSignalSchema
+>;
 
 // Envelope of the room channel's SIGNAL lane, served by `streamSignals`. `payload` stays
 // `unknown` because the vocabulary of names is open: a client parses the ones it asked for
@@ -134,6 +154,10 @@ export const ChatRoomUserSchema = z.object({
   blocked: z.boolean(),
   banId: UuidSchema.nullable(),
   banExpiresAt: TimestampSchema.nullable(),
+  // Same flag, same meaning as on ChatRoomMemberSchema. It belongs on both rosters: this
+  // one backs the manage-members modal, that one the room info panel and the message-list
+  // badges, and a "Deleted user" that shows in one but not the other is worse than neither.
+  isDeletedAccount: z.boolean(),
 });
 export type ChatRoomUser = z.infer<typeof ChatRoomUserSchema>;
 

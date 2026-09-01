@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
-import { buildKycResubmissionNotification, notificationEventMap } from '../plugin.js';
+import {
+  buildChatRoomScheduledForDeletionNotification,
+  buildKycResubmissionNotification,
+  notificationEventMap,
+} from '../plugin.js';
 
 function entryFor(event: (typeof notificationEventMap)[number]['event']) {
   const entry = notificationEventMap.find((e) => e.event === event);
@@ -118,6 +122,44 @@ describe('notificationEventMap', () => {
     });
   });
 
+  it('maps chat.room.ownership.transferred to the inheriting owner, carrying the room id', () => {
+    const roomId = randomUUID();
+    const newOwnerId = randomUUID();
+    const input = entryFor('chat.room.ownership.transferred').handle({
+      roomId,
+      roomName: 'Wheel Spin',
+      previousOwnerId: randomUUID(),
+      newOwnerId,
+      reason: 'account-closed',
+    });
+
+    expect(input).toMatchObject({
+      userId: newOwnerId,
+      type: 'chat.room.ownership_transferred',
+      data: { roomId },
+    });
+    expect(input!.body).toContain('Wheel Spin');
+  });
+
+  it('builds one scheduled-for-deletion notification per member, carrying the room id', () => {
+    const roomId = randomUUID();
+    const userId = randomUUID();
+
+    const input = buildChatRoomScheduledForDeletionNotification({
+      userId,
+      roomId,
+      roomName: 'Wheel Spin',
+    });
+
+    expect(input).toMatchObject({
+      userId,
+      type: 'chat.room.scheduled_for_deletion',
+      data: { roomId },
+    });
+    expect(input.body).toContain('Wheel Spin');
+    expect(input.body).toContain('30 days');
+  });
+
   it('leaves data null for kyc.resubmission_requested (no linkable entity in the source payload)', () => {
     const input = buildKycResubmissionNotification({ userId: randomUUID(), reason: 'blurry' });
 
@@ -143,6 +185,7 @@ describe('notificationEventMap', () => {
       'wallet.withdrawal.completed',
       'wallet.withdrawal.failed',
       'chat.user.mentioned',
+      'chat.room.ownership.transferred',
     ] as const;
 
     for (const event of inAppOnlyEvents) {
