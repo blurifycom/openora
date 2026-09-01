@@ -4,8 +4,10 @@ import {
   findOneOrThrow,
   makeNotFoundError,
   makeConflictError,
+  moneyCompare,
   serializeRow,
   mapConcurrent,
+  withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
@@ -17,10 +19,14 @@ import type {
   EmailTemplateKey,
   AdminUserDirectory,
   IdentityReader,
+  RgInitiator,
   User,
   ClientMeta,
+  LimitType,
+  ExchangeRateReader,
 } from '@openora/core/contracts';
-import { userLimit, rgExclusion } from '../schema/index.js';
+import { userLimit, rgExclusion, SESSION_LIMIT_CURRENCY } from '../schema/index.js';
+import { player } from '@openora/core/pam/schema/profile';
 import { LimitNotFoundError } from './compliance.service.js';
 import type {
   Limit,
@@ -30,7 +36,7 @@ import type {
   LiftCoolingOffInput,
   ActivateSelfExclusionInput,
   LiftSelfExclusionInput,
-  RgSection,
+  UpsertLimitInput,
 } from '../contract/index.js';
 
 const logger = createLogger('compliance-rg');
@@ -52,10 +58,186 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
   'The self-exclusion minimum period has not elapsed yet',
 );
 
+export type LimitRow = typeof userLimit.$inferSelect;
+
+export function toDbCurrency(type: LimitType, currency: string | null): string {
+  return type === 'session' ? SESSION_LIMIT_CURRENCY : (currency as string);
+}
+export function toWireCurrency(type: LimitType, currency: string | null): string | null {
+  return type === 'session' ? null : currency;
+}
+
+export type ResolvedLimitRow = Omit<LimitRow, 'currency'> & { currency: string };
+
+export async function isWeakening(
+  row: ResolvedLimitRow,
+  next: Pick<UpsertLimitInput, 'amount' | 'minutes' | 'currency'>,
+  rates: ExchangeRateReader,
+): Promise<boolean> {
+  if (next.amount !== null && row.amount !== null) {
+    const nextCurrency = toDbCurrency(row.type as LimitType, next.currency);
+    if (nextCurrency === row.currency) {
+      return moneyCompare(next.amount, row.amount) > 0;
+    }
+    const converted = await rates.convert(next.amount, nextCurrency, row.currency);
+    if (converted === null) {
+      return true;
+    }
+    return moneyCompare(converted, row.amount) > 0;
+  }
+  if (next.minutes !== null && row.minutes !== null) {
+    return next.minutes > row.minutes;
+  }
+  return true;
+}
+
+export type LimitRaiseNotAllowedData = {
+  type: LimitRow['type'];
+  period: LimitRow['period'];
+  previousAmount: string | null;
+  previousMinutes: number | null;
+  requestedAmount: string | null;
+  requestedMinutes: number | null;
+};
+
+export class LimitRaiseNotAllowedError extends Error {
+  readonly data: LimitRaiseNotAllowedData;
+
+  constructor(row: LimitRow, input: Pick<SetPlayerLimitInput, 'amount' | 'minutes'>) {
+    super(
+      'An admin override may only create or lower a player limit; raising one the player controls is not permitted',
+    );
+    this.name = 'LimitRaiseNotAllowedError';
+    this.data = {
+      type: row.type,
+      period: row.period,
+      previousAmount: row.amount,
+      previousMinutes: row.minutes,
+      requestedAmount: input.amount,
+      requestedMinutes: input.minutes,
+    };
+  }
+}
+
 const HOUR_MS = 60 * 60 * 1000;
+
+export const limitSlotKey = (userId: User['id'], type: string, period: string) =>
+  `rg-limit:${userId}:${type}:${period}`;
+export const NO_PENDING_CHANGE = {
+  pendingKind: null,
+  pendingAmount: null,
+  pendingMinutes: null,
+  pendingCurrency: null,
+  pendingRequestedAt: null,
+  pendingEffectiveAt: null,
+  pendingExpiresAt: null,
+} as const;
 // Cap in-flight enforcement syncs per sweep tick so a large lapsed-cooling-off batch can't
 // exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
 const SWEEP_CONCURRENCY = 10;
+
+export class RgLimitCurrencyUnresolvedError extends Error {
+  constructor(readonly userId: User['id']) {
+    super(
+      `Cannot resolve a currency for this responsible-gambling limit: no player record found for ${userId}`,
+    );
+    this.name = 'RgLimitCurrencyUnresolvedError';
+  }
+}
+
+/**
+ * Resolves and persists a pre-existing row's null currency to the player's own
+ * `player.currency`. Caller must already hold the transaction and advisory lock for
+ * this limit's slot (`limitSlotKey`).
+ */
+export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow> {
+  if (row.currency !== null) {
+    return row as ResolvedLimitRow;
+  }
+  const [current] = await tx.select().from(userLimit).where(eq(userLimit.id, row.id));
+  if (!current) {
+    throw new LimitNotFoundError(row.id);
+  }
+  if (current.currency !== null) {
+    return current as ResolvedLimitRow;
+  }
+  const [playerRow] = await tx
+    .select({ currency: player.currency })
+    .from(player)
+    .where(eq(player.userId, row.userId));
+  if (!playerRow) {
+    throw new RgLimitCurrencyUnresolvedError(row.userId);
+  }
+  const [updated] = await tx
+    .update(userLimit)
+    .set({ currency: playerRow.currency })
+    .where(eq(userLimit.id, row.id))
+    .returning();
+  return { ...(updated ?? current), currency: playerRow.currency };
+}
+
+/**
+ * Same resolution, for a caller that holds no transaction: opens its own transaction and
+ * takes the lock itself. Never call from inside an already-open transaction on the same
+ * slot - use `resolveLimitCurrencyInTx` there instead, or a second connection taking the
+ * same advisory lock self-deadlocks.
+ */
+export async function resolveLimitCurrency(
+  drizzle: DrizzleService,
+  row: LimitRow,
+): Promise<ResolvedLimitRow> {
+  if (row.currency !== null) {
+    return row as ResolvedLimitRow;
+  }
+  return drizzle.db.transaction((tx) =>
+    withAdvisoryXactLock(tx, limitSlotKey(row.userId, row.type, row.period), () =>
+      resolveLimitCurrencyInTx(tx, row),
+    ),
+  );
+}
+
+/**
+ * Applies a limit immediately and clears any parked pending request. Caller must
+ * already hold this limit's slot lock (`limitSlotKey`) inside their own transaction and
+ * must pass the `existing` row read under it - the update pins to `existing.id`.
+ */
+export async function writeLimitRow(
+  tx: Tx,
+  userId: User['id'],
+  existing: LimitRow | undefined,
+  input: Pick<UpsertLimitInput, 'type' | 'amount' | 'minutes' | 'currency' | 'period'>,
+): Promise<LimitRow> {
+  const currency = toDbCurrency(input.type, input.currency);
+  if (existing) {
+    return findOneOrThrow(
+      await tx
+        .update(userLimit)
+        .set({
+          amount: input.amount,
+          minutes: input.minutes,
+          currency,
+          ...NO_PENDING_CHANGE,
+        })
+        .where(eq(userLimit.id, existing.id))
+        .returning(),
+      new LimitNotFoundError(userId),
+    );
+  }
+  return findOneOrThrow(
+    await tx
+      .insert(userLimit)
+      .values({
+        userId,
+        type: input.type,
+        amount: input.amount,
+        minutes: input.minutes,
+        currency,
+        period: input.period,
+      })
+      .returning(),
+    new LimitNotFoundError(userId),
+  );
+}
 
 function addMonths(from: Date, months: number): Date {
   const d = new Date(from);
@@ -64,7 +246,10 @@ function addMonths(from: Date, months: number): Date {
 }
 
 function toLimitDto(row: typeof userLimit.$inferSelect) {
-  return serializeRow(row, { dateFields: ['createdAt'] });
+  return {
+    ...serializeRow(row, { dateFields: ['createdAt'] }),
+    currency: toWireCurrency(row.type as LimitType, row.currency),
+  };
 }
 
 function toExclusionDto(row: typeof rgExclusion.$inferSelect) {
@@ -81,6 +266,7 @@ export type RgServiceDeps = {
   directory?: AdminUserDirectory | null;
   identityReader: IdentityReader;
   templateRenderer?: EmailTemplateRenderer | null;
+  rates: ExchangeRateReader;
 };
 
 /**
@@ -100,6 +286,7 @@ export class RgService {
   private readonly directory: AdminUserDirectory | null;
   private readonly identityReader: IdentityReader;
   private readonly templateRenderer: EmailTemplateRenderer | null;
+  private readonly rates: ExchangeRateReader;
 
   constructor(deps: RgServiceDeps) {
     this.drizzle = deps.drizzle;
@@ -109,39 +296,65 @@ export class RgService {
     this.directory = deps.directory ?? null;
     this.identityReader = deps.identityReader;
     this.templateRenderer = deps.templateRenderer ?? null;
+    this.rates = deps.rates;
   }
 
+  /**
+   * Admin override: creates a player's first limit or lowers an existing one, effective
+   * immediately, with no cool-down. Reduce-only - raising a limit the player set for
+   * themselves throws `LimitRaiseNotAllowedError`.
+   */
   async setPlayerLimit(
     userId: User['id'],
     input: SetPlayerLimitInput,
     actorId: User['id'],
+    initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<Limit> {
-    const [prior] = await this.drizzle.db
-      .select({ amount: userLimit.amount, minutes: userLimit.minutes })
-      .from(userLimit)
-      .where(
-        and(
-          eq(userLimit.userId, userId),
-          eq(userLimit.type, input.type),
-          eq(userLimit.period, input.period),
-        ),
-      )
-      .limit(1);
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .insert(userLimit)
-        .values({ ...input, userId })
-        .onConflictDoUpdate({
-          target: [userLimit.userId, userLimit.type, userLimit.period],
-          set: { amount: input.amount, minutes: input.minutes },
-        })
-        .returning(),
-      new LimitNotFoundError(userId),
+    const { prior, row } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, limitSlotKey(userId, input.type, input.period), async () => {
+        const [existing] = await tx
+          .select()
+          .from(userLimit)
+          .where(
+            and(
+              eq(userLimit.userId, userId),
+              eq(userLimit.type, input.type),
+              eq(userLimit.period, input.period),
+            ),
+          )
+          .limit(1);
+        if (existing) {
+          const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+          if (await isWeakening(resolvedExisting, input, this.rates)) {
+            throw new LimitRaiseNotAllowedError(existing, input);
+          }
+        }
+        return { prior: existing, row: await writeLimitRow(tx, userId, existing, input) };
+      }),
     );
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    if (prior?.pendingKind) {
+      this.events.emit('rg.limit.change_cancelled', {
+        userId,
+        playerId,
+        actorId,
+        limitId: row.id,
+        type: input.type,
+        period: input.period,
+        kind: prior.pendingKind,
+        previousAmount: prior.amount,
+        previousMinutes: prior.minutes,
+        requestedAmount: prior.pendingAmount,
+        requestedMinutes: prior.pendingMinutes,
+        initiatedBy,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
     this.events.emit('rg.limit.set', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       actorId,
       limitId: row.id,
       type: input.type,
@@ -150,22 +363,34 @@ export class RgService {
       minutes: input.minutes,
       previousAmount: prior?.amount ?? null,
       previousMinutes: prior?.minutes ?? null,
+      initiatedBy,
+      reason: input.reason,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    const limitDescription = input.amount ?? `${input.minutes} minutes`;
-    await this.notify(userId, 'rgLimitUpdated', {
-      period: input.period,
-      type: input.type,
-      description: limitDescription,
-    });
+    await this.notifyLimitUpdated(userId, input.type, input.period, input.amount, input.minutes);
     return toLimitDto(row);
+  }
+
+  async notifyLimitUpdated(
+    userId: User['id'],
+    type: SetPlayerLimitInput['type'],
+    period: SetPlayerLimitInput['period'],
+    amount: string | null,
+    minutes: number | null,
+  ): Promise<void> {
+    await this.notify(userId, 'rgLimitUpdated', {
+      period,
+      type,
+      description: amount ?? `${minutes} minutes`,
+    });
   }
 
   async activateCoolingOff(
     userId: User['id'],
     input: ActivateCoolingOffInput,
     actorId: User['id'],
+    initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
@@ -208,6 +433,7 @@ export class RgService {
       exclusionId: row.id,
       expiresAt: expiresAt.toISOString(),
       reason: input.reason,
+      initiatedBy,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
@@ -225,6 +451,7 @@ export class RgService {
     userId: User['id'],
     input: ActivateSelfExclusionInput,
     actorId: User['id'],
+    initiatedBy: RgInitiator,
     meta?: ClientMeta,
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'self_exclusion');
@@ -262,6 +489,7 @@ export class RgService {
       durationMonths: input.isPermanent ? null : (input.durationMonths ?? null),
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
       reason: input.reason,
+      initiatedBy,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
@@ -388,23 +616,23 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  async getRgSection(userId: User['id']): Promise<RgSection> {
+  /**
+   * The exclusions in force for a player right now. A lapsed cooling-off row stays
+   * `active` until the sweep expires it, so it is filtered out here by its expiry.
+   */
+  async getActiveExclusions(
+    userId: User['id'],
+  ): Promise<{ coolingOff: RgExclusion | null; selfExclusion: RgExclusion | null }> {
     const now = new Date();
-    const [limits, exclusions] = await Promise.all([
-      this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId)),
-      this.drizzle.db
-        .select()
-        .from(rgExclusion)
-        .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
-        .orderBy(desc(rgExclusion.createdAt)),
-    ]);
-    // A lapsed cooling-off row stays `active` until the sweep expires it - treat it as
-    // not-active here so the section reflects the enforced state.
+    const exclusions = await this.drizzle.db
+      .select()
+      .from(rgExclusion)
+      .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
+      .orderBy(desc(rgExclusion.createdAt));
     const coolingOff =
       exclusions.find((e) => e.kind === 'cooling_off' && e.expiresAt && e.expiresAt > now) ?? null;
     const selfExclusion = exclusions.find((e) => e.kind === 'self_exclusion') ?? null;
     return {
-      limits: limits.map(toLimitDto),
       coolingOff: coolingOff ? toExclusionDto(coolingOff) : null,
       selfExclusion: selfExclusion ? toExclusionDto(selfExclusion) : null,
     };

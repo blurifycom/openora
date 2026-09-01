@@ -10,12 +10,13 @@ import {
   type KycStatusWriter,
   type KycWebhookVerifier,
 } from '@openora/core/contracts';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   makeIdentityReader,
   mock,
+  makeRealtimeTransport,
   makeEventBus,
   makeAuditWriter,
   NO_CLIENT_META,
@@ -27,6 +28,7 @@ import { KycVerificationService } from '../service/kyc.service.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { RgService } from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import type { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const CTX = {
   request: { headers: {} as Record<string, string | string[] | undefined> },
@@ -79,9 +81,10 @@ function build(guard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({}),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
-    realtime: new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
+    rgSelfService: mock<RgSelfServiceService>({}),
   });
   return { router, audit, statusWriter, events };
 }

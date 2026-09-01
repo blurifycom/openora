@@ -1,5 +1,5 @@
 {
-  "id": "918ac796-d97d-44f2-8fd9-b697d0030390",
+  "id": "3cfef640-3c19-43de-bb6e-5d72a0bbad07",
   "prevId": "848568d2-f6c2-4771-a5ee-b14c583419ff",
   "version": "7",
   "dialect": "postgresql",
@@ -77,14 +77,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "tier": {
-          "name": "tier",
-          "type": "kyc_verification_tier",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'basic'"
         },
         "status": {
           "name": "status",
@@ -165,17 +157,11 @@
         }
       },
       "indexes": {
-        "kyc_verification_user_id_tier_created_at_idx": {
-          "name": "kyc_verification_user_id_tier_created_at_idx",
+        "kyc_verification_user_id_created_at_idx": {
+          "name": "kyc_verification_user_id_created_at_idx",
           "columns": [
             {
               "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "tier",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -192,23 +178,11 @@
           "method": "btree",
           "with": {}
         },
-        "kyc_verification_user_id_reference_id_tier_key": {
-          "name": "kyc_verification_user_id_reference_id_tier_key",
+        "kyc_verification_reference_id_key": {
+          "name": "kyc_verification_reference_id_key",
           "columns": [
             {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
               "expression": "reference_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "tier",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -570,7 +544,7 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 2)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": false
         },
@@ -580,11 +554,60 @@
           "primaryKey": false,
           "notNull": false
         },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "period": {
           "name": "period",
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "pending_kind": {
+          "name": "pending_kind",
+          "type": "limit_change_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_amount": {
+          "name": "pending_amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_minutes": {
+          "name": "pending_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_currency": {
+          "name": "pending_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_requested_at": {
+          "name": "pending_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_effective_at": {
+          "name": "pending_effective_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_expires_at": {
+          "name": "pending_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -601,8 +624,8 @@
         }
       },
       "indexes": {
-        "user_limit_user_id_type_period_key": {
-          "name": "user_limit_user_id_type_period_key",
+        "user_limit_user_id_type_period_currency_key": {
+          "name": "user_limit_user_id_type_period_currency_key",
           "columns": [
             {
               "expression": "user_id",
@@ -621,6 +644,12 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": true,
@@ -633,6 +662,21 @@
           "columns": [
             {
               "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "user_limit_pending_expires_at_idx": {
+          "name": "user_limit_pending_expires_at_idx",
+          "columns": [
+            {
+              "expression": "pending_expires_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -671,10 +715,10 @@
         "manually_overridden"
       ]
     },
-    "public.kyc_verification_tier": {
-      "name": "kyc_verification_tier",
+    "public.limit_change_kind": {
+      "name": "limit_change_kind",
       "schema": "public",
-      "values": ["basic", "advanced"]
+      "values": ["increase", "removal"]
     },
     "public.rg_exclusion_kind": {
       "name": "rg_exclusion_kind",

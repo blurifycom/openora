@@ -1,10 +1,15 @@
 import { DrizzleService } from '@openora/core/server';
-import { type WalletReader } from '@openora/core/contracts';
+import { type WalletReader, type WalletBalancesReading } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
+import { readWalletBalances } from '../service/wallet.service.js';
 
 export class WalletReaderService implements WalletReader {
   constructor(private readonly drizzle: DrizzleService) {}
+
+  getBalances(userId: string): Promise<WalletBalancesReading> {
+    return readWalletBalances(this.drizzle.db, userId);
+  }
 
   async getLifetimeDeposit(userId: string): Promise<string> {
     const [row] = await this.drizzle.db

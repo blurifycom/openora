@@ -5,18 +5,22 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   AdminUserDirectory,
+  ExchangeRateReader,
   KycAdapter,
   KycWebhookVerifier,
   LoginEnforcementPort,
   SendEmailPort,
   JobQueueAdapter,
 } from '@openora/core/contracts';
-import { queue } from '@openora/core/contracts';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { defaultResponsibleGamingConfig, queue } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
+import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import {
   makeIdentityReader,
   mock,
+  makeRealtimeTransport,
   makeEventBus,
   makeAdminGuard,
   makeAuditWriter,
@@ -28,9 +32,11 @@ import { createComplianceRouter } from '../router/index.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
 import { RgService } from '../service/rg.service.js';
-import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const CTX = testContext();
+const playerCtx = (userId: string) => testContext({ auth: { userId } });
 const USER = '11111111-1111-4111-8111-111111111111';
 const CALLER = '33333333-3333-4333-8333-333333333333';
 const HOURS = 3600_000;
@@ -38,7 +44,7 @@ const HOURS = 3600_000;
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateWallet, migrateGaming]);
 });
 
 afterAll(async () => {
@@ -54,6 +60,17 @@ beforeEach(async () => {
 const guardAllowing = (allow: readonly string[]) =>
   makeAdminGuard({ allow, caller: { userId: CALLER } });
 
+function identityRates(): ExchangeRateReader {
+  return mock<ExchangeRateReader>({
+    getRate: vi.fn(async (from: string, to: string) =>
+      from === to ? { rate: '1', asOf: new Date().toISOString() } : null,
+    ),
+    convert: vi.fn(async (amount: string, from: string, to: string) =>
+      from === to ? amount : null,
+    ),
+  });
+}
+
 function build(adminGuard: AdminGuard) {
   const events = makeEventBus();
   const enforcement = mock<LoginEnforcementPort>({
@@ -67,6 +84,17 @@ function build(adminGuard: AdminGuard) {
     email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
     directory: mock<AdminUserDirectory>({ lookupPlayers: vi.fn(async () => []) }),
     identityReader: makeIdentityReader(),
+    rates: identityRates(),
+  });
+  const rgMonitoring = new RgMonitoringService({ drizzle: db.drizzle, rates: identityRates() });
+  const rgSelfService = new RgSelfServiceService({
+    drizzle: db.drizzle,
+    events,
+    rg,
+    monitoring: rgMonitoring,
+    identityReader: makeIdentityReader(),
+    config: defaultResponsibleGamingConfig,
+    rates: identityRates(),
   });
   const router = createComplianceRouter({
     compliance: mock<ComplianceService>({}),
@@ -77,9 +105,10 @@ function build(adminGuard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({ enqueue: vi.fn(async () => ({ id: 'job-1' })) }),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
-    realtime: new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
     rg,
-    rgMonitoring: mock<RgMonitoringService>({}),
+    rgMonitoring,
+    rgSelfService,
   });
   return { router, events, enforcement };
 }
@@ -115,7 +144,16 @@ describe('compliance RG router authz', () => {
     await expect(
       call(
         router.setPlayerLimit,
-        { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+        {
+          userId: USER,
+          type: 'deposit',
+          amount: '100',
+          minutes: null,
+          currency: 'USD',
+          period: 'daily',
+          reason: 'x',
+          confirm: true,
+        },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -166,7 +204,16 @@ describe('compliance RG router writes', () => {
 
     const result = await call(
       router.setPlayerLimit,
-      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        currency: 'USD',
+        period: 'daily',
+        reason: 'first limit on file',
+        confirm: true,
+      },
       { context: CTX },
     );
 
@@ -176,8 +223,88 @@ describe('compliance RG router writes', () => {
     expect(stored[0]?.period).toBe('daily');
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.set',
-      expect.objectContaining({ userId: USER, actorId: CALLER }),
+      expect.objectContaining({
+        userId: USER,
+        actorId: CALLER,
+        reason: 'first limit on file',
+      }),
     );
+  });
+
+  it('setPlayerLimit lowers an existing player-set limit immediately', async () => {
+    const { router } = build(guardAllowing(['compliance:manage-rg']));
+    await call(
+      router.setPlayerLimit,
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        currency: 'USD',
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
+      { context: CTX },
+    );
+
+    const result = await call(
+      router.setPlayerLimit,
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '40',
+        minutes: null,
+        currency: 'USD',
+        period: 'daily',
+        reason: 'reducing exposure',
+        confirm: true,
+      },
+      { context: CTX },
+    );
+
+    expect(Number(result.amount)).toBe(40);
+    const stored = await limitsOf(USER);
+    expect(stored).toHaveLength(1);
+    expect(Number(stored[0]?.amount)).toBe(40);
+  });
+
+  it('setPlayerLimit refuses to raise an existing player-set limit, mapped to CONFLICT', async () => {
+    const { router } = build(guardAllowing(['compliance:manage-rg']));
+    await call(
+      router.setPlayerLimit,
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '40',
+        minutes: null,
+        currency: 'USD',
+        period: 'daily',
+        reason: 'initial limit',
+        confirm: true,
+      },
+      { context: CTX },
+    );
+
+    await expect(
+      call(
+        router.setPlayerLimit,
+        {
+          userId: USER,
+          type: 'deposit',
+          amount: '100',
+          minutes: null,
+          currency: 'USD',
+          period: 'daily',
+          reason: 'trying to raise it',
+          confirm: true,
+        },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const stored = await limitsOf(USER);
+    expect(Number(stored[0]?.amount)).toBe(40);
   });
 
   it('activateSelfExclusion records the exclusion and blocks login', async () => {
@@ -264,7 +391,16 @@ describe('compliance RG router writes', () => {
     const { router } = build(guardAllowing(['compliance:manage-rg', 'compliance:view']));
     await call(
       router.setPlayerLimit,
-      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      {
+        userId: USER,
+        type: 'deposit',
+        amount: '100',
+        minutes: null,
+        currency: 'USD',
+        period: 'daily',
+        reason: 'for the section read-back test',
+        confirm: true,
+      },
       { context: CTX },
     );
 
@@ -272,5 +408,136 @@ describe('compliance RG router writes', () => {
 
     expect(section.limits).toHaveLength(1);
     expect(section.limits[0]?.type).toBe('deposit');
+  });
+
+  it('getRgSection shows the compliance officer a pending player request', async () => {
+    const { router } = build(guardAllowing(['compliance:view']));
+    await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+    await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+
+    const section = await call(router.getRgSection, { userId: USER }, { context: CTX });
+
+    expect(section.limits[0]).toMatchObject({
+      amount: '100.000000000000000000',
+      pendingAmount: '500.000000000000000000',
+      pendingStatus: 'waiting',
+    });
+  });
+});
+
+describe('compliance router - player self-service', () => {
+  const OTHER = '44444444-4444-4444-8444-444444444444';
+
+  it('getMyRgSection returns the CALLER state, never another players', async () => {
+    const { router } = build(guardAllowing([]));
+    await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+
+    const mine = await call(router.getMyRgSection, undefined, { context: playerCtx(OTHER) });
+
+    expect(mine.limits).toHaveLength(0);
+  });
+
+  it('upsertLimit writes a first limit for the caller with no admin permission at all', async () => {
+    const { router } = build(guardAllowing([]));
+
+    const view = await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+
+    expect(view).toMatchObject({
+      userId: USER,
+      amount: '100.000000000000000000',
+      pendingStatus: null,
+    });
+  });
+
+  it('deleteLimit files a removal request and leaves the limit standing', async () => {
+    const { router } = build(guardAllowing([]));
+    const created = await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+
+    const view = await call(router.deleteLimit, { id: created.id }, { context: playerCtx(USER) });
+
+    expect(view).toMatchObject({ amount: '100.000000000000000000', pendingKind: 'removal' });
+    expect(await limitsOf(USER)).toHaveLength(1);
+  });
+
+  it('confirmPendingLimitChange is a CONFLICT while the cool-down runs', async () => {
+    const { router } = build(guardAllowing([]));
+    await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+    const raised = await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+
+    await expect(
+      call(router.confirmPendingLimitChange, { id: raised.id }, { context: playerCtx(USER) }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('one player cannot cancel another players request', async () => {
+    const { router } = build(guardAllowing([]));
+    await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+    const raised = await call(
+      router.upsertLimit,
+      { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
+      { context: playerCtx(USER) },
+    );
+
+    await expect(
+      call(router.cancelPendingLimitChange, { id: raised.id }, { context: playerCtx(OTHER) }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('requestCoolingOff starts a break on the caller and blocks their login', async () => {
+    const { router, enforcement } = build(guardAllowing([]));
+
+    const exclusion = await call(
+      router.requestCoolingOff,
+      { durationHours: 24 },
+      { context: playerCtx(USER) },
+    );
+
+    expect(exclusion).toMatchObject({ userId: USER, kind: 'cooling_off' });
+    expect(enforcement.block).toHaveBeenCalledWith(USER, expect.anything());
+  });
+
+  it('requestSelfExclusion is a CONFLICT when one is already active', async () => {
+    const { router } = build(guardAllowing([]));
+    await seedExclusion({ userId: USER, kind: 'self_exclusion', isPermanent: true });
+
+    await expect(
+      call(
+        router.requestSelfExclusion,
+        { isPermanent: true, confirm: true },
+        { context: playerCtx(USER) },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });

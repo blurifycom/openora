@@ -1152,6 +1152,7 @@ describe('TagEvaluationService.onSelfExclusionActivated / onSelfExclusionLifted 
       isPermanent: false,
       durationMonths: 6,
       expiresAt: new Date().toISOString(),
+      initiatedBy: 'player',
     });
 
     expect(await activeTagKeys(userId)).toContain('self_excluded');
@@ -1173,6 +1174,7 @@ describe('TagEvaluationService.onSelfExclusionActivated / onSelfExclusionLifted 
         isPermanent: false,
         durationMonths: 6,
         expiresAt: null,
+        initiatedBy: 'player',
       }),
     ).resolves.toBeUndefined();
   });

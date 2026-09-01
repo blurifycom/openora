@@ -5,6 +5,7 @@ import {
   MoneyAmountSchema,
   ChatRoomIdSchema,
   TimestampSchema,
+  CurrencyTickerSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -22,9 +23,11 @@ export const CHAT_COMMAND_TYPES = [
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
+const PerCurrencyAmountSchema = z.record(CurrencyTickerSchema, MoneyAmountSchema);
+
 export const CommandConfigSchema = z.object({
-  maxAmount: MoneyAmountSchema.optional(),
-  minAmount: MoneyAmountSchema.optional(),
+  maxAmount: PerCurrencyAmountSchema.optional(),
+  minAmount: PerCurrencyAmountSchema.optional(),
   maxRecipients: z.number().int().positive().optional(),
 });
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;

@@ -2,10 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import { queue, type PaymentAdapter } from '@openora/core/contracts';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { CreateWithdrawalAddressInput } from '../contract/index.js';
 import {
   mock,
+  makeRealtimeTransport,
   makeEventBus,
   testContext,
   makeAuditWriter,
@@ -66,7 +67,7 @@ function routerWith(payment: Partial<PaymentAdapter> = {}) {
     reconciliation: mock<ReconciliationService>({}),
     jobQueue: makeJobQueue(),
     reconciliationQueue: RECONCILIATION_QUEUE,
-    realtime: new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
   });
   return { router, audit, service };
 }
@@ -120,7 +121,10 @@ describe('wallet withdrawal address book', () => {
     const { router } = routerWith();
     await create(router);
 
-    const trc = await create(router, { network: 'TRC20' });
+    const trc = await create(router, {
+      network: 'TRC20',
+      address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+    });
 
     expect(trc).toMatchObject({ network: 'TRC20' });
   });
@@ -128,7 +132,12 @@ describe('wallet withdrawal address book', () => {
   it("list: only the caller's own rows, newest first, filterable by currency", async () => {
     const { router } = routerWith();
     await create(router);
-    await create(router, { label: 'My BTC', currency: 'BTC', network: 'SEGWIT' });
+    await create(router, {
+      label: 'My BTC',
+      currency: 'BTC',
+      network: 'SEGWIT',
+      address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+    });
     await create(router, { label: 'Not yours' }, OTHER_PLAYER);
 
     const all = await call(router.withdrawalAddresses.list, {}, { context: ctxFor(PLAYER) });

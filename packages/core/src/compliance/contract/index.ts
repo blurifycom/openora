@@ -10,7 +10,7 @@ import {
   GeoRuleActionSchema,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
-import { LimitSchema, UpsertLimitInputSchema } from './limits.js';
+import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
 import { rgContract } from './rg.js';
 
 export const KycDocumentTypeSchema = z.enum(KYC_DOCUMENT_TYPES);
@@ -170,17 +170,19 @@ const GeoCheckOutputSchema = z.object({
 });
 
 export const complianceContract = {
-  getLimits: oc.route({ method: 'GET', path: '/compliance/limits' }).output(z.array(LimitSchema)),
+  getLimits: oc
+    .route({ method: 'GET', path: '/compliance/limits' })
+    .output(z.array(LimitViewSchema)),
 
   upsertLimit: oc
     .route({ method: 'PUT', path: '/compliance/limits' })
     .input(UpsertLimitInputSchema)
-    .output(LimitSchema),
+    .output(LimitViewSchema),
 
   deleteLimit: oc
     .route({ method: 'DELETE', path: '/compliance/limits/{id}' })
     .input(DeleteLimitInputSchema)
-    .output(z.object({ success: z.literal(true) })),
+    .output(LimitViewSchema),
 
   geoCheck: oc.route({ method: 'GET', path: '/compliance/geo-check' }).output(GeoCheckOutputSchema),
 

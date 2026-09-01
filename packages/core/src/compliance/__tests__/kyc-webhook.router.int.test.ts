@@ -12,11 +12,16 @@ import {
 } from '@openora/core/contracts';
 import {
   createTestRedis,
-  InProcessRealtimeTransport,
+  RedisPubSubRealtimeTransport,
   redisUrlForWorker,
   type TestRedis,
 } from '@openora/core/testing';
-import { mock, makeAuditWriter, NO_CLIENT_META } from '../../testing/mock.js';
+import {
+  mock,
+  makeAuditWriter,
+  makeRealtimeTransport,
+  NO_CLIENT_META,
+} from '../../testing/mock.js';
 import {
   createComplianceRouter,
   createKycStatusStream,
@@ -26,6 +31,7 @@ import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
 import type { RgService } from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import type { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 
@@ -72,7 +78,6 @@ function build(opts: {
   webhookVerifier: KycWebhookVerifier;
   kycAdapter: KycAdapter;
   jobQueue: BullMqJobQueue;
-  realtime?: InProcessRealtimeTransport;
 }) {
   return createComplianceRouter({
     compliance: mock<ComplianceService>({}),
@@ -83,9 +88,10 @@ function build(opts: {
     webhookVerifier: opts.webhookVerifier,
     jobQueue: opts.jobQueue,
     kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
-    realtime: opts.realtime ?? new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
+    rgSelfService: mock<RgSelfServiceService>({}),
   });
 }
 
@@ -99,33 +105,33 @@ function bodyHashKey(rawBody: string): string {
 
 const acceptingVerifier = () => mock<KycWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
 
+const REDIS_SUBSCRIBE_SETTLE_MS = 200;
+
 describe('compliance streamKycStatus router', () => {
   it('streams only player-safe updates from the player channel', async () => {
-    const realtime = new InProcessRealtimeTransport();
-    const iterator = createKycStatusStream(realtime, 'user-1', undefined)[Symbol.asyncIterator]();
-    const next = iterator.next();
-    await Promise.resolve();
+    const realtime = new RedisPubSubRealtimeTransport(redis.client, 'kyc-webhook-test');
+    try {
+      const iterator = createKycStatusStream(realtime, 'user-1', undefined)[Symbol.asyncIterator]();
+      const next = iterator.next();
+      await new Promise((resolve) => setTimeout(resolve, REDIS_SUBSCRIBE_SETTLE_MS));
 
-    realtime.publish(kycStatusChannel('other-user'), {
-      eventId: '11111111-1111-4111-8111-111111111111',
-      status: 'rejected',
-      tier: 'basic',
-    });
-    realtime.publish(kycStatusChannel('user-1'), {
-      eventId: '22222222-2222-4222-8222-222222222222',
-      status: 'approved',
-      tier: 'advanced',
-    });
-
-    await expect(next).resolves.toEqual({
-      done: false,
-      value: {
+      await realtime.publish(kycStatusChannel('other-user'), {
+        eventId: '11111111-1111-4111-8111-111111111111',
+        status: 'rejected',
+        tier: 'basic',
+      });
+      const callerUpdate = {
         eventId: '22222222-2222-4222-8222-222222222222',
         status: 'approved',
         tier: 'advanced',
-      },
-    });
-    await iterator.return?.(undefined);
+      };
+      await realtime.publish(kycStatusChannel('user-1'), callerUpdate);
+
+      await expect(next).resolves.toEqual({ done: false, value: callerUpdate });
+      await iterator.return?.(undefined);
+    } finally {
+      await realtime.close();
+    }
   });
 });
 

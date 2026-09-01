@@ -8,8 +8,11 @@ export {
   moneyEquals,
   moneyCompare,
   moneyScaleBy,
+  moneyDivide,
   moneyAdd,
   moneySubtract,
+  moneyFloorToScale,
+  moneyCeilToScale,
   mapConcurrent,
 } from './query-helpers.js';
 

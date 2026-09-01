@@ -80,6 +80,35 @@ export type TestDb = {
 };
 
 /**
+ * Wait for every other backend on `database` to disconnect, so the FORCE drop below has
+ * nothing left to terminate.
+ *
+ * `pool.end()` resolves once the pool stops handing out clients, but a socket it already
+ * closed can still be registered server-side for a moment. Dropping in that window makes
+ * Postgres terminate the backend (57P01), and `pg` surfaces that on the client as an
+ * error with no listener left to catch it - an uncaught exception that fails the whole
+ * vitest run even though every test passed. Only reproducible under parallel load, which
+ * is exactly when a lingering socket is slowest to close.
+ *
+ * Best-effort: a backend that outlives the timeout is left to FORCE, since a stuck
+ * teardown must never be worse than the race it is avoiding.
+ */
+async function waitForIdleBackends(admin: Pool, database: string, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { rows } = await admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM pg_stat_activity
+       WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [database],
+    );
+    if (rows[0]?.count === '0') {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
  * Create a throwaway `test_<random>` database, apply the given per-module migrations
  * against it, and return a `DrizzleService` bound to it. `drop()` disposes the pool
  * and drops the database with FORCE (terminating any lingering backends).
@@ -113,6 +142,7 @@ export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
     drizzle,
     async drop(): Promise<void> {
       await drizzle.dispose();
+      await waitForIdleBackends(admin, database);
       await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
       await admin.end();
     },

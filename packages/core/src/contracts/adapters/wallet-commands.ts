@@ -9,6 +9,8 @@ export type WalletDebitArgs = {
   userId: string;
   amount: string;
   type: WalletTransactionType;
+  /** Which of the player's balances to take from. Omit it and the debit falls on the player's active currency (`wallet.currency`). */
+  currency?: string;
 };
 
 export type WalletDebitOutcome =
@@ -25,6 +27,10 @@ export type WalletCreditArgs = {
   amount: string;
   currency: string;
   type: WalletTransactionType;
+  /** Allow crediting a currency the player does not hold a balance in yet, creating the `wallet_balance` row. Off by default. */
+  allowNewCurrency?: boolean;
+  /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
+  allowNewWallet?: boolean;
 };
 
 export type WalletCreditOutcome = { ok: true; newBalance: string } | { ok: false; reason: string };

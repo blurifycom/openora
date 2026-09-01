@@ -1,8 +1,22 @@
 import { createToken } from './token.js';
 
+/** One player balance row, as returned by `WalletReader.getBalances`. */
+export type WalletBalanceReading = {
+  currency: string;
+  balance: string;
+};
+
+/** Full per-currency balance snapshot for a player, as returned by `WalletReader.getBalances`. */
+export type WalletBalancesReading = {
+  activeCurrency: string;
+  balances: WalletBalanceReading[];
+};
+
 export type WalletReader = {
   /** Sum of all completed deposits for a player, as a decimal string (same as wallet_transaction.amount). Used for high_roller evaluation. */
   getLifetimeDeposit(userId: string): Promise<string>;
+  /** Always answers: a player with no wallet row yet gets an empty `balances` array and the platform's default wallet currency, never a throw. */
+  getBalances(userId: string): Promise<WalletBalancesReading>;
   /** Count of completed withdrawals for a player within the last windowDays days. Used for high_risk evaluation. */
   getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number>;
   /**

@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { LimitsSchema } from './igaming-config.js';
+import {
+  LimitsSchema,
+  CurrencyCodeSchema,
+  ResponsibleGamingSchema,
+  defaultResponsibleGamingConfig,
+} from './igaming-config.js';
 import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
@@ -128,6 +133,22 @@ export const WalletConfigSchema = z
   .strict();
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
+
+export const ExchangeRateConfigSchema = z
+  .object({
+    /** Comparison currency the fx module derives a cross rate against. Absent = 'USD'. */
+    pivot: CurrencyCodeSchema.default('USD'),
+    freshTtlMs: z.number().int().positive().default(60_000),
+    hardMaxAgeMs: z
+      .number()
+      .int()
+      .positive()
+      .default(15 * 60_000),
+    providerTimeoutMs: z.number().int().positive().default(2_000),
+  })
+  .strict();
+
+export type ExchangeRateConfig = z.infer<typeof ExchangeRateConfigSchema>;
 
 export const NotificationsConfigSchema = z
   .object({
@@ -260,6 +281,7 @@ export const PlatformConfigSchema = z
      * defaults), reusing the shared LimitsSchema shape.
      */
     rgLimits: z.record(z.string().length(2), LimitsSchema).default({}),
+    responsibleGambling: ResponsibleGamingSchema.default(defaultResponsibleGamingConfig),
     /**
      * KYC verification knobs: provider id, webhook secret env, withdrawal gating,
      * and per-currency re-KYC deposit thresholds. Absent = KYC ungated, no re-KYC.
@@ -269,6 +291,8 @@ export const PlatformConfigSchema = z
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
     /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
     wallet: WalletConfigSchema.optional(),
+    /** Exchange-rate refresh knobs (pivot currency, refresh cron). Absent = built-in defaults. */
+    exchangeRate: ExchangeRateConfigSchema.optional(),
     /** Required before public registration is enabled. */
     registration: RegistrationConfigSchema.optional(),
     /** In-app notification retention knobs. Absent = built-in default (30 days). */
@@ -278,6 +302,8 @@ export const PlatformConfigSchema = z
      * Undefined or empty means no restriction - any value is accepted.
      */
     supportedLanguages: z.array(z.string().min(1)).optional(),
+    /** Currencies a player may pick to display amounts in. Absent or empty = built-in default. */
+    displayCurrencies: z.array(z.string().min(1)).optional(),
     /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
     /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */

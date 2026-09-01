@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus } from '../../testing/mock.js';
+import type { IdentityReader } from '@openora/core/contracts';
+import { makeEventBus, makeIdentityReader, mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { mapEventToRecord } from '../plugin.js';
 import { auditLog } from '../schema/index.js';
@@ -96,8 +97,8 @@ describe('computeHash canonical form', () => {
 
 let db: TestDb;
 
-function makeService() {
-  return new AuditService(db.drizzle, makeEventBus());
+function makeService(identityReader = makeIdentityReader()) {
+  return new AuditService(db.drizzle, makeEventBus(), identityReader);
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -676,6 +677,94 @@ describe('mapEventToRecord() player.id resolution', () => {
     }
   });
 
+  it('rg.limit.set: a player self-service change is filed under the PLAYER, not an admin', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: p.userId,
+      initiatedBy: 'player',
+    });
+
+    expect(row.actorType).toBe('player');
+    expect(row.actorId).toBe(p.userId);
+  });
+
+  it('rg.limit.set: an admin change stays filed under the admin', async () => {
+    const p = await seedPlayer();
+    const adminId = randomUUID();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: adminId,
+      initiatedBy: 'admin',
+    });
+
+    expect(row.actorType).toBe('admin');
+    expect(row.actorId).toBe(adminId);
+  });
+
+  it('rg.limit.set: an admin override reason lands in the audit record', async () => {
+    const p = await seedPlayer();
+    const adminId = randomUUID();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: adminId,
+      initiatedBy: 'admin',
+      reason: 'reducing exposure after a support call',
+    });
+
+    expect(row.after).toMatchObject({ reason: 'reducing exposure after a support call' });
+  });
+
+  it('rg.limit.set: the player self-service path still emits with no reason', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.limit.set', {
+      userId: p.userId,
+      playerId: p.id,
+      actorId: p.userId,
+      initiatedBy: 'player',
+      reason: null,
+    });
+
+    expect(row.after).toMatchObject({ reason: null });
+  });
+
+  it('rg.limit.change_requested / _confirmed: player-attributed, resourceId from playerId', async () => {
+    const p = await seedPlayer();
+
+    for (const topic of ['rg.limit.change_requested', 'rg.limit.change_confirmed']) {
+      const row = await mapAndRecord(topic, {
+        userId: p.userId,
+        playerId: p.id,
+        actorId: p.userId,
+        initiatedBy: 'player',
+      });
+      expect(row.resourceId).toBe(p.id);
+      expect(row.actorType).toBe('player');
+    }
+  });
+
+  it('rg.limit.change_expired: system-attributed - the window closed, nobody acted', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.limit.change_expired', {
+      userId: p.userId,
+      playerId: p.id,
+      limitId: randomUUID(),
+      requestedAmount: '500.00',
+      expiresAt: new Date().toISOString(),
+    });
+
+    expect(row.actorType).toBe('system');
+    expect(row.resourceId).toBe(p.id);
+  });
+
   it('rg.exclusion.login_blocked: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 
@@ -782,5 +871,174 @@ describe('mapEventToRecord() player.id resolution', () => {
 
     expect(row.actorType).toBe('admin');
     expect(row.actorId).toBe(userId);
+  });
+});
+
+describe('AuditService.listMyRgHistory() (real PG)', () => {
+  function readerFor(userId: string, playerId: string | null): IdentityReader {
+    return mock<IdentityReader>({
+      getPlayerIdByUserId: vi.fn(async (id: string) => (id === userId ? playerId : null)),
+    });
+  }
+
+  async function seedRgRow(
+    p: { id: string; userId: string },
+    overrides: Partial<Parameters<AuditService['record']>[0]> = {},
+  ) {
+    return makeService().record({
+      actorType: 'player',
+      actorId: p.userId,
+      action: 'rg.limit.set',
+      resourceType: 'player',
+      resourceId: p.id,
+      after: {
+        userId: p.userId,
+        playerId: p.id,
+        actorId: p.userId,
+        limitId: randomUUID(),
+        type: 'deposit',
+        period: 'daily',
+        amount: '500.00',
+        minutes: null,
+        previousAmount: null,
+        previousMinutes: null,
+        initiatedBy: 'player',
+      },
+      result: 'success',
+      ...overrides,
+    });
+  }
+
+  it('resolves the caller player id via getPlayerIdByUserId (distinct from userId) and returns only that player rows', async () => {
+    const p = await seedPlayer();
+    const other = await seedPlayer();
+    expect(p.id).not.toBe(p.userId);
+
+    await seedRgRow(p);
+    await seedRgRow(other);
+
+    const svc = makeService(readerFor(p.userId, p.id));
+    const result = await svc.listMyRgHistory(p.userId, { page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.total).toBe(1);
+  });
+
+  it('excludes non-rg.limit. audit rows for the same player', async () => {
+    const p = await seedPlayer();
+    await seedRgRow(p);
+    await makeService().record({
+      actorType: 'system',
+      action: 'compliance.kyc.updated',
+      resourceType: 'player',
+      resourceId: p.id,
+      after: { kycStatus: 'verified' },
+    });
+
+    const svc = makeService(readerFor(p.userId, p.id));
+    const result = await svc.listMyRgHistory(p.userId, { page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.action).toBe('rg.limit.set');
+  });
+
+  it('returns an empty page - not another subjects rows - when the caller has no player profile', async () => {
+    const p = await seedPlayer();
+    await seedRgRow(p);
+
+    const callerUserId = randomUUID();
+    const svc = makeService(readerFor(callerUserId, null));
+    const result = await svc.listMyRgHistory(callerUserId, { page: 1, limit: 10 });
+
+    expect(result).toEqual({ items: [], total: 0, page: 1, limit: 10 });
+  });
+
+  it('projects only the allowlisted fields - no reason/actorId/ip/userAgent/hash/prevHash/seq/correlationId leak', async () => {
+    const p = await seedPlayer();
+    await seedRgRow(p, {
+      after: {
+        userId: p.userId,
+        playerId: p.id,
+        actorId: 'admin-1',
+        limitId: randomUUID(),
+        type: 'deposit',
+        period: 'daily',
+        amount: '500.00',
+        minutes: null,
+        previousAmount: '200.00',
+        previousMinutes: null,
+        initiatedBy: 'admin',
+        reason: 'compliance escalation',
+      },
+      ip: '203.0.113.5',
+      userAgent: 'test-agent',
+      correlationId: 'corr-1',
+    });
+
+    const svc = makeService(readerFor(p.userId, p.id));
+    const result = await svc.listMyRgHistory(p.userId, { page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    const entry = result.items[0]!;
+    expect(entry).toEqual({
+      id: expect.any(String),
+      action: 'rg.limit.set',
+      actorType: 'player',
+      createdAt: expect.any(String),
+      type: 'deposit',
+      period: 'daily',
+      kind: null,
+      previousAmount: '200.00',
+      newAmount: '500.00',
+      previousMinutes: null,
+      newMinutes: null,
+      effectiveAt: null,
+      expiresAt: null,
+    });
+    for (const leaked of [
+      'reason',
+      'actorId',
+      'ip',
+      'userAgent',
+      'hash',
+      'prevHash',
+      'seq',
+      'correlationId',
+    ]) {
+      expect(entry).not.toHaveProperty(leaked);
+    }
+  });
+
+  it('reads newAmount/newMinutes from requestedAmount/requestedMinutes on a change_requested row, not amount/minutes', async () => {
+    const p = await seedPlayer();
+    await seedRgRow(p, {
+      action: 'rg.limit.change_requested',
+      after: {
+        userId: p.userId,
+        playerId: p.id,
+        actorId: p.userId,
+        limitId: randomUUID(),
+        type: 'deposit',
+        period: 'daily',
+        kind: 'increase',
+        previousAmount: '500.00',
+        previousMinutes: null,
+        requestedAmount: '1000.00',
+        requestedMinutes: null,
+        effectiveAt: new Date().toISOString(),
+        expiresAt: new Date().toISOString(),
+        initiatedBy: 'player',
+      },
+    });
+
+    const svc = makeService(readerFor(p.userId, p.id));
+    const result = await svc.listMyRgHistory(p.userId, { page: 1, limit: 10 });
+
+    expect(result.items[0]).toMatchObject({
+      action: 'rg.limit.change_requested',
+      kind: 'increase',
+      newAmount: '1000.00',
+      previousAmount: '500.00',
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
+import { AUDIT_WRITER, IDENTITY_READER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
@@ -544,28 +544,45 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
-  // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
     topic === 'rg.limit.set' ||
+    topic === 'rg.limit.change_requested' ||
+    topic === 'rg.limit.change_confirmed' ||
+    topic === 'rg.limit.change_cancelled' ||
     topic === 'rg.cooling_off.activated' ||
     topic === 'rg.self_exclusion.activated' ||
     topic === 'rg.self_exclusion.lifted' ||
     topic === 'rg.cooling_off.lifted'
   ) {
     const before =
-      topic === 'rg.limit.set'
+      topic === 'rg.limit.set' || topic === 'rg.limit.change_confirmed'
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
+    const initiatedBy = p['initiatedBy'];
     return {
       ...base,
-      actorType: 'admin',
+      actorType:
+        initiatedBy === 'player' || initiatedBy === 'system' || initiatedBy === 'admin'
+          ? initiatedBy
+          : 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
       before,
+      after: p,
+    };
+  }
+
+  if (topic === 'rg.limit.change_expired') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      before: { pendingAmount: p['requestedAmount'] ?? null },
       after: p,
     };
   }
@@ -757,11 +774,17 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  // chat.gift.sent
+  // chat.rain.distributed
   'chat.room.member.role-changed',
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',
+  'rg.limit.change_requested',
+  'rg.limit.change_confirmed',
+  'rg.limit.change_cancelled',
+  'rg.limit.change_expired',
   'rg.cooling_off.activated',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
@@ -812,7 +835,7 @@ export default {
     let svcRef: AuditService | null = null;
 
     ctx.provideSealed(AUDIT_WRITER, (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
@@ -833,7 +856,7 @@ export default {
     }
 
     ctx.routers.add('audit', (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       svcRef = svc;
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });
