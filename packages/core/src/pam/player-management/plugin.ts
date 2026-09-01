@@ -30,10 +30,7 @@ export default {
   id: 'player-management',
   dependsOn: ['chat', 'gaming', 'audit', 'identity'],
   register(ctx) {
-    ctx.provide(
-      KYC_STATUS_WRITER,
-      (c) => new PlayerKycStatusWriter(c.get(DRIZZLE), c.get(EVENT_BUS)),
-    );
+    ctx.provide(KYC_STATUS_WRITER, (c) => new PlayerKycStatusWriter(c.get(DRIZZLE)));
     ctx.provide(PLAYER_ACTIVITY_TRACKER, (c) => makePlayerService(c));
     ctx.routers.add('player', (c) =>
       createPlayerRouter(makePlayerService(c), c.get(ADMIN_GUARD), c.get(AUDIT_WRITER)),

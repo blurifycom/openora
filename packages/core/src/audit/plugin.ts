@@ -35,9 +35,10 @@ export async function mapEventToRecord(
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      before: { kycStatus: p['previousStatus'] ?? null },
+      before: { kycStatus: p['previousStatus'] ?? null, tier: p['tier'] ?? null },
       after: {
         kycStatus: p['status'] ?? null,
+        tier: p['tier'] ?? null,
         reason: p['reason'] ?? null,
         source: p['source'] ?? null,
       },
@@ -53,7 +54,11 @@ export async function mapEventToRecord(
       actorId: str(p['playerId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { referenceId: p['referenceId'] ?? null, provider: p['provider'] ?? null },
+      after: {
+        referenceId: p['referenceId'] ?? null,
+        provider: p['provider'] ?? null,
+        tier: p['tier'] ?? null,
+      },
     };
   }
 
@@ -64,7 +69,7 @@ export async function mapEventToRecord(
       actorType: 'system',
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { reason: p['reason'] ?? null },
+      after: { reason: p['reason'] ?? null, tier: p['tier'] ?? null },
     };
   }
 
@@ -76,6 +81,7 @@ export async function mapEventToRecord(
       resourceId: str(p['playerId']),
       after: {
         referenceId: p['referenceId'] ?? null,
+        tier: p['tier'] ?? null,
         vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
         dataCenterIpDetected: p['dataCenterIpDetected'] ?? null,
         duplicateDeviceDetected: p['duplicateDeviceDetected'] ?? null,

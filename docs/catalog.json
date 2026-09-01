@@ -162,6 +162,7 @@
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
+        "compliance.getMyKyc",
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
@@ -1631,11 +1632,19 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "KycTierSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
       "name": "KycTriggeredBySchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "KycVerificationSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycVerificationSummarySchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
@@ -1845,6 +1854,10 @@
     {
       "name": "PlayerEmailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerKycSummaryViewSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "PlayerKycViewSchema",
