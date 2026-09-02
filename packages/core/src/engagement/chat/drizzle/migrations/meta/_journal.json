@@ -78,6 +78,13 @@
       "when": 1788165921652,
       "tag": "0010_backfill_role_assigned_at",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788340642047,
+      "tag": "0011_chat_moderation_expiry_recorded",
+      "breakpoints": true
     }
   ]
 }

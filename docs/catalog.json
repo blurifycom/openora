@@ -729,6 +729,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts",

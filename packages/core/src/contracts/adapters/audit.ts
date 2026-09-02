@@ -19,6 +19,8 @@ export type DirectAuditAction =
   | 'admin.player.removed'
   | 'admin.player_note.created'
   | 'audit.export'
+  | 'chat.mute.expired'
+  | 'chat.platform_ban.expired'
   | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'

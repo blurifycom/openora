@@ -251,6 +251,9 @@ export const chatPlatformBan = pgTable(
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
+    // Bookmark for the expiry sweep, never an enforcement input: set once the audit
+    // entry for this ban's own lapse has been written, so a re-run writes nothing.
+    expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chat_platform_ban_active_scope_key')
@@ -260,6 +263,7 @@ export const chatPlatformBan = pgTable(
       .on(t.userId, t.scope, t.roomId)
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_platform_ban_user_idx').on(t.userId),
+    index('chat_platform_ban_expires_at_idx').on(t.expiresAt),
   ],
 );
 
@@ -276,6 +280,9 @@ export const chatMute = pgTable(
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
+    // See chatPlatformBan.expiryRecordedAt - same sweep bookmark, same non-role in
+    // enforcement (assertCanSend reads expiresAt and liftedAt only).
+    expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     index('chat_mute_user_room_idx').on(t.userId, t.roomId),

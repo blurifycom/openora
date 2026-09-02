@@ -209,6 +209,20 @@ export const ChatConfigSchema = z
   .object({
     /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
     allowedAttachmentHosts: z.array(AttachmentHostSchema).default([]),
+    /**
+     * Cron knob for the sweep that audits a mute or platform ban lapsing on its own.
+     * Static config, not a DB row. Absent means the built-in default applies; the cadence
+     * only sets how soon the lapse shows in the audit trail - enforcement already stops
+     * at `expiresAt` without it.
+     */
+    moderationExpiry: z
+      .object({
+        // Offset off the wallet custody sweep's quarter-hourly tick; see the matching
+        // default in engagement/chat/plugin.ts, which this has to agree with.
+        cron: z.string().default('7,22,37,52 * * * *'),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
