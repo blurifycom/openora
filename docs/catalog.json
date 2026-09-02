@@ -2387,6 +2387,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "TimezoneSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "TotpStepUpCodeSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },

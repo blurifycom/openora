@@ -291,3 +291,106 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
     expect(row?.displayCurrency).toBeNull();
   });
 });
+
+describe('ProfileService.recordTimezone (real PG)', () => {
+  it('stores the browser-reported zone and stamps when it was captured', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+
+    await svc.recordTimezone(account.id, 'Europe/Warsaw');
+
+    const [row] = await playersFor(account.id);
+    expect(row?.timezone).toBe('Europe/Warsaw');
+    expect(row?.timezoneUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  it('leaves timezoneUpdatedAt untouched when the stored zone is unchanged', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+    await svc.recordTimezone(account.id, 'Europe/Warsaw');
+    const [first] = await playersFor(account.id);
+
+    // Same zone, and the same zone spelled the way another browser reports it - neither is
+    // a move, so neither may churn the timestamp.
+    await svc.recordTimezone(account.id, 'Europe/Warsaw');
+    await svc.recordTimezone(account.id, 'europe/warsaw');
+
+    const [second] = await playersFor(account.id);
+    expect(second?.timezone).toBe('Europe/Warsaw');
+    expect(second?.timezoneUpdatedAt?.getTime()).toBe(first?.timezoneUpdatedAt?.getTime());
+  });
+
+  it('moves both columns when the reported zone changes', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+    await svc.recordTimezone(account.id, 'Europe/Warsaw');
+    const [before] = await playersFor(account.id);
+
+    await svc.recordTimezone(account.id, 'America/New_York');
+
+    const [after] = await playersFor(account.id);
+    expect(after?.timezone).toBe('America/New_York');
+    expect(after?.timezoneUpdatedAt?.getTime()).toBeGreaterThan(
+      before?.timezoneUpdatedAt?.getTime() ?? 0,
+    );
+  });
+
+  it('drops a zone the tz database does not recognise rather than storing client text', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { timezone: 'Europe/Warsaw' });
+
+    await svc.recordTimezone(account.id, 'Mars/Phobos');
+
+    // The stored zone survives an unrecognised one: a bad capture must not erase a good one.
+    const [row] = await playersFor(account.id);
+    expect(row?.timezone).toBe('Europe/Warsaw');
+  });
+
+  it('is a no-op for a user with no player row rather than materializing one', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+
+    await svc.recordTimezone(account.id, 'Europe/Warsaw');
+
+    expect(await playersFor(account.id)).toHaveLength(0);
+  });
+
+  it('reads back null on the player read model when no session ever sent a zone', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+
+    const profile = await svc.getMyProfile(account.id);
+
+    expect(profile).toMatchObject({ timezone: null, timezoneUpdatedAt: null });
+  });
+});
+
+describe('ProfileService.updateMyProfile - timezone (real PG)', () => {
+  it('captures a zone sent on its own, with no other field to write', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { country: 'PL' });
+
+    const result = await svc.updateMyProfile(account.id, { timezone: 'Asia/Tokyo' });
+
+    expect(result).toMatchObject({ timezone: 'Asia/Tokyo', country: 'PL' });
+  });
+
+  it('applies the other fields and ignores an unrecognised zone', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+
+    const result = await svc.updateMyProfile(account.id, {
+      country: 'GB',
+      timezone: 'Mars/Phobos',
+    });
+
+    expect(result).toMatchObject({ country: 'GB', timezone: null });
+  });
+});

@@ -21,6 +21,7 @@ import {
   type PhoneLoginRequestInput,
   type PhoneLoginRequestOutput,
   type PhoneLoginVerifyInput,
+  type PlayerProvisioning,
   type User,
   ClientMeta,
 } from '@openora/core/contracts';
@@ -139,6 +140,7 @@ export type PhoneLoginServiceDeps = {
   auth: Auth;
   cache?: CacheAdapter;
   options?: IdentityServiceOptions;
+  playerProvisioning?: PlayerProvisioning;
 };
 
 export class PhoneLoginService {
@@ -149,8 +151,18 @@ export class PhoneLoginService {
   private readonly auth: Auth;
   private readonly cache?: CacheAdapter;
   private readonly options?: IdentityServiceOptions;
+  private readonly playerProvisioning?: PlayerProvisioning;
 
-  constructor({ drizzle, events, sms, limiter, auth, cache, options }: PhoneLoginServiceDeps) {
+  constructor({
+    drizzle,
+    events,
+    sms,
+    limiter,
+    auth,
+    cache,
+    options,
+    playerProvisioning,
+  }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.sms = sms;
@@ -158,6 +170,7 @@ export class PhoneLoginService {
     this.auth = auth;
     this.cache = cache;
     this.options = options;
+    this.playerProvisioning = playerProvisioning;
   }
 
   private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
@@ -251,7 +264,7 @@ export class PhoneLoginService {
   }
 
   async verifyOtp(input: PhoneLoginVerifyInput & ClientMeta, resHeaders: Headers) {
-    const { phone, code, rememberMe, ip = null, userAgent = null } = input;
+    const { phone, code, rememberMe, timezone, ip = null, userAgent = null } = input;
     await assertRateLimit(this.limiter, `phone-otp-verify:${phone}`, OTP_VERIFY_RATE_LIMIT);
 
     const [otp] = await this.drizzle.db
@@ -438,6 +451,16 @@ export class PhoneLoginService {
       ip,
       userAgent,
     });
+
+    // Only once the OTP has cleared and the session exists. Display metadata, so a failure
+    // is logged and swallowed - it must never cost the player the session they just earned.
+    if (timezone && this.playerProvisioning) {
+      try {
+        await this.playerProvisioning.recordTimezone(account.id, timezone);
+      } catch (err) {
+        logger.warn({ err, userId: account.id }, 'player timezone capture failed - ignored');
+      }
+    }
 
     const authContext = await this.auth.$context;
 

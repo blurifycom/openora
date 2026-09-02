@@ -37,6 +37,15 @@ export const player = pgTable(
     totalWagered: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     totalDeposits: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     lastSeenAt: timestamp({ withTimezone: true }),
+    // The IANA zone the player's browser last reported. Nullable with no backfill: it
+    // cannot be derived from `country` (large countries span several zones, and the value
+    // is self-declared anyway) or from `registrationIp` (VPN-defeated, and less accurate
+    // than the device), so an uncaptured player stays honestly unknown.
+    timezone: text(),
+    // When that capture last changed the zone. A returning session that reports the same
+    // zone leaves this alone, so it reads as "last confirmed different", which is what
+    // tells a reader whether the zone is still worth trusting.
+    timezoneUpdatedAt: timestamp({ withTimezone: true }),
     termsVersion: text(),
     termsAcceptedAt: timestamp({ withTimezone: true }),
     ageAcceptedAt: timestamp({ withTimezone: true }),

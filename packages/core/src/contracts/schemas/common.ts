@@ -61,3 +61,36 @@ export const CurrencyTickerSchema = z
   .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
 
 export const CurrencyTickerInputSchema = CurrencyTickerSchema.transform((c) => c.toUpperCase());
+
+/**
+ * An IANA zone name as a browser reports it (`Intl.DateTimeFormat().resolvedOptions().timeZone`,
+ * eg `Europe/Warsaw`). Bounded rather than enumerated: the value is checked against the
+ * runtime's own tz database at the write (`resolveTimezone`), so a zone a later tzdata release
+ * adds is accepted without a contract change. The longest name in the current database is 30
+ * characters.
+ *
+ * Display metadata only. It is device-reported and trivially spoofable, so it is never
+ * evidence of where a player is and must never gate anything - responsible-gambling windows
+ * and audit records stay UTC on purpose.
+ */
+export const TimezoneSchema = z.string().min(1).max(64);
+export type Timezone = z.infer<typeof TimezoneSchema>;
+
+/**
+ * The canonical IANA name for `value`, or null when the runtime's tz database does not
+ * recognise it. Canonicalising rather than echoing the input keeps the stored value stable
+ * across the aliases and casings different browsers report (`US/Pacific` and `europe/warsaw`
+ * both normalise), so an unchanged zone compares equal instead of churning its timestamp.
+ *
+ * A bare UTC offset (`+05:00`) is rejected even though `Intl` accepts one: an offset is a
+ * moment's arithmetic, not a zone, and it silently goes wrong the next time DST moves.
+ */
+export function resolveTimezone(value: string): string | null {
+  let canonical: string;
+  try {
+    canonical = new Intl.DateTimeFormat(undefined, { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+  return /^[+-]/.test(canonical) ? null : canonical;
+}

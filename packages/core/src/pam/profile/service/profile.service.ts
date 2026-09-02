@@ -13,7 +13,8 @@ import type {
   ExchangeRateReader,
   AuditWritePort,
 } from '@openora/core/contracts';
-import { eq } from 'drizzle-orm';
+import { resolveTimezone } from '@openora/core/contracts';
+import { and, eq, isNull, ne, or } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import type {
   UpdatePlayerProfileInput,
@@ -86,13 +87,55 @@ export class ProfileService implements PlayerProvisioning {
     return this.ensureProfile(userId);
   }
 
-  async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
-    const { email, username } = await this.ensureProfile(userId);
-    const [record] = await this.drizzle.db
+  /**
+   * Stores the IANA zone the browser reported, for rendering a stored UTC timestamp on the
+   * player's own clock. Display metadata only - device-reported and spoofable, so it is
+   * never evidence of where the player is, never gates anything, and deliberately stays out
+   * of responsible-gambling windows and audit records, which remain UTC.
+   *
+   * Silent about both of its no-ops, by design. A zone the runtime's tz database does not
+   * recognise is dropped rather than stored as arbitrary client text, and the `WHERE` skips
+   * the write entirely when the stored zone already matches - a remembered browser signs in
+   * with the same zone for months and must not churn `timezoneUpdatedAt` each time. Doing
+   * both in the one statement leaves no read-modify-write window for concurrent sessions.
+   *
+   * A player with no row yet is also a no-op: registration is what materialises the row, and
+   * a capture is not a good enough reason to conjure one from a login.
+   */
+  async recordTimezone(userId: User['id'], timezone: string): Promise<void> {
+    const resolved = resolveTimezone(timezone);
+    if (!resolved) {
+      return;
+    }
+    await this.drizzle.db
       .update(player)
-      .set(data)
-      .where(eq(player.userId, userId))
-      .returning();
+      .set({ timezone: resolved, timezoneUpdatedAt: new Date() })
+      .where(
+        and(
+          eq(player.userId, userId),
+          // `ne` alone is NULL - and so never true - for a player who has never sent one.
+          or(isNull(player.timezone), ne(player.timezone, resolved)),
+        ),
+      );
+  }
+
+  async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
+    // The zone is not a plain profile field: it carries its own validation and its own
+    // timestamp, and an unrecognised value is dropped rather than failing the update.
+    const { timezone, ...fields } = data;
+    const { email, username } = await this.ensureProfile(userId);
+    if (timezone !== undefined) {
+      await this.recordTimezone(userId, timezone);
+    }
+    // An update carrying nothing but the zone has no fields left to set, and drizzle
+    // rejects an empty `set` - read the row back instead.
+    const [record] = Object.keys(fields).length
+      ? await this.drizzle.db
+          .update(player)
+          .set(fields)
+          .where(eq(player.userId, userId))
+          .returning()
+      : await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     return toPlayer(record, email, username);
   }
 

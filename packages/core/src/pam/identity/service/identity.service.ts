@@ -585,6 +585,11 @@ export class IdentityService {
       throw err;
     }
     const { playerId, consentStored } = consent;
+    // The consent write is what materialises the player row, so the zone has somewhere to
+    // land. Registration mints no session - the player still has to verify their email -
+    // but the browser is here now, so the zone is captured now rather than waiting for a
+    // first login that may be days away.
+    await this.captureTimezone(body.user.id, input.timezone);
     this.events.emit('identity.user.registered', {
       userId: body.user.id,
       playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
@@ -676,6 +681,27 @@ export class IdentityService {
       );
     }
     return { playerId: outcome.playerId ?? null, consentStored: outcome.created };
+  }
+
+  /**
+   * Hands the browser-reported IANA zone to the player module, for rendering a stored UTC
+   * timestamp on the player's own clock. Every caller invokes this only AFTER the credentials
+   * have passed, so an unauthenticated request can never write to someone else's row.
+   *
+   * Display metadata, so it is best-effort in both directions: an absent zone or an unbound
+   * provisioning port is nothing to do, and a write that fails is logged and swallowed. A
+   * player who cannot sign in because a cosmetic column would not update is a far worse
+   * outcome than a missing zone, which the next session re-offers anyway.
+   */
+  private async captureTimezone(userId: User['id'], timezone: string | undefined) {
+    if (!timezone || !this.playerProvisioning) {
+      return;
+    }
+    try {
+      await this.playerProvisioning.recordTimezone(userId, timezone);
+    } catch (err) {
+      identityLogger.warn({ err, userId }, 'player timezone capture failed - ignored');
+    }
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
@@ -849,6 +875,7 @@ export class IdentityService {
         ip,
         userAgent,
       });
+      await this.captureTimezone(body.user.id, input.timezone);
       const sessionDurationSeconds =
         this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
@@ -1257,6 +1284,7 @@ export class IdentityService {
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
       }
+      await this.captureTimezone(userId, input.timezone);
     }
     return SUCCESS;
   }

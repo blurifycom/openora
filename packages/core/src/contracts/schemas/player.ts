@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
+import { MoneyAmountSchema, TimestampSchema, TimezoneSchema, UuidSchema } from './common.js';
 import { CountryCodeSchema, CurrencyCodeSchema } from './igaming-config.js';
 import { E164PhoneSchema } from './identity.js';
 import { TagKeySchema } from './tag.js';
@@ -62,6 +62,14 @@ export const PlayerSchema = z.object({
   totalWagered: MoneyAmountSchema,
   totalDeposits: MoneyAmountSchema,
   lastSeenAt: z.string().nullable(),
+  // The IANA zone the player's browser last reported, for rendering a stored UTC timestamp
+  // on their own clock. Null until a session captures one - an uncaptured player is
+  // honestly unknown, never guessed from `country` or `registrationIp`.
+  timezone: z.string().nullable(),
+  // Shipped alongside the zone because the zone is a point-in-time, device-reported guess:
+  // a player who moved, or who last signed in eight months ago, renders a plausible but
+  // wrong local time, and only this column lets the reader see that before trusting it.
+  timezoneUpdatedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -120,6 +128,11 @@ export function isAdultDateOfBirth(dateOfBirth: string, now = new Date()): boole
  * phones. `null` clears a field; omitting it leaves the stored value alone. `phone` is the
  * player's self-declared contact number - the verified login credential lives on the
  * identity module's `user.phoneNumber` and is never written from here.
+ *
+ * `timezone` is the odd one out: it is not nullable (display metadata is worth capturing,
+ * never worth clearing) and it does not go through the field write at all - the service
+ * routes it to `recordTimezone`, which validates it against the tz database and stamps
+ * `timezoneUpdatedAt`. A zone the runtime does not recognise is dropped, not rejected.
  */
 export const UpdatePlayerProfileInputSchema = z
   .object({
@@ -134,6 +147,7 @@ export const UpdatePlayerProfileInputSchema = z
     phone: E164PhoneSchema.nullable(),
     country: CountryCodeSchema.nullable(),
     currency: CurrencyCodeSchema,
+    timezone: TimezoneSchema,
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
