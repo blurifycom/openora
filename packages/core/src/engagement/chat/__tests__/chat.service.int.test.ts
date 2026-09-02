@@ -2777,6 +2777,7 @@ describe('ChatService moderation (real PG)', () => {
     const message = await seedMessage({ content: 'bad content' });
     const received: ChatMessage[] = [];
     svc.subscribeMessages(null, (event) => received.push(event));
+    await settle();
 
     await moderation.deleteMessage(message.id, randomUUID(), NO_CLIENT_META);
     await waitFor(() => received.length === 1);
