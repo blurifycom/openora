@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { asc, sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import type { EventHandler, PluginContext, CoreTokenCatalog } from '@openora/core/server';
 import {
@@ -17,7 +17,7 @@ import {
   type QueueName,
   type WorkerRegistration,
 } from '@openora/core/contracts';
-import { makeEventBus, mock } from '../../../testing/mock.js';
+import { makeEventBus, makeRealtimeTransport, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { notification } from '../schema/index.js';
 import notificationsPlugin from '../plugin.js';
@@ -92,7 +92,9 @@ function bootPlugin() {
 
   const delivery = mock<NotificationDeliveryAdapter>({ sendEmail: async () => undefined });
   const directory = mock<AdminUserDirectory>({ get: async () => null });
-  const realtime = new InProcessRealtimeTransport();
+  // Only ever resolved out of the container - this test asserts on notification rows and
+  // enqueued jobs, never on a realtime publish, so the mock stands in for the transport.
+  const realtime = makeRealtimeTransport();
   const container = {
     get: (token: unknown) =>
       token === DRIZZLE

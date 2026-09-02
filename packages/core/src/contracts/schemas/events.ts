@@ -659,7 +659,8 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
   }),
-  // An admin closed a player's account from the back office (PlayerService.remove).
+  // An admin closed a player's account from the back office - either `PlayerService.remove`
+  // or an `update` that moves `status` to `closed`; both routes are the same closure.
   // Distinct from `identity.user.deactivated`, which flips the auth user's active flag:
   // this one is the PAM-side account closure. Both are terminal for a player's chat
   // ownership, so the chat module subscribes to both.

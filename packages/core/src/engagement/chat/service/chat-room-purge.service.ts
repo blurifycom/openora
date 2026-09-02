@@ -90,9 +90,12 @@ export class ChatRoomPurgeService {
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(eq(chatRoomMember.roomId, roomId));
-        // chat_message, chat_platform_ban and chat_mute point at chat_room without a
-        // cascade, so they go first or the room delete trips their foreign key. Everything
-        // else (chat_room_member, _rule, _configuration, _ban, _mute, _remove) cascades.
+        // chat_message and chat_platform_ban reference chat_room without a cascade, so
+        // they go first or the room delete trips their foreign key. chat_mute has no FK at
+        // all - its roomId is a bare nullable column (null = global chat) - so its rows are
+        // deleted here to stop them outliving the room as orphans. The rest cascades:
+        // chat_room_member, _rule, _configuration, _ban, _remove, and chat_room_mute, which
+        // despite the name is a different table from chat_mute.
         const messages = await t
           .delete(chatMessage)
           .where(eq(chatMessage.roomId, roomId))

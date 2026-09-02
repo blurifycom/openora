@@ -1,7 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  RedisPubSubRealtimeTransport,
+  type TestDb,
+  type TestRedis,
+} from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -39,8 +45,21 @@ import { ChatRoomPurgeService } from '../service/chat-room-purge.service.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let db: TestDb;
+let redis: TestRedis;
+const transports: RedisPubSubRealtimeTransport[] = [];
 
-function makeServices(transport: RealtimeTransport = new InProcessRealtimeTransport()) {
+// Matches chat.service.int.test.ts: a real pub/sub transport on an isolated key prefix, so
+// the channel revokes the purge fires go through the same code path production uses.
+function makeTransport(): RedisPubSubRealtimeTransport {
+  const transport = new RedisPubSubRealtimeTransport(
+    redis.client,
+    `chat-handover-test-${randomUUID()}`,
+  );
+  transports.push(transport);
+  return transport;
+}
+
+function makeServices(transport: RealtimeTransport = makeTransport()) {
   const events = makeEventBus();
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
@@ -149,10 +168,16 @@ function readRoom(roomId: string) {
 
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateIdentity, migrateProfile]);
+  redis = await createTestRedis();
 });
 
 afterAll(async () => {
   await db.drop();
+  await redis.quit();
+});
+
+afterEach(async () => {
+  await Promise.allSettled(transports.splice(0).map((t) => t.close()));
 });
 
 beforeEach(async () => {
@@ -241,7 +266,7 @@ describe('ChatRoomMembershipService.handleAccountClosed - transfer (real PG)', (
 
   it('signals both the successor and the demoted owner so rosters refetch', async () => {
     const signal = vi.fn();
-    const services = makeServices(Object.assign(new InProcessRealtimeTransport(), { signal }));
+    const services = makeServices(Object.assign(makeTransport(), { signal }));
     const ownerId = randomUUID();
     const modId = randomUUID();
     const room = await seedPrivateRoom(services, ownerId, [modId]);
@@ -266,7 +291,7 @@ describe('ChatRoomMembershipService.handleAccountClosed - transfer (real PG)', (
 describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', () => {
   it('starts a 30-day countdown and freezes administration when nobody can inherit', async () => {
     const signal = vi.fn();
-    const services = makeServices(Object.assign(new InProcessRealtimeTransport(), { signal }));
+    const services = makeServices(Object.assign(makeTransport(), { signal }));
     const ownerId = randomUUID();
     const memberIds = [randomUUID(), randomUUID()];
     const room = await seedPrivateRoom(services, ownerId, memberIds);

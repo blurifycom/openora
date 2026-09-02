@@ -255,6 +255,19 @@ export class PlayerService implements PlayerActivityTracker {
       await this.sessionCommands.revokeAll(existing.userId, actorId);
     }
 
+    // Closing through this route is the same terminal event as `remove()`, so it emits the
+    // same thing: subscribers (chat's room-ownership handover) must not care which route an
+    // admin reached for, or a room closed by PATCH stays stranded with a dead owner. Both
+    // paths landing for one player is a no-op the second time - the handover handler guards
+    // on `chatRoomMember.accountClosedAt`. Emitted after commit, like the level change above.
+    if (data.status === 'closed' && existing.status !== 'closed') {
+      this.events.emit('player.account.closed', {
+        playerId,
+        userId: existing.userId,
+        actorId,
+      });
+    }
+
     return this.fetchOneWithTags(playerId);
   }
 
