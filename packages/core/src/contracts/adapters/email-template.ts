@@ -15,9 +15,18 @@ export type RenderedEmail = { subject: string; html: string; text: string };
  * Takes the tagged union whole (not a key/data pair) so an implementation switches
  * on `template.key` with `data` already narrowed, and no caller has to bridge the
  * key/data generic across a port boundary.
+ *
+ * `recipientName` is the account's display name when the mail module could resolve
+ * one (a `toUser` send), or `null` (a `toAddress` send - the recipient has no
+ * account yet, eg an OTP or an admin invitation). The platform default renderer
+ * ignores it; an operator overlay uses it for a greeting.
  */
 export type EmailTemplateRenderer = {
-  render(template: MailTemplate, locale: string): Promise<RenderedEmail> | RenderedEmail;
+  render(
+    template: MailTemplate,
+    locale: string,
+    recipientName?: string | null,
+  ): Promise<RenderedEmail> | RenderedEmail;
 };
 
 export const EMAIL_TEMPLATE_RENDERER: Token<EmailTemplateRenderer> =

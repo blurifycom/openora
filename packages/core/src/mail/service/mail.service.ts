@@ -123,7 +123,7 @@ export class MailService {
     if (!resolved) {
       return;
     }
-    const rendered = await this.renderer.render(job.template, resolved.locale);
+    const rendered = await this.renderer.render(job.template, resolved.locale, resolved.name);
     await this.sender.send({
       to: resolved.email,
       subject: rendered.subject,
@@ -165,9 +165,15 @@ export class MailService {
 
   private async resolveRecipient(
     job: MailSendJob,
-  ): Promise<{ email: string; locale: string } | null> {
+  ): Promise<{ email: string; locale: string; name: string | null } | null> {
     if (job.recipient.kind === 'address') {
-      return { email: job.recipient.email, locale: job.recipient.locale ?? DEFAULT_LOCALE };
+      // A `toAddress` send has no account behind it (OTP, admin invitation), so the
+      // recipient's name is never known here.
+      return {
+        email: job.recipient.email,
+        locale: job.recipient.locale ?? DEFAULT_LOCALE,
+        name: null,
+      };
     }
     const row = await this.directory.get(job.recipient.userId);
     if (!row?.email) {
@@ -177,6 +183,6 @@ export class MailService {
       );
       return null;
     }
-    return { email: row.email, locale: row.language ?? DEFAULT_LOCALE };
+    return { email: row.email, locale: row.language ?? DEFAULT_LOCALE, name: row.name ?? null };
   }
 }
