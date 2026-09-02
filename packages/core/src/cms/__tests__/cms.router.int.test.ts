@@ -399,15 +399,30 @@ async function createDefaultConfiguration(router: Router, placement: string) {
   return created;
 }
 
+async function createSchedulableConfiguration(router: Router, placement: string) {
+  const created = await call(
+    router.createBannerConfiguration,
+    { placement, layout: 'single' },
+    { context: CTX },
+  );
+  await call(
+    router.setBannerImage,
+    {
+      bannerConfigurationId: created.id,
+      sortOrder: 0,
+      desktopImageUrl: imageUrl(`/scheduled-${created.id}-d.png`),
+      mobileImageUrl: imageUrl(`/scheduled-${created.id}-m.png`),
+    },
+    { context: CTX },
+  );
+  return created;
+}
+
 describe('cms router banner schedule writes', () => {
   it('creates a schedule, edits its end, and lists it back for the placement', async () => {
     const router = routerWith(allowingGuard());
     await createDefaultConfiguration(router, 'home-top');
-    const target = await call(
-      router.createBannerConfiguration,
-      { placement: 'home-top', layout: 'single' },
-      { context: CTX },
-    );
+    const target = await createSchedulableConfiguration(router, 'home-top');
 
     const startsAt = new Date(Date.now() + 60_000).toISOString();
     const endsAt = new Date(Date.now() + 120_000).toISOString();
@@ -444,16 +459,8 @@ describe('cms router banner schedule error mapping', () => {
   it('maps an overlapping schedule to CONFLICT, naming the conflicting range', async () => {
     const router = routerWith(allowingGuard());
     await createDefaultConfiguration(router, 'home-top');
-    const first = await call(
-      router.createBannerConfiguration,
-      { placement: 'home-top', layout: 'single' },
-      { context: CTX },
-    );
-    const second = await call(
-      router.createBannerConfiguration,
-      { placement: 'home-top', layout: 'single' },
-      { context: CTX },
-    );
+    const first = await createSchedulableConfiguration(router, 'home-top');
+    const second = await createSchedulableConfiguration(router, 'home-top');
     const firstStart = new Date(Date.now() + 60_000).toISOString();
     const firstEnd = new Date(Date.now() + 180_000).toISOString();
     await call(
@@ -482,11 +489,7 @@ describe('cms router banner schedule error mapping', () => {
   it('maps endsAt at or before startsAt to BAD_REQUEST', async () => {
     const router = routerWith(allowingGuard());
     await createDefaultConfiguration(router, 'home-top');
-    const target = await call(
-      router.createBannerConfiguration,
-      { placement: 'home-top', layout: 'single' },
-      { context: CTX },
-    );
+    const target = await createSchedulableConfiguration(router, 'home-top');
 
     const error: unknown = await call(
       router.createBannerSchedule,
@@ -505,11 +508,7 @@ describe('cms router banner schedule error mapping', () => {
   it('maps deleting a scheduled configuration to CONFLICT', async () => {
     const router = routerWith(allowingGuard());
     await createDefaultConfiguration(router, 'home-top');
-    const target = await call(
-      router.createBannerConfiguration,
-      { placement: 'home-top', layout: 'single' },
-      { context: CTX },
-    );
+    const target = await createSchedulableConfiguration(router, 'home-top');
     await call(
       router.createBannerSchedule,
       {
@@ -535,11 +534,7 @@ describe('cms router banner schedule events', () => {
   it('emits cms.banner.schedule.created and cms.banner.schedule.updated', async () => {
     const { router, events } = routerWithEvents(allowingGuard());
     await createDefaultConfiguration(router, 'home-top');
-    const target = await call(
-      router.createBannerConfiguration,
-      { placement: 'home-top', layout: 'single' },
-      { context: CTX },
-    );
+    const target = await createSchedulableConfiguration(router, 'home-top');
 
     await call(
       router.createBannerSchedule,
@@ -560,5 +555,41 @@ describe('cms router banner schedule events', () => {
       'cms.banner.schedule.created',
       'cms.banner.schedule.updated',
     ]);
+  });
+});
+
+describe('cms router banner schedule publication authorization', () => {
+  it('requires content:publish to create or update a schedule', async () => {
+    const setupRouter = routerWith(allowingGuard());
+    await createDefaultConfiguration(setupRouter, 'home-top');
+    const target = await createSchedulableConfiguration(setupRouter, 'home-top');
+    const createOnlyGuard = makeAdminGuard({ allow: ['content:create', 'content:update'] });
+    const restrictedRouter = routerWith(createOnlyGuard);
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 120_000).toISOString();
+
+    await expect(
+      call(
+        restrictedRouter.createBannerSchedule,
+        { id: target.id, startsAt, endsAt },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+
+    await call(
+      setupRouter.createBannerSchedule,
+      { id: target.id, startsAt, endsAt },
+      { context: CTX },
+    );
+
+    await expect(
+      call(
+        restrictedRouter.updateBannerScheduleEnd,
+        { id: target.id, endsAt: new Date(Date.now() + 90_000).toISOString() },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+
+    expect(createOnlyGuard.assert).toHaveBeenCalledWith(CTX, 'content', 'publish');
   });
 });

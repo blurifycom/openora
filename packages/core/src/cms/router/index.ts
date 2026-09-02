@@ -93,7 +93,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
         return mapErrors(
           {
             NOT_FOUND: BannerConfigurationNotFoundError,
-            CONFLICT: BannerConfigurationImageCountError,
+            CONFLICT: [BannerConfigurationImageCountError, BannerConfigurationHasScheduleError],
           },
           () => cms.setDefaultConfiguration(input.id, userId, { ip, userAgent }),
         );
@@ -124,7 +124,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
     ),
 
     createBannerSchedule: os.createBannerSchedule.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'create');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
       return mapErrors(
         {
           NOT_FOUND: BannerConfigurationNotFoundError,
@@ -132,6 +132,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
             BannerConfigurationIsDefaultError,
             BannerConfigurationHasScheduleError,
             BannerScheduleOverlapError,
+            BannerConfigurationImageCountError,
           ],
           BAD_REQUEST: BannerScheduleInvalidRangeError,
         },
@@ -146,7 +147,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
     }),
 
     updateBannerScheduleEnd: os.updateBannerScheduleEnd.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'update');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
       return mapErrors(
         {
           NOT_FOUND: [BannerConfigurationNotFoundError, BannerScheduleNotFoundError],

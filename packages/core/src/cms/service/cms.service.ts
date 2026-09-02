@@ -8,6 +8,7 @@ import {
   findOneOrThrow,
   cached,
   invalidate,
+  withAdvisoryXactLock,
 } from '@openora/core/server';
 import type { CacheAdapter, ClientMeta, User, Uuid } from '@openora/core/contracts';
 import { eq, ne, and, asc, desc, isNotNull, inArray, sql, gt, lt, gte, lte } from 'drizzle-orm';
@@ -70,6 +71,7 @@ const pageCacheKey = (slug: string) => `cms:page:${slug}`;
 // acceptable for this public, non-money read.
 const publicBannerCacheKey = (placement: string, locale: string) =>
   `cms:banner-placement:${placement}:${locale}`;
+const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 
 function toPage(record: {
   id: string;
@@ -515,48 +517,43 @@ export class CmsService {
 
   async setDefaultConfiguration(id: string, actorId: User['id'], meta?: ClientMeta) {
     const placement = await this.drizzle.db.transaction(async (tx) => {
-      const config = findOneOrThrow(
+      const initialConfig = findOneOrThrow(
         await tx.select().from(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id)),
         new BannerConfigurationNotFoundError(id),
       );
-
-      // Slot count is measured against the base (DEFAULT_LOCALE) rows only - a
-      // locale override reuses an existing slot, it does not add one.
-      const slotRows = await tx
-        .select({ sortOrder: bannerImageTable.sortOrder })
-        .from(bannerImageTable)
-        .where(
-          and(
-            eq(bannerImageTable.bannerConfigurationId, id),
-            eq(bannerImageTable.locale, DEFAULT_LOCALE),
-          ),
+      return withAdvisoryXactLock(tx, bannerScheduleLockKey(initialConfig.placement), async () => {
+        const config = findOneOrThrow(
+          await tx
+            .select()
+            .from(bannerConfigurationTable)
+            .where(eq(bannerConfigurationTable.id, id)),
+          new BannerConfigurationNotFoundError(id),
         );
-      const slotCount = new Set(slotRows.map((r) => r.sortOrder)).size;
-      const bounds = BANNER_IMAGE_COUNT_BOUNDS[config.layout];
-      if (slotCount < bounds.min || slotCount > bounds.max) {
-        throw new BannerConfigurationImageCountError(
-          config.layout,
-          bounds.min,
-          bounds.max,
-          slotCount,
-        );
-      }
+        const [schedule] = await tx
+          .select({ id: bannerScheduleTable.id })
+          .from(bannerScheduleTable)
+          .where(eq(bannerScheduleTable.bannerConfigurationId, id));
+        if (schedule) {
+          throw new BannerConfigurationHasScheduleError();
+        }
+        await this.assertBannerConfigurationImageCount(tx, config);
 
-      await tx
-        .update(bannerConfigurationTable)
-        .set({ isDefault: false })
-        .where(
-          and(
-            eq(bannerConfigurationTable.placement, config.placement),
-            eq(bannerConfigurationTable.isDefault, true),
-          ),
-        );
-      await tx
-        .update(bannerConfigurationTable)
-        .set({ isDefault: true })
-        .where(eq(bannerConfigurationTable.id, id));
+        await tx
+          .update(bannerConfigurationTable)
+          .set({ isDefault: false })
+          .where(
+            and(
+              eq(bannerConfigurationTable.placement, config.placement),
+              eq(bannerConfigurationTable.isDefault, true),
+            ),
+          );
+        await tx
+          .update(bannerConfigurationTable)
+          .set({ isDefault: true })
+          .where(eq(bannerConfigurationTable.id, id));
 
-      return config.placement;
+        return config.placement;
+      });
     });
 
     await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
@@ -800,59 +797,68 @@ export class CmsService {
     const endsAt = new Date(input.endsAt);
 
     const { record, placement } = await this.drizzle.db.transaction(async (tx) => {
-      const config = findOneOrThrow(
+      const initialConfig = findOneOrThrow(
         await tx
           .select()
           .from(bannerConfigurationTable)
           .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
         new BannerConfigurationNotFoundError(bannerConfigurationId),
       );
-      // A schedule requires a default to layer onto, and can never target the
-      // default configuration itself (it is already live).
-      if (config.isDefault) {
-        throw new BannerConfigurationIsDefaultError();
-      }
-      const [defaultConfig] = await tx
-        .select({ id: bannerConfigurationTable.id })
-        .from(bannerConfigurationTable)
-        .where(
-          and(
-            eq(bannerConfigurationTable.placement, config.placement),
-            eq(bannerConfigurationTable.isDefault, true),
-          ),
+      return withAdvisoryXactLock(tx, bannerScheduleLockKey(initialConfig.placement), async () => {
+        const config = findOneOrThrow(
+          await tx
+            .select()
+            .from(bannerConfigurationTable)
+            .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
+          new BannerConfigurationNotFoundError(bannerConfigurationId),
         );
-      if (!defaultConfig) {
-        throw new BannerConfigurationNotFoundError(config.placement);
-      }
+        // A schedule requires a default to layer onto, and can never target the
+        // default configuration itself (it is already live).
+        if (config.isDefault) {
+          throw new BannerConfigurationIsDefaultError();
+        }
+        const [defaultConfig] = await tx
+          .select({ id: bannerConfigurationTable.id })
+          .from(bannerConfigurationTable)
+          .where(
+            and(
+              eq(bannerConfigurationTable.placement, config.placement),
+              eq(bannerConfigurationTable.isDefault, true),
+            ),
+          );
+        if (!defaultConfig) {
+          throw new BannerConfigurationNotFoundError(config.placement);
+        }
 
-      const [existingSchedule] = await tx
-        .select({ id: bannerScheduleTable.id })
-        .from(bannerScheduleTable)
-        .where(eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationId));
-      if (existingSchedule) {
-        throw new BannerConfigurationHasScheduleError();
-      }
+        const [existingSchedule] = await tx
+          .select({ id: bannerScheduleTable.id })
+          .from(bannerScheduleTable)
+          .where(eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationId));
+        if (existingSchedule) {
+          throw new BannerConfigurationHasScheduleError();
+        }
 
-      if (endsAt <= startsAt) {
-        throw new BannerScheduleInvalidRangeError('endsAt must be after startsAt');
-      }
-      if (startsAt <= new Date()) {
-        throw new BannerScheduleInvalidRangeError('startsAt must be in the future');
-      }
+        if (endsAt <= startsAt) {
+          throw new BannerScheduleInvalidRangeError('endsAt must be after startsAt');
+        }
+        if (startsAt <= new Date()) {
+          throw new BannerScheduleInvalidRangeError('startsAt must be in the future');
+        }
+        await this.assertBannerConfigurationImageCount(tx, config);
+        await this.assertNoScheduleOverlap(tx, config.placement, bannerConfigurationId, {
+          startsAt,
+          endsAt,
+        });
 
-      await this.assertNoScheduleOverlap(tx, config.placement, bannerConfigurationId, {
-        startsAt,
-        endsAt,
+        const inserted = findOneOrThrow(
+          await tx
+            .insert(bannerScheduleTable)
+            .values({ bannerConfigurationId, startsAt, endsAt, createdBy: actorId })
+            .returning(),
+          new BannerConfigurationNotFoundError(bannerConfigurationId),
+        );
+        return { record: inserted, placement: config.placement };
       });
-
-      const inserted = findOneOrThrow(
-        await tx
-          .insert(bannerScheduleTable)
-          .values({ bannerConfigurationId, startsAt, endsAt, createdBy: actorId })
-          .returning(),
-        new BannerConfigurationNotFoundError(bannerConfigurationId),
-      );
-      return { record: inserted, placement: config.placement };
     });
 
     await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
@@ -877,42 +883,51 @@ export class CmsService {
   ) {
     const newEndsAt = new Date(input.endsAt);
 
-    const { record, placement } = await this.drizzle.db.transaction(async (tx) => {
-      const config = findOneOrThrow(
+    const { record, placement, previousEndsAt } = await this.drizzle.db.transaction(async (tx) => {
+      const initialConfig = findOneOrThrow(
         await tx
           .select()
           .from(bannerConfigurationTable)
           .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
         new BannerConfigurationNotFoundError(bannerConfigurationId),
       );
-      const schedule = findOneOrThrow(
-        await tx
-          .select()
-          .from(bannerScheduleTable)
-          .where(eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationId)),
-        new BannerScheduleNotFoundError(bannerConfigurationId),
-      );
+      return withAdvisoryXactLock(tx, bannerScheduleLockKey(initialConfig.placement), async () => {
+        const config = findOneOrThrow(
+          await tx
+            .select()
+            .from(bannerConfigurationTable)
+            .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
+          new BannerConfigurationNotFoundError(bannerConfigurationId),
+        );
+        const schedule = findOneOrThrow(
+          await tx
+            .select()
+            .from(bannerScheduleTable)
+            .where(eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationId)),
+          new BannerScheduleNotFoundError(bannerConfigurationId),
+        );
 
-      if (newEndsAt <= schedule.startsAt) {
-        throw new BannerScheduleInvalidRangeError('endsAt must be after startsAt');
-      }
-      // startsAt is not editable and not re-validated against now() here - ending a
-      // schedule early legitimately moves endsAt to now or the past.
+        if (newEndsAt <= schedule.startsAt) {
+          throw new BannerScheduleInvalidRangeError('endsAt must be after startsAt');
+        }
+        // startsAt is not editable and not re-validated against now() here - ending a
+        // schedule early legitimately moves endsAt to now or the past.
 
-      await this.assertNoScheduleOverlap(tx, config.placement, bannerConfigurationId, {
-        startsAt: schedule.startsAt,
-        endsAt: newEndsAt,
+        await this.assertNoScheduleOverlap(tx, config.placement, bannerConfigurationId, {
+          startsAt: schedule.startsAt,
+          endsAt: newEndsAt,
+        });
+
+        const updated = findOneOrThrow(
+          await tx
+            .update(bannerScheduleTable)
+            .set({ endsAt: newEndsAt })
+            .where(eq(bannerScheduleTable.id, schedule.id))
+            .returning(),
+          new BannerScheduleNotFoundError(bannerConfigurationId),
+        );
+        return { record: updated, placement: config.placement, previousEndsAt: schedule.endsAt };
       });
-
-      const updated = findOneOrThrow(
-        await tx
-          .update(bannerScheduleTable)
-          .set({ endsAt: newEndsAt })
-          .where(eq(bannerScheduleTable.id, schedule.id))
-          .returning(),
-        new BannerScheduleNotFoundError(bannerConfigurationId),
-      );
-      return { record: updated, placement: config.placement };
     });
 
     await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
@@ -922,6 +937,7 @@ export class CmsService {
       placement,
       startsAt: record.startsAt.toISOString(),
       endsAt: record.endsAt.toISOString(),
+      before: { endsAt: previousEndsAt.toISOString() },
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
@@ -989,6 +1005,33 @@ export class CmsService {
       .limit(1);
     if (conflict) {
       throw new BannerScheduleOverlapError(conflict.startsAt, conflict.endsAt);
+    }
+  }
+
+  private async assertBannerConfigurationImageCount(
+    tx: DrizzleTx,
+    configuration: { id: Uuid; layout: BannerLayout },
+  ) {
+    // Slot count is measured against base-locale rows only: locale overrides replace
+    // a slot rather than adding a publishable slot.
+    const slotRows = await tx
+      .select({ sortOrder: bannerImageTable.sortOrder })
+      .from(bannerImageTable)
+      .where(
+        and(
+          eq(bannerImageTable.bannerConfigurationId, configuration.id),
+          eq(bannerImageTable.locale, DEFAULT_LOCALE),
+        ),
+      );
+    const slotCount = new Set(slotRows.map((row) => row.sortOrder)).size;
+    const bounds = BANNER_IMAGE_COUNT_BOUNDS[configuration.layout];
+    if (slotCount < bounds.min || slotCount > bounds.max) {
+      throw new BannerConfigurationImageCountError(
+        configuration.layout,
+        bounds.min,
+        bounds.max,
+        slotCount,
+      );
     }
   }
 

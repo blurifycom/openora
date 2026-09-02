@@ -50,6 +50,9 @@ const cmsBannerScheduleEventBase = z
     actorId: UuidSchema,
   })
   .extend(authContextBase.shape);
+const cmsBannerScheduleUpdatedEvent = cmsBannerScheduleEventBase.extend({
+  before: z.object({ endsAt: TimestampSchema }),
+});
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
 const tagPlayerEventBase = actorReasonBase
   .extend({ playerId: UuidSchema, tagKey: TagKeySchema })
@@ -589,7 +592,7 @@ export const domainEventSchemas = {
   'cms.banner.image.set': cmsBannerImageEventBase,
   'cms.banner.image.deleted': cmsBannerImageEventBase,
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
-  'cms.banner.schedule.updated': cmsBannerScheduleEventBase,
+  'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role

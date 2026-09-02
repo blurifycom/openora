@@ -73,6 +73,20 @@ async function makeDefaultConfiguration(svc: CmsService, placement: string) {
   return created;
 }
 
+async function makeSchedulableConfiguration(svc: CmsService, placement: string) {
+  const created = await svc.createConfiguration({ placement, layout: 'single' }, ADMIN_ID);
+  await svc.setBannerImage(
+    {
+      bannerConfigurationId: created.id,
+      sortOrder: 0,
+      desktopImageUrl: imageUrl(`/scheduled-${created.id}-d.png`),
+      mobileImageUrl: imageUrl(`/scheduled-${created.id}-m.png`),
+    },
+    ADMIN_ID,
+  );
+  return created;
+}
+
 // Inserts a schedule row directly, bypassing createBannerSchedule's startsAt-in-the-future
 // guard - the only way to test getPublicBanner's read-time activation/expiry without
 // waiting on the wall clock.
@@ -495,10 +509,7 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('creates a schedule and emits cms.banner.schedule.created', async () => {
     const { svc, events } = makeService();
     const defaultConfig = await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
 
     const startsAt = new Date(Date.now() + 60_000).toISOString();
     const endsAt = new Date(Date.now() + 120_000).toISOString();
@@ -515,6 +526,7 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
       'cms.banner.image.set',
       'cms.banner.configuration.set_default',
       'cms.banner.configuration.created', // target
+      'cms.banner.image.set',
       'cms.banner.schedule.created',
     ]);
     const lastEvent = events.emit.mock.calls.at(-1);
@@ -547,6 +559,23 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
 
   it('rejects scheduling a placement with no default configured yet', async () => {
     const { svc } = makeService();
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
+
+    await expect(
+      svc.createBannerSchedule(
+        target.id,
+        {
+          startsAt: new Date(Date.now() + 60_000).toISOString(),
+          endsAt: new Date(Date.now() + 120_000).toISOString(),
+        },
+        ADMIN_ID,
+      ),
+    ).rejects.toBeInstanceOf(BannerConfigurationNotFoundError);
+  });
+
+  it('rejects scheduling a configuration without the required base-locale slots', async () => {
+    const { svc } = makeService();
+    await makeDefaultConfiguration(svc, 'home-top');
     const target = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
@@ -561,16 +590,13 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
         },
         ADMIN_ID,
       ),
-    ).rejects.toBeInstanceOf(BannerConfigurationNotFoundError);
+    ).rejects.toBeInstanceOf(BannerConfigurationImageCountError);
   });
 
   it('rejects endsAt at or before startsAt', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
     const startsAt = new Date(Date.now() + 120_000);
     const endsAt = new Date(Date.now() + 60_000);
 
@@ -586,10 +612,7 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('rejects a startsAt that is not in the future', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
 
     await expect(
       svc.createBannerSchedule(
@@ -606,10 +629,7 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('rejects a second schedule on a configuration that already has one', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
     await svc.createBannerSchedule(
       target.id,
       {
@@ -634,14 +654,8 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('rejects an overlapping schedule on a different configuration in the same placement, naming the conflicting range', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const first = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
-    const second = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const first = await makeSchedulableConfiguration(svc, 'home-top');
+    const second = await makeSchedulableConfiguration(svc, 'home-top');
     const firstStart = new Date(Date.now() + 60_000);
     const firstEnd = new Date(Date.now() + 180_000);
     await svc.createBannerSchedule(
@@ -670,14 +684,8 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('allows a schedule whose startsAt touches an existing schedule endsAt (boundary-touching is not overlap)', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const first = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
-    const second = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const first = await makeSchedulableConfiguration(svc, 'home-top');
+    const second = await makeSchedulableConfiguration(svc, 'home-top');
     const firstStart = new Date(Date.now() + 60_000);
     const firstEnd = new Date(Date.now() + 120_000);
     await svc.createBannerSchedule(
@@ -694,20 +702,52 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
 
     expect(secondSchedule.startsAt).toBe(firstEnd.toISOString());
   });
+
+  it('serializes concurrent overlapping schedules for a placement', async () => {
+    const { svc } = makeService();
+    await makeDefaultConfiguration(svc, 'home-top');
+    const [first, second] = await Promise.all([
+      makeSchedulableConfiguration(svc, 'home-top'),
+      makeSchedulableConfiguration(svc, 'home-top'),
+    ]);
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 120_000).toISOString();
+
+    const results = await Promise.allSettled([
+      svc.createBannerSchedule(first.id, { startsAt, endsAt }, ADMIN_ID),
+      svc.createBannerSchedule(second.id, { startsAt, endsAt }, ADMIN_ID),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+  });
+
+  it('rejects promoting a configuration with an attached schedule', async () => {
+    const { svc } = makeService();
+    await makeDefaultConfiguration(svc, 'home-top');
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
+    await insertScheduleDirect({
+      bannerConfigurationId: target.id,
+      startsAt: new Date(Date.now() + 60_000),
+      endsAt: new Date(Date.now() + 120_000),
+    });
+
+    await expect(svc.setDefaultConfiguration(target.id, ADMIN_ID)).rejects.toBeInstanceOf(
+      BannerConfigurationHasScheduleError,
+    );
+  });
 });
 
 describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
   it('updates endsAt and emits cms.banner.schedule.updated', async () => {
     const { svc, events } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
     const startsAt = new Date(Date.now() + 60_000);
+    const previousEndsAt = new Date(Date.now() + 120_000).toISOString();
     await svc.createBannerSchedule(
       target.id,
-      { startsAt: startsAt.toISOString(), endsAt: new Date(Date.now() + 120_000).toISOString() },
+      { startsAt: startsAt.toISOString(), endsAt: previousEndsAt },
       ADMIN_ID,
     );
 
@@ -717,15 +757,16 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
     expect(updated.endsAt).toBe(newEndsAt);
     expect((await scheduleByConfigurationId(target.id))?.endsAt.toISOString()).toBe(newEndsAt);
     expect(emittedTopics(events).at(-1)).toBe('cms.banner.schedule.updated');
+    expect(events.emit.mock.calls.at(-1)?.[1]).toMatchObject({
+      before: { endsAt: previousEndsAt },
+      endsAt: newEndsAt,
+    });
   });
 
   it('allows moving endsAt to the past, ending a schedule early', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
     const startsAt = new Date(Date.now() - 120_000);
     const endsAt = new Date(Date.now() + 120_000);
     await insertScheduleDirect({ bannerConfigurationId: target.id, startsAt, endsAt });
@@ -739,10 +780,7 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
   it('404s a configuration with no attached schedule', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
 
     await expect(
       svc.updateBannerScheduleEnd(
@@ -756,10 +794,7 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
   it('rejects an endsAt at or before the schedule startsAt', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
     const startsAt = new Date(Date.now() + 60_000);
     await svc.createBannerSchedule(
       target.id,
@@ -779,14 +814,8 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
   it('re-runs the overlap check excluding self on edit', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const first = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
-    const second = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const first = await makeSchedulableConfiguration(svc, 'home-top');
+    const second = await makeSchedulableConfiguration(svc, 'home-top');
     const firstStart = new Date(Date.now() + 60_000);
     const firstEnd = new Date(Date.now() + 120_000);
     await svc.createBannerSchedule(
@@ -825,14 +854,8 @@ describe('CmsService.listBannerSchedulesByPlacement (real PG)', () => {
   it('lists schedules for a placement ordered by startsAt, with the joined configuration summary', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const first = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
-    const second = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const first = await makeSchedulableConfiguration(svc, 'home-top');
+    const second = await makeSchedulableConfiguration(svc, 'home-top');
     const laterStart = new Date(Date.now() + 200_000);
     const earlierStart = new Date(Date.now() + 60_000);
     await svc.createBannerSchedule(
@@ -855,7 +878,7 @@ describe('CmsService.listBannerSchedulesByPlacement (real PG)', () => {
     expect(list[0]).toMatchObject({
       bannerConfigurationId: first.id,
       startsAt: earlierStart.toISOString(),
-      configuration: { id: first.id, placement: 'home-top', imageCount: 0 },
+      configuration: { id: first.id, placement: 'home-top', imageCount: 1 },
     });
     expect(list[1]).toMatchObject({
       bannerConfigurationId: second.id,
@@ -957,10 +980,7 @@ describe('CmsService.deleteConfiguration blocked-while-scheduled (real PG)', () 
   it('rejects deleting a configuration with a queued schedule', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
-    const target = await svc.createConfiguration(
-      { placement: 'home-top', layout: 'single' },
-      ADMIN_ID,
-    );
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
     await svc.createBannerSchedule(
       target.id,
       {
