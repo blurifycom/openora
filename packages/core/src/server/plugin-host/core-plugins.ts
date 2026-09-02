@@ -9,6 +9,7 @@ const CORE_PLUGIN_MODULES = [
   { id: 'iam', path: '@openora/core/iam/plugin' },
   { id: 'mail', path: '@openora/core/mail/plugin' },
   { id: 'notifications', path: '@openora/core/engagement/plugins/notifications' },
+  { id: 'exchange-rate', path: '@openora/core/fx/plugins/exchange-rate' },
   { id: 'wallet', path: '@openora/core/wallet/plugins/wallet' },
   { id: 'gaming', path: '@openora/core/casino/plugins/gaming' },
   { id: 'lobby', path: '@openora/core/casino/plugins/lobby' },

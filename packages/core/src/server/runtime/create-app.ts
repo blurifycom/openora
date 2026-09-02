@@ -14,6 +14,7 @@ import {
   RedisCache,
   RedisRateLimiter,
   RedisStreamsBroker,
+  RedisPubSubRealtimeTransport,
   createEventBus,
   createLogger,
   createRedisClient,
@@ -29,9 +30,11 @@ import {
   JOB_QUEUE,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
+  ADMIN_SECURITY_POLICY,
   IDENTITY_READER,
   RATE_LIMITER,
   CACHE,
+  REALTIME_TRANSPORT,
   ERROR_TRACKING,
   healthContract,
   IGAMING_CONFIG,
@@ -176,14 +179,15 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * The single composition root: wires the DI container, boots every plugin in
  * `config.plugins`, and mounts the resulting oRPC router on a Hono app.
  * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
- * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER` to their
- * Redis-backed drivers - the broker being the `RedisStreamsBroker` reference driver,
- * which an overlay (RabbitMQ/Kafka) or a test's `configure` callback can replace.
- * `assertDurableSeamsBound` runs right after
- * plugins + `configure` and throws a clear, actionable error listing every
- * always-needed seam that still has no binding - it never falls back to an
- * in-process realtime implementation. `OUTBOX_ENABLED` (or
- * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay.
+ * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER`/
+ * `REALTIME_TRANSPORT` to their Redis-backed drivers - the broker being the
+ * `RedisStreamsBroker` reference driver and realtime the `RedisPubSubRealtimeTransport`
+ * reference driver (ADR-0031), either replaceable by an overlay (RabbitMQ/Kafka, Ably)
+ * or a test's `configure` callback. `assertDurableSeamsBound` runs right after plugins
+ * + `configure` and throws a clear, actionable error listing every always-needed seam
+ * that still has no binding - none of the five has an in-process fallback.
+ * `OUTBOX_ENABLED` (or `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox
+ * relay.
  * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
  * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
  * before the DB closes. A router namespace registered by more than one plugin
@@ -222,14 +226,6 @@ export async function createApp(
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
-  // When REDIS_URL is set, JOB_QUEUE, the rate limiter, the cache and the message
-  // broker bind to the shipped Redis reference adapters: BullMQ-backed durable jobs
-  // (survive restarts, real cron), distributed throttling, cross-replica cache
-  // invalidation and cross-replica events over Redis Streams. There is no in-process
-  // fallback (ADR-0030) - a deployment without REDIS_URL must bind these itself (an
-  // overlay, or a test's `configure` callback), or `assertDurableSeamsBound` below
-  // throws. The JOB_QUEUE disposer drains in-flight jobs before the DB closes (DRIZZLE
-  // is resolved before JOB_QUEUE below, and disposers run in reverse).
   const redisUrl = process.env['REDIS_URL'];
   if (redisUrl) {
     // Resolved eagerly, before any client is opened: a misconfigured service name is
@@ -249,6 +245,11 @@ export async function createApp(
       container.onDispose(() => broker.close());
       return broker;
     });
+    container.register(REALTIME_TRANSPORT, () => {
+      const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
+      container.onDispose(() => transport.close());
+      return transport;
+    });
   }
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
@@ -265,6 +266,7 @@ export async function createApp(
         c.get(EVENT_BUS),
         // has() avoids throwing on an unbound token so boot works without the identity module.
         c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
+        c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
       ),
   );
   if (config.igaming) {

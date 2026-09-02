@@ -1,14 +1,44 @@
-import { DrizzleService, makeNotFoundError } from '@openora/core/server';
-import type { PlayerProvisioning, PlayerRegistrationRecord, User } from '@openora/core/contracts';
+import {
+  DrizzleService,
+  makeNotFoundError,
+  createDomainError,
+  moneyCompare,
+} from '@openora/core/server';
+import type {
+  PlayerProvisioning,
+  PlayerRegistrationRecord,
+  User,
+  WalletReader,
+  WalletBalanceReading,
+  ExchangeRateReader,
+  AuditWritePort,
+} from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
-import type { UpdatePlayerProfileInput } from '../contract/index.js';
+import type {
+  UpdatePlayerProfileInput,
+  SetDisplayCurrencyInput,
+  DisplayCurrencyInfo,
+} from '../contract/index.js';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 
 export const ProfileUserNotFoundError = makeNotFoundError('User');
 
+export const UnsupportedDisplayCurrencyError = createDomainError<[currency: string]>(
+  'UnsupportedDisplayCurrencyError',
+  (currency) => `Display currency not supported: ${currency}`,
+);
+
+const VALUE_COMPARISON_CURRENCY = 'USD';
+
 export class ProfileService implements PlayerProvisioning {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly walletReader: WalletReader,
+    private readonly exchangeRateReader: ExchangeRateReader,
+    private readonly audit: AuditWritePort,
+    private readonly supportedDisplayCurrencies: readonly string[],
+  ) {}
 
   /** Idempotent: a retried registration never overwrites the original consent record. */
   async createForRegistration({ userId, ...consent }: PlayerRegistrationRecord) {
@@ -25,7 +55,7 @@ export class ProfileService implements PlayerProvisioning {
    * identity row is resolved first: materialising a profile for a missing user would
    * create an orphan that every downstream join then has to defend against.
    */
-  private async ensureProfile(userId: User['id']) {
+  private async ensureProfileRow(userId: User['id']) {
     const identity = await fetchIdentityByUserId(this.drizzle, userId);
     if (!identity) {
       throw new ProfileUserNotFoundError(userId);
@@ -33,7 +63,7 @@ export class ProfileService implements PlayerProvisioning {
 
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     if (existing) {
-      return toPlayer(existing, identity.email, identity.username);
+      return { row: existing, identity };
     }
 
     // Upsert: a concurrent first-hit may insert the row between our select and
@@ -44,7 +74,12 @@ export class ProfileService implements PlayerProvisioning {
       .values({ userId })
       .onConflictDoUpdate({ target: player.userId, set: { userId } })
       .returning();
-    return toPlayer(created, identity.email, identity.username);
+    return { row: created, identity };
+  }
+
+  private async ensureProfile(userId: User['id']) {
+    const { row, identity } = await this.ensureProfileRow(userId);
+    return toPlayer(row, identity.email, identity.username);
   }
 
   async getMyProfile(userId: User['id']) {
@@ -59,5 +94,80 @@ export class ProfileService implements PlayerProvisioning {
       .where(eq(player.userId, userId))
       .returning();
     return toPlayer(record, email, username);
+  }
+
+  async getMyDisplayCurrency(userId: User['id']): Promise<DisplayCurrencyInfo> {
+    const { row } = await this.ensureProfileRow(userId);
+    return {
+      currency: await this.resolveEffectiveDisplayCurrency(userId, row),
+      supported: [...this.supportedDisplayCurrencies],
+    };
+  }
+
+  async setMyDisplayCurrency(
+    userId: User['id'],
+    input: SetDisplayCurrencyInput,
+  ): Promise<DisplayCurrencyInfo> {
+    if (!this.supportedDisplayCurrencies.includes(input.currency)) {
+      throw new UnsupportedDisplayCurrencyError(input.currency);
+    }
+
+    const { row } = await this.ensureProfileRow(userId);
+    const before = row.displayCurrency;
+
+    // One transaction: a display-currency change without its audit record is an
+    // unexplained change, so the write and the record commit together or not at all.
+    await this.drizzle.db.transaction(async (tx) => {
+      await tx
+        .update(player)
+        .set({ displayCurrency: input.currency })
+        .where(eq(player.userId, userId));
+
+      await this.audit.recordInTransaction(tx, {
+        actorId: userId,
+        actorType: 'player',
+        action: 'player.display_currency.set',
+        resourceType: 'player',
+        resourceId: row.id,
+        before: { displayCurrency: before },
+        after: { displayCurrency: input.currency },
+      });
+    });
+
+    return { currency: input.currency, supported: [...this.supportedDisplayCurrencies] };
+  }
+
+  private async resolveEffectiveDisplayCurrency(
+    userId: User['id'],
+    row: { displayCurrency: string | null },
+  ): Promise<string> {
+    if (row.displayCurrency) {
+      return row.displayCurrency;
+    }
+
+    const { activeCurrency, balances } = await this.walletReader.getBalances(userId);
+    const mostValuable = await this.mostValuableCurrency(balances);
+    return mostValuable ?? activeCurrency;
+  }
+
+  private async mostValuableCurrency(balances: WalletBalanceReading[]): Promise<string | null> {
+    let best: { currency: string; value: string } | null = null;
+    for (const balance of balances) {
+      if (moneyCompare(balance.balance, '0') <= 0) {
+        continue;
+      }
+      const converted = await this.exchangeRateReader.convert(
+        balance.balance,
+        balance.currency,
+        VALUE_COMPARISON_CURRENCY,
+      );
+      if (converted === null) {
+        continue;
+      }
+      if (!best || moneyCompare(converted, best.value) > 0) {
+        best = { currency: balance.currency, value: converted };
+      }
+    }
+    return best?.currency ?? null;
   }
 }

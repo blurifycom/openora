@@ -1,6 +1,8 @@
 import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   KycStatusSchema,
   MoneyAmountSchema,
   MONEY_PRECISION,
@@ -29,13 +31,9 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
   message: 'must be greater than zero',
 });
 
-// ISO 4217 plus longer crypto tickers (USDT, USDC). Codes are canonically uppercase -
-// normalize on the way in so a `usd` request can never diverge from a `USD` wallet.
-const WalletCurrencyCodeSchema = z
-  .string()
-  .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
+const WalletCurrencyCodeSchema = CurrencyTickerSchema;
 
-const WalletCurrencyInputSchema = WalletCurrencyCodeSchema.transform((c) => c.toUpperCase());
+const WalletCurrencyInputSchema = CurrencyTickerInputSchema;
 
 // A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
 // different addresses, fees and minimums. Free-form rather than an enum because each
@@ -49,6 +47,33 @@ const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperC
 // an address the player never saved. Deliberately no case transform - base58 rails (BTC
 // legacy, TRC20, Solana) are case-sensitive, so lowercasing would corrupt the address.
 const WalletAddressInputSchema = z.string().trim().min(8).max(128);
+
+const BASE58_LEGACY = '[a-km-zA-HJ-NP-Z1-9]{25,39}';
+
+const ADDRESS_PATTERN_BY_NETWORK: Record<string, RegExp> = {
+  SEGWIT: new RegExp(`^((bc1|tb1|bcrt1)[a-z0-9]{25,87}|[13mn2]${BASE58_LEGACY})$`),
+  BITCOIN_CASH: new RegExp(`^((bitcoincash:|bchtest:)?[qp][a-z0-9]{41}|[13mn2]${BASE58_LEGACY})$`),
+  LITECOIN: new RegExp(`^((ltc1|tltc1)[a-z0-9]{25,87}|[LM3Qmn2]${BASE58_LEGACY})$`),
+  DOGECOIN: new RegExp(`^[DA9nm2][a-km-zA-HJ-NP-Z1-9]{25,39}$`),
+  XRP_LEDGER: /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/,
+  ERC20: /^0x[a-fA-F0-9]{40}$/,
+  BEP20: /^0x[a-fA-F0-9]{40}$/,
+  TRC20: /^T[1-9A-HJ-NP-Za-km-z]{33}$/,
+  SOLANA: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+};
+
+/**
+ * Format check for a payout destination, per chain, looked up by `network.toUpperCase()`.
+ * A network with no entry in the table is ACCEPTED, falling back to the shared length
+ * bound (8-128 chars trimmed) instead of being rejected.
+ */
+export function isWalletAddressValidForNetwork(address: string, network: string): boolean {
+  const pattern = ADDRESS_PATTERN_BY_NETWORK[network.toUpperCase()];
+  if (!pattern) {
+    return address.length >= 8 && address.length <= 128;
+  }
+  return pattern.test(address);
+}
 
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
@@ -120,23 +145,29 @@ export const DepositInputSchema = z.object({
 // tightened for; the adapter rejects a malformed tag at payout time.
 export const DestinationTagInputSchema = z.string().trim().min(1).max(64);
 
-export const WithdrawInputSchema = z.object({
-  amount: PositiveMoneyAmountSchema,
-  currency: WalletCurrencyInputSchema,
-  // Required for any currency the operator settles on more than one chain - a payout is
-  // rejected as ambiguous rather than guessing which chain the player meant.
-  network: WalletNetworkInputSchema.optional(),
-  provider: z.string().optional(),
-  idempotencyKey: UuidSchema,
-  destinationAddress: WalletAddressInputSchema.optional(),
-  // Tag/memo networks (XRP, XLM, EOS, and the exchange deposit addresses on them) carry the
-  // beneficiary in a separate field rather than in the address: one address serves every
-  // account behind it. A payout sent without the tag the player was given arrives
-  // unattributed and has to be recovered by hand, so it is carried end to end instead of
-  // being dropped between the request and the custodian. It must match the tag saved on the
-  // whitelisted destination - see `requireWhitelistedWalletId`.
-  destinationTag: DestinationTagInputSchema.optional(),
-});
+export const WithdrawInputSchema = z
+  .object({
+    amount: PositiveMoneyAmountSchema,
+    currency: WalletCurrencyInputSchema,
+    network: WalletNetworkInputSchema.optional(),
+    provider: z.string().optional(),
+    idempotencyKey: UuidSchema,
+    destinationAddress: WalletAddressInputSchema.optional(),
+    destinationTag: DestinationTagInputSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.network &&
+      data.destinationAddress &&
+      !isWalletAddressValidForNetwork(data.destinationAddress, data.network)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `not a valid ${data.network} address`,
+        path: ['destinationAddress'],
+      });
+    }
+  });
 
 export const ManualWalletAdjustmentInputSchema = z.object({
   userId: UuidSchema,
@@ -491,19 +522,23 @@ export const WithdrawalAddressSchema = z.object({
 });
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
 
-// The address string itself is deliberately unvalidated beyond a length bound: every
-// chain has its own format, and the payment provider is the only thing that can tell a
-// live address from a well-formed dead one. It rejects a bad one at payout time.
-export const CreateWithdrawalAddressInputSchema = z.object({
-  label: z.string().trim().min(1).max(50),
-  currency: WalletCurrencyInputSchema,
-  network: WalletNetworkInputSchema,
-  address: WalletAddressInputSchema,
-  // Part of the saved destination, for the same reason the address is: on a tag chain the pair
-  // names the beneficiary and the address alone does not. A withdrawal must present the tag it
-  // was saved with, so this is what the payout is checked against.
-  destinationTag: DestinationTagInputSchema.optional(),
-});
+export const CreateWithdrawalAddressInputSchema = z
+  .object({
+    label: z.string().trim().min(1).max(50),
+    currency: WalletCurrencyInputSchema,
+    network: WalletNetworkInputSchema,
+    address: WalletAddressInputSchema,
+    destinationTag: DestinationTagInputSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!isWalletAddressValidForNetwork(data.address, data.network)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `not a valid ${data.network} address`,
+        path: ['address'],
+      });
+    }
+  });
 export type CreateWithdrawalAddressInput = z.infer<typeof CreateWithdrawalAddressInputSchema>;
 
 export const ListWithdrawalAddressesInputSchema = z.object({

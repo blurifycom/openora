@@ -5,9 +5,75 @@ import {
   LiftCoolingOffInputSchema,
   LiftSelfExclusionInputSchema,
   RgFlagListItemSchema,
+  SetPlayerLimitInputSchema,
 } from '../contract/rg.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';
+
+describe('SetPlayerLimitInputSchema', () => {
+  const base = {
+    userId: USER,
+    type: 'deposit' as const,
+    amount: '100',
+    minutes: null,
+    currency: 'USD',
+    period: 'daily' as const,
+    reason: 'x',
+    confirm: true as const,
+  };
+
+  it('accepts a valid override with a reason and confirm', () => {
+    expect(SetPlayerLimitInputSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('accepts a session-type override with a null currency', () => {
+    expect(
+      SetPlayerLimitInputSchema.safeParse({
+        ...base,
+        type: 'session' as const,
+        amount: null,
+        minutes: 60,
+        currency: null,
+        period: 'session' as const,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a money-type override with a null currency', () => {
+    expect(SetPlayerLimitInputSchema.safeParse({ ...base, currency: null }).success).toBe(false);
+  });
+
+  it('rejects a session-type override with a non-null currency', () => {
+    expect(
+      SetPlayerLimitInputSchema.safeParse({
+        ...base,
+        type: 'session' as const,
+        amount: null,
+        minutes: 60,
+        currency: 'USD',
+        period: 'session' as const,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a missing reason', () => {
+    const { reason: _reason, ...rest } = base;
+    expect(SetPlayerLimitInputSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects an empty reason', () => {
+    expect(SetPlayerLimitInputSchema.safeParse({ ...base, reason: '' }).success).toBe(false);
+  });
+
+  it('rejects a missing confirm', () => {
+    const { confirm: _confirm, ...rest } = base;
+    expect(SetPlayerLimitInputSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects confirm: false', () => {
+    expect(SetPlayerLimitInputSchema.safeParse({ ...base, confirm: false }).success).toBe(false);
+  });
+});
 
 describe('RgFlagListItemSchema.detail resilience', () => {
   const base = {

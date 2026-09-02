@@ -23,6 +23,7 @@ export type DirectAuditAction =
   // KYC-resubmission email - the regulator asks about the notification at those
   // events, so a failure to send it is itself auditable. See ADR-0036.
   | 'mail.regulatory_delivery.failed'
+  | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
@@ -40,7 +41,10 @@ export type DirectAuditAction =
   | 'wallet.reconciliation_run.skipped'
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
-  | 'wallet.reconciliation_finding.resolved';
+  | 'wallet.reconciliation_finding.resolved'
+  | 'wallet.wallet_asset.created'
+  | 'wallet.wallet_asset.updated'
+  | 'wallet.wallet_asset.deleted';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

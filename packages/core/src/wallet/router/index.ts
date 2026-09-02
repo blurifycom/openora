@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_PAYMENT_PROVIDER,
   RATE_LIMIT_KEYS,
+  RgLimitExceededError,
   makeRateLimitKey,
   type AuditWritePort,
   type JobQueueAdapter,
@@ -43,6 +44,7 @@ import {
   WalletAssetUnsupportedError,
   WalletAssetUnknownProviderError,
   WalletAssetInUseError,
+  WalletAssetHasIssuedAddressesError,
   WalletAssetHasInFlightTransactionsError,
   AmbiguousNetworkError,
   UnsupportedNetworkError,
@@ -177,7 +179,7 @@ export function createWalletRouter({
           // A disabled currency/network is a permanent policy rejection, not a state
           // conflict: 409 would tell a status-code-branching client to retry it.
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
-          CONFLICT: IdempotencyKeyReuseError,
+          CONFLICT: [IdempotencyKeyReuseError, RgLimitExceededError],
         },
         () =>
           wallet.deposit({
@@ -415,7 +417,13 @@ export function createWalletRouter({
           userAgent,
         } = await adminGuard.assert(context, 'wallet-asset', 'delete');
         return mapErrors(
-          { CONFLICT: [WalletAssetInUseError, WalletAssetHasInFlightTransactionsError] },
+          {
+            CONFLICT: [
+              WalletAssetInUseError,
+              WalletAssetHasIssuedAddressesError,
+              WalletAssetHasInFlightTransactionsError,
+            ],
+          },
           () => wallet.deleteWalletAsset(adminId, input.currency, input.network, { ip, userAgent }),
         );
       }),

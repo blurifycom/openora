@@ -32,7 +32,7 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
     submit: vi.fn(async () => adapterResult),
     getStatus: vi.fn(async () => adapterResult.status),
   });
-  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) });
+  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) });
   const svc = new KycVerificationService({
     drizzle: db.drizzle,
     events: events,
@@ -44,7 +44,10 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
   return { svc, events, kycAdapter, statusWriter, adapterResult };
 }
 
-const passportSubmission = { documents: [{ type: 'passport' as const, frontUrl: 'https://f' }] };
+const passportSubmission = {
+  tier: 'basic' as const,
+  documents: [{ type: 'passport' as const, frontUrl: 'https://f' }],
+};
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
@@ -98,6 +101,20 @@ beforeEach(async () => {
 });
 
 describe('KycVerificationService.submit (real PG)', () => {
+  it('tracks Advanced independently without changing the player KYC status', async () => {
+    const { svc, statusWriter, events } = makeService();
+    const userId = randomUUID();
+
+    const result = await svc.submit(userId, { ...passportSubmission, tier: 'advanced' });
+
+    expect(result.tier).toBe('advanced');
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.kyc.updated',
+      expect.objectContaining({ userId, tier: 'advanced', previousStatus: 'not_started' }),
+    );
+  });
+
   it('appends a decided record, emits submitted, and pushes the status through the writer', async () => {
     const { svc, events, statusWriter, adapterResult } = makeService();
     const userId = randomUUID();
@@ -149,6 +166,65 @@ describe('KycVerificationService.submit (real PG)', () => {
     await svc.submit(userId, passportSubmission);
 
     expect(await verificationsOf(userId)).toHaveLength(1);
+  });
+
+  it('serializes concurrent submits so at most one active session is created', async () => {
+    const { svc, kycAdapter } = makeService();
+    const userId = randomUUID();
+    // Fresh referenceId per call, unlike the shared fixture's fixed adapterResult - this is
+    // what actually exercises the race. A vendor that mints a new session per call (eg
+    // Didit) would let the (userId, referenceId, tier) unique constraint see two distinct
+    // references, so only the advisory lock (not the DB upsert) can close this race.
+    kycAdapter.submit = vi.fn(async () => ({
+      referenceId: randomUUID(),
+      status: 'pending' as const,
+    }));
+
+    const [first, second] = await Promise.all([
+      svc.submit(userId, passportSubmission),
+      svc.submit(userId, passportSubmission),
+    ]);
+
+    expect(kycAdapter.submit).toHaveBeenCalledTimes(1);
+    expect(await verificationsOf(userId)).toHaveLength(1);
+    expect(first.status).toBe('pending');
+    expect(second.status).toBe('pending');
+  });
+
+  it('keeps a shared vendor workflow separate for Basic and Advanced', async () => {
+    const { svc, statusWriter } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+
+    const basic = await svc.submit(userId, passportSubmission);
+    const advanced = await svc.submit(userId, { ...passportSubmission, tier: 'advanced' });
+
+    expect(basic.tier).toBe('basic');
+    expect(advanced.tier).toBe('advanced');
+    const submitted = await verificationsOf(userId);
+    expect(submitted).toHaveLength(2);
+    expect(submitted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tier: 'basic', status: 'pending' }),
+        expect.objectContaining({ tier: 'advanced', status: 'pending' }),
+      ]),
+    );
+
+    await svc.reconcile(basic.referenceId, 'approved');
+
+    const reconciled = await verificationsOf(userId);
+    expect(reconciled).toHaveLength(2);
+    expect(reconciled).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tier: 'basic', status: 'approved' }),
+        expect.objectContaining({ tier: 'advanced', status: 'approved' }),
+      ]),
+    );
+    expect(statusWriter.setStatus).toHaveBeenLastCalledWith(
+      userId,
+      'approved',
+      expect.objectContaining({ source: 'webhook' }),
+      expect.anything(),
+    );
   });
 
   it('passes a hosted-session verificationUrl through', async () => {
@@ -203,7 +279,7 @@ describe('KycVerificationService.reconcile (real PG)', () => {
   it('is idempotent when the record already holds the mapped decision', async () => {
     const { svc, statusWriter, adapterResult } = makeService();
     await svc.submit(randomUUID(), passportSubmission);
-    statusWriter.setStatus = vi.fn(async () => undefined);
+    statusWriter.setStatus = vi.fn(async () => null);
 
     await svc.reconcile(adapterResult.referenceId, 'approved');
 
@@ -215,11 +291,93 @@ describe('KycVerificationService.reconcile (real PG)', () => {
 
     expect(await svc.reconcile(randomUUID(), 'approved')).toBeNull();
   });
+
+  it('scopes a tiered decision to only the named tier, leaving the other tier untouched', async () => {
+    const { svc, statusWriter } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+    const basic = await svc.submit(userId, passportSubmission);
+    await svc.submit(userId, { ...passportSubmission, tier: 'advanced' });
+    const callsFromSubmit = vi.mocked(statusWriter.setStatus).mock.calls.length;
+
+    await svc.reconcile(basic.referenceId, 'approved', { tier: 'advanced' });
+
+    const rows = await verificationsOf(userId);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tier: 'basic', status: 'pending' }),
+        expect.objectContaining({ tier: 'advanced', status: 'approved' }),
+      ]),
+    );
+    // Advanced never touches player.kycStatus - reconcile scoped to 'advanced' must not
+    // add a further writer call beyond whatever submit() already made for Basic.
+    expect(statusWriter.setStatus).toHaveBeenCalledTimes(callsFromSubmit);
+  });
+
+  it('refuses a reference id shared across two different players, updating neither row', async () => {
+    const { svc } = makeService();
+    const referenceId = randomUUID();
+    const [playerA] = await db.drizzle.db
+      .insert(kycVerification)
+      .values({
+        userId: randomUUID(),
+        provider: 'mock',
+        referenceId,
+        tier: 'basic',
+        status: 'pending',
+        documentTypes: ['passport'],
+        triggeredBy: 'submission',
+      })
+      .returning();
+    const [playerB] = await db.drizzle.db
+      .insert(kycVerification)
+      .values({
+        userId: randomUUID(),
+        provider: 'mock',
+        referenceId,
+        tier: 'basic',
+        status: 'pending',
+        documentTypes: ['passport'],
+        triggeredBy: 'submission',
+      })
+      .returning();
+
+    await expect(svc.reconcile(referenceId, 'approved')).rejects.toThrow(
+      'belong to different users',
+    );
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(kycVerification)
+      .where(eq(kycVerification.referenceId, referenceId));
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: playerA!.id, status: 'pending' }),
+        expect.objectContaining({ id: playerB!.id, status: 'pending' }),
+      ]),
+    );
+  });
+
+  it('rejects a decision when the webhook tier and resolveDecision tier disagree', async () => {
+    const { svc, kycAdapter, adapterResult } = makeService({ adapter: { status: 'pending' } });
+    await svc.submit(randomUUID(), passportSubmission);
+    kycAdapter.resolveDecision = vi.fn(async () => ({
+      referenceId: adapterResult.referenceId,
+      status: 'approved' as const,
+      tier: 'advanced' as const,
+    }));
+
+    await expect(
+      svc.syncDecision(adapterResult.referenceId, 'approved', undefined, 'basic'),
+    ).rejects.toThrow('disagree');
+  });
 });
 
 describe('KycVerificationService.getForPlayer (real PG)', () => {
   it('returns the newest record as current with the full history behind it', async () => {
-    const { svc } = makeService({ adapter: { status: 'pending' } });
+    // First session must be decided (not pending/not_started) before the second submit -
+    // otherwise the duplicate-session guard in submit() correctly collapses the second call
+    // onto the still-active first one instead of creating a second history row.
+    const { svc } = makeService({ adapter: { status: 'rejected' } });
     const userId = randomUUID();
     await svc.submit(userId, passportSubmission);
     await db.drizzle.db
@@ -231,14 +389,17 @@ describe('KycVerificationService.getForPlayer (real PG)', () => {
 
     const view = await svc.getForPlayer(userId);
 
-    expect(view.history).toHaveLength(2);
-    expect(view.current?.referenceId).toBe(adapterResult.referenceId);
+    expect(view.basic.history).toHaveLength(2);
+    expect(view.basic.current?.referenceId).toBe(adapterResult.referenceId);
   });
 
   it('returns an empty view for a player with no submissions', async () => {
     const { svc } = makeService();
 
-    expect(await svc.getForPlayer(randomUUID())).toEqual({ current: null, history: [] });
+    expect(await svc.getForPlayer(randomUUID())).toEqual({
+      basic: { current: null, history: [] },
+      advanced: { current: null, history: [] },
+    });
   });
 });
 
@@ -262,6 +423,7 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
       userId,
       'resubmission_requested',
       expect.objectContaining({ source: 'reverify' }),
+      expect.anything(),
     );
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.kyc.reverify_required',

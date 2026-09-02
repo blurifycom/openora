@@ -70,6 +70,10 @@ deprecated, so there is no path - explicit or accidental - back to them.
 - `InProcessRealtimeTransport` and `SseClientAuthorizer` stay. They are not test
   doubles - `createApp` binds them as the production default because core ships no
   realtime driver at all (ADR-0031). Nothing real exists to replace them with.
+  **(Superseded 2026-08-31: ADR-0031 shipped `RedisPubSubRealtimeTransport` and this
+  in-process default is deleted. `bootTestApp` now binds the same Redis-backed
+  transport production does, same as the other four seams; see ADR-0031's own update
+  note for the detail.)**
 
 Postgres and Redis are therefore hard prerequisites for `pnpm verify`, not optional
 extras. A missing container fails the run with an actionable `docker compose up -d`

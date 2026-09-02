@@ -7,7 +7,7 @@
  */
 import * as z from 'zod';
 import { createToken, type Token } from './token.js';
-import type { KycStatus, KycStatusSource, Player } from '../schemas/player.js';
+import type { KycStatus, KycStatusSource, KycTier, Player } from '../schemas/player.js';
 
 export type KycDocument = {
   type: 'passport' | 'drivers_license' | 'national_id';
@@ -46,6 +46,15 @@ export type KycCheckResult = z.infer<typeof KycCheckResultSchema>;
 export type KycResult = {
   referenceId: string;
   status: KycVendorStatus;
+  /**
+   * The tier this decision belongs to, when the adapter/vendor can attribute it. Omit when
+   * the vendor session is a shared workflow that decides both tiers together (see
+   * `docs/adapters/kyc.md`) - `KycVerificationService.reconcile` then fans the decision out
+   * to every `kyc_verification` row sharing this `referenceId`, exactly as before this field
+   * existed. Set it whenever the vendor CAN tell tiers apart, so reconcile only ever touches
+   * the row that actually ran that tier's checks.
+   */
+  tier?: KycTier;
   /**
    * Hosted verification URL to redirect the end user to, for vendors whose flow collects
    * documents on their own hosted page (eg Didit) rather than accepting them from our
@@ -92,8 +101,8 @@ export type KycAdapter = {
    * operator can't enable the gate yet leave verification a no-op. Real providers omit it.
    */
   readonly autoApproves?: boolean;
-  submit(userId: string, documents: KycDocument[]): Promise<KycResult>;
-  getStatus(userId: string): Promise<KycVendorStatus>;
+  submit(userId: string, documents: KycDocument[], tier: KycTier): Promise<KycResult>;
+  getStatus(userId: string, tier: KycTier): Promise<KycVendorStatus>;
   /**
    * Provider-specific normalization of a raw webhook into a vendor decision, or
    * null when the body is not a reconcilable decision. Optional - MockKycAdapter
@@ -129,9 +138,10 @@ export const KYC_ADAPTER: Token<KycAdapter> = createToken('KYC_ADAPTER');
 /**
  * Single-writer port for `player.kycStatus`. The invariant is enforced structurally,
  * not by a sealed token: pam owns the `player` table and binds the only implementation,
- * so every status change (admin override, vendor decision, webhook, threshold re-KYC)
- * routes through one write + one `compliance.kyc.updated` emit. An overlay MAY rebind
- * this port, but it MUST preserve that audit emit - dropping it breaks the 5AMLD trail.
+ * so every Basic status change (admin override, vendor decision, webhook, threshold re-KYC)
+ * routes through one write. Compliance emits the corresponding `compliance.kyc.updated`
+ * event after its transaction commits. An overlay MAY rebind this port, but it MUST
+ * preserve the transition result or the audit trail cannot be emitted.
  * `actorId` is the admin who acted, or null for a system change (vendor/webhook/re-KYC).
  * `source` records what drove it. `tx` is the caller's active transaction handle to stay
  * atomic with the caller's own writes (e.g. the player-management update), else the writer
@@ -144,7 +154,12 @@ export type KycStatusWriter = {
     status: KycStatus,
     opts: { actorId: Player['userId'] | null; reason?: string; source: KycStatusSource },
     tx?: unknown,
-  ): Promise<void>;
+  ): Promise<KycStatusTransition | null>;
+};
+
+export type KycStatusTransition = {
+  playerId: Player['id'];
+  previousStatus: KycStatus;
 };
 
 export const KYC_STATUS_WRITER: Token<KycStatusWriter> = createToken('KYC_STATUS_WRITER');

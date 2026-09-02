@@ -18,6 +18,7 @@ export const extensions = [
   { id: 'mail', path: './packages/core/dist/mail/plugin.js' },
   { id: 'notifications', path: './packages/core/dist/engagement/notifications/plugin.js' },
   { id: 'compliance', path: './packages/core/dist/compliance/plugin.js' },
+  { id: 'exchange-rate', path: './packages/core/dist/fx/exchange-rate/plugin.js' },
 
   // Player - the player-facing igaming surface
   { id: 'wallet', path: './packages/core/dist/wallet/plugin.js' },

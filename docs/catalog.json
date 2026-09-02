@@ -33,7 +33,8 @@
       ],
       "routes": [
         "audit.exportCsv",
-        "audit.list"
+        "audit.list",
+        "audit.listMyRgHistory"
       ]
     },
     {
@@ -128,19 +129,25 @@
       "id": "cms",
       "group": "cms",
       "tables": [
-        "banner",
+        "banner_configuration",
+        "banner_image",
         "page"
       ],
       "routes": [
-        "cms.createBanner",
+        "cms.createBannerConfiguration",
         "cms.createPage",
-        "cms.deleteBanner",
+        "cms.deleteBannerConfiguration",
+        "cms.deleteBannerImage",
         "cms.deletePage",
+        "cms.getBannerConfiguration",
         "cms.getPage",
-        "cms.listBanners",
-        "cms.listBannersByPlacement",
+        "cms.getPublicBanner",
+        "cms.listBannerConfigurationsByPlacement",
+        "cms.listBannerPlacements",
         "cms.listPages",
-        "cms.updateBanner",
+        "cms.setBannerImage",
+        "cms.setDefaultBannerConfiguration",
+        "cms.unsetDefaultBannerConfiguration",
         "cms.updatePage"
       ]
     },
@@ -159,9 +166,13 @@
         "compliance.activateSelfExclusion",
         "compliance.addGeoRule",
         "compliance.bulkApproveKyc",
+        "compliance.cancelPendingLimitChange",
+        "compliance.confirmPendingLimitChange",
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
+        "compliance.getMyKyc",
+        "compliance.getMyRgSection",
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
@@ -170,11 +181,24 @@
         "compliance.listGeoRules",
         "compliance.listRgFlags",
         "compliance.overrideKycStatus",
+        "compliance.requestCoolingOff",
         "compliance.requestKycResubmission",
+        "compliance.requestSelfExclusion",
         "compliance.setPlayerLimit",
         "compliance.streamKycStatus",
         "compliance.submitKyc",
         "compliance.upsertLimit"
+      ]
+    },
+    {
+      "id": "exchange-rate",
+      "group": "fx",
+      "tables": [
+        "exchange_rate_quote"
+      ],
+      "routes": [
+        "exchange-rate.getRate",
+        "exchange-rate.getRates"
       ]
     },
     {
@@ -226,6 +250,7 @@
       "group": "pam",
       "tables": [
         "account",
+        "admin_trusted_device",
         "session",
         "sms_otp_session",
         "two_factor",
@@ -239,20 +264,28 @@
         "identity.disable2fa",
         "identity.enable2fa",
         "identity.list",
+        "identity.listAll",
         "identity.listMine",
         "identity.login",
         "identity.logout",
         "identity.me",
         "identity.phoneLoginRequest",
         "identity.phoneLoginVerify",
+        "identity.regenerateBackupCodes",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
+        "identity.resetUserTwoFactor",
         "identity.revoke",
         "identity.revokeAll",
         "identity.revokeMine",
+        "identity.revokeTrustedDevice",
+        "identity.revokeUserTrustedDevice",
         "identity.sendEmailVerification",
+        "identity.status",
         "identity.streamSession",
+        "identity.trustCurrentDevice",
+        "identity.trustedDevices",
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.usernameAvailable",
@@ -331,6 +364,8 @@
       ],
       "routes": [
         "profile.get",
+        "profile.getDisplayCurrency",
+        "profile.setDisplayCurrency",
         "profile.update"
       ]
     },
@@ -471,6 +506,16 @@
       ]
     },
     {
+      "category": "admin-security",
+      "interface": "AdminSessionContext",
+      "token": "ADMIN_SECURITY_POLICY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
       "category": "admin-user-directory",
       "interface": "AdminUserRow",
       "token": "ADMIN_USER_DIRECTORY",
@@ -518,6 +563,7 @@
         "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -602,6 +648,26 @@
       ]
     },
     {
+      "category": "exchange-rate-provider",
+      "interface": "ExchangeRateQuote",
+      "token": "CRYPTO_EXCHANGE_RATE_PROVIDER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/fx/exchange-rate/plugin.ts"
+      ]
+    },
+    {
+      "category": "exchange-rate-reader",
+      "interface": "ExchangeRateReader",
+      "token": "EXCHANGE_RATE_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/fx/exchange-rate/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts"
+      ]
+    },
+    {
       "category": "game",
       "interface": "GameAdapter",
       "token": "GAME_ADAPTER",
@@ -626,7 +692,8 @@
       "token": "GEO_IP_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/compliance/plugin.ts"
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -644,6 +711,7 @@
       "token": "IDENTITY_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/audit/plugin.ts",
         "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
@@ -771,6 +839,17 @@
       ]
     },
     {
+      "category": "rg-limits",
+      "interface": "RgLimitDecision",
+      "token": "RG_LIMITS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "rng",
       "interface": "RngAdapter",
       "token": "RNG_ADAPTER",
@@ -799,6 +878,13 @@
         "packages/core/src/engagement/social/__tests__/social.plugin.int.test.ts",
         "packages/core/src/engagement/social/plugin.ts"
       ]
+    },
+    {
+      "category": "swap",
+      "interface": "SwapAdapter",
+      "token": "SWAP_ADAPTER",
+      "status": "stub",
+      "boundIn": []
     },
     {
       "category": "tag-evaluation-commands",
@@ -831,10 +917,11 @@
     },
     {
       "category": "wallet-reader",
-      "interface": "WalletReader",
+      "interface": "WalletBalanceReading",
       "token": "WALLET_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/pam/profile/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
@@ -857,9 +944,12 @@
     "chat.user.mentioned",
     "chat.user.unblocked",
     "chat.user.unignored",
-    "cms.banner.created",
-    "cms.banner.deleted",
-    "cms.banner.updated",
+    "cms.banner.configuration.created",
+    "cms.banner.configuration.deleted",
+    "cms.banner.configuration.set_default",
+    "cms.banner.configuration.unset_default",
+    "cms.banner.image.deleted",
+    "cms.banner.image.set",
     "cms.page.created",
     "cms.page.deleted",
     "cms.page.published",
@@ -869,8 +959,6 @@
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
     "compliance.kyc.updated",
-    "compliance.limit.removed",
-    "compliance.limit.upserted",
     "gaming.round.ended",
     "gaming.round.started",
     "iam.invitation.accepted",
@@ -880,16 +968,25 @@
     "iam.role.permissions.changed",
     "iam.role.revoked",
     "iam.role.updated",
+    "identity.2fa.backup_codes_regenerated",
     "identity.2fa.disabled",
     "identity.2fa.enabled",
+    "identity.2fa.enrollment_blocked",
+    "identity.2fa.failed",
+    "identity.2fa.lockout.triggered",
+    "identity.2fa.reset",
+    "identity.2fa.verified",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
     "identity.password.reset",
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.session.fingerprint_mismatch",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
+    "identity.trusted_device.added",
+    "identity.trusted_device.revoked",
     "identity.user.deactivated",
     "identity.user.lockout.triggered",
     "identity.user.login",
@@ -908,6 +1005,10 @@
     "rg.cooling_off.expired",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
+    "rg.limit.change_cancelled",
+    "rg.limit.change_confirmed",
+    "rg.limit.change_expired",
+    "rg.limit.change_requested",
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
@@ -943,6 +1044,10 @@
     {
       "name": "ActiveCurrencySchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ActiveSessionItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
       "name": "ActiveUsersTrendPointSchema",
@@ -995,6 +1100,14 @@
     {
       "name": "AdminRoomSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminSecurityConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "AdminSecurityStatusSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
       "name": "AdminTransactionDetailSchema",
@@ -1065,7 +1178,31 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
-      "name": "BannerSchema",
+      "name": "BackupCodesResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "BannerConfigurationSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerConfigurationSummarySchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerImageSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerLayoutSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerLinkUrlSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerPlacementSummarySchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
@@ -1193,6 +1330,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatMoneyCommandInputSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
       "name": "ChatOnlineCountSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
@@ -1257,6 +1398,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "CmsConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
       "name": "CommandChatMessageSchema",
       "file": "packages/core/src/contracts/schemas/chat-command.ts"
     },
@@ -1275,6 +1420,10 @@
     {
       "name": "CountryCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "CreateBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "CreateNotificationInputSchema",
@@ -1301,8 +1450,24 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "CurrencyTickerInputSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "CurrencyTickerSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "DateRangeSchema",
       "file": "packages/core/src/contracts/schemas/reporting.ts"
+    },
+    {
+      "name": "DeleteBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "DeleteBannerImageInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "deleteTagSchema",
@@ -1327,6 +1492,18 @@
     {
       "name": "Disable2faInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "DisplayCurrencyCodeSchema",
+      "file": "packages/core/src/contracts/schemas/display-currency.ts"
+    },
+    {
+      "name": "DisplayCurrencyInfoSchema",
+      "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "DisplayCurrencyInputSchema",
+      "file": "packages/core/src/contracts/schemas/display-currency.ts"
     },
     {
       "name": "DonateCommandMetadataSchema",
@@ -1359,6 +1536,18 @@
     {
       "name": "EndRoundOutputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "ExchangeRateBatchEntrySchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "ExchangeRateConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "ExchangeRateQuoteSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
     },
     {
       "name": "ExclusionKindSchema",
@@ -1461,6 +1650,22 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "GetBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "GetExchangeRateInputSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "GetExchangeRatesInputSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "GetPublicBannerInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "GetRelationshipsInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
@@ -1495,6 +1700,10 @@
     {
       "name": "HighRiskCountBreachDetailSchema",
       "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HostAllowlistEntrySchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
       "name": "IamAssignmentSortBySchema",
@@ -1585,11 +1794,19 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "KycTierSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
       "name": "KycTriggeredBySchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "KycVerificationSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycVerificationSummarySchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
@@ -1603,6 +1820,10 @@
     {
       "name": "LiftSelfExclusionInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "LimitChangeKindSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
       "name": "LimitPeriodSchema",
@@ -1623,6 +1844,14 @@
     {
       "name": "LimitTypeSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "LimitViewSchema",
+      "file": "packages/core/src/compliance/contract/limits.ts"
+    },
+    {
+      "name": "ListBannerConfigurationsInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "ListFriendRequestsInputSchema",
@@ -1707,6 +1936,14 @@
     {
       "name": "MoneyByCurrencySchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "MyRgHistoryEntrySchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "MyRgHistoryFiltersSchema",
+      "file": "packages/core/src/audit/contract/index.ts"
     },
     {
       "name": "NotificationCountSchema",
@@ -1813,6 +2050,10 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerKycSummaryViewSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "PlayerKycViewSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
@@ -1897,6 +2138,14 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "PublicBannerSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "PublicBannerSlotSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "PublicWalletAssetSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1907,6 +2156,10 @@
     {
       "name": "ReconciliationResolutionSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "RegenerateBackupCodesInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "RegisterInputSchema",
@@ -1953,12 +2206,20 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "RequestCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "RequestKycResubmissionInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "RequestPasswordResetInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RequestSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
       "name": "ResendEmailVerificationInputSchema",
@@ -1971,6 +2232,10 @@
     {
       "name": "ResolveReconciliationFindingInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ResponsibleGamingSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
       "name": "RetentionCohortRowSchema",
@@ -1998,6 +2263,14 @@
     },
     {
       "name": "RgFlagTypeSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgInitiatorSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgLimitErrorReasonSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
@@ -2049,8 +2322,20 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "SetBannerImageInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "SetBonusRolloverConfigInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "SetDisplayCurrencyInputSchema",
+      "file": "packages/core/src/pam/profile/contract/index.ts"
     },
     {
       "name": "SetPlayerLimitInputSchema",
@@ -2113,6 +2398,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "TotpStepUpCodeSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TransactionFilterSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -2121,12 +2410,32 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "TrustCurrentDeviceInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TrustedDeviceItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "TwoFactorChallengeMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TwoFactorMethodSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
       "name": "UnblockCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
     {
       "name": "UnignoreCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "UnsetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "UpdatePlayerProfileInputSchema",

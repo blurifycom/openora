@@ -126,7 +126,7 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
     for (let i = 0; i < 3; i++) {
       await expect(
         svc.verifyTwoFactor(
-          { code: '123456' },
+          { code: '123456', method: 'totp', trustDevice: false },
           { cookie: `better-auth.two_factor=${twoFactorIdentifier}; junk${i}=${i}` },
           new Headers(),
         ),
@@ -207,7 +207,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
-      svc.disableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
+      svc.disableTwoFactor({ password: 'currentpw1', code: '123456' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });
@@ -239,7 +239,13 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
     const { limiter, consume } = denyingLimiter();
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
-    await expect(svc.verifyTwoFactor({ code: '123456' }, {}, new Headers())).rejects.toMatchObject({
+    await expect(
+      svc.verifyTwoFactor(
+        { code: '123456', method: 'totp', trustDevice: false },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
     expect(consume).toHaveBeenCalledWith(

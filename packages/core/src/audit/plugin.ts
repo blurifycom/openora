@@ -1,6 +1,6 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
+import { AUDIT_WRITER, IDENTITY_READER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
@@ -35,9 +35,10 @@ export async function mapEventToRecord(
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      before: { kycStatus: p['previousStatus'] ?? null },
+      before: { kycStatus: p['previousStatus'] ?? null, tier: p['tier'] ?? null },
       after: {
         kycStatus: p['status'] ?? null,
+        tier: p['tier'] ?? null,
         reason: p['reason'] ?? null,
         source: p['source'] ?? null,
       },
@@ -53,7 +54,11 @@ export async function mapEventToRecord(
       actorId: str(p['playerId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { referenceId: p['referenceId'] ?? null, provider: p['provider'] ?? null },
+      after: {
+        referenceId: p['referenceId'] ?? null,
+        provider: p['provider'] ?? null,
+        tier: p['tier'] ?? null,
+      },
     };
   }
 
@@ -64,7 +69,7 @@ export async function mapEventToRecord(
       actorType: 'system',
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { reason: p['reason'] ?? null },
+      after: { reason: p['reason'] ?? null, tier: p['tier'] ?? null },
     };
   }
 
@@ -76,6 +81,7 @@ export async function mapEventToRecord(
       resourceId: str(p['playerId']),
       after: {
         referenceId: p['referenceId'] ?? null,
+        tier: p['tier'] ?? null,
         vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
         dataCenterIpDetected: p['dataCenterIpDetected'] ?? null,
         duplicateDeviceDetected: p['duplicateDeviceDetected'] ?? null,
@@ -254,17 +260,21 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player/Admin revoked one or all of their own sessions, or an admin forced it.
-  // actorId = the resolved playerId on the self-revoke path, else the acting admin's
-  // raw userId (never resolved - actor is an admin, not the subject player).
-  // Self-revoke sends its own userId as actorId, so only a *different* actor is forced.
+  // Player/Admin revoked one or all of their own sessions, an admin forced it, or
+  // AdminGuard forced it itself on a fingerprint mismatch (no actorId at all - never
+  // read the subject's own userId as a stand-in, that is what mislabels a
+  // system-triggered kill as a self-revoke). Self-revoke sends its own userId as
+  // actorId, so only a *different*, present actorId is an admin acting.
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
     const isSingle = topic === 'identity.session.revoked';
-    const isForced = !!p['actorId'] && p['actorId'] !== p['userId'];
-    const actorId = isForced ? str(p['actorId']) : str(p['playerId']);
+    const rawActorId = p['actorId'];
+    const isSystem = rawActorId === undefined || rawActorId === null;
+    const isForced = !isSystem && rawActorId !== p['userId'];
+    const actorType = isSystem ? 'system' : isForced ? 'admin' : 'player';
+    const actorId = isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']);
     return {
       ...base,
-      actorType: isForced ? 'admin' : 'player',
+      actorType,
       actorId,
       resourceType: isSingle ? 'session' : 'user',
       resourceId: isSingle ? str(p['sessionId']) : str(p['userId']),
@@ -481,22 +491,30 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
+  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page, banner
+  // configuration, or banner image (whichever id that topic's payload carries).
   if (
     topic === 'cms.page.created' ||
     topic === 'cms.page.updated' ||
     topic === 'cms.page.deleted' ||
-    topic === 'cms.banner.created' ||
-    topic === 'cms.banner.updated' ||
-    topic === 'cms.banner.deleted'
+    topic === 'cms.banner.configuration.created' ||
+    topic === 'cms.banner.configuration.deleted' ||
+    topic === 'cms.banner.configuration.set_default' ||
+    topic === 'cms.banner.configuration.unset_default' ||
+    topic === 'cms.banner.image.set' ||
+    topic === 'cms.banner.image.deleted'
   ) {
     const isBanner = topic.startsWith('cms.banner.');
+    const bannerResourceId =
+      topic === 'cms.banner.configuration.unset_default'
+        ? (str(p['previousBannerConfigurationId']) ?? str(p['placement']))
+        : (str(p['bannerImageId']) ?? str(p['bannerConfigurationId']));
     return {
       ...base,
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: isBanner ? 'banner' : 'page',
-      resourceId: str(isBanner ? p['bannerId'] : p['pageId']),
+      resourceId: isBanner ? bannerResourceId : str(p['pageId']),
     };
   }
 
@@ -534,28 +552,45 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
-  // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
     topic === 'rg.limit.set' ||
+    topic === 'rg.limit.change_requested' ||
+    topic === 'rg.limit.change_confirmed' ||
+    topic === 'rg.limit.change_cancelled' ||
     topic === 'rg.cooling_off.activated' ||
     topic === 'rg.self_exclusion.activated' ||
     topic === 'rg.self_exclusion.lifted' ||
     topic === 'rg.cooling_off.lifted'
   ) {
     const before =
-      topic === 'rg.limit.set'
+      topic === 'rg.limit.set' || topic === 'rg.limit.change_confirmed'
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
+    const initiatedBy = p['initiatedBy'];
     return {
       ...base,
-      actorType: 'admin',
+      actorType:
+        initiatedBy === 'player' || initiatedBy === 'system' || initiatedBy === 'admin'
+          ? initiatedBy
+          : 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
       before,
+      after: p,
+    };
+  }
+
+  if (topic === 'rg.limit.change_expired') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      before: { pendingAmount: p['requestedAmount'] ?? null },
       after: p,
     };
   }
@@ -638,6 +673,27 @@ export async function mapEventToRecord(
     return { ...base, resourceType: 'registration' };
   }
 
+  // Admin-on-behalf topics: `userId` names the affected account, not the actor - the
+  // acting admin travels in its own `actorId` field, same as compliance.kyc.updated.
+  // Both also fire self-service: `disableTwoFactor` / `regenerateBackupCodes` tear down
+  // the caller's own trust with `actorId === userId`, and
+  // `identity.trusted_device.revoked` fires with no actorId at all when AdminGuard
+  // revokes the trust itself on a fingerprint mismatch. Same system/forced/self split
+  // as the session-revoked mapper above, so a self-teardown is never logged as an
+  // admin acting on the account.
+  if (topic === 'identity.2fa.reset' || topic === 'identity.trusted_device.revoked') {
+    const rawActorId = p['actorId'];
+    const isSystem = rawActorId === undefined || rawActorId === null;
+    const isForced = !isSystem && rawActorId !== p['userId'];
+    return {
+      ...base,
+      actorType: isSystem ? 'system' : isForced ? 'admin' : 'player',
+      actorId: isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -647,6 +703,13 @@ export async function mapEventToRecord(
     topic === 'identity.user.logout' ||
     topic === 'identity.2fa.enabled' ||
     topic === 'identity.2fa.disabled' ||
+    topic === 'identity.2fa.verified' ||
+    topic === 'identity.2fa.failed' ||
+    topic === 'identity.2fa.backup_codes_regenerated' ||
+    topic === 'identity.2fa.lockout.triggered' ||
+    topic === 'identity.2fa.enrollment_blocked' ||
+    topic === 'identity.session.fingerprint_mismatch' ||
+    topic === 'identity.trusted_device.added' ||
     topic === 'identity.password.reset' ||
     topic === 'identity.email.verified' ||
     topic === 'identity.profile.updated'
@@ -680,6 +743,15 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.phone_otp.cancelled',
   'identity.2fa.enabled',
   'identity.2fa.disabled',
+  'identity.2fa.verified',
+  'identity.2fa.failed',
+  'identity.2fa.backup_codes_regenerated',
+  'identity.2fa.reset',
+  'identity.2fa.lockout.triggered',
+  'identity.2fa.enrollment_blocked',
+  'identity.session.fingerprint_mismatch',
+  'identity.trusted_device.added',
+  'identity.trusted_device.revoked',
   'identity.password.reset',
   'identity.email.verified',
   'identity.profile.updated',
@@ -710,11 +782,17 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  // chat.gift.sent
+  // chat.rain.distributed
   'chat.room.member.role-changed',
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',
+  'rg.limit.change_requested',
+  'rg.limit.change_confirmed',
+  'rg.limit.change_cancelled',
+  'rg.limit.change_expired',
   'rg.cooling_off.activated',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
@@ -730,9 +808,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'cms.page.created',
   'cms.page.updated',
   'cms.page.deleted',
-  'cms.banner.created',
-  'cms.banner.updated',
-  'cms.banner.deleted',
+  'cms.banner.configuration.created',
+  'cms.banner.configuration.deleted',
+  'cms.banner.configuration.set_default',
+  'cms.banner.configuration.unset_default',
+  'cms.banner.image.set',
+  'cms.banner.image.deleted',
   'notifications.created',
   'iam.invitation.accepted',
   'iam.role.created',
@@ -765,7 +846,7 @@ export default {
     let svcRef: AuditService | null = null;
 
     ctx.provideSealed(AUDIT_WRITER, (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
@@ -786,7 +867,7 @@ export default {
     }
 
     ctx.routers.add('audit', (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       svcRef = svc;
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });

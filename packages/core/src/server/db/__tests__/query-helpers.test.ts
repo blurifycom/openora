@@ -6,6 +6,9 @@ import {
   moneyEquals,
   moneyCompare,
   moneyScaleBy,
+  moneyDivide,
+  moneyFloorToScale,
+  moneyCeilToScale,
   mapConcurrent,
 } from '../query-helpers.js';
 
@@ -81,8 +84,6 @@ describe('moneyCompare', () => {
   });
 
   it('orders correctly at the margin where a float compare gives the wrong answer', () => {
-    // moneyToNumber demonstrably breaks here: both round to the same float, so a
-    // float-based compare reports them equal (or reverses order) instead of a<b.
     const a = '123456789012345678.000000000000000001';
     const b = '123456789012345678.000000000000000002';
     expect(moneyCompare(a, b)).toBe(-1);
@@ -101,13 +102,40 @@ describe('moneyScaleBy', () => {
   });
 
   it('is exact where a float multiplication would drift', () => {
-    // 0.1 * 3 famously drifts to 0.30000000000000004 in JS float arithmetic.
     expect(0.1 * 3).not.toBe(0.3);
     expect(moneyScaleBy('0.1', '3')).toBe('0.300000000000000000');
   });
 
   it('truncates past MONEY_SCALE rather than rounding up', () => {
     expect(moneyScaleBy('1.000000000000000001', '0.5')).toBe('0.500000000000000000');
+  });
+});
+
+describe('moneyDivide', () => {
+  it('divides exactly', () => {
+    expect(moneyDivide('10', '4')).toBe('2.500000000000000000');
+    expect(moneyDivide('1', '3')).toBe('0.333333333333333333');
+  });
+
+  it('is exact where a float division would drift', () => {
+    expect(0.3 / 0.1).not.toBe(3);
+    expect(moneyDivide('0.3', '0.1')).toBe('3.000000000000000000');
+  });
+
+  it('is the exact inverse of moneyScaleBy for a whole-dividing pair', () => {
+    expect(moneyDivide(moneyScaleBy('7', '3'), '3')).toBe('7.000000000000000000');
+  });
+
+  it('derives a cross rate as from/pivot ÷ to/pivot', () => {
+    expect(moneyDivide('60000', '1.1')).toBe('54545.454545454545454545');
+  });
+
+  it('throws on division by zero rather than returning Infinity/NaN', () => {
+    expect(() => moneyDivide('10', '0')).toThrow(RangeError);
+  });
+
+  it('truncates past MONEY_SCALE rather than rounding up', () => {
+    expect(moneyDivide('1', '3')).toBe('0.333333333333333333');
   });
 });
 
@@ -175,5 +203,39 @@ describe('mapConcurrent', () => {
         return n;
       }),
     ).rejects.toThrow('item 2 failed');
+  });
+});
+
+describe('moneyFloorToScale', () => {
+  it('truncates discarded digits rather than rounding them', () => {
+    expect(moneyFloorToScale('66.664999999999999999', 2)).toBe('66.66');
+    expect(moneyFloorToScale('19.999999999999999999', 2)).toBe('19.99');
+  });
+
+  it('leaves an amount already at the target scale unchanged', () => {
+    expect(moneyFloorToScale('20.00', 2)).toBe('20.00');
+  });
+
+  it('pads a whole amount out to the target scale', () => {
+    expect(moneyFloorToScale('20', 2)).toBe('20.00');
+  });
+
+  it('floors a zero amount to zero at scale', () => {
+    expect(moneyFloorToScale('0', 2)).toBe('0.00');
+  });
+});
+
+describe('moneyCeilToScale', () => {
+  it('rounds up whenever any discarded digit is nonzero', () => {
+    expect(moneyCeilToScale('33.335000000000000001', 2)).toBe('33.34');
+    expect(moneyCeilToScale('19.991', 2)).toBe('20.00');
+  });
+
+  it('leaves an exact amount unchanged', () => {
+    expect(moneyCeilToScale('33.340000000000000000', 2)).toBe('33.34');
+  });
+
+  it('leaves a zero amount at zero, never rounding up from nothing', () => {
+    expect(moneyCeilToScale('0', 2)).toBe('0.00');
   });
 });

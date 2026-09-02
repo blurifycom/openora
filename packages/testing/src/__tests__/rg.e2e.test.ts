@@ -17,6 +17,7 @@ import {
   asPlayer,
   asAdmin,
   seedMinimal,
+  capturedEmailsFor,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -109,16 +110,22 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       type: 'deposit',
       amount: '500',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
+      reason: 'initial deposit limit',
+      confirm: true,
     });
     expect(depositRes.status).toBe(200);
-    expect((await readJson(depositRes)).amount).toBe('500.00');
+    expect((await readJson(depositRes)).amount).toBe('500.000000000000000000');
 
     const sessionRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'session',
       amount: null,
       minutes: 60,
+      currency: null,
       period: 'session',
+      reason: 'initial session-time limit',
+      confirm: true,
     });
     expect(sessionRes.status).toBe(200);
 
@@ -132,6 +139,54 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     ]);
     expect(section.coolingOff).toBeNull();
     expect(section.selfExclusion).toBeNull();
+  });
+
+  it('notifies the player in-app on an admin limit override, never on their own self-service change', async () => {
+    const email = `rg-admin-notify-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerAndMaterializePlayer(app, { email });
+
+    const setRes = await admin.put(`/compliance/players/${userId}/limits`, {
+      type: 'deposit',
+      amount: '500',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+      reason: 'operator lowered on a support request',
+      confirm: true,
+    });
+    expect(setRes.status).toBe(200);
+
+    await vi.waitFor(async () => {
+      const notifyRes = await client.get('/notifications');
+      const notifications = await readJson(notifyRes);
+      const found = (notifications as { items: Array<{ type: string; body: string }> }).items.find(
+        (n) => n.type === 'rg.limit.admin_updated',
+      );
+      expect(found).toBeTruthy();
+      expect(found?.body).toContain('deposit');
+      expect(found?.body).toContain('daily');
+      expect(found?.body).toContain('500');
+      expect(found?.body).not.toContain('operator lowered on a support request');
+    });
+
+    const rgEmails = capturedEmailsFor(email).filter(
+      (e) => e.subject === 'Your gambling limit was updated',
+    );
+    expect(rgEmails).toHaveLength(1);
+    expect(rgEmails[0]?.text).not.toContain('operator lowered on a support request');
+
+    const beforeCount = (await readJson(await client.get('/notifications'))).total;
+    const selfRes = await client.put('/compliance/limits', {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    expect(selfRes.status).toBe(200);
+
+    const afterCount = (await readJson(await client.get('/notifications'))).total;
+    expect(afterCount).toBe(beforeCount);
   });
 
   it('activates a 24h cooling-off and surfaces it via getRgSection', async () => {
@@ -554,7 +609,15 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
 
 describe('RG authz negatives', () => {
   const validBodies: Record<string, unknown> = {
-    limits: { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+    limits: {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+      reason: 'x',
+      confirm: true,
+    },
     coolingOff: { durationHours: 24, reason: 'x' },
     selfExclusion: { isPermanent: true, reason: 'x', confirm: true },
     lift: { reason: 'x', confirm: true },
@@ -618,7 +681,10 @@ describe('RG monitoring (queue-based)', () => {
       type: 'deposit',
       amount: '100',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(limitRes.status).toBe(200);
 
@@ -684,7 +750,10 @@ describe('RG audit trail', () => {
       type: 'deposit',
       amount: '250',
       minutes: null,
+      currency: 'USD',
       period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(limitRes.status).toBe(200);
 
@@ -788,7 +857,10 @@ describe('RG audit trail', () => {
       type: 'wager',
       amount: '300',
       minutes: null,
+      currency: 'USD',
       period: 'weekly',
+      reason: 'initial limit',
+      confirm: true,
     });
     expect(limitRes.status).toBe(200);
 
@@ -804,5 +876,114 @@ describe('RG audit trail', () => {
     for (const line of csv.split('\n').slice(1).filter(Boolean)) {
       expect(line).toMatch(/rg\./);
     }
+  });
+});
+
+describe('GET /audit/me/rg-history (player self-service limit history)', () => {
+  it('returns only the callers own rows, hides another players rows, and leaks no internal field', async () => {
+    const mine = await registerAndMaterializePlayer(app, {
+      email: `rg-history-mine-${randomUUID()}@e2e.test`,
+    });
+    const other = await registerAndMaterializePlayer(app, {
+      email: `rg-history-other-${randomUUID()}@e2e.test`,
+    });
+
+    expect(mine.playerId).not.toBe(mine.userId);
+
+    const setRes = await admin.put(`/compliance/players/${mine.userId}/limits`, {
+      type: 'deposit',
+      amount: '500',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
+    });
+    expect(setRes.status).toBe(200);
+
+    await admin.put(`/compliance/players/${other.userId}/limits`, {
+      type: 'deposit',
+      amount: '750',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
+    });
+
+    await vi.waitFor(async () => {
+      const res = await mine.client.get('/audit/me/rg-history');
+      expect(res.status).toBe(200);
+      const body = await readJson(res);
+
+      expect(body.items).toHaveLength(1);
+      const entry = body.items[0];
+      expect(entry.action).toBe('rg.limit.set');
+      expect(entry.type).toBe('deposit');
+      expect(entry.period).toBe('daily');
+      expect(entry.newAmount).toBe('500');
+      expect(entry.previousAmount).toBeNull();
+
+      for (const leaked of [
+        'reason',
+        'actorId',
+        'ip',
+        'userAgent',
+        'hash',
+        'prevHash',
+        'seq',
+        'correlationId',
+        'userId',
+        'playerId',
+        'limitId',
+        'resourceId',
+        'resourceType',
+        'initiatedBy',
+      ]) {
+        expect(entry).not.toHaveProperty(leaked);
+      }
+    });
+  });
+
+  it('rejects an unauthenticated call with 401', async () => {
+    const res = await app.app.request('/audit/me/rg-history');
+    expect(res.status).toBe(401);
+  });
+
+  it('is reachable by an ordinary player with no admin permissions', async () => {
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `rg-history-plain-${randomUUID()}@e2e.test`,
+    });
+
+    const res = await client.get('/audit/me/rg-history');
+    expect(res.status).toBe(200);
+    expect((await readJson(res)).items).toEqual([]);
+  });
+
+  it('ignores caller-supplied scoping params - actorId/resourceId/resourceType/actionPrefix/q are not accepted', async () => {
+    const { client, userId, playerId } = await registerAndMaterializePlayer(app, {
+      email: `rg-history-noscope-${randomUUID()}@e2e.test`,
+    });
+    await admin.put(`/compliance/players/${userId}/limits`, {
+      type: 'deposit',
+      amount: '300',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+      reason: 'initial limit',
+      confirm: true,
+    });
+
+    await vi.waitFor(async () => {
+      const res = await client.get(
+        `/audit/me/rg-history?resourceId=someone-else&actionPrefix=&q=admin`,
+      );
+      const body = await readJson(res);
+      expect(body.items.length).toBeGreaterThanOrEqual(1);
+      expect(body.items.every((i: { action: string }) => i.action.startsWith('rg.limit.'))).toBe(
+        true,
+      );
+    });
+    expect(playerId).not.toBe(userId);
   });
 });

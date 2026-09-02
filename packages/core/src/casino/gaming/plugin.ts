@@ -5,6 +5,7 @@ import {
   GAME_ADAPTER,
   IDENTITY_READER,
   PLAY_ELIGIBILITY,
+  RG_LIMITS,
   RNG_ADAPTER,
   WALLET_COMMANDS,
 } from '@openora/core/contracts';
@@ -31,6 +32,7 @@ export default {
           c.get(PLAY_ELIGIBILITY),
           c.get(WALLET_COMMANDS),
           c.get(IDENTITY_READER),
+          c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         ),
       ),
     );

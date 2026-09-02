@@ -25,6 +25,9 @@ import {
 import { NotificationsService } from './service/notifications.service.js';
 import { CreateNotificationInputSchema, type CreateNotificationInput } from './contract/index.js';
 
+const describeLimitValue = (amount: string | null, minutes: number | null): string =>
+  amount !== null ? amount : `${minutes} minutes`;
+
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
@@ -326,13 +329,37 @@ export default {
       });
     }
 
+    // Non-null `reason` marks an admin override (ADR-0037); player-initiated
+    // limit changes always emit `reason: null`.
+    ctx.events.on('rg.limit.set', (payload) => {
+      const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
+      if (!parsed.success || !svcRef || parsed.data.reason === null) {
+        return;
+      }
+      const p = parsed.data;
+      const title = 'Your responsible gambling limit was changed';
+      const previous =
+        p.previousAmount !== null || p.previousMinutes !== null
+          ? describeLimitValue(p.previousAmount, p.previousMinutes)
+          : 'no prior limit';
+      const next = describeLimitValue(p.amount, p.minutes);
+      const body = `An administrator changed your ${p.period} ${p.type} limit from ${previous} to ${next}.`;
+      // In-app only: `RgService.setPlayerLimit` already sends the `rgLimitUpdated` mail on this write.
+      svcRef
+        .create({ userId: p.userId, type: 'rg.limit.admin_updated', title, body })
+        .catch((err) => logger.error({ err }, 'rg.limit.set admin-override notification failed'));
+    });
+
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
       if (!parsed.success || !jobQueueRef) {
         return;
       }
       const p = parsed.data;
-      if (p.status !== 'resubmission_requested' || p.source !== 'manual') {
+      // Generic copy below assumes basic-tier document requirements; advanced-tier
+      // resubmission has no tier-specific copy yet (see tag-evaluation.service.ts's
+      // same guard).
+      if (p.status !== 'resubmission_requested' || p.source !== 'manual' || p.tier !== 'basic') {
         return;
       }
       if (!envelope?.eventId) {

@@ -28,6 +28,18 @@ export const LimitsSchema = z
   })
   .strict();
 
+export const ResponsibleGamingSchema = z
+  .object({
+    limitIncreaseCooldownHours: z.number().int().min(0).default(24),
+    limitChangeConfirmationWindowHours: z.number().int().positive().default(168),
+  })
+  .strict();
+
+export type ResponsibleGamingConfig = z.infer<typeof ResponsibleGamingSchema>;
+
+export const defaultResponsibleGamingConfig: ResponsibleGamingConfig =
+  ResponsibleGamingSchema.parse({});
+
 export const ProviderSelectionSchema = z
   .object({
     // Which vendor adapter each swap seam should bind to. The string is the

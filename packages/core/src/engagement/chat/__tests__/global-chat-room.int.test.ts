@@ -2,12 +2,18 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { AdminUserDirectory, AuditWritePort } from '@openora/core/contracts';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
-import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
+import {
+  NO_CLIENT_META,
+  makeEventBus,
+  makeIdentityReader,
+  makeRealtimeTransport,
+  mock,
+} from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { chatRoom } from '../schema/index.js';
 import { ChatService, ChatRoomProtectedError } from '../service/chat.service.js';
@@ -29,7 +35,7 @@ afterAll(async () => {
 });
 
 function makeService() {
-  const transport = new InProcessRealtimeTransport();
+  const transport = makeRealtimeTransport();
   const events = makeEventBus();
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),

@@ -29,3 +29,22 @@ export type RgFlagType = z.infer<typeof RgFlagTypeSchema>;
 export const RG_FLAG_STATUSES = ['active', 'cleared'] as const;
 export const RgFlagStatusSchema = z.enum(RG_FLAG_STATUSES);
 export type RgFlagStatus = z.infer<typeof RgFlagStatusSchema>;
+
+export const LIMIT_CHANGE_KINDS = ['increase', 'removal'] as const;
+export const LimitChangeKindSchema = z.enum(LIMIT_CHANGE_KINDS);
+export type LimitChangeKind = z.infer<typeof LimitChangeKindSchema>;
+
+export const RG_INITIATORS = ['player', 'admin', 'system'] as const;
+export const RgInitiatorSchema = z.enum(RG_INITIATORS);
+export type RgInitiator = z.infer<typeof RgInitiatorSchema>;
+
+export const RG_FLAG_THRESHOLD_PCT = 80;
+
+export const RG_LIMIT_ERROR_REASONS = [
+  'cooldown_not_elapsed',
+  'limit_change_expired',
+  'deposit_limit_exceeded',
+  'wager_limit_exceeded',
+] as const;
+export const RgLimitErrorReasonSchema = z.enum(RG_LIMIT_ERROR_REASONS);
+export type RgLimitErrorReason = z.infer<typeof RgLimitErrorReasonSchema>;

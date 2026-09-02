@@ -5,8 +5,20 @@ import { WALLET_TRANSACTION_TYPES, type WalletTransactionType } from '@openora/c
 // drizzle/migrations/0014_abandoned_madripoor.sql. Kept in lockstep here so a future type
 // added to WALLET_TRANSACTION_TYPES fails this test instead of silently backfilling as
 // NULL (or, worse, someone guessing a direction for it).
-const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = ['deposit', 'win', 'bonus', 'manual_credit'];
-const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = ['withdrawal', 'bet', 'loss', 'manual_debit'];
+const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = [
+  'deposit',
+  'win',
+  'bonus',
+  'manual_credit',
+  'swap_in',
+];
+const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = [
+  'withdrawal',
+  'bet',
+  'loss',
+  'manual_debit',
+  'swap_out',
+];
 
 // The only types where the same value is written for both legs of a transfer (see
 // engagement/social-transfers/service/social-transfers.service.ts), so a historical row

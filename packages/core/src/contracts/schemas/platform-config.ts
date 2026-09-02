@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { LimitsSchema } from './igaming-config.js';
+import {
+  LimitsSchema,
+  CurrencyCodeSchema,
+  ResponsibleGamingSchema,
+  defaultResponsibleGamingConfig,
+} from './igaming-config.js';
 import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
@@ -129,6 +134,22 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+export const ExchangeRateConfigSchema = z
+  .object({
+    /** Comparison currency the fx module derives a cross rate against. Absent = 'USD'. */
+    pivot: CurrencyCodeSchema.default('USD'),
+    freshTtlMs: z.number().int().positive().default(60_000),
+    hardMaxAgeMs: z
+      .number()
+      .int()
+      .positive()
+      .default(15 * 60_000),
+    providerTimeoutMs: z.number().int().positive().default(2_000),
+  })
+  .strict();
+
+export type ExchangeRateConfig = z.infer<typeof ExchangeRateConfigSchema>;
+
 export const NotificationsConfigSchema = z
   .object({
     /**
@@ -159,7 +180,7 @@ export const RegistrationConfigSchema = z
   })
   .strict();
 
-const AttachmentHostSchema = z
+export const HostAllowlistEntrySchema = z
   .string()
   .trim()
   .min(1)
@@ -187,10 +208,62 @@ const AttachmentHostSchema = z
 export const ChatConfigSchema = z
   .object({
     /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
-    allowedAttachmentHosts: z.array(AttachmentHostSchema).default([]),
+    allowedAttachmentHosts: z.array(HostAllowlistEntrySchema).default([]),
   })
   .strict();
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
+
+export const AdminSecurityConfigSchema = z
+  .object({
+    /**
+     * Every Backoffice account must hold a second factor before it can reach any
+     * admin route. Operator-level switch with no per-user opt-out: an operator under
+     * a licence that mandates 2FA turns this on, and no account can then bypass it.
+     *
+     * Off by default. Whether Backoffice 2FA is mandatory is a licensing decision the
+     * operator owns, and defaulting it on would lock every existing deployment out of
+     * its own back office on upgrade.
+     */
+    requireTwoFactor: z.boolean().default(false),
+    /**
+     * Ties a Backoffice session to the browser it was issued to: a mid-session
+     * User-Agent change (or an IP change, per `ipChangePolicy`) ends the session and
+     * forces full re-authentication. Off by default for the same reason as above.
+     */
+    bindSessionToDevice: z.boolean().default(false),
+    /** How long a device stays trusted after a successful second factor. */
+    trustedDeviceDays: z.number().int().min(0).max(90).default(30),
+    /**
+     * Which mid-session IP change invalidates a Backoffice session, once
+     * `bindSessionToDevice` is on. `country` needs a bound GEO_IP_ADAPTER and degrades
+     * to `off` without one - never to `any`, which would end a session on every NAT or
+     * mobile-network hop.
+     */
+    ipChangePolicy: z.enum(['off', 'country', 'any']).default('off'),
+    /** Consecutive failed second-factor attempts before the account locks. */
+    twoFactorLockout: z
+      .object({
+        maxAttempts: z.number().int().min(1).max(20).default(5),
+        durationMs: z
+          .number()
+          .int()
+          .min(0)
+          .default(15 * 60 * 1000),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict();
+
+export type AdminSecurityConfig = z.infer<typeof AdminSecurityConfigSchema>;
+
+export const CmsConfigSchema = z
+  .object({
+    /** Hostnames a banner image URL may be served from. Empty = no banner images allowed. */
+    allowedBannerImageHosts: z.array(HostAllowlistEntrySchema).default([]),
+  })
+  .strict();
+export type CmsConfig = z.infer<typeof CmsConfigSchema>;
 
 export const PlatformConfigSchema = z
   .object({
@@ -216,6 +289,7 @@ export const PlatformConfigSchema = z
      * defaults), reusing the shared LimitsSchema shape.
      */
     rgLimits: z.record(z.string().length(2), LimitsSchema).default({}),
+    responsibleGambling: ResponsibleGamingSchema.default(defaultResponsibleGamingConfig),
     /**
      * KYC verification knobs: provider id, webhook secret env, withdrawal gating,
      * and per-currency re-KYC deposit thresholds. Absent = KYC ungated, no re-KYC.
@@ -225,6 +299,8 @@ export const PlatformConfigSchema = z
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
     /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
     wallet: WalletConfigSchema.optional(),
+    /** Exchange-rate refresh knobs (pivot currency, refresh cron). Absent = built-in defaults. */
+    exchangeRate: ExchangeRateConfigSchema.optional(),
     /** Required before public registration is enabled. */
     registration: RegistrationConfigSchema.optional(),
     /** In-app notification retention knobs. Absent = built-in default (30 days). */
@@ -234,8 +310,14 @@ export const PlatformConfigSchema = z
      * Undefined or empty means no restriction - any value is accepted.
      */
     supportedLanguages: z.array(z.string().min(1)).optional(),
+    /** Currencies a player may pick to display amounts in. Absent or empty = built-in default. */
+    displayCurrencies: z.array(z.string().min(1)).optional(),
     /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
+    /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */
+    adminSecurity: AdminSecurityConfigSchema.prefault({}),
+    /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
+    cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
   })
   .strict()
   .superRefine((cfg, ctx) => {

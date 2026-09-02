@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { isConsistentLimit, isConsistentLimitAmount } from '../contract/limits.js';
+import { isConsistentLimit, isConsistentLimitAmount, LimitViewSchema } from '../contract/limits.js';
+
+const baseView = {
+  id: '11111111-1111-4111-8111-111111111111',
+  userId: '22222222-2222-4222-8222-222222222222',
+  type: 'deposit' as const,
+  amount: '100.00',
+  minutes: null,
+  currency: 'USD',
+  period: 'daily' as const,
+  createdAt: new Date().toISOString(),
+  pct: 80,
+  pendingKind: null,
+  pendingAmount: null,
+  pendingMinutes: null,
+  pendingCurrency: null,
+  pendingStatus: null,
+  pendingEffectiveAt: null,
+  pendingExpiresAt: null,
+};
 
 describe('isConsistentLimit', () => {
   it.each(['deposit', 'wager', 'loss'])('accepts a %s limit on a money period', (type) => {
@@ -50,5 +69,30 @@ describe('isConsistentLimitAmount', () => {
 
   it('treats a zero amount as present - the value check belongs to the schema', () => {
     expect(isConsistentLimitAmount({ type: 'deposit', amount: '0', minutes: null })).toBe(true);
+  });
+});
+
+describe('LimitViewSchema used/remaining scale', () => {
+  it('accepts used/remaining at the limit amount scale', () => {
+    const result = LimitViewSchema.safeParse({ ...baseView, used: '80.00', remaining: '20.00' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts used/remaining at full MONEY_SCALE(18) precision', () => {
+    const result = LimitViewSchema.safeParse({
+      ...baseView,
+      used: '33.336000000000000000',
+      remaining: '66.664000000000000000',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a used value with more than MONEY_SCALE(18) decimal places', () => {
+    const result = LimitViewSchema.safeParse({
+      ...baseView,
+      used: '33.3360000000000000001',
+      remaining: '66.664000000000000000',
+    });
+    expect(result.success).toBe(false);
   });
 });
