@@ -289,7 +289,7 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 19 modules, 242 routes, 45 adapter ports, 100 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 19 modules, 247 routes, 45 adapter ports, 103 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                    | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
@@ -297,7 +297,7 @@ Generated from `docs/catalog.json` - 19 modules, 242 routes, 45 adapter ports, 1
 | `@openora/core/analytics`     | analytics                                                  | (owns none - reads through ports)                                                   | 3      |
 | `@openora/core/audit`         | audit                                                      | audit_log                                                                           | 3      |
 | `@openora/core/casino`        | gaming · lobby                                             | featured_slot, game, game_round, lobby_category + 1 more                            | 9      |
-| `@openora/core/cms`           | cms                                                        | banner, page                                                                        | 10     |
+| `@openora/core/cms`           | cms                                                        | banner_configuration, banner_image, page                                            | 15     |
 | `@openora/core/compliance`    | compliance                                                 | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 26     |
 | `@openora/core/engagement`    | chat · chat-commands · notifications · social              | chat_command_config, chat_message, chat_mute, chat_platform_ban + 11 more           | 72     |
 | `fx`                          | exchange-rate                                              | exchange_rate_quote                                                                 | 2      |

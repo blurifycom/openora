@@ -8,6 +8,13 @@
       "when": 1783555223550,
       "tag": "0000_daffy_hemingway",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788220027498,
+      "tag": "0001_steep_starjammers",
+      "breakpoints": true
     }
   ]
 }
