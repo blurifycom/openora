@@ -502,7 +502,9 @@ export async function mapEventToRecord(
     topic === 'cms.banner.configuration.set_default' ||
     topic === 'cms.banner.configuration.unset_default' ||
     topic === 'cms.banner.image.set' ||
-    topic === 'cms.banner.image.deleted'
+    topic === 'cms.banner.image.deleted' ||
+    topic === 'cms.banner.schedule.created' ||
+    topic === 'cms.banner.schedule.updated'
   ) {
     const isBanner = topic.startsWith('cms.banner.');
     const bannerResourceId =
@@ -814,6 +816,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'cms.banner.configuration.unset_default',
   'cms.banner.image.set',
   'cms.banner.image.deleted',
+  'cms.banner.schedule.created',
+  'cms.banner.schedule.updated',
   'notifications.created',
   'iam.invitation.accepted',
   'iam.role.created',

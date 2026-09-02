@@ -10,6 +10,7 @@ import {
   page as pageTable,
   bannerConfiguration as bannerConfigurationTable,
   bannerImage as bannerImageTable,
+  bannerSchedule as bannerScheduleTable,
 } from '../schema/index.js';
 import { createCmsRouter } from '../router/index.js';
 import { CmsService } from '../service/cms.service.js';
@@ -36,7 +37,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${pageTable}, ${bannerConfigurationTable}, ${bannerImageTable} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${pageTable}, ${bannerConfigurationTable}, ${bannerImageTable}, ${bannerScheduleTable} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
 });
@@ -128,6 +129,32 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
   {
     name: 'deleteBannerImage',
     invoke: (r) => call(r.deleteBannerImage, { id: BANNER_IMAGE_ID }, { context: CTX }),
+  },
+  {
+    name: 'createBannerSchedule',
+    invoke: (r) =>
+      call(
+        r.createBannerSchedule,
+        {
+          id: BANNER_CONFIGURATION_ID,
+          startsAt: new Date(Date.now() + 60_000).toISOString(),
+          endsAt: new Date(Date.now() + 120_000).toISOString(),
+        },
+        { context: CTX },
+      ),
+  },
+  {
+    name: 'updateBannerScheduleEnd',
+    invoke: (r) =>
+      call(
+        r.updateBannerScheduleEnd,
+        { id: BANNER_CONFIGURATION_ID, endsAt: new Date(Date.now() + 120_000).toISOString() },
+        { context: CTX },
+      ),
+  },
+  {
+    name: 'listBannerSchedulesByPlacement',
+    invoke: (r) => call(r.listBannerSchedulesByPlacement, { placement: 'home' }, { context: CTX }),
   },
 ];
 
@@ -348,6 +375,190 @@ describe('cms router banner events', () => {
       'cms.banner.configuration.unset_default',
       'cms.banner.image.deleted',
       'cms.banner.configuration.deleted',
+    ]);
+  });
+});
+
+async function createDefaultConfiguration(router: Router, placement: string) {
+  const created = await call(
+    router.createBannerConfiguration,
+    { placement, layout: 'single' },
+    { context: CTX },
+  );
+  await call(
+    router.setBannerImage,
+    {
+      bannerConfigurationId: created.id,
+      sortOrder: 0,
+      desktopImageUrl: imageUrl('/d.png'),
+      mobileImageUrl: imageUrl('/m.png'),
+    },
+    { context: CTX },
+  );
+  await call(router.setDefaultBannerConfiguration, { id: created.id }, { context: CTX });
+  return created;
+}
+
+describe('cms router banner schedule writes', () => {
+  it('creates a schedule, edits its end, and lists it back for the placement', async () => {
+    const router = routerWith(allowingGuard());
+    await createDefaultConfiguration(router, 'home-top');
+    const target = await call(
+      router.createBannerConfiguration,
+      { placement: 'home-top', layout: 'single' },
+      { context: CTX },
+    );
+
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 120_000).toISOString();
+    const schedule = await call(
+      router.createBannerSchedule,
+      { id: target.id, startsAt, endsAt },
+      { context: CTX },
+    );
+    expect(schedule).toMatchObject({ bannerConfigurationId: target.id, startsAt, endsAt });
+
+    const newEndsAt = new Date(Date.now() + 90_000).toISOString();
+    const updated = await call(
+      router.updateBannerScheduleEnd,
+      { id: target.id, endsAt: newEndsAt },
+      { context: CTX },
+    );
+    expect(updated.endsAt).toBe(newEndsAt);
+
+    const list = await call(
+      router.listBannerSchedulesByPlacement,
+      { placement: 'home-top' },
+      { context: CTX },
+    );
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      bannerConfigurationId: target.id,
+      endsAt: newEndsAt,
+      configuration: { id: target.id, placement: 'home-top' },
+    });
+  });
+});
+
+describe('cms router banner schedule error mapping', () => {
+  it('maps an overlapping schedule to CONFLICT, naming the conflicting range', async () => {
+    const router = routerWith(allowingGuard());
+    await createDefaultConfiguration(router, 'home-top');
+    const first = await call(
+      router.createBannerConfiguration,
+      { placement: 'home-top', layout: 'single' },
+      { context: CTX },
+    );
+    const second = await call(
+      router.createBannerConfiguration,
+      { placement: 'home-top', layout: 'single' },
+      { context: CTX },
+    );
+    const firstStart = new Date(Date.now() + 60_000).toISOString();
+    const firstEnd = new Date(Date.now() + 180_000).toISOString();
+    await call(
+      router.createBannerSchedule,
+      { id: first.id, startsAt: firstStart, endsAt: firstEnd },
+      { context: CTX },
+    );
+
+    const error: unknown = await call(
+      router.createBannerSchedule,
+      {
+        id: second.id,
+        startsAt: new Date(Date.now() + 120_000).toISOString(),
+        endsAt: new Date(Date.now() + 240_000).toISOString(),
+      },
+      { context: CTX },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'createBannerSchedule', unknown>).code).toBe('CONFLICT');
+    expect(
+      (error as ORPCError<'createBannerSchedule', { startsAt: string; endsAt: string }>).data,
+    ).toEqual({ startsAt: firstStart, endsAt: firstEnd });
+  });
+
+  it('maps endsAt at or before startsAt to BAD_REQUEST', async () => {
+    const router = routerWith(allowingGuard());
+    await createDefaultConfiguration(router, 'home-top');
+    const target = await call(
+      router.createBannerConfiguration,
+      { placement: 'home-top', layout: 'single' },
+      { context: CTX },
+    );
+
+    const error: unknown = await call(
+      router.createBannerSchedule,
+      {
+        id: target.id,
+        startsAt: new Date(Date.now() + 120_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      { context: CTX },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'createBannerSchedule', unknown>).code).toBe('BAD_REQUEST');
+  });
+
+  it('maps deleting a scheduled configuration to CONFLICT', async () => {
+    const router = routerWith(allowingGuard());
+    await createDefaultConfiguration(router, 'home-top');
+    const target = await call(
+      router.createBannerConfiguration,
+      { placement: 'home-top', layout: 'single' },
+      { context: CTX },
+    );
+    await call(
+      router.createBannerSchedule,
+      {
+        id: target.id,
+        startsAt: new Date(Date.now() + 60_000).toISOString(),
+        endsAt: new Date(Date.now() + 120_000).toISOString(),
+      },
+      { context: CTX },
+    );
+
+    const error: unknown = await call(
+      router.deleteBannerConfiguration,
+      { id: target.id },
+      { context: CTX },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'deleteBannerConfiguration', unknown>).code).toBe('CONFLICT');
+  });
+});
+
+describe('cms router banner schedule events', () => {
+  it('emits cms.banner.schedule.created and cms.banner.schedule.updated', async () => {
+    const { router, events } = routerWithEvents(allowingGuard());
+    await createDefaultConfiguration(router, 'home-top');
+    const target = await call(
+      router.createBannerConfiguration,
+      { placement: 'home-top', layout: 'single' },
+      { context: CTX },
+    );
+
+    await call(
+      router.createBannerSchedule,
+      {
+        id: target.id,
+        startsAt: new Date(Date.now() + 60_000).toISOString(),
+        endsAt: new Date(Date.now() + 120_000).toISOString(),
+      },
+      { context: CTX },
+    );
+    await call(
+      router.updateBannerScheduleEnd,
+      { id: target.id, endsAt: new Date(Date.now() + 90_000).toISOString() },
+      { context: CTX },
+    );
+
+    expect(emittedTopics(events).slice(-2)).toEqual([
+      'cms.banner.schedule.created',
+      'cms.banner.schedule.updated',
     ]);
   });
 });

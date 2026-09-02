@@ -9,6 +9,10 @@ import {
   BannerConfigurationImageCountError,
   BannerImageNotFoundError,
   BannerImageHostNotAllowedError,
+  BannerScheduleNotFoundError,
+  BannerConfigurationHasScheduleError,
+  BannerScheduleInvalidRangeError,
+  BannerScheduleOverlapError,
 } from '../service/cms.service.js';
 
 export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
@@ -76,7 +80,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
       await mapErrors(
         {
           NOT_FOUND: BannerConfigurationNotFoundError,
-          CONFLICT: BannerConfigurationIsDefaultError,
+          CONFLICT: [BannerConfigurationIsDefaultError, BannerConfigurationHasScheduleError],
         },
         () => cms.deleteConfiguration(input.id, userId, { ip, userAgent }),
       );
@@ -117,6 +121,51 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     getPublicBanner: os.getPublicBanner.handler(({ input }) =>
       cms.getPublicBanner(input.placement, input.locale),
+    ),
+
+    createBannerSchedule: os.createBannerSchedule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'create');
+      return mapErrors(
+        {
+          NOT_FOUND: BannerConfigurationNotFoundError,
+          CONFLICT: [
+            BannerConfigurationIsDefaultError,
+            BannerConfigurationHasScheduleError,
+            BannerScheduleOverlapError,
+          ],
+          BAD_REQUEST: BannerScheduleInvalidRangeError,
+        },
+        () =>
+          cms.createBannerSchedule(
+            input.id,
+            { startsAt: input.startsAt, endsAt: input.endsAt },
+            userId,
+            { ip, userAgent },
+          ),
+      );
+    }),
+
+    updateBannerScheduleEnd: os.updateBannerScheduleEnd.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'update');
+      return mapErrors(
+        {
+          NOT_FOUND: [BannerConfigurationNotFoundError, BannerScheduleNotFoundError],
+          CONFLICT: BannerScheduleOverlapError,
+          BAD_REQUEST: BannerScheduleInvalidRangeError,
+        },
+        () =>
+          cms.updateBannerScheduleEnd(input.id, { endsAt: input.endsAt }, userId, {
+            ip,
+            userAgent,
+          }),
+      );
+    }),
+
+    listBannerSchedulesByPlacement: os.listBannerSchedulesByPlacement.handler(
+      async ({ input, context }) => {
+        await adminGuard.assert(context, 'content', 'update');
+        return cms.listBannerSchedulesByPlacement(input.placement);
+      },
     ),
   });
 }
