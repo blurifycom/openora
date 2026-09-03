@@ -30,6 +30,34 @@ describe('mapEventToRecord: identity.session.revoked', () => {
   });
 });
 
+describe('mapEventToRecord: cms.banner.schedule.updated', () => {
+  it('audits the schedule resource and records both endsAt values', async () => {
+    const bannerScheduleId = '55555555-5555-4555-8555-555555555555';
+    const bannerConfigurationId = '66666666-6666-4666-8666-666666666666';
+    const beforeEndsAt = '2026-01-01T01:00:00.000Z';
+    const endsAt = '2026-01-01T02:00:00.000Z';
+
+    const row = await mapEventToRecord('cms.banner.schedule.updated', {
+      bannerScheduleId,
+      bannerConfigurationId,
+      placement: 'home-top',
+      startsAt: '2026-01-01T00:00:00.000Z',
+      endsAt,
+      before: { endsAt: beforeEndsAt },
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'banner_schedule',
+      resourceId: bannerScheduleId,
+      before: { endsAt: beforeEndsAt },
+      after: { endsAt, bannerConfigurationId, placement: 'home-top' },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 

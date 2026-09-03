@@ -131,10 +131,12 @@
       "tables": [
         "banner_configuration",
         "banner_image",
+        "banner_schedule",
         "page"
       ],
       "routes": [
         "cms.createBannerConfiguration",
+        "cms.createBannerSchedule",
         "cms.createPage",
         "cms.deleteBannerConfiguration",
         "cms.deleteBannerImage",
@@ -144,10 +146,12 @@
         "cms.getPublicBanner",
         "cms.listBannerConfigurationsByPlacement",
         "cms.listBannerPlacements",
+        "cms.listBannerSchedulesByPlacement",
         "cms.listPages",
         "cms.setBannerImage",
         "cms.setDefaultBannerConfiguration",
         "cms.unsetDefaultBannerConfiguration",
+        "cms.updateBannerScheduleEnd",
         "cms.updatePage"
       ]
     },
@@ -950,6 +954,8 @@
     "cms.banner.configuration.unset_default",
     "cms.banner.image.deleted",
     "cms.banner.image.set",
+    "cms.banner.schedule.created",
+    "cms.banner.schedule.updated",
     "cms.page.created",
     "cms.page.deleted",
     "cms.page.published",
@@ -1206,6 +1212,14 @@
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
+      "name": "BannerScheduleSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerScheduleWithConfigurationSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "BlockCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
@@ -1423,6 +1437,10 @@
     },
     {
       "name": "CreateBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "CreateBannerScheduleInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
@@ -1851,6 +1869,10 @@
     },
     {
       "name": "ListBannerConfigurationsInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "ListBannerSchedulesByPlacementInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
@@ -2435,6 +2457,10 @@
     },
     {
       "name": "UnsetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "UpdateBannerScheduleEndInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
