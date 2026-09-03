@@ -38,6 +38,38 @@ does not repeat it.
 - Deleting a configuration that is the current default is refused
   (`BannerConfigurationIsDefaultError`) - unset or replace the default first, then delete.
 
+## Scheduling a banner ahead of time
+
+A non-default configuration can carry at most one `bannerSchedule` row - a `[startsAt, endsAt)`
+window that makes it the placement's live banner for that window, then automatically reverts to
+the standing default, with no admin action at either boundary:
+
+- **`createBannerSchedule`** (`POST /cms/banner-configurations/{id}/schedule`) targets a
+  configuration that is not itself the default, in a placement that already has one (a schedule
+  layers onto a default, it doesn't replace the concept of one). `startsAt` must be in the future;
+  `endsAt` must be after `startsAt`; a configuration that already has a schedule refuses a second
+  one (`BannerConfigurationHasScheduleError`) - schedule a fresh configuration instead. An
+  overlapping window on the same placement is refused with `BannerScheduleOverlapError`, which
+  carries the conflicting schedule's own `startsAt`/`endsAt` so the caller can show the collision
+  without a second lookup; two schedules that only touch at a boundary
+  (`new.startsAt === existing.endsAt`) do not conflict.
+- **`updateBannerScheduleEnd`** (`PUT /cms/banner-configurations/{id}/schedule`) edits `endsAt`
+  only - there is no route to change `startsAt` or to cancel a schedule outright. Moving `endsAt`
+  to now or the past is how a live schedule is ended early. The overlap check reruns, excluding
+  the schedule's own configuration.
+- **`listBannerSchedulesByPlacement`** (`GET /cms/banner-placements/{placement}/schedules`) lists
+  every schedule for a placement, ordered by `startsAt`, each with its configuration's summary.
+- **"What's live" is resolved at read time inside `getPublicBanner`**, not by a background job:
+  a schedule whose window contains `now()` wins over the placement default, otherwise the default
+  renders as before - same auto-expiry approach as `rgExclusion` in the compliance module. This
+  means a schedule boundary can lag by up to the same `CMS_CACHE_TTL_MS` this module already
+  accepts for any other public-read staleness; nothing needs to invalidate the cache at the
+  boundary itself.
+- **Deleting a configuration with any attached schedule is refused unconditionally** - queued,
+  currently active, or already expired all fail the same way
+  (`BannerConfigurationHasScheduleError`). An expired schedule's configuration simply stays around
+  as an inert row; there is no cleanup job for this ticket's scope.
+
 ## Locales
 
 A `bannerImage` row's `locale` defaults to the sentinel `DEFAULT_LOCALE` ('default'), which is
@@ -68,7 +100,8 @@ This module is intentionally silent about where images come from. A downstream o
   `setBannerImage` call is rejected.
 - **The admin routes** (`listBannerPlacements`, `listBannerConfigurationsByPlacement`,
   `createBannerConfiguration`, `getBannerConfiguration`, `setBannerImage`, `deleteBannerImage`,
-  `setDefaultBannerConfiguration`, `unsetDefaultBannerConfiguration`, `deleteBannerConfiguration`)
-  from its backoffice, to manage configurations and images per placement.
+  `setDefaultBannerConfiguration`, `unsetDefaultBannerConfiguration`, `deleteBannerConfiguration`,
+  `createBannerSchedule`, `updateBannerScheduleEnd`, `listBannerSchedulesByPlacement`) from its
+  backoffice, to manage configurations, images, and schedules per placement.
 - **The public route** (`getPublicBanner`) from its player-facing app, to render the live
   configuration for a placement - `{ placement, layout, slots }`, `null` when nothing is live yet.
