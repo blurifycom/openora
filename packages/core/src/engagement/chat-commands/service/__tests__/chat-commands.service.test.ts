@@ -144,6 +144,27 @@ describe('ChatCommandsService searchMentions', () => {
 
     expect(result).toEqual([{ userId: 'wanted', username: 'dave' }]);
   });
+
+  it('excludes the caller and blocked users before limiting a typed query', async () => {
+    const findPlayerIds = vi.fn().mockResolvedValue(['wanted']);
+    const service = new ChatCommandsService(
+      makeDrizzle({ select: [] }),
+      mock<AdminUserDirectory>({
+        findPlayerIds,
+        lookupPlayers: vi.fn().mockResolvedValue([{ userId: 'wanted', username: 'dave' }]),
+      }),
+      mock<ChatBlockWriter>({ getExcludedUserIds: vi.fn().mockResolvedValue(['blocked']) }),
+      mock<RealtimeTransport>({ getOnlineUserIds: vi.fn().mockResolvedValue([]) }),
+      mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
+    );
+
+    await service.searchMentions({ ...SEARCH, q: 'da', limit: 2 });
+
+    expect(findPlayerIds).toHaveBeenCalledWith('da', 2, {
+      excludeUserIds: ['blocked', 'viewer'],
+      playerOnly: true,
+    });
+  });
 });
 
 describe('ChatCommandsService searchMentions staff visibility', () => {

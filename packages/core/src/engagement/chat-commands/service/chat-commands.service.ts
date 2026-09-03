@@ -40,15 +40,6 @@ const ADMIN_COMMAND_SORT_COLUMNS = {
   updatedAt: chatCommandConfig.updatedAt,
 } as const satisfies Record<AdminCommandSortBy, unknown>;
 
-const MENTION_CANDIDATE_OVERFETCH = 3;
-const MENTION_CANDIDATE_MAX = 200;
-
-// Exclusions (self, blocks, ignores, offline staff) are applied after the directory
-// lookup, so fetching exactly `limit` ids would let a single excluded match shrink the
-// autocomplete below what the caller asked for.
-const candidateFetchSize = (limit: number) =>
-  Math.min(limit * MENTION_CANDIDATE_OVERFETCH, MENTION_CANDIDATE_MAX);
-
 const isStaffRole = (role: string | undefined) => role === 'admin' || role === 'super-admin';
 
 export class ChatCommandsService {
@@ -146,11 +137,16 @@ export class ChatCommandsService {
     }
 
     const onlineIds = new Set(onlineUserIds);
+    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    excluded.add(viewerId);
     const canSeeAdminUsers = await this.canSeeAdminUsers(viewerId);
     let ids =
       query.length === 0
         ? onlineUserIds
-        : await this.directory.findPlayerIds(query, candidateFetchSize(limit));
+        : await this.directory.findPlayerIds(query, limit, {
+            excludeUserIds: [...excluded],
+            playerOnly: true,
+          });
     if (canSeeAdminUsers && query.length > 0) {
       const onlineAccounts = await this.directory.lookupUsers(onlineUserIds);
       const queryLower = query.toLowerCase();
@@ -168,9 +164,8 @@ export class ChatCommandsService {
     if (ids.length === 0) {
       return [];
     }
-    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
     const candidateIds = ids.filter(
-      (id) => id !== viewerId && !excluded.has(id) && (query.length > 0 || onlineIds.has(id)),
+      (id) => !excluded.has(id) && (query.length > 0 || onlineIds.has(id)),
     );
     if (candidateIds.length === 0) {
       return [];

@@ -12,15 +12,6 @@ import {
   type TestApp,
 } from '../index.js';
 
-/**
- * Route-level walkthrough for chat-commands `mentionSearch`
- * (GET /chat-command/mention-search) over the real app. The service unit tests
- * cover the branch matrix with fakes; this suite proves the behaviour survives
- * the real router, auth guard and directory binding. Nobody holds a realtime
- * connection in a booted test app, so every registered player here is offline -
- * which is exactly the case the online-only filter used to drop.
- */
-
 let db: TestDb;
 let app: TestApp;
 

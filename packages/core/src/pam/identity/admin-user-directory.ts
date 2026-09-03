@@ -1,8 +1,25 @@
-import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
+import type {
+  AdminUserDirectory,
+  AdminUserListOptions,
+  ClientMeta,
+  PlayerIdSearchOptions,
+} from '@openora/core/contracts';
 import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { asc, count, desc, eq, ilike, inArray, or, sql, and } from 'drizzle-orm';
+import {
+  asc,
+  count,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  notInArray,
+  or,
+  sql,
+  and,
+} from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -184,7 +201,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
   }
 
-  async findPlayerIds(query: string, limit = 1000) {
+  async findPlayerIds(query: string, limit = 1000, options?: PlayerIdSearchOptions) {
     const term = `%${query}%`;
     const conditions = [ilike(user.email, term), ilike(user.username, term)];
     if (UuidSchema.safeParse(query).success) {
@@ -194,7 +211,15 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .selectDistinct({ id: user.id })
       .from(user)
       .leftJoin(player, eq(player.userId, user.id))
-      .where(or(...conditions))
+      .where(
+        and(
+          or(...conditions),
+          options?.playerOnly ? and(eq(user.role, 'player'), isNotNull(player.id)) : undefined,
+          options?.excludeUserIds?.length
+            ? notInArray(user.id, [...options.excludeUserIds])
+            : undefined,
+        ),
+      )
       .limit(limit);
     return rows.map((r) => r.id);
   }
