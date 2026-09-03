@@ -255,6 +255,7 @@
       "tables": [
         "account",
         "admin_trusted_device",
+        "phone_verification_session",
         "session",
         "sms_otp_session",
         "two_factor",
@@ -265,18 +266,22 @@
         "identity.adminRequestPasswordReset",
         "identity.changeEmail",
         "identity.changePassword",
+        "identity.confirm",
         "identity.disable2fa",
         "identity.enable2fa",
         "identity.list",
         "identity.listAll",
         "identity.listMine",
         "identity.login",
+        "identity.loginWithdrawalAlerts",
         "identity.logout",
+        "identity.me",
         "identity.me",
         "identity.phoneLoginRequest",
         "identity.phoneLoginVerify",
         "identity.regenerateBackupCodes",
         "identity.register",
+        "identity.request",
         "identity.requestPasswordReset",
         "identity.resetPassword",
         "identity.resetUserTwoFactor",
@@ -724,6 +729,7 @@
         "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/engagement/social/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
@@ -987,12 +993,15 @@
     "identity.2fa.lockout.triggered",
     "identity.2fa.reset",
     "identity.2fa.verified",
+    "identity.authentication.succeeded",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
     "identity.password.reset",
+    "identity.phone.verified",
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.security.login_withdrawal_alerts.updated",
     "identity.session.fingerprint_mismatch",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
@@ -1171,6 +1180,10 @@
     {
       "name": "AuditSortBySchema",
       "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuthenticationMethodSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
     },
     {
       "name": "AuthGuardReasonSchema",
@@ -2041,6 +2054,18 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "PhoneVerificationConfirmInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationRequestInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationRequestOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "PlatformConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -2293,6 +2318,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "SecurityControlsSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SelfExcludedLoginDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -2347,6 +2376,10 @@
     {
       "name": "SetDisplayCurrencyInputSchema",
       "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "SetLoginWithdrawalAlertsInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "SetPlayerLimitInputSchema",

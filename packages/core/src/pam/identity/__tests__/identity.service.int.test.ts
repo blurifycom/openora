@@ -40,6 +40,7 @@ const {
   requestPasswordResetEmailOTPMock,
   checkVerificationOTPMock,
   resetPasswordEmailOTPMock,
+  changeEmailMock,
   capturedAuthOptions,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
@@ -52,6 +53,7 @@ const {
   requestPasswordResetEmailOTPMock: vi.fn(),
   checkVerificationOTPMock: vi.fn(),
   resetPasswordEmailOTPMock: vi.fn(),
+  changeEmailMock: vi.fn(),
   capturedAuthOptions: {
     current: undefined as
       | { onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void }
@@ -82,6 +84,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         requestPasswordResetEmailOTP: requestPasswordResetEmailOTPMock,
         checkVerificationOTP: checkVerificationOTPMock,
         resetPasswordEmailOTP: resetPasswordEmailOTPMock,
+        changeEmail: changeEmailMock,
       },
     };
   }),
@@ -163,6 +166,7 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(null);
+  changeEmailMock.mockReset();
   await db.drizzle.db.execute(
     sql`TRUNCATE ${user}, ${session}, ${player} RESTART IDENTITY CASCADE`,
   );
@@ -1227,5 +1231,41 @@ describe('IdentityService.trustCurrentDevice', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(verifyTotpMock).not.toHaveBeenCalled();
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
+  });
+});
+
+describe('IdentityService security controls', () => {
+  it('refuses alerts until the account email is verified', async () => {
+    const account = await seedUser({ emailVerified: false });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+
+    await expect(
+      buildService().setLoginWithdrawalAlerts({ enabled: true }, {}),
+    ).rejects.toMatchObject({ code: 'UNPROCESSABLE_CONTENT' });
+
+    expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
+  });
+
+  it('auditable alert preference is reset when the player changes email', async () => {
+    const account = await seedUser({
+      emailVerified: true,
+      loginWithdrawalAlertsEnabled: true,
+    });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    changeEmailMock.mockResolvedValue(jsonResponse({ status: true }, 200));
+    const events = makeEventBus();
+    const svc = buildService({ events });
+
+    await svc.changeEmail({ newEmail: 'new-address@test.dev' }, {}, new Headers());
+
+    expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.security.login_withdrawal_alerts.updated',
+      expect.objectContaining({
+        userId: account.id,
+        previousEnabled: true,
+        enabled: false,
+      }),
+    );
   });
 });

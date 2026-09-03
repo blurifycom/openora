@@ -408,10 +408,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
   const admin = options.admin ?? {
     email: 'admin@oss.dev',
-    password: 'password123',
+    password: 'password1234',
     name: 'Platform Admin',
   };
-  const playerPassword = options.password ?? 'password123';
+  const playerPassword = options.password ?? 'password1234';
   const rng = makeRng(0x5eed);
 
   log('Clearing existing demo content (player, wallet, transaction, game, chat)...');
@@ -440,7 +440,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
 
   const moderator = {
     email: 'moderator@oss.dev',
-    password: 'password123',
+    password: 'password1234',
     name: 'Chat Moderator',
   };
   const moderatorUser = await ensureUser(db, auth, {

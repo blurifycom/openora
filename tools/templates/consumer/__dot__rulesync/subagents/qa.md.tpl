@@ -22,7 +22,7 @@ You write Playwright E2E tests, debug failures with Chrome DevTools, and triage 
 
 ## Local stack
 
-The platform is headless (API + modules); the player app and backoffice are this operator's own frontends. API :3001, player app :3000, backoffice :3002. Seed credentials (after `pnpm db:seed`): `admin@oss.dev` / `password123`. Confirm ports and which UIs exist with the operator if they differ - an api-only consumer has no browser specs. If the stack isn't running, say so with the start command.
+The platform is headless (API + modules); the player app and backoffice are this operator's own frontends. API :3001, player app :3000, backoffice :3002. Seed credentials (after `pnpm db:seed`): `admin@oss.dev` / `password1234`. Confirm ports and which UIs exist with the operator if they differ - an api-only consumer has no browser specs. If the stack isn't running, say so with the start command.
 
 ## Tests
 

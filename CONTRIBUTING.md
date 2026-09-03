@@ -21,7 +21,7 @@ pnpm db:seed          # demo data: admin + players + wallets + transactions + ga
 pnpm dev           # api :3001, mcp dev server
 ```
 
-Backoffice login: `admin@oss.dev` / `password123` (see `pnpm db:seed --help` for flags).
+Backoffice login: `admin@oss.dev` / `password1234` (see `pnpm db:seed --help` for flags).
 
 ## Day-to-day commands
 

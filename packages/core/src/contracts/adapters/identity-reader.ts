@@ -17,6 +17,8 @@ export type IdentityReader = {
   getPlayerKycStatusByUserId(userId: User['id']): Promise<KycStatus | null>;
   /** Returns other player user ids that have authenticated from the same login IP. */
   getPlayerUserIdsSharingLoginIp(userId: User['id'], ipAddress: string): Promise<User['id'][]>;
+  /** True only while the player explicitly opted in and their delivery address remains verified. */
+  canReceiveLoginWithdrawalAlerts(userId: User['id']): Promise<boolean>;
 };
 
 export const IDENTITY_READER = createToken<IdentityReader>('IDENTITY_READER');

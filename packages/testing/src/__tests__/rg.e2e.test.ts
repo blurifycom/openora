@@ -324,7 +324,7 @@ describe('RG login enforcement', () => {
     });
     expect(coolOffRes.status).toBe(200);
 
-    const blockedLoginRes = await attemptLogin(email, 'password123');
+    const blockedLoginRes = await attemptLogin(email, 'password1234');
     expect(blockedLoginRes.status).toBe(403);
 
     const revokedSessionRes = await client.get('/profile');
@@ -352,7 +352,7 @@ describe('RG login enforcement', () => {
     });
     expect(res.status).toBe(200);
 
-    const blockedLoginRes = await attemptLogin(email, 'password123');
+    const blockedLoginRes = await attemptLogin(email, 'password1234');
     expect(blockedLoginRes.status).toBe(403);
     const blockedBody = await readJson(blockedLoginRes);
     expect(String(blockedBody.message).toLowerCase()).toContain('responsible gambling');
@@ -380,7 +380,7 @@ describe('RG cooling-off lift', () => {
     expect(activateRes.status).toBe(200);
     const exclusionId = (await readJson(activateRes)).id as string;
 
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
     await expect(isRestricted(userId)).resolves.toBe(true);
 
     const liftRes = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
@@ -392,7 +392,7 @@ describe('RG cooling-off lift', () => {
     expect(lifted.liftedReason).toBe('raised in error, support ticket 42');
     expect(await exclusionStatus(app.container, exclusionId)).toBe('lifted');
 
-    expect((await attemptLogin(email, 'password123')).status).toBe(200);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(200);
     await expect(isRestricted(userId)).resolves.toBe(false);
 
     const section = await readJson(await admin.get(`/compliance/players/${userId}/rg`));
@@ -418,7 +418,7 @@ describe('RG cooling-off lift', () => {
     });
     expect(liftRes.status).toBe(200);
 
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
     await expect(isRestricted(userId)).resolves.toBe(true);
   });
 
@@ -569,7 +569,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
       confirm: true,
     });
     expect(permRes.status).toBe(200);
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
     const coolOffRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -580,7 +580,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
 
     // Still blocked immediately after adding the cooling-off - the permanent
     // self-exclusion must win the recompute, not be downgraded to a finite block.
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
     await expireExclusion(app.container, coolOffId);
     await triggerRgMonitorSweep(app.container);
@@ -591,7 +591,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
 
     // The cooling-off lapsed and was swept to `expired` - the permanent
     // self-exclusion block must still hold.
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
     const section = await readJson(await admin.get(`/compliance/players/${userId}/rg`));
     expect(section.coolingOff).toBeNull();
@@ -728,7 +728,7 @@ describe('RG monitoring (queue-based)', () => {
     });
     expect(res.status).toBe(200);
 
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
     await vi.waitFor(async () => {
       const listRes = await admin.get('/compliance/rg-flags?flagType=self_excluded_login');
@@ -835,7 +835,7 @@ describe('RG audit trail', () => {
       reason: 'audit login check',
       confirm: true,
     });
-    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
     await vi.waitFor(async () => {
       const res = await admin.get(

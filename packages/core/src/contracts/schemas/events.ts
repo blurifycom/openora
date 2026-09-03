@@ -101,6 +101,13 @@ export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as 
 export const TwoFactorMethodSchema = z.enum(TWO_FACTOR_METHODS);
 export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
 
+// A session is only authenticated after a credential-bearing flow completes. This is
+// deliberately narrower than session refresh and distinct from 2FA enrolment, which
+// changes account configuration but does not create a new authenticated session.
+export const AUTHENTICATION_METHODS = ['password', 'email_verification', 'phone', 'totp'] as const;
+export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);
+export type AuthenticationMethod = z.infer<typeof AuthenticationMethodSchema>;
+
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
@@ -122,6 +129,11 @@ export const domainEventSchemas = {
   'identity.user.login': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+  'identity.authentication.succeeded': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    method: AuthenticationMethodSchema,
   }),
   'identity.user.login.failed': authContextBase.extend({
     email: z.email(),
@@ -229,6 +241,16 @@ export const domainEventSchemas = {
   'identity.email.verified': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+  'identity.phone.verified': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'identity.security.login_withdrawal_alerts.updated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    previousEnabled: z.boolean(),
+    enabled: z.boolean(),
   }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,

@@ -496,4 +496,24 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
     );
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.phone_login', expect.anything());
   });
+
+  it('refuses SMS-only login for a 2FA-enabled account without consuming its OTP', async () => {
+    const code = '123456';
+    const account = await seedUser({ twoFactorEnabled: true });
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc, events } = build();
+    const resHeaders = new Headers();
+
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(resHeaders.get('set-cookie')).toBeNull();
+    expect(await sessionRows()).toHaveLength(0);
+    expect(await otpRows()).toHaveLength(1);
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.anything(),
+    );
+  });
 });

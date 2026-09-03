@@ -399,8 +399,16 @@ export class PhoneLoginService {
       },
     );
 
-    // Mint the session directly - bypasses better-auth's TOTP plugin chain by design,
-    // so phone login never triggers a second factor.
+    // This flow mints sessions directly and cannot hand a challenge to better-auth's
+    // pending-2FA cookie. Refuse rather than silently downgrade a 2FA-protected
+    // account to a single SMS factor; a later dedicated handoff may replace this.
+    if (account.twoFactorEnabled) {
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Phone login requires an authenticator challenge for this account.',
+      });
+    }
+
+    // Mint the session directly only after the no-2FA guard above.
     // Delete the OTP and insert the new session atomically: if the insert fails the
     // OTP is not consumed and the user can retry with the same code.
     const token = randomUUID();
@@ -432,6 +440,13 @@ export class PhoneLoginService {
     });
 
     this.events.emit('identity.user.phone_login', {
+      userId: account.id,
+      playerId,
+      method: 'phone',
+      ip,
+      userAgent,
+    });
+    this.events.emit('identity.authentication.succeeded', {
       userId: account.id,
       playerId,
       method: 'phone',

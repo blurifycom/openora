@@ -8,13 +8,37 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query';
-import type { Enable2faResult, IdentitySuccess } from '@openora/core/contracts';
+import type {
+  Enable2faResult,
+  IdentitySuccess,
+  PhoneVerificationConfirmInput,
+  PhoneVerificationRequestInput,
+  PhoneVerificationRequestOutput,
+  SecurityControls,
+  SetLoginWithdrawalAlertsInput,
+} from '@openora/core/contracts';
 import type { Paginated } from '@openora/core/contracts/kit';
 import { useOrpcQueryUtils } from '@openora/core/react';
 import { identityContract, type SessionItem } from '../contract/index.js';
 
 export type UseMySessionsResult = UseQueryResult<Paginated<SessionItem>, Error>;
 export type UseRevokeMySessionResult = UseMutationResult<IdentitySuccess, Error, { id: string }>;
+export type UseMySecurityControlsResult = UseQueryResult<SecurityControls, Error>;
+export type UseSetLoginWithdrawalAlertsResult = UseMutationResult<
+  SecurityControls,
+  Error,
+  SetLoginWithdrawalAlertsInput
+>;
+export type UseRequestPhoneVerificationResult = UseMutationResult<
+  PhoneVerificationRequestOutput,
+  Error,
+  PhoneVerificationRequestInput
+>;
+export type UseConfirmPhoneVerificationResult = UseMutationResult<
+  SecurityControls,
+  Error,
+  PhoneVerificationConfirmInput
+>;
 
 export type { Enable2faResult };
 
@@ -22,6 +46,12 @@ type IdentityUtils = ReturnType<typeof useOrpcQueryUtils<typeof identityContract
 
 const invalidateMe = (utils: IdentityUtils, queryClient: QueryClient) => () =>
   queryClient.invalidateQueries({ queryKey: utils.me.key() });
+
+const invalidateSecurityControls = (utils: IdentityUtils, queryClient: QueryClient) => () =>
+  Promise.all([
+    queryClient.invalidateQueries({ queryKey: utils.me.key() }),
+    queryClient.invalidateQueries({ queryKey: utils.security.me.key() }),
+  ]);
 
 export function useEnable2fa() {
   const utils = useOrpcQueryUtils(identityContract);
@@ -55,7 +85,7 @@ export function useVerifyEmail() {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.verifyEmail.mutationOptions(),
-    onSuccess: invalidateMe(utils, queryClient),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }
 
@@ -73,7 +103,35 @@ export function useChangePassword() {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.changePassword.mutationOptions(),
-    onSuccess: invalidateMe(utils, queryClient),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useMySecurityControls(): UseMySecurityControlsResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useQuery(utils.security.me.queryOptions());
+}
+
+export function useSetLoginWithdrawalAlerts(): UseSetLoginWithdrawalAlertsResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.security.loginWithdrawalAlerts.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useRequestPhoneVerification(): UseRequestPhoneVerificationResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useMutation(utils.phoneVerification.request.mutationOptions());
+}
+
+export function useConfirmPhoneVerification(): UseConfirmPhoneVerificationResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.phoneVerification.confirm.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }
 

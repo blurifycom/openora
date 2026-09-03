@@ -56,7 +56,7 @@ export async function seedMinimal(
       playerCount: options.playerCount ?? 4,
       admin: options.admin ?? {
         email: 'admin@oss.dev',
-        password: 'password123',
+        password: 'password1234',
         name: 'Platform Admin',
       },
     });
