@@ -6,7 +6,11 @@ import {
 } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
-import { readWalletBalances } from '../service/wallet.service.js';
+import {
+  readWalletBalance,
+  readWalletBalances,
+  DEFAULT_WALLET_CURRENCY,
+} from '../service/wallet.service.js';
 
 // The caller only ever hands this a row matched by a WHERE on providerName/providerRefId
 // both equal to non-null args, so a null here means the query itself is broken - guard
@@ -113,5 +117,16 @@ export class WalletReaderService implements WalletReader {
         ),
       );
     return row ? toProviderTransaction(row) : null;
+  }
+
+  async getBalance(userId: string): Promise<{ balance: string; currency: string }> {
+    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+    if (!record) {
+      return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
+    }
+    return {
+      balance: await readWalletBalance(this.drizzle.db, record.id, record.currency),
+      currency: record.currency,
+    };
   }
 }
