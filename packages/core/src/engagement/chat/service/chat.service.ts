@@ -287,15 +287,14 @@ function toConfiguration(record: typeof chatRoomConfiguration.$inferSelect) {
 
 const COMMAND_METADATA_MONEY_KEYS = ['amount', 'perRecipient'] as const;
 
-// A command metadata blob persisted before MoneyAmountSchema capped the decimal
-// scale (the retired SQL rain split rendered its share as numeric(38,20)) holds
-// money strings the current contract rejects. Trim them to canonical form on
-// read so one historical row cannot fail output validation for the whole batch.
 function canonicalizeMoneyString(value: string): string {
   if (!/^\d+\.\d+$/.test(value)) {
     return value;
   }
   const [whole, fraction] = value.split('.') as [string, string];
+  if (fraction.length <= MONEY_SCALE) {
+    return value;
+  }
   const trimmed = fraction.slice(0, MONEY_SCALE).replace(/0+$/, '');
   return trimmed ? `${whole}.${trimmed}` : whole;
 }

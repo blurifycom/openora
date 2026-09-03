@@ -549,6 +549,26 @@ describe('ChatService message reads (real PG)', () => {
     expect(() => ChatMessageSchema.parse(message)).not.toThrow();
   });
 
+  it('preserves valid command metadata money strings', async () => {
+    const { svc } = makeService();
+    await seedMessage({
+      type: 'system',
+      content: '',
+      metadata: {
+        command: 'rain',
+        fromUserId: randomUUID(),
+        amount: '10.50',
+        currency: 'USD',
+        recipientCount: 1,
+        perRecipient: '100.00',
+      },
+    });
+
+    const [message] = await svc.getGlobalMessages();
+
+    expect(message?.metadata).toMatchObject({ amount: '10.50', perRecipient: '100.00' });
+  });
+
   it('filters out senders the viewer has blocked', async () => {
     const { svc } = makeService();
     const viewerId = randomUUID();
