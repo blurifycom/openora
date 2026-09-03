@@ -14,7 +14,7 @@ import type {
   AuditWritePort,
 } from '@openora/core/contracts';
 import { resolveTimezone } from '@openora/core/contracts';
-import { and, eq, isNull, ne, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import type {
   UpdatePlayerProfileInput,
@@ -93,14 +93,18 @@ export class ProfileService implements PlayerProvisioning {
    * never evidence of where the player is, never gates anything, and deliberately stays out
    * of responsible-gambling windows and audit records, which remain UTC.
    *
-   * Silent about both of its no-ops, by design. A zone the runtime's tz database does not
-   * recognise is dropped rather than stored as arbitrary client text, and the `WHERE` skips
-   * the write entirely when the stored zone already matches - a remembered browser signs in
-   * with the same zone for months and must not churn `timezoneUpdatedAt` each time. Doing
-   * both in the one statement leaves no read-modify-write window for concurrent sessions.
+   * `timezoneUpdatedAt` moves on every capture the tz database accepts, including one that
+   * reports the zone already stored. That is what makes the column readable as "last
+   * confirmed by a device": a player signing in from the same zone every day for months
+   * would otherwise carry a months-old timestamp, indistinguishable from one who has not
+   * been seen since - and telling those two apart is the whole reason the read model ships
+   * the timestamp beside the zone. The write lands on a row an authenticated request
+   * touches anyway, so keeping it current costs nothing worth trading that reading for.
    *
-   * A player with no row yet is also a no-op: registration is what materialises the row, and
-   * a capture is not a good enough reason to conjure one from a login.
+   * Silent about both of its no-ops, by design. A zone the runtime's tz database does not
+   * recognise is dropped rather than stored as arbitrary client text, and a player with no
+   * row yet is skipped: registration is what materialises the row, and a capture is not a
+   * good enough reason to conjure one from a login.
    */
   async recordTimezone(userId: User['id'], timezone: string): Promise<void> {
     const resolved = resolveTimezone(timezone);
@@ -110,13 +114,7 @@ export class ProfileService implements PlayerProvisioning {
     await this.drizzle.db
       .update(player)
       .set({ timezone: resolved, timezoneUpdatedAt: new Date() })
-      .where(
-        and(
-          eq(player.userId, userId),
-          // `ne` alone is NULL - and so never true - for a player who has never sent one.
-          or(isNull(player.timezone), ne(player.timezone, resolved)),
-        ),
-      );
+      .where(eq(player.userId, userId));
   }
 
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {

@@ -66,9 +66,11 @@ export const PlayerSchema = z.object({
   // on their own clock. Null until a session captures one - an uncaptured player is
   // honestly unknown, never guessed from `country` or `registrationIp`.
   timezone: z.string().nullable(),
-  // Shipped alongside the zone because the zone is a point-in-time, device-reported guess:
-  // a player who moved, or who last signed in eight months ago, renders a plausible but
-  // wrong local time, and only this column lets the reader see that before trusting it.
+  // When a device last reported that zone - refreshed on every accepted capture, including
+  // one that repeats the stored value, so it reads as "last confirmed" rather than "last
+  // changed". Shipped alongside the zone because the zone is a point-in-time, device-reported
+  // guess: a player who moved, or who last signed in eight months ago, renders a plausible
+  // but wrong local time, and only this column lets the reader see that before trusting it.
   timezoneUpdatedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

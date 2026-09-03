@@ -69,11 +69,17 @@ export const CurrencyTickerInputSchema = CurrencyTickerSchema.transform((c) => c
  * adds is accepted without a contract change. The longest name in the current database is 30
  * characters.
  *
+ * Deliberately not `.min(1)`: a client that falls back to `''` when `Intl` gives it nothing
+ * must land in `resolveTimezone`'s silent no-op like any other unrecognised zone, not fail
+ * the login that carried it. The upper bound stays hard - at more than twice the longest real
+ * zone name, an over-long value is not a zone the platform failed to recognise but arbitrary
+ * client text, and the column is not a place to put it.
+ *
  * Display metadata only. It is device-reported and trivially spoofable, so it is never
  * evidence of where a player is and must never gate anything - responsible-gambling windows
  * and audit records stay UTC on purpose.
  */
-export const TimezoneSchema = z.string().min(1).max(64);
+export const TimezoneSchema = z.string().max(64);
 export type Timezone = z.infer<typeof TimezoneSchema>;
 
 /**

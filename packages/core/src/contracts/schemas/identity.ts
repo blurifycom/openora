@@ -211,6 +211,10 @@ export const ResendEmailVerificationInputSchema = z.object({
 export const VerifyEmailInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
+  // This route mints the session that sign-up deliberately does not, so it captures the
+  // zone on the same terms as the other session-establishing routes - a new player whose
+  // first session is this one may well be on a different device than the sign-up form.
+  timezone: TimezoneSchema.optional(),
 });
 
 export const UpdateProfileInputSchema = z

@@ -305,7 +305,7 @@ describe('ProfileService.recordTimezone (real PG)', () => {
     expect(row?.timezoneUpdatedAt).toBeInstanceOf(Date);
   });
 
-  it('leaves timezoneUpdatedAt untouched when the stored zone is unchanged', async () => {
+  it('refreshes timezoneUpdatedAt when a capture re-confirms the stored zone', async () => {
     const svc = makeService();
     const account = await seedUser(db);
     await seedPlayer(account.id);
@@ -313,13 +313,16 @@ describe('ProfileService.recordTimezone (real PG)', () => {
     const [first] = await playersFor(account.id);
 
     // Same zone, and the same zone spelled the way another browser reports it - neither is
-    // a move, so neither may churn the timestamp.
+    // a move, but both are a device confirming the zone now, which is what the timestamp
+    // reports. The canonical value is what lands, whichever spelling arrived.
     await svc.recordTimezone(account.id, 'Europe/Warsaw');
     await svc.recordTimezone(account.id, 'europe/warsaw');
 
     const [second] = await playersFor(account.id);
     expect(second?.timezone).toBe('Europe/Warsaw');
-    expect(second?.timezoneUpdatedAt?.getTime()).toBe(first?.timezoneUpdatedAt?.getTime());
+    expect(second?.timezoneUpdatedAt?.getTime()).toBeGreaterThanOrEqual(
+      first?.timezoneUpdatedAt?.getTime() ?? 0,
+    );
   });
 
   it('moves both columns when the reported zone changes', async () => {

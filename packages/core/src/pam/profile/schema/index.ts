@@ -42,9 +42,9 @@ export const player = pgTable(
     // is self-declared anyway) or from `registrationIp` (VPN-defeated, and less accurate
     // than the device), so an uncaptured player stays honestly unknown.
     timezone: text(),
-    // When that capture last changed the zone. A returning session that reports the same
-    // zone leaves this alone, so it reads as "last confirmed different", which is what
-    // tells a reader whether the zone is still worth trusting.
+    // When a device last confirmed that zone, moved on every accepted capture rather than
+    // only on a change - a zone re-reported daily for months is current, not stale, and
+    // only a refreshed stamp tells a reader that before they trust the local time it implies.
     timezoneUpdatedAt: timestamp({ withTimezone: true }),
     termsVersion: text(),
     termsAcceptedAt: timestamp({ withTimezone: true }),

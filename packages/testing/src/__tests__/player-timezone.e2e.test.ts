@@ -6,6 +6,8 @@ import {
   bootTestApp,
   registerAndMaterializePlayer,
   verifyEmailByOtp,
+  verificationOtpFor,
+  registrationRequestHeaders,
   asPlayer,
   seedMinimal,
   type TestDb,
@@ -78,18 +80,20 @@ describe('POST /identity/login - player timezone capture', () => {
     expect(profile.timezoneUpdatedAt).not.toBeNull();
   });
 
-  it('leaves timezoneUpdatedAt alone when a later login reports the same zone', async () => {
+  it('refreshes timezoneUpdatedAt when a later login reports the same zone', async () => {
     const { client, email } = await newPlayer();
     await login(email, 'Europe/Warsaw');
     const first = await readProfile(client);
 
     await login(email, 'Europe/Warsaw');
 
-    // A remembered browser signs in with the same zone for months; the "last confirmed
-    // different" reading is only useful if an unchanged capture does not churn it.
+    // A browser signing in with the same zone for months is confirming it, not going stale;
+    // the timestamp reads as "last confirmed", so a repeat capture has to move it.
     const second = await readProfile(client);
     expect(second.timezone).toBe('Europe/Warsaw');
-    expect(second.timezoneUpdatedAt).toBe(first.timezoneUpdatedAt);
+    expect(new Date(second.timezoneUpdatedAt!).getTime()).toBeGreaterThanOrEqual(
+      new Date(first.timezoneUpdatedAt!).getTime(),
+    );
   });
 
   it('updates both columns when a login reports a different zone', async () => {
@@ -114,6 +118,23 @@ describe('POST /identity/login - player timezone capture', () => {
 
     // The whole point of dropping it rather than rejecting it: display metadata must never
     // cost a player their session.
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toBeTruthy();
+    expect(await readProfile(client)).toMatchObject({ timezone: null, timezoneUpdatedAt: null });
+  });
+
+  it('signs the player in when the client sends an empty zone rather than omitting it', async () => {
+    const { client, email } = await newPlayer();
+
+    // `Intl` gave the client nothing and it fell back to `''`. The contract has to let that
+    // through to the same silent no-op as any other unrecognised zone - a client-side
+    // fallback must not be the reason a login 400s.
+    const res = await app.app.request('/identity/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: PASSWORD, timezone: '' }),
+    });
+
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toBeTruthy();
     expect(await readProfile(client)).toMatchObject({ timezone: null, timezoneUpdatedAt: null });
@@ -151,6 +172,42 @@ describe('PATCH /profile - player timezone capture', () => {
       country: 'GB',
       timezone: null,
     });
+  });
+});
+
+describe('POST /identity/email/verify - player timezone capture', () => {
+  it('captures the zone on the route that mints the first session', async () => {
+    const email = `player-timezone-verify-${randomUUID()}@e2e.test`;
+    const username = `tzver_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+
+    // Sign-up carries no zone on purpose: verification is a separate request and may well
+    // come from a different device, so it has to be able to capture on its own.
+    const registered = await app.app.request('/identity/register', {
+      method: 'POST',
+      headers: registrationRequestHeaders(),
+      body: JSON.stringify({
+        email,
+        password: PASSWORD,
+        username,
+        acceptedTerms: true,
+        acceptedAge: true,
+      }),
+    });
+    expect(registered.status).toBe(200);
+
+    const verified = await app.app.request('/identity/email/verify', {
+      method: 'POST',
+      headers: registrationRequestHeaders(),
+      body: JSON.stringify({
+        email,
+        otp: verificationOtpFor(email),
+        timezone: 'Asia/Tokyo',
+      }),
+    });
+    expect(verified.status).toBe(200);
+
+    const client = await asPlayer(app.app, { email, password: PASSWORD });
+    expect(await readProfile(client)).toMatchObject({ timezone: 'Asia/Tokyo' });
   });
 });
 
