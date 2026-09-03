@@ -82,7 +82,12 @@ describe('SessionService', () => {
     await service().revokeSession(account.id, target.id);
 
     const { items } = await service().listSessions({ userId: account.id, page: 1, limit: 20 });
-    expect(new Date(items[0]!.expiresAt).getTime()).toBeLessThanOrEqual(Date.now());
+    // revokeSession stamps expiresAt with the database clock, so read the same clock back:
+    // an app-side Date.now() a millisecond behind the database would fail this on nothing.
+    const { rows } = await db.drizzle.db.execute<{ now: string }>(sql`select now() as now`);
+    expect(new Date(items[0]!.expiresAt).getTime()).toBeLessThanOrEqual(
+      new Date(rows[0]!.now).getTime(),
+    );
   });
 
   it('keeps the last-used timestamp when a session is revoked', async () => {

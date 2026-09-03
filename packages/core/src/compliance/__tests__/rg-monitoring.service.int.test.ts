@@ -1,55 +1,80 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { AdminPlayerSummary, AdminUserDirectory } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import type {
+  AdminPlayerSummary,
+  AdminUserDirectory,
+  ExchangeRateReader,
+} from '@openora/core/contracts';
+import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { user, session } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
-import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import { RgMonitoringService, RgRateUnavailableError } from '../service/rg-monitoring.service.js';
+import { RgLimitGate } from '../adapters/rg-limit-gate.js';
 
 let db: TestDb;
 
-const makeService = (directory?: AdminUserDirectory) =>
-  new RgMonitoringService({ drizzle: db.drizzle, ...(directory ? { directory } : {}) });
-
-async function seedDepositLimit(userId: string, amount: string, period = 'daily' as const) {
-  await db.drizzle.db
-    .insert(userLimit)
-    .values({ userId, type: 'deposit', amount, minutes: null, period });
-}
-
-async function seedDeposit(userId: string, amount: string, createdAt = new Date()) {
-  const [walletRow] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId, currency: 'USD' })
-    .onConflictDoNothing()
-    .returning();
-  const [existing] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-  await db.drizzle.db.insert(walletTransaction).values({
-    walletId: (walletRow ?? existing)!.id,
-    type: 'deposit',
-    amount,
-    currency: 'USD',
-    status: 'completed',
-    createdAt,
+function identityRates(): ExchangeRateReader {
+  return mock<ExchangeRateReader>({
+    getRate: vi.fn(async (from: string, to: string) =>
+      from === to ? { rate: '1', asOf: new Date().toISOString() } : null,
+    ),
+    convert: vi.fn(async (amount: string, from: string, to: string) =>
+      from === to ? amount : null,
+    ),
   });
 }
 
-async function seedBet(userId: string, betAmount: string) {
+const makeService = (directory?: AdminUserDirectory, rates: ExchangeRateReader = identityRates()) =>
+  new RgMonitoringService({ drizzle: db.drizzle, rates, ...(directory ? { directory } : {}) });
+
+async function seedDepositLimit(
+  userId: string,
+  amount: string,
+  period = 'daily' as const,
+  currency = 'USD',
+) {
+  await db.drizzle.db
+    .insert(userLimit)
+    .values({ userId, type: 'deposit', amount, minutes: null, currency, period });
+}
+
+async function seedUnresolvedDepositLimit(
+  userId: string,
+  amount: string,
+  period = 'daily' as const,
+) {
+  const [row] = await db.drizzle.db
+    .insert(userLimit)
+    .values({ userId, type: 'deposit', amount, minutes: null, currency: null, period })
+    .returning();
+  return row!;
+}
+
+async function seedPlayer(userId: string, currency: string) {
+  await db.drizzle.db.insert(player).values({ userId, currency, kycStatus: 'verified' });
+}
+
+const seedDeposit = (userId: string, amount: string, createdAt = new Date()) =>
+  seedCompletedDeposit(db, userId, amount, { createdAt });
+
+async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [g] = await db.drizzle.db
     .insert(game)
     .values({ name: 'Slot', provider: 'mock', category: 'slots' })
     .returning();
   await db.drizzle.db
     .insert(gameRound)
-    .values({ gameId: g!.id, userId, betAmount, currency: 'USD' });
+    .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD' });
 }
 
 async function seedSession(userId: string, startedMinutesAgo: number) {
@@ -78,7 +103,7 @@ async function flagsOf(userId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateWallet, migrateGaming, migrateIdentity]);
+  db = await createTestDb([migrate, migrateWallet, migrateGaming, migrateIdentity, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -87,7 +112,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${rgFlag}, ${rgExclusion}, ${userLimit}, ${walletTransaction}, ${wallet}, ${gameRound}, ${game}, ${session}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${rgFlag}, ${rgExclusion}, ${userLimit}, ${walletTransaction}, ${wallet}, ${gameRound}, ${game}, ${session}, ${user}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -159,9 +184,14 @@ describe('RgMonitoringService.evaluateUser - deposit limits (real PG)', () => {
 
   it('skips the session limit on a deposit trigger', async () => {
     const userId = randomUUID();
-    await db.drizzle.db
-      .insert(userLimit)
-      .values({ userId, type: 'session', amount: null, minutes: 60, period: 'session' });
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'session',
+      amount: null,
+      minutes: 60,
+      currency: 'SESSION',
+      period: 'session',
+    });
 
     await makeService().evaluateUser(userId, 'wallet.deposit.completed');
 
@@ -172,15 +202,222 @@ describe('RgMonitoringService.evaluateUser - deposit limits (real PG)', () => {
 describe('RgMonitoringService.evaluateUser - wager limits (real PG)', () => {
   it('sums game rounds for a wager limit', async () => {
     const userId = randomUUID();
-    await db.drizzle.db
-      .insert(userLimit)
-      .values({ userId, type: 'wager', amount: '100', minutes: null, period: 'daily' });
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'wager',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
     await seedBet(userId, '90');
 
     await makeService().evaluateUser(userId, 'gaming.round.ended');
 
     const [flag] = await flagsOf(userId);
     expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'wager' });
+  });
+});
+
+describe('RgMonitoringService.evaluateUser - loss limits (real PG)', () => {
+  async function seedLossLimit(userId: string, amount: string) {
+    await db.drizzle.db
+      .insert(userLimit)
+      .values({ userId, type: 'loss', amount, minutes: null, currency: 'USD', period: 'daily' });
+  }
+
+  it('counts NET loss - stakes minus winnings - not gross stakes', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '1000', '900');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag?.detail).toMatchObject({
+      actual: '100.000000000000000000',
+      limit: '100.000000000000000000',
+      pct: 100,
+    });
+  });
+
+  it('does not flag a player who is up on the window', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '100', '400');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    expect(await flagsOf(userId)).toHaveLength(0);
+  });
+
+  it('flags a net loss that reaches the 80% band', async () => {
+    const userId = randomUUID();
+    await seedLossLimit(userId, '100');
+    await seedBet(userId, '200', '120');
+
+    await makeService().evaluateUser(userId, 'gaming.round.ended');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'loss' });
+  });
+});
+
+describe('RgLimitGate loss handling (real PG)', () => {
+  it('never refuses a wager on a loss limit', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'loss',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    await seedBet(userId, '500');
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    await expect(gate.checkWager(db.drizzle.db, userId, '400', 'USD')).resolves.toEqual({
+      allowed: true,
+    });
+  });
+
+  it('still refuses a wager on a wager limit', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'wager',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    await seedBet(userId, '90');
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    await expect(gate.checkWager(db.drizzle.db, userId, '20', 'USD')).resolves.toMatchObject({
+      allowed: false,
+      limitType: 'wager',
+    });
+  });
+
+  it('counts the attempted amount, so a move that exactly fills the limit passes', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'wager',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    await seedBet(userId, '90');
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    await expect(gate.checkWager(db.drizzle.db, userId, '10', 'USD')).resolves.toEqual({
+      allowed: true,
+    });
+  });
+});
+
+describe('RgLimitGate multi-currency enforcement (real PG)', () => {
+  const btcToUsd = (rate: number) =>
+    mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async (amount: string, from: string, to: string) => {
+        if (from === to) {
+          return amount;
+        }
+        if (from === 'BTC' && to === 'USD') {
+          return (Number(amount) * rate).toFixed(18);
+        }
+        return null;
+      }),
+    });
+
+  it('refuses a BTC deposit that converts well past a USD deposit limit', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    const rates = btcToUsd(50000);
+    const gate = new RgLimitGate(makeService(undefined, rates), rates);
+
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '100', 'BTC');
+
+    expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
+  });
+
+  it('allows a BTC deposit that converts to comfortably under a USD deposit limit', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    const rates = btcToUsd(50000);
+    const gate = new RgLimitGate(makeService(undefined, rates), rates);
+
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '0.001', 'BTC');
+
+    expect(decision).toEqual({ allowed: true });
+  });
+
+  it('refuses (fails closed) when no rate is available to convert the attempted amount', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    const noRates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => null),
+    });
+    const gate = new RgLimitGate(makeService(undefined, noRates), noRates);
+
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '0.001', 'BTC');
+
+    expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
+  });
+
+  it('refuses (fails closed) when no rate is available to convert prior spend in another currency', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    await seedCompletedDeposit(db, userId, '0.001', { currency: 'BTC' });
+    const noRates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => null),
+    });
+    const gate = new RgLimitGate(makeService(undefined, noRates), noRates);
+
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '1', 'USD');
+
+    expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
+  });
+
+  it('spendFor itself throws RgRateUnavailableError rather than silently treating a foreign-currency group as zero', async () => {
+    const userId = randomUUID();
+    await seedCompletedDeposit(db, userId, '0.001', { currency: 'BTC' });
+    const noRates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async () => null),
+    });
+
+    await expect(
+      makeService(undefined, noRates).spendFor(
+        db.drizzle.db,
+        userId,
+        'deposit',
+        'daily',
+        new Date(0),
+        'USD',
+      ),
+    ).rejects.toBeInstanceOf(RgRateUnavailableError);
+  });
+});
+
+describe('RgMonitoringService.evaluateUser - deposits past the limit (real PG)', () => {
+  it('flags a deposit total that has already passed the limit', async () => {
+    const userId = randomUUID();
+    await seedDepositLimit(userId, '100');
+    await seedDeposit(userId, '150');
+
+    await makeService().evaluateUser(userId, 'wallet.deposit.completed');
+
+    const [flag] = await flagsOf(userId);
+    expect(flag).toMatchObject({ flagType: 'limit_threshold', limitType: 'deposit' });
+    expect(flag?.detail).toMatchObject({ limit: '100.000000000000000000', pct: 150 });
   });
 });
 
@@ -233,9 +470,14 @@ describe('RgMonitoringService.evaluateUser - blocked login (real PG)', () => {
 describe('RgMonitoringService.sweep (real PG)', () => {
   it('raises a session_time flag once the active session reaches the limit band', async () => {
     const userId = randomUUID();
-    await db.drizzle.db
-      .insert(userLimit)
-      .values({ userId, type: 'session', amount: null, minutes: 60, period: 'session' });
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'session',
+      amount: null,
+      minutes: 60,
+      currency: 'SESSION',
+      period: 'session',
+    });
     await seedSession(userId, 50);
 
     await makeService().sweep();
@@ -246,9 +488,14 @@ describe('RgMonitoringService.sweep (real PG)', () => {
 
   it('leaves a short session unflagged', async () => {
     const userId = randomUUID();
-    await db.drizzle.db
-      .insert(userLimit)
-      .values({ userId, type: 'session', amount: null, minutes: 60, period: 'session' });
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'session',
+      amount: null,
+      minutes: 60,
+      currency: 'SESSION',
+      period: 'session',
+    });
     await seedSession(userId, 10);
 
     await makeService().sweep();
@@ -258,9 +505,14 @@ describe('RgMonitoringService.sweep (real PG)', () => {
 
   it('clears the flag once the session is gone', async () => {
     const userId = randomUUID();
-    await db.drizzle.db
-      .insert(userLimit)
-      .values({ userId, type: 'session', amount: null, minutes: 60, period: 'session' });
+    await db.drizzle.db.insert(userLimit).values({
+      userId,
+      type: 'session',
+      amount: null,
+      minutes: 60,
+      currency: 'SESSION',
+      period: 'session',
+    });
     await seedSession(userId, 50);
     await makeService().sweep();
     await db.drizzle.db.delete(session).where(eq(session.userId, userId));
@@ -336,5 +588,75 @@ describe('RgMonitoringService.listFlags (real PG)', () => {
 
     expect(result.total).toBe(3);
     expect(result.items).toHaveLength(1);
+  });
+});
+
+describe('RgLimitGate lazy currency resolution (real PG)', () => {
+  it('resolves a null-currency limit to the player currency on first check, and persists it', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'JPY');
+    const seeded = await seedUnresolvedDepositLimit(userId, '100000');
+    expect(seeded.currency).toBeNull();
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    await expect(gate.checkDeposit(db.drizzle.db, userId, '1000', 'JPY')).resolves.toEqual({
+      allowed: true,
+    });
+
+    const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(row?.currency).toBe('JPY');
+  });
+
+  it('fails the deposit closed (refuses, does not default to USD) when no player record exists', async () => {
+    const userId = randomUUID();
+    await seedUnresolvedDepositLimit(userId, '100000');
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    const decision = await gate.checkDeposit(db.drizzle.db, userId, '1', 'USD');
+
+    expect(decision).toMatchObject({ allowed: false, limitType: 'deposit' });
+    const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(row?.currency).toBeNull();
+  });
+
+  it('resolves two concurrent checks of the same unresolved limit to the same currency', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'GBP');
+    await seedUnresolvedDepositLimit(userId, '100000');
+    const gate = new RgLimitGate(makeService(), identityRates());
+
+    const [a, b] = await Promise.all([
+      gate.checkDeposit(db.drizzle.db, userId, '10', 'GBP'),
+      gate.checkDeposit(db.drizzle.db, userId, '10', 'GBP'),
+    ]);
+
+    expect(a).toEqual({ allowed: true });
+    expect(b).toEqual({ allowed: true });
+    const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(row?.currency).toBe('GBP');
+  });
+});
+
+describe('RgMonitoringService.evaluateUser lazy currency resolution (real PG)', () => {
+  it('resolves a null-currency limit before comparing spend, and persists it', async () => {
+    const userId = randomUUID();
+    await seedPlayer(userId, 'EUR');
+    await seedUnresolvedDepositLimit(userId, '100');
+    await seedDeposit(userId, '80');
+
+    await makeService().evaluateUser(userId, 'wallet.deposit.completed');
+
+    const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(row?.currency).toBe('EUR');
+  });
+
+  it('skips (does not throw) evaluation of a limit whose currency cannot be resolved', async () => {
+    const userId = randomUUID();
+    await seedUnresolvedDepositLimit(userId, '100');
+
+    await expect(
+      makeService().evaluateUser(userId, 'wallet.deposit.completed'),
+    ).resolves.toBeUndefined();
+    expect(await flagsOf(userId)).toHaveLength(0);
   });
 });

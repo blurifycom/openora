@@ -205,4 +205,27 @@ describe('RedisStreamsBroker', () => {
       expect(seenB).toEqual([envelope]);
     });
   });
+
+  it('recovers on its own after the stream key (and its group) disappear', async () => {
+    const broker = makeBroker('svc');
+    const topic = uniqueTopic();
+    const seen: EventEnvelope[] = [];
+    broker.subscribe(topic, (e) => {
+      seen.push(e);
+    });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
+
+    await redis.client.del(streamOf(topic));
+
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf(topic),
+      group: 'svc',
+      timeoutMs: 6000,
+    });
+
+    const envelope = makeEnvelope(topic);
+    await broker.publish(envelope);
+
+    await vi.waitFor(() => expect(seen).toEqual([envelope]), { timeout: 5000 });
+  });
 });

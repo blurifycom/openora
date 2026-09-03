@@ -5,6 +5,8 @@
 **Supersedes**: [ADR-0010](./0010-event-driven-broker-and-microservices.md), [ADR-0014](./0014-job-queue-and-realtime-transport-seams.md), [ADR-0016](./0016-event-envelope-and-transport-agnostic-broker.md), [ADR-0028](./0028-redis-reference-adapters-cache-rate-limiting.md) (their in-process-default decisions only - the seam interfaces, the event envelope, and the Redis/BullMQ reference drivers those ADRs introduced are unchanged).
 
 > **Update (2026-07-25)**: [ADR-0032](./0032-tests-run-the-production-seams.md) took the next step and deleted the four in-process seam impls entirely - the "survive as test-only doubles" and "zero infra" clauses below no longer hold, and Postgres + Redis are now prerequisites for the suite. `InProcessRealtimeTransport`/`SseClientAuthorizer` remain as `createApp`'s production default. The distributed-only production decision itself is unchanged and still in force.
+>
+> **Update (2026-08-31)**: [ADR-0031](./0031-realtime-transport-sse-and-http-over-web-sockets.md) closed the last exception: `InProcessRealtimeTransport` is deleted and `REALTIME_TRANSPORT` joins `assertDurableSeamsBound`, auto-binding `RedisPubSubRealtimeTransport` on `REDIS_URL` with no in-process fallback. Production is now distributed-only for all five durable seams, not four; `SseClientAuthorizer` (a stateless grant-issuer, not a seam with delivery semantics) is unaffected and stays as-is.
 
 ## Context
 

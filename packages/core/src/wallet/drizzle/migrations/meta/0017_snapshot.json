@@ -1,5 +1,5 @@
 {
-  "id": "ec0d79e1-4bc7-4092-9a4e-b119822dd9f4",
+  "id": "3dcfa91d-54ec-418c-8d8d-644319fe8a19",
   "prevId": "9c5187e1-c88c-4e72-ada3-0584da299707",
   "version": "7",
   "dialect": "postgresql",
@@ -1439,12 +1439,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_round_id": {
-          "name": "external_round_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "destination_address": {
           "name": "destination_address",
           "type": "text",
@@ -1682,21 +1676,6 @@
           ],
           "isUnique": true,
           "where": "\"wallet_transaction\".\"provider_ref_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "wallet_transaction_external_round_id_idx": {
-          "name": "wallet_transaction_external_round_id_idx",
-          "columns": [
-            {
-              "expression": "external_round_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1948,7 +1927,8 @@
         "rain",
         "manual_credit",
         "manual_debit",
-        "bet_reversal"
+        "swap_out",
+        "swap_in"
       ]
     }
   },

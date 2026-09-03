@@ -6,6 +6,7 @@ import {
   type KycAdapter,
   type KycDocument,
   type KycResult,
+  type KycTier,
 } from '@openora/core/contracts';
 
 /**
@@ -17,11 +18,11 @@ import {
 class ControllablePendingKycAdapter implements KycAdapter {
   readonly autoApproves = false;
 
-  async submit(userId: string, _docs: KycDocument[]): Promise<KycResult> {
-    return { referenceId: `test-${userId}`, status: 'pending' };
+  async submit(userId: string, _docs: KycDocument[], tier: KycTier): Promise<KycResult> {
+    return { referenceId: `test-${userId}-${tier}`, status: 'pending' };
   }
 
-  async getStatus(_userId: string): Promise<KycResult['status']> {
+  async getStatus(_userId: string, _tier: KycTier): Promise<KycResult['status']> {
     return 'pending';
   }
 

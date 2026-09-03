@@ -55,3 +55,9 @@ export const SignedMoneyAmountSchema = z
     `must be a decimal string (optionally negative) with at most ${MONEY_INTEGER_DIGITS} integer and ${MONEY_SCALE} decimal places`,
   );
 export type SignedMoneyAmount = z.infer<typeof SignedMoneyAmountSchema>;
+
+export const CurrencyTickerSchema = z
+  .string()
+  .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
+
+export const CurrencyTickerInputSchema = CurrencyTickerSchema.transform((c) => c.toUpperCase());

@@ -2,7 +2,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { call } from '@orpc/server';
 import { sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  RedisPubSubRealtimeTransport,
+  type TestDb,
+  type TestRedis,
+} from '@openora/core/testing';
 import { makeEventBus, testContext } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { notification } from '../schema/index.js';
@@ -11,10 +17,13 @@ import { NotificationsService } from '../service/notifications.service.js';
 import type { Notification } from '../contract/index.js';
 
 let db: TestDb;
+let redis: TestRedis;
+const transports: RedisPubSubRealtimeTransport[] = [];
 
 function build() {
   const notifications = new NotificationsService(db.drizzle, makeEventBus());
-  const realtime = new InProcessRealtimeTransport();
+  const realtime = new RedisPubSubRealtimeTransport(redis.client, 'notifications-test');
+  transports.push(realtime);
   return { router: createNotificationsRouter({ notifications, realtime }), realtime };
 }
 
@@ -47,9 +56,12 @@ async function seedNotification(overrides: Partial<typeof notification.$inferIns
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
+  redis = await createTestRedis();
 });
 
 afterAll(async () => {
+  await Promise.allSettled(transports.splice(0).map((t) => t.close()));
+  await redis.quit();
   await db.drop();
 });
 

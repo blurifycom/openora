@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
@@ -100,35 +100,5 @@ describe('WalletReaderService.findByProviderRef (real PG)', () => {
 
     const replayed = await svc.findByProviderRef('aggregator-x', 'ref-2');
     expect(replayed).toEqual(original);
-  });
-});
-
-describe('WalletReaderService.getBalance (real PG)', () => {
-  it('returns a zero USD balance for a user with no wallet row', async () => {
-    expect(await svc.getBalance(randomUUID())).toEqual({ balance: '0', currency: 'USD' });
-  });
-
-  it("returns the wallet's active-currency balance", async () => {
-    const w = await seedWallet();
-    await db.drizzle.db
-      .insert(walletBalance)
-      .values({ walletId: w.id, currency: 'USD', amount: '42.50' });
-
-    const result = await svc.getBalance(w.userId);
-    expect(Number(result.balance)).toBe(42.5);
-    expect(result.currency).toBe('USD');
-  });
-
-  it('reflects a currency switch on the wallet row, not just the balance rows', async () => {
-    const w = await seedWallet();
-    await db.drizzle.db.insert(walletBalance).values([
-      { walletId: w.id, currency: 'USD', amount: '10' },
-      { walletId: w.id, currency: 'EUR', amount: '5' },
-    ]);
-    await db.drizzle.db.update(wallet).set({ currency: 'EUR' }).where(eq(wallet.id, w.id));
-
-    const result = await svc.getBalance(w.userId);
-    expect(Number(result.balance)).toBe(5);
-    expect(result.currency).toBe('EUR');
   });
 });

@@ -1,15 +1,17 @@
-import type {
-  AuditWritePort,
-  PlayEligibilityPort,
-  PlatformConfig,
-  Uuid,
-  WalletCommands,
-  WalletDebitArgs,
-  WalletDebitOutcome,
-  WalletCreditArgs,
-  WalletCreditOutcome,
-  WalletProviderRef,
-  WalletTransactionType,
+import {
+  RgLimitExceededError,
+  type AuditWritePort,
+  type PlayEligibilityPort,
+  type RgLimitsPort,
+  type PlatformConfig,
+  type Uuid,
+  type WalletCommands,
+  type WalletDebitArgs,
+  type WalletDebitOutcome,
+  type WalletCreditArgs,
+  type WalletCreditOutcome,
+  type WalletProviderRef,
+  type WalletTransactionType,
 } from '@openora/core/contracts';
 import {
   createDomainError,
@@ -61,6 +63,7 @@ export class WalletCommandsService implements WalletCommands {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
+    private readonly rgLimits?: RgLimitsPort,
   ) {}
 
   // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
@@ -95,7 +98,7 @@ export class WalletCommandsService implements WalletCommands {
 
   async debit(
     tx: unknown,
-    { userId, amount, type, providerRef }: WalletDebitArgs,
+    { userId, amount, type, currency, providerRef }: WalletDebitArgs,
   ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -112,41 +115,65 @@ export class WalletCommandsService implements WalletCommands {
     if (!row) {
       return { ok: false, available: '0' };
     }
-    const available = await readWalletBalance(txn, row.id, row.currency);
+
+    if (type === 'bet' && this.rgLimits) {
+      const decision = await this.rgLimits.checkWager(
+        txn,
+        userId,
+        amount,
+        currency ?? row.currency,
+      );
+      if (!decision.allowed) {
+        throw new RgLimitExceededError('wager_limit_exceeded', decision);
+      }
+    }
+
+    const debitCurrency = balanceKey(currency ?? row.currency);
+    const debitRow = { ...row, currency: debitCurrency };
+
+    const available = await readWalletBalance(txn, row.id, debitCurrency);
 
     if (type === 'loss') {
-      await this.writeLedgerRow(txn, row, 'loss', '0', 'debit');
-      return { ok: true, newBalance: available, currency: row.currency };
+      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit');
+      return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
     // arithmetic - no JS float math on either side of the debit.
     const debited =
       type === 'bet'
-        ? await debitWalletBalance(txn, row.id, row.currency, amount)
-        : await debitWithdrawableBalance(txn, row.id, row.currency, amount);
+        ? await debitWalletBalance(txn, row.id, debitCurrency, amount)
+        : await debitWithdrawableBalance(txn, row.id, debitCurrency, amount);
     const newBalance = debited[0]?.amount;
     if (newBalance === undefined) {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, row, type, amount, 'debit', providerRef);
+    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
 
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
         userId,
-        currency: balanceKey(row.currency),
+        currency: debitCurrency,
         amount,
       });
-      return { ok: true, newBalance, currency: row.currency, completedBonusCredits };
+      return { ok: true, newBalance, currency: debitCurrency, completedBonusCredits };
     }
 
-    return { ok: true, newBalance, currency: row.currency };
+    return { ok: true, newBalance, currency: debitCurrency };
   }
 
   async credit(
     tx: unknown,
-    { userId, amount, currency, type, providerRef }: WalletCreditArgs,
+    {
+      userId,
+      amount,
+      currency,
+      type,
+      providerRef,
+      allowNewCurrency,
+      allowNewWallet,
+    }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -154,21 +181,23 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletCommandAmountError('credit', amount);
     }
 
-    const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
-    // Fail closed: a credit never creates a wallet - a missing one is a caller bug.
+    const row = allowNewWallet
+      ? await this.resolveOrOpenWallet(txn, userId, currency)
+      : (await txn.select().from(wallet).where(eq(wallet.userId, userId)))[0];
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
-    if (row.currency !== currency) {
+    if (!allowNewCurrency && balanceKey(row.currency) !== balanceKey(currency)) {
       return { ok: false, reason: 'currency mismatch' };
     }
 
+    const creditRow = { ...row, currency: balanceKey(currency) };
     const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
 
-    await this.writeLedgerRow(txn, row, type, amount, 'credit', providerRef);
+    await this.writeLedgerRow(txn, creditRow, type, amount, 'credit', providerRef);
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {
@@ -181,6 +210,27 @@ export class WalletCommandsService implements WalletCommands {
     }
 
     return { ok: true, newBalance: credited.amount };
+  }
+
+  private async resolveOrOpenWallet(
+    txn: DrizzleDb,
+    userId: Uuid,
+    currency: string,
+  ): Promise<Wallet | undefined> {
+    const [existing] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+    if (existing) {
+      return existing;
+    }
+    const [created] = await txn
+      .insert(wallet)
+      .values({ userId, currency: balanceKey(currency) })
+      .onConflictDoNothing()
+      .returning();
+    if (created) {
+      return created;
+    }
+    const [raced] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+    return raced;
   }
 
   private async resolveRolloverMultiplier(txn: DrizzleDb): Promise<string> {

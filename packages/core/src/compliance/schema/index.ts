@@ -14,13 +14,17 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   KYC_STATUSES,
+  KYC_TIERS,
   EXCLUSION_KINDS,
   EXCLUSION_STATUSES,
   RG_FLAG_TYPES,
   RG_FLAG_STATUSES,
   limitTypes,
   limitPeriods,
+  LIMIT_CHANGE_KINDS,
   geoRuleActions,
+  MONEY_SCALE,
+  MONEY_PRECISION,
   type KycRiskSignals,
   type KycCheckResult,
 } from '@openora/core/contracts';
@@ -28,11 +32,17 @@ import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
 
 export const kycVerificationStatus = pgEnum('kyc_verification_status', KYC_STATUSES);
+export const kycVerificationTier = pgEnum('kyc_verification_tier', KYC_TIERS);
 export const kycTriggeredBy = pgEnum('kyc_triggered_by', KYC_TRIGGERED_BY);
 export const rgExclusionKind = pgEnum('rg_exclusion_kind', EXCLUSION_KINDS);
 export const rgExclusionStatus = pgEnum('rg_exclusion_status', EXCLUSION_STATUSES);
 export const rgFlagType = pgEnum('rg_flag_type', RG_FLAG_TYPES);
 export const rgFlagStatus = pgEnum('rg_flag_status', RG_FLAG_STATUSES);
+export const limitChangeKind = pgEnum('limit_change_kind', LIMIT_CHANGE_KINDS);
+
+// Postgres treats every NULL as distinct in a unique index, so a session-type row uses
+// this sentinel instead of NULL to stay covered by the unique index below.
+export const SESSION_LIMIT_CURRENCY = 'SESSION';
 
 export const userLimit = pgTable(
   'user_limit',
@@ -42,17 +52,31 @@ export const userLimit = pgTable(
     type: text({ enum: limitTypes }).notNull(),
     // Exactly one of the two is set, discriminated by `type`: money-type limits
     // (deposit/wager/loss) carry amount; the session-type limit carries minutes.
-    amount: decimal({ precision: 18, scale: 2 }),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     minutes: integer(),
+    currency: text(),
     period: text({ enum: limitPeriods }).notNull(),
+    pendingKind: limitChangeKind(),
+    pendingAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    pendingMinutes: integer(),
+    pendingCurrency: text(),
+    pendingRequestedAt: timestamp({ withTimezone: true }),
+    pendingEffectiveAt: timestamp({ withTimezone: true }),
+    pendingExpiresAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    uniqueIndex('user_limit_user_id_type_period_key').on(t.userId, t.type, t.period),
+    uniqueIndex('user_limit_user_id_type_period_currency_key').on(
+      t.userId,
+      t.type,
+      t.period,
+      t.currency,
+    ),
     index('user_limit_user_id_idx').on(t.userId),
+    index('user_limit_pending_expires_at_idx').on(t.pendingExpiresAt),
   ],
 );
 
@@ -71,6 +95,7 @@ export const kycVerification = pgTable(
     userId: uuid().notNull(),
     provider: text().notNull(),
     referenceId: text().notNull(),
+    tier: kycVerificationTier().notNull().default('basic'),
     status: kycVerificationStatus().notNull(),
     documentTypes: jsonb().$type<(typeof KYC_DOCUMENT_TYPES)[number][]>().notNull().default([]),
     decisionReason: text(),
@@ -94,8 +119,12 @@ export const kycVerification = pgTable(
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    index('kyc_verification_user_id_created_at_idx').on(t.userId, t.createdAt),
-    uniqueIndex('kyc_verification_reference_id_key').on(t.referenceId),
+    index('kyc_verification_user_id_tier_created_at_idx').on(t.userId, t.tier, t.createdAt),
+    uniqueIndex('kyc_verification_user_id_reference_id_tier_key').on(
+      t.userId,
+      t.referenceId,
+      t.tier,
+    ),
     index('kyc_verification_status_idx').on(t.status),
   ],
 );

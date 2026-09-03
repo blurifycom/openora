@@ -22,15 +22,26 @@ import {
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
-import { KycVerificationService, PlayerNotFoundError } from '../service/kyc.service.js';
+import {
+  KycVerificationService,
+  PlayerNotFoundError,
+  toPlayerSummaryView,
+} from '../service/kyc.service.js';
 import {
   RgService,
   ExclusionNotFoundError,
   ActiveExclusionError,
   PermanentExclusionLiftError,
   ExclusionPeriodNotElapsedError,
+  LimitRaiseNotAllowedError,
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import {
+  RgSelfServiceService,
+  CooldownNotElapsedError,
+  LimitChangeExpiredError,
+  NoPendingLimitChangeError,
+} from '../service/rg-self-service.service.js';
 
 export function kycStatusChannel(userId: User['id']): string {
   return `compliance:kyc-status:${userId}`;
@@ -59,9 +70,11 @@ export function createComplianceRouter({
   realtime,
   rg,
   rgMonitoring,
+  rgSelfService,
 }: {
   rg: RgService;
   rgMonitoring: RgMonitoringService;
+  rgSelfService: RgSelfServiceService;
   compliance: ComplianceService;
   adminGuard: AdminGuard;
   audit: AuditWritePort;
@@ -75,17 +88,15 @@ export function createComplianceRouter({
   const os = implement(complianceContract).$context<OssContext>();
 
   return os.router({
-    getLimits: os.getLimits.handler(({ context }) =>
-      compliance.getLimitsForUser(getUserId(context)),
-    ),
+    getLimits: os.getLimits.handler(({ context }) => rgSelfService.getLimits(getUserId(context))),
 
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
-      return compliance.upsertLimit(getUserId(context), input, context.clientMeta);
+      return rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta);
     }),
 
     deleteLimit: os.deleteLimit.handler(({ input, context }) => {
       return mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
-        compliance.removeLimit(input.id, getUserId(context), context.clientMeta),
+        rgSelfService.requestLimitRemoval(input.id, getUserId(context), context.clientMeta),
       );
     }),
 
@@ -112,6 +123,10 @@ export function createComplianceRouter({
       await adminGuard.assert(context, 'compliance', 'view');
       return kyc.getForPlayer(input.userId);
     }),
+
+    getMyKyc: os.getMyKyc.handler(({ context }) =>
+      kyc.getForPlayer(getUserId(context)).then(toPlayerSummaryView),
+    ),
 
     submitKyc: os.submitKyc.handler(({ input, context }) => {
       return kyc.submit(getUserId(context), input, context.clientMeta);
@@ -151,7 +166,12 @@ export function createComplianceRouter({
         const receivedAt = new Date().toISOString();
         await jobQueue.enqueue(
           kycDecisionSyncQueue,
-          { referenceId: decision.referenceId, status: decision.status, receivedAt },
+          {
+            referenceId: decision.referenceId,
+            status: decision.status,
+            tier: decision.tier,
+            receivedAt,
+          },
           {
             idempotencyKey,
             orderingKey: decision.referenceId,
@@ -166,20 +186,20 @@ export function createComplianceRouter({
     requestKycResubmission: os.requestKycResubmission.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
-        kyc.requestResubmission(input.userId, input.reason, caller.userId),
+        kyc.requestResubmission(input.userId, input.tier, input.reason, caller.userId),
       );
     }),
 
     overrideKycStatus: os.overrideKycStatus.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
-        kyc.overrideStatus(input.userId, input.status, input.reason, caller.userId),
+        kyc.overrideStatus(input.userId, input.tier, input.status, input.reason, caller.userId),
       );
     }),
 
     bulkApproveKyc: os.bulkApproveKyc.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
-      const results = await kyc.bulkApprove(input.userIds, input.reason, caller.userId);
+      const results = await kyc.bulkApprove(input.userIds, input.tier, input.reason, caller.userId);
       // A per-item failure never reaches overrideStatus, so it leaves no
       // compliance.kyc.updated trail of its own - record the WHOLE attempted batch here
       // (every userId, success/failure per item) so a probe of nonexistent ids is still
@@ -190,27 +210,29 @@ export function createComplianceRouter({
         action: 'compliance.kyc.bulk_approve',
         resourceType: 'compliance',
         resourceId: null,
-        after: { reason: input.reason, results },
+        after: { tier: input.tier, reason: input.reason, results },
       });
       return { results };
     }),
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return rg.setPlayerLimit(input.userId, input, userId, { ip, userAgent });
+      return mapErrors({ CONFLICT: LimitRaiseNotAllowedError }, () =>
+        rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
+      );
     }),
 
     activateCoolingOff: os.activateCoolingOff.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rg.activateCoolingOff(input.userId, input, userId, { ip, userAgent }),
+        rg.activateCoolingOff(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),
 
     activateSelfExclusion: os.activateSelfExclusion.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rg.activateSelfExclusion(input.userId, input, userId, { ip, userAgent }),
+        rg.activateSelfExclusion(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),
 
@@ -234,12 +256,45 @@ export function createComplianceRouter({
 
     getRgSection: os.getRgSection.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
-      return rg.getRgSection(input.userId);
+      return rgSelfService.getSection(input.userId);
     }),
 
     listRgFlags: os.listRgFlags.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return rgMonitoring.listFlags(input);
     }),
+
+    getMyRgSection: os.getMyRgSection.handler(({ context }) =>
+      rgSelfService.getSection(getUserId(context)),
+    ),
+
+    confirmPendingLimitChange: os.confirmPendingLimitChange.handler(({ input, context }) =>
+      mapErrors(
+        {
+          NOT_FOUND: [LimitNotFoundError, NoPendingLimitChangeError],
+          FORBIDDEN: LimitOwnershipError,
+          CONFLICT: [CooldownNotElapsedError, LimitChangeExpiredError],
+        },
+        () => rgSelfService.confirmPendingChange(input.id, getUserId(context), context.clientMeta),
+      ),
+    ),
+
+    cancelPendingLimitChange: os.cancelPendingLimitChange.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
+        rgSelfService.cancelPendingChange(input.id, getUserId(context), context.clientMeta),
+      ),
+    ),
+
+    requestCoolingOff: os.requestCoolingOff.handler(({ input, context }) =>
+      mapErrors({ CONFLICT: ActiveExclusionError }, () =>
+        rgSelfService.requestCoolingOff(getUserId(context), input, context.clientMeta),
+      ),
+    ),
+
+    requestSelfExclusion: os.requestSelfExclusion.handler(({ input, context }) =>
+      mapErrors({ CONFLICT: ActiveExclusionError }, () =>
+        rgSelfService.requestSelfExclusion(getUserId(context), input, context.clientMeta),
+      ),
+    ),
   });
 }

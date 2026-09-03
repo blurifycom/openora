@@ -1,6 +1,6 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
+import { AUDIT_WRITER, IDENTITY_READER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
@@ -35,9 +35,10 @@ export async function mapEventToRecord(
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      before: { kycStatus: p['previousStatus'] ?? null },
+      before: { kycStatus: p['previousStatus'] ?? null, tier: p['tier'] ?? null },
       after: {
         kycStatus: p['status'] ?? null,
+        tier: p['tier'] ?? null,
         reason: p['reason'] ?? null,
         source: p['source'] ?? null,
       },
@@ -53,7 +54,11 @@ export async function mapEventToRecord(
       actorId: str(p['playerId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { referenceId: p['referenceId'] ?? null, provider: p['provider'] ?? null },
+      after: {
+        referenceId: p['referenceId'] ?? null,
+        provider: p['provider'] ?? null,
+        tier: p['tier'] ?? null,
+      },
     };
   }
 
@@ -64,7 +69,7 @@ export async function mapEventToRecord(
       actorType: 'system',
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { reason: p['reason'] ?? null },
+      after: { reason: p['reason'] ?? null, tier: p['tier'] ?? null },
     };
   }
 
@@ -76,6 +81,7 @@ export async function mapEventToRecord(
       resourceId: str(p['playerId']),
       after: {
         referenceId: p['referenceId'] ?? null,
+        tier: p['tier'] ?? null,
         vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
         dataCenterIpDetected: p['dataCenterIpDetected'] ?? null,
         duplicateDeviceDetected: p['duplicateDeviceDetected'] ?? null,
@@ -485,22 +491,30 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
+  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page, banner
+  // configuration, or banner image (whichever id that topic's payload carries).
   if (
     topic === 'cms.page.created' ||
     topic === 'cms.page.updated' ||
     topic === 'cms.page.deleted' ||
-    topic === 'cms.banner.created' ||
-    topic === 'cms.banner.updated' ||
-    topic === 'cms.banner.deleted'
+    topic === 'cms.banner.configuration.created' ||
+    topic === 'cms.banner.configuration.deleted' ||
+    topic === 'cms.banner.configuration.set_default' ||
+    topic === 'cms.banner.configuration.unset_default' ||
+    topic === 'cms.banner.image.set' ||
+    topic === 'cms.banner.image.deleted'
   ) {
     const isBanner = topic.startsWith('cms.banner.');
+    const bannerResourceId =
+      topic === 'cms.banner.configuration.unset_default'
+        ? (str(p['previousBannerConfigurationId']) ?? str(p['placement']))
+        : (str(p['bannerImageId']) ?? str(p['bannerConfigurationId']));
     return {
       ...base,
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: isBanner ? 'banner' : 'page',
-      resourceId: str(isBanner ? p['bannerId'] : p['pageId']),
+      resourceId: isBanner ? bannerResourceId : str(p['pageId']),
     };
   }
 
@@ -538,28 +552,45 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
-  // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
     topic === 'rg.limit.set' ||
+    topic === 'rg.limit.change_requested' ||
+    topic === 'rg.limit.change_confirmed' ||
+    topic === 'rg.limit.change_cancelled' ||
     topic === 'rg.cooling_off.activated' ||
     topic === 'rg.self_exclusion.activated' ||
     topic === 'rg.self_exclusion.lifted' ||
     topic === 'rg.cooling_off.lifted'
   ) {
     const before =
-      topic === 'rg.limit.set'
+      topic === 'rg.limit.set' || topic === 'rg.limit.change_confirmed'
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
+    const initiatedBy = p['initiatedBy'];
     return {
       ...base,
-      actorType: 'admin',
+      actorType:
+        initiatedBy === 'player' || initiatedBy === 'system' || initiatedBy === 'admin'
+          ? initiatedBy
+          : 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
       before,
+      after: p,
+    };
+  }
+
+  if (topic === 'rg.limit.change_expired') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      before: { pendingAmount: p['requestedAmount'] ?? null },
       after: p,
     };
   }
@@ -751,11 +782,17 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  // chat.gift.sent
+  // chat.rain.distributed
   'chat.room.member.role-changed',
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',
+  'rg.limit.change_requested',
+  'rg.limit.change_confirmed',
+  'rg.limit.change_cancelled',
+  'rg.limit.change_expired',
   'rg.cooling_off.activated',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
@@ -771,9 +808,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'cms.page.created',
   'cms.page.updated',
   'cms.page.deleted',
-  'cms.banner.created',
-  'cms.banner.updated',
-  'cms.banner.deleted',
+  'cms.banner.configuration.created',
+  'cms.banner.configuration.deleted',
+  'cms.banner.configuration.set_default',
+  'cms.banner.configuration.unset_default',
+  'cms.banner.image.set',
+  'cms.banner.image.deleted',
   'notifications.created',
   'iam.invitation.accepted',
   'iam.role.created',
@@ -806,7 +846,7 @@ export default {
     let svcRef: AuditService | null = null;
 
     ctx.provideSealed(AUDIT_WRITER, (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
@@ -827,7 +867,7 @@ export default {
     }
 
     ctx.routers.add('audit', (c) => {
-      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       svcRef = svc;
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });

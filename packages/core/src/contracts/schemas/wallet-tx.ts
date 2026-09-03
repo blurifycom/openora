@@ -20,6 +20,8 @@ export const WALLET_TRANSACTION_TYPES = [
   'manual_credit',
   'manual_debit',
   'bet_reversal',
+  'swap_out',
+  'swap_in',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [
@@ -91,3 +93,10 @@ export type WalletReconciliationFindingKind = z.infer<typeof WalletReconciliatio
 export type WalletReconciliationFindingStatus = z.infer<
   typeof WalletReconciliationFindingStatusSchema
 >;
+
+export const DEFAULT_CRYPTO_CURRENCIES = ['BTC', 'ETH', 'USDT', 'USDC'] as const;
+
+export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
+  const set = new Set((cryptoCurrencies ?? DEFAULT_CRYPTO_CURRENCIES).map((c) => c.toUpperCase()));
+  return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+}

@@ -5,11 +5,62 @@ import {
   serializeRow,
   withAdvisoryXactLock,
   type EventBus,
+  type SerializedRow,
 } from '@openora/core/server';
 import { eq, and, or, gt, gte, lte, like, asc, desc, sql } from 'drizzle-orm';
-import type { AuditWritePort } from '@openora/core/contracts';
+import {
+  LimitChangeKindSchema,
+  LimitPeriodSchema,
+  LimitTypeSchema,
+  MoneyAmountSchema,
+  type AuditWritePort,
+  type IdentityReader,
+  type User,
+} from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
-import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
+import type {
+  AuditListFilters,
+  AuditExportFilters,
+  MyRgHistoryEntry,
+  MyRgHistoryFilters,
+} from '../contract/index.js';
+
+const RG_LIMIT_ACTION_PREFIX = 'rg.limit.';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function pick<T>(
+  schema: { safeParse: (v: unknown) => { success: boolean; data?: T } },
+  value: unknown,
+): T | null {
+  const result = schema.safeParse(value);
+  return result.success ? (result.data ?? null) : null;
+}
+
+function toMyRgHistoryEntry(row: SerializedRow<AuditLog, 'createdAt'>): MyRgHistoryEntry {
+  const after = isRecord(row.after) ? row.after : {};
+  const isSet = row.action === 'rg.limit.set';
+  const newAmountRaw = isSet ? after['amount'] : after['requestedAmount'];
+  const newMinutesRaw = isSet ? after['minutes'] : after['requestedMinutes'];
+
+  return {
+    id: row.id,
+    action: row.action,
+    actorType: row.actorType,
+    createdAt: row.createdAt,
+    type: pick(LimitTypeSchema, after['type']),
+    period: pick(LimitPeriodSchema, after['period']),
+    kind: pick(LimitChangeKindSchema, after['kind']),
+    previousAmount: pick(MoneyAmountSchema, after['previousAmount']),
+    newAmount: pick(MoneyAmountSchema, newAmountRaw),
+    previousMinutes: typeof after['previousMinutes'] === 'number' ? after['previousMinutes'] : null,
+    newMinutes: typeof newMinutesRaw === 'number' ? newMinutesRaw : null,
+    effectiveAt: typeof after['effectiveAt'] === 'string' ? after['effectiveAt'] : null,
+    expiresAt: typeof after['expiresAt'] === 'string' ? after['expiresAt'] : null,
+  };
+}
 
 const AUDIT_SORT_COLS = {
   createdAt: auditLog.createdAt,
@@ -128,6 +179,7 @@ export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   // Hash computed and inserted in a single statement - no read-back UPDATE, so a
@@ -210,6 +262,27 @@ export class AuditService {
       page,
       limit,
     };
+  }
+
+  /** Player self-service RG limit history. Returns an empty page, not an error,
+   * when the caller has no player profile. */
+  async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
+    const { page, limit } = filters;
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      return { items: [], total: 0, page, limit };
+    }
+
+    const { items, total } = await this.list({
+      page,
+      limit,
+      resourceType: 'player',
+      resourceId: playerId,
+      actionPrefix: RG_LIMIT_ACTION_PREFIX,
+      sortOrder: filters.sortOrder,
+    });
+
+    return { items: items.map(toMyRgHistoryEntry), total, page, limit };
   }
 
   // Hard cap to prevent unbounded bulk extraction / OOM; exports exceeding it are

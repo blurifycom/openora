@@ -8,6 +8,7 @@ import {
   RgRestrictedError,
   InsufficientBalanceError,
 } from '../service/gaming.service.js';
+import { RgLimitExceededError } from '@openora/core/contracts';
 
 export function createGamingRouter(gaming: GamingService) {
   const os = implement(gamingContract).$context<OssContext>();
@@ -23,7 +24,7 @@ export function createGamingRouter(gaming: GamingService) {
       mapErrors(
         {
           NOT_FOUND: GameNotFoundError,
-          CONFLICT: RgRestrictedError,
+          CONFLICT: [RgRestrictedError, RgLimitExceededError],
           BAD_REQUEST: InsufficientBalanceError,
         },
         () => gaming.startRound(getUserId(context), input.gameId, input.currency, input.betAmount),

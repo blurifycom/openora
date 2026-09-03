@@ -9,7 +9,7 @@ import {
   walletTransaction,
   walletBonusCredit,
 } from '@openora/core/wallet/schema';
-import { game } from '@openora/core/casino/schema/gaming';
+import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
   chatRoomMember,
@@ -424,6 +424,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(walletBalance);
   await db.delete(wallet);
   await db.delete(player);
+  await db.delete(gameRound);
   await db.delete(game);
 
   const adminUser = await ensureUser(db, auth, {

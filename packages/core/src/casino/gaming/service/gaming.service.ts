@@ -9,8 +9,10 @@ import {
 } from '@openora/core/server';
 import { eq, and, asc, desc, sql } from 'drizzle-orm';
 import {
+  RgLimitExceededError,
   type GameAdapter,
   type PlayEligibilityPort,
+  type RgLimitsPort,
   type WalletCommands,
   type IdentityReader,
   type User,
@@ -55,6 +57,7 @@ export class GamingService {
     private readonly playEligibility: PlayEligibilityPort,
     private readonly walletCommands: WalletCommands,
     private readonly identityReader: IdentityReader,
+    private readonly rgLimits?: RgLimitsPort,
   ) {}
 
   async listGames() {
@@ -78,13 +81,20 @@ export class GamingService {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
+    const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
+    if (decision && !decision.allowed) {
+      throw new RgLimitExceededError('wager_limit_exceeded', decision);
+    }
 
     await this.getGame(gameId);
 
     const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
+      // The same currency the RG pre-check above weighed. Left off, the debit falls on the
+      // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
         userId,
         amount: betAmount,
+        currency,
         type: 'bet',
       });
       if (!outcome.ok) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RealtimeTransport } from '@openora/core/contracts';
 
 export type RealtimeTransportHarness = {
@@ -30,6 +30,11 @@ export type RealtimeTransportHarness = {
   simulateFailure?: (transport: RealtimeTransport) => void;
 };
 
+const SUBSCRIBE_SETTLE_MS = 200;
+function settle(ms = SUBSCRIBE_SETTLE_MS): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Shared behavioral spec for every RealtimeTransport implementation. Run this
  * against each adapter alongside its own adapter-specific tests (this suite
@@ -60,32 +65,45 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
     });
 
     if (harness.supportsServerSideSubscribe) {
-      it('fans a published event out to every subscriber of the channel', () => {
+      it('fans a published event out to every subscriber of the channel', async () => {
         const transport = harness.create();
         const a: number[] = [];
         const b: number[] = [];
         transport.subscribe<number>('c', (event) => a.push(event));
         transport.subscribe<number>('c', (event) => b.push(event));
-        transport.publish('c', 1);
-        expect(a).toEqual([1]);
-        expect(b).toEqual([1]);
+        await settle();
+
+        await transport.publish('c', 1);
+        await vi.waitFor(() => {
+          expect(a).toEqual([1]);
+          expect(b).toEqual([1]);
+        });
       });
 
-      it('does not deliver across channels', () => {
+      it('does not deliver across channels', async () => {
         const transport = harness.create();
         const got: number[] = [];
         transport.subscribe<number>('one', (event) => got.push(event));
-        transport.publish('two', 99);
+        await settle();
+
+        await transport.publish('two', 99);
+        await settle();
         expect(got).toEqual([]);
       });
 
-      it('stops delivering after unsubscribe', () => {
+      it('stops delivering after unsubscribe', async () => {
         const transport = harness.create();
         const got: number[] = [];
         const unsubscribe = transport.subscribe<number>('c', (event) => got.push(event));
-        transport.publish('c', 1);
+        await settle();
+
+        await transport.publish('c', 1);
+        await vi.waitFor(() => expect(got).toEqual([1]));
+
         unsubscribe();
-        transport.publish('c', 2);
+        await settle();
+        await transport.publish('c', 2);
+        await settle();
         expect(got).toEqual([1]);
       });
     }

@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import type {
   GameAdapter,
   PlayEligibilityPort,
+  RgLimitsPort,
   WalletCommands,
   WalletDebitOutcome,
 } from '@openora/core/contracts';
@@ -41,10 +42,12 @@ function makeService({
   }),
   playEligibility = unrestricted,
   walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
+  rgLimits,
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
   walletCommands?: WalletCommands;
+  rgLimits?: RgLimitsPort;
 } = {}) {
   return new GamingService(
     db.drizzle,
@@ -53,6 +56,7 @@ function makeService({
     playEligibility,
     walletCommands,
     makeIdentityReader(),
+    rgLimits,
   );
 }
 
@@ -98,7 +102,45 @@ describe('GamingService lobby (real PG)', () => {
   });
 });
 
+const refusingLimits = () =>
+  mock<RgLimitsPort>({
+    checkDeposit: vi.fn(),
+    checkWager: vi.fn().mockResolvedValue({
+      allowed: false,
+      limitType: 'wager',
+      period: 'daily',
+      limit: '50',
+      used: '45',
+    }),
+  });
+
 describe('GamingService.startRound (real PG)', () => {
+  it('refuses a wager over the players own limit before touching the provider', async () => {
+    const launchGame = vi.fn();
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+      rgLimits: refusingLimits(),
+    });
+
+    await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toMatchObject({
+      name: 'RgLimitExceededError',
+      data: { reason: 'wager_limit_exceeded', limitType: 'wager', limit: '50', used: '45' },
+    });
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(walletCommands.debit).not.toHaveBeenCalled();
+  });
+
+  it('starts a round when no limit gate is bound at all', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000c1', name: 'Ungated' });
+    const svc = makeService();
+
+    await expect(
+      svc.startRound('00000000-0000-0000-0000-000000000111', created.id, 'USD', '10'),
+    ).resolves.toMatchObject({ launchUrl: 'https://mock/play' });
+  });
+
   it('refuses a restricted player before touching the provider', async () => {
     const launchGame = vi.fn();
     const svc = makeService({
@@ -144,6 +186,7 @@ describe('GamingService.startRound (real PG)', () => {
     expect(walletCommands.debit).toHaveBeenCalledWith(expect.anything(), {
       userId,
       amount: '10',
+      currency: 'USD',
       type: 'bet',
     });
     expect(launchGame).toHaveBeenCalledWith(created.id, userId, 'USD');

@@ -16,9 +16,23 @@ export type WalletProviderTransaction = {
   createdAt: Date;
 };
 
+/** One player balance row, as returned by `WalletReader.getBalances`. */
+export type WalletBalanceReading = {
+  currency: string;
+  balance: string;
+};
+
+/** Full per-currency balance snapshot for a player, as returned by `WalletReader.getBalances`. */
+export type WalletBalancesReading = {
+  activeCurrency: string;
+  balances: WalletBalanceReading[];
+};
+
 export type WalletReader = {
   /** Sum of all completed deposits for a player, as a decimal string (same as wallet_transaction.amount). Used for high_roller evaluation. */
   getLifetimeDeposit(userId: string): Promise<string>;
+  /** Always answers: a player with no wallet row yet gets an empty `balances` array and the platform's default wallet currency, never a throw. */
+  getBalances(userId: string): Promise<WalletBalancesReading>;
   /** Count of completed withdrawals for a player within the last windowDays days. Used for high_risk evaluation. */
   getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number>;
   /**
@@ -40,12 +54,6 @@ export type WalletReader = {
     providerName: string,
     providerRefId: string,
   ): Promise<WalletProviderTransaction | null>;
-  /**
-   * Current balance in the player's active wallet currency. Optional for the same
-   * reason as getWithdrawalCountsInWindow above - a pre-existing external WalletReader
-   * implementation still satisfies the port.
-   */
-  getBalance?(userId: string): Promise<{ balance: string; currency: string }>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

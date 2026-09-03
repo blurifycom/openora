@@ -10,12 +10,13 @@ import {
   type KycStatusWriter,
   type KycWebhookVerifier,
 } from '@openora/core/contracts';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   makeIdentityReader,
   mock,
+  makeRealtimeTransport,
   makeEventBus,
   makeAuditWriter,
   NO_CLIENT_META,
@@ -27,6 +28,7 @@ import { KycVerificationService } from '../service/kyc.service.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { RgService } from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import type { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const CTX = {
   request: { headers: {} as Record<string, string | string[] | undefined> },
@@ -61,7 +63,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
 
 function build(guard: AdminGuard) {
   const events = makeEventBus();
-  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) });
+  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) });
   const kyc = new KycVerificationService({
     drizzle: db.drizzle,
     events,
@@ -79,9 +81,10 @@ function build(guard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({}),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
-    realtime: new InProcessRealtimeTransport(),
+    realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
+    rgSelfService: mock<RgSelfServiceService>({}),
   });
   return { router, audit, statusWriter, events };
 }
@@ -111,7 +114,7 @@ describe('compliance admin KYC router authz (real PG)', () => {
     await expect(
       call(
         router.requestKycResubmission,
-        { userId: seeded.userId, reason: 'blurry docs' },
+        { userId: seeded.userId, tier: 'basic', reason: 'blurry docs' },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -125,7 +128,7 @@ describe('compliance admin KYC router authz (real PG)', () => {
     await expect(
       call(
         router.overrideKycStatus,
-        { userId: seeded.userId, status: 'approved', reason: 'manual review' },
+        { userId: seeded.userId, tier: 'basic', status: 'approved', reason: 'manual review' },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -137,7 +140,11 @@ describe('compliance admin KYC router authz (real PG)', () => {
     const { router } = build(fakeGuard([]));
 
     await expect(
-      call(router.bulkApproveKyc, { userIds: [seeded.userId], reason: 'sweep' }, { context: CTX }),
+      call(
+        router.bulkApproveKyc,
+        { userIds: [seeded.userId], tier: 'basic', reason: 'sweep' },
+        { context: CTX },
+      ),
     ).rejects.toBeInstanceOf(ORPCError);
     expect(await verificationsOf(seeded.userId)).toHaveLength(0);
   });
@@ -151,7 +158,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
     await expect(
       call(
         router.requestKycResubmission,
-        { userId: seeded.userId, reason: '   ' },
+        { userId: seeded.userId, tier: 'basic', reason: '   ' },
         { context: CTX },
       ),
     ).rejects.toThrow();
@@ -165,7 +172,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
     await expect(
       call(
         router.overrideKycStatus,
-        { userId: seeded.userId, status: 'rejected', reason: '' },
+        { userId: seeded.userId, tier: 'basic', status: 'rejected', reason: '' },
         { context: CTX },
       ),
     ).rejects.toThrow();
@@ -176,7 +183,11 @@ describe('compliance admin KYC router input validation (real PG)', () => {
     const { router } = build(fakeGuard(['compliance:override-limit']));
 
     await expect(
-      call(router.bulkApproveKyc, { userIds: [seeded.userId], reason: '' }, { context: CTX }),
+      call(
+        router.bulkApproveKyc,
+        { userIds: [seeded.userId], tier: 'basic', reason: '' },
+        { context: CTX },
+      ),
     ).rejects.toThrow();
   });
 
@@ -185,7 +196,7 @@ describe('compliance admin KYC router input validation (real PG)', () => {
     const userIds = Array.from({ length: 101 }, () => randomUUID());
 
     await expect(
-      call(router.bulkApproveKyc, { userIds, reason: 'sweep' }, { context: CTX }),
+      call(router.bulkApproveKyc, { userIds, tier: 'basic', reason: 'sweep' }, { context: CTX }),
     ).rejects.toThrow();
   });
 });
@@ -197,7 +208,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
 
     await call(
       router.requestKycResubmission,
-      { userId: seeded.userId, reason: 'blurry docs' },
+      { userId: seeded.userId, tier: 'basic', reason: 'blurry docs' },
       { context: CTX },
     );
 
@@ -223,7 +234,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
 
     await call(
       router.overrideKycStatus,
-      { userId: seeded.userId, status: 'approved', reason: 'manual review' },
+      { userId: seeded.userId, tier: 'basic', status: 'approved', reason: 'manual review' },
       { context: CTX },
     );
 
@@ -241,7 +252,12 @@ describe('compliance admin KYC router effects (real PG)', () => {
   it('is idempotent on a repeat override that resolves to the current status', async () => {
     const seeded = await seedPlayer();
     const { router, statusWriter } = build(fakeGuard(['compliance:override-limit']));
-    const input = { userId: seeded.userId, status: 'approved' as const, reason: 'manual review' };
+    const input = {
+      userId: seeded.userId,
+      tier: 'basic' as const,
+      status: 'approved' as const,
+      reason: 'manual review',
+    };
 
     await call(router.overrideKycStatus, input, { context: CTX });
     await db.drizzle.db
@@ -263,7 +279,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
 
     const result = await call(
       router.bulkApproveKyc,
-      { userIds: [seeded.userId, missing], reason: 'sweep' },
+      { userIds: [seeded.userId, missing], tier: 'basic', reason: 'sweep' },
       { context: CTX },
     );
 
@@ -284,7 +300,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
 
     await call(
       router.bulkApproveKyc,
-      { userIds: [seeded.userId, missing], reason: 'sweep' },
+      { userIds: [seeded.userId, missing], tier: 'basic', reason: 'sweep' },
       { context: CTX },
     );
 
