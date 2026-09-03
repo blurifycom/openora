@@ -22,7 +22,7 @@ import type {
 } from '@openora/core/contracts';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
-import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
+import { CHAT_ROOM_CATEGORIES, ChatMessageSchema, type ChatMessage } from '../contract/index.js';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   MAX_PRIVATE_ROOMS_PER_PLAYER,
@@ -528,6 +528,47 @@ describe('ChatService message reads (real PG)', () => {
     const messages = await svc.getGlobalMessages();
 
     expect(messages.map((m) => m.id)).toEqual([newer.id, older.id]);
+  });
+
+  it('serves a legacy rain message whose metadata amounts exceed the current decimal scale', async () => {
+    const { svc } = makeService();
+    await seedMessage({
+      type: 'system',
+      content: '',
+      metadata: {
+        command: 'rain',
+        fromUserId: randomUUID(),
+        amount: '0.62000000000000000000',
+        currency: 'USD',
+        recipientCount: 1,
+        perRecipient: '0.62000000000000000000',
+      },
+    });
+
+    const [message] = await svc.getGlobalMessages();
+
+    expect(message?.metadata).toMatchObject({ amount: '0.62', perRecipient: '0.62' });
+    expect(() => ChatMessageSchema.parse(message)).not.toThrow();
+  });
+
+  it('preserves valid command metadata money strings', async () => {
+    const { svc } = makeService();
+    await seedMessage({
+      type: 'system',
+      content: '',
+      metadata: {
+        command: 'rain',
+        fromUserId: randomUUID(),
+        amount: '10.50',
+        currency: 'USD',
+        recipientCount: 1,
+        perRecipient: '100.00',
+      },
+    });
+
+    const [message] = await svc.getGlobalMessages();
+
+    expect(message?.metadata).toMatchObject({ amount: '10.50', perRecipient: '100.00' });
   });
 
   it('filters out senders the viewer has blocked', async () => {
