@@ -238,7 +238,7 @@ function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddr
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
 // reads as their active currency before one is created on first deposit.
-const DEFAULT_WALLET_CURRENCY = 'USD';
+export const DEFAULT_WALLET_CURRENCY = 'USD';
 
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
