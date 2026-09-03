@@ -65,7 +65,6 @@ describe('DefaultEmailTemplateRenderer', () => {
           currency: 'USDT',
           transactionId: '00000000-0000-0000-0000-000000000000',
           occurredAt: '2026-01-01T00:00:00.000Z',
-          status: 'approved',
         },
       },
       {
@@ -75,7 +74,6 @@ describe('DefaultEmailTemplateRenderer', () => {
           currency: 'USDT',
           transactionId: '00000000-0000-0000-0000-000000000000',
           occurredAt: '2026-01-01T00:00:00.000Z',
-          status: 'rejected',
           reason: 'AML review',
         },
       },
@@ -90,6 +88,23 @@ describe('DefaultEmailTemplateRenderer', () => {
       expect(result.text).not.toMatch(/<[a-z/]/i);
       expect(result.html).toContain('<p>');
     }
+  });
+
+  it('groups the withdrawal amount in thousands, matching the in-app notification', () => {
+    const result = renderer.render(
+      {
+        key: 'withdrawalApproved',
+        data: {
+          amount: '10000.00',
+          currency: 'USDT',
+          transactionId: '00000000-0000-0000-0000-000000000000',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      'en',
+    );
+
+    expect(result.text).toContain('10,000 USDT');
   });
 
   it('formats the cooling-off date against the recipient locale', () => {

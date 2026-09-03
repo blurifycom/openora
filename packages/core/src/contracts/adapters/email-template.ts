@@ -1,4 +1,5 @@
 import { createToken, type Token } from './token.js';
+import { formatMoneyAmount } from '../schemas/common.js';
 import type { EmailTemplateData, EmailTemplateKey, MailTemplate } from '../schemas/mail.js';
 
 /**
@@ -53,7 +54,10 @@ const formatEmailDate = (iso: string | null, locale: string): string =>
         timeZone: 'UTC',
       }).format(new Date(iso))} UTC`;
 
-const formatMoney = (amount: string, currency: string): string => `${amount} ${currency}`;
+// Same grouping as the in-app notification of the same event, so a $10,000 withdrawal
+// does not read `10,000.00 USD` in one channel and `10000.00 USD` in the other.
+const formatMoney = (amount: string, currency: string): string =>
+  `${formatMoneyAmount(amount)} ${currency}`;
 
 type PlainTemplate<K extends EmailTemplateKey> = (
   data: EmailTemplateData[K],

@@ -21,6 +21,9 @@ const logger = createLogger('iam');
 export default {
   id: 'iam',
   dependsOn: ['identity'],
+  // inviteAdmin resolves MAIL_DISPATCH unconditionally - fail fast with a clear
+  // message if a split deployment includes `iam` but not `mail`. See ADR-0024/0036.
+  requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Captured from the provider factory so the event handlers below purge the SAME
     // singleton the AdminGuard reads (Container memoizes per token). Null until the

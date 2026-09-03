@@ -25,21 +25,28 @@ closes a load-order cycle.
 ### One module
 
 `packages/core/src/mail/` is a thin domain (module id `mail`, published as
-`@openora/core/mail` + `/plugin` + `/contract`). It owns **no table and no routes** -
-only the mail seams and one `mail-send` job queue worker. `#110` already built the
-queue-layer machinery for notifications (idempotency key from `envelope.eventId`, five
-tries with a growing gap, an `onDeadLetter` hook); the mail worker mirrors that shape
-rather than reimplementing it.
+`@openora/core/mail` + `/plugin` + `/contract`). It owns **no table and no HTTP
+routes** - only the mail seams and one `mail-send` job queue worker. `#110` already
+built the queue-layer machinery for notifications (idempotency key from
+`envelope.eventId`, five tries with a growing gap, an `onDeadLetter` hook); the mail
+worker mirrors that shape rather than reimplementing it.
 
 ### No `dependsOn`, lazy resolution
 
 The mail plugin declares no `dependsOn`. Every consumer resolves `MAIL_DISPATCH` lazily
-in its own router/worker factory, which runs after every plugin has registered - the
-same pattern `wallet/plugin.ts` uses for `TAG_EVALUATION_COMMANDS`. The mail service is
-memoized on first `MAIL_DISPATCH` resolution (a consumer's boot-time router factory),
-always before the first `mail-send` job runs. The next reader will assume this is a bug;
-it is deliberate, and it is why the plugin can bind a port that `identity` needs while
-`identity` binds ports the mail worker needs.
+in its own router factory, which runs after every plugin has registered - the same
+pattern `wallet/plugin.ts` uses for `TAG_EVALUATION_COMMANDS`. The `MailService` is
+memoized on first `MAIL_DISPATCH` resolution. It is deliberate, and it is why the plugin
+can bind a port `identity` needs while `identity` binds ports the mail worker needs.
+
+The worker itself needs the `MailService`, and the BullMQ worker starts consuming the
+moment it is registered - before router factories run, and in a `mail`-only split
+deployment no consumer resolves `MAIL_DISPATCH` at all. So the mail plugin registers an
+**empty router** whose only job is to force `mailService(c)` during the boot-time router
+loop, before the first job is picked up. `identity` and `iam` (which resolve
+`MAIL_DISPATCH` unconditionally) declare `requiresPorts: [MAIL_DISPATCH]`, so a split
+deployment that omits `mail` fails fast with a descriptive boot error (ADR-0024) rather
+than a bare "no provider" crash.
 
 ### One transport port
 

@@ -7,6 +7,7 @@ import {
   REALTIME_TRANSPORT,
   UuidSchema,
   domainEventSchemas,
+  formatMoneyAmount,
   queue,
   type DomainEventName,
   type DomainEventPayload,
@@ -50,18 +51,6 @@ const NotificationDispatchJobSchema = z.object({
   // the notification's English body). See ADR-0036.
   email: MailTemplateSchema.nullable(),
 });
-
-function formatMoneyAmount(amount: string): string {
-  const match = /^(-)?(\d+)(?:\.(\d+))?$/.exec(amount);
-  if (!match) {
-    return amount;
-  }
-  const [, sign, integerPart, fractionPart] = match;
-  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const trimmedFraction = fractionPart ? fractionPart.replace(/0+$/, '') : '';
-  const magnitude = trimmedFraction ? `${groupedInteger}.${trimmedFraction}` : groupedInteger;
-  return sign ? `${sign}${magnitude}` : magnitude;
-}
 
 type NotificationMapEntry = {
   event: DomainEventName;
@@ -132,7 +121,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
           currency: p.currency,
           transactionId: p.transactionId,
           occurredAt,
-          status: 'approved',
         },
       }),
     },
@@ -155,7 +143,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
           currency: p.currency,
           transactionId: p.transactionId,
           occurredAt,
-          status: 'rejected',
           reason: p.reason,
         },
       }),

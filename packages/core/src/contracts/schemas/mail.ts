@@ -35,6 +35,9 @@ export const MAIL_TEMPLATE_KEYS = [
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
 
+// No `status` field: the `key` (`withdrawalApproved` vs `withdrawalRejected`) is
+// already the discriminant, so a separate literal would just be a second copy a
+// caller has to keep in sync by hand.
 const WithdrawalDetailsShape = {
   amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
@@ -66,10 +69,9 @@ export const EmailTemplateDataSchemas = {
     isPermanent: z.boolean(),
   }),
   rgSelfExclusionLifted: z.object({}),
-  withdrawalApproved: z.object({ ...WithdrawalDetailsShape, status: z.literal('approved') }),
+  withdrawalApproved: z.object({ ...WithdrawalDetailsShape }),
   withdrawalRejected: z.object({
     ...WithdrawalDetailsShape,
-    status: z.literal('rejected'),
     reason: z.string().nullable(),
   }),
   kycResubmissionRequested: z.object({ reason: z.string().nullable() }),

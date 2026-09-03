@@ -2,7 +2,8 @@
 
 Outbound email leaves the platform one way: a caller hands `MAIL_DISPATCH` a
 `{ key, data }` template, the `mail` module enqueues it onto the `mail-send` queue, and
-the worker resolves the address + locale, renders once, and sends. See ADR-0036.
+the worker resolves the address, locale and display name, renders once, and sends. See
+ADR-0036.
 
 ## Interfaces
 

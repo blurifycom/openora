@@ -170,12 +170,11 @@ describe('notificationEventMap', () => {
         currency: 'USD',
         transactionId,
         occurredAt: OCCURRED_AT,
-        status: 'approved',
       },
     });
     expect(
       entryFor('wallet.withdrawal.rejected').buildEmail({ ...payload, reason: 'AML' }, OCCURRED_AT),
-    ).toMatchObject({ key: 'withdrawalRejected', data: { reason: 'AML', status: 'rejected' } });
+    ).toMatchObject({ key: 'withdrawalRejected', data: { reason: 'AML' } });
   });
 
   describe('amount formatting in notification body text', () => {

@@ -78,6 +78,10 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
+  // The OTP hook resolves MAIL_DISPATCH unconditionally; a split deployment that
+  // includes `identity` but not `mail` gets a descriptive boot error, not a bare
+  // "no provider" crash on the first sign-up. See ADR-0024/0036.
+  requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
     // separate `makeAdminSecurity(c)` calls would construct two independent

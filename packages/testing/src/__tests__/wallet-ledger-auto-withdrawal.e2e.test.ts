@@ -17,6 +17,7 @@ import {
   registerAndMaterializePlayer,
   asAdmin,
   seedMinimal,
+  waitForEmail,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -488,6 +489,21 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     expect(approveRes.status).toBe(200);
     expect((await readJson(approveRes)).status).toBe('completed');
 
+    // One `wallet.withdrawal.approved` event drives BOTH channels through the
+    // notifications module: the in-app notification row and, alongside it, the
+    // `withdrawalApproved` email enqueued onto `mail-send`.
+    await vi.waitFor(async () => {
+      const items = (await readJson(await client.get('/notifications'))).items as Array<{
+        type: string;
+      }>;
+      expect(items.some((n) => n.type === 'withdrawal.approved')).toBe(true);
+    });
+    const approvedMail = await waitForEmail(
+      email,
+      (m) => m.subject === 'Your withdrawal was approved',
+    );
+    expect(approvedMail.text).toContain(w1.transactionId);
+
     const w2 = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -505,6 +521,12 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     });
     expect(rejectRes.status).toBe(200);
     expect((await readJson(rejectRes)).status).toBe('rejected');
+
+    const rejectedMail = await waitForEmail(
+      email,
+      (m) => m.subject === 'Your withdrawal was rejected',
+    );
+    expect(rejectedMail.text).toContain('qa regression check');
 
     const balanceAfterReject = (await readJson(await client.get('/wallet/balance'))).balance;
     expect(balanceAfterReject).toBe('2.400000000000000000');

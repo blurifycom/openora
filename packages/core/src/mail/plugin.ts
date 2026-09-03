@@ -16,15 +16,20 @@ import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from './contract/index.js
 const logger = createLogger('mail');
 
 /**
- * The `mail` module: a thin module (no table, no routes) that owns the outbound
- * mail seams and the `mail-send` queue worker.
+ * The `mail` module: a thin module (no table, no HTTP routes) that owns the
+ * outbound mail seams and the `mail-send` queue worker.
  *
  * It declares NO `dependsOn`. `notifications` depends on `identity`, and `identity`
  * needs a send path - a mail binding in either would close a load-order cycle. The
  * mail plugin binds its ports here, and every consumer resolves `MAIL_DISPATCH`
- * lazily in its own router/worker factory, which runs after all plugins register.
- * `svcRef` is set the first time `MAIL_DISPATCH` is resolved (a consumer's boot-time
- * router factory), always before the first `mail-send` job runs. See ADR-0036.
+ * lazily in its own router factory, which runs after all plugins register.
+ *
+ * The `mail-send` worker needs a `MailService`, which is built the first time
+ * `MAIL_DISPATCH` is resolved. The BullMQ worker starts consuming the moment it is
+ * registered (before router factories run), and in a `mail`-only split deployment
+ * NO consumer resolves `MAIL_DISPATCH` at all - so this plugin registers an empty
+ * router purely to force `mailService(c)` at boot, before the first job is picked
+ * up. See ADR-0036.
  */
 export default {
   id: 'mail',
@@ -52,6 +57,13 @@ export default {
       };
     });
 
+    // No HTTP surface - this factory exists only so the boot-time router loop
+    // constructs the MailService the worker below needs, in every deployment shape.
+    ctx.routers.add('mail', (c) => {
+      mailService(c);
+      return {};
+    });
+
     ctx.jobs.worker({
       queue: MAIL_SEND_QUEUE,
       schema: EncryptedMailSendJobSchema,
@@ -59,6 +71,8 @@ export default {
       options: { concurrency: 5 },
       handler: async ({ payload }) => {
         if (!svcRef) {
+          // A leftover job picked up in the sub-millisecond window before the router
+          // loop runs: throw so BullMQ retries (its backoff outlasts that window).
           throw new Error('mail: service not constructed yet');
         }
         await svcRef.deliverEncrypted(payload);

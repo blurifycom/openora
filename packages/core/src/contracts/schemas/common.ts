@@ -34,6 +34,25 @@ export const MoneyAmountSchema = z.string().regex(
 );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
 
+/**
+ * Display formatting for a money-amount string: groups the integer part in
+ * thousands and trims trailing-zero decimals (`"10000.5000"` -> `"10,000.5"`).
+ * Presentation only - never feed the result back into a `MoneyAmountSchema` field
+ * or the DB. Shared so every player-facing channel for the same event (in-app
+ * notification, email) renders an amount the same way.
+ */
+export function formatMoneyAmount(amount: string): string {
+  const match = /^(-)?(\d+)(?:\.(\d+))?$/.exec(amount);
+  if (!match) {
+    return amount;
+  }
+  const [, sign, integerPart, fractionPart] = match;
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const trimmedFraction = fractionPart ? fractionPart.replace(/0+$/, '') : '';
+  const magnitude = trimmedFraction ? `${groupedInteger}.${trimmedFraction}` : groupedInteger;
+  return sign ? `${sign}${magnitude}` : magnitude;
+}
+
 export const AUTH_GUARD_REASONS = [
   'missing_request_context',
   'authentication_required',
