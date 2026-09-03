@@ -15,6 +15,13 @@
       "when": 1788220027498,
       "tag": "0001_steep_starjammers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788302574622,
+      "tag": "0002_naive_kingpin",
+      "breakpoints": true
     }
   ]
 }
