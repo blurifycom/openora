@@ -54,6 +54,12 @@ export type WalletReader = {
     providerName: string,
     providerRefId: string,
   ): Promise<WalletProviderTransaction | null>;
+  /**
+   * Current balance in the player's active wallet currency. Optional for the same
+   * reason as getWithdrawalCountsInWindow above - a pre-existing external WalletReader
+   * implementation still satisfies the port.
+   */
+  getBalance?(userId: string): Promise<{ balance: string; currency: string }>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');
