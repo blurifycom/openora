@@ -137,6 +137,41 @@ export const GetPublicBannerInputSchema = z.object({
 });
 export type GetPublicBannerInput = z.infer<typeof GetPublicBannerInputSchema>;
 
+export const BannerScheduleSchema = z.object({
+  id: UuidSchema,
+  bannerConfigurationId: UuidSchema,
+  startsAt: TimestampSchema,
+  endsAt: TimestampSchema,
+  createdBy: UuidSchema,
+  createdAt: TimestampSchema,
+});
+export type BannerSchedule = z.infer<typeof BannerScheduleSchema>;
+
+export const BannerScheduleWithConfigurationSchema = BannerScheduleSchema.extend({
+  configuration: BannerConfigurationSummarySchema,
+});
+export type BannerScheduleWithConfiguration = z.infer<typeof BannerScheduleWithConfigurationSchema>;
+
+export const CreateBannerScheduleInputSchema = z.object({
+  id: UuidSchema,
+  startsAt: TimestampSchema,
+  endsAt: TimestampSchema,
+});
+export type CreateBannerScheduleInput = z.infer<typeof CreateBannerScheduleInputSchema>;
+
+export const UpdateBannerScheduleEndInputSchema = z.object({
+  id: UuidSchema,
+  endsAt: TimestampSchema,
+});
+export type UpdateBannerScheduleEndInput = z.infer<typeof UpdateBannerScheduleEndInputSchema>;
+
+export const ListBannerSchedulesByPlacementInputSchema = z.object({
+  placement: z.string(),
+});
+export type ListBannerSchedulesByPlacementInput = z.infer<
+  typeof ListBannerSchedulesByPlacementInputSchema
+>;
+
 export const cmsContract = {
   listPages: oc
     .route({ method: 'GET', path: '/cms/pages' })
@@ -225,4 +260,19 @@ export const cmsContract = {
     .route({ method: 'GET', path: '/cms/banners/{placement}' })
     .input(GetPublicBannerInputSchema)
     .output(PublicBannerSchema.nullable()),
+
+  createBannerSchedule: oc
+    .route({ method: 'POST', path: '/cms/banner-configurations/{id}/schedule' })
+    .input(CreateBannerScheduleInputSchema)
+    .output(BannerScheduleSchema),
+
+  updateBannerScheduleEnd: oc
+    .route({ method: 'PUT', path: '/cms/banner-configurations/{id}/schedule' })
+    .input(UpdateBannerScheduleEndInputSchema)
+    .output(BannerScheduleSchema),
+
+  listBannerSchedulesByPlacement: oc
+    .route({ method: 'GET', path: '/cms/banner-placements/{placement}/schedules' })
+    .input(ListBannerSchedulesByPlacementInputSchema)
+    .output(z.array(BannerScheduleWithConfigurationSchema)),
 };
