@@ -7,6 +7,7 @@ import {
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
+export const MIN_MAIL_ENCRYPTION_SECRET_LENGTH = 32;
 
 export type MailPayloadCipher = {
   encrypt(job: MailSendJob): EncryptedMailSendJob;
@@ -16,7 +17,7 @@ export type MailPayloadCipher = {
 const toKey = (secret: string): Buffer => createHash('sha256').update(secret).digest();
 
 export function createMailPayloadCipher(secret: string): MailPayloadCipher {
-  if (secret.length < 32) {
+  if (secret.length < MIN_MAIL_ENCRYPTION_SECRET_LENGTH) {
     throw new Error('AUTH_SECRET must have at least 32 characters to encrypt mail jobs');
   }
   const key = toKey(secret);

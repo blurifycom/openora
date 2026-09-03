@@ -150,7 +150,9 @@ export class MailService {
         action: 'mail.regulatory_delivery.failed',
         resourceType: 'email',
         resourceId: job.recipient.kind === 'user' ? job.recipient.userId : null,
-        after: { templateKey: job.template.key, error: error.message },
+        // error.name only - a provider bounce message routinely embeds the recipient
+        // address, and audit_log is append-only.
+        after: { templateKey: job.template.key, reason: error.name },
       })
       .catch((err) => logger.error({ err }, 'mail regulatory-failure audit write failed'));
   }

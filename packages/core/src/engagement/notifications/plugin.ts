@@ -36,20 +36,20 @@ const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 
+// `eventId` optional and `email` nullish so a job enqueued by the previous release
+// (before #110's dispatch queue carried a mail template) still parses on a rolling
+// redeploy - it lands the in-app notification and skips the mail rather than
+// dead-lettering.
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
   reason: z.string().nullable(),
-  eventId: UuidSchema,
+  eventId: UuidSchema.optional(),
 });
 
 const NotificationDispatchJobSchema = z.object({
   event: z.string(),
   input: CreateNotificationInputSchema,
-  // The `{ key, data }` mail template to enqueue alongside the in-app notification,
-  // or null for an in-app-only event. Replaces the old `sendEmail: boolean` - a flag
-  // can't carry the template key or its data (that's why four mails used to go out as
-  // the notification's English body). See ADR-0036.
-  email: MailTemplateSchema.nullable(),
+  email: MailTemplateSchema.nullish(),
 });
 
 type NotificationMapEntry = {
@@ -378,11 +378,13 @@ export default {
           return;
         }
         publishNotification(record);
-        await dispatchMail(
-          payload.userId,
-          { key: 'kycResubmissionRequested', data: { reason: payload.reason } },
-          payload.eventId,
-        );
+        if (payload.eventId) {
+          await dispatchMail(
+            payload.userId,
+            { key: 'kycResubmissionRequested', data: { reason: payload.reason } },
+            payload.eventId,
+          );
+        }
       },
     });
 

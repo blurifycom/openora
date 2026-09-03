@@ -9,6 +9,7 @@ import {
 import { createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { MailService } from './service/mail.service.js';
+import { MIN_MAIL_ENCRYPTION_SECRET_LENGTH } from './service/mail-payload.service.js';
 import { DefaultEmailTemplateRenderer } from './adapters/default-email-template-renderer.js';
 import { StdoutEmailSender } from './adapters/stdout-email-sender.js';
 import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from './contract/index.js';
@@ -34,6 +35,13 @@ const logger = createLogger('mail');
 export default {
   id: 'mail',
   register(ctx) {
+    const encryptionSecret = process.env['AUTH_SECRET'] ?? '';
+    if (encryptionSecret.length < MIN_MAIL_ENCRYPTION_SECRET_LENGTH) {
+      throw new Error(
+        `mail: AUTH_SECRET must be at least ${MIN_MAIL_ENCRYPTION_SECRET_LENGTH} characters - mail-send job payloads (OTPs, invitation tokens) are encrypted with it`,
+      );
+    }
+
     let svcRef: MailService | null = null;
     const mailService = (c: TypedContainer<CoreTokenCatalog>): MailService =>
       (svcRef ??= new MailService({
@@ -42,7 +50,7 @@ export default {
         directory: c.get(ADMIN_USER_DIRECTORY),
         jobQueue: c.get(JOB_QUEUE),
         audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
-        encryptionSecret: process.env['AUTH_SECRET'] ?? '',
+        encryptionSecret,
       }));
 
     // Platform defaults: log-to-stdout transport, English-only plain-text renderer.
