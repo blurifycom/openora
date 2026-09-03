@@ -212,7 +212,19 @@ describe('MailService', () => {
   });
 
   it('audits an exhausted delivery for a regulatory key', async () => {
-    const { svc, audit } = build();
+    const { svc, audit } = build({
+      directory: {
+        get: vi.fn(async () => ({
+          id: 'u-1',
+          email: 'user@b.com',
+          name: null,
+          createdAt: new Date(),
+          isActive: true,
+          role: 'player',
+          language: 'de',
+        })),
+      },
+    });
 
     await svc.onDeliveryExhausted(
       { recipient: { kind: 'user', userId: 'u-1' }, template: rgLifted },
@@ -225,7 +237,12 @@ describe('MailService', () => {
         actorType: 'system',
         action: 'mail.regulatory_delivery.failed',
         resourceId: 'u-1',
-        after: { templateKey: 'rgCoolingOffLifted', reason: 'Error', attempt: 5 },
+        after: {
+          templateKey: 'rgCoolingOffLifted',
+          locale: 'de',
+          reason: 'Error',
+          attempt: 5,
+        },
       }),
     );
   });

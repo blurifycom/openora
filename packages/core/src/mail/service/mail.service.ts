@@ -127,7 +127,9 @@ export class MailService {
       { err: error, key: job.template.key, recipient: job.recipient.kind },
       'mail delivery exhausted retries',
     );
+    const locale = await this.resolveLocale(job);
     await this.recordRegulatoryOutcome('mail.regulatory_delivery.failed', job, {
+      locale,
       reason: error.name,
       attempt,
     });
@@ -164,6 +166,14 @@ export class MailService {
 
   private encrypt(job: MailSendJob): EncryptedMailSendJob {
     return this.payloadCipher.encrypt(job);
+  }
+
+  private async resolveLocale(job: MailSendJob): Promise<string> {
+    if (job.recipient.kind === 'address') {
+      return job.recipient.locale ?? DEFAULT_LOCALE;
+    }
+    const row = await this.directory.get(job.recipient.userId);
+    return row?.language ?? DEFAULT_LOCALE;
   }
 
   private async resolveRecipient(
