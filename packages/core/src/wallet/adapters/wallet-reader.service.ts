@@ -12,9 +12,6 @@ import {
   DEFAULT_WALLET_CURRENCY,
 } from '../service/wallet.service.js';
 
-// The caller only ever hands this a row matched by a WHERE on providerName/providerRefId
-// both equal to non-null args, so a null here means the query itself is broken - guard
-// rather than assert-away the column's nullability.
 function toProviderTransaction(
   row: typeof walletTransaction.$inferSelect,
 ): WalletProviderTransaction {

@@ -10,8 +10,6 @@ export type WalletProviderTransaction = {
   providerName: string;
   providerRefId: string;
   externalRoundId: string | null;
-  /** Raw JSON string from wallet_transaction.metadata - caller parses it. Present when the
-   *  original debit/credit included a responseSnapshot (see WalletCommands below). */
   metadata: string | null;
   createdAt: Date;
 };
@@ -43,22 +41,12 @@ export type WalletReader = {
    * getWithdrawalCountInWindow (see TagEvaluationService's high_risk resweep).
    */
   getWithdrawalCountsInWindow?(userIds: string[], windowDays: number): Promise<Map<string, number>>;
-  /**
-   * Looks up the wallet_transaction row tagged with this exact (providerName,
-   * providerRefId) pair, if any. Lets a caller replaying a provider callback return the
-   * original response deterministically instead of reconstructing one from current
-   * state. Optional for the same reason as getWithdrawalCountsInWindow above - a
-   * pre-existing external WalletReader implementation still satisfies the port.
-   */
+  /** Looks up the wallet_transaction row tagged with this (providerName, providerRefId) pair, if any. Optional for the same reason as getWithdrawalCountsInWindow above. */
   findByProviderRef?(
     providerName: string,
     providerRefId: string,
   ): Promise<WalletProviderTransaction | null>;
-  /**
-   * Current balance in the player's active wallet currency. Optional for the same
-   * reason as getWithdrawalCountsInWindow above - a pre-existing external WalletReader
-   * implementation still satisfies the port.
-   */
+  /** Current balance in the player's active wallet currency. Optional for the same reason as getWithdrawalCountsInWindow above. */
   getBalance?(userId: string): Promise<{ balance: string; currency: string }>;
 };
 

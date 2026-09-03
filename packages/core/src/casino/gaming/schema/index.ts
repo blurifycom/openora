@@ -47,9 +47,6 @@ export const gameRound = pgTable(
     currency: text().notNull(),
     startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp({ withTimezone: true }),
-    // The aggregator-side round id a synchronous wallet-callback bridge accumulates bet/win
-    // deltas onto (see GamingService.accumulateExternalRound). Null for a round started
-    // in-platform via startRound - those are identified by their own `id`.
     externalRoundId: text(),
   },
   (t) => [
