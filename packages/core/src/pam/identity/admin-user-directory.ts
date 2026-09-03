@@ -26,6 +26,8 @@ import { user } from './schema/index.js';
 // username + KYC without leaking the schema to the consumer module.
 import { player } from '@openora/core/pam/schema/profile';
 
+const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&');
+
 // Identity owns the `user` table, so it owns the admin directory port.
 // admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.
 function toRow(r: typeof user.$inferSelect) {
@@ -202,7 +204,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   }
 
   async findPlayerIds(query: string, limit = 1000, options?: PlayerIdSearchOptions) {
-    const term = `%${query}%`;
+    const term = `%${escapeLikePattern(query)}%`;
     const conditions = [ilike(user.email, term), ilike(user.username, term)];
     if (UuidSchema.safeParse(query).success) {
       conditions.push(eq(player.id, query), eq(player.userId, query));

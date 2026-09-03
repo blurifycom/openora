@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { loadExtensions } from '@openora/core/server';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import { MentionResultSchema } from '@openora/core/engagement/contracts/chat-commands';
 import {
   setupTestDb,
   bootTestApp,
@@ -29,9 +30,8 @@ function mentionUrl(q: string, roomId: string = GLOBAL_CHAT_ROOM_ID) {
   return `/chat-command/mention-search?${params.toString()}`;
 }
 
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
-async function readJson(res: Response): Promise<any> {
-  return res.json();
+async function readMentionResults(res: Response) {
+  return MentionResultSchema.array().parse(await res.json());
 }
 
 beforeAll(async () => {
@@ -59,18 +59,28 @@ describe('mentionSearch: a typed query reaches players who are not online', () =
     const res = await searcher.client.get(mentionUrl(target.username));
 
     expect(res.status).toBe(200);
-    const results = (await readJson(res)) as { userId: string; username: string }[];
+    const results = await readMentionResults(res);
     expect(results).toContainEqual({ userId: target.userId, username: target.username });
   });
 
   it('never returns the caller', async () => {
     const searcher = await registerPlayer('selfsearch');
 
-    const results = (await readJson(await searcher.client.get(mentionUrl(searcher.username)))) as {
-      userId: string;
-    }[];
+    const results = await readMentionResults(
+      await searcher.client.get(mentionUrl(searcher.username)),
+    );
 
     expect(results.map((r) => r.userId)).not.toContain(searcher.userId);
+  });
+
+  it('does not treat wildcard query characters as player search patterns', async () => {
+    const searcher = await registerPlayer('wildsearch');
+    await registerPlayer('wildtarget');
+
+    const res = await searcher.client.get(mentionUrl('%'));
+
+    expect(res.status).toBe(200);
+    expect(await readMentionResults(res)).toEqual([]);
   });
 });
 
@@ -82,7 +92,7 @@ describe('mentionSearch: an empty query stays scoped to the room', () => {
     const res = await searcher.client.get(mentionUrl(''));
 
     expect(res.status).toBe(200);
-    expect(await readJson(res)).toEqual([]);
+    expect(await readMentionResults(res)).toEqual([]);
   });
 });
 
