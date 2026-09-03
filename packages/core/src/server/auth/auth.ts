@@ -7,10 +7,8 @@ import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
 import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora/core/contracts';
 
-// Transport-agnostic mail hook. The identity plugin wires it to MAIL_DISPATCH.toAddress
-// (which enqueues onto the `mail-send` queue - rendering and transport happen off the
-// request path). When omitted, OTP emails are silently skipped (eg in tests, or the
-// SessionResolver-only createAuth() which never sends).
+// Transport-agnostic OTP-mail hook; the identity plugin wires it to MAIL_DISPATCH.
+// A silent no-op when omitted (tests, the SessionResolver-only createAuth()).
 export type DispatchOtpMail = (args: {
   to: string;
   template: MailTemplate;
@@ -54,11 +52,7 @@ export type AuthOptions = {
    * them apart on its own - and the two need different copy.
    */
   isExistingAccountSignUp?: (email: string) => boolean;
-  /**
-   * Marks a password-reset OTP initiated by an administrator. The selected template
-   * is carried over the mail queue, so renderer behavior never depends on a cache
-   * value still being present when the worker runs.
-   */
+  /** True while the reset code being sent was triggered by an administrator, not the owner. */
   isAdminPasswordReset?: (email: string) => boolean | Promise<boolean>;
   cookieDomain?: string;
   twoFactor?: TwoFactorOptions;
@@ -166,9 +160,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           if (type !== 'email-verification' && type !== 'forget-password') {
             return;
           }
-          // Pick the template key here (auth is the only place that knows an OTP is a
-          // verification vs. a reset vs. a sign-up on an existing address); rendering,
-          // locale resolution and transport happen later in the mail worker.
           const template: MailTemplate =
             type === 'email-verification'
               ? { key: 'verifyEmail', data: { otp } }

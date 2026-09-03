@@ -857,10 +857,6 @@ export class IamService {
       new InvitationNotFoundError(input.email),
     );
 
-    // The platform carries only the token + expiry; the operator's renderer builds the
-    // back-office link. Always English: the invitee has no account yet, so no locale
-    // (and the back-office ships en-only). Keyed by the invitation row so a retry can't
-    // double-send. Rendering + transport happen off this request in the mail worker.
     await this.mailDispatch.toAddress({
       email: input.email,
       locale: 'en',

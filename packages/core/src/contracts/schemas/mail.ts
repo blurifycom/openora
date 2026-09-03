@@ -3,19 +3,10 @@ import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
 
 /**
- * The wire contract for a single outbound email, shared by the mail module
- * (`MAIL_DISPATCH`), the notifications module (`CreateNotificationInput.email`),
- * and the identity/iam callers. A template is named by `key` and always carries
- * the exact `data` shape that key renders - a tagged union, so `key` narrows
- * `data` to one payload (a bare generic over the key would not).
- *
- * Datetimes travel as ISO-8601 strings, never `Date`: every dispatch crosses the
- * `mail-send` job queue, and a `Date` does not survive JSON serialization there.
- * The renderer formats them against the recipient locale (see EMAIL_TEMPLATE_RENDERER).
- *
- * Openora core ships an English-only plain-text fallback for every key
- * (DEFAULT_EMAIL_TEMPLATES); an operator overlay replaces the renderer to add
- * languages and HTML design.
+ * The `{ key, data }` tagged union for a single outbound email, shared by the
+ * mail module, the notifications module and the identity/iam callers. Datetimes
+ * are ISO-8601 strings, never `Date` - every dispatch crosses the `mail-send`
+ * job queue as JSON.
  */
 export const MAIL_TEMPLATE_KEYS = [
   'verifyEmail',
@@ -35,23 +26,15 @@ export const MAIL_TEMPLATE_KEYS = [
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
 
-// No `status` field: the `key` (`withdrawalApproved` vs `withdrawalRejected`) is
-// already the discriminant, so a separate literal would just be a second copy a
-// caller has to keep in sync by hand.
 const WithdrawalDetailsShape = {
   amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   transactionId: UuidSchema,
-  // The moment the withdrawal decision was taken (`envelope.occurredAt`), NOT the
-  // moment the mail worker ran - a retry an hour later must not rewrite the date.
+  // `envelope.occurredAt`, not `new Date()` in the worker - a retried send must not
+  // re-date the mail.
   occurredAt: TimestampSchema,
 } as const;
 
-/**
- * One Zod object per template key, holding exactly the fields that key renders.
- * `EmailTemplateData` is inferred from this map, so the type and the runtime
- * validator can never drift.
- */
 export const EmailTemplateDataSchemas = {
   verifyEmail: z.object({ otp: z.string() }),
   resetPasswordOtp: z.object({ otp: z.string(), email: z.email() }),
@@ -85,10 +68,6 @@ export type EmailTemplateData = {
 const templateVariant = <K extends EmailTemplateKey>(key: K) =>
   z.object({ key: z.literal(key), data: EmailTemplateDataSchemas[key] });
 
-/**
- * `{ key, data }` tagged union. `MailTemplateSchema.parse` narrows `data` to the
- * payload the key names.
- */
 export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('verifyEmail'),
   templateVariant('resetPasswordOtp'),

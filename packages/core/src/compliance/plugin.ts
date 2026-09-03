@@ -230,7 +230,6 @@ export default {
         events: c.get(EVENT_BUS),
         loginEnforcement: c.get(LOGIN_ENFORCEMENT),
         identityReader: c.get(IDENTITY_READER),
-        // Lazy: the router factory runs after every plugin registered, so mail is bound.
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       });

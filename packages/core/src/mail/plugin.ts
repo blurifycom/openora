@@ -17,20 +17,9 @@ import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from './contract/index.js
 const logger = createLogger('mail');
 
 /**
- * The `mail` module: a thin module (no table, no HTTP routes) that owns the
- * outbound mail seams and the `mail-send` queue worker.
- *
- * It declares NO `dependsOn`. `notifications` depends on `identity`, and `identity`
- * needs a send path - a mail binding in either would close a load-order cycle. The
- * mail plugin binds its ports here, and every consumer resolves `MAIL_DISPATCH`
- * lazily in its own router factory, which runs after all plugins register.
- *
- * The `mail-send` worker needs a `MailService`, which is built the first time
- * `MAIL_DISPATCH` is resolved. The BullMQ worker starts consuming the moment it is
- * registered (before router factories run), and in a `mail`-only split deployment
- * NO consumer resolves `MAIL_DISPATCH` at all - so this plugin registers an empty
- * router purely to force `mailService(c)` at boot, before the first job is picked
- * up. See ADR-0036.
+ * Owns the outbound-mail seams (`EMAIL_SENDER`, `EMAIL_TEMPLATE_RENDERER`,
+ * `MAIL_DISPATCH`) and the `mail-send` queue worker. No table, no HTTP routes.
+ * See ADR-0036 for the no-`dependsOn` lazy-resolution design.
  */
 export default {
   id: 'mail',
@@ -53,7 +42,6 @@ export default {
         encryptionSecret,
       }));
 
-    // Platform defaults: log-to-stdout transport, English-only plain-text renderer.
     ctx.provide(EMAIL_SENDER, () => new StdoutEmailSender());
     ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new DefaultEmailTemplateRenderer());
 
@@ -65,8 +53,8 @@ export default {
       };
     });
 
-    // No HTTP surface - this factory exists only so the boot-time router loop
-    // constructs the MailService the worker below needs, in every deployment shape.
+    // Empty router: its only job is to build the MailService during the boot-time
+    // router loop, so the worker has it even when no consumer resolves MAIL_DISPATCH.
     ctx.routers.add('mail', (c) => {
       mailService(c);
       return {};
@@ -75,12 +63,9 @@ export default {
     ctx.jobs.worker({
       queue: MAIL_SEND_QUEUE,
       schema: EncryptedMailSendJobSchema,
-      // Mail providers rate-limit; keep the fan-out modest.
       options: { concurrency: 5 },
       handler: async ({ payload }) => {
         if (!svcRef) {
-          // A leftover job picked up in the sub-millisecond window before the router
-          // loop runs: throw so BullMQ retries (its backoff outlasts that window).
           throw new Error('mail: service not constructed yet');
         }
         await svcRef.deliverEncrypted(payload);

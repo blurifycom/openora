@@ -78,9 +78,6 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
-  // The OTP hook resolves MAIL_DISPATCH unconditionally; a split deployment that
-  // includes `identity` but not `mail` gets a descriptive boot error, not a bare
-  // "no provider" crash on the first sign-up. See ADR-0024/0036.
   requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
@@ -142,8 +139,6 @@ export default {
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           identityReader: c.get(IDENTITY_READER),
-          // Resolved lazily (router factory runs after every plugin registered) so identity
-          // does not depend on the mail plugin's load order. See ADR-0036.
           mailDispatch: c.get(MAIL_DISPATCH),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),

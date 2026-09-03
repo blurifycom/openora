@@ -1,12 +1,6 @@
 import * as z from 'zod';
 import { MailTemplateSchema, UuidSchema, queue } from '@openora/core/contracts';
 
-/**
- * The `mail` module has no HTTP surface - it owns the outbound-mail seams and one
- * background queue. This "contract" is the wire shape of that queue's payload,
- * validated before the worker handler runs (deliveries cross the queue, so a
- * `Date` in the template data would not survive - datetimes are ISO strings).
- */
 export const MAIL_SEND_QUEUE = queue('mail-send');
 
 export const MailRecipientSchema = z.discriminatedUnion('kind', [

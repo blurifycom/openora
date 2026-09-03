@@ -335,7 +335,6 @@ export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   identityReader: IdentityReader;
-  /** Enqueues OTP mail (verification / reset). Omitted only in tests that never send. */
   mailDispatch?: MailDispatchPort;
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
@@ -415,15 +414,12 @@ export class IdentityService {
       ...(mailDispatch
         ? {
             dispatchOtpMail: async ({ to, template }) => {
-              // identity owns the `user` table, so it resolves the account locale here
-              // and passes it explicitly; the mail module never reads the identity schema.
               const locale = (await this.resolveUserLanguage(to)) ?? 'en';
               await mailDispatch.toAddress({
                 email: to,
                 locale,
                 template,
-                // OTP sends are request-driven, not event-driven: every send is a new
-                // code and must go through, so the key is unique per call.
+                // unique per call: each OTP send is a fresh code that must go through
                 idempotencyKey: `otp:${template.key}:${randomUUID()}`,
               });
             },
@@ -1083,9 +1079,6 @@ export class IdentityService {
     }
   }
 
-  // Read while Better Auth selects the queued template. Unlike the former renderer
-  // marker, this value does not need to survive until mail delivery: the resulting
-  // `adminResetPasswordOtp` discriminator travels in the validated job payload.
   private adminPasswordResetMarkerKey(email: string): string {
     return `admin-password-reset:${email.toLowerCase()}`;
   }
@@ -1119,8 +1112,7 @@ export class IdentityService {
       identityLogger.warn({ email, err }, 'admin password reset marker cache write failed');
     }
 
-    // Mirrors requestPasswordReset: the OTP email (if any) is handed to the mail queue;
-    // any underlying error is swallowed the same way.
+    // Mirrors requestPasswordReset - the send failure is swallowed the same way.
     try {
       await this.api.requestPasswordResetEmailOTP({
         body: { email },

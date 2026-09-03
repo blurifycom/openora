@@ -2,25 +2,13 @@ import { createToken, type Token } from './token.js';
 import { formatMoneyAmount } from '../schemas/common.js';
 import type { EmailTemplateData, EmailTemplateKey, MailTemplate } from '../schemas/mail.js';
 
-/**
- * A rendered email: subject plus BOTH bodies. HTML and text are separate fields,
- * never one string the transport has to sniff (`body.trim().startsWith('<')`).
- * The default renderer fills `text` with the copy and `html` with a minimal
- * escaped wrapper; an operator overlay returns a designed HTML body and a
- * generated plain-text alternative.
- */
 export type RenderedEmail = { subject: string; html: string; text: string };
 
 /**
  * Renders one `{ key, data }` template into a subject + HTML + text for a locale.
- * Takes the tagged union whole (not a key/data pair) so an implementation switches
- * on `template.key` with `data` already narrowed, and no caller has to bridge the
- * key/data generic across a port boundary.
- *
- * `recipientName` is the account's display name when the mail module could resolve
- * one (a `toUser` send), or `null` (a `toAddress` send - the recipient has no
- * account yet, eg an OTP or an admin invitation). The platform default renderer
- * ignores it; an operator overlay uses it for a greeting.
+ * `recipientName` is the account display name for a `toUser` send, or `null` for a
+ * `toAddress` send (OTP, invitation - no account behind the address). The default
+ * renderer ignores it; an operator overlay uses it for a greeting.
  */
 export type EmailTemplateRenderer = {
   render(
@@ -36,9 +24,6 @@ export const EMAIL_TEMPLATE_RENDERER: Token<EmailTemplateRenderer> =
 const escapeHtml = (value: string): string =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-// Wraps the plain-text fallback in the smallest valid HTML body: each blank-line
-// block becomes a <p>, single newlines become <br>. Keeps the platform shippable
-// without an operator renderer; an overlay replaces this wholesale.
 const textToHtml = (text: string): string =>
   text
     .split(/\n{2,}/)
@@ -54,8 +39,6 @@ const formatEmailDate = (iso: string | null, locale: string): string =>
         timeZone: 'UTC',
       }).format(new Date(iso))} UTC`;
 
-// Same grouping as the in-app notification of the same event, so a $10,000 withdrawal
-// does not read `10,000.00 USD` in one channel and `10000.00 USD` in the other.
 const formatMoney = (amount: string, currency: string): string =>
   `${formatMoneyAmount(amount)} ${currency}`;
 
@@ -64,15 +47,7 @@ type PlainTemplate<K extends EmailTemplateKey> = (
   locale: string,
 ) => { subject: string; text: string };
 
-/**
- * Production-safe English-only copy for every template key. Shared by the mail
- * module's `DefaultEmailTemplateRenderer` and any caller that needs a fallback -
- * single source of truth so no two copies drift. Openora core intentionally
- * ships English-only plain text; an operator overlay rebinds
- * `EMAIL_TEMPLATE_RENDERER` for other languages and HTML design. The `locale`
- * argument still reaches every entry so date and number formatting follows the
- * recipient even before an overlay is installed.
- */
+/** English-only fallback copy for every template key. An operator overlay replaces it. */
 const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   verifyEmail: (data) => ({
     subject: 'Verify your email',
@@ -86,9 +61,8 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Password reset requested by an administrator',
     text: `An administrator requested a password reset for your account. Your reset code is: ${data.otp}`,
   }),
-  // Sent when someone tries to sign up with an address that already has an account. It
-  // must never confirm or deny that the account exists to anyone but its owner, so the
-  // wording addresses the owner and the sign-up response stays identical either way.
+  // Must never confirm or deny the account exists to anyone but its owner - the copy
+  // addresses the owner and the sign-up response is identical either way.
   existingAccountSignUp: (data) => ({
     subject: 'You already have an account',
     text:
@@ -152,18 +126,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   }),
 };
 
-/**
- * The English-only fallback render for one `{ key, data }` template.
- * `DefaultEmailTemplateRenderer` (the mail module's platform-default
- * `EMAIL_TEMPLATE_RENDERER` binding) is a thin wrapper over this; keeping it a
- * pure function means a caller that needs the fallback copy without the DI
- * plumbing can reach it directly.
- */
+/** English-only fallback render for one `{ key, data }` template. */
 export function renderDefaultEmail(template: MailTemplate, locale: string): RenderedEmail {
-  // The tagged union pairs `key` with `data` by construction, but indexing the
-  // template map by a union key produces a union of functions TS will not call
-  // with the union data. This is the single sanctioned variance cast (see conventions);
-  // MailTemplateSchema guarantees the pairing at every entry point.
+  // Sanctioned variance cast (see conventions): indexing the map by a union key gives a
+  // union of functions TS won't call with the union data; MailTemplateSchema guards the pairing.
   const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
   const { subject, text } = plain(template.data, locale);
   return { subject, text, html: textToHtml(text) };

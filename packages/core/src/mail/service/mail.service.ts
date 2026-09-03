@@ -16,9 +16,8 @@ const logger = createLogger('mail');
 
 const DEFAULT_LOCALE = 'en';
 
-// A permanent send failure for one of these keys is a regulatory event the
-// operator must be able to evidence (MGA/UKGC: the player must be told). Every
-// other key's failure is operational only - logged, not audited (B9 / ADR-0036).
+// A permanent send failure for one of these keys is a regulatory event the operator
+// must be able to evidence (MGA/UKGC: the player must be told). See ADR-0036.
 const REGULATORY_KEYS = new Set<MailTemplate['key']>([
   'rgLimitUpdated',
   'rgCoolingOffActivated',
@@ -28,17 +27,11 @@ const REGULATORY_KEYS = new Set<MailTemplate['key']>([
   'kycResubmissionRequested',
 ]);
 
-// Matches the notifications module's dispatch retry shape (#110): 5 tries, growing gap.
-// These govern the SEND once the job is on the queue.
 const MAIL_ENQUEUE_OPTS = {
   attempts: 5,
   backoff: { type: 'exponential', delayMs: 1000 },
 } as const;
 
-// Getting the job ONTO the queue is the fragile step (a brief queue-backend outage).
-// A bare `.catch(log)` there loses the mail silently, so retry the enqueue a few
-// times with a short gap before giving up. This is the interim guard for the ack
-// gap (B11 / ADR-0036); the durable fix is an outbox row in the caller's txn.
 const ENQUEUE_RETRY_DELAYS_MS = [100, 300, 800];
 
 async function withEnqueueRetry(enqueue: () => Promise<unknown>): Promise<void> {
@@ -65,11 +58,9 @@ export type MailServiceDeps = {
 };
 
 /**
- * The one send path. `enqueue*` is called synchronously by `MAIL_DISPATCH`
- * consumers and only puts a job on the `mail-send` queue - never renders, never
- * calls the transport. `deliver` runs later in the queue worker: it resolves the
- * address and locale, renders once, and sends. `onDeliveryExhausted` is the
- * worker's dead-letter hook.
+ * The one send path. `enqueue*` only puts an encrypted job on the `mail-send`
+ * queue; `deliver` runs later in the worker (resolve recipient, render, send);
+ * `onDeliveryExhausted` is the worker's dead-letter hook.
  */
 export class MailService {
   private readonly sender: EmailSenderPort;
@@ -116,8 +107,6 @@ export class MailService {
     );
   }
 
-  // Throws only on a retryable failure (transport error). A missing address is
-  // permanent - it is logged and swallowed so the queue does not spin on it.
   async deliver(job: MailSendJob): Promise<void> {
     const resolved = await this.resolveRecipient(job);
     if (!resolved) {
@@ -169,8 +158,6 @@ export class MailService {
     job: MailSendJob,
   ): Promise<{ email: string; locale: string; name: string | null } | null> {
     if (job.recipient.kind === 'address') {
-      // A `toAddress` send has no account behind it (OTP, admin invitation), so the
-      // recipient's name is never known here.
       return {
         email: job.recipient.email,
         locale: job.recipient.locale ?? DEFAULT_LOCALE,

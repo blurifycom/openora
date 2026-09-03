@@ -39,10 +39,8 @@ services:
   # See ADR-0028.
   redis:
     image: redis:7-alpine
-    # noeviction: the job queue shares this instance; evicting a queued key would
-    # silently drop a pending email/notification. appendonly + everysec: an fsync'd
-    # on-disk journal so a container restart does not lose what is still queued.
-    # A dedicated queue instance is a later infra ticket (ADR-0036).
+    # noeviction + appendonly: the job queue shares this instance and must not lose
+    # queued work to eviction or a restart. See ADR-0036.
     command:
       [
         'redis-server',

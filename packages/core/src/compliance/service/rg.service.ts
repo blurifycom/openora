@@ -261,7 +261,6 @@ export type RgServiceDeps = {
   events: EventBus;
   loginEnforcement: LoginEnforcementPort;
   identityReader: IdentityReader;
-  /** Enqueues the player-facing RG email. Null in tests that don't assert on mail. */
   mailDispatch?: MailDispatchPort | null;
   rates: ExchangeRateReader;
 };
@@ -365,9 +364,6 @@ export class RgService {
     return toLimitDto(row);
   }
 
-  // Takes the written row (not the individual fields) so the mail idempotency
-  // key can bind to `id:updatedAt` - every caller (setPlayerLimit and the two
-  // player self-service flows) already has the row on hand.
   async notifyLimitUpdated(userId: User['id'], row: LimitRow): Promise<void> {
     await this.notify(
       userId,
@@ -748,12 +744,8 @@ export class RgService {
     }
   }
 
-  // Hands the RG email to the mail module: it resolves the address and locale, renders
-  // and sends off the request path, and - because these keys are regulatory - writes an
-  // audit entry if delivery is ultimately exhausted. `rowId` (the limit or exclusion row)
-  // is the idempotency key, so a retried mutation never doubles the mail. The enqueue is
-  // itself retried inside the mail module; a final failure here is logged, not thrown -
-  // the exclusion is already committed and enforced.
+  // `notificationId` (the limit/exclusion row) keys the send so a retried mutation
+  // never doubles the mail. Failure is logged, not thrown - the change is committed.
   private async notify(
     userId: User['id'],
     template: MailTemplate,

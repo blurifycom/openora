@@ -489,9 +489,6 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     expect(approveRes.status).toBe(200);
     expect((await readJson(approveRes)).status).toBe('completed');
 
-    // One `wallet.withdrawal.approved` event drives BOTH channels through the
-    // notifications module: the in-app notification row and, alongside it, the
-    // `withdrawalApproved` email enqueued onto `mail-send`.
     await vi.waitFor(async () => {
       const items = (await readJson(await client.get('/notifications'))).items as Array<{
         type: string;

@@ -42,8 +42,6 @@ describe('DefaultEmailTemplateRenderer', () => {
 
     expect(result.subject).toBe('You already have an account');
     expect(result.text).toContain('123456');
-    // The whole point of the separate key: a player who never asked to reset anything
-    // must not be handed a bare reset code with no explanation.
     expect(result.text).toContain('no new account was created');
   });
 

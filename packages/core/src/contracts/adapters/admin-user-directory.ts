@@ -18,11 +18,7 @@ export type AdminUserRow = {
   createdAt: Date;
   isActive: boolean;
   role: string;
-  /**
-   * The account's UI locale (`en`, `de`, ...), or null when never set. The mail
-   * module reads it through this port to pick a language for a `toUser` send -
-   * the player-facing `AdminPlayerSummary` already carried it, admin rows did not.
-   */
+  /** Account UI locale (`en`, `de`, ...), or null when never set. */
   language: string | null;
   failedLoginAttempts?: number;
   lockoutUntil?: Date | null;

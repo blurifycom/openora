@@ -27,11 +27,7 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
-/**
- * Polls `capturedEmailsFor` until a mail matching `match` lands or the deadline passes.
- * Mail now leaves the platform through the `mail-send` job queue, so a mail a request
- * just triggered is not captured synchronously - the worker delivers it a beat later.
- */
+/** Polls `capturedEmailsFor` until a mail matching `match` lands (mail is queue-delivered). */
 export async function waitForEmail(
   email: string,
   match: (mail: CapturedEmail) => boolean,

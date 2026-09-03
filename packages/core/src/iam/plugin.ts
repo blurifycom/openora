@@ -21,8 +21,6 @@ const logger = createLogger('iam');
 export default {
   id: 'iam',
   dependsOn: ['identity'],
-  // inviteAdmin resolves MAIL_DISPATCH unconditionally - fail fast with a clear
-  // message if a split deployment includes `iam` but not `mail`. See ADR-0024/0036.
   requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Captured from the provider factory so the event handlers below purge the SAME
@@ -75,7 +73,6 @@ export default {
         new IamService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
-          // Lazy resolve: router factories run after every plugin registered. See ADR-0036.
           c.get(MAIL_DISPATCH),
           c.get(IDENTITY_READER),
           c.get(SESSION_COMMANDS),

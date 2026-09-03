@@ -36,10 +36,8 @@ const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 
-// `eventId` optional and `email` nullish so a job enqueued by the previous release
-// (before #110's dispatch queue carried a mail template) still parses on a rolling
-// redeploy - it lands the in-app notification and skips the mail rather than
-// dead-lettering.
+// `eventId` optional / `email` nullish: a job from the previous release still parses
+// on a rolling redeploy (in-app notification lands, mail is skipped).
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
   reason: z.string().nullable(),
@@ -55,9 +53,7 @@ const NotificationDispatchJobSchema = z.object({
 type NotificationMapEntry = {
   event: DomainEventName;
   handle: (payload: unknown) => CreateNotificationInput | null;
-  // Builds the mail template for this event, or null when the event is in-app only.
-  // `occurredAt` is the envelope timestamp - the mail must date from when the event
-  // happened, never from when the (possibly retried) worker ran.
+  // `occurredAt` is the envelope timestamp - a retried send must not re-date the mail.
   buildEmail: (payload: unknown, occurredAt: string) => MailTemplate | null;
 };
 
@@ -246,17 +242,13 @@ export default {
     // Subscriptions are wired before router factories run (boot order), so these refs are
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
-    // Resolved lazily (router factory) so notifications does not depend on the mail
-    // plugin's load order. The mail module OWNS address + locale resolution and the
-    // send path - this module only names the template. See ADR-0036.
     let mailDispatchRef: MailDispatchPort | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
-    // Hands a template to the mail module keyed by the source event, so a redelivered
-    // event never doubles the mail. Never throws into the caller - the in-app
-    // notification has already landed; the enqueue is retried inside the mail module.
+    // Keyed by the source event so a redelivery never doubles the mail. Never throws:
+    // the in-app notification already landed.
     const dispatchMail = async (
       userId: string,
       template: MailTemplate,
