@@ -129,19 +129,25 @@
       "id": "cms",
       "group": "cms",
       "tables": [
-        "banner",
+        "banner_configuration",
+        "banner_image",
         "page"
       ],
       "routes": [
-        "cms.createBanner",
+        "cms.createBannerConfiguration",
         "cms.createPage",
-        "cms.deleteBanner",
+        "cms.deleteBannerConfiguration",
+        "cms.deleteBannerImage",
         "cms.deletePage",
+        "cms.getBannerConfiguration",
         "cms.getPage",
-        "cms.listBanners",
-        "cms.listBannersByPlacement",
+        "cms.getPublicBanner",
+        "cms.listBannerConfigurationsByPlacement",
+        "cms.listBannerPlacements",
         "cms.listPages",
-        "cms.updateBanner",
+        "cms.setBannerImage",
+        "cms.setDefaultBannerConfiguration",
+        "cms.unsetDefaultBannerConfiguration",
         "cms.updatePage"
       ]
     },
@@ -947,9 +953,12 @@
     "chat.user.mentioned",
     "chat.user.unblocked",
     "chat.user.unignored",
-    "cms.banner.created",
-    "cms.banner.deleted",
-    "cms.banner.updated",
+    "cms.banner.configuration.created",
+    "cms.banner.configuration.deleted",
+    "cms.banner.configuration.set_default",
+    "cms.banner.configuration.unset_default",
+    "cms.banner.image.deleted",
+    "cms.banner.image.set",
     "cms.page.created",
     "cms.page.deleted",
     "cms.page.published",
@@ -1183,7 +1192,27 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
-      "name": "BannerSchema",
+      "name": "BannerConfigurationSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerConfigurationSummarySchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerImageSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerLayoutSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerLinkUrlSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerPlacementSummarySchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
@@ -1383,6 +1412,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "CmsConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
       "name": "CommandChatMessageSchema",
       "file": "packages/core/src/contracts/schemas/chat-command.ts"
     },
@@ -1401,6 +1434,10 @@
     {
       "name": "CountryCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "CreateBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "CreateNotificationInputSchema",
@@ -1437,6 +1474,14 @@
     {
       "name": "DateRangeSchema",
       "file": "packages/core/src/contracts/schemas/reporting.ts"
+    },
+    {
+      "name": "DeleteBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "DeleteBannerImageInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "deleteTagSchema",
@@ -1615,12 +1660,20 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "GetBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "GetExchangeRateInputSchema",
       "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
     },
     {
       "name": "GetExchangeRatesInputSchema",
       "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "GetPublicBannerInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "GetRelationshipsInputSchema",
@@ -1657,6 +1710,10 @@
     {
       "name": "HighRiskCountBreachDetailSchema",
       "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HostAllowlistEntrySchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
       "name": "IamAssignmentSortBySchema",
@@ -1801,6 +1858,10 @@
     {
       "name": "LimitViewSchema",
       "file": "packages/core/src/compliance/contract/limits.ts"
+    },
+    {
+      "name": "ListBannerConfigurationsInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "ListFriendRequestsInputSchema",
@@ -2075,6 +2136,14 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "PublicBannerSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "PublicBannerSlotSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "PublicWalletAssetSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -2251,8 +2320,16 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "SetBannerImageInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
       "name": "SetBonusRolloverConfigInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "SetDisplayCurrencyInputSchema",
@@ -2353,6 +2430,10 @@
     {
       "name": "UnignoreCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "UnsetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "UpdatePlayerProfileInputSchema",
