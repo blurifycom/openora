@@ -34,8 +34,11 @@ const iamRoleEventBase = z
 const cmsPageEventBase = z
   .object({ pageId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
-const cmsBannerEventBase = z
-  .object({ bannerId: UuidSchema, actorId: UuidSchema })
+const cmsBannerConfigurationEventBase = z
+  .object({ bannerConfigurationId: UuidSchema, actorId: UuidSchema })
+  .extend(authContextBase.shape);
+const cmsBannerImageEventBase = z
+  .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
 const tagPlayerEventBase = actorReasonBase
@@ -563,9 +566,18 @@ export const domainEventSchemas = {
   'cms.page.created': cmsPageEventBase,
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
-  'cms.banner.created': cmsBannerEventBase,
-  'cms.banner.updated': cmsBannerEventBase,
-  'cms.banner.deleted': cmsBannerEventBase,
+  'cms.banner.configuration.created': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.set_default': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.unset_default': z
+    .object({
+      placement: z.string(),
+      previousBannerConfigurationId: UuidSchema.nullable(),
+      actorId: UuidSchema,
+    })
+    .extend(authContextBase.shape),
+  'cms.banner.image.set': cmsBannerImageEventBase,
+  'cms.banner.image.deleted': cmsBannerImageEventBase,
 
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role

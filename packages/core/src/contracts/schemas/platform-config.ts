@@ -180,7 +180,7 @@ export const RegistrationConfigSchema = z
   })
   .strict();
 
-const AttachmentHostSchema = z
+export const HostAllowlistEntrySchema = z
   .string()
   .trim()
   .min(1)
@@ -208,7 +208,7 @@ const AttachmentHostSchema = z
 export const ChatConfigSchema = z
   .object({
     /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
-    allowedAttachmentHosts: z.array(AttachmentHostSchema).default([]),
+    allowedAttachmentHosts: z.array(HostAllowlistEntrySchema).default([]),
     /**
      * Cron knob for the sweep that audits a mute or platform ban lapsing on its own.
      * Static config, not a DB row. Absent means the built-in default applies; the cadence
@@ -271,6 +271,14 @@ export const AdminSecurityConfigSchema = z
 
 export type AdminSecurityConfig = z.infer<typeof AdminSecurityConfigSchema>;
 
+export const CmsConfigSchema = z
+  .object({
+    /** Hostnames a banner image URL may be served from. Empty = no banner images allowed. */
+    allowedBannerImageHosts: z.array(HostAllowlistEntrySchema).default([]),
+  })
+  .strict();
+export type CmsConfig = z.infer<typeof CmsConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -322,6 +330,8 @@ export const PlatformConfigSchema = z
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
     /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
+    /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
+    cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
   })
   .strict()
   .superRefine((cfg, ctx) => {
