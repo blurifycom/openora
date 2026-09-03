@@ -1,6 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
-import type { EventBus } from '@openora/core/server';
+import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
 import type {
   AuditWritePort,
   ClientMeta,
@@ -23,8 +23,17 @@ export class ChatRoomBanService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  private async assertModerator(roomId: Uuid, actorId: Uuid, targetId?: Uuid) {
-    const [actor] = await this.drizzle.db
+  /**
+   * Reads both roles through `db`, so a caller holding the room's advisory lock can pass its
+   * transaction and have the authorization decided against rows nobody can move underneath it.
+   */
+  private async assertModerator(
+    db: DrizzleDb | DrizzleTx,
+    roomId: Uuid,
+    actorId: Uuid,
+    targetId?: Uuid,
+  ) {
+    const [actor] = await db
       .select({ role: chatRoomMember.role })
       .from(chatRoomMember)
       .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
@@ -33,7 +42,7 @@ export class ChatRoomBanService {
       throw new ChatRoomNotModeratorError(roomId);
     }
     if (targetId) {
-      const [target] = await this.drizzle.db
+      const [target] = await db
         .select({ role: chatRoomMember.role })
         .from(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, targetId)))
@@ -63,9 +72,12 @@ export class ChatRoomBanService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
-    await this.assertModerator(roomId, moderatorId, userId);
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        // Inside the lock, not before it: an owner whose account is closing is demoted by the
+        // ownership handover, and a check that ran before the lock would still let that request
+        // through to ban the successor it just promoted, leaving the room without an owner.
+        await this.assertModerator(t, roomId, moderatorId, userId);
         const [existing] = await t
           .select({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt })
           .from(chatRoomBan)
@@ -127,7 +139,7 @@ export class ChatRoomBanService {
     userId: Uuid;
     moderatorId: Uuid;
   }) {
-    await this.assertModerator(roomId, moderatorId);
+    await this.assertModerator(this.drizzle.db, roomId, moderatorId);
     await this.drizzle.db
       .update(chatRoomBan)
       .set({ liftedAt: new Date(), liftedBy: moderatorId })

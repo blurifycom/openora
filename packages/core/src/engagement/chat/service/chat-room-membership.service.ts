@@ -230,35 +230,40 @@ export class ChatRoomMembershipService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
-    const removed = await this.drizzle.db.transaction(async (t) => {
-      const [moderator] = await t
-        .select({ role: chatRoomMember.role })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
-        .limit(1);
-      if (!moderator) {
-        throw new ChatRoomNotMemberError(roomId);
-      }
-      if (moderator.role !== 'moderator' && moderator.role !== 'owner') {
-        throw new ChatRoomNotModeratorError(roomId);
-      }
-      const [target] = await t
-        .select({ role: chatRoomMember.role })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-        .limit(1);
-      if (moderator.role !== 'owner' && target && target.role !== 'member') {
-        throw new ChatRoomNotModeratorError(roomId);
-      }
-      const removed = await t
-        .delete(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-        .returning();
-      if (removed.length > 0) {
-        await t.insert(chatRoomRemove).values({ roomId, userId, removedBy: moderatorId, reason });
-      }
-      return removed;
-    });
+    // Same lock the handover, join, leave and role writes take. Without it this delete lands
+    // between `closeAccountInRoom` picking a successor and promoting them, and the room keeps a
+    // `creatorId` who is no longer a member - no owner on the roster, no deletion deadline.
+    const removed = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const [moderator] = await t
+          .select({ role: chatRoomMember.role })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
+          .limit(1);
+        if (!moderator) {
+          throw new ChatRoomNotMemberError(roomId);
+        }
+        if (moderator.role !== 'moderator' && moderator.role !== 'owner') {
+          throw new ChatRoomNotModeratorError(roomId);
+        }
+        const [target] = await t
+          .select({ role: chatRoomMember.role })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .limit(1);
+        if (moderator.role !== 'owner' && target && target.role !== 'member') {
+          throw new ChatRoomNotModeratorError(roomId);
+        }
+        const removed = await t
+          .delete(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .returning();
+        if (removed.length > 0) {
+          await t.insert(chatRoomRemove).values({ roomId, userId, removedBy: moderatorId, reason });
+        }
+        return removed;
+      }),
+    );
     if (removed.length > 0) {
       await this.audit?.record({
         actorId: moderatorId,
@@ -344,8 +349,8 @@ export class ChatRoomMembershipService {
         if (target.role === role) {
           return null;
         }
-        // `removeMember` does not take this lock, so the row read above can be gone by now.
-        // The update decides whether anything actually changed, not the read.
+        // The update decides whether anything actually changed, not the read: the read is only
+        // as good as the lock, and a row can still be gone if a future writer forgets to take it.
         const updated = await t
           .update(chatRoomMember)
           .set({ role, roleAssignedAt: role === 'member' ? null : new Date() })
@@ -466,7 +471,7 @@ export class ChatRoomMembershipService {
         // A dead account must never inherit the room: two owners closed in sequence would
         // otherwise hand it straight to the first one's ghost row. `joinedAt` breaks the
         // tie for rows a backfill left without an assignment stamp.
-        const [successor] = await t
+        const candidates = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(
@@ -479,8 +484,7 @@ export class ChatRoomMembershipService {
           .orderBy(
             sql`${chatRoomMember.roleAssignedAt} asc nulls last`,
             asc(chatRoomMember.joinedAt),
-          )
-          .limit(1);
+          );
         // Ownership is read two ways - `chatRoom.creatorId` gates room edit and delete,
         // `chatRoomMember.role` gates the moderation guards - so both move together or the
         // new owner ends up unable to administer the room they just inherited.
@@ -490,23 +494,37 @@ export class ChatRoomMembershipService {
             .set({ role: 'member', roleAssignedAt: null })
             .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
 
-        if (successor) {
-          await t
+        // `creatorId` follows a promotion that actually landed, never the row the select saw.
+        // Every membership writer now takes the lock above, so a candidate disappearing between
+        // the two is not reachable today - this is the guard that keeps it that way, and the
+        // fallback when no candidate survives is the same countdown an ownerless room gets.
+        let newOwnerId: Uuid | null = null;
+        for (const candidate of candidates) {
+          const promoted = await t
             .update(chatRoomMember)
             .set({ role: 'owner', roleAssignedAt: new Date() })
             .where(
-              and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, successor.userId)),
-            );
-          await t
-            .update(chatRoom)
-            .set({ creatorId: successor.userId })
-            .where(eq(chatRoom.id, roomId));
+              and(
+                eq(chatRoomMember.roomId, roomId),
+                eq(chatRoomMember.userId, candidate.userId),
+                isNull(chatRoomMember.accountClosedAt),
+              ),
+            )
+            .returning({ id: chatRoomMember.id });
+          if (promoted.length === 1) {
+            newOwnerId = candidate.userId;
+            break;
+          }
+        }
+
+        if (newOwnerId) {
+          await t.update(chatRoom).set({ creatorId: newOwnerId }).where(eq(chatRoom.id, roomId));
           await demoteClosedOwner();
           return {
             handover: {
               kind: 'transferred',
               roomName: room.name,
-              newOwnerId: successor.userId,
+              newOwnerId,
             },
           } as const;
         }

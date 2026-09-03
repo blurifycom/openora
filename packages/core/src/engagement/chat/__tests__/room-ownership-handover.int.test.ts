@@ -8,6 +8,7 @@ import {
   type TestDb,
   type TestRedis,
 } from '@openora/core/testing';
+import type { DrizzleTx } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -39,7 +40,9 @@ import {
 } from '../schema/index.js';
 import { ChatService } from '../service/chat.service.js';
 import { ChatModerationService } from '../service/chat-moderation.service.js';
+import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
+import { ChatRoomNotModeratorError } from '../service/errors/chat-moderation.errors.js';
 import { ChatRoomPurgeService } from '../service/chat-room-purge.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -97,7 +100,8 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
     identityReader,
   );
   const purge = new ChatRoomPurgeService(db.drizzle, events, transport);
-  return { chat, membership, purge, events, transport };
+  const ban = new ChatRoomBanService(db.drizzle, events, audit, transport, identityReader);
+  return { chat, membership, purge, ban, events, transport };
 }
 
 /** A private room owned by `ownerId`, with the given ids joined as plain members. */
@@ -485,6 +489,148 @@ describe('ChatRoomMembershipService.handleAccountClosed - non-owners (real PG)',
 
     expect((await readMember(publicRoom!.id, ownerId)).accountClosedAt).toBeNull();
     expect((await readRoom(publicRoom!.id))?.scheduledDeletionAt).toBeNull();
+  });
+});
+
+describe('handleAccountClosed against a concurrent membership write (real PG)', () => {
+  /** Long enough for a blocked statement to actually be waiting on its lock, not queued in the driver. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+  /**
+   * Hold the room's advisory lock in a transaction the test controls, standing in for a
+   * handover that is mid-flight. `release(work)` runs `work` on that same transaction - so
+   * its writes land under the lock, exactly as the handover's do - and then commits.
+   */
+  function holdRoomLock(roomId: string) {
+    let held!: () => void;
+    const acquired = new Promise<void>((resolve) => {
+      held = resolve;
+    });
+    let release!: (work: (t: DrizzleTx) => Promise<void>) => void;
+    const work = new Promise<(t: DrizzleTx) => Promise<void>>((resolve) => {
+      release = resolve;
+    });
+    const done = db.drizzle.db.transaction(async (t) => {
+      await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-room:${roomId}`}))`);
+      held();
+      await (
+        await work
+      )(t);
+    });
+    return { acquired, release: (w: (t: DrizzleTx) => Promise<void>) => release(w), done };
+  }
+
+  /** The two role rows and the creator pointer the handover moves, as one unit. */
+  const handoverWrites =
+    (roomId: string, closedOwnerId: string, successorId: string) => async (t: DrizzleTx) => {
+      await t
+        .update(chatRoomMember)
+        .set({ role: 'owner', roleAssignedAt: new Date() })
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, successorId)));
+      await t
+        .update(chatRoomMember)
+        .set({ role: 'member', roleAssignedAt: null, accountClosedAt: new Date() })
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, closedOwnerId)));
+      await t.update(chatRoom).set({ creatorId: successorId }).where(eq(chatRoom.id, roomId));
+    };
+
+  it('starts the countdown rather than naming a creator whose membership vanished mid-transfer', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const modId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [modId]);
+    await promote(services, room, ownerId, modId);
+    const closedAt = new Date('2026-08-31T10:00:00.000Z');
+
+    // The one interleaving the room lock cannot cover on its own, reproduced exactly: an
+    // uncommitted delete is invisible to the handover's successor SELECT but holds the row
+    // lock, so the promotion UPDATE waits on it and then matches nothing. Without the
+    // row-count guard the handover still copies `modId` into `creatorId`, and the room is
+    // left with a creator who is not a member, no owner on the roster and no deadline.
+    let commitDelete!: () => void;
+    const deleteCommitted = new Promise<void>((resolve) => {
+      commitDelete = resolve;
+    });
+    const deleting = db.drizzle.db.transaction(async (t) => {
+      await t
+        .delete(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, modId)));
+      await deleteCommitted;
+    });
+    await settle();
+
+    const handover = services.membership.handleAccountClosed({ userId: ownerId, closedAt });
+    await settle();
+    commitDelete();
+    await deleting;
+    await handover;
+
+    const stored = await readRoom(room.id);
+    expect(stored?.creatorId).toBeNull();
+    expect(stored?.scheduledDeletionAt?.toISOString()).toBe(
+      new Date(closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS).toISOString(),
+    );
+  });
+
+  it('makes removeMember wait on the room lock and re-read the roles it was authorized against', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const modId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [modId]);
+    await promote(services, room, ownerId, modId);
+    const lock = holdRoomLock(room.id);
+    await lock.acquired;
+
+    // The closing owner's request, in flight while the handover holds the lock. It has to
+    // block: the roles it would authorize against are exactly the ones about to move.
+    const removing = services.membership.removeMember({
+      moderatorId: ownerId,
+      roomId: room.id,
+      userId: modId,
+      ...NO_CLIENT_META,
+    });
+    const outcome = removing.then(
+      () => 'settled',
+      () => 'settled',
+    );
+    expect(await Promise.race([outcome, settle().then(() => 'blocked')])).toBe('blocked');
+
+    lock.release(handoverWrites(room.id, ownerId, modId));
+    await lock.done;
+
+    await expect(removing).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+    expect((await readMember(room.id, modId)).role).toBe('owner');
+    expect((await readRoom(room.id))?.creatorId).toBe(modId);
+  });
+
+  it('authorizes banMember inside the room lock, so a demoted owner cannot ban their successor', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const modId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [modId]);
+    await promote(services, room, ownerId, modId);
+    const lock = holdRoomLock(room.id);
+    await lock.acquired;
+
+    const banning = services.ban.banMember({
+      moderatorId: ownerId,
+      roomId: room.id,
+      userId: modId,
+      ...NO_CLIENT_META,
+    });
+    const outcome = banning.then(
+      () => 'settled',
+      () => 'settled',
+    );
+    expect(await Promise.race([outcome, settle().then(() => 'blocked')])).toBe('blocked');
+
+    lock.release(handoverWrites(room.id, ownerId, modId));
+    await lock.done;
+
+    // The ban that was authorized before the lock would have deleted the member row of the
+    // owner the handover had just installed, leaving `creatorId` pointing off the roster.
+    await expect(banning).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
+    expect(await readMember(room.id, modId)).toMatchObject({ role: 'owner' });
   });
 });
 
