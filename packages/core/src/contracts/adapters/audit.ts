@@ -19,8 +19,6 @@ export type DirectAuditAction =
   | 'admin.player.removed'
   | 'admin.player_note.created'
   | 'audit.export'
-  // Mail worker exhausted all retries on an RG/KYC-resubmission email; that
-  // notification is regulator-visible, so its failure is auditable. See ADR-0036.
   | 'mail.regulatory_delivery.failed'
   | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'

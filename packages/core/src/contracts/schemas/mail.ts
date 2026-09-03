@@ -2,12 +2,6 @@ import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
 
-/**
- * The `{ key, data }` tagged union for a single outbound email, shared by the
- * mail module, the notifications module and the identity/iam callers. Datetimes
- * are ISO-8601 strings, never `Date` - every dispatch crosses the `mail-send`
- * job queue as JSON.
- */
 export const MAIL_TEMPLATE_KEYS = [
   'verifyEmail',
   'resetPasswordOtp',
@@ -30,8 +24,6 @@ const WithdrawalDetailsShape = {
   amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   transactionId: UuidSchema,
-  // `envelope.occurredAt`, not `new Date()` in the worker - a retried send must not
-  // re-date the mail.
   occurredAt: TimestampSchema,
 } as const;
 

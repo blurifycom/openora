@@ -27,7 +27,6 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
-/** Polls `capturedEmailsFor` until a mail matching `match` lands (mail is queue-delivered). */
 export async function waitForEmail(
   email: string,
   match: (mail: CapturedEmail) => boolean,

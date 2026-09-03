@@ -16,11 +16,6 @@ import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from './contract/index.js
 
 const logger = createLogger('mail');
 
-/**
- * Owns the outbound-mail seams (`EMAIL_SENDER`, `EMAIL_TEMPLATE_RENDERER`,
- * `MAIL_DISPATCH`) and the `mail-send` queue worker. No table, no HTTP routes.
- * See ADR-0036 for the no-`dependsOn` lazy-resolution design.
- */
 export default {
   id: 'mail',
   register(ctx) {
@@ -53,8 +48,6 @@ export default {
       };
     });
 
-    // Empty router: its only job is to build the MailService during the boot-time
-    // router loop, so the worker has it even when no consumer resolves MAIL_DISPATCH.
     ctx.routers.add('mail', (c) => {
       mailService(c);
       return {};

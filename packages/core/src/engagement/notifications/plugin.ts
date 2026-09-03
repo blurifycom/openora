@@ -36,8 +36,6 @@ const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 
-// `eventId` optional / `email` nullish: a job from the previous release still parses
-// on a rolling redeploy (in-app notification lands, mail is skipped).
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
   reason: z.string().nullable(),
@@ -53,7 +51,6 @@ const NotificationDispatchJobSchema = z.object({
 type NotificationMapEntry = {
   event: DomainEventName;
   handle: (payload: unknown) => CreateNotificationInput | null;
-  // `occurredAt` is the envelope timestamp - a retried send must not re-date the mail.
   buildEmail: (payload: unknown, occurredAt: string) => MailTemplate | null;
 };
 
@@ -76,9 +73,6 @@ function mapEvent<K extends DomainEventName>(
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
   options?: { email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate },
 ): NotificationMapEntry {
-  // Library boundary: TS cannot narrow a domainEventSchemas lookup keyed by this
-  // function's own generic K to that one event's payload type; the pairing holds
-  // by domainEventSchemas' own definition (DomainEventPayload<K> is inferred from it).
   const parse = (payload: unknown): DomainEventPayload<K> | null => {
     const parsed = domainEventSchemas[event].safeParse(payload);
     return parsed.success ? (parsed.data as DomainEventPayload<K>) : null;
@@ -247,8 +241,6 @@ export default {
     let realtimeRef: RealtimeTransport | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
-    // Keyed by the source event so a redelivery never doubles the mail. Never throws:
-    // the in-app notification already landed.
     const dispatchMail = async (
       userId: string,
       template: MailTemplate,

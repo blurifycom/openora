@@ -16,8 +16,6 @@ const logger = createLogger('mail');
 
 const DEFAULT_LOCALE = 'en';
 
-// A permanent send failure for one of these keys is a regulatory event the operator
-// must be able to evidence (MGA/UKGC: the player must be told). See ADR-0036.
 const REGULATORY_KEYS = new Set<MailTemplate['key']>([
   'rgLimitUpdated',
   'rgCoolingOffActivated',
@@ -57,11 +55,6 @@ export type MailServiceDeps = {
   encryptionSecret: string;
 };
 
-/**
- * The one send path. `enqueue*` only puts an encrypted job on the `mail-send`
- * queue; `deliver` runs later in the worker (resolve recipient, render, send);
- * `onDeliveryExhausted` is the worker's dead-letter hook.
- */
 export class MailService {
   private readonly sender: EmailSenderPort;
   private readonly renderer: EmailTemplateRenderer;
@@ -139,8 +132,6 @@ export class MailService {
         action: 'mail.regulatory_delivery.failed',
         resourceType: 'email',
         resourceId: job.recipient.kind === 'user' ? job.recipient.userId : null,
-        // error.name only - a provider bounce message routinely embeds the recipient
-        // address, and audit_log is append-only.
         after: { templateKey: job.template.key, reason: error.name },
       })
       .catch((err) => logger.error({ err }, 'mail regulatory-failure audit write failed'));

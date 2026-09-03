@@ -744,8 +744,6 @@ export class RgService {
     }
   }
 
-  // `notificationId` (the limit/exclusion row) keys the send so a retried mutation
-  // never doubles the mail. Failure is logged, not thrown - the change is committed.
   private async notify(
     userId: User['id'],
     template: MailTemplate,

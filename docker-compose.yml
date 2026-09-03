@@ -39,8 +39,6 @@ services:
   # See ADR-0028.
   redis:
     image: redis:7-alpine
-    # noeviction + appendonly: the job queue shares this instance and must not lose
-    # queued work to eviction or a restart. See ADR-0036.
     command:
       [
         'redis-server',

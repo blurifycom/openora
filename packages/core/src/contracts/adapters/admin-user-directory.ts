@@ -18,7 +18,6 @@ export type AdminUserRow = {
   createdAt: Date;
   isActive: boolean;
   role: string;
-  /** Account UI locale (`en`, `de`, ...), or null when never set. */
   language: string | null;
   failedLoginAttempts?: number;
   lockoutUntil?: Date | null;

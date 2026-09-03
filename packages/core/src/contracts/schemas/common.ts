@@ -34,11 +34,6 @@ export const MoneyAmountSchema = z.string().regex(
 );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
 
-/**
- * Display formatting for a money-amount string: thousands grouping + trailing-zero
- * trim (`"10000.5000"` -> `"10,000.5"`). Presentation only - never write the result
- * back to a `MoneyAmountSchema` field or the DB.
- */
 export function formatMoneyAmount(amount: string): string {
   const match = /^(-)?(\d+)(?:\.(\d+))?$/.exec(amount);
   if (!match) {

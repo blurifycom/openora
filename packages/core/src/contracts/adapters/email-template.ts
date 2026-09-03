@@ -4,12 +4,6 @@ import type { EmailTemplateData, EmailTemplateKey, MailTemplate } from '../schem
 
 export type RenderedEmail = { subject: string; html: string; text: string };
 
-/**
- * Renders one `{ key, data }` template into a subject + HTML + text for a locale.
- * `recipientName` is the account display name for a `toUser` send, or `null` for a
- * `toAddress` send (OTP, invitation - no account behind the address). The default
- * renderer ignores it; an operator overlay uses it for a greeting.
- */
 export type EmailTemplateRenderer = {
   render(
     template: MailTemplate,
@@ -47,7 +41,6 @@ type PlainTemplate<K extends EmailTemplateKey> = (
   locale: string,
 ) => { subject: string; text: string };
 
-/** English-only fallback copy for every template key. An operator overlay replaces it. */
 const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   verifyEmail: (data) => ({
     subject: 'Verify your email',
@@ -61,8 +54,6 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Password reset requested by an administrator',
     text: `An administrator requested a password reset for your account. Your reset code is: ${data.otp}`,
   }),
-  // Must never confirm or deny the account exists to anyone but its owner - the copy
-  // addresses the owner and the sign-up response is identical either way.
   existingAccountSignUp: (data) => ({
     subject: 'You already have an account',
     text:
@@ -126,10 +117,7 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   }),
 };
 
-/** English-only fallback render for one `{ key, data }` template. */
 export function renderDefaultEmail(template: MailTemplate, locale: string): RenderedEmail {
-  // Sanctioned variance cast (see conventions): indexing the map by a union key gives a
-  // union of functions TS won't call with the union data; MailTemplateSchema guards the pairing.
   const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
   const { subject, text } = plain(template.data, locale);
   return { subject, text, html: textToHtml(text) };
