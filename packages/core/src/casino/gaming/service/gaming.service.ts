@@ -1,5 +1,6 @@
 import {
   type EventBus,
+  type DrizzleDb,
   createDomainError,
   makeNotFoundError,
   makeConflictError,
@@ -168,23 +169,33 @@ export class GamingService {
   }
 
   // Atomic upsert for a downstream aggregator's synchronous wallet-callback bridge: each
-  // callback settles its own debit/credit via WalletCommands, then calls this to accumulate
-  // the round total, inside its own transaction pairing the two. The partial unique index
-  // on externalRoundId (schema/index.ts) requires targetWhere here - Postgres rejects
-  // ON CONFLICT against a partial index without repeating its predicate. Deltas reference
-  // the *input* values (not `excluded.<col>`) so two concurrent calls both apply their own
-  // delta rather than one clobbering the other - see creditWalletBalance for the same idiom.
-  async accumulateExternalRound(args: {
-    gameId: Game['id'];
-    userId: User['id'];
-    currency: string;
-    externalRoundId: NonNullable<GameRound['externalRoundId']>;
-    betDelta?: string;
-    winDelta?: string;
-  }): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
+  // callback settles its own debit/credit via WalletCommands on `tx`, then calls this *on
+  // the same tx* to accumulate the round total, so a rollback of one undoes the other. The
+  // partial unique index on externalRoundId (schema/index.ts) requires targetWhere here -
+  // Postgres rejects ON CONFLICT against a partial index without repeating its predicate.
+  // Deltas reference the *input* values (not `excluded.<col>`) so two concurrent calls both
+  // apply their own delta rather than one clobbering the other - see creditWalletBalance for
+  // the same idiom. `isFinal` marks the aggregator's terminating callback for the round -
+  // without it every externally-bridged round would stay 'active' forever, unlike startRound/
+  // endRound which always pair.
+  async accumulateExternalRound(
+    tx: unknown,
+    args: {
+      gameId: Game['id'];
+      userId: User['id'];
+      currency: string;
+      externalRoundId: NonNullable<GameRound['externalRoundId']>;
+      betDelta?: string;
+      winDelta?: string;
+      isFinal?: boolean;
+    },
+  ): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
+    const txn = tx as DrizzleDb;
     const betDelta = args.betDelta ?? '0';
     const winDelta = args.winDelta ?? '0';
-    const [row] = await this.drizzle.db
+    const status = args.isFinal ? 'completed' : 'active';
+    const endedAt = args.isFinal ? new Date() : undefined;
+    const [row] = await txn
       .insert(gameRound)
       .values({
         gameId: args.gameId,
@@ -193,7 +204,8 @@ export class GamingService {
         externalRoundId: args.externalRoundId,
         betAmount: betDelta,
         winAmount: winDelta,
-        status: 'active',
+        status,
+        endedAt,
       })
       .onConflictDoUpdate({
         target: gameRound.externalRoundId,
@@ -201,6 +213,7 @@ export class GamingService {
         set: {
           betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
           winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
+          ...(args.isFinal ? { status, endedAt } : {}),
         },
       })
       .returning({

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
   PlayEligibilityPort,
@@ -328,7 +328,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     const svc = makeService();
     const userId = '00000000-0000-0000-0000-000000000501';
 
-    const result = await svc.accumulateExternalRound({
+    const result = await svc.accumulateExternalRound(db.drizzle.db, {
       gameId: created.id,
       userId,
       currency: 'USD',
@@ -356,14 +356,14 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     const svc = makeService();
     const userId = '00000000-0000-0000-0000-000000000502';
 
-    const first = await svc.accumulateExternalRound({
+    const first = await svc.accumulateExternalRound(db.drizzle.db, {
       gameId: created.id,
       userId,
       currency: 'USD',
       externalRoundId: 'ext-round-2',
       betDelta: '10',
     });
-    const second = await svc.accumulateExternalRound({
+    const second = await svc.accumulateExternalRound(db.drizzle.db, {
       gameId: created.id,
       userId,
       currency: 'USD',
@@ -385,14 +385,14 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     const userId = '00000000-0000-0000-0000-000000000503';
 
     await Promise.all([
-      svc.accumulateExternalRound({
+      svc.accumulateExternalRound(db.drizzle.db, {
         gameId: created.id,
         userId,
         currency: 'USD',
         externalRoundId: 'ext-round-3',
         betDelta: '10',
       }),
-      svc.accumulateExternalRound({
+      svc.accumulateExternalRound(db.drizzle.db, {
         gameId: created.id,
         userId,
         currency: 'USD',
@@ -404,5 +404,59 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     const rows = await db.drizzle.db.select().from(gameRound);
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.betAmount)).toBe(17);
+  });
+
+  it('rolls back the accumulated round together with the caller transaction', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b4', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000504';
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await svc.accumulateExternalRound(tx, {
+          gameId: created.id,
+          userId,
+          currency: 'USD',
+          externalRoundId: 'ext-round-4',
+          betDelta: '10',
+        });
+        throw new Error('caller rolled back');
+      }),
+    ).rejects.toThrow('caller rolled back');
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.externalRoundId, 'ext-round-4'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('marks the round completed with endedAt set when the terminating callback passes isFinal', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b5', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000505';
+
+    await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-5',
+      betDelta: '10',
+    });
+    const result = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-5',
+      winDelta: '15',
+      isFinal: true,
+    });
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.id, result.roundId));
+    expect(rows[0]).toMatchObject({ status: 'completed' });
+    expect(rows[0]?.endedAt).not.toBeNull();
   });
 });
