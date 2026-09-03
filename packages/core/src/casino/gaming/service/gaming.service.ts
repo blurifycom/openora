@@ -168,16 +168,11 @@ export class GamingService {
     return { success: true };
   }
 
-  // Atomic upsert for a downstream aggregator's synchronous wallet-callback bridge: each
-  // callback settles its own debit/credit via WalletCommands on `tx`, then calls this *on
-  // the same tx* to accumulate the round total, so a rollback of one undoes the other. The
-  // partial unique index on externalRoundId (schema/index.ts) requires targetWhere here -
-  // Postgres rejects ON CONFLICT against a partial index without repeating its predicate.
-  // Deltas reference the *input* values (not `excluded.<col>`) so two concurrent calls both
-  // apply their own delta rather than one clobbering the other - see creditWalletBalance for
-  // the same idiom. `isFinal` marks the aggregator's terminating callback for the round -
-  // without it every externally-bridged round would stay 'active' forever, unlike startRound/
-  // endRound which always pair.
+  /**
+   * `targetWhere` must repeat the partial index's predicate (schema/index.ts) - Postgres
+   * rejects ON CONFLICT against a partial index without it. Deltas add onto the stored
+   * value, not `excluded.<col>`, so concurrent callbacks each apply their own delta.
+   */
   async accumulateExternalRound(
     tx: unknown,
     args: {

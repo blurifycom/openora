@@ -9,9 +9,6 @@ export type WalletProviderRef = {
   providerName: string;
   providerRefId: string;
   externalRoundId?: string;
-  /** Serialized into wallet_transaction.metadata. Exists so a replayed provider callback can
-   *  return the *exact original* response (incl. balance-at-the-time) via findByProviderRef,
-   *  instead of reconstructing one from current state that may have drifted since. */
   responseSnapshot?: unknown;
 };
 
