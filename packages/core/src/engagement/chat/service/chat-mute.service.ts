@@ -200,6 +200,10 @@ export class ChatMuteService {
       .where(
         and(
           eq(chatMute.userId, userId),
+          // Same predicate listMutes and assertCanSend apply: a lapsed mute is not
+          // active, so there is nothing to lift. Without this an admin lifting a row
+          // that has just expired puts both `expired` and `lifted` on its trail.
+          or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, liftedAt)),
           scope === 'room'
             ? or(
                 eq(chatMute.scope, 'room'),

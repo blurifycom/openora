@@ -1452,6 +1452,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "CronExpressionSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
       "name": "CurrencyCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },

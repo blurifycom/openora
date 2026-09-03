@@ -2,14 +2,15 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type { AuditWritePort } from '@openora/core/contracts';
+import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { AuditService } from '@openora/core/audit/server';
-import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
+import { makeEventBus, makeIdentityReader, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { chatMute, chatPlatformBan } from '../schema/index.js';
 import { ChatModerationExpiryService } from '../service/chat-moderation-expiry.service.js';
+import { ChatModerationService } from '../service/chat-moderation.service.js';
 
 let db: TestDb;
 let audit: AuditWritePort;
@@ -74,6 +75,8 @@ beforeEach(async () => {
 
 describe('ChatModerationExpiryService.sweep', () => {
   const makeSweep = () => new ChatModerationExpiryService(db.drizzle, audit);
+  const makeModeration = () =>
+    new ChatModerationService(db.drizzle, mock<RealtimeTransport>({}), audit);
 
   it('records exactly one audit entry for a lapsed mute, dated from its own expiresAt', async () => {
     const expiresAt = secondsFromNow(-30);
@@ -157,5 +160,31 @@ describe('ChatModerationExpiryService.sweep', () => {
     expect(row!.expiryRecordedAt).toBeInstanceOf(Date);
     // The bookmark is not an enforcement input: the mute is still lapsed, still unlifted.
     expect(row!.liftedAt).toBeNull();
+  });
+
+  // A lapsed row is not active, so lifting it is a no-op in both directions: the trail
+  // carries `expired` or `lifted` for a given row, never both.
+  it('leaves an admin lift after the sweep off the trail', async () => {
+    const userId = randomUUID();
+    const mute = await seedMute({ userId, expiresAt: secondsFromNow(-30) });
+    const ban = await seedBan({ userId, expiresAt: secondsFromNow(-30) });
+
+    await makeSweep().sweep();
+
+    const moderation = makeModeration();
+    await moderation.unmute({ userId, roomId: '__global', actorId: ADMIN_ID, ...NO_CLIENT_META });
+    await moderation.unban({
+      userId,
+      roomId: '__all_public',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+
+    expect((await auditRowsFor(mute.id)).map((r) => r.action)).toEqual(['chat.mute.expired']);
+    expect((await auditRowsFor(ban.id)).map((r) => r.action)).toEqual([
+      'chat.platform_ban.expired',
+    ]);
+    const [muteRow] = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.id, mute.id));
+    expect(muteRow!.liftedAt).toBeNull();
   });
 });

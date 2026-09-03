@@ -18,6 +18,7 @@ import {
   AUDIT_WRITER,
   IDENTITY_READER,
   PLATFORM_CONFIG,
+  CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { ChatModerationService } from './service/chat-moderation.service.js';
@@ -28,13 +29,6 @@ import { ChatModerationExpiryService } from './service/chat-moderation-expiry.se
 import { createChatRouter } from './router/index.js';
 
 const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
-
-// Quarter-hourly, offset off the :00/:15/:30/:45 tick the wallet custody sweep owns, so
-// the in-process driver never runs this alongside a money path. The cadence sets
-// audit-trail latency only - a lapsed mute stops being enforced at its own expiresAt,
-// with or without this job - and the entry is dated from the row, so a late or missed run
-// still records the right instant; the offset therefore costs nothing.
-const CHAT_MODERATION_EXPIRY_CRON = '7,22,37,52 * * * *';
 
 // The cron tick carries no state - the job's whole input is "what has lapsed by now".
 const EmptyJobPayloadSchema = z.object({});
@@ -95,6 +89,9 @@ export default {
       schema: EmptyJobPayloadSchema,
       handler: async () => {
         if (!expiryRef) {
+          // Workers started without building routers: the sweep is wired to the router
+          // factory, so it has nothing to run. Say so rather than no-op in silence.
+          logger.warn('chat-moderation-expiry sweep skipped - service not constructed');
           return;
         }
         const { mutes, bans } = await expiryRef.sweep();
@@ -109,7 +106,7 @@ export default {
       expiryRef = new ChatModerationExpiryService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
       const expiryCron =
         (c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).chat.moderationExpiry?.cron : undefined) ??
-        CHAT_MODERATION_EXPIRY_CRON;
+        CHAT_MODERATION_EXPIRY_DEFAULT_CRON;
       // Idempotent registration (keyed by scheduleId). JOB_QUEUE binds to BullMQ whenever
       // REDIS_URL is set, which every real deployment has, so the schedule is durable
       // there; the in-process default still ticks for `pnpm dev`.
