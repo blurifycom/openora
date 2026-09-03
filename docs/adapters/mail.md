@@ -3,13 +3,13 @@
 Outbound email leaves the platform one way: a caller hands `MAIL_DISPATCH` a
 `{ key, data }` template, the `mail` module enqueues it onto the `mail-send` queue, and
 the worker resolves the address, locale and display name, renders once, and sends. See
-ADR-0036.
+ADR-0038.
 
 ## Interfaces
 
 Source of truth:
 
-- [`packages/core/src/contracts/adapters/mail.ts`](../../packages/core/src/contracts/adapters/mail.ts) - `EMAIL_SENDER` (transport) and `MAIL_DISPATCH` (façade).
+- [`packages/core/src/contracts/adapters/mail.ts`](../../packages/core/src/contracts/adapters/mail.ts) - `EMAIL_SENDER` (transport) and `MAIL_DISPATCH` (facade).
 - [`packages/core/src/contracts/adapters/email-template.ts`](../../packages/core/src/contracts/adapters/email-template.ts) - `EMAIL_TEMPLATE_RENDERER` and `renderDefaultEmail`.
 - [`packages/core/src/contracts/schemas/mail.ts`](../../packages/core/src/contracts/schemas/mail.ts) - the `MailTemplate` tagged union and per-key data schemas.
 
@@ -68,6 +68,8 @@ plain-text default, and CI fails a renderer that has no entry for one.
 `MAIL_DISPATCH` enqueues (with a short enqueue-retry); the `mail-send` worker retries the
 send five times with a growing gap and a bounded concurrency. The durable queue envelope is
 authenticated-encrypted with `AUTH_SECRET`, so addresses, OTPs, and invitation tokens are not
-readable from the queue backend. On exhausted delivery of a
-responsible-gambling or `kycResubmissionRequested` template, the worker writes an
-`AUDIT_WRITER` entry - the regulator asks about the notification at those events.
+readable from the queue backend. For a responsible-gambling or `kycResubmissionRequested`
+template the worker writes an `AUDIT_WRITER` entry on both outcomes -
+`mail.regulatory_delivery.sent` and `mail.regulatory_delivery.failed`, each carrying the
+template key, recipient locale and attempt - because the regulator asks about the
+notification at those events.

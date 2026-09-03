@@ -372,7 +372,9 @@ export class RgService {
         data: {
           period: row.period,
           type: row.type,
-          description: row.amount ?? `${row.minutes} minutes`,
+          amount: row.amount,
+          currency: toWireCurrency(row.type, row.currency),
+          minutes: row.minutes,
         },
       },
       `${row.id}:${row.updatedAt.toISOString()}`,

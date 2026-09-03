@@ -100,7 +100,7 @@ export class MailService {
     );
   }
 
-  async deliver(job: MailSendJob): Promise<void> {
+  async deliver(job: MailSendJob, attempt = 1): Promise<void> {
     const resolved = await this.resolveRecipient(job);
     if (!resolved) {
       return;
@@ -112,33 +112,54 @@ export class MailService {
       html: rendered.html,
       text: rendered.text,
     });
+    await this.recordRegulatoryOutcome('mail.regulatory_delivery.sent', job, {
+      locale: resolved.locale,
+      attempt,
+    });
   }
 
-  async deliverEncrypted(job: EncryptedMailSendJob): Promise<void> {
-    await this.deliver(this.payloadCipher.decrypt(job));
+  async deliverEncrypted(job: EncryptedMailSendJob, attempt = 1): Promise<void> {
+    await this.deliver(this.payloadCipher.decrypt(job), attempt);
   }
 
-  async onDeliveryExhausted(job: MailSendJob, error: Error): Promise<void> {
+  async onDeliveryExhausted(job: MailSendJob, error: Error, attempt = 1): Promise<void> {
     logger.error(
       { err: error, key: job.template.key, recipient: job.recipient.kind },
       'mail delivery exhausted retries',
     );
+    await this.recordRegulatoryOutcome('mail.regulatory_delivery.failed', job, {
+      reason: error.name,
+      attempt,
+    });
+  }
+
+  async onEncryptedDeliveryExhausted(
+    job: EncryptedMailSendJob,
+    error: Error,
+    attempt = 1,
+  ): Promise<void> {
+    await this.onDeliveryExhausted(this.payloadCipher.decrypt(job), error, attempt);
+  }
+
+  // `after` carries no free text - error.name, not error.message: a provider bounce
+  // routinely embeds the recipient address, and audit_log is append-only.
+  private async recordRegulatoryOutcome(
+    action: 'mail.regulatory_delivery.sent' | 'mail.regulatory_delivery.failed',
+    job: MailSendJob,
+    after: { locale?: string; reason?: string; attempt: number },
+  ): Promise<void> {
     if (!this.audit || !REGULATORY_KEYS.has(job.template.key)) {
       return;
     }
     await this.audit
       .record({
         actorType: 'system',
-        action: 'mail.regulatory_delivery.failed',
+        action,
         resourceType: 'email',
         resourceId: job.recipient.kind === 'user' ? job.recipient.userId : null,
-        after: { templateKey: job.template.key, reason: error.name },
+        after: { templateKey: job.template.key, ...after },
       })
-      .catch((err) => logger.error({ err }, 'mail regulatory-failure audit write failed'));
-  }
-
-  async onEncryptedDeliveryExhausted(job: EncryptedMailSendJob, error: Error): Promise<void> {
-    await this.onDeliveryExhausted(this.payloadCipher.decrypt(job), error);
+      .catch((err) => logger.error({ err }, 'mail regulatory audit write failed'));
   }
 
   private encrypt(job: MailSendJob): EncryptedMailSendJob {

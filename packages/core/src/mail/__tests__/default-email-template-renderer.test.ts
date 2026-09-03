@@ -51,7 +51,16 @@ describe('DefaultEmailTemplateRenderer', () => {
       { key: 'resetPasswordOtp', data: { otp: '111111', email: 'a@b.com' } },
       { key: 'adminResetPasswordOtp', data: { otp: '111111', email: 'a@b.com' } },
       { key: 'existingAccountSignUp', data: { otp: '111111', email: 'a@b.com' } },
-      { key: 'rgLimitUpdated', data: { period: 'daily', type: 'deposit', description: '100 EUR' } },
+      {
+        key: 'rgLimitUpdated',
+        data: {
+          period: 'daily',
+          type: 'deposit',
+          amount: '100.00',
+          currency: 'EUR',
+          minutes: null,
+        },
+      },
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-01-01T00:00:00.000Z' } },
       { key: 'rgCoolingOffLifted', data: {} },
       { key: 'rgSelfExclusionActivated', data: { expiresAt: null, isPermanent: true } },
@@ -103,6 +112,32 @@ describe('DefaultEmailTemplateRenderer', () => {
     );
 
     expect(result.text).toContain('10,000 USDT');
+  });
+
+  it('composes the rgLimitUpdated sentence from raw amount/currency, grouped', () => {
+    const money = renderer.render(
+      {
+        key: 'rgLimitUpdated',
+        data: {
+          period: 'daily',
+          type: 'deposit',
+          amount: '10000.00',
+          currency: 'EUR',
+          minutes: null,
+        },
+      },
+      'en',
+    );
+    expect(money.text).toContain('10,000 EUR');
+
+    const session = renderer.render(
+      {
+        key: 'rgLimitUpdated',
+        data: { period: 'session', type: 'session', amount: null, currency: null, minutes: 60 },
+      },
+      'en',
+    );
+    expect(session.text).toContain('60 minutes');
   });
 
   it('formats the cooling-off date against the recipient locale', () => {

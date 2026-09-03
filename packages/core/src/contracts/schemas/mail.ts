@@ -35,7 +35,9 @@ export const EmailTemplateDataSchemas = {
   rgLimitUpdated: z.object({
     period: z.string(),
     type: z.string(),
-    description: z.string(),
+    amount: MoneyAmountSchema.nullable(),
+    currency: CurrencyCodeSchema.nullable(),
+    minutes: z.number().int().nullable(),
   }),
   rgCoolingOffActivated: z.object({ expiresAt: TimestampSchema }),
   rgCoolingOffLifted: z.object({}),

@@ -176,12 +176,48 @@ describe('MailService', () => {
     expect(sender.send).not.toHaveBeenCalled();
   });
 
+  it('audits a delivered regulatory mail with its key, locale and attempt', async () => {
+    const { svc, audit } = build({
+      directory: {
+        get: vi.fn(async () => ({
+          id: 'u-1',
+          email: 'user@b.com',
+          name: null,
+          createdAt: new Date(),
+          isActive: true,
+          role: 'player',
+          language: 'de',
+        })),
+      },
+    });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: rgLifted }, 2);
+
+    expect((audit as AuditWritePort).record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorType: 'system',
+        action: 'mail.regulatory_delivery.sent',
+        resourceId: 'u-1',
+        after: { templateKey: 'rgCoolingOffLifted', locale: 'de', attempt: 2 },
+      }),
+    );
+  });
+
+  it('does not audit a delivered non-regulatory mail', async () => {
+    const { svc, audit } = build();
+
+    await svc.deliver({ recipient: { kind: 'address', email: 'a@b.com' }, template: verify });
+
+    expect((audit as AuditWritePort).record).not.toHaveBeenCalled();
+  });
+
   it('audits an exhausted delivery for a regulatory key', async () => {
     const { svc, audit } = build();
 
     await svc.onDeliveryExhausted(
       { recipient: { kind: 'user', userId: 'u-1' }, template: rgLifted },
       new Error('smtp 550'),
+      5,
     );
 
     expect((audit as AuditWritePort).record).toHaveBeenCalledWith(
@@ -189,6 +225,7 @@ describe('MailService', () => {
         actorType: 'system',
         action: 'mail.regulatory_delivery.failed',
         resourceId: 'u-1',
+        after: { templateKey: 'rgCoolingOffLifted', reason: 'Error', attempt: 5 },
       }),
     );
   });

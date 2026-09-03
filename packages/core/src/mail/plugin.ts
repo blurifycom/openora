@@ -57,18 +57,18 @@ export default {
       queue: MAIL_SEND_QUEUE,
       schema: EncryptedMailSendJobSchema,
       options: { concurrency: 5 },
-      handler: async ({ payload }) => {
+      handler: async ({ payload, attempt }) => {
         if (!svcRef) {
           throw new Error('mail: service not constructed yet');
         }
-        await svcRef.deliverEncrypted(payload);
+        await svcRef.deliverEncrypted(payload, attempt);
       },
       onDeadLetter: (jobCtx, error) => {
         if (!svcRef) {
           logger.error({ err: error }, 'mail delivery exhausted retries before service init');
           return;
         }
-        return svcRef.onEncryptedDeliveryExhausted(jobCtx.payload, error);
+        return svcRef.onEncryptedDeliveryExhausted(jobCtx.payload, error, jobCtx.attempt);
       },
     });
   },

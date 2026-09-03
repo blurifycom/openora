@@ -1,4 +1,4 @@
-# ADR-0036: Mail Module and a Single Outbound-Mail Path
+# ADR-0038: Mail Module and a Single Outbound-Mail Path
 
 **Date**: 2026-09-01
 **Status**: Accepted
@@ -56,7 +56,7 @@ transport never sniffs `body.trim().startsWith('<')`. This is a new name, not a 
 port: an operator gets a compile error, not a silently different argument shape under a
 familiar name. Push and SMS are out of scope (`SMS_ADAPTER` already lives separately).
 
-### One façade
+### One facade
 
 `MAIL_DISPATCH` with `toUser({ userId, template, idempotencyKey })` and
 `toAddress({ email, locale?, template, idempotencyKey })`. It never sends inline - each
@@ -71,13 +71,16 @@ The mail module never reads the identity schema, so `identity` resolves the acco
 locale in its OTP hook and passes it explicitly. Admin invitations are always English
 (no account yet; the back-office ships `en` only).
 
-### Regulatory audit on exhausted delivery
+### Regulatory audit on every regulatory send
 
-The worker's dead-letter hook writes an `AUDIT_WRITER` entry for the five responsible-
-gambling keys and `kycResubmissionRequested`, and only those. A withdrawal already has an
-audit entry on the decision itself; a second entry on the mail adds volume, not
-evidence. The regulator asks separately about the notification at an RG or KYC event, and
-that is what was missing.
+The worker writes an `AUDIT_WRITER` entry for the five responsible-gambling keys and
+`kycResubmissionRequested` - on a successful send (`mail.regulatory_delivery.sent`) and
+on an exhausted one (`mail.regulatory_delivery.failed`), and only for those keys. The
+regulator asks separately about the notification at an RG or KYC event ("the player was
+told"), so the delivered case is the primary evidence and the failed case records that
+it could not be produced. Each entry carries the template key, the recipient locale and
+the attempt number. A withdrawal is not in this set - it already has an audit entry on
+the decision itself.
 
 ### Interim guard for the ack gap
 
@@ -91,10 +94,10 @@ events.
 
 - Three breaking changes: transport ports consolidated, the notification-delivery port
   loses its email method, the renderer return shape changes to `{ subject, html, text }`
-  and its input to the `{ key, data }` template. Major changeset.
+  and its input to the `{ key, data }` template.
 - Core still ships an English-only plain-text fallback for every template key, so the
   platform runs with no operator renderer.
 - Rendering happens only in the worker, never during a request.
-- `docker-compose.yml`'s Redis gains an fsync'd append-only journal and a volume - a
-  restart no longer drops what is queued. A dedicated queue instance stays a later infra
-  ticket.
+- The Redis service in `docker-compose.yml` and in the consumer templates gets an
+  fsync'd append-only journal and a volume - a restart no longer drops what is queued.
+  A dedicated queue instance stays a later infra ticket.

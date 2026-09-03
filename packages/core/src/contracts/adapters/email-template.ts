@@ -61,10 +61,16 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `You already have one, so no new account was created. ` +
       `If it was you, sign in as usual - or use this code to reset your password: ${data.otp}`,
   }),
-  rgLimitUpdated: (data) => ({
-    subject: 'Your gambling limit was updated',
-    text: `A ${data.period} ${data.type} limit of ${data.description} is now active on your account.`,
-  }),
+  rgLimitUpdated: (data) => {
+    const value =
+      data.amount !== null
+        ? formatMoney(data.amount, data.currency ?? '')
+        : `${data.minutes} minutes`;
+    return {
+      subject: 'Your gambling limit was updated',
+      text: `A ${data.period} ${data.type} limit of ${value.trim()} is now active on your account.`,
+    };
+  },
   rgCoolingOffActivated: (data, locale) => ({
     subject: 'Your cooling-off period has started',
     text: `A cooling-off period is active on your account until ${formatEmailDate(

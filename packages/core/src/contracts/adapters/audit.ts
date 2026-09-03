@@ -19,6 +19,7 @@ export type DirectAuditAction =
   | 'admin.player.removed'
   | 'admin.player_note.created'
   | 'audit.export'
+  | 'mail.regulatory_delivery.sent'
   | 'mail.regulatory_delivery.failed'
   | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
