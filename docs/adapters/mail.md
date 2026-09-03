@@ -7,11 +7,7 @@ ADR-0038.
 
 ## Interfaces
 
-Source of truth:
-
-- [`packages/core/src/contracts/adapters/mail.ts`](../../packages/core/src/contracts/adapters/mail.ts) - `EMAIL_SENDER` (transport) and `MAIL_DISPATCH` (facade).
-- [`packages/core/src/contracts/adapters/email-template.ts`](../../packages/core/src/contracts/adapters/email-template.ts) - `EMAIL_TEMPLATE_RENDERER` and `renderDefaultEmail`.
-- [`packages/core/src/contracts/schemas/mail.ts`](../../packages/core/src/contracts/schemas/mail.ts) - the `MailTemplate` tagged union and per-key data schemas.
+Source of truth: the mail contract and adapter ports under `packages/core/src/contracts/`.
 
 `EMAIL_SENDER.send({ to, subject, html, text })` - HTML and text are separate fields; the
 transport never sniffs one string. `EMAIL_TEMPLATE_RENDERER.render(template, locale)`
@@ -60,8 +56,8 @@ last-wins).
 `rgSelfExclusionLifted`, `withdrawalApproved`, `withdrawalRejected`,
 `kycResubmissionRequested`, `adminInvitation`.
 
-A renderer overlay must cover every key: a missing key falls through to the English
-plain-text default, and CI fails a renderer that has no entry for one.
+An overlay renderer receives every built-in template key and owns the rendered result for each key;
+there is no automatic fallback to the platform's English renderer.
 
 ## Delivery guarantee
 

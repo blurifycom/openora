@@ -187,7 +187,7 @@ export { EMAIL_SENDER, MAIL_DISPATCH } from './mail.js';
 export type { SmsAdapter } from './sms.js';
 export { SMS_ADAPTER } from './sms.js';
 export type { EmailTemplateRenderer, RenderedEmail } from './email-template.js';
-export { EMAIL_TEMPLATE_RENDERER, renderDefaultEmail } from './email-template.js';
+export { EMAIL_TEMPLATE_RENDERER } from './email-template.js';
 
 export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
 export { ERROR_TRACKING } from './error-tracking.js';
