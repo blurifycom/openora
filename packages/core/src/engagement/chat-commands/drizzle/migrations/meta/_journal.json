@@ -15,6 +15,13 @@
       "when": 1787009522084,
       "tag": "0001_sturdy_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788512549109,
+      "tag": "0002_drop_legacy_scalar_command_amounts",
+      "breakpoints": true
     }
   ]
 }
