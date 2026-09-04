@@ -110,9 +110,6 @@ const credentialsBase = z.object({
 
 export const LoginInputSchema = credentialsBase.extend({
   rememberMe: z.boolean().optional(),
-  // The browser's own IANA zone, captured for rendering a stored timestamp on the player's
-  // clock. Optional and best-effort on every route that carries it: an omitted or
-  // unrecognised value is dropped after the credentials pass, never a reason to fail a login.
   timezone: TimezoneSchema.optional(),
 });
 
@@ -211,9 +208,8 @@ export const ResendEmailVerificationInputSchema = z.object({
 export const VerifyEmailInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
-  // This route mints the session that sign-up deliberately does not, so it captures the
-  // zone on the same terms as the other session-establishing routes - a new player whose
-  // first session is this one may well be on a different device than the sign-up form.
+  // Carried here too: `autoSignInAfterVerification` mints the first session on this route,
+  // and verification may come from a different device than sign-up.
   timezone: TimezoneSchema.optional(),
 });
 

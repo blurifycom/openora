@@ -10,13 +10,9 @@ export type PlayerProvisioning = {
   ): Promise<{ created: boolean; playerId?: string }>;
 
   /**
-   * Stores the IANA zone a browser reported, so a stored UTC timestamp can be rendered on
-   * the player's own clock. Display metadata: the value is device-reported and spoofable,
-   * so it never gates anything and never reaches an RG window or an audit record.
-   *
-   * Best-effort by contract - a zone the runtime does not recognise, or a player with no
-   * row yet, is a silent no-op. Callers invoke it only AFTER authentication succeeds and
-   * must never let it fail the request that carried it.
+   * Stores the IANA zone a browser reported. Display metadata - it never gates anything and
+   * never reaches an RG window or an audit record. Best-effort by contract: an unrecognised
+   * zone, or a player with no row yet, is a silent no-op. Call only after authentication.
    */
   recordTimezone(userId: string, timezone: string): Promise<void>;
 };

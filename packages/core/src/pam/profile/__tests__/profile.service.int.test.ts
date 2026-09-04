@@ -312,15 +312,13 @@ describe('ProfileService.recordTimezone (real PG)', () => {
     await svc.recordTimezone(account.id, 'Europe/Warsaw');
     const [first] = await playersFor(account.id);
 
-    // Same zone, and the same zone spelled the way another browser reports it - neither is
-    // a move, but both are a device confirming the zone now, which is what the timestamp
-    // reports. The canonical value is what lands, whichever spelling arrived.
+    // Neither is a move, but both are a device confirming the zone now.
     await svc.recordTimezone(account.id, 'Europe/Warsaw');
     await svc.recordTimezone(account.id, 'europe/warsaw');
 
     const [second] = await playersFor(account.id);
     expect(second?.timezone).toBe('Europe/Warsaw');
-    expect(second?.timezoneUpdatedAt?.getTime()).toBeGreaterThanOrEqual(
+    expect(second?.timezoneUpdatedAt?.getTime()).toBeGreaterThan(
       first?.timezoneUpdatedAt?.getTime() ?? 0,
     );
   });
@@ -348,7 +346,6 @@ describe('ProfileService.recordTimezone (real PG)', () => {
 
     await svc.recordTimezone(account.id, 'Mars/Phobos');
 
-    // The stored zone survives an unrecognised one: a bad capture must not erase a good one.
     const [row] = await playersFor(account.id);
     expect(row?.timezone).toBe('Europe/Warsaw');
   });

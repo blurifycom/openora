@@ -88,23 +88,10 @@ export class ProfileService implements PlayerProvisioning {
   }
 
   /**
-   * Stores the IANA zone the browser reported, for rendering a stored UTC timestamp on the
-   * player's own clock. Display metadata only - device-reported and spoofable, so it is
-   * never evidence of where the player is, never gates anything, and deliberately stays out
-   * of responsible-gambling windows and audit records, which remain UTC.
-   *
-   * `timezoneUpdatedAt` moves on every capture the tz database accepts, including one that
-   * reports the zone already stored. That is what makes the column readable as "last
-   * confirmed by a device": a player signing in from the same zone every day for months
-   * would otherwise carry a months-old timestamp, indistinguishable from one who has not
-   * been seen since - and telling those two apart is the whole reason the read model ships
-   * the timestamp beside the zone. The write lands on a row an authenticated request
-   * touches anyway, so keeping it current costs nothing worth trading that reading for.
-   *
-   * Silent about both of its no-ops, by design. A zone the runtime's tz database does not
-   * recognise is dropped rather than stored as arbitrary client text, and a player with no
-   * row yet is skipped: registration is what materialises the row, and a capture is not a
-   * good enough reason to conjure one from a login.
+   * Stores the IANA zone the browser reported. Display metadata - it never gates anything and
+   * stays out of RG windows and audit records, which remain UTC. `timezoneUpdatedAt` moves on
+   * every accepted capture, including one repeating the stored zone, so it reads as "last
+   * confirmed". An unrecognised zone, and a player with no row yet, are both silent no-ops.
    */
   async recordTimezone(userId: User['id'], timezone: string): Promise<void> {
     const resolved = resolveTimezone(timezone);
@@ -118,15 +105,13 @@ export class ProfileService implements PlayerProvisioning {
   }
 
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
-    // The zone is not a plain profile field: it carries its own validation and its own
-    // timestamp, and an unrecognised value is dropped rather than failing the update.
+    // The zone has its own validation and its own timestamp, so it is written separately.
     const { timezone, ...fields } = data;
     const { email, username } = await this.ensureProfile(userId);
     if (timezone !== undefined) {
       await this.recordTimezone(userId, timezone);
     }
-    // An update carrying nothing but the zone has no fields left to set, and drizzle
-    // rejects an empty `set` - read the row back instead.
+    // Drizzle rejects an empty `set`, so an update carrying only the zone reads the row back.
     const [record] = Object.keys(fields).length
       ? await this.drizzle.db
           .update(player)

@@ -87,11 +87,9 @@ describe('POST /identity/login - player timezone capture', () => {
 
     await login(email, 'Europe/Warsaw');
 
-    // A browser signing in with the same zone for months is confirming it, not going stale;
-    // the timestamp reads as "last confirmed", so a repeat capture has to move it.
     const second = await readProfile(client);
     expect(second.timezone).toBe('Europe/Warsaw');
-    expect(new Date(second.timezoneUpdatedAt!).getTime()).toBeGreaterThanOrEqual(
+    expect(new Date(second.timezoneUpdatedAt!).getTime()).toBeGreaterThan(
       new Date(first.timezoneUpdatedAt!).getTime(),
     );
   });
@@ -105,8 +103,7 @@ describe('POST /identity/login - player timezone capture', () => {
 
     const after = await readProfile(client);
     expect(after.timezone).toBe('America/New_York');
-    expect(after.timezoneUpdatedAt).not.toBe(before.timezoneUpdatedAt);
-    expect(new Date(after.timezoneUpdatedAt!).getTime()).toBeGreaterThanOrEqual(
+    expect(new Date(after.timezoneUpdatedAt!).getTime()).toBeGreaterThan(
       new Date(before.timezoneUpdatedAt!).getTime(),
     );
   });
@@ -116,8 +113,6 @@ describe('POST /identity/login - player timezone capture', () => {
 
     const res = await login(email, 'Mars/Phobos');
 
-    // The whole point of dropping it rather than rejecting it: display metadata must never
-    // cost a player their session.
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toBeTruthy();
     expect(await readProfile(client)).toMatchObject({ timezone: null, timezoneUpdatedAt: null });
@@ -126,9 +121,6 @@ describe('POST /identity/login - player timezone capture', () => {
   it('signs the player in when the client sends an empty zone rather than omitting it', async () => {
     const { client, email } = await newPlayer();
 
-    // `Intl` gave the client nothing and it fell back to `''`. The contract has to let that
-    // through to the same silent no-op as any other unrecognised zone - a client-side
-    // fallback must not be the reason a login 400s.
     const res = await app.app.request('/identity/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -151,8 +143,6 @@ describe('POST /identity/login - player timezone capture', () => {
 
 describe('PATCH /profile - player timezone capture', () => {
   it('captures the zone from the once-per-session profile write', async () => {
-    // The reason this route carries the zone at all: a remembered session skips login for
-    // weeks, and no existing player re-authenticates just because a column appeared.
     const { client } = await newPlayer();
 
     const res = await client.patch('/profile', { timezone: 'Asia/Tokyo' });
@@ -180,8 +170,6 @@ describe('POST /identity/email/verify - player timezone capture', () => {
     const email = `player-timezone-verify-${randomUUID()}@e2e.test`;
     const username = `tzver_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 
-    // Sign-up carries no zone on purpose: verification is a separate request and may well
-    // come from a different device, so it has to be able to capture on its own.
     const registered = await app.app.request('/identity/register', {
       method: 'POST',
       headers: registrationRequestHeaders(),

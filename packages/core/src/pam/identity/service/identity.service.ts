@@ -16,6 +16,7 @@ import { parseCookies } from 'better-auth/cookies';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import { captureTimezone } from './capture-timezone.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
@@ -585,11 +586,9 @@ export class IdentityService {
       throw err;
     }
     const { playerId, consentStored } = consent;
-    // The consent write is what materialises the player row, so the zone has somewhere to
-    // land. Registration mints no session - the player still has to verify their email -
-    // but the browser is here now, so the zone is captured now rather than waiting for a
-    // first login that may be days away.
-    await this.captureTimezone(body.user.id, input.timezone);
+    // After the consent write, which is what materialises the player row the zone lands on.
+    // No session yet, but the browser is here now and a first login may be days away.
+    await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
     this.events.emit('identity.user.registered', {
       userId: body.user.id,
       playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
@@ -681,27 +680,6 @@ export class IdentityService {
       );
     }
     return { playerId: outcome.playerId ?? null, consentStored: outcome.created };
-  }
-
-  /**
-   * Hands the browser-reported IANA zone to the player module, for rendering a stored UTC
-   * timestamp on the player's own clock. Every caller invokes this only AFTER the credentials
-   * have passed, so an unauthenticated request can never write to someone else's row.
-   *
-   * Display metadata, so it is best-effort in both directions: an absent zone or an unbound
-   * provisioning port is nothing to do, and a write that fails is logged and swallowed. A
-   * player who cannot sign in because a cosmetic column would not update is a far worse
-   * outcome than a missing zone, which the next session re-offers anyway.
-   */
-  private async captureTimezone(userId: User['id'], timezone: string | undefined) {
-    if (!timezone || !this.playerProvisioning) {
-      return;
-    }
-    try {
-      await this.playerProvisioning.recordTimezone(userId, timezone);
-    } catch (err) {
-      identityLogger.warn({ err, userId }, 'player timezone capture failed - ignored');
-    }
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
@@ -875,7 +853,7 @@ export class IdentityService {
         ip,
         userAgent,
       });
-      await this.captureTimezone(body.user.id, input.timezone);
+      await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
       const sessionDurationSeconds =
         this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
@@ -1284,7 +1262,7 @@ export class IdentityService {
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
       }
-      await this.captureTimezone(userId, input.timezone);
+      await captureTimezone(this.playerProvisioning, userId, input.timezone);
     }
     return SUCCESS;
   }
@@ -1617,11 +1595,9 @@ export class IdentityService {
     if (account) {
       await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
-    // The emailed code is proof of address ownership, so this is past the credential gate
-    // like every other capture. Placed before the 2FA branch below deliberately: that path
-    // ends the session it just minted but the browser still reported its zone, and the
-    // player is about to sign in through `login` anyway.
-    await this.captureTimezone(body.user.id, input.timezone);
+    // Before the 2FA branch below: that path ends the session it just minted, but the zone
+    // the browser reported is good either way.
+    await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
 
     // better-auth mints this session with `createSession`, which its twoFactor plugin only
     // hooks on the sign-in routes - so an enrolled account would get a full session from

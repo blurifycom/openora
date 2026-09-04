@@ -26,6 +26,7 @@ import {
   ClientMeta,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
+import { captureTimezone } from './capture-timezone.service.js';
 import { assertAccountNotBlocked } from './rg-guard.service.js';
 import {
   DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -452,15 +453,8 @@ export class PhoneLoginService {
       userAgent,
     });
 
-    // Only once the OTP has cleared and the session exists. Display metadata, so a failure
-    // is logged and swallowed - it must never cost the player the session they just earned.
-    if (timezone && this.playerProvisioning) {
-      try {
-        await this.playerProvisioning.recordTimezone(account.id, timezone);
-      } catch (err) {
-        logger.warn({ err, userId: account.id }, 'player timezone capture failed - ignored');
-      }
-    }
+    // Only once the OTP has cleared and the session exists.
+    await captureTimezone(this.playerProvisioning, account.id, timezone);
 
     const authContext = await this.auth.$context;
 

@@ -62,15 +62,9 @@ export const PlayerSchema = z.object({
   totalWagered: MoneyAmountSchema,
   totalDeposits: MoneyAmountSchema,
   lastSeenAt: z.string().nullable(),
-  // The IANA zone the player's browser last reported, for rendering a stored UTC timestamp
-  // on their own clock. Null until a session captures one - an uncaptured player is
-  // honestly unknown, never guessed from `country` or `registrationIp`.
-  timezone: z.string().nullable(),
-  // When a device last reported that zone - refreshed on every accepted capture, including
-  // one that repeats the stored value, so it reads as "last confirmed" rather than "last
-  // changed". Shipped alongside the zone because the zone is a point-in-time, device-reported
-  // guess: a player who moved, or who last signed in eight months ago, renders a plausible
-  // but wrong local time, and only this column lets the reader see that before trusting it.
+  // The IANA zone the player's browser last reported; null until a device reports one.
+  timezone: TimezoneSchema.nullable(),
+  // Last confirmed by a device, not last changed: it moves on every accepted capture.
   timezoneUpdatedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -131,10 +125,8 @@ export function isAdultDateOfBirth(dateOfBirth: string, now = new Date()): boole
  * player's self-declared contact number - the verified login credential lives on the
  * identity module's `user.phoneNumber` and is never written from here.
  *
- * `timezone` is the odd one out: it is not nullable (display metadata is worth capturing,
- * never worth clearing) and it does not go through the field write at all - the service
- * routes it to `recordTimezone`, which validates it against the tz database and stamps
- * `timezoneUpdatedAt`. A zone the runtime does not recognise is dropped, not rejected.
+ * `timezone` is the odd one out: not nullable (worth capturing, never worth clearing) and
+ * written by `recordTimezone` rather than by the field update.
  */
 export const UpdatePlayerProfileInputSchema = z
   .object({

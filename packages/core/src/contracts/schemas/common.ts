@@ -63,33 +63,18 @@ export const CurrencyTickerSchema = z
 export const CurrencyTickerInputSchema = CurrencyTickerSchema.transform((c) => c.toUpperCase());
 
 /**
- * An IANA zone name as a browser reports it (`Intl.DateTimeFormat().resolvedOptions().timeZone`,
- * eg `Europe/Warsaw`). Bounded rather than enumerated: the value is checked against the
- * runtime's own tz database at the write (`resolveTimezone`), so a zone a later tzdata release
- * adds is accepted without a contract change. The longest name in the current database is 30
- * characters.
- *
- * Deliberately not `.min(1)`: a client that falls back to `''` when `Intl` gives it nothing
- * must land in `resolveTimezone`'s silent no-op like any other unrecognised zone, not fail
- * the login that carried it. The upper bound stays hard - at more than twice the longest real
- * zone name, an over-long value is not a zone the platform failed to recognise but arbitrary
- * client text, and the column is not a place to put it.
- *
- * Display metadata only. It is device-reported and trivially spoofable, so it is never
- * evidence of where a player is and must never gate anything - responsible-gambling windows
- * and audit records stay UTC on purpose.
+ * An IANA zone name as a browser reports it (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
+ * Unbounded on purpose: `resolveTimezone` drops anything the tz database does not know, so no
+ * client value can fail the request that carried it. Display metadata - never gates anything.
  */
-export const TimezoneSchema = z.string().max(64);
+export const TimezoneSchema = z.string();
 export type Timezone = z.infer<typeof TimezoneSchema>;
 
 /**
- * The canonical IANA name for `value`, or null when the runtime's tz database does not
- * recognise it. Canonicalising rather than echoing the input keeps the stored value stable
- * across the aliases and casings different browsers report (`US/Pacific` and `europe/warsaw`
- * both normalise), so an unchanged zone compares equal instead of churning its timestamp.
- *
+ * The canonical IANA name for `value`, or null when the tz database does not recognise it.
+ * Canonicalising keeps one stored spelling across the aliases browsers report (`US/Pacific`).
  * A bare UTC offset (`+05:00`) is rejected even though `Intl` accepts one: an offset is a
- * moment's arithmetic, not a zone, and it silently goes wrong the next time DST moves.
+ * moment's arithmetic, not a zone, and goes wrong the next time DST moves.
  */
 export function resolveTimezone(value: string): string | null {
   let canonical: string;
