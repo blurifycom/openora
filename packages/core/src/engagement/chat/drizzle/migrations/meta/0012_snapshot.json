@@ -159,12 +159,8 @@
           "name": "chat_message_room_id_chat_room_id_fk",
           "tableFrom": "chat_message",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -457,12 +453,8 @@
           "name": "chat_platform_ban_room_id_chat_room_id_fk",
           "tableFrom": "chat_platform_ban",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -746,12 +738,8 @@
           "name": "chat_room_ban_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_ban",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -858,12 +846,8 @@
           "name": "chat_room_configuration_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_configuration",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -977,12 +961,8 @@
           "name": "chat_room_member_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_member",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1119,12 +1099,8 @@
           "name": "chat_room_mute_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_mute",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1221,12 +1197,8 @@
           "name": "chat_room_remove_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_remove",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1330,12 +1302,8 @@
           "name": "chat_room_rule_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_rule",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1517,39 +1485,22 @@
     "public.chat_message_type": {
       "name": "chat_message_type",
       "schema": "public",
-      "values": [
-        "user",
-        "system"
-      ]
+      "values": ["user", "system"]
     },
     "public.chat_moderation_scope": {
       "name": "chat_moderation_scope",
       "schema": "public",
-      "values": [
-        "__global",
-        "__all_public",
-        "__all",
-        "room"
-      ]
+      "values": ["__global", "__all_public", "__all", "room"]
     },
     "public.chat_room_category": {
       "name": "chat_room_category",
       "schema": "public",
-      "values": [
-        "games-sports",
-        "regions",
-        "languages",
-        "private-channels"
-      ]
+      "values": ["games-sports", "regions", "languages", "private-channels"]
     },
     "public.chat_room_role": {
       "name": "chat_room_role",
       "schema": "public",
-      "values": [
-        "member",
-        "moderator",
-        "owner"
-      ]
+      "values": ["member", "moderator", "owner"]
     }
   },
   "schemas": {},
