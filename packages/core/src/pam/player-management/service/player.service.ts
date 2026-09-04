@@ -255,11 +255,6 @@ export class PlayerService implements PlayerActivityTracker {
       await this.sessionCommands.revokeAll(existing.userId, actorId);
     }
 
-    // Closing through this route is the same terminal event as `remove()`, so it emits the
-    // same thing: subscribers (chat's room-ownership handover) must not care which route an
-    // admin reached for, or a room closed by PATCH stays stranded with a dead owner. Both
-    // paths landing for one player is a no-op the second time - the handover handler guards
-    // on `chatRoomMember.accountClosedAt`. Emitted after commit, like the level change above.
     if (data.status === 'closed' && existing.status !== 'closed') {
       this.events.emit('player.account.closed', {
         playerId,
@@ -268,10 +263,6 @@ export class PlayerService implements PlayerActivityTracker {
       });
     }
 
-    // The inverse, and this is the only route out of `closed` - `remove()` has no undo. A
-    // closure is not the end of the story for the subscribers that acted on it: chat still
-    // renders this player as a deleted account on every roster it left them on, and any
-    // room it put on a deletion countdown is still counting down.
     if (data.status !== undefined && data.status !== 'closed' && existing.status === 'closed') {
       this.events.emit('player.account.reopened', {
         playerId,
@@ -302,8 +293,6 @@ export class PlayerService implements PlayerActivityTracker {
     );
     await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
     await this.sessionCommands.revokeAll(existing.userId, actorId);
-    // Emitted after the status write commits: subscribers (chat's room-ownership handover)
-    // act on a closure that has actually happened, never on one that could still roll back.
     this.events.emit('player.account.closed', {
       playerId,
       userId: existing.userId,

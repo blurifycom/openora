@@ -484,9 +484,6 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
   });
 });
 
-// Closing a player has two routes - `remove()` and an `update()` that sets status to
-// `closed` - and chat's room-ownership handover subscribes to the event, not the route.
-// A route that closes silently strands every private room the player owned.
 describe('PlayerService player.account.closed emission (real PG)', () => {
   it('emits player.account.closed when update moves the status to closed', async () => {
     const { svc, events } = makeService();
@@ -532,8 +529,6 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
     expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
   });
 
-  // The inverse matters for the same reason: chat renders a closed player as a deleted
-  // account and puts their room on a deletion countdown, and neither undoes itself.
   it('emits player.account.reopened when update moves the status out of closed', async () => {
     const { svc, events } = makeService();
     const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'closed' });

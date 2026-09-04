@@ -236,8 +236,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
     { sendEmail: false },
   ),
 
-  // In-app only: a chat room is not a money path, and this fires from a system handler
-  // with no request behind it.
   mapEvent(
     'chat.room.ownership.transferred',
     (p) => ({
@@ -264,9 +262,6 @@ export function buildKycResubmissionNotification(payload: {
   };
 }
 
-// Not a notificationEventMap entry: one `chat.room.scheduled_for_deletion` notifies every
-// member of the room, and a map entry produces exactly one notification. The fan-out lives
-// in the subscription below, which still dispatches through the same queue.
 export function buildChatRoomScheduledForDeletionNotification(payload: {
   userId: string;
   roomId: string;
@@ -380,10 +375,6 @@ export default {
         .catch((err) => logger.error({ err }, 'rg.limit.set admin-override notification failed'));
     });
 
-    // One notification per member, so this fans out here rather than through
-    // notificationEventMap, then rides the same dispatch queue - one job per recipient, so
-    // a retry re-notifies only the member it failed for. The queue key carries the member
-    // id because the map's `notifications-dispatch:<eventId>` would collide across them.
     ctx.events.on('chat.room.scheduled_for_deletion', (payload, envelope) => {
       const parsed = domainEventSchemas['chat.room.scheduled_for_deletion'].safeParse(payload);
       if (!parsed.success || !jobQueueRef) {
@@ -396,9 +387,6 @@ export default {
       }
       const eventId = envelope.eventId;
       const jobQueue = jobQueueRef;
-      // `memberIds` is already the audience - the emitter drops closed accounts, the
-      // previous owner among them. Re-checking the owner here is belt-and-braces: this
-      // handler must not notify them even if a future emitter path forgets to.
       for (const userId of p.memberIds.filter((id) => id !== p.previousOwnerId)) {
         jobQueue
           .enqueue(

@@ -38,9 +38,6 @@ export const chatRoom = pgTable(
     creatorId: uuid(), // bare id - cross-module (user from pam/identity), no FK
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp({ withTimezone: true }),
-    // Set when the room's owner account was closed and no moderator could inherit it.
-    // The purge job hard-deletes the room once this passes. Never rewritten once set -
-    // that is what keeps the 30-day countdown immune to member activity.
     scheduledDeletionAt: timestamp({ withTimezone: true }),
   },
   (t) => [
@@ -48,8 +45,6 @@ export const chatRoom = pgTable(
     uniqueIndex('chat_room_join_code_key').on(t.joinCode),
     index('chat_room_deleted_at_idx').on(t.deletedAt),
     index('chat_room_creator_public_deleted_at_idx').on(t.creatorId, t.isPublic, t.deletedAt),
-    // Partial: the purge scan only ever looks at rooms already on the countdown, which
-    // is a vanishing fraction of the table.
     index('chat_room_scheduled_deletion_idx')
       .on(t.scheduledDeletionAt)
       .where(sql`${t.scheduledDeletionAt} IS NOT NULL`),
@@ -60,9 +55,6 @@ export const chatMessage = pgTable(
   'chat_message',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cascades like every other room-scoped table: the room's only hard delete is the
-    // owner-less purge, and there the messages must go with it. A soft delete
-    // (`chatRoom.deletedAt`) leaves them untouched.
     roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     userId: uuid().notNull(),
     username: text().notNull(),
@@ -138,10 +130,6 @@ export const chatRoomMember = pgTable(
     // Null for plain members; set when a role above `member` is granted, cleared on revoke.
     // Ownership transfer picks the successor by the earliest assignment among moderators.
     roleAssignedAt: timestamp({ withTimezone: true }),
-    // Set when this member's account was closed or deactivated. The row is kept so the
-    // roster and the room's history stay intact; the UI renders it as "Deleted user".
-    // Doubles as the ownership-handover handler's idempotency guard - a stamped row is
-    // one the handler has already processed.
     accountClosedAt: timestamp({ withTimezone: true }),
     joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
@@ -263,8 +251,6 @@ export const chatPlatformBan = pgTable(
     userId: uuid().notNull(),
     bannedBy: uuid().notNull(),
     scope: chatModerationScope().notNull().default('__all_public'),
-    // Cascades with the room, same as chat_message: a room-scoped ban outliving the
-    // purge would be a ban on a room nobody can name.
     roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     reason: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

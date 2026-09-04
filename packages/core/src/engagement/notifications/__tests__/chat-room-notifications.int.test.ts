@@ -24,14 +24,6 @@ import notificationsPlugin from '../plugin.js';
 
 let db: TestDb;
 
-/**
- * Runs the notifications plugin's real `register()` against a minimal context, then its
- * router factory (which is what wires the service the workers publish through). The job
- * queue double runs handlers inline and honours `idempotencyKey`, so a test sees the whole
- * subscribe -> enqueue -> dispatch path the same way a real deployment does, without a
- * broker. Cheaper than the full e2e boot, and it exercises the actual wiring rather than a
- * copy of its body.
- */
 function bootPlugin() {
   const handlers = new Map<string, EventHandler[]>();
   const workers = new Map<string, WorkerRegistration<unknown>>();
@@ -39,13 +31,10 @@ function bootPlugin() {
   const seenKeys = new Set<string>();
   let routerFactory: ((c: unknown) => unknown) | null = null;
 
-  // A subscription enqueues without awaiting - it is fire-and-forget by design - so the
-  // in-flight jobs are tracked here and drained before a test reads the table.
   const pending: Promise<unknown>[] = [];
   const jobQueue = mock<JobQueueAdapter>({
     enqueue: (name: QueueName, payload: unknown, opts?: EnqueueOptions) => {
       enqueued.push({ queue: name, key: opts?.idempotencyKey });
-      // At-most-one active job per key, the way a durable driver dedupes on job id.
       const duplicate = Boolean(opts?.idempotencyKey && seenKeys.has(opts.idempotencyKey));
       if (opts?.idempotencyKey) {
         seenKeys.add(opts.idempotencyKey);
@@ -92,8 +81,6 @@ function bootPlugin() {
 
   const delivery = mock<NotificationDeliveryAdapter>({ sendEmail: async () => undefined });
   const directory = mock<AdminUserDirectory>({ get: async () => null });
-  // Only ever resolved out of the container - this test asserts on notification rows and
-  // enqueued jobs, never on a realtime publish, so the mock stands in for the transport.
   const realtime = makeRealtimeTransport();
   const container = {
     get: (token: unknown) =>
@@ -178,8 +165,6 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
       roomId,
       roomName: 'Wheel Spin',
       previousOwnerId,
-      // The closed owner is on the roster snapshot - their row is kept and marked, not
-      // removed - so the handler is what has to leave them out.
       memberIds: [previousOwnerId, ...memberIds],
       scheduledDeletionAt: new Date('2026-09-30T10:00:00.000Z').toISOString(),
     });
@@ -199,8 +184,6 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     const previousOwnerId = randomUUID();
     const activeId = randomUUID();
 
-    // The shape the emitter now produces for a room holding one active member and one
-    // already-closed member: the closed member never reaches the audience at all.
     await fire('chat.room.scheduled_for_deletion', {
       roomId: randomUUID(),
       roomName: 'Wheel Spin',
@@ -227,15 +210,11 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     };
 
     const eventId = await fire('chat.room.scheduled_for_deletion', payload);
-    // One dispatch key per recipient: a single key for the whole event would collide and
-    // silently drop every member after the first.
     expect(new Set(enqueued.map((e) => e.key)).size).toBe(memberIds.length);
     for (const userId of memberIds) {
       expect(enqueued.map((e) => e.key)).toContain(`notifications-dispatch:${eventId}:${userId}`);
     }
 
-    // At-least-once delivery: the same event redelivered must not double-notify, because
-    // every recipient's key is already taken.
     await fire('chat.room.scheduled_for_deletion', payload, eventId);
 
     const rows = await readNotifications();

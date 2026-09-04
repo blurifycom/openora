@@ -22,12 +22,6 @@ export const CHAT_ROOM_ASSIGNABLE_ROLES = ['member', 'moderator'] as const;
 // Named alongside the transport's own `chat:access-revoked`; a client subscribes to it by name.
 export const CHAT_MEMBER_ROLE_CHANGED_SIGNAL = 'chat:member-role-changed';
 
-// Realtime signal published on a room's channel when the room enters its 30-day owner-less
-// countdown, so the deletion banner appears without a reload. Room-level rather than
-// per-member: every member sees the same deadline.
 export const CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL = 'chat:room-scheduled-for-deletion';
 
-// Days a private room stays readable and writable after its owner's account was closed with
-// no moderator able to inherit it. The purge job hard-deletes the room once the deadline
-// passes.
 export const OWNERLESS_ROOM_RETENTION_DAYS = 30;

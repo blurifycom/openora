@@ -2818,10 +2818,6 @@ describe('ChatService moderation (real PG)', () => {
     const message = await seedMessage({ content: 'bad content' });
     const received: ChatMessage[] = [];
     svc.subscribeMessages(null, (event) => received.push(event));
-    // `subscribeMessages` returns before the Redis SUBSCRIBE lands - the transport fires it
-    // on a floating promise - and pub/sub keeps no backlog, so a publish that beats it is
-    // dropped for good rather than delivered late. Every other subscriber in this file
-    // settles first; this one did not, which is why it timed out on CI.
     await settle();
 
     await moderation.deleteMessage(message.id, randomUUID(), NO_CLIENT_META);

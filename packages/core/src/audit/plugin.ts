@@ -385,17 +385,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-driven room lifecycle after an owner's account was closed. There is no acting
-  // human here - the closure is the cause, and its own audit record names the admin behind
-  // it - so these are system-attributed. resource = the room; `after` carries what moved:
-  // the inheriting owner or the countdown deadline. The third step, the purge itself, is
-  // NOT here: it is a hard delete whose audit record is the room's only surviving trace, so
-  // chat writes it inside the deleting transaction (`ChatRoomPurgeService.purgeRoom`)
-  // rather than through this post-commit subscription. Auditing it here as well would
-  // double the row.
-  // The countdown was called off because the owner whose closure started it came back.
-  // Audited on its own because it reverses a scheduled hard delete, and because the room
-  // changing hands back is an ownership move like the two above.
   if (topic === 'chat.room.deletion.cancelled') {
     return {
       ...base,
@@ -431,10 +420,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // An admin closed a player's account from the back office, or moved it back out of
-  // `closed`. resource = the subject player; the payload's userId is the subject's auth
-  // user, never the actor. `after.status` carries only the closed flag - the reopened
-  // event does not name the status it moved to, and the player's own update record does.
   if (topic === 'player.account.closed' || topic === 'player.account.reopened') {
     return {
       ...base,
@@ -870,7 +855,6 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.ownership.transferred',
   'chat.room.scheduled_for_deletion',
   'chat.room.deletion.cancelled',
-  // 'chat.private_room.purged' is written transactionally by chat, not subscribed here.
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',

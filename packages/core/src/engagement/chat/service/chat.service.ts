@@ -2061,8 +2061,6 @@ export class ChatService {
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
     const room = await this.verifyRoomAccess(roomId, viewerId);
     const canSeeAdminUsers = viewerId ? await this.canSeeAdminUsers(viewerId) : false;
-    // A closed account keeps its row here on purpose: filtering it out would strip the
-    // author names off every message it ever posted in this room.
     const members = await this.drizzle.db
       .select({
         userId: chatRoomMember.userId,

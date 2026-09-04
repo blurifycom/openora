@@ -23,10 +23,6 @@ export class ChatRoomBanService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  /**
-   * Reads both roles through `db`, so a caller holding the room's advisory lock can pass its
-   * transaction and have the authorization decided against rows nobody can move underneath it.
-   */
   private async assertModerator(
     db: DrizzleDb | DrizzleTx,
     roomId: Uuid,
@@ -74,9 +70,6 @@ export class ChatRoomBanService {
     }
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        // Inside the lock, not before it: an owner whose account is closing is demoted by the
-        // ownership handover, and a check that ran before the lock would still let that request
-        // through to ban the successor it just promoted, leaving the room without an owner.
         await this.assertModerator(t, roomId, moderatorId, userId);
         const [existing] = await t
           .select({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt })
@@ -139,11 +132,6 @@ export class ChatRoomBanService {
     userId: Uuid;
     moderatorId: Uuid;
   }) {
-    // Authorized inside the lock, same as `banMember`: the ownership handover demotes a
-    // closing owner, and a check read outside it decides against a role that has already
-    // moved. Lifting a ban cannot strand a room the way banning could, but a moderation
-    // guard that is racy in one direction and not the other is the harder one to reason
-    // about later.
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId);

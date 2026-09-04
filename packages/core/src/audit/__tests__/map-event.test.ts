@@ -193,12 +193,6 @@ describe('mapEventToRecord: chat room lifecycle after an owner account closes', 
       after: { ownerId: previousOwnerId, scheduledDeletionAt: null, memberCount: 2 },
     });
   });
-
-  // The purge itself has no case here on purpose: chat writes that record inside the
-  // deleting transaction, because after a hard delete it is the room's only surviving trace
-  // and a post-commit subscription would lose it to a crash. `chat.private_room.purged` is
-  // therefore not in the audited-topic list either, so this mapper never sees it. See
-  // `ChatRoomPurgeService.purgeRoom`.
 });
 
 describe('mapEventToRecord: player account closed and reopened', () => {

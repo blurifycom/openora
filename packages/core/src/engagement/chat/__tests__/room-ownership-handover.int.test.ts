@@ -51,8 +51,6 @@ let db: TestDb;
 let redis: TestRedis;
 const transports: RedisPubSubRealtimeTransport[] = [];
 
-// Matches chat.service.int.test.ts: a real pub/sub transport on an isolated key prefix, so
-// the channel revokes the purge fires go through the same code path production uses.
 function makeTransport(): RedisPubSubRealtimeTransport {
   const transport = new RedisPubSubRealtimeTransport(
     redis.client,
@@ -104,7 +102,6 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
   return { chat, membership, purge, ban, events, transport, audit };
 }
 
-/** A private room owned by `ownerId`, with the given ids joined as plain members. */
 async function seedPrivateRoom(
   services: ReturnType<typeof makeServices>,
   ownerId: string,
@@ -121,7 +118,6 @@ async function seedPrivateRoom(
   return room;
 }
 
-/** Promote through the real route, then pin `roleAssignedAt` so successor order is exact. */
 async function promote(
   services: ReturnType<typeof makeServices>,
   room: { id: string },
@@ -153,7 +149,6 @@ function readMember(roomId: string, userId: string) {
     .then(([row]) => row!);
 }
 
-/** The `memberIds` the countdown event actually carried - ie who gets notified. */
 function emittedAudience(services: ReturnType<typeof makeServices>): string[] {
   const call = services.events.emit.mock.calls.find(
     (args: unknown[]) => args[0] === 'chat.room.scheduled_for_deletion',
@@ -201,8 +196,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - transfer (real PG)', (
 
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt });
 
-    // `creatorId` gates room edit/delete and `role` gates the moderation guards - a
-    // transfer that moved only one leaves a room its new owner cannot administer.
     const stored = await readRoom(room.id);
     expect(stored?.creatorId).toBe(modId);
     expect(stored?.scheduledDeletionAt).toBeNull();
@@ -226,8 +219,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - transfer (real PG)', (
     const ownerId = randomUUID();
     const [deadMod, earlyMod, lateMod] = [randomUUID(), randomUUID(), randomUUID()];
     const room = await seedPrivateRoom(services, ownerId, [deadMod, earlyMod, lateMod]);
-    // The earliest stamp of the three belongs to an account that is already closed: a dead
-    // account must never inherit the room, so the next-earliest live one wins.
     await promote(services, room, ownerId, deadMod, new Date('2026-01-01T00:00:00.000Z'));
     await promote(services, room, ownerId, earlyMod, new Date('2026-02-01T00:00:00.000Z'));
     await promote(services, room, ownerId, lateMod, new Date('2026-03-01T00:00:00.000Z'));
@@ -244,8 +235,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - transfer (real PG)', (
     expect((await readRoom(room.id))?.creatorId).toBe(earlyMod);
     expect((await readMember(room.id, earlyMod)).role).toBe('owner');
     expect((await readMember(room.id, lateMod)).role).toBe('moderator');
-    // The closed moderator keeps its row and its role - only the stamp rules it out as a
-    // successor. Demotion belongs to the closed *owner*, whose ownership had to move.
     expect(await readMember(room.id, deadMod)).toMatchObject({ role: 'moderator' });
     expect((await readMember(room.id, deadMod)).accountClosedAt).toBeInstanceOf(Date);
   });
@@ -308,8 +297,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
     expect(stored?.scheduledDeletionAt?.toISOString()).toBe(
       new Date(closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS).toISOString(),
     );
-    // The notification audience: the live members only. The closed owner is named
-    // separately rather than carried in it.
     expect(services.events.emit).toHaveBeenCalledWith(
       'chat.room.scheduled_for_deletion',
       expect.objectContaining({
@@ -334,9 +321,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
     const activeId = randomUUID();
     const closedId = randomUUID();
     const room = await seedPrivateRoom(services, ownerId, [activeId, closedId]);
-    // A player closed before the owner was: their row stays on the roster, but they have
-    // no session and can never open the room again, so a notification for them is
-    // unreadable by anyone.
     await services.membership.handleAccountClosed({
       userId: closedId,
       closedAt: new Date('2026-08-30T10:00:00.000Z'),
@@ -348,10 +332,7 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
       closedAt: new Date('2026-08-31T10:00:00.000Z'),
     });
 
-    // Exactly one recipient - the fan-out creates one notification per id, so this is the
-    // one notification the room produces.
     expect(emittedAudience(services)).toEqual([activeId]);
-    // The roster itself is untouched: both closed rows are still there, flagged.
     const roster = await services.chat.listRoomMembers({ roomId: room.id, viewerId: activeId });
     expect(roster).toHaveLength(3);
     expect(
@@ -425,9 +406,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
     const successorAfterFirst = await readMember(room.id, modId);
     services.events.emit.mockClear();
 
-    // A second, unrelated closure instant for the same person. Nothing is rewritten, and
-    // nothing is re-announced either: the room was not changed by THIS closure, so the
-    // re-derivation below declines it.
     await services.membership.handleAccountClosed({
       userId: ownerId,
       closedAt: new Date('2026-09-01T10:00:00.000Z'),
@@ -439,9 +417,6 @@ describe('ChatRoomMembershipService.handleAccountClosed - countdown (real PG)', 
   });
 });
 
-// A redelivery is the only thing that can replace an announce lost to a crash between the
-// commit and the fan-out, so the second run has to re-announce what the first one wrote -
-// without writing anything itself.
 describe('handleAccountClosed redelivery (real PG)', () => {
   const CLOSED_AT = new Date('2026-08-31T10:00:00.000Z');
 
@@ -465,7 +440,6 @@ describe('handleAccountClosed redelivery (real PG)', () => {
       }),
     );
     expect(emittedAudience(services)).toEqual([memberId]);
-    // Re-announced, not re-run: the deadline is still the one the first delivery wrote.
     expect(await readRoom(room.id)).toEqual(afterFirst);
   });
 
@@ -500,8 +474,6 @@ describe('handleAccountClosed redelivery (real PG)', () => {
     const room = await seedPrivateRoom(services, firstOwnerId, [secondOwnerId]);
     await promote(services, room, firstOwnerId, secondOwnerId);
     await services.membership.handleAccountClosed({ userId: firstOwnerId, closedAt: CLOSED_AT });
-    // The successor's own closure starts the countdown; a redelivery for the FIRST owner
-    // then finds a room on a countdown it did not cause.
     const secondClosedAt = new Date('2026-09-02T10:00:00.000Z');
     await services.membership.handleAccountClosed({
       userId: secondOwnerId,
@@ -584,14 +556,8 @@ describe('ChatRoomMembershipService.handleAccountClosed - non-owners (real PG)',
 });
 
 describe('handleAccountClosed against a concurrent membership write (real PG)', () => {
-  /** Long enough for a blocked statement to actually be waiting on its lock, not queued in the driver. */
   const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
-  /**
-   * Hold the room's advisory lock in a transaction the test controls, standing in for a
-   * handover that is mid-flight. `release(work)` runs `work` on that same transaction - so
-   * its writes land under the lock, exactly as the handover's do - and then commits.
-   */
   function holdRoomLock(roomId: string) {
     let held!: () => void;
     const acquired = new Promise<void>((resolve) => {
@@ -611,7 +577,6 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
     return { acquired, release: (w: (t: DrizzleTx) => Promise<void>) => release(w), done };
   }
 
-  /** The two role rows and the creator pointer the handover moves, as one unit. */
   const handoverWrites =
     (roomId: string, closedOwnerId: string, successorId: string) => async (t: DrizzleTx) => {
       await t
@@ -633,11 +598,6 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
     await promote(services, room, ownerId, modId);
     const closedAt = new Date('2026-08-31T10:00:00.000Z');
 
-    // The one interleaving the room lock cannot cover on its own, reproduced exactly: an
-    // uncommitted delete is invisible to the handover's successor SELECT but holds the row
-    // lock, so the promotion UPDATE waits on it and then matches nothing. Without the
-    // row-count guard the handover still copies `modId` into `creatorId`, and the room is
-    // left with a creator who is not a member, no owner on the roster and no deadline.
     let commitDelete!: () => void;
     const deleteCommitted = new Promise<void>((resolve) => {
       commitDelete = resolve;
@@ -672,8 +632,6 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
     const lock = holdRoomLock(room.id);
     await lock.acquired;
 
-    // The closing owner's request, in flight while the handover holds the lock. It has to
-    // block: the roles it would authorize against are exactly the ones about to move.
     const removing = services.membership.removeMember({
       moderatorId: ownerId,
       roomId: room.id,
@@ -718,8 +676,6 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
     lock.release(handoverWrites(room.id, ownerId, modId));
     await lock.done;
 
-    // The ban that was authorized before the lock would have deleted the member row of the
-    // owner the handover had just installed, leaving `creatorId` pointing off the roster.
     await expect(banning).rejects.toBeInstanceOf(ChatRoomNotModeratorError);
     expect(await readMember(room.id, modId)).toMatchObject({ role: 'owner' });
   });
@@ -744,7 +700,6 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     const owner = await readMember(room.id, ownerId);
     expect(owner.role).toBe('owner');
     expect(owner.accountClosedAt).toBeNull();
-    // The room must actually be administrable again, not merely look it.
     await expect(
       services.chat.updatePrivateRoom({
         id: room.id,
@@ -773,11 +728,9 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
 
     await services.membership.handleAccountReopened({ userId: ownerId });
 
-    // The transfer stands - the successor keeps what they inherited.
     expect((await readRoom(room.id))?.creatorId).toBe(modId);
     const previousOwner = await readMember(room.id, ownerId);
     expect(previousOwner.role).toBe('member');
-    // But the roster stops calling them a deleted account, and they can inherit again.
     expect(previousOwner.accountClosedAt).toBeNull();
     expect(
       services.events.emit.mock.calls.some(
@@ -787,8 +740,6 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
   });
 
   it('does not hand a room to a plain member whose own account reopens', async () => {
-    // The countdown belongs to the owner's closure. A member who was closed and comes back
-    // clears their own flag and nothing else - taking the room would be a silent grant.
     const services = makeServices();
     const ownerId = randomUUID();
     const memberId = randomUUID();
@@ -829,8 +780,6 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
     await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
     await services.membership.handleAccountReopened({ userId: ownerId });
 
-    // The deadline it would have been purged on is long past by the test's own clock, so a
-    // room still carrying one would come back here. A cancelled one has nothing to be due.
     expect(await services.purge.listDueRooms(100)).toEqual([]);
     expect(await services.purge.purgeRoom(room.id)).toBe(false);
     expect(await readRoom(room.id)).not.toBeNull();
@@ -876,8 +825,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
       roomId: room.id,
       content: 'goodbye',
     });
-    // chat_platform_ban now cascades with the room; chat_mute has no FK at all and is the
-    // one table the purge still deletes by hand. Both are asserted gone below.
     await db.drizzle.db.insert(chatPlatformBan).values({
       userId: memberId,
       bannedBy: ownerId,
@@ -912,8 +859,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
 
   it('leaves a public room, a null-deadline room and a future-deadline room untouched', async () => {
     const services = makeServices();
-    // A public room can never carry a deadline through the handler, but the guard is the
-    // only thing standing between this job and every room in the table - so pin it.
     const publicRoom = await seedRoom({
       isPublic: true,
       scheduledDeletionAt: new Date(Date.now() - DAY_MS),
@@ -926,8 +871,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
     });
 
     await expect(services.purge.listDueRooms(100)).resolves.toEqual([]);
-    // The scan is only half the guard - a job carrying any of these ids must still refuse
-    // to delete, because the id was selected outside the lock the purge takes.
     for (const room of [publicRoom, noDeadline, future, soft]) {
       await expect(services.purge.purgeRoom(room.id)).resolves.toBe(false);
       expect(await readRoom(room.id)).not.toBeNull();
@@ -954,8 +897,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
 
     await services.purge.purgeRoom(room.id);
 
-    // The audit record is the room's only surviving trace, so it is written inside the
-    // deleting transaction rather than derived from the event after the fact.
     expect(services.audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -966,7 +907,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
         after: { messageCount: 2 },
       }),
     );
-    // The event stays, for overlays and clients - it just no longer carries the trace.
     expect(services.events.emit).toHaveBeenCalledWith('chat.private_room.purged', {
       roomId: room.id,
       messageCount: 2,
@@ -980,8 +920,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
 
     await expect(services.purge.purgeRoom(room.id)).rejects.toThrow('audit down');
 
-    // Untraceable deletion is the one outcome this job must never produce, so the room
-    // survives to be retried rather than vanishing without a record.
     expect(await readRoom(room.id)).not.toBeNull();
   });
 
@@ -1003,8 +941,6 @@ describe('ChatRoomPurgeService (real PG)', () => {
     const middle = await seedRoom({ scheduledDeletionAt: new Date(Date.now() - 2 * DAY_MS) });
     await seedRoom({ scheduledDeletionAt: new Date(Date.now() - DAY_MS) });
 
-    // A backlog after downtime is drained across ticks; nothing is lost by waiting a day,
-    // and one tick never serially chews through the whole table.
     await expect(services.purge.listDueRooms(2)).resolves.toEqual([oldest.id, middle.id]);
   });
 
