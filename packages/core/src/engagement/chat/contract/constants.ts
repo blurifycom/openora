@@ -19,5 +19,5 @@ export const CHAT_ROOM_ASSIGNABLE_ROLES = ['member', 'moderator'] as const;
 
 // Realtime signal published on a room's channel when a member's role changes, so connected
 // clients refetch the roster instead of rendering a stale badge until their cache expires.
-// Named alongside the transport's own `chat:access-revoked`; a client subscribes to it by name.
+// Named alongside the transport's own ACCESS_REVOKED_SIGNAL; a client subscribes to it by name.
 export const CHAT_MEMBER_ROLE_CHANGED_SIGNAL = 'chat:member-role-changed';

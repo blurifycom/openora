@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import type { RealtimeSignal } from '@openora/core/contracts';
 import { RedisPubSubRealtimeTransport } from '../redis-pubsub-realtime-transport.js';
 import { runRealtimeTransportConformanceSuite } from '../../../testing/realtime-transport-conformance.js';
 import { createTestRedis, type TestRedis } from '@openora/core/testing';
@@ -101,6 +102,48 @@ describe('RedisPubSubRealtimeTransport', () => {
     await settle();
     expect(kicked).toEqual([true]);
     expect(kept).toEqual([true, true]);
+  });
+
+  it('signals only the revoked user before cutting both of their lanes', async () => {
+    const transport = makeTransport();
+    const channel = `chat:room:${randomUUID()}`;
+    const revokedMessages: unknown[] = [];
+    const otherMessages: unknown[] = [];
+    const throwingSignals: RealtimeSignal[] = [];
+    const revokedSignals: RealtimeSignal[] = [];
+    const otherSignals: RealtimeSignal[] = [];
+
+    transport.subscribe(channel, () => revokedMessages.push(true), 'revoked-user');
+    transport.subscribe(channel, () => otherMessages.push(true), 'other-user');
+    transport.subscribeSignal(
+      channel,
+      (signal) => {
+        throwingSignals.push(signal);
+        throw new Error('disconnected');
+      },
+      'revoked-user',
+    );
+    transport.subscribeSignal(channel, (signal) => revokedSignals.push(signal), 'revoked-user');
+    transport.subscribeSignal(channel, (signal) => otherSignals.push(signal), 'other-user');
+    await settle();
+
+    const revocation = { name: 'chat:access-revoked', payload: { channel } };
+    expect(() => transport.revokeUserFromChannel('revoked-user', channel)).not.toThrow();
+
+    // Delivered synchronously, ahead of the prune, so a Redis round-trip cannot outrun it.
+    expect(throwingSignals).toEqual([revocation]);
+    expect(revokedSignals).toEqual([revocation]);
+    expect(otherSignals).toEqual([]);
+
+    await transport.publish(channel, 'after-revoke');
+    await transport.signal(channel, 'chat:room-changed', { channel });
+    await vi.waitFor(() => {
+      expect(otherMessages).toEqual([true]);
+      expect(otherSignals).toEqual([{ name: 'chat:room-changed', payload: { channel } }]);
+    });
+    expect(revokedMessages).toEqual([]);
+    expect(revokedSignals).toEqual([revocation]);
+    expect(throwingSignals).toEqual([revocation]);
   });
 
   it('prefixes channels with serviceName, so two service names never cross-deliver', async () => {

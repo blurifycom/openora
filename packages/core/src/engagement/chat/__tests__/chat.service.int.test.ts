@@ -1625,14 +1625,32 @@ describe('ChatService admin rooms (real PG)', () => {
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
     const ownerDeliveries: unknown[] = [];
     const memberDeliveries: unknown[] = [];
+    const ownerSignals: RealtimeSignal[] = [];
+    const memberSignals: RealtimeSignal[] = [];
     transport.subscribe(chatChannel(room.id), () => ownerDeliveries.push(true), ownerId);
     transport.subscribe(chatChannel(room.id), () => memberDeliveries.push(true), memberId);
+    transport.subscribeSignal?.(
+      chatChannel(room.id),
+      (signal) => ownerSignals.push(signal),
+      ownerId,
+    );
+    transport.subscribeSignal?.(
+      chatChannel(room.id),
+      (signal) => memberSignals.push(signal),
+      memberId,
+    );
 
     await svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META });
 
     transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
     expect(ownerDeliveries).toEqual([]);
     expect(memberDeliveries).toEqual([]);
+    expect(ownerSignals).toEqual([
+      { name: 'chat:access-revoked', payload: { channel: chatChannel(room.id) } },
+    ]);
+    expect(memberSignals).toEqual([
+      { name: 'chat:access-revoked', payload: { channel: chatChannel(room.id) } },
+    ]);
   });
 
   it('cuts every connection the same user holds, not just the first', async () => {
@@ -2433,7 +2451,9 @@ describe('ChatService.setMemberRole (real PG)', () => {
     });
     await settle();
 
-    expect(signals).toEqual([]);
+    expect(signals).toEqual([
+      { name: 'chat:access-revoked', payload: { channel: chatChannel(room.id) } },
+    ]);
   });
 
   it('delivers the signal over the default transport, on its own lane', async () => {
