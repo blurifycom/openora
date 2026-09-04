@@ -414,14 +414,13 @@ export class IdentityService {
       ...(mailDispatch
         ? {
             dispatchOtpMail: async ({ to, template }) => {
-              const locale = (await this.resolveUserLanguage(to)) ?? 'en';
-              await mailDispatch.toAddress({
-                email: to,
-                locale,
-                template,
-                // unique per call: each OTP send is a fresh code that must go through
-                idempotencyKey: `otp:${template.key}:${randomUUID()}`,
-              });
+              const idempotencyKey = `otp:${template.key}:${randomUUID()}`;
+              const recipient = await this.findUserByEmail(to);
+              if (recipient) {
+                await mailDispatch.toUser({ userId: recipient.id, template, idempotencyKey });
+                return;
+              }
+              await mailDispatch.toAddress({ email: to, template, idempotencyKey });
             },
           }
         : {}),
@@ -455,22 +454,13 @@ export class IdentityService {
     });
   }
 
-  private async findUserByEmail(
-    email: string,
-  ): Promise<{ id: User['id']; language: string | null } | undefined> {
+  private async findUserByEmail(email: string): Promise<{ id: User['id'] } | undefined> {
     const [row] = await this.drizzle.db
-      .select({ id: user.id, language: user.language })
+      .select({ id: user.id })
       .from(user)
       .where(eq(user.email, email.toLowerCase()))
       .limit(1);
     return row;
-  }
-
-  // Used by the emailOTP plugin's sendVerificationOTP hook to pick a locale for the
-  // reset-password email - better-auth only gives us the target email, not a session.
-  private async resolveUserLanguage(email: string): Promise<string | null> {
-    const row = await this.findUserByEmail(email);
-    return row?.language ?? null;
   }
 
   private get api() {
