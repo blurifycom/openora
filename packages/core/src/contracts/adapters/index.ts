@@ -96,6 +96,7 @@ export {
   REALTIME_CLIENT_AUTHORIZER,
   CHAT_REALTIME_TRANSPORT,
   CHAT_REALTIME_CLIENT_AUTHORIZER,
+  ACCESS_REVOKED_SIGNAL,
 } from './realtime.js';
 
 export type { GameAdapter } from './game.js';

@@ -38,12 +38,16 @@ export const chatRoom = pgTable(
     creatorId: uuid(), // bare id - cross-module (user from pam/identity), no FK
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp({ withTimezone: true }),
+    scheduledDeletionAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chat_room_slug_key').on(t.slug),
     uniqueIndex('chat_room_join_code_key').on(t.joinCode),
     index('chat_room_deleted_at_idx').on(t.deletedAt),
     index('chat_room_creator_public_deleted_at_idx').on(t.creatorId, t.isPublic, t.deletedAt),
+    index('chat_room_scheduled_deletion_idx')
+      .on(t.scheduledDeletionAt)
+      .where(sql`${t.scheduledDeletionAt} IS NOT NULL`),
   ],
 );
 
@@ -51,7 +55,7 @@ export const chatMessage = pgTable(
   'chat_message',
   {
     id: uuid().primaryKey().defaultRandom(),
-    roomId: uuid().references(() => chatRoom.id),
+    roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     userId: uuid().notNull(),
     username: text().notNull(),
     content: text().notNull(),
@@ -126,6 +130,7 @@ export const chatRoomMember = pgTable(
     // Null for plain members; set when a role above `member` is granted, cleared on revoke.
     // Ownership transfer picks the successor by the earliest assignment among moderators.
     roleAssignedAt: timestamp({ withTimezone: true }),
+    accountClosedAt: timestamp({ withTimezone: true }),
     joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -246,7 +251,7 @@ export const chatPlatformBan = pgTable(
     userId: uuid().notNull(),
     bannedBy: uuid().notNull(),
     scope: chatModerationScope().notNull().default('__all_public'),
-    roomId: uuid().references(() => chatRoom.id),
+    roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     reason: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp({ withTimezone: true }),

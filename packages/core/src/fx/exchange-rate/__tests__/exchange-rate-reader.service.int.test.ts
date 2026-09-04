@@ -153,10 +153,13 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
     expect(quote?.rate).toBe('1.100000000000000000');
     expect(elapsed).toBeLessThan(30);
 
-    await wait(80);
+    // Polled, not slept: the provider resolves after 30ms but the write behind it lands
+    // whenever the pool hands back a connection, which on a loaded runner is well past any
+    // fixed deadline. Same idiom as the cross-leg refresh test below.
+    await vi.waitFor(async () =>
+      expect((await getRow('EUR', 'USD'))?.rate).toBe('1.500000000000000000'),
+    );
     expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
-    const row = await getRow('EUR', 'USD');
-    expect(row?.rate).toBe('1.500000000000000000');
   });
 
   it('soft-stale: a background refresh timeout is completely invisible to the caller', async () => {

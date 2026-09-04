@@ -484,6 +484,74 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
   });
 });
 
+describe('PlayerService player.account.closed emission (real PG)', () => {
+  it('emits player.account.closed when update moves the status to closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'closed' }, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.account.closed', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+    });
+  });
+
+  it('emits the same payload from remove as from update', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser();
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.account.closed', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+    });
+  });
+
+  it('does not emit when update moves the status to a non-terminal blocking status', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+  });
+
+  it('does not re-emit when the player was already closed (no transition)', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.update(seeded.id, { status: 'closed' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+  });
+
+  it('emits player.account.reopened when update moves the status out of closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.account.reopened', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+    });
+  });
+
+  it('does not emit reopened for a status change between two non-closed statuses', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'suspended' });
+
+    await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.account.reopened', expect.anything());
+  });
+});
+
 // Ported from chat-commands.service.test.ts (ChatCommandsService.searchPlayers/
 // getPlayerProfile) - these methods never touch the DB, only the injected ports.
 describe('PlayerService.searchPlayers', () => {
