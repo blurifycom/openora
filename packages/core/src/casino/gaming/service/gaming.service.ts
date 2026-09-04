@@ -5,11 +5,14 @@ import {
   makeConflictError,
   DrizzleService,
   findOneOrThrow,
+  isUniqueConstraintViolation,
+  pageToOffset,
   serializeRow,
 } from '@openora/core/server';
-import { eq, and, asc, desc, inArray } from 'drizzle-orm';
+import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or } from 'drizzle-orm';
 import {
   RgLimitExceededError,
+  type ClientMeta,
   type GameAdapter,
   type PlayEligibilityPort,
   type RgLimitsPort,
@@ -24,12 +27,26 @@ import {
   gameProvider,
   gameRound,
   type Game,
+  type GameCategory,
+  type GameProvider,
   type GameRound,
 } from '../schema/index.js';
+import { GameProviderNotFoundError } from './game-provider.service.js';
+import { GameCategoryNotFoundError } from './game-category.service.js';
+import type { UpdateGameInput } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
 export const GameRoundNotFoundError = makeNotFoundError('GameRound');
+
+export const GameSlugTakenError = makeConflictError(
+  'GameSlugTakenError',
+  'A game with this slug already exists',
+);
+
+type Actor = {
+  actorId?: User['id'];
+} & ClientMeta;
 
 export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
@@ -85,15 +102,57 @@ export class GamingService {
     private readonly rgLimits?: RgLimitsPort,
   ) {}
 
-  async listGames() {
-    const rows = await this.drizzle.db
-      .select({ game, provider: gameProvider })
-      .from(game)
-      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-      .where(eq(game.isActive, true))
-      .orderBy(asc(game.name));
+  async listGames({
+    page,
+    limit,
+    q,
+    providerId,
+    categoryId,
+    isActive,
+  }: {
+    page: number;
+    limit: number;
+    q?: string;
+    providerId?: GameProvider['id'];
+    categoryId?: GameCategory['id'];
+    isActive?: boolean;
+  }) {
+    const where = and(
+      q ? or(ilike(game.name, `%${q}%`), ilike(game.slug, `%${q}%`)) : undefined,
+      providerId ? eq(game.providerId, providerId) : undefined,
+      isActive === undefined ? undefined : eq(game.isActive, isActive),
+      categoryId
+        ? exists(
+            this.drizzle.db
+              .select({ gameId: gameCategoryGame.gameId })
+              .from(gameCategoryGame)
+              .where(
+                and(
+                  eq(gameCategoryGame.gameId, game.id),
+                  eq(gameCategoryGame.categoryId, categoryId),
+                ),
+              ),
+          )
+        : undefined,
+    );
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({ game, provider: gameProvider })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(where)
+        .orderBy(asc(game.name))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(game).where(where),
+    ]);
     const categories = await this.categoriesByGameIds(rows.map((r) => r.game.id));
-    return rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] }));
+    return {
+      items: rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async getGame(id: string) {
@@ -230,5 +289,90 @@ export class GamingService {
       .orderBy(desc(gameRound.startedAt))
       .limit(50);
     return rounds.map(toGameRound);
+  }
+
+  async updateGame({
+    id,
+    categoryIds,
+    actorId,
+    ip,
+    userAgent,
+    ...patchInput
+  }: UpdateGameInput & Actor) {
+    if (patchInput.providerId !== undefined) {
+      findOneOrThrow(
+        await this.drizzle.db
+          .select({ id: gameProvider.id })
+          .from(gameProvider)
+          .where(eq(gameProvider.id, patchInput.providerId))
+          .limit(1),
+        new GameProviderNotFoundError(patchInput.providerId),
+      );
+    }
+    if (patchInput.slug !== undefined) {
+      const [clash] = await this.drizzle.db
+        .select({ id: game.id })
+        .from(game)
+        .where(and(eq(game.slug, patchInput.slug), ne(game.id, id)))
+        .limit(1);
+      if (clash) {
+        throw new GameSlugTakenError();
+      }
+    }
+    if (categoryIds !== undefined) {
+      const rows =
+        categoryIds.length > 0
+          ? await this.drizzle.db
+              .select()
+              .from(gameCategory)
+              .where(inArray(gameCategory.id, categoryIds))
+          : [];
+      const found = new Set(rows.map((r) => r.id));
+      const missing = categoryIds.find((categoryId) => !found.has(categoryId));
+      if (missing) {
+        throw new GameCategoryNotFoundError(missing);
+      }
+    }
+    try {
+      await this.drizzle.db.transaction(async (tx) => {
+        findOneOrThrow(
+          await tx.select({ id: game.id }).from(game).where(eq(game.id, id)).limit(1),
+          new GameNotFoundError(id),
+        );
+        const { name, slug, providerId, aggregator, thumbnailUrl, isActive, metadata } = patchInput;
+        const patch: Partial<typeof game.$inferInsert> = {
+          name,
+          slug,
+          providerId,
+          aggregator,
+          thumbnailUrl,
+          isActive,
+          metadata,
+        };
+        if (Object.values(patch).some((value) => value !== undefined)) {
+          await tx.update(game).set(patch).where(eq(game.id, id));
+        }
+        if (categoryIds !== undefined) {
+          await tx.delete(gameCategoryGame).where(eq(gameCategoryGame.gameId, id));
+          if (categoryIds.length > 0) {
+            await tx
+              .insert(gameCategoryGame)
+              .values(categoryIds.map((categoryId) => ({ gameId: id, categoryId })));
+          }
+        }
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new GameSlugTakenError();
+      }
+      throw error;
+    }
+    this.events.emit('gaming.game.updated', {
+      gameId: id,
+      actorId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    return this.getGame(id);
   }
 }

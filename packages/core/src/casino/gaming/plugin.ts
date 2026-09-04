@@ -10,7 +10,6 @@ import {
   WALLET_COMMANDS,
 } from '@openora/core/contracts';
 import { GamingService } from './service/gaming.service.js';
-import { GameCatalogService } from './service/game-catalog.service.js';
 import { GameCategoryService } from './service/game-category.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { createGamingRouter } from './router/index.js';
@@ -37,7 +36,6 @@ export default {
           c.get(IDENTITY_READER),
           c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         ),
-        catalog: new GameCatalogService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         providers: new GameProviderService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         categories: new GameCategoryService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         adminGuard: c.get(ADMIN_GUARD),

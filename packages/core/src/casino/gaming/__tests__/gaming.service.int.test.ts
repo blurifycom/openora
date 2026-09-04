@@ -10,19 +10,24 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { mock, makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
+import { mock, makeEventBus, makeIdentityReader, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
 import {
   GamingService,
   GameNotFoundError,
+  GameSlugTakenError,
   RgRestrictedError,
   InsufficientBalanceError,
 } from '../service/gaming.service.js';
+import { GameProviderNotFoundError } from '../service/game-provider.service.js';
+import { GameCategoryNotFoundError } from '../service/game-category.service.js';
 
 let db: TestDb;
 
 const noopEvents = makeEventBus();
+
+const ACTOR = { actorId: '00000000-0000-4000-8000-000000000001', ...NO_CLIENT_META };
 
 const eligibility = (isRestricted: boolean) =>
   mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
@@ -44,21 +49,31 @@ function makeService({
   playEligibility = unrestricted,
   walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
   rgLimits,
+  events = noopEvents,
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
   walletCommands?: WalletCommands;
   rgLimits?: RgLimitsPort;
+  events?: ReturnType<typeof makeEventBus>;
 } = {}) {
   return new GamingService(
     db.drizzle,
-    noopEvents,
+    events,
     provider,
     playEligibility,
     walletCommands,
     makeIdentityReader(),
     rgLimits,
   );
+}
+
+async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `studio-${randomUUID()}`, name: 'Studio', ...overrides })
+    .returning();
+  return row!;
 }
 
 async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert> = {}) {
@@ -106,14 +121,50 @@ beforeEach(async () => {
 });
 
 describe('GamingService lobby (real PG)', () => {
-  it('listGames returns only active games, ordered by name', async () => {
+  it('listGames paginates active games ordered by name', async () => {
     await seedGame({ name: 'Baccarat', isActive: true });
     await seedGame({ name: 'Aces', isActive: true });
     await seedGame({ name: 'Retired', isActive: false });
 
-    const games = await makeService().listGames();
+    const page = await makeService().listGames({ page: 1, limit: 10, isActive: true });
 
-    expect(games.map((g) => g.name)).toEqual(['Aces', 'Baccarat']);
+    expect(page.total).toBe(2);
+    expect(page.items.map((g) => g.name)).toEqual(['Aces', 'Baccarat']);
+  });
+
+  it('listGames searches and filters by provider and category', async () => {
+    const p1 = await seedProvider({ slug: 'studio-one', name: 'One' });
+    const p2 = await seedProvider({ slug: 'studio-two', name: 'Two' });
+    const slots = await seedCategory({ slug: 'slots', name: 'Slots' });
+    const live = await seedCategory({ slug: 'live', name: 'Live' });
+    await seedGame(
+      { name: 'Gates of Olympus', slug: 'gates-of-olympus', providerId: p1.id, isActive: true },
+      [slots.id],
+    );
+    await seedGame(
+      { name: 'Sweet Bonanza', slug: 'sweet-bonanza', providerId: p1.id, isActive: true },
+      [slots.id],
+    );
+    await seedGame({ name: 'Crazy Time', slug: 'crazy-time', providerId: p2.id, isActive: true }, [
+      live.id,
+      slots.id,
+    ]);
+    const svc = makeService();
+
+    expect((await svc.listGames({ page: 1, limit: 10, q: 'bonanza', isActive: true })).total).toBe(
+      1,
+    );
+    expect(
+      (await svc.listGames({ page: 1, limit: 10, providerId: p1.id, isActive: true })).items.map(
+        (g) => g.slug,
+      ),
+    ).toEqual(['gates-of-olympus', 'sweet-bonanza']);
+    expect(
+      (await svc.listGames({ page: 1, limit: 10, categoryId: live.id, isActive: true })).total,
+    ).toBe(1);
+    expect(
+      (await svc.listGames({ page: 1, limit: 10, categoryId: slots.id, isActive: true })).total,
+    ).toBe(3);
   });
 
   it('getGame returns the row for a known id and 404s an unknown one', async () => {
@@ -349,5 +400,97 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       'wallet.bonus_rollover.completed',
       expect.anything(),
     );
+  });
+});
+
+describe('GamingService updateGame (real PG)', () => {
+  const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
+    events.emit.mock.calls.map(([topic]) => topic);
+
+  it('patches scalar fields and emits an event', async () => {
+    const created = await seedGame({ name: 'Roulette' });
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    const updated = await svc.updateGame({
+      id: created.id,
+      name: 'Roulette Gold',
+      isActive: false,
+      ...ACTOR,
+    });
+
+    expect(updated).toMatchObject({ name: 'Roulette Gold', isActive: false });
+    expect(emittedTopics(events)).toContain('gaming.game.updated');
+  });
+
+  it('replaces the category set, including clearing it with an empty array', async () => {
+    const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
+    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack' });
+    const created = await seedGame({}, [table.id, blackjack.id]);
+    const svc = makeService();
+
+    const replaced = await svc.updateGame({
+      id: created.id,
+      categoryIds: [blackjack.id],
+      ...NO_CLIENT_META,
+    });
+    expect(replaced.categories.map((c) => c.slug)).toEqual(['blackjack']);
+
+    const cleared = await svc.updateGame({ id: created.id, categoryIds: [], ...NO_CLIENT_META });
+    expect(cleared.categories).toEqual([]);
+  });
+
+  it('leaves links untouched when categoryIds is omitted', async () => {
+    const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
+    const created = await seedGame({}, [table.id]);
+    const svc = makeService();
+
+    const updated = await svc.updateGame({ id: created.id, name: 'Renamed', ...NO_CLIENT_META });
+    expect(updated.categories.map((c) => c.slug)).toEqual(['table-games']);
+  });
+
+  it('reassigns the provider and validates all references', async () => {
+    const created = await seedGame();
+    const other = await seedProvider({ slug: 'other-studio', name: 'Other' });
+    const svc = makeService();
+
+    const updated = await svc.updateGame({
+      id: created.id,
+      providerId: other.id,
+      ...NO_CLIENT_META,
+    });
+    expect(updated.provider).toMatchObject({ slug: 'other-studio' });
+
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        providerId: '00000000-0000-4000-8000-000000000000',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(GameProviderNotFoundError);
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        categoryIds: ['00000000-0000-4000-8000-000000000000'],
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
+    await expect(
+      svc.updateGame({
+        id: '00000000-0000-4000-8000-000000000000',
+        name: 'X',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+  });
+
+  it('rejects a taken game slug', async () => {
+    const created = await seedGame({ slug: 'game-one' });
+    await seedGame({ slug: 'game-two' });
+    const svc = makeService();
+
+    await expect(
+      svc.updateGame({ id: created.id, slug: 'game-two', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(GameSlugTakenError);
   });
 });

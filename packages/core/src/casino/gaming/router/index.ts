@@ -5,10 +5,10 @@ import {
   GamingService,
   GameNotFoundError,
   GameRoundNotFoundError,
+  GameSlugTakenError,
   RgRestrictedError,
   InsufficientBalanceError,
 } from '../service/gaming.service.js';
-import { GameCatalogService, GameSlugTakenError } from '../service/game-catalog.service.js';
 import {
   GameCategoryService,
   GameCategoryNotFoundError,
@@ -25,19 +25,17 @@ export function createGamingRouter({
   gaming,
   providers,
   categories,
-  catalog,
   adminGuard,
 }: {
   gaming: GamingService;
   providers: GameProviderService;
   categories: GameCategoryService;
-  catalog: GameCatalogService;
   adminGuard: AdminGuard;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
   return os.router({
-    listGames: os.listGames.handler(() => gaming.listGames()),
+    listGames: os.listGames.handler(({ input }) => gaming.listGames({ ...input, isActive: true })),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () => gaming.getGame(input.id)),
@@ -120,8 +118,13 @@ export function createGamingRouter({
           NOT_FOUND: [GameNotFoundError, GameProviderNotFoundError, GameCategoryNotFoundError],
           CONFLICT: GameSlugTakenError,
         },
-        () => catalog.updateGame({ ...input, actorId: userId, ip, userAgent }),
+        () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
       );
+    }),
+
+    listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return gaming.listGames(input);
     }),
   });
 }

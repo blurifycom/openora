@@ -73,8 +73,19 @@ export const EndRoundOutputSchema = z.object({
   outcome: z.unknown().optional(),
 });
 
+export const ListGamesInputSchema = z.object({
+  ...PageQuerySchema.shape,
+  q: z.string().trim().min(1).max(64).optional(),
+  providerId: UuidSchema.optional(),
+  categoryId: UuidSchema.optional(),
+});
+export type ListGamesInput = z.infer<typeof ListGamesInputSchema>;
+
 export const gamingContract = {
-  listGames: oc.route({ method: 'GET', path: '/gaming/games' }).output(z.array(GameSchema)),
+  listGames: oc
+    .route({ method: 'GET', path: '/gaming/games' })
+    .input(ListGamesInputSchema)
+    .output(paginated(GameSchema)),
 
   getGame: oc
     .route({ method: 'GET', path: '/gaming/games/{id}' })
@@ -139,6 +150,15 @@ const CatalogFilterSchema = z.object({
   q: z.string().trim().min(1).max(64).optional(),
   isActive: QueryBooleanSchema.optional(),
 });
+
+export const ListAdminGamesInputSchema = z.object({
+  ...PageQuerySchema.shape,
+  q: z.string().trim().min(1).max(64).optional(),
+  providerId: UuidSchema.optional(),
+  categoryId: UuidSchema.optional(),
+  isActive: QueryBooleanSchema.optional(),
+});
+export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
 export const UpdateProviderInputSchema = z.object({
   id: UuidSchema,
@@ -221,4 +241,9 @@ export const gamingAdminContract = {
     .route({ method: 'PATCH', path: '/backoffice/gaming/games/{id}' })
     .input(UpdateGameInputSchema)
     .output(GameSchema),
+
+  listAdminGames: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/games' })
+    .input(ListAdminGamesInputSchema)
+    .output(paginated(GameSchema)),
 };

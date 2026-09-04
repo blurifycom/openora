@@ -222,6 +222,7 @@
         "gaming.getAdminProvider",
         "gaming.getGame",
         "gaming.listAdminCategories",
+        "gaming.listAdminGames",
         "gaming.listAdminProviders",
         "gaming.listCategories",
         "gaming.listGames",
@@ -1910,6 +1911,10 @@
       "file": "packages/core/src/compliance/contract/limits.ts"
     },
     {
+      "name": "ListAdminGamesInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "ListBannerConfigurationsInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
@@ -1920,6 +1925,10 @@
     {
       "name": "ListFriendRequestsInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "ListGamesInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "ListReconciliationFindingsInputSchema",

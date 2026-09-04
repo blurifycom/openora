@@ -16,7 +16,6 @@ import { migrate } from '../migrate.js';
 import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
 import { createGamingRouter } from '../router/index.js';
 import { GamingService } from '../service/gaming.service.js';
-import { GameCatalogService } from '../service/game-catalog.service.js';
 import { GameCategoryService } from '../service/game-category.service.js';
 import { GameProviderService } from '../service/game-provider.service.js';
 
@@ -48,11 +47,10 @@ function routerWith(adminGuard: AdminGuard) {
     makeWalletCommands(),
     makeIdentityReader(),
   );
-  const catalog = new GameCatalogService(db.drizzle, events);
   const providers = new GameProviderService(db.drizzle, events);
   const categories = new GameCategoryService(db.drizzle, events);
   return {
-    router: createGamingRouter({ gaming, providers, categories, catalog, adminGuard }),
+    router: createGamingRouter({ gaming, providers, categories, adminGuard }),
     events,
   };
 }
@@ -106,6 +104,10 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
         { id: '00000000-0000-4000-8000-000000000000', name: 'X' },
         { context: CTX },
       ),
+  },
+  {
+    name: 'listAdminGames',
+    invoke: (r) => call(r.listAdminGames, {}, { context: CTX }),
   },
 ];
 
