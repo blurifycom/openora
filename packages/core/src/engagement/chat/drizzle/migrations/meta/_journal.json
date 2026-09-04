@@ -99,6 +99,13 @@
       "when": 1788510703169,
       "tag": "0013_chilly_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788531588015,
+      "tag": "0014_chat_moderation_expiry_recorded",
+      "breakpoints": true
     }
   ]
 }
