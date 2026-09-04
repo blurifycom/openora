@@ -2,6 +2,8 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CurrencyCodeSchema,
+  GameCategorySummarySchema,
+  GameProviderSummarySchema,
   GameTypeSchema,
   IdInputSchema,
   MoneyAmountSchema,
@@ -9,6 +11,8 @@ import {
 } from '@openora/core/contracts';
 
 export { GameTypeSchema } from '@openora/core/contracts';
+export { GameProviderSummarySchema } from '@openora/core/contracts';
+export { GameCategorySummarySchema } from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
@@ -17,8 +21,11 @@ export type GameRoundStatus = z.infer<typeof GameRoundStatusSchema>;
 export const GameSchema = z.object({
   id: UuidSchema,
   name: z.string(),
-  provider: z.string(),
-  category: z.string(),
+  slug: z.string(),
+  provider: GameProviderSummarySchema,
+  // Source channel code (eg 'eventmatrix'); 'direct' = directly integrated.
+  aggregator: z.string(),
+  categories: z.array(GameCategorySummarySchema),
   gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),

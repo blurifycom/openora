@@ -14,7 +14,13 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
 import { DrizzleAdminGameReporting } from '@openora/core/casino/server';
 import { BackofficeService, TransactionNotFoundError } from '../service/backoffice.service.js';
 import { AdminTransactionSchema } from '../contract/index.js';
@@ -355,7 +361,9 @@ describe('BackofficeService.getGamePerformance (real PG)', () => {
   });
 
   beforeEach(async () => {
-    await db.drizzle.db.execute(sql`TRUNCATE ${gameRound}, ${game} RESTART IDENTITY CASCADE`);
+    await db.drizzle.db.execute(
+      sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+    );
   });
 
   function makeService() {
@@ -369,10 +377,27 @@ describe('BackofficeService.getGamePerformance (real PG)', () => {
   }
 
   async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
+    const [provider] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: `studio-${randomUUID()}`, name: 'Test Studio' })
+      .returning();
+    const [category] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({ slug: `category-${randomUUID()}`, name: 'Slots' })
+      .returning();
     const [row] = await db.drizzle.db
       .insert(game)
-      .values({ name: 'Aces', provider: 'p', category: 'slots', ...overrides })
+      .values({
+        name: 'Aces',
+        slug: `game-${randomUUID()}`,
+        providerId: provider!.id,
+        aggregator: 'direct',
+        ...overrides,
+      })
       .returning();
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values({ gameId: row!.id, categoryId: category!.id });
     return row!;
   }
 

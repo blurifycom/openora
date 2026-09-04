@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
-import { game, gameRound } from '../schema/index.js';
+import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 
 let db: TestDb;
@@ -12,10 +12,27 @@ let reporting: DrizzleAdminGameReporting;
 const AT = (iso: string) => new Date(iso);
 
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
+  const [provider] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `studio-${randomUUID()}`, name: 'Test Studio' })
+    .returning();
+  const [category] = await db.drizzle.db
+    .insert(gameCategory)
+    .values({ slug: `category-${randomUUID()}`, name: 'Slots' })
+    .returning();
   const [row] = await db.drizzle.db
     .insert(game)
-    .values({ name: 'Aces', provider: 'p', category: 'slots', ...overrides })
+    .values({
+      name: 'Aces',
+      slug: `game-${randomUUID()}`,
+      providerId: provider!.id,
+      aggregator: 'direct',
+      ...overrides,
+    })
     .returning();
+  await db.drizzle.db
+    .insert(gameCategoryGame)
+    .values({ gameId: row!.id, categoryId: category!.id });
   return row!;
 }
 
@@ -46,7 +63,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${gameRound}, ${game} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+  );
 });
 
 describe('DrizzleAdminGameReporting.listGamePerformance (real PG)', () => {

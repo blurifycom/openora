@@ -7,7 +7,7 @@ import {
   findOneOrThrow,
   serializeRow,
 } from '@openora/core/server';
-import { eq, and, asc, desc } from 'drizzle-orm';
+import { eq, and, asc, desc, inArray } from 'drizzle-orm';
 import {
   RgLimitExceededError,
   type GameAdapter,
@@ -17,7 +17,15 @@ import {
   type IdentityReader,
   type User,
 } from '@openora/core/contracts';
-import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+  type Game,
+  type GameRound,
+} from '../schema/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -32,16 +40,33 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
 
-function toGame(record: typeof game.$inferSelect) {
+function toGame(row: {
+  game: typeof game.$inferSelect;
+  provider: typeof gameProvider.$inferSelect;
+  categories: (typeof gameCategory.$inferSelect)[];
+}) {
   return {
-    id: record.id,
-    name: record.name,
-    provider: record.provider,
-    category: record.category,
-    gameType: record.gameType,
-    thumbnailUrl: record.thumbnailUrl,
-    isActive: record.isActive,
-    metadata: record.metadata,
+    id: row.game.id,
+    name: row.game.name,
+    slug: row.game.slug,
+    provider: {
+      id: row.provider.id,
+      slug: row.provider.slug,
+      name: row.provider.name,
+      logoUrl: row.provider.logoUrl,
+    },
+    aggregator: row.game.aggregator,
+    categories: row.categories.map((c) => ({
+      id: c.id,
+      slug: c.slug,
+      name: c.name,
+      icon: c.icon,
+      sortOrder: c.sortOrder,
+    })),
+    gameType: row.game.gameType,
+    thumbnailUrl: row.game.thumbnailUrl,
+    isActive: row.game.isActive,
+    metadata: row.game.metadata,
   };
 }
 
@@ -61,20 +86,49 @@ export class GamingService {
   ) {}
 
   async listGames() {
-    const games = await this.drizzle.db
-      .select()
+    const rows = await this.drizzle.db
+      .select({ game, provider: gameProvider })
       .from(game)
+      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
       .where(eq(game.isActive, true))
       .orderBy(asc(game.name));
-    return games.map(toGame);
+    const categories = await this.categoriesByGameIds(rows.map((r) => r.game.id));
+    return rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] }));
   }
 
   async getGame(id: string) {
-    const record = findOneOrThrow(
-      await this.drizzle.db.select().from(game).where(eq(game.id, id)),
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .select({ game, provider: gameProvider })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(eq(game.id, id)),
       new GameNotFoundError(id),
     );
-    return toGame(record);
+    const categories = await this.categoriesByGameIds([row.game.id]);
+    return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
+  }
+
+  private async categoriesByGameIds(gameIds: Game['id'][]) {
+    if (gameIds.length === 0) {
+      return new Map<Game['id'], (typeof gameCategory.$inferSelect)[]>();
+    }
+    const rows = await this.drizzle.db
+      .select({ gameId: gameCategoryGame.gameId, category: gameCategory })
+      .from(gameCategoryGame)
+      .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
+      .where(inArray(gameCategoryGame.gameId, gameIds))
+      .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
+    const map = new Map<Game['id'], (typeof gameCategory.$inferSelect)[]>();
+    for (const r of rows) {
+      const list = map.get(r.gameId);
+      if (list) {
+        list.push(r.category);
+      } else {
+        map.set(r.gameId, [r.category]);
+      }
+    }
+    return map;
   }
 
   async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {

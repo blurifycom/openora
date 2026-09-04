@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type {
   GameAdapter,
@@ -11,7 +12,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { mock, makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { game, gameRound } from '../schema/index.js';
+import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
 import {
   GamingService,
   GameNotFoundError,
@@ -60,11 +61,33 @@ function makeService({
   );
 }
 
-async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
+async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(gameCategory)
+    .values({ slug: `category-${randomUUID()}`, name: 'Slots', ...overrides })
+    .returning();
+  return row!;
+}
+
+async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categoryIds?: string[]) {
+  const [provider] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio' })
+    .returning();
+  const ids = categoryIds ?? [(await seedCategory()).id];
   const [row] = await db.drizzle.db
     .insert(game)
-    .values({ name: 'Game', provider: 'mock', category: 'slots', ...overrides })
+    .values({
+      name: 'Game',
+      slug: `game-${randomUUID()}`,
+      providerId: provider!.id,
+      aggregator: 'direct',
+      ...overrides,
+    })
     .returning();
+  await db.drizzle.db
+    .insert(gameCategoryGame)
+    .values(ids.map((categoryId) => ({ gameId: row!.id, categoryId })));
   return row!;
 }
 
@@ -77,7 +100,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${gameRound}, ${game} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+  );
 });
 
 describe('GamingService lobby (real PG)', () => {
@@ -92,10 +117,15 @@ describe('GamingService lobby (real PG)', () => {
   });
 
   it('getGame returns the row for a known id and 404s an unknown one', async () => {
-    const created = await seedGame({ name: 'Roulette', category: 'table' });
+    const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
+    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack' });
+    const created = await seedGame({ name: 'Roulette' }, [table.id, blackjack.id]);
     const svc = makeService();
 
-    expect(await svc.getGame(created.id)).toMatchObject({ name: 'Roulette', category: 'table' });
+    expect(await svc.getGame(created.id)).toMatchObject({
+      name: 'Roulette',
+      categories: [{ slug: 'blackjack' }, { slug: 'table-games' }],
+    });
     await expect(svc.getGame('00000000-0000-0000-0000-000000000000')).rejects.toBeInstanceOf(
       GameNotFoundError,
     );

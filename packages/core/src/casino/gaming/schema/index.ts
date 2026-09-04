@@ -7,6 +7,8 @@ import {
   timestamp,
   pgEnum,
   index,
+  integer,
+  uniqueIndex,
   jsonb,
 } from 'drizzle-orm/pg-core';
 import { GAME_TYPES } from '@openora/core/contracts';
@@ -19,17 +21,86 @@ export const gameRoundStatusEnum = pgEnum('game_round_status', GAME_ROUND_STATUS
 // contract both need the same type - see contracts/schemas/game.ts.
 export const gameTypeEnum = pgEnum('game_type', GAME_TYPES);
 
-export const game = pgTable('game', {
-  id: uuid().primaryKey().defaultRandom(),
-  name: text().notNull(),
-  provider: text().notNull(),
-  category: text().notNull(),
-  gameType: gameTypeEnum().notNull().default('casino'),
-  thumbnailUrl: text(),
-  isActive: boolean().notNull().default(true),
-  metadata: jsonb(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const gameProvider = pgTable(
+  'game_provider',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    slug: text().notNull(),
+    name: text().notNull(),
+    // The aggregator's studio id (eg EventMatrix's id for Pragmatic Play).
+    // NULL = direct-only integration with no aggregator mapping.
+    aggregatorVendorId: text(),
+    logoUrl: text(),
+    isActive: boolean().notNull().default(false),
+    metadata: jsonb(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('game_provider_slug_key').on(t.slug),
+    uniqueIndex('game_provider_aggregator_vendor_id_key').on(t.aggregatorVendorId),
+  ],
+);
+
+export const gameCategory = pgTable(
+  'game_category',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    slug: text().notNull(),
+    name: text().notNull(),
+    icon: text(),
+    sortOrder: integer().notNull().default(0),
+    isActive: boolean().notNull().default(true),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('game_category_slug_key').on(t.slug)],
+);
+
+export const game = pgTable(
+  'game',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull(),
+    slug: text().notNull(),
+    providerId: uuid()
+      .notNull()
+      .references(() => gameProvider.id),
+    aggregator: text().notNull(),
+    gameType: gameTypeEnum().notNull().default('casino'),
+    thumbnailUrl: text(),
+    isActive: boolean().notNull().default(false),
+    metadata: jsonb(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('game_slug_key').on(t.slug),
+    index('game_provider_id_idx').on(t.providerId),
+    index('game_aggregator_idx').on(t.aggregator),
+  ],
+);
+
+// A game can sit in multiple categories (eg 'table games' + 'blackjack').
+export const gameCategoryGame = pgTable(
+  'game_category_game',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    gameId: uuid()
+      .notNull()
+      .references(() => game.id, { onDelete: 'cascade' }),
+    categoryId: uuid()
+      .notNull()
+      .references(() => gameCategory.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    uniqueIndex('game_category_game_key').on(t.gameId, t.categoryId),
+    index('game_category_game_category_id_idx').on(t.categoryId),
+  ],
+);
 
 export const gameRound = pgTable(
   'game_round',
@@ -55,3 +126,6 @@ export const gameRound = pgTable(
 
 export type Game = typeof game.$inferSelect;
 export type GameRound = typeof gameRound.$inferSelect;
+export type GameProvider = typeof gameProvider.$inferSelect;
+export type GameCategory = typeof gameCategory.$inferSelect;
+export type GameCategoryGame = typeof gameCategoryGame.$inferSelect;

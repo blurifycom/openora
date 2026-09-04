@@ -296,7 +296,7 @@ Generated from `docs/catalog.json` - 19 modules, 250 routes, 45 adapter ports, 1
 | `@openora/core/admin-console` | admin-console                                              | (owns none - reads through ports)                                                   | 8      |
 | `@openora/core/analytics`     | analytics                                                  | (owns none - reads through ports)                                                   | 3      |
 | `@openora/core/audit`         | audit                                                      | audit_log                                                                           | 3      |
-| `@openora/core/casino`        | gaming · lobby                                             | featured_slot, game, game_round, lobby_category + 1 more                            | 9      |
+| `@openora/core/casino`        | gaming · lobby                                             | featured_slot, game, game_category, game_category_game + 4 more                     | 9      |
 | `@openora/core/cms`           | cms                                                        | banner_configuration, banner_image, banner_schedule, page                           | 18     |
 | `@openora/core/compliance`    | compliance                                                 | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 26     |
 | `@openora/core/engagement`    | chat · chat-commands · notifications · social              | chat_command_config, chat_message, chat_mute, chat_platform_ban + 11 more           | 72     |

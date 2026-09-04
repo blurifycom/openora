@@ -210,6 +210,9 @@
       "group": "casino",
       "tables": [
         "game",
+        "game_category",
+        "game_category_game",
+        "game_provider",
         "game_round"
       ],
       "routes": [
@@ -1629,6 +1632,10 @@
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
+      "name": "GameCategorySummarySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GamePerformanceFilterSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1639,6 +1646,10 @@
     {
       "name": "GamePerformanceSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameProviderSummarySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {
       "name": "GameRoundSchema",
