@@ -7,7 +7,8 @@ const logger = createLogger('player-timezone');
  * Hands the browser-reported zone to the player module. Every caller invokes this only after
  * the credentials have passed, so an unauthenticated request can never write someone else's
  * row. Best-effort throughout - an absent zone, an unbound port and a failed write are all
- * swallowed, because a cosmetic column must never cost a player their session.
+ * swallowed, as is a provisioning adapter that does not implement the optional method,
+ * because a cosmetic column must never cost a player their session.
  */
 export async function captureTimezone(
   provisioning: PlayerProvisioning | undefined,
@@ -18,7 +19,7 @@ export async function captureTimezone(
     return;
   }
   try {
-    await provisioning.recordTimezone(userId, timezone);
+    await provisioning.recordTimezone?.(userId, timezone);
   } catch (err) {
     logger.warn({ err, userId }, 'player timezone capture failed - ignored');
   }

@@ -13,8 +13,10 @@ export type PlayerProvisioning = {
    * Stores the IANA zone a browser reported. Display metadata - it never gates anything and
    * never reaches an RG window or an audit record. Best-effort by contract: an unrecognised
    * zone, or a player with no row yet, is a silent no-op. Call only after authentication.
+   * Optional: an operator's own provisioning adapter predating this method still satisfies
+   * the port, and a caller that skips the write costs the player nothing.
    */
-  recordTimezone(userId: string, timezone: string): Promise<void>;
+  recordTimezone?(userId: string, timezone: string): Promise<void>;
 };
 
 export type PlayerRegistrationRecord = {

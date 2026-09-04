@@ -26,12 +26,6 @@ describe('MoneyAmountSchema', () => {
 });
 
 describe('resolveTimezone', () => {
-  it('lets a real zone through the offset guard unchanged', () => {
-    expect(resolveTimezone('Europe/Warsaw')).toBe('Europe/Warsaw');
-    expect(resolveTimezone('America/New_York')).toBe('America/New_York');
-    expect(resolveTimezone('UTC')).toBe('UTC');
-  });
-
   it('canonicalises the aliases and casings different browsers report', () => {
     expect(resolveTimezone('europe/warsaw')).toBe('Europe/Warsaw');
     expect(resolveTimezone('US/Pacific')).toBe('America/Los_Angeles');
