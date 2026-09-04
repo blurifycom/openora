@@ -40,6 +40,14 @@ export type RealtimePresence = {
 /** A named control signal on a channel: "something here changed, refetch". */
 export type RealtimeSignal = { name: string; payload: unknown };
 
+/**
+ * Name of the signal `revokeUserFromChannel` delivers to the user losing access, so a client
+ * matches it by constant rather than by a hardcoded string. Exported here rather than from the
+ * chat module because the transport that emits it is provider-agnostic; the chat-namespaced
+ * name is historical, and any channel a transport revokes carries it.
+ */
+export const ACCESS_REVOKED_SIGNAL = 'chat:access-revoked';
+
 export type RealtimeTransport = {
   /**
    * Fan a message out to every subscriber of `channel`. Best-effort, at-most-once
@@ -61,10 +69,10 @@ export type RealtimeTransport = {
    * Push a NAMED control signal to a channel - "something about this room changed, refetch"
    * - as opposed to `publish`/`remove`, which carry the channel's payload stream itself (for
    * chat, `ChatMessage`). A managed transport delivers it as its own named event, the way
-   * `revokeUserFromChannel` already surfaces `chat:access-revoked`, so a signal never
-   * reaches a payload subscriber and cannot corrupt that stream. The first-party in-process
-   * transport implements it over a second lane per channel, which the `/chat/signals` SSE route
-   * serves, so the default deployment carries signals too. Optional per ADR-0007 all the same:
+   * `revokeUserFromChannel` already surfaces `ACCESS_REVOKED_SIGNAL`, so a signal never
+   * reaches a payload subscriber and cannot corrupt that stream. The first-party Redis Pub/Sub
+   * transport implements it over a second Redis channel per chat channel, which the
+   * `/chat/signals` SSE route serves, so the default deployment carries signals too. Optional per ADR-0007 all the same:
    * a transport that only fans out payloads is still a valid transport.
    *
    * `subscribeSignal` below is the server-side receiving half; on the client it is
@@ -91,11 +99,16 @@ export type RealtimeTransport = {
    * AUTHENTICATED user, not on a connection: `getConnection` lets a caller pick its own
    * per-connection `clientId`, so revoking one of those would leave the same person's other
    * tabs subscribed. Before cutting access, the transport delivers
-   * `{ name: 'chat:access-revoked', payload: { channel } }` to every signal subscription for
-   * that user on the channel. It must not send the signal to other users or include `userId`
-   * in its payload. Message and signal lanes remain separate, and every connection on both
-   * lanes is removed even when a signal handler fails. A managed adapter must provide the
-   * equivalent targeted notification before cutting every connection it issued under `userId`.
+   * `{ name: ACCESS_REVOKED_SIGNAL, payload: { channel } }` to the signal subscriptions it
+   * holds for that user on the channel. It must not send the signal to other users or include
+   * `userId` in its payload. Message and signal lanes remain separate, and every connection on
+   * both lanes is removed even when a signal handler fails.
+   *
+   * Reach is whatever the transport itself owns. `RedisPubSubRealtimeTransport` holds
+   * subscriptions per replica, so it signals and cuts only the connections on the replica the
+   * call lands on - the same user's tabs on a sibling replica keep streaming until they
+   * reconnect. A managed adapter owns every connection centrally and must therefore signal and
+   * cut all of them, which is the behaviour a multi-replica deployment needs.
    */
   revokeUserFromChannel?: (userId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;
