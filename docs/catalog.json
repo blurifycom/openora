@@ -739,6 +739,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts",
@@ -940,13 +941,17 @@
     "chat.message.sent",
     "chat.private_room.created",
     "chat.private_room.deleted",
+    "chat.private_room.purged",
     "chat.room.created",
     "chat.room.deleted",
+    "chat.room.deletion.cancelled",
     "chat.room.member.banned",
     "chat.room.member.joined",
     "chat.room.member.left",
     "chat.room.member.removed",
     "chat.room.member.role-changed",
+    "chat.room.ownership.transferred",
+    "chat.room.scheduled_for_deletion",
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
@@ -1010,6 +1015,8 @@
     "identity.user.unauthorized_access",
     "identity.user.unlocked",
     "notifications.created",
+    "player.account.closed",
+    "player.account.reopened",
     "player.level.changed",
     "player.login_blocked",
     "rg.cooling_off.activated",
@@ -1394,6 +1401,10 @@
     },
     {
       "name": "ChatRoomRuleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomScheduledForDeletionSignalSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

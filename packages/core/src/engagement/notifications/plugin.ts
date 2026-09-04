@@ -235,6 +235,18 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
     { sendEmail: false },
   ),
+
+  mapEvent(
+    'chat.room.ownership.transferred',
+    (p) => ({
+      userId: p.newOwnerId,
+      type: 'chat.room.ownership_transferred',
+      title: 'You are now the owner of a chat room',
+      body: `The owner of "${p.roomName}" had their account removed, so ownership of the room has passed to you.`,
+      data: { roomId: p.roomId },
+    }),
+    { sendEmail: false },
+  ),
 ];
 
 export function buildKycResubmissionNotification(payload: {
@@ -247,6 +259,20 @@ export function buildKycResubmissionNotification(payload: {
     title: 'Document resubmission required',
     body: `An admin has requested you resubmit your verification documents.${payload.reason ? ` Reason: ${payload.reason}.` : ''}`,
     data: null,
+  };
+}
+
+export function buildChatRoomScheduledForDeletionNotification(payload: {
+  userId: string;
+  roomId: string;
+  roomName: string;
+}): CreateNotificationInput {
+  return {
+    userId: payload.userId,
+    type: 'chat.room.scheduled_for_deletion',
+    title: 'Chat room closing',
+    body: `The owner of "${payload.roomName}" had their account removed and no moderator could take the room over. It will be permanently deleted in 30 days.`,
+    data: { roomId: payload.roomId },
   };
 }
 
@@ -347,6 +373,43 @@ export default {
       svcRef
         .create({ userId: p.userId, type: 'rg.limit.admin_updated', title, body })
         .catch((err) => logger.error({ err }, 'rg.limit.set admin-override notification failed'));
+    });
+
+    ctx.events.on('chat.room.scheduled_for_deletion', (payload, envelope) => {
+      const parsed = domainEventSchemas['chat.room.scheduled_for_deletion'].safeParse(payload);
+      if (!parsed.success || !jobQueueRef) {
+        return;
+      }
+      const p = parsed.data;
+      if (!envelope?.eventId) {
+        logger.warn({ roomId: p.roomId }, 'chat-room-deletion notify skipped: missing eventId');
+        return;
+      }
+      const eventId = envelope.eventId;
+      const jobQueue = jobQueueRef;
+      for (const userId of p.memberIds.filter((id) => id !== p.previousOwnerId)) {
+        jobQueue
+          .enqueue(
+            NOTIFICATIONS_DISPATCH_QUEUE,
+            {
+              event: 'chat.room.scheduled_for_deletion',
+              input: buildChatRoomScheduledForDeletionNotification({
+                userId,
+                roomId: p.roomId,
+                roomName: p.roomName,
+              }),
+              sendEmail: false,
+            },
+            {
+              idempotencyKey: `notifications-dispatch:${eventId}:${userId}`,
+              attempts: 5,
+              backoff: { type: 'exponential', delayMs: 1000 },
+            },
+          )
+          .catch((err) =>
+            logger.error({ err }, 'chat.room.scheduled_for_deletion dispatch enqueue failed'),
+          );
+      }
     });
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
