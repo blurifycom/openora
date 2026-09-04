@@ -255,6 +255,22 @@ export class PlayerService implements PlayerActivityTracker {
       await this.sessionCommands.revokeAll(existing.userId, actorId);
     }
 
+    if (data.status === 'closed' && existing.status !== 'closed') {
+      this.events.emit('player.account.closed', {
+        playerId,
+        userId: existing.userId,
+        actorId,
+      });
+    }
+
+    if (data.status !== undefined && data.status !== 'closed' && existing.status === 'closed') {
+      this.events.emit('player.account.reopened', {
+        playerId,
+        userId: existing.userId,
+        actorId,
+      });
+    }
+
     return this.fetchOneWithTags(playerId);
   }
 
@@ -277,6 +293,11 @@ export class PlayerService implements PlayerActivityTracker {
     );
     await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
     await this.sessionCommands.revokeAll(existing.userId, actorId);
+    this.events.emit('player.account.closed', {
+      playerId,
+      userId: existing.userId,
+      actorId,
+    });
     return { success: true };
   }
 
