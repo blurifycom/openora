@@ -85,15 +85,43 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
 
 type ModuleInfo = { id: string; group: string; tables: string[]; routes: string[] };
 
+// A router nests related routes in plain object literals (`security: { me: os... }`), so a
+// route's id is its full dotted path from the router root, not just its own key - two
+// unrelated groups can otherwise both contribute a leaf key with the same name (`me`).
+// Tracked by indentation: each `key: {` line pushes a group onto the stack at its own
+// indent, popped once a later line dedents back to or past it. Blank lines are skipped
+// entirely so they never look like a dedent.
+function extractRoutes(moduleId: string, router: string): string[] {
+  const stack: Array<{ indent: number; name: string }> = [];
+  const routes: string[] = [];
+  for (const line of router.split('\n')) {
+    if (!line.trim()) {
+      continue;
+    }
+    const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
+    while (stack.length > 0 && indent <= (stack[stack.length - 1]?.indent ?? -1)) {
+      stack.pop();
+    }
+    const group = line.match(/^\s{2,}(\w+):\s*\{\s*$/);
+    if (group) {
+      stack.push({ indent, name: group[1] ?? '' });
+      continue;
+    }
+    const route = line.match(/^\s{2,}(\w+):\s*os\b/);
+    if (route) {
+      routes.push([moduleId, ...stack.map((s) => s.name), route[1]].join('.'));
+    }
+  }
+  return routes.sort();
+}
+
 function collectModules(): ModuleInfo[] {
   const out: ModuleInfo[] = [];
   for (const { id, domain, srcDir } of moduleSrcDirs()) {
     const schema = read(join(srcDir, 'schema', 'index.ts'));
     const router = read(join(srcDir, 'router', 'index.ts'));
     const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1] ?? '').sort();
-    const routes = [...router.matchAll(/^\s{2,}(\w+):\s*os\b/gm)]
-      .map((m) => `${id}.${m[1]}`)
-      .sort();
+    const routes = extractRoutes(id, router);
     out.push({ id, group: domain, tables, routes });
   }
   return out;

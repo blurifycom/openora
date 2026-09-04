@@ -176,4 +176,65 @@ describe('PhoneVerificationService (real PG)', () => {
       .where(eq(user.id, accountUser.id));
     expect(unchanged?.phoneVerified).toBe(false);
   });
+
+  it('rejects the second confirm with CONFLICT when two accounts race to claim the same number', async () => {
+    // Neither account owns PHONE yet, so `request()`'s uniqueness check (which only looks
+    // at already-bound `user.phoneNumber`) lets both create a pending session for it.
+    const first = await seedAuthenticatedUser();
+    const second = await insertUser(db, { name: 'B', email: 'phone-verification-2@test.dev' });
+    await db.drizzle.db.insert(account).values({
+      userId: second.id,
+      accountId: second.id,
+      providerId: 'credential',
+      password: 'stored-password-hash',
+    });
+    const [secondSession] = await db.drizzle.db
+      .insert(session)
+      .values({
+        userId: second.id,
+        token: 'second-active-session-token',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      })
+      .returning({ id: session.id });
+    const { svc, sms } = build();
+
+    await svc.request({
+      userId: first.accountUser.id,
+      sessionId: first.sessionId,
+      input: { phone: PHONE, currentPassword: PASSWORD },
+      reqHeaders: {},
+      meta: NO_CLIENT_META,
+    });
+    const firstCode = (sms.sendOtp as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.code;
+    await svc.request({
+      userId: second.id,
+      sessionId: secondSession!.id,
+      input: { phone: PHONE, currentPassword: PASSWORD },
+      reqHeaders: {},
+      meta: NO_CLIENT_META,
+    });
+    const secondCode = (sms.sendOtp as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]?.code;
+
+    await svc.confirm({
+      userId: first.accountUser.id,
+      sessionId: first.sessionId,
+      input: { code: firstCode },
+      meta: NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.confirm({
+        userId: second.id,
+        sessionId: secondSession!.id,
+        input: { code: secondCode },
+        meta: NO_CLIENT_META,
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const [unchanged] = await db.drizzle.db
+      .select({ phoneNumber: user.phoneNumber, phoneVerified: user.phoneVerified })
+      .from(user)
+      .where(eq(user.id, second.id));
+    expect(unchanged).toEqual({ phoneNumber: null, phoneVerified: false });
+  });
 });

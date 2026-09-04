@@ -104,7 +104,13 @@ export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
 // A session is only authenticated after a credential-bearing flow completes. This is
 // deliberately narrower than session refresh and distinct from 2FA enrolment, which
 // changes account configuration but does not create a new authenticated session.
-export const AUTHENTICATION_METHODS = ['password', 'email_verification', 'phone', 'totp'] as const;
+export const AUTHENTICATION_METHODS = [
+  'password',
+  'email_verification',
+  'phone',
+  'totp',
+  'backup_code',
+] as const;
 export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);
 export type AuthenticationMethod = z.infer<typeof AuthenticationMethodSchema>;
 

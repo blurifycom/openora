@@ -1,4 +1,4 @@
-import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   type EventBus,
@@ -32,6 +32,7 @@ import {
   hasFailedLoginWindowExpired,
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
+import { hashCode, generateCode } from '../../shared/otp.js';
 
 const MINUTE_MS = 60 * 1000;
 const OTP_TTL_MS = 5 * MINUTE_MS;
@@ -82,18 +83,6 @@ export function OtpCancelledError() {
     message: 'Too many incorrect attempts. Please request a new code.',
     data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },
   });
-}
-
-function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
-}
-
-function generateCode(): string {
-  const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-  if (process.env['NODE_ENV'] !== 'production') {
-    console.log(`SMS Verification code sent: ${code}`); // oxlint-disable-line no-console
-  }
-  return code;
 }
 
 type UserRow = Pick<
@@ -192,15 +181,22 @@ export class PhoneLoginService {
     const resendAfter = new Date(now + RESEND_COOLDOWN_MS);
 
     const [account] = await this.drizzle.db
-      .select({ id: user.id, phoneVerified: user.phoneVerified })
+      .select({
+        id: user.id,
+        phoneVerified: user.phoneVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+      })
       .from(user)
       .where(eq(user.phoneNumber, phone))
       .limit(1);
 
-    // Anti-enumeration: an unknown or unverified phone gets the same success-shaped
-    // response, minus the SMS. A caller cannot distinguish a real verified number from
-    // a fake or unverified one.
-    if (!account || !account.phoneVerified) {
+    // Anti-enumeration: an unknown, unverified, or 2FA-enabled phone gets the same
+    // success-shaped response, minus the SMS. A 2FA-enabled account's phone login is
+    // always rejected once the OTP is entered (see the guard below in `verifyOtp`), so
+    // sending a real code here would just be a billable no-op; folding it into the same
+    // shadow path also keeps a caller from telling 2FA-enabled accounts apart from
+    // unknown/unverified ones by response shape alone.
+    if (!account || !account.phoneVerified || account.twoFactorEnabled) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
       if (shadow && now - shadow.createdAt < RESEND_COOLDOWN_MS) {

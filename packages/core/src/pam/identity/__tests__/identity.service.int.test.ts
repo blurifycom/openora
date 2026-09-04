@@ -1003,6 +1003,12 @@ describe('IdentityService.verifyTwoFactor', () => {
       'identity.2fa.verified',
       expect.objectContaining({ userId: account.id, method: 'backup_code' }),
     );
+    // A recovery-credential sign-in is a materially different fraud signal than a normal
+    // authenticator login and must be reported as such, not hardcoded to 'totp'.
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.objectContaining({ userId: account.id, method: 'backup_code' }),
+    );
   });
 
   it('counts a rejected backup code against the lockout', async () => {
@@ -1235,6 +1241,21 @@ describe('IdentityService.trustCurrentDevice', () => {
 });
 
 describe('IdentityService security controls', () => {
+  it('refuses to set the preference for a non-player (admin) account', async () => {
+    const account = await seedUser({
+      role: 'admin',
+      emailVerified: true,
+      loginWithdrawalAlertsEnabled: false,
+    });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+
+    await expect(
+      buildService().setLoginWithdrawalAlerts({ enabled: true }, {}),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
+  });
+
   it('refuses alerts until the account email is verified', async () => {
     const account = await seedUser({ emailVerified: false });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
@@ -1252,7 +1273,17 @@ describe('IdentityService security controls', () => {
       loginWithdrawalAlertsEnabled: true,
     });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    changeEmailMock.mockResolvedValue(jsonResponse({ status: true }, 200));
+    // better-auth's `/change-email` returns the same `{ status: true }` shape whether or
+    // not it actually touched the row (see the identity.service.ts `changeEmail` comment),
+    // so the service keys the alert-disable off the row's own email column - update it the
+    // way the real endpoint's synchronous-update branch would, before the mock resolves.
+    changeEmailMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ status: true }, 200);
+    });
     const events = makeEventBus();
     const svc = buildService({ events });
 
@@ -1266,6 +1297,27 @@ describe('IdentityService security controls', () => {
         previousEnabled: true,
         enabled: false,
       }),
+    );
+  });
+
+  it('leaves the alert preference untouched when change-email does not actually update the row', async () => {
+    // Covers better-auth's anti-enumeration no-op and its deferred confirmation-email
+    // branch: both return `{ status: true }` without touching `user.email`.
+    const account = await seedUser({
+      emailVerified: true,
+      loginWithdrawalAlertsEnabled: true,
+    });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    changeEmailMock.mockResolvedValue(jsonResponse({ status: true }, 200));
+    const events = makeEventBus();
+    const svc = buildService({ events });
+
+    await svc.changeEmail({ newEmail: 'new-address@test.dev' }, {}, new Headers());
+
+    expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(true);
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.security.login_withdrawal_alerts.updated',
+      expect.anything(),
     );
   });
 });

@@ -1284,7 +1284,7 @@ export class IdentityService {
         this.events.emit('identity.authentication.succeeded', {
           userId,
           playerId,
-          method: 'totp',
+          method: input.method,
           ip,
           userAgent,
         });
@@ -1572,6 +1572,16 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+    const [caller] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (caller?.role !== 'player') {
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Only players can set this preference.',
+      });
+    }
     const before = await this.securityControlsFor(userId);
     if (input.enabled && !before.emailVerified) {
       throw new ORPCError('UNPROCESSABLE_CONTENT', {
@@ -1593,7 +1603,7 @@ export class IdentityService {
       ip,
       userAgent,
     });
-    return this.securityControlsFor(userId);
+    return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
   }
 
   /**
@@ -1720,6 +1730,7 @@ export class IdentityService {
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
+    const newEmail = input.newEmail.toLowerCase();
     const res = await this.api.changeEmail({
       body: { newEmail: input.newEmail },
       headers,
@@ -1728,10 +1739,22 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     if (userId) {
+      // better-auth's `/change-email` returns the same `{ status: true }` shape for the
+      // anti-enumeration no-op (target already owned by someone else) and for a deferred
+      // confirmation-email flow, where the address only actually changes once the
+      // confirmation link is clicked - neither of which touched this row yet. Requiring
+      // `user.email` to already equal the requested address scopes the disable to the
+      // one branch (`updateEmailWithoutVerification`) that updates it synchronously.
       const [disabled] = await this.drizzle.db
         .update(user)
         .set({ loginWithdrawalAlertsEnabled: false })
-        .where(and(eq(user.id, userId), eq(user.loginWithdrawalAlertsEnabled, true)))
+        .where(
+          and(
+            eq(user.id, userId),
+            eq(user.loginWithdrawalAlertsEnabled, true),
+            eq(user.email, newEmail),
+          ),
+        )
         .returning({ id: user.id });
       if (disabled) {
         const { ip, userAgent } = extractClientMeta(reqHeaders);

@@ -1,5 +1,5 @@
-import { createHash, randomInt } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
+import { DatabaseError } from 'pg';
 import { and, eq, gt, isNotNull } from 'drizzle-orm';
 import {
   type Auth,
@@ -22,6 +22,8 @@ import type {
 import { account, phoneVerificationSession, user, type Session } from '../schema/index.js';
 import { getSecurityControls } from './security-controls.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
+import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
+import { hashCode, generateCode } from '../../shared/otp.js';
 
 const MINUTE_MS = 60 * 1000;
 const OTP_TTL_MS = 5 * MINUTE_MS;
@@ -32,24 +34,6 @@ const REAUTH_TTL_MS = 5 * MINUTE_MS;
 const REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const VERIFY_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 
-function hashCode(code: string) {
-  return createHash('sha256').update(code).digest('hex');
-}
-
-function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(nodeHeaders)) {
-    if (value !== undefined) {
-      headers.set(key, Array.isArray(value) ? value.join(', ') : value);
-    }
-  }
-  return headers;
-}
-
-function generateCode() {
-  return randomInt(0, 1_000_000).toString().padStart(6, '0');
-}
-
 function phoneVerificationCooldownError(retryAfterMs: number) {
   return new ORPCError('TOO_MANY_REQUESTS', {
     message: 'A code was already sent. Please wait before requesting another.',
@@ -59,6 +43,15 @@ function phoneVerificationCooldownError(retryAfterMs: number) {
 
 function phoneVerificationInvalidError() {
   return new ORPCError('UNPROCESSABLE_CONTENT', { message: 'The code is invalid or expired.' });
+}
+
+function isPhoneNumberCollision(error: unknown): boolean {
+  const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
+  return (
+    cause instanceof DatabaseError &&
+    cause.code === '23505' &&
+    cause.constraint === 'user_phoneNumber_unique'
+  );
 }
 
 type VerifyTotpApi = {
@@ -261,55 +254,64 @@ export class PhoneVerificationService {
   }): Promise<SecurityControls> {
     await assertRateLimit(this.limiter, `phone-verification-confirm:${userId}`, VERIFY_RATE_LIMIT);
     const now = new Date();
-    await this.drizzle.db.transaction(async (tx) => {
-      const [otp] = await tx
-        .select({
-          id: phoneVerificationSession.id,
-          sessionId: phoneVerificationSession.sessionId,
-          phone: phoneVerificationSession.phone,
-          codeHash: phoneVerificationSession.codeHash,
-          reauthenticatedAt: phoneVerificationSession.reauthenticatedAt,
-          expiresAt: phoneVerificationSession.expiresAt,
-          failedAttempts: phoneVerificationSession.failedAttempts,
-        })
-        .from(phoneVerificationSession)
-        .where(
-          and(
-            eq(phoneVerificationSession.userId, userId),
-            gt(phoneVerificationSession.expiresAt, now),
-          ),
-        )
-        .for('update');
-      if (
-        !otp ||
-        otp.sessionId !== sessionId ||
-        now.getTime() - otp.reauthenticatedAt.getTime() > REAUTH_TTL_MS
-      ) {
-        throw phoneVerificationInvalidError();
-      }
-      if (hashCode(input.code) !== otp.codeHash) {
-        const failedAttempts = otp.failedAttempts + 1;
-        if (failedAttempts >= MAX_VERIFY_ATTEMPTS) {
-          await tx.delete(phoneVerificationSession).where(eq(phoneVerificationSession.id, otp.id));
-        } else {
-          await tx
-            .update(phoneVerificationSession)
-            .set({ failedAttempts })
-            .where(eq(phoneVerificationSession.id, otp.id));
+    try {
+      await this.drizzle.db.transaction(async (tx) => {
+        const [otp] = await tx
+          .select({
+            id: phoneVerificationSession.id,
+            sessionId: phoneVerificationSession.sessionId,
+            phone: phoneVerificationSession.phone,
+            codeHash: phoneVerificationSession.codeHash,
+            reauthenticatedAt: phoneVerificationSession.reauthenticatedAt,
+            expiresAt: phoneVerificationSession.expiresAt,
+            failedAttempts: phoneVerificationSession.failedAttempts,
+          })
+          .from(phoneVerificationSession)
+          .where(
+            and(
+              eq(phoneVerificationSession.userId, userId),
+              gt(phoneVerificationSession.expiresAt, now),
+            ),
+          )
+          .for('update');
+        if (
+          !otp ||
+          otp.sessionId !== sessionId ||
+          now.getTime() - otp.reauthenticatedAt.getTime() > REAUTH_TTL_MS
+        ) {
+          throw phoneVerificationInvalidError();
         }
-        throw phoneVerificationInvalidError();
-      }
+        if (hashCode(input.code) !== otp.codeHash) {
+          const failedAttempts = otp.failedAttempts + 1;
+          if (failedAttempts >= MAX_VERIFY_ATTEMPTS) {
+            await tx
+              .delete(phoneVerificationSession)
+              .where(eq(phoneVerificationSession.id, otp.id));
+          } else {
+            await tx
+              .update(phoneVerificationSession)
+              .set({ failedAttempts })
+              .where(eq(phoneVerificationSession.id, otp.id));
+          }
+          throw phoneVerificationInvalidError();
+        }
 
-      await tx.delete(phoneVerificationSession).where(eq(phoneVerificationSession.id, otp.id));
-      const [updated] = await tx
-        .update(user)
-        .set({ phoneNumber: otp.phone, phoneVerified: true, phoneVerifiedAt: new Date() })
-        .where(eq(user.id, userId))
-        .returning({ id: user.id });
-      if (!updated) {
-        throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+        await tx.delete(phoneVerificationSession).where(eq(phoneVerificationSession.id, otp.id));
+        const [updated] = await tx
+          .update(user)
+          .set({ phoneNumber: otp.phone, phoneVerified: true, phoneVerifiedAt: new Date() })
+          .where(eq(user.id, userId))
+          .returning({ id: user.id });
+        if (!updated) {
+          throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+        }
+      });
+    } catch (error) {
+      if (isPhoneNumberCollision(error)) {
+        throw new ORPCError('CONFLICT', { message: 'Phone number is unavailable.' });
       }
-    });
+      throw error;
+    }
     const controls = await getSecurityControls(this.drizzle, userId);
     if (!controls) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
