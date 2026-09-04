@@ -178,16 +178,11 @@ describe('mapEventToRecord: chat room lifecycle after an owner account closes', 
     });
   });
 
-  it('records the purge with its message count - the only trace left of the room', async () => {
-    const row = await mapEventToRecord('chat.private_room.purged', { roomId, messageCount: 12 });
-
-    expect(row).toMatchObject({
-      actorType: 'system',
-      resourceType: 'chat_room',
-      resourceId: roomId,
-      after: { messageCount: 12 },
-    });
-  });
+  // The purge itself has no case here on purpose: chat writes that record inside the
+  // deleting transaction, because after a hard delete it is the room's only surviving trace
+  // and a post-commit subscription would lose it to a crash. `chat.private_room.purged` is
+  // therefore not in the audited-topic list either, so this mapper never sees it. See
+  // `ChatRoomPurgeService.purgeRoom`.
 });
 
 describe('mapEventToRecord: player.account.closed', () => {

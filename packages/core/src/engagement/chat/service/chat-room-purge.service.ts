@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, lte } from 'drizzle-orm';
+import { and, count, eq, isNotNull, isNull, lte } from 'drizzle-orm';
 import {
   DrizzleService,
   withAdvisoryXactLock,
@@ -6,14 +6,13 @@ import {
   createLogger,
 } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { chatChannel, type RealtimeTransport, type Uuid } from '@openora/core/contracts';
 import {
-  chatMessage,
-  chatMute,
-  chatPlatformBan,
-  chatRoom,
-  chatRoomMember,
-} from '../schema/index.js';
+  chatChannel,
+  type AuditWritePort,
+  type RealtimeTransport,
+  type Uuid,
+} from '@openora/core/contracts';
+import { chatMessage, chatMute, chatRoom, chatRoomMember } from '../schema/index.js';
 
 const ROOM_REVOKE_CONCURRENCY = 10;
 
@@ -27,18 +26,25 @@ const logger = createLogger('chat');
  * `chatRoom.scheduledDeletionAt` is written in exactly one place
  * (`ChatRoomMembershipService.handleAccountClosed`) and never rewritten.
  *
- * Driven by a daily cron rather than a per-room timer: the deadline has day granularity,
- * so a finer tick buys nothing and a missed run just deletes a day late.
+ * Split in two on purpose. A daily cron calls {@link listDueRooms} and enqueues one job
+ * per room; each job calls {@link purgeRoom} for that room alone. So a room that fails to
+ * delete retries on its own schedule instead of waiting for tomorrow's tick, and it cannot
+ * block the rooms behind it in the batch.
  */
 export class ChatRoomPurgeService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly transport: RealtimeTransport,
+    private readonly audit: AuditWritePort,
   ) {}
 
-  /** One pass over the due rooms. Idempotent: a purged room stops matching the scan. */
-  async runCycle() {
+  /**
+   * The rooms a tick should hand out, newest deadline last. `limit` bounds one tick's
+   * fan-out: after downtime the backlog can be arbitrarily long, and a deadline that has
+   * already passed does not get worse by being purged on the next tick instead of this one.
+   */
+  async listDueRooms(limit: number): Promise<Uuid[]> {
     const due = await this.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
@@ -52,17 +58,17 @@ export class ChatRoomPurgeService {
           isNotNull(chatRoom.scheduledDeletionAt),
           lte(chatRoom.scheduledDeletionAt, new Date()),
         ),
-      );
-    let purged = 0;
-    for (const { id } of due) {
-      if (await this.purgeRoom(id)) {
-        purged += 1;
-      }
-    }
-    return { purged } as const;
+      )
+      .orderBy(chatRoom.scheduledDeletionAt)
+      .limit(limit);
+    return due.map((room) => room.id);
   }
 
-  private async purgeRoom(roomId: Uuid) {
+  /**
+   * Purges one room. Idempotent: a room already gone, or one that stopped qualifying,
+   * returns false and writes nothing, so a retried job is safe.
+   */
+  async purgeRoom(roomId: Uuid) {
     // Same lock join/leave/handleAccountClosed take, so a member joining concurrently
     // either lands before the roster snapshot (and gets revoked) or after the delete
     // (and hits a room that no longer exists).
@@ -90,28 +96,40 @@ export class ChatRoomPurgeService {
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(eq(chatRoomMember.roomId, roomId));
-        // chat_message and chat_platform_ban reference chat_room without a cascade, so
-        // they go first or the room delete trips their foreign key. chat_mute has no FK at
-        // all - its roomId is a bare nullable column (null = global chat) - so its rows are
-        // deleted here to stop them outliving the room as orphans. The rest cascades:
-        // chat_room_member, _rule, _configuration, _ban, _remove, and chat_room_mute, which
-        // despite the name is a different table from chat_mute.
-        const messages = await t
-          .delete(chatMessage)
-          .where(eq(chatMessage.roomId, roomId))
-          .returning({ id: chatMessage.id });
-        await t.delete(chatPlatformBan).where(eq(chatPlatformBan.roomId, roomId));
+        // Counted before the delete because the rows are about to stop existing, and the
+        // count is the one quantity the audit record carries about what was destroyed.
+        const [messages] = await t
+          .select({ value: count() })
+          .from(chatMessage)
+          .where(eq(chatMessage.roomId, roomId));
+        const messageCount = messages?.value ?? 0;
+        // chat_mute has no foreign key at all - its roomId is a bare nullable column
+        // (null = global chat) - so its rows are deleted here to stop them outliving the
+        // room as orphans. Everything else hangs off chat_room with `onDelete: cascade`
+        // and goes with the room itself: chat_message, chat_platform_ban, chat_room_member,
+        // _rule, _configuration, _ban, _remove, and chat_room_mute, which despite the name
+        // is a different table from chat_mute.
         await t.delete(chatMute).where(eq(chatMute.roomId, roomId));
+        // The audit record joins the delete's own transaction. After a hard delete this
+        // record is the room's only surviving trace, and a post-commit write would lose it
+        // outright if the process died in between - the one case where the trace matters
+        // most. Written before the delete so a failure to record fails the purge.
+        await this.audit.recordInTransaction(t, {
+          actorType: 'system',
+          action: 'chat.private_room.purged',
+          resourceType: 'chat_room',
+          resourceId: roomId,
+          after: { messageCount },
+        });
         await t.delete(chatRoom).where(eq(chatRoom.id, roomId));
-        return { memberIds: members.map((m) => m.userId), messageCount: messages.length };
+        return { memberIds: members.map((m) => m.userId), messageCount };
       }),
     );
     if (!result) {
       return false;
     }
-    // Emitted before the realtime cleanup: this event is what writes the audit record, and
-    // after a hard delete that record is the room's only surviving trace - it must not go
-    // missing because a transport happened to be down.
+    // Best-effort fan-out for overlays and clients; the audit record above is already
+    // durable, so nothing here can lose the room's trace.
     this.events.emit('chat.private_room.purged', {
       roomId,
       messageCount: result.messageCount,

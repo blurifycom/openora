@@ -92,6 +92,13 @@
       "when": 1788508946073,
       "tag": "0012_strange_mephisto",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788510703169,
+      "tag": "0013_chilly_sprite",
+      "breakpoints": true
     }
   ]
 }

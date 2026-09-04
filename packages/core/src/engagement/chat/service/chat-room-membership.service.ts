@@ -5,7 +5,7 @@ import {
   serializeRow,
   createLogger,
 } from '@openora/core/server';
-import type { EventBus } from '@openora/core/server';
+import type { DrizzleTx, EventBus } from '@openora/core/server';
 import {
   chatChannel,
   type AuditWritePort,
@@ -402,8 +402,13 @@ export class ChatRoomMembershipService {
    *
    * Both triggers - an admin closing the player (`player.account.closed`) and the auth user
    * being deactivated (`identity.user.deactivated`) - route here, and firing for the same
-   * person twice is a no-op: stamping the member row is guarded on it still being null, and
-   * only the run that wins that write does any of the work behind it.
+   * person twice writes nothing the second time: stamping the member row is guarded on it
+   * still being null, and only the run that wins that write does any of the work behind it.
+   *
+   * The announce behind those writes is a different matter, and is deliberately NOT guarded
+   * away. It happens after the transaction commits, so a redelivery is the only thing that
+   * can replace an announce lost to a crash in between - see {@link rederiveHandover}. That
+   * is why the room scan below does not filter on `accountClosedAt`.
    *
    * Public rooms are out of scope: they have no owner to inherit and no roster to strand.
    */
@@ -415,7 +420,6 @@ export class ChatRoomMembershipService {
       .where(
         and(
           eq(chatRoomMember.userId, userId),
-          isNull(chatRoomMember.accountClosedAt),
           eq(chatRoom.isPublic, false),
           isNull(chatRoom.deletedAt),
         ),
@@ -437,8 +441,10 @@ export class ChatRoomMembershipService {
   private closeAccountInRoom(roomId: Uuid, userId: Uuid, closedAt: Date) {
     return this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
-        // The stamp is the idempotency guard for the whole handler: a row already marked
-        // is a room a previous run already finished, so it is skipped outright.
+        // The stamp is the write guard for the whole handler: a row already marked is a
+        // room a previous run already changed, so nothing here writes twice. What that run
+        // may not have finished is the announce, so losing this race hands over to the
+        // re-derivation rather than returning.
         const [stamped] = await t
           .update(chatRoomMember)
           .set({ accountClosedAt: closedAt })
@@ -451,7 +457,7 @@ export class ChatRoomMembershipService {
           )
           .returning({ role: chatRoomMember.role });
         if (!stamped) {
-          return null;
+          return this.rederiveHandover(t, roomId, userId, closedAt);
         }
         // A closed moderator or plain member just becomes a ghost row on the roster.
         // Only the owner leaving takes the room with them.
@@ -500,9 +506,13 @@ export class ChatRoomMembershipService {
         // fallback when no candidate survives is the same countdown an ownerless room gets.
         let newOwnerId: Uuid | null = null;
         for (const candidate of candidates) {
+          // `closedAt`, not `new Date()`: it ties the promotion to the closure that caused
+          // it, which is what lets a redelivery recognise its own transfer (see
+          // `rederiveHandover`). On a retry it is also the more honest timestamp - the
+          // room changed hands when the account closed, not when the retry ran.
           const promoted = await t
             .update(chatRoomMember)
-            .set({ role: 'owner', roleAssignedAt: new Date() })
+            .set({ role: 'owner', roleAssignedAt: closedAt })
             .where(
               and(
                 eq(chatRoomMember.roomId, roomId),
@@ -568,6 +578,81 @@ export class ChatRoomMembershipService {
         } as const;
       }),
     );
+  }
+
+  /**
+   * Rebuilds the announce for a room a previous delivery already wrote, so a crash between
+   * that commit and its fan-out does not leave the room silently changed: without this a
+   * redelivery short-circuits on the stamp, members never hear the room is closing, and the
+   * purge still deletes it when the countdown runs out.
+   *
+   * Nothing here writes. It re-announces only what THIS closure caused, which both stamps
+   * make provable: the member row carries `accountClosedAt = closedAt`, the countdown is
+   * `closedAt + OWNERLESS_ROOM_RETENTION_DAYS`, and a successor promoted by this closure
+   * carries `roleAssignedAt = closedAt`. A room changed by somebody else's closure matches
+   * none of those and is left alone. `closedAt` comes off the job payload, so it is the
+   * same value on every delivery of the same closure.
+   */
+  private async rederiveHandover(t: DrizzleTx, roomId: Uuid, userId: Uuid, closedAt: Date) {
+    const [member] = await t
+      .select({ accountClosedAt: chatRoomMember.accountClosedAt })
+      .from(chatRoomMember)
+      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+      .limit(1);
+    if (member?.accountClosedAt?.getTime() !== closedAt.getTime()) {
+      return null;
+    }
+    const [room] = await t
+      .select({
+        name: chatRoom.name,
+        creatorId: chatRoom.creatorId,
+        scheduledDeletionAt: chatRoom.scheduledDeletionAt,
+      })
+      .from(chatRoom)
+      .where(and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)))
+      .limit(1);
+    if (!room) {
+      return null;
+    }
+    if (room.creatorId) {
+      const [successor] = await t
+        .select({ userId: chatRoomMember.userId })
+        .from(chatRoomMember)
+        .where(
+          and(
+            eq(chatRoomMember.roomId, roomId),
+            eq(chatRoomMember.userId, room.creatorId),
+            eq(chatRoomMember.role, 'owner'),
+            eq(chatRoomMember.roleAssignedAt, closedAt),
+            isNull(chatRoomMember.accountClosedAt),
+          ),
+        )
+        .limit(1);
+      if (!successor) {
+        return null;
+      }
+      return {
+        handover: { kind: 'transferred', roomName: room.name, newOwnerId: successor.userId },
+      } as const;
+    }
+    if (
+      room.scheduledDeletionAt?.getTime() !==
+      closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS
+    ) {
+      return null;
+    }
+    const recipients = await t
+      .select({ userId: chatRoomMember.userId })
+      .from(chatRoomMember)
+      .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+    return {
+      handover: {
+        kind: 'scheduled',
+        roomName: room.name,
+        scheduledDeletionAt: room.scheduledDeletionAt,
+        memberIds: recipients.map((m) => m.userId),
+      },
+    } as const;
   }
 
   /**

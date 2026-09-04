@@ -60,7 +60,10 @@ export const chatMessage = pgTable(
   'chat_message',
   {
     id: uuid().primaryKey().defaultRandom(),
-    roomId: uuid().references(() => chatRoom.id),
+    // Cascades like every other room-scoped table: the room's only hard delete is the
+    // owner-less purge, and there the messages must go with it. A soft delete
+    // (`chatRoom.deletedAt`) leaves them untouched.
+    roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     userId: uuid().notNull(),
     username: text().notNull(),
     content: text().notNull(),
@@ -260,7 +263,9 @@ export const chatPlatformBan = pgTable(
     userId: uuid().notNull(),
     bannedBy: uuid().notNull(),
     scope: chatModerationScope().notNull().default('__all_public'),
-    roomId: uuid().references(() => chatRoom.id),
+    // Cascades with the room, same as chat_message: a room-scoped ban outliving the
+    // purge would be a ban on a room nobody can name.
+    roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     reason: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp({ withTimezone: true }),

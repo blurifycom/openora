@@ -388,13 +388,12 @@ export async function mapEventToRecord(
   // System-driven room lifecycle after an owner's account was closed. There is no acting
   // human here - the closure is the cause, and its own audit record names the admin behind
   // it - so these are system-attributed. resource = the room; `after` carries what moved:
-  // the inheriting owner, the countdown deadline, or the purged message count. The purge
-  // record is the only trace left once the room and its messages are hard-deleted.
-  if (
-    topic === 'chat.room.ownership.transferred' ||
-    topic === 'chat.room.scheduled_for_deletion' ||
-    topic === 'chat.private_room.purged'
-  ) {
+  // the inheriting owner or the countdown deadline. The third step, the purge itself, is
+  // NOT here: it is a hard delete whose audit record is the room's only surviving trace, so
+  // chat writes it inside the deleting transaction (`ChatRoomPurgeService.purgeRoom`)
+  // rather than through this post-commit subscription. Auditing it here as well would
+  // double the row.
+  if (topic === 'chat.room.ownership.transferred' || topic === 'chat.room.scheduled_for_deletion') {
     return {
       ...base,
       actorType: 'system',
@@ -407,13 +406,11 @@ export async function mapEventToRecord(
               newOwnerId: str(p['newOwnerId']),
               reason: p['reason'] ?? null,
             }
-          : topic === 'chat.room.scheduled_for_deletion'
-            ? {
-                previousOwnerId: str(p['previousOwnerId']),
-                scheduledDeletionAt: p['scheduledDeletionAt'] ?? null,
-                memberCount: Array.isArray(p['memberIds']) ? p['memberIds'].length : null,
-              }
-            : { messageCount: p['messageCount'] ?? null },
+          : {
+              previousOwnerId: str(p['previousOwnerId']),
+              scheduledDeletionAt: p['scheduledDeletionAt'] ?? null,
+              memberCount: Array.isArray(p['memberIds']) ? p['memberIds'].length : null,
+            },
     };
   }
 
@@ -853,7 +850,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.role-changed',
   'chat.room.ownership.transferred',
   'chat.room.scheduled_for_deletion',
-  'chat.private_room.purged',
+  // 'chat.private_room.purged' is written transactionally by chat, not subscribed here.
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
