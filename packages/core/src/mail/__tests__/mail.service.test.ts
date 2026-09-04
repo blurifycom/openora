@@ -105,7 +105,7 @@ describe('MailService', () => {
     }
     await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'de@b.com' }));
   });
 
@@ -117,7 +117,7 @@ describe('MailService', () => {
       template: verify,
     });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
     expect(sender.send).toHaveBeenCalledWith({
       to: 'de@b.com',
       subject: 's',
@@ -126,7 +126,7 @@ describe('MailService', () => {
     });
   });
 
-  it('resolves a user recipient to its address and account locale', async () => {
+  it('resolves a user recipient to its address, account locale and display name', async () => {
     const { svc, renderer, sender } = build({
       directory: {
         get: vi.fn(async () => ({
@@ -143,8 +143,28 @@ describe('MailService', () => {
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada');
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'user@b.com' }));
+  });
+
+  it('passes null when the directory has no name on file for the user', async () => {
+    const { svc, renderer } = build({
+      directory: {
+        get: vi.fn(async () => ({
+          id: 'u-1',
+          email: 'user@b.com',
+          name: null,
+          createdAt: new Date(),
+          isActive: true,
+          role: 'player',
+          language: 'fr',
+        })),
+      },
+    });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
+
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null);
   });
 
   it('skips - without throwing - when the user has no address (nothing to retry)', async () => {

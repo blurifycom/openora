@@ -4,7 +4,11 @@ import type { MailTemplate } from '../schemas/mail.js';
 export type RenderedEmail = { subject: string; html: string; text: string };
 
 export type EmailTemplateRenderer = {
-  render(template: MailTemplate, locale: string): Promise<RenderedEmail> | RenderedEmail;
+  render(
+    template: MailTemplate,
+    locale: string,
+    recipientName?: string | null,
+  ): Promise<RenderedEmail> | RenderedEmail;
 };
 
 export const EMAIL_TEMPLATE_RENDERER: Token<EmailTemplateRenderer> =
