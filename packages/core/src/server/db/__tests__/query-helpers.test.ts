@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findOneOrThrow,
   pageToOffset,
+  isUniqueConstraintViolation,
   moneyToNumber,
   moneyEquals,
   moneyCompare,
@@ -27,6 +28,19 @@ describe('pageToOffset', () => {
   it('converts a 1-based page + limit to an offset', () => {
     expect(pageToOffset(1, 20)).toBe(0);
     expect(pageToOffset(3, 20)).toBe(40);
+  });
+});
+
+describe('isUniqueConstraintViolation', () => {
+  it('matches a Postgres unique violation by code', () => {
+    expect(isUniqueConstraintViolation({ code: '23505' })).toBe(true);
+  });
+
+  it('rejects other pg codes and non-errors', () => {
+    expect(isUniqueConstraintViolation({ code: '23503' })).toBe(false);
+    expect(isUniqueConstraintViolation({})).toBe(false);
+    expect(isUniqueConstraintViolation(null)).toBe(false);
+    expect(isUniqueConstraintViolation('23505')).toBe(false);
   });
 });
 

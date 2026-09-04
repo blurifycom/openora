@@ -7,7 +7,10 @@ import {
   GameTypeSchema,
   IdInputSchema,
   MoneyAmountSchema,
+  PageQuerySchema,
+  TimestampSchema,
   UuidSchema,
+  paginated,
 } from '@openora/core/contracts';
 
 export { GameTypeSchema } from '@openora/core/contracts';
@@ -89,4 +92,133 @@ export const gamingContract = {
     .output(EndRoundOutputSchema),
 
   listRounds: oc.route({ method: 'GET', path: '/gaming/rounds' }).output(z.array(GameRoundSchema)),
+
+  listProviders: oc
+    .route({ method: 'GET', path: '/gaming/providers' })
+    .output(z.array(GameProviderSummarySchema)),
+
+  listCategories: oc
+    .route({ method: 'GET', path: '/gaming/categories' })
+    .output(z.array(GameCategorySummarySchema)),
+};
+
+// ---------------------------------------------------------------------------
+// Backoffice catalog management (game-config guarded in the router).
+// ---------------------------------------------------------------------------
+
+// kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
+export const CatalogSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+
+const QueryBooleanSchema = z.preprocess(
+  (value) => (value === 'true' ? true : value === 'false' ? false : value),
+  z.boolean(),
+);
+
+export const GameProviderSchema = GameProviderSummarySchema.extend({
+  aggregatorVendorId: z.string().nullable(),
+  isActive: z.boolean(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type GameProviderDetail = z.infer<typeof GameProviderSchema>;
+
+export const GameCategorySchema = GameCategorySummarySchema.extend({
+  isActive: z.boolean(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type GameCategoryDetail = z.infer<typeof GameCategorySchema>;
+
+const CatalogFilterSchema = z.object({
+  ...PageQuerySchema.shape,
+  q: z.string().trim().min(1).max(64).optional(),
+  isActive: QueryBooleanSchema.optional(),
+});
+
+export const UpdateProviderInputSchema = z.object({
+  id: UuidSchema,
+  slug: CatalogSlugSchema.optional(),
+  name: z.string().trim().min(1).max(128).optional(),
+  aggregatorVendorId: z.string().trim().min(1).max(128).nullable().optional(),
+  logoUrl: z.string().trim().min(1).max(512).nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdateProviderInput = z.infer<typeof UpdateProviderInputSchema>;
+
+export const CreateCategoryInputSchema = z.object({
+  slug: CatalogSlugSchema,
+  name: z.string().trim().min(1).max(128),
+  icon: z.string().trim().min(1).max(512).nullable().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+export type CreateCategoryInput = z.infer<typeof CreateCategoryInputSchema>;
+
+export const UpdateCategoryInputSchema = z.object({
+  id: UuidSchema,
+  slug: CatalogSlugSchema.optional(),
+  name: z.string().trim().min(1).max(128).optional(),
+  icon: z.string().trim().min(1).max(512).nullable().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdateCategoryInput = z.infer<typeof UpdateCategoryInputSchema>;
+
+export const UpdateGameInputSchema = z.object({
+  id: UuidSchema,
+  name: z.string().trim().min(1).max(256).optional(),
+  slug: CatalogSlugSchema.optional(),
+  providerId: UuidSchema.optional(),
+  aggregator: z.string().trim().min(1).max(64).optional(),
+  thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
+  isActive: z.boolean().optional(),
+  metadata: z.unknown().nullable().optional(),
+  categoryIds: z.array(UuidSchema).optional(),
+});
+export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
+
+export const gamingAdminContract = {
+  listAdminProviders: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/providers' })
+    .input(CatalogFilterSchema)
+    .output(paginated(GameProviderSchema)),
+
+  getAdminProvider: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/providers/{id}' })
+    .input(IdInputSchema)
+    .output(GameProviderSchema),
+
+  updateProvider: oc
+    .route({ method: 'PATCH', path: '/backoffice/gaming/providers/{id}' })
+    .input(UpdateProviderInputSchema)
+    .output(GameProviderSchema),
+
+  listAdminCategories: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/categories' })
+    .input(CatalogFilterSchema)
+    .output(paginated(GameCategorySchema)),
+
+  getAdminCategory: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/categories/{id}' })
+    .input(IdInputSchema)
+    .output(GameCategorySchema),
+
+  createCategory: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/categories' })
+    .input(CreateCategoryInputSchema)
+    .output(GameCategorySchema),
+
+  updateCategory: oc
+    .route({ method: 'PATCH', path: '/backoffice/gaming/categories/{id}' })
+    .input(UpdateCategoryInputSchema)
+    .output(GameCategorySchema),
+
+  updateGame: oc
+    .route({ method: 'PATCH', path: '/backoffice/gaming/games/{id}' })
+    .input(UpdateGameInputSchema)
+    .output(GameSchema),
 };

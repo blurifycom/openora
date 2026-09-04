@@ -30,7 +30,7 @@ export const adminStatement = {
   bonus: ['view', 'create', 'update', 'pause', 'cancel'] as const,
   audit: ['view', 'export'] as const,
   admin: ['view', 'create', 'update', 'disable', 'delete'] as const,
-  'game-config': ['view', 'update', 'schedule'] as const,
+  'game-config': ['view', 'create', 'update', 'schedule'] as const,
   analytics: ['view'] as const,
   sportsbook: ['view', 'configure', 'suspend'] as const,
   affiliate: ['view', 'manage'] as const,

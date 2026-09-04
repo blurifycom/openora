@@ -109,6 +109,7 @@ export class GamingService {
     return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
   }
 
+  // One batched query for many games - never per-game lookups (no N+1).
   private async categoriesByGameIds(gameIds: Game['id'][]) {
     if (gameIds.length === 0) {
       return new Map<Game['id'], (typeof gameCategory.$inferSelect)[]>();

@@ -3,6 +3,7 @@ export { createDrizzleDb, type DrizzleDb, type DrizzleTx } from './drizzle.js';
 export {
   findOneOrThrow,
   pageToOffset,
+  isUniqueConstraintViolation,
   withAdvisoryXactLock,
   moneyToNumber,
   moneyEquals,

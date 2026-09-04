@@ -1,4 +1,4 @@
-import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
@@ -10,6 +10,9 @@ import {
   WALLET_COMMANDS,
 } from '@openora/core/contracts';
 import { GamingService } from './service/gaming.service.js';
+import { GameCatalogService } from './service/game-catalog.service.js';
+import { GameCategoryService } from './service/game-category.service.js';
+import { GameProviderService } from './service/game-provider.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -24,8 +27,8 @@ export default {
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());
     ctx.provide(ADMIN_GAME_REPORTING, (c) => new DrizzleAdminGameReporting(c.get(DRIZZLE)));
     ctx.routers.add('gaming', (c) =>
-      createGamingRouter(
-        new GamingService(
+      createGamingRouter({
+        gaming: new GamingService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
           c.get(GAME_ADAPTER),
@@ -34,7 +37,11 @@ export default {
           c.get(IDENTITY_READER),
           c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         ),
-      ),
+        catalog: new GameCatalogService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        providers: new GameProviderService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        categories: new GameCategoryService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        adminGuard: c.get(ADMIN_GUARD),
+      }),
     );
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

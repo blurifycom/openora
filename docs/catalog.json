@@ -216,11 +216,21 @@
         "game_round"
       ],
       "routes": [
+        "gaming.createCategory",
         "gaming.endRound",
+        "gaming.getAdminCategory",
+        "gaming.getAdminProvider",
         "gaming.getGame",
+        "gaming.listAdminCategories",
+        "gaming.listAdminProviders",
+        "gaming.listCategories",
         "gaming.listGames",
+        "gaming.listProviders",
         "gaming.listRounds",
-        "gaming.startRound"
+        "gaming.startRound",
+        "gaming.updateCategory",
+        "gaming.updateGame",
+        "gaming.updateProvider"
       ]
     },
     {
@@ -973,6 +983,10 @@
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
     "compliance.kyc.updated",
+    "gaming.category.created",
+    "gaming.category.updated",
+    "gaming.game.updated",
+    "gaming.provider.updated",
     "gaming.round.ended",
     "gaming.round.started",
     "iam.invitation.accepted",
@@ -1292,6 +1306,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "CatalogSlugSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "ChangeEmailInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1450,6 +1468,10 @@
     {
       "name": "CreateBannerScheduleInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "CreateCategoryInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "CreateNotificationInputSchema",
@@ -1632,6 +1654,10 @@
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
+      "name": "GameCategorySchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "GameCategorySummarySchema",
       "file": "packages/core/src/contracts/schemas/game.ts"
     },
@@ -1646,6 +1672,10 @@
     {
       "name": "GamePerformanceSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameProviderSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "GameProviderSummarySchema",
@@ -2464,12 +2494,24 @@
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
+      "name": "UpdateCategoryInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "UpdateGameInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "UpdatePlayerProfileInputSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
       "name": "UpdateProfileInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UpdateProviderInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "updateTagSchema",

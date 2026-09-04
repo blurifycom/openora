@@ -14,6 +14,16 @@ export function pageToOffset(page: number, limit: number) {
   return (page - 1) * limit;
 }
 
+// Postgres unique-violation predicate for the friendly-precheck + DB-guard pattern:
+// services pre-check for slug clashes to return a typed 409, and translate a 23505
+// from the unique index into the same error to close the concurrent-insert race.
+export function isUniqueConstraintViolation(e: unknown): boolean {
+  if (typeof e !== 'object' || e === null || !('code' in e)) {
+    return false;
+  }
+  return e.code === '23505';
+}
+
 // The single sanctioned JS-side conversion point for a decimal-string money amount.
 // Ledger writes and balance comparisons stay in SQL (numeric arithmetic); this is only
 // for a coarse, non-ledger decision (a review-queue heuristic, a velocity/cap check)

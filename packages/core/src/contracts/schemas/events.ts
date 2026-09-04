@@ -321,6 +321,30 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  // Backoffice game-catalog management (actorId = acting admin UUID).
+  'gaming.provider.updated': authContextBase.extend({
+    providerId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({ slug: z.string(), name: z.string() }),
+    after: z.object({ slug: z.string(), name: z.string() }),
+  }),
+  'gaming.category.created': authContextBase.extend({
+    categoryId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    actorId: UuidSchema.optional(),
+  }),
+  'gaming.category.updated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({ slug: z.string(), name: z.string() }),
+    after: z.object({ slug: z.string(), name: z.string() }),
+  }),
+  'gaming.game.updated': authContextBase.extend({
+    gameId: UuidSchema,
+    actorId: UuidSchema.optional(),
+  }),
+
   'wallet.bonus_rollover.completed': z.object({
     userId: UuidSchema,
     creditId: UuidSchema,
