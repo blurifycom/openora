@@ -1,16 +1,19 @@
 import * as z from 'zod';
 import {
+  IDENTITY_READER,
   JOB_QUEUE,
   MAIL_DISPATCH,
   MailTemplateSchema,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
+  TimestampSchema,
   UuidSchema,
   domainEventSchemas,
   formatMoneyAmount,
   queue,
   type DomainEventName,
   type DomainEventPayload,
+  type IdentityReader,
   type JobQueueAdapter,
   type MailDispatchPort,
   type MailTemplate,
@@ -32,6 +35,7 @@ const describeLimitValue = (amount: string | null, minutes: number | null): stri
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
+const SECURITY_ALERT_DISPATCH_QUEUE = queue('security-alert-dispatch');
 
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
@@ -46,6 +50,14 @@ const NotificationDispatchJobSchema = z.object({
   event: z.string(),
   input: CreateNotificationInputSchema,
   email: MailTemplateSchema.nullish(),
+  // Backlog jobs produced before security alerts existed omit this field.
+  securityAlert: z.boolean().default(false),
+});
+
+const SecurityAlertDispatchJobSchema = z.object({
+  userId: UuidSchema,
+  eventId: UuidSchema,
+  occurredAt: TimestampSchema,
 });
 
 type NotificationMapEntry = {
@@ -53,6 +65,8 @@ type NotificationMapEntry = {
   parse: (payload: unknown) => unknown;
   buildNotification: (data: unknown) => CreateNotificationInput;
   buildEmail: (data: unknown, occurredAt: string) => MailTemplate | null;
+  // Opt-in security alert: the mail is preference-gated and its enqueue errors reach the worker.
+  securityAlert: boolean;
 };
 
 // Drops null/undefined entity refs (eg a nullable roomId) so `data` only ever carries
@@ -72,7 +86,10 @@ function compactData(
 function mapEvent<K extends DomainEventName>(
   event: K,
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
-  options?: { email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate },
+  options?: {
+    email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate;
+    securityAlert?: boolean;
+  },
 ): NotificationMapEntry {
   return {
     event,
@@ -83,6 +100,7 @@ function mapEvent<K extends DomainEventName>(
     buildNotification: (data) => buildNotification(data as DomainEventPayload<K>),
     buildEmail: (data, occurredAt) =>
       options?.email ? options.email(data as DomainEventPayload<K>, occurredAt) : null,
+    securityAlert: options?.securityAlert ?? false,
   };
 }
 
@@ -132,13 +150,28 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
-  mapEvent('wallet.withdrawal.requested', (p) => ({
-    userId: p.userId,
-    type: 'withdrawal.requested',
-    title: 'Withdrawal requested',
-    body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
-    data: { transactionId: p.transactionId },
-  })),
+  mapEvent(
+    'wallet.withdrawal.requested',
+    (p) => ({
+      userId: p.userId,
+      type: 'withdrawal.requested',
+      title: 'Withdrawal requested',
+      body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
+      data: { transactionId: p.transactionId },
+    }),
+    {
+      email: (p, occurredAt) => ({
+        key: 'securityWithdrawalRequested',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+      securityAlert: true,
+    },
+  ),
 
   mapEvent('wallet.withdrawal.completed', (p) => ({
     userId: p.userId,
@@ -254,6 +287,7 @@ export default {
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
     let mailDispatchRef: MailDispatchPort | null = null;
+    let identityReaderRef: IdentityReader | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
@@ -275,6 +309,27 @@ export default {
       } catch (err) {
         logger.error({ err, key: template.key }, 'notification mail enqueue failed');
       }
+    };
+
+    // Security alerts are explicitly opt-in and require a currently verified email.
+    // Unlike the ordinary notification mail helper above, enqueue errors are surfaced to the
+    // queue worker so they use its retry/dead-letter policy.
+    const dispatchSecurityAlertMail = async (
+      userId: string,
+      template: MailTemplate,
+      eventId: string,
+    ): Promise<void> => {
+      if (!mailDispatchRef || !identityReaderRef) {
+        return;
+      }
+      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(userId))) {
+        return;
+      }
+      await mailDispatchRef.toUser({
+        userId,
+        template,
+        idempotencyKey: `security-alert-mail:${eventId}`,
+      });
     };
 
     const publishNotification = (
@@ -307,6 +362,10 @@ export default {
               event: entry.event,
               input: { ...entry.buildNotification(data), eventId: envelope.eventId },
               email: entry.buildEmail(data, envelope.occurredAt),
+              // `wallet.withdrawal.requested` already creates an in-app notification. Its
+              // existing dispatch is enriched with a preference-gated email rather than adding
+              // a second record or a second subscription.
+              securityAlert: entry.securityAlert,
             },
             {
               idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
@@ -319,6 +378,35 @@ export default {
           );
       });
     }
+
+    ctx.events.on('identity.authentication.succeeded', async (payload, envelope) => {
+      const parsed = domainEventSchemas['identity.authentication.succeeded'].safeParse(payload);
+      if (!parsed.success || !jobQueueRef || !identityReaderRef) {
+        return;
+      }
+      if (!envelope?.eventId) {
+        logger.warn(
+          { userId: parsed.data.userId },
+          'security login alert enqueue skipped: missing event id',
+        );
+        return;
+      }
+      // Skip the job entirely for the normal opt-out case. Delivery checks the same
+      // current state again, so a preference or email change between here and the
+      // worker cannot result in a stale-address email.
+      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(parsed.data.userId))) {
+        return;
+      }
+      await jobQueueRef.enqueue(
+        SECURITY_ALERT_DISPATCH_QUEUE,
+        { userId: parsed.data.userId, eventId: envelope.eventId, occurredAt: envelope.occurredAt },
+        {
+          idempotencyKey: `security-login-alert:${envelope.eventId}`,
+          attempts: 5,
+          backoff: { type: 'exponential', delayMs: 1000 },
+        },
+      );
+    });
 
     // Non-null `reason` marks an admin override (ADR-0037); player-initiated
     // limit changes always emit `reason: null`.
@@ -439,17 +527,47 @@ export default {
         }
         const record = await svcRef.create(payload.input);
         if (!record) {
+          // A prior attempt may have already persisted the in-app notification. Continue so a
+          // retried security alert can still be delivered through this job's retry policy.
+          if (payload.securityAlert && payload.email && payload.input.eventId) {
+            await dispatchSecurityAlertMail(
+              payload.input.userId,
+              payload.email,
+              payload.input.eventId,
+            );
+          }
           return;
         }
         publishNotification(record);
         if (payload.email) {
-          await dispatchMail(record.userId, payload.email, payload.input.eventId ?? record.id);
+          const mailKey = payload.input.eventId ?? record.id;
+          await (payload.securityAlert
+            ? dispatchSecurityAlertMail(record.userId, payload.email, mailKey)
+            : dispatchMail(record.userId, payload.email, mailKey));
         }
       },
       onDeadLetter: (jobCtx, error) => {
         logger.error(
           { err: error, event: jobCtx.payload.event, jobId: jobCtx.id },
           'notification dispatch exhausted retries',
+        );
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: SECURITY_ALERT_DISPATCH_QUEUE,
+      schema: SecurityAlertDispatchJobSchema,
+      handler: async ({ payload }) => {
+        await dispatchSecurityAlertMail(
+          payload.userId,
+          { key: 'securityLoginAlert', data: { occurredAt: payload.occurredAt } },
+          payload.eventId,
+        );
+      },
+      onDeadLetter: (jobCtx, error) => {
+        logger.error(
+          { err: error, userId: jobCtx.payload.userId, jobId: jobCtx.id },
+          'security login alert delivery exhausted retries',
         );
       },
     });
@@ -470,6 +588,7 @@ export default {
       const svc = new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;
       mailDispatchRef = c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null;
+      identityReaderRef = c.get(IDENTITY_READER);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;

@@ -872,6 +872,60 @@ describe('mapEventToRecord() player.id resolution', () => {
     expect(row.actorType).toBe('admin');
     expect(row.actorId).toBe(userId);
   });
+
+  it('identity.phone.verified records the player actor and verification state transition', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('identity.phone.verified', {
+      userId: p.userId,
+      playerId: p.id,
+      previousPhoneVerified: false,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: p.id,
+      resourceType: 'user',
+      resourceId: p.userId,
+      before: { phoneVerified: false },
+      after: { phoneVerified: true },
+    });
+  });
+
+  it('identity.phone.verified keeps the real previous state when a number is re-bound', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('identity.phone.verified', {
+      userId: p.userId,
+      playerId: p.id,
+      previousPhoneVerified: true,
+    });
+
+    expect(row).toMatchObject({
+      before: { phoneVerified: true },
+      after: { phoneVerified: true },
+    });
+  });
+
+  it('identity.security.login_withdrawal_alerts.updated records the preference diff', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('identity.security.login_withdrawal_alerts.updated', {
+      userId: p.userId,
+      playerId: p.id,
+      previousEnabled: false,
+      enabled: true,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: p.id,
+      resourceType: 'user',
+      resourceId: p.userId,
+      before: { loginWithdrawalAlertsEnabled: false },
+      after: { loginWithdrawalAlertsEnabled: true },
+    });
+  });
 });
 
 describe('AuditService.listMyRgHistory() (real PG)', () => {

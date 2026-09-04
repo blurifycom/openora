@@ -16,6 +16,8 @@ export const MAIL_TEMPLATE_KEYS = [
   'withdrawalRejected',
   'kycResubmissionRequested',
   'adminInvitation',
+  'securityLoginAlert',
+  'securityWithdrawalRequested',
 ] as const;
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
@@ -53,6 +55,8 @@ export const EmailTemplateDataSchemas = {
   }),
   kycResubmissionRequested: z.object({ reason: z.string().nullable() }),
   adminInvitation: z.object({ token: z.string(), expiresAt: TimestampSchema }),
+  securityLoginAlert: z.object({ occurredAt: TimestampSchema }),
+  securityWithdrawalRequested: z.object({ ...WithdrawalDetailsShape }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
 
 export type EmailTemplateData = {
@@ -76,6 +80,8 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('withdrawalRejected'),
   templateVariant('kycResubmissionRequested'),
   templateVariant('adminInvitation'),
+  templateVariant('securityLoginAlert'),
+  templateVariant('securityWithdrawalRequested'),
 ]);
 
 export type MailTemplate = {

@@ -78,7 +78,7 @@ describe('IdentityService - rate limiting (real Redis)', () => {
       svc.register(
         {
           email,
-          password: 'password123',
+          password: 'password1234',
           username: 'alpha',
           acceptedTerms: true,
           acceptedAge: true,
@@ -99,7 +99,7 @@ describe('IdentityService - rate limiting (real Redis)', () => {
       svc.register(
         {
           email: 'ok@x.dev',
-          password: 'password123',
+          password: 'password1234',
           username: 'alpha',
           acceptedTerms: true,
           acceptedAge: true,

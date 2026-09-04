@@ -21,6 +21,8 @@ export type DirectAuditAction =
   | 'audit.export'
   | 'mail.regulatory_delivery.sent'
   | 'mail.regulatory_delivery.failed'
+  | 'chat.mute.expired'
+  | 'chat.platform_ban.expired'
   | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'

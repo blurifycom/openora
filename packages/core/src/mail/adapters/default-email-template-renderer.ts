@@ -119,6 +119,19 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       locale,
     )}.`,
   }),
+  securityLoginAlert: (data, locale) => ({
+    subject: 'New sign-in to your account',
+    text:
+      `A new sign-in to your account was detected on ${formatEmailDate(data.occurredAt, locale)}.\n\n` +
+      `If this was not you, secure your account immediately.`,
+  }),
+  securityWithdrawalRequested: (data, locale) => ({
+    subject: 'Withdrawal requested on your account',
+    text:
+      `A withdrawal of ${formatMoney(data.amount, data.currency)} was requested on your account and is pending review.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}\n\n` +
+      `If this was not you, secure your account immediately.`,
+  }),
 };
 
 const renderDefaultEmail = (template: MailTemplate, locale: string): RenderedEmail => {

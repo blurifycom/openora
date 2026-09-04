@@ -26,7 +26,7 @@ pnpm db:migrate                   # apply them
 pnpm db:seed
 ```
 
-Seeding logs you in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`,
+Seeding logs you in with `admin@oss.dev` / `password1234`. Flags: `--players=<n>`,
 `--admin-email=<e>`, `--admin-password=<p>`.
 
 ## Run an API

@@ -20,6 +20,7 @@ import {
   AUDIT_WRITER,
   IDENTITY_READER,
   PLATFORM_CONFIG,
+  CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
@@ -27,9 +28,11 @@ import { ChatModerationService } from './service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
+import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
 import { ChatRoomPurgeService } from './service/chat-room-purge.service.js';
 import { createChatRouter } from './router/index.js';
 
+const CHAT_MODERATION_EXPIRY_QUEUE = queue('chat-moderation-expiry');
 const CHAT_ROOM_PURGE_SCAN_QUEUE = queue('chat-room-purge-scan');
 const CHAT_ROOM_PURGE_QUEUE = queue('chat-room-purge');
 const CHAT_ACCOUNT_CLOSED_QUEUE = queue('chat-account-closed');
@@ -45,6 +48,7 @@ const RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } a
 const accountJobKey = (prefix: string, userId: string, at: Date) =>
   `${prefix}:${userId}:${at.toISOString().slice(0, 10)}`;
 
+// The cron tick carries no state - the job's whole input is "what has lapsed by now".
 const EmptyJobPayloadSchema = z.object({});
 const RoomPurgeJobSchema = z.object({ roomId: UuidSchema });
 const AccountClosedJobSchema = z.object({ userId: UuidSchema, closedAt: z.iso.datetime() });
@@ -55,6 +59,7 @@ export default {
   dependsOn: ['identity', 'audit'],
   register(ctx) {
     const logger = createLogger('chat');
+    let expiryRef: ChatModerationExpiryService | undefined;
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
     ctx.provide(
@@ -99,6 +104,23 @@ export default {
         await createChatService(c).verifyRoomAccess(roomId, viewerId);
       },
     }));
+
+    ctx.jobs.worker({
+      queue: CHAT_MODERATION_EXPIRY_QUEUE,
+      schema: EmptyJobPayloadSchema,
+      handler: async () => {
+        if (!expiryRef) {
+          // Workers started without building routers: the sweep is wired to the router
+          // factory, so it has nothing to run. Say so rather than no-op in silence.
+          logger.warn('chat-moderation-expiry sweep skipped - service not constructed');
+          return;
+        }
+        const { mutes, bans } = await expiryRef.sweep();
+        if (mutes > 0 || bans > 0) {
+          logger.info({ mutes, bans }, 'chat moderation expiry recorded');
+        }
+      },
+    });
 
     let membershipRef: ChatRoomMembershipService | null = null;
     let purgeRef: ChatRoomPurgeService | null = null;
@@ -252,6 +274,22 @@ export default {
 
     ctx.routers.add('chat', (c) => {
       const chatService = createChatService(c);
+      expiryRef = new ChatModerationExpiryService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
+      const expiryCron =
+        (c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).chat.moderationExpiry?.cron : undefined) ??
+        CHAT_MODERATION_EXPIRY_DEFAULT_CRON;
+      // Idempotent registration (keyed by scheduleId). JOB_QUEUE binds to BullMQ whenever
+      // REDIS_URL is set, which every real deployment has, so the schedule is durable
+      // there; the in-process default still ticks for `pnpm dev`.
+      void c
+        .get(JOB_QUEUE)
+        .schedule(
+          CHAT_MODERATION_EXPIRY_QUEUE,
+          'chat-moderation-expiry.cron',
+          {},
+          { cron: expiryCron },
+        )
+        .catch((err: unknown) => logger.error({ err }, 'chat-moderation-expiry schedule failed'));
       const membershipService = createMembershipService(c);
       membershipRef = membershipService;
       purgeRef = new ChatRoomPurgeService(

@@ -24,6 +24,7 @@ import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
+import { PhoneVerificationService } from './service/phone-verification.service.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
@@ -159,6 +160,16 @@ export default {
           auth: c.get(AUTH_SESSION).auth,
           cache: c.get(CACHE),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
+          playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
+        }),
+        new PhoneVerificationService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          sms: c.get(SMS_ADAPTER),
+          limiter: c.get(RATE_LIMITER),
+          auth: c.get(AUTH_SESSION).auth,
+          identityReader: c.get(IDENTITY_READER),
+          twoFactorLockout: makeTwoFactorLockout(c),
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),

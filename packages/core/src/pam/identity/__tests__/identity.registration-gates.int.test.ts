@@ -28,7 +28,7 @@ let redis: TestRedis;
 
 const validInput = () => ({
   email: `gate-${Math.random().toString(36).slice(2)}@x.dev`,
-  password: 'password123',
+  password: 'password1234',
   username: 'alpha',
   acceptedTerms: true as const,
   acceptedAge: true as const,

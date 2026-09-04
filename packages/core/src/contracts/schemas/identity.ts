@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UuidSchema, TimestampSchema } from './common.js';
+import { UuidSchema, TimestampSchema, TimezoneSchema } from './common.js';
 
 export const THEMES = ['light', 'dark', 'system'] as const;
 export const OTP_CODE_LENGTH = 6;
@@ -46,6 +46,7 @@ export const PhoneLoginVerifyInputSchema = z.object({
   phone: E164PhoneSchema,
   code: z.string().regex(/^[0-9]{6}$/),
   rememberMe: z.boolean().optional(),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const PHONE_LOGIN_ERROR_REASONS = [
@@ -100,7 +101,7 @@ export const MemberSchema = z.object({
  * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
  * password was ever storable) and would only narrow an existing contract.
  */
-export const PasswordSchema = z.string().min(8).max(128);
+export const PasswordSchema = z.string().min(12).max(128);
 
 const credentialsBase = z.object({
   email: z.email(),
@@ -109,6 +110,7 @@ const credentialsBase = z.object({
 
 export const LoginInputSchema = credentialsBase.extend({
   rememberMe: z.boolean().optional(),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const LoginSecurityStateSchema = z.object({
@@ -121,6 +123,7 @@ export const RegisterInputSchema = credentialsBase.extend({
   username: UsernameSchema,
   acceptedTerms: z.literal(true),
   acceptedAge: z.literal(true),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const RegisterOutputSchema = z.object({ status: z.literal('check-email') });
@@ -155,6 +158,7 @@ export const Verify2faInputSchema = z.object({
   // Honoured only for `method: 'totp'` - a spent recovery code buys a session, not
   // a 30-day bypass - and only while the operator allows a non-zero window.
   trustDevice: z.boolean().default(false),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const RegenerateBackupCodesInputSchema = z.object({
@@ -181,6 +185,32 @@ export const Disable2faInputSchema = z.object({
   code: TotpStepUpCodeSchema,
 });
 
+export const SecurityControlsSchema = z.object({
+  passwordMeetsPolicy: z.boolean(),
+  emailVerified: z.boolean(),
+  phoneNumber: E164PhoneSchema.nullable(),
+  phoneVerified: z.boolean(),
+  twoFactorEnabled: z.boolean(),
+  loginWithdrawalAlertsEnabled: z.boolean(),
+});
+
+export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
+
+export const PhoneVerificationRequestInputSchema = z.object({
+  phone: E164PhoneSchema,
+  currentPassword: z.string().min(8),
+  totpCode: TotpStepUpCodeSchema.optional(),
+});
+
+export const PhoneVerificationRequestOutputSchema = z.object({
+  expiresAt: TimestampSchema,
+  resendAfter: TimestampSchema,
+});
+
+export const PhoneVerificationConfirmInputSchema = z.object({
+  code: z.string().regex(/^[0-9]{6}$/),
+});
+
 export const RequestPasswordResetInputSchema = z.object({
   email: z.email(),
 });
@@ -204,6 +234,9 @@ export const ResendEmailVerificationInputSchema = z.object({
 export const VerifyEmailInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
+  // Carried here too: `autoSignInAfterVerification` mints the first session on this route,
+  // and verification may come from a different device than sign-up.
+  timezone: TimezoneSchema.optional(),
 });
 
 export const UpdateProfileInputSchema = z
@@ -257,6 +290,11 @@ export type E164Phone = z.infer<typeof E164PhoneSchema>;
 export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
 export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
+export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
+export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
+export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
+export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
+export type PhoneVerificationConfirmInput = z.infer<typeof PhoneVerificationConfirmInputSchema>;
 export type PhoneLoginErrorReason = z.infer<typeof PhoneLoginErrorReasonSchema>;
 export type PhoneLoginOtpInvalidReason = z.infer<typeof PhoneLoginOtpInvalidReasonSchema>;
 export type RegistrationFailureReason = z.infer<typeof RegistrationFailureReasonSchema>;

@@ -106,4 +106,13 @@ export class IdentityReaderService implements IdentityReader {
       .groupBy(user.id);
     return rows.map((r) => r.userId);
   }
+
+  async canReceiveLoginWithdrawalAlerts(userId: User['id']): Promise<boolean> {
+    const [row] = await this.drizzle.db
+      .select({ enabled: user.loginWithdrawalAlertsEnabled, emailVerified: user.emailVerified })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.enabled === true && row.emailVerified === true;
+  }
 }

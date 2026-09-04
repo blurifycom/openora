@@ -257,6 +257,7 @@ export const chatPlatformBan = pgTable(
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
+    expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chat_platform_ban_active_scope_key')
@@ -266,6 +267,7 @@ export const chatPlatformBan = pgTable(
       .on(t.userId, t.scope, t.roomId)
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_platform_ban_user_idx').on(t.userId),
+    index('chat_platform_ban_expires_at_idx').on(t.expiresAt),
   ],
 );
 
@@ -282,6 +284,7 @@ export const chatMute = pgTable(
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
+    expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     index('chat_mute_user_room_idx').on(t.userId, t.roomId),

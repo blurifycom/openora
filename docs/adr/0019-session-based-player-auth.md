@@ -50,7 +50,7 @@ a forged header reaches no auth/tenant decision.
 **4. Tests use real sessions.** The `asPlayer` test helper now logs in with a seeded
 player's real credentials (`/identity/login`) and carries the session cookie, mirroring
 `asAdmin` - it no longer injects `x-user-id`. Seeded players have deterministic creds
-(`player.<n>@demo.igaming.dev` / `password123`) and the demo `tenantId`, so a logged-in
+(`player.<n>@demo.igaming.dev` / `password1234`) and the demo `tenantId`, so a logged-in
 player sees only its own tenant's data under RLS. A regression test asserts a forged
 `x-user-id` with no session cookie is rejected with 401.
 

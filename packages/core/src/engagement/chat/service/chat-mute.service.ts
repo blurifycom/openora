@@ -200,6 +200,10 @@ export class ChatMuteService {
       .where(
         and(
           eq(chatMute.userId, userId),
+          // Same predicate listMutes and assertCanSend apply: a lapsed mute is not
+          // active, so there is nothing to lift. Without this an admin lifting a row
+          // that has just expired puts both `expired` and `lifted` on its trail.
+          or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, liftedAt)),
           scope === 'room'
             ? or(
                 eq(chatMute.scope, 'room'),
@@ -236,7 +240,16 @@ export class ChatMuteService {
         expiresAt: chatMute.expiresAt,
       })
       .from(chatMute)
-      .where(and(isNull(chatMute.liftedAt), userId ? eq(chatMute.userId, userId) : undefined))
+      .where(
+        and(
+          isNull(chatMute.liftedAt),
+          // Mirrors listBans and the three assertCanSend checks: expiry is a read-time
+          // predicate, so a listing that omits it reports a player as muted after the
+          // duration has run out - while chat itself already lets them post.
+          or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, new Date())),
+          userId ? eq(chatMute.userId, userId) : undefined,
+        ),
+      )
       .orderBy(desc(chatMute.createdAt));
     return rows.map((row) => ({
       ...serializeRow(row, { dateFields: ['createdAt', 'expiresAt'] }),

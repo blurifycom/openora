@@ -181,7 +181,6 @@ describe('notificationEventMap', () => {
     const inAppOnlyEvents = [
       'wallet.deposit.completed',
       'wallet.manual_adjustment.created',
-      'wallet.withdrawal.requested',
       'wallet.withdrawal.completed',
       'wallet.withdrawal.failed',
       'chat.user.mentioned',
@@ -190,7 +189,31 @@ describe('notificationEventMap', () => {
 
     for (const event of inAppOnlyEvents) {
       expect(entryFor(event).buildEmail({}, OCCURRED_AT)).toBeNull();
+      expect(entryFor(event).securityAlert).toBe(false);
     }
+  });
+
+  it('builds a preference-gated security alert mail for a requested withdrawal', () => {
+    const transactionId = randomUUID();
+    const payload = {
+      userId: randomUUID(),
+      amount: '10.00',
+      currency: 'USD',
+      transactionId,
+    };
+
+    const entry = entryFor('wallet.withdrawal.requested');
+
+    expect(entry.securityAlert).toBe(true);
+    expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'securityWithdrawalRequested',
+      data: {
+        amount: '10.00',
+        currency: 'USD',
+        transactionId,
+        occurredAt: OCCURRED_AT,
+      },
+    });
   });
 
   it('builds a withdrawal mail dated from the envelope, not the worker clock', () => {

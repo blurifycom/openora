@@ -19,7 +19,8 @@ const registerInput = (password: string) => ({
 describe('password rules', () => {
   it('holds sign-up to the same bounds as the password reset flow', () => {
     expect(RegisterInputSchema.safeParse(registerInput('short')).success).toBe(false);
-    expect(RegisterInputSchema.safeParse(registerInput('password123')).success).toBe(true);
+    expect(RegisterInputSchema.safeParse(registerInput('password123')).success).toBe(false);
+    expect(RegisterInputSchema.safeParse(registerInput('password1234')).success).toBe(true);
   });
 
   // better-auth caps at 128 itself, but only after the fact: on sign-up that surfaces as
@@ -40,7 +41,7 @@ describe('password rules', () => {
       'change',
       () =>
         ChangePasswordInputSchema.safeParse({
-          currentPassword: 'password123',
+          currentPassword: 'password1234',
           newPassword: OVER_LENGTH,
         }),
     ],
