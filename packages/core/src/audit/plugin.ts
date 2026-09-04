@@ -536,6 +536,27 @@ export async function mapEventToRecord(
     };
   }
 
+  // Scheduled-banner mutations are auditable against the schedule row itself so an
+  // update remains attributable even when its configuration later changes state.
+  if (topic === 'cms.banner.schedule.created' || topic === 'cms.banner.schedule.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'banner_schedule',
+      resourceId: str(p['bannerScheduleId']),
+      ...(topic === 'cms.banner.schedule.updated' && isRecord(p['before'])
+        ? { before: p['before'] }
+        : {}),
+      after: {
+        bannerConfigurationId: str(p['bannerConfigurationId']),
+        placement: str(p['placement']),
+        startsAt: str(p['startsAt']),
+        endsAt: str(p['endsAt']),
+      },
+    };
+  }
+
   // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page, banner
   // configuration, or banner image (whichever id that topic's payload carries).
   if (
@@ -862,6 +883,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'cms.banner.configuration.unset_default',
   'cms.banner.image.set',
   'cms.banner.image.deleted',
+  'cms.banner.schedule.created',
+  'cms.banner.schedule.updated',
   'notifications.created',
   'iam.invitation.accepted',
   'iam.role.created',

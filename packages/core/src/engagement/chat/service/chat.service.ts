@@ -31,7 +31,12 @@ import type {
   Uuid,
   ChatAttachment,
 } from '@openora/core/contracts';
-import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import {
+  chatBlockLockKey,
+  chatChannel,
+  GLOBAL_CHAT_ROOM_ID,
+  MONEY_SCALE,
+} from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -280,9 +285,39 @@ function toConfiguration(record: typeof chatRoomConfiguration.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
 
+const COMMAND_METADATA_MONEY_KEYS = ['amount', 'perRecipient'] as const;
+
+function canonicalizeMoneyString(value: string): string {
+  if (!/^\d+\.\d+$/.test(value)) {
+    return value;
+  }
+  const [whole, fraction] = value.split('.') as [string, string];
+  if (fraction.length <= MONEY_SCALE) {
+    return value;
+  }
+  const trimmed = fraction.slice(0, MONEY_SCALE).replace(/0+$/, '');
+  return trimmed ? `${whole}.${trimmed}` : whole;
+}
+
+function sanitizeCommandMetadata(metadata: unknown): unknown {
+  if (!metadata || typeof metadata !== 'object') {
+    return metadata;
+  }
+  const entries = Object.entries(metadata as Record<string, unknown>).map(([key, value]) =>
+    (COMMAND_METADATA_MONEY_KEYS as readonly string[]).includes(key) && typeof value === 'string'
+      ? [key, canonicalizeMoneyString(value)]
+      : [key, value],
+  );
+  return Object.fromEntries(entries);
+}
+
 function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage {
   const message = toMessage(record);
-  return { ...message, actorId: message.userId } as ChatSystemMessage;
+  return {
+    ...message,
+    metadata: sanitizeCommandMetadata(message.metadata),
+    actorId: message.userId,
+  } as ChatSystemMessage;
 }
 
 function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
