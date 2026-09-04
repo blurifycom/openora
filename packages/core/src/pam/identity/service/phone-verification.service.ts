@@ -1,6 +1,6 @@
 import { ORPCError } from '@orpc/server';
 import { DatabaseError } from 'pg';
-import { and, eq, gt, isNotNull } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, sql } from 'drizzle-orm';
 import {
   type Auth,
   type EventBus,
@@ -104,12 +104,14 @@ export class PhoneVerificationService {
     headers,
     currentPassword,
     totpCode,
+    twoFactorEnabled,
     meta,
   }: {
     userId: User['id'];
     headers: Headers;
     currentPassword: PhoneVerificationRequestInput['currentPassword'];
     totpCode: PhoneVerificationRequestInput['totpCode'];
+    twoFactorEnabled: boolean;
     meta: ClientMeta;
   }) {
     const [credential] = await this.drizzle.db
@@ -130,15 +132,7 @@ export class PhoneVerificationService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
     }
 
-    const [accountRow] = await this.drizzle.db
-      .select({ twoFactorEnabled: user.twoFactorEnabled })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-    if (!accountRow) {
-      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
-    }
-    if (!accountRow.twoFactorEnabled) {
+    if (!twoFactorEnabled) {
       return;
     }
     if (!totpCode) {
@@ -177,24 +171,49 @@ export class PhoneVerificationService {
     meta: ClientMeta;
   }): Promise<PhoneVerificationRequestOutput> {
     await assertRateLimit(this.limiter, `phone-verification-request:${userId}`, REQUEST_RATE_LIMIT);
+    const [caller] = await this.drizzle.db
+      .select({ role: user.role, twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!caller) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    // A verified number is also a login credential: PhoneLoginService mints a session
+    // from an SMS code alone. Binding one therefore stays a player-only control, so a
+    // backoffice account cannot trade its password login for a single SMS factor.
+    if (caller.role !== 'player') {
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Only players can verify a phone number.',
+      });
+    }
     await this.assertFreshReauthentication({
       userId,
       headers: nodeHeadersToHeaders(reqHeaders),
       currentPassword: input.currentPassword,
       totpCode: input.totpCode,
+      twoFactorEnabled: caller.twoFactorEnabled ?? false,
       meta,
     });
 
+    const now = new Date();
     const [phoneOwner] = await this.drizzle.db
       .select({ id: user.id })
       .from(user)
       .where(eq(user.phoneNumber, input.phone))
       .limit(1);
+    // Anti-enumeration, the same trade PhoneLoginService makes for this identifier: a
+    // number owned by someone else answers with the ordinary success shape and no SMS,
+    // rather than a CONFLICT that would confirm to any signed-in player that a given
+    // number belongs to an account here. No challenge is written, so `confirm` then fails
+    // as invalid-or-expired, which is indistinguishable from a wrong code.
     if (phoneOwner && phoneOwner.id !== userId) {
-      throw new ORPCError('CONFLICT', { message: 'Phone number is unavailable.' });
+      return {
+        expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+        resendAfter: new Date(now.getTime() + RESEND_COOLDOWN_MS).toISOString(),
+      };
     }
 
-    const now = new Date();
     const [existing] = await this.drizzle.db
       .select({ createdAt: phoneVerificationSession.createdAt })
       .from(phoneVerificationSession)
@@ -254,49 +273,68 @@ export class PhoneVerificationService {
   }): Promise<SecurityControls> {
     await assertRateLimit(this.limiter, `phone-verification-confirm:${userId}`, VERIFY_RATE_LIMIT);
     const now = new Date();
+    const [otp] = await this.drizzle.db
+      .select({
+        id: phoneVerificationSession.id,
+        sessionId: phoneVerificationSession.sessionId,
+        phone: phoneVerificationSession.phone,
+        codeHash: phoneVerificationSession.codeHash,
+        reauthenticatedAt: phoneVerificationSession.reauthenticatedAt,
+        failedAttempts: phoneVerificationSession.failedAttempts,
+      })
+      .from(phoneVerificationSession)
+      .where(
+        and(
+          eq(phoneVerificationSession.userId, userId),
+          gt(phoneVerificationSession.expiresAt, now),
+        ),
+      )
+      .limit(1);
+    if (
+      !otp ||
+      otp.sessionId !== sessionId ||
+      now.getTime() - otp.reauthenticatedAt.getTime() > REAUTH_TTL_MS
+    ) {
+      throw phoneVerificationInvalidError();
+    }
+
+    if (hashCode(input.code) !== otp.codeHash) {
+      // Outside any transaction on purpose: a rejected attempt has to survive the throw
+      // that rejects it, and the increment is atomic so concurrent guesses cannot each
+      // read a stale count and slip past the cap (same shape as PhoneLoginService).
+      const [attempt] = await this.drizzle.db
+        .update(phoneVerificationSession)
+        .set({ failedAttempts: sql`${phoneVerificationSession.failedAttempts} + 1` })
+        .where(eq(phoneVerificationSession.id, otp.id))
+        .returning({ failedAttempts: phoneVerificationSession.failedAttempts });
+      if (attempt !== undefined && attempt.failedAttempts >= MAX_VERIFY_ATTEMPTS) {
+        await this.drizzle.db
+          .delete(phoneVerificationSession)
+          .where(eq(phoneVerificationSession.id, otp.id));
+      }
+      throw phoneVerificationInvalidError();
+    }
+
+    let previousPhoneVerified = false;
     try {
       await this.drizzle.db.transaction(async (tx) => {
-        const [otp] = await tx
-          .select({
-            id: phoneVerificationSession.id,
-            sessionId: phoneVerificationSession.sessionId,
-            phone: phoneVerificationSession.phone,
-            codeHash: phoneVerificationSession.codeHash,
-            reauthenticatedAt: phoneVerificationSession.reauthenticatedAt,
-            expiresAt: phoneVerificationSession.expiresAt,
-            failedAttempts: phoneVerificationSession.failedAttempts,
-          })
-          .from(phoneVerificationSession)
-          .where(
-            and(
-              eq(phoneVerificationSession.userId, userId),
-              gt(phoneVerificationSession.expiresAt, now),
-            ),
-          )
-          .for('update');
-        if (
-          !otp ||
-          otp.sessionId !== sessionId ||
-          now.getTime() - otp.reauthenticatedAt.getTime() > REAUTH_TTL_MS
-        ) {
+        // Consuming the challenge and binding the number commit together, and the
+        // conditional delete is what makes a concurrent second confirm lose the race:
+        // only the transaction whose DELETE returns a row proceeds to the update.
+        const [consumed] = await tx
+          .delete(phoneVerificationSession)
+          .where(eq(phoneVerificationSession.id, otp.id))
+          .returning({ id: phoneVerificationSession.id });
+        if (!consumed) {
           throw phoneVerificationInvalidError();
         }
-        if (hashCode(input.code) !== otp.codeHash) {
-          const failedAttempts = otp.failedAttempts + 1;
-          if (failedAttempts >= MAX_VERIFY_ATTEMPTS) {
-            await tx
-              .delete(phoneVerificationSession)
-              .where(eq(phoneVerificationSession.id, otp.id));
-          } else {
-            await tx
-              .update(phoneVerificationSession)
-              .set({ failedAttempts })
-              .where(eq(phoneVerificationSession.id, otp.id));
-          }
-          throw phoneVerificationInvalidError();
-        }
-
-        await tx.delete(phoneVerificationSession).where(eq(phoneVerificationSession.id, otp.id));
+        // Read before the write: RETURNING yields the new row, and the audit record needs
+        // the state this verification replaced.
+        const [before] = await tx
+          .select({ phoneVerified: user.phoneVerified })
+          .from(user)
+          .where(eq(user.id, userId))
+          .limit(1);
         const [updated] = await tx
           .update(user)
           .set({ phoneNumber: otp.phone, phoneVerified: true, phoneVerifiedAt: new Date() })
@@ -305,6 +343,7 @@ export class PhoneVerificationService {
         if (!updated) {
           throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
         }
+        previousPhoneVerified = before?.phoneVerified ?? false;
       });
     } catch (error) {
       if (isPhoneNumberCollision(error)) {
@@ -319,6 +358,7 @@ export class PhoneVerificationService {
     this.events.emit('identity.phone.verified', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      previousPhoneVerified,
       ip: meta.ip,
       userAgent: meta.userAgent,
     });

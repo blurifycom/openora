@@ -17,8 +17,12 @@ export type IdentityReader = {
   getPlayerKycStatusByUserId(userId: User['id']): Promise<KycStatus | null>;
   /** Returns other player user ids that have authenticated from the same login IP. */
   getPlayerUserIdsSharingLoginIp(userId: User['id'], ipAddress: string): Promise<User['id'][]>;
-  /** True only while the player explicitly opted in and their delivery address remains verified. */
-  canReceiveLoginWithdrawalAlerts(userId: User['id']): Promise<boolean>;
+  /**
+   * True only while the player explicitly opted in and their delivery address remains
+   * verified. Optional so an operator's own implementation of this port keeps compiling;
+   * a missing implementation reads as opted out, which is the default state anyway.
+   */
+  canReceiveLoginWithdrawalAlerts?(userId: User['id']): Promise<boolean>;
 };
 
 export const IDENTITY_READER = createToken<IdentityReader>('IDENTITY_READER');

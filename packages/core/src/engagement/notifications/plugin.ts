@@ -306,7 +306,7 @@ export default {
       if (!deliveryRef || !directoryRef || !identityReaderRef) {
         return;
       }
-      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts(userId))) {
+      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(userId))) {
         return;
       }
       const recipient = await directoryRef.get(userId);
@@ -376,7 +376,7 @@ export default {
       // Skip the job entirely for the normal opt-out case. Delivery checks the same
       // current state again, so a preference or email change between here and the
       // worker cannot result in a stale-address email.
-      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts(parsed.data.userId))) {
+      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(parsed.data.userId))) {
         return;
       }
       await jobQueueRef.enqueue(

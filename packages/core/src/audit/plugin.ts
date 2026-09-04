@@ -723,7 +723,7 @@ export async function mapEventToRecord(
       actorId: playerId ? str(playerId) : str(p['userId']),
       resourceType: 'user',
       resourceId: str(p['userId']),
-      before: { phoneVerified: false },
+      before: { phoneVerified: p['previousPhoneVerified'] ?? null },
       after: { phoneVerified: true },
     };
   }

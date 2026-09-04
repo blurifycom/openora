@@ -180,6 +180,9 @@ export class PhoneLoginService {
     const expiresAt = new Date(now + OTP_TTL_MS);
     const resendAfter = new Date(now + RESEND_COOLDOWN_MS);
 
+    // Role-filtered at the source: SMS is a single factor, so this flow only ever
+    // resolves a player. A backoffice account with a verified number stays on password
+    // plus its own second factor, and never becomes reachable through an SMS code.
     const [account] = await this.drizzle.db
       .select({
         id: user.id,
@@ -187,11 +190,11 @@ export class PhoneLoginService {
         twoFactorEnabled: user.twoFactorEnabled,
       })
       .from(user)
-      .where(eq(user.phoneNumber, phone))
+      .where(and(eq(user.phoneNumber, phone), eq(user.role, 'player')))
       .limit(1);
 
-    // Anti-enumeration: an unknown, unverified, or 2FA-enabled phone gets the same
-    // success-shaped response, minus the SMS. A 2FA-enabled account's phone login is
+    // Anti-enumeration: an unknown, unverified, non-player, or 2FA-enabled phone gets the
+    // same success-shaped response, minus the SMS. A 2FA-enabled account's phone login is
     // always rejected once the OTP is entered (see the guard below in `verifyOtp`), so
     // sending a real code here would just be a billable no-op; folding it into the same
     // shadow path also keeps a caller from telling 2FA-enabled accounts apart from

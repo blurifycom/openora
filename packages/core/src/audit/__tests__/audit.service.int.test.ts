@@ -879,6 +879,7 @@ describe('mapEventToRecord() player.id resolution', () => {
     const row = await mapAndRecord('identity.phone.verified', {
       userId: p.userId,
       playerId: p.id,
+      previousPhoneVerified: false,
     });
 
     expect(row).toMatchObject({
@@ -887,6 +888,21 @@ describe('mapEventToRecord() player.id resolution', () => {
       resourceType: 'user',
       resourceId: p.userId,
       before: { phoneVerified: false },
+      after: { phoneVerified: true },
+    });
+  });
+
+  it('identity.phone.verified keeps the real previous state when a number is re-bound', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('identity.phone.verified', {
+      userId: p.userId,
+      playerId: p.id,
+      previousPhoneVerified: true,
+    });
+
+    expect(row).toMatchObject({
+      before: { phoneVerified: true },
       after: { phoneVerified: true },
     });
   });

@@ -40,8 +40,12 @@ function build({ passwordMatches = true }: { passwordMatches?: boolean } = {}) {
   return { svc, events, sms };
 }
 
-async function seedAuthenticatedUser() {
-  const accountUser = await insertUser(db, { name: 'A', email: 'phone-verification@test.dev' });
+async function seedAuthenticatedUser(overrides: { role?: string; email?: string } = {}) {
+  const accountUser = await insertUser(db, {
+    name: 'A',
+    email: overrides.email ?? 'phone-verification@test.dev',
+    ...(overrides.role ? { role: overrides.role } : {}),
+  });
   await db.drizzle.db.insert(account).values({
     userId: accountUser.id,
     accountId: accountUser.id,
@@ -131,6 +135,7 @@ describe('PhoneVerificationService (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('identity.phone.verified', {
       userId: accountUser.id,
       playerId: null,
+      previousPhoneVerified: false,
       ip: null,
       userAgent: null,
     });
@@ -236,5 +241,86 @@ describe('PhoneVerificationService (real PG)', () => {
       .from(user)
       .where(eq(user.id, second.id));
     expect(unchanged).toEqual({ phoneNumber: null, phoneVerified: false });
+  });
+  it('keeps counting wrong codes and burns the challenge on the last one', async () => {
+    const { accountUser, sessionId } = await seedAuthenticatedUser();
+    const { svc } = build();
+
+    await svc.request({
+      userId: accountUser.id,
+      sessionId,
+      input: { phone: PHONE, currentPassword: PASSWORD },
+      reqHeaders: {},
+      meta: NO_CLIENT_META,
+    });
+
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await expect(
+        svc.confirm({
+          userId: accountUser.id,
+          sessionId,
+          input: { code: '000000' },
+          meta: NO_CLIENT_META,
+        }),
+      ).rejects.toMatchObject({ code: 'UNPROCESSABLE_CONTENT' });
+      const [row] = await db.drizzle.db.select().from(phoneVerificationSession);
+      expect(row?.failedAttempts).toBe(attempt);
+    }
+
+    await expect(
+      svc.confirm({
+        userId: accountUser.id,
+        sessionId,
+        input: { code: '000000' },
+        meta: NO_CLIENT_META,
+      }),
+    ).rejects.toMatchObject({ code: 'UNPROCESSABLE_CONTENT' });
+    expect(await db.drizzle.db.select().from(phoneVerificationSession)).toEqual([]);
+  });
+
+  it('refuses to bind a number to a non-player account', async () => {
+    const { accountUser, sessionId } = await seedAuthenticatedUser({
+      role: 'admin',
+      email: 'phone-verification-admin@test.dev',
+    });
+    const { svc, sms } = build();
+
+    await expect(
+      svc.request({
+        userId: accountUser.id,
+        sessionId,
+        input: { phone: PHONE, currentPassword: PASSWORD },
+        reqHeaders: {},
+        meta: NO_CLIENT_META,
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(sms.sendOtp).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(phoneVerificationSession)).toEqual([]);
+  });
+
+  it('answers a number owned by another account without an SMS or a challenge', async () => {
+    const { accountUser, sessionId } = await seedAuthenticatedUser();
+    const owner = await insertUser(db, { name: 'B', email: 'phone-verification-owner@test.dev' });
+    await db.drizzle.db
+      .update(user)
+      .set({ phoneNumber: PHONE, phoneVerified: true })
+      .where(eq(user.id, owner.id));
+    const { svc, sms } = build();
+
+    const result = await svc.request({
+      userId: accountUser.id,
+      sessionId,
+      input: { phone: PHONE, currentPassword: PASSWORD },
+      reqHeaders: {},
+      meta: NO_CLIENT_META,
+    });
+
+    expect(result).toMatchObject({
+      expiresAt: expect.any(String),
+      resendAfter: expect.any(String),
+    });
+    expect(sms.sendOtp).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(phoneVerificationSession)).toEqual([]);
   });
 });

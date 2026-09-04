@@ -1359,11 +1359,22 @@ export class IdentityService {
 
     this.forwardCookies(verified, resHeaders);
     await this.trustedDevices?.trust(userId, { ip, userAgent });
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     this.events.emit('identity.2fa.verified', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       method: 'totp',
       trustedDevice: true,
+      ip,
+      userAgent,
+    });
+    // The challenge leg above ran without a session cookie, so better-auth minted a new
+    // session and this response carries it. That is a new authenticated session like any
+    // other, and the security alert has to see it.
+    this.events.emit('identity.authentication.succeeded', {
+      userId,
+      playerId,
+      method: 'totp',
       ip,
       userAgent,
     });
@@ -1578,6 +1589,17 @@ export class IdentityService {
       .where(eq(user.id, userId))
       .limit(1);
     if (caller?.role !== 'player') {
+      // A service-level denial still owes the audit log the same signal AdminGuard emits,
+      // since this check rejects before any shared guard runs (docs/standards/audit.md).
+      this.events.emit('identity.user.unauthorized_access', {
+        userId,
+        playerId: null,
+        resource: 'identity.security.login_withdrawal_alerts',
+        action: 'set',
+        ...(caller?.role ? { role: caller.role } : {}),
+        ip,
+        userAgent,
+      });
       throw new ORPCError('FORBIDDEN', {
         message: 'Only players can set this preference.',
       });

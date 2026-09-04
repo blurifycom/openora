@@ -251,6 +251,9 @@ export const domainEventSchemas = {
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // Re-binding a different number is the same topic, so the audit record needs the
+    // state it replaced rather than assuming every verification starts from unverified.
+    previousPhoneVerified: z.boolean(),
   }),
   'identity.security.login_withdrawal_alerts.updated': authContextBase.extend({
     userId: UuidSchema,

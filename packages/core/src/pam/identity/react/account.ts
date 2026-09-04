@@ -58,7 +58,7 @@ export function useEnable2fa() {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.enable2fa.mutationOptions(),
-    onSuccess: invalidateMe(utils, queryClient),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }
 
@@ -67,7 +67,7 @@ export function useVerify2fa() {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.verify2fa.mutationOptions(),
-    onSuccess: invalidateMe(utils, queryClient),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }
 
@@ -76,7 +76,7 @@ export function useDisable2fa() {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.disable2fa.mutationOptions(),
-    onSuccess: invalidateMe(utils, queryClient),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }
 
