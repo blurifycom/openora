@@ -5,19 +5,13 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { organization, admin as adminPlugin, twoFactor, emailOTP } from 'better-auth/plugins';
 import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
-import {
-  OTP_CODE_LENGTH,
-  OTP_EXPIRES_IN_SEC,
-  DEFAULT_EMAIL_TEMPLATES,
-  type EmailTemplateRenderer,
-} from '@openora/core/contracts';
+import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora/core/contracts';
 
-// Transport-agnostic mail hook; identity plugin binds the implementation via
-// NOTIFICATION_DELIVERY_ADAPTER. When omitted, emails are silently skipped (eg in tests).
-export type SendEmail = (args: {
+// Transport-agnostic OTP-mail hook; the identity plugin wires it to MAIL_DISPATCH.
+// A silent no-op when omitted (tests, the SessionResolver-only createAuth()).
+export type DispatchOtpMail = (args: {
   to: string;
-  subject: string;
-  body: string;
+  template: MailTemplate;
 }) => Promise<void> | void;
 
 // Transport-agnostic second-factor OTP hook. The identity plugin binds the
@@ -42,10 +36,8 @@ export type TwoFactorOptions = {
 export type AuthOptions = {
   db: DrizzleDb;
   schema?: Record<string, unknown>;
-  sendEmail?: SendEmail;
+  dispatchOtpMail?: DispatchOtpMail;
   onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
-  templateRenderer?: EmailTemplateRenderer;
-  getUserLanguage?: (email: string) => Promise<string | null>;
   /**
    * Blocks sign-in until the address is verified. Default off: unverified players stay
    * unrestricted while the KYC toggle is off. Operators that need the stricter gate set
@@ -60,24 +52,17 @@ export type AuthOptions = {
    * them apart on its own - and the two need different copy.
    */
   isExistingAccountSignUp?: (email: string) => boolean;
+  /** True while the reset code being sent was triggered by an administrator, not the owner. */
+  isAdminPasswordReset?: (email: string) => boolean | Promise<boolean>;
   cookieDomain?: string;
   twoFactor?: TwoFactorOptions;
-};
-
-// Used only by SessionResolver's createAuth() call, which never sends email (getSession
-// only) - keeps templateRenderer optional on AuthOptions without a server/auth -> pam
-// layering violation (the real DefaultEmailTemplateRenderer lives in pam/identity).
-// Delegates to the shared DEFAULT_EMAIL_TEMPLATES map (contracts/adapters/email-template.ts)
-// so this fallback copy can never drift from DefaultEmailTemplateRenderer's.
-const fallbackTemplateRenderer: EmailTemplateRenderer = {
-  render: (key, data) => DEFAULT_EMAIL_TEMPLATES[key](data),
 };
 
 /**
  * Builds the one shared better-auth instance for the whole app - both the
  * per-request session middleware and `AdminGuard` resolve sessions through it,
  * never a second `createAuth()` over the same DB. Bundles the org, admin
- * (role/permission), and two-factor plugins; `sendEmail` is a silent no-op
+ * (role/permission), and two-factor plugins; `dispatchOtpMail` is a silent no-op
  * when omitted (eg tests) rather than throwing. The explicit `BetterAuthType`
  * return annotation is load-bearing, not stylistic - it dodges a TS2883 Zod v4
  * `$strip` portability error the inferred type would otherwise surface.
@@ -88,8 +73,7 @@ const fallbackTemplateRenderer: EmailTemplateRenderer = {
  * both run on one host and is the safer default everywhere else.
  */
 export function createAuth(options: AuthOptions): BetterAuthType {
-  const sendEmail: SendEmail = options.sendEmail ?? (() => {});
-  const templateRenderer = options.templateRenderer ?? fallbackTemplateRenderer;
+  const dispatchOtpMail: DispatchOtpMail = options.dispatchOtpMail ?? (() => {});
   const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
   return betterAuth({
     database: drizzleAdapter(options.db, {
@@ -176,16 +160,15 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           if (type !== 'email-verification' && type !== 'forget-password') {
             return;
           }
-          const locale = (await options.getUserLanguage?.(email)) ?? 'en';
-          // Three explicit branches, not a computed key: `render` is generic over the key,
-          // so a union of keys will not narrow the data argument to a single payload type.
-          const { subject, body } =
+          const template: MailTemplate =
             type === 'email-verification'
-              ? await templateRenderer.render('verifyEmail', { otp }, locale)
+              ? { key: 'verifyEmail', data: { otp } }
               : options.isExistingAccountSignUp?.(email)
-                ? await templateRenderer.render('existingAccountSignUp', { otp, email }, locale)
-                : await templateRenderer.render('resetPasswordOtp', { otp, email }, locale);
-          await sendEmail({ to: email, subject, body });
+                ? { key: 'existingAccountSignUp', data: { otp, email } }
+                : (await options.isAdminPasswordReset?.(email))
+                  ? { key: 'adminResetPasswordOtp', data: { otp, email } }
+                  : { key: 'resetPasswordOtp', data: { otp, email } };
+          await dispatchOtpMail({ to: email, template });
         },
       }),
     ],

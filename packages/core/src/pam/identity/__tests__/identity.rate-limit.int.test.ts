@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type {
-  EmailTemplateRenderer,
   IdentityReader,
   PlayerProvisioning,
   RateLimiterAdapter,
@@ -12,17 +11,12 @@ import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 
-const testTemplateRenderer: EmailTemplateRenderer = {
-  render: () => ({ subject: 'subject', body: 'body' }),
-};
-
 function withTemplateRenderer(
-  deps: Omit<IdentityServiceDeps, 'templateRenderer' | 'identityReader'> & {
+  deps: Omit<IdentityServiceDeps, 'identityReader'> & {
     identityReader?: IdentityReader;
   },
 ) {
   return new IdentityService({
-    templateRenderer: testTemplateRenderer,
     playerProvisioning: mock<PlayerProvisioning>({ createForRegistration: vi.fn() }),
     ...deps,
     identityReader: deps.identityReader ?? makeIdentityReader(),

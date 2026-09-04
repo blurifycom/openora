@@ -292,6 +292,7 @@ const DOMAIN_PACKAGE: Record<string, string> = {
   compliance: '@openora/core/compliance',
   engagement: '@openora/core/engagement',
   iam: '@openora/core/iam',
+  mail: '@openora/core/mail',
   pam: '@openora/core/pam',
   wallet: '@openora/core/wallet',
 };

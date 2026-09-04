@@ -199,13 +199,7 @@ export class RgSelfServiceService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.rg.notifyLimitUpdated(
-      userId,
-      outcome.row.type,
-      outcome.row.period,
-      outcome.row.amount,
-      outcome.row.minutes,
-    );
+    await this.rg.notifyLimitUpdated(userId, outcome.row);
     return this.toView(userId, outcome.row);
   }
 
@@ -337,13 +331,7 @@ export class RgSelfServiceService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.rg.notifyLimitUpdated(
-      userId,
-      outcome.row.type,
-      outcome.row.period,
-      outcome.row.amount,
-      outcome.row.minutes,
-    );
+    await this.rg.notifyLimitUpdated(userId, outcome.row);
     return this.toView(userId, outcome.row);
   }
 

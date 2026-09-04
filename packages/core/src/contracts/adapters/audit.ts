@@ -19,6 +19,8 @@ export type DirectAuditAction =
   | 'admin.player.removed'
   | 'admin.player_note.created'
   | 'audit.export'
+  | 'mail.regulatory_delivery.sent'
+  | 'mail.regulatory_delivery.failed'
   | 'chat.mute.expired'
   | 'chat.platform_ban.expired'
   | 'player.display_currency.set'

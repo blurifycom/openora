@@ -12,12 +12,11 @@ import {
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
 import type {
+  AuditWritePort,
   LoginEnforcementPort,
-  SendEmailPort,
-  EmailTemplateRenderer,
-  EmailTemplateData,
-  EmailTemplateKey,
-  AdminUserDirectory,
+  MailDispatchPort,
+  MailTemplate,
+  MailToUserInput,
   IdentityReader,
   RgInitiator,
   User,
@@ -262,10 +261,9 @@ export type RgServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   loginEnforcement: LoginEnforcementPort;
-  email?: SendEmailPort | null;
-  directory?: AdminUserDirectory | null;
   identityReader: IdentityReader;
-  templateRenderer?: EmailTemplateRenderer | null;
+  mailDispatch?: MailDispatchPort | null;
+  audit?: AuditWritePort | null;
   rates: ExchangeRateReader;
 };
 
@@ -282,20 +280,18 @@ export class RgService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly loginEnforcement: LoginEnforcementPort;
-  private readonly email: SendEmailPort | null;
-  private readonly directory: AdminUserDirectory | null;
   private readonly identityReader: IdentityReader;
-  private readonly templateRenderer: EmailTemplateRenderer | null;
+  private readonly mailDispatch: MailDispatchPort | null;
+  private readonly audit: AuditWritePort | null;
   private readonly rates: ExchangeRateReader;
 
   constructor(deps: RgServiceDeps) {
     this.drizzle = deps.drizzle;
     this.events = deps.events;
     this.loginEnforcement = deps.loginEnforcement;
-    this.email = deps.email ?? null;
-    this.directory = deps.directory ?? null;
     this.identityReader = deps.identityReader;
-    this.templateRenderer = deps.templateRenderer ?? null;
+    this.mailDispatch = deps.mailDispatch ?? null;
+    this.audit = deps.audit ?? null;
     this.rates = deps.rates;
   }
 
@@ -368,22 +364,25 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notifyLimitUpdated(userId, input.type, input.period, input.amount, input.minutes);
+    await this.notifyLimitUpdated(userId, row);
     return toLimitDto(row);
   }
 
-  async notifyLimitUpdated(
-    userId: User['id'],
-    type: SetPlayerLimitInput['type'],
-    period: SetPlayerLimitInput['period'],
-    amount: string | null,
-    minutes: number | null,
-  ): Promise<void> {
-    await this.notify(userId, 'rgLimitUpdated', {
-      period,
-      type,
-      description: amount ?? `${minutes} minutes`,
-    });
+  async notifyLimitUpdated(userId: User['id'], row: LimitRow): Promise<void> {
+    await this.notify(
+      userId,
+      {
+        key: 'rgLimitUpdated',
+        data: {
+          period: row.period,
+          type: row.type,
+          amount: row.amount,
+          currency: toWireCurrency(row.type, row.currency),
+          minutes: row.minutes,
+        },
+      },
+      `${row.id}:${row.updatedAt.toISOString()}`,
+    );
   }
 
   async activateCoolingOff(
@@ -437,7 +436,11 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgCoolingOffActivated', { expiresAt });
+    await this.notify(
+      userId,
+      { key: 'rgCoolingOffActivated', data: { expiresAt: expiresAt.toISOString() } },
+      row.id,
+    );
     return toExclusionDto(row);
   }
 
@@ -493,10 +496,17 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgSelfExclusionActivated', {
-      expiresAt,
-      isPermanent: input.isPermanent,
-    });
+    await this.notify(
+      userId,
+      {
+        key: 'rgSelfExclusionActivated',
+        data: {
+          expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          isPermanent: input.isPermanent,
+        },
+      },
+      row.id,
+    );
     return toExclusionDto(row);
   }
 
@@ -559,7 +569,7 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgSelfExclusionLifted', {});
+    await this.notify(userId, { key: 'rgSelfExclusionLifted', data: {} }, row.id);
     return toExclusionDto(row);
   }
 
@@ -612,7 +622,7 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, 'rgCoolingOffLifted', {});
+    await this.notify(userId, { key: 'rgCoolingOffLifted', data: {} }, row.id);
     return toExclusionDto(row);
   }
 
@@ -740,27 +750,33 @@ export class RgService {
     }
   }
 
-  private async notify<K extends EmailTemplateKey>(
+  private async notify(
     userId: User['id'],
-    key: K,
-    data: EmailTemplateData[K],
+    template: MailTemplate,
+    notificationId: MailToUserInput['idempotencyKey'],
   ) {
-    if (!this.email || !this.directory || !this.templateRenderer) {
+    if (!this.mailDispatch) {
       return;
     }
     try {
-      const [summary] = await this.directory.lookupPlayers([userId]);
-      if (!summary?.email) {
-        return;
-      }
-      const { subject, body } = await this.templateRenderer.render(
-        key,
-        data,
-        summary.language ?? 'en',
-      );
-      await this.email.send({ to: summary.email, subject, body });
+      await this.mailDispatch.toUser({
+        userId,
+        template,
+        idempotencyKey: `rg-notify:${template.key}:${notificationId}`,
+      });
     } catch (err) {
-      logger.warn({ err, userId }, 'RG player notification failed');
+      logger.error({ err, userId, key: template.key }, 'RG player mail enqueue failed');
+      await this.audit
+        ?.record({
+          actorType: 'system',
+          action: 'mail.regulatory_delivery.failed',
+          resourceType: 'email',
+          resourceId: userId,
+          after: { templateKey: template.key, reason: 'enqueue_failed' },
+        })
+        .catch((auditErr) =>
+          logger.error({ err: auditErr }, 'RG player mail failure audit write failed'),
+        );
     }
   }
 }

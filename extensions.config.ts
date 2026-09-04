@@ -13,6 +13,7 @@ export const extensions = [
   { id: 'iam', path: './packages/core/dist/iam/plugin.js' },
   // Platform - shared substrate used by both surfaces
   { id: 'identity', path: './packages/core/dist/pam/identity/plugin.js' },
+  { id: 'mail', path: './packages/core/dist/mail/plugin.js' },
   { id: 'notifications', path: './packages/core/dist/engagement/notifications/plugin.js' },
   { id: 'compliance', path: './packages/core/dist/compliance/plugin.js' },
   { id: 'exchange-rate', path: './packages/core/dist/fx/exchange-rate/plugin.js' },

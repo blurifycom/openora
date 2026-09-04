@@ -18,7 +18,7 @@ describe('notificationEventMap', () => {
   it('maps wallet.withdrawal.approved to an in-app notification for the payee, carrying the transaction id', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
-    const input = entryFor('wallet.withdrawal.approved').handle({
+    const input = entryFor('wallet.withdrawal.approved').buildNotification({
       userId,
       amount: '10.00',
       currency: 'USD',
@@ -32,7 +32,7 @@ describe('notificationEventMap', () => {
   it('maps wallet.deposit.completed to a deposit.completed notification, carrying the transaction id', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
-    const input = entryFor('wallet.deposit.completed').handle({
+    const input = entryFor('wallet.deposit.completed').buildNotification({
       userId,
       amount: '25.50',
       currency: 'USD',
@@ -46,7 +46,7 @@ describe('notificationEventMap', () => {
   it('maps wallet.manual_adjustment.created to a balance.adjusted notification carrying the reason and transaction id', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
-    const input = entryFor('wallet.manual_adjustment.created').handle({
+    const input = entryFor('wallet.manual_adjustment.created').buildNotification({
       userId,
       amount: '5.00',
       currency: 'USD',
@@ -58,7 +58,7 @@ describe('notificationEventMap', () => {
     });
 
     expect(input).toMatchObject({ userId, type: 'balance.adjusted', data: { transactionId } });
-    expect(input?.body).toContain('goodwill credit');
+    expect(input.body).toContain('goodwill credit');
   });
 
   it('maps chat.user.mentioned to the mentioned user, not the author, carrying room and message ids', () => {
@@ -66,32 +66,32 @@ describe('notificationEventMap', () => {
     const mentionedUserId = randomUUID();
     const roomId = randomUUID();
     const messageId = randomUUID();
-    const input = entryFor('chat.user.mentioned').handle({
+    const input = entryFor('chat.user.mentioned').buildNotification({
       mentionedUserId,
       byUserId,
       roomId,
       messageId,
     });
 
-    expect(input?.userId).toBe(mentionedUserId);
+    expect(input.userId).toBe(mentionedUserId);
     expect(input).toMatchObject({ type: 'chat.mention', data: { roomId, messageId } });
   });
 
   it('carries only the message id for a global-chat mention (null roomId)', () => {
     const messageId = randomUUID();
-    const input = entryFor('chat.user.mentioned').handle({
+    const input = entryFor('chat.user.mentioned').buildNotification({
       mentionedUserId: randomUUID(),
       byUserId: randomUUID(),
       roomId: null,
       messageId,
     });
 
-    expect(input?.data).toEqual({ messageId });
+    expect(input.data).toEqual({ messageId });
   });
 
   it('maps social.friend_request.sent to the requester id (who to link to)', () => {
     const requesterId = randomUUID();
-    const input = entryFor('social.friend_request.sent').handle({
+    const input = entryFor('social.friend_request.sent').buildNotification({
       friendshipId: randomUUID(),
       requesterId,
       addresseeId: randomUUID(),
@@ -107,7 +107,7 @@ describe('notificationEventMap', () => {
   it('maps social.friend_request.accepted to the accepter id, not the requester (self-referential otherwise)', () => {
     const requesterId = randomUUID();
     const accepterId = randomUUID();
-    const input = entryFor('social.friend_request.accepted').handle({
+    const input = entryFor('social.friend_request.accepted').buildNotification({
       friendshipId: randomUUID(),
       requesterId,
       addresseeId: randomUUID(),
@@ -115,7 +115,7 @@ describe('notificationEventMap', () => {
       accepterUsername: 'bob',
     });
 
-    expect(input?.userId).toBe(requesterId);
+    expect(input.userId).toBe(requesterId);
     expect(input).toMatchObject({
       type: 'social.friend_request.accepted',
       data: { accepterId },
@@ -125,7 +125,7 @@ describe('notificationEventMap', () => {
   it('maps chat.room.ownership.transferred to the inheriting owner, carrying the room id', () => {
     const roomId = randomUUID();
     const newOwnerId = randomUUID();
-    const input = entryFor('chat.room.ownership.transferred').handle({
+    const input = entryFor('chat.room.ownership.transferred').buildNotification({
       roomId,
       roomName: 'Wheel Spin',
       previousOwnerId: randomUUID(),
@@ -138,7 +138,7 @@ describe('notificationEventMap', () => {
       type: 'chat.room.ownership_transferred',
       data: { roomId },
     });
-    expect(input!.body).toContain('Wheel Spin');
+    expect(input.body).toContain('Wheel Spin');
   });
 
   it('builds one scheduled-for-deletion notification per member, carrying the room id', () => {
@@ -166,22 +166,21 @@ describe('notificationEventMap', () => {
     expect(input.data).toBeNull();
   });
 
-  it('returns null instead of throwing on a payload that fails schema validation', () => {
-    const input = entryFor('wallet.withdrawal.approved').handle({ garbage: true });
-
-    expect(input).toBeNull();
+  it('parse returns null instead of throwing on a payload that fails schema validation', () => {
+    expect(entryFor('wallet.withdrawal.approved').parse({ garbage: true })).toBeNull();
   });
 
-  it('keeps email disabled for the pre-existing friend-request types, unchanged from before the map refactor', () => {
-    expect(entryFor('social.friend_request.sent').sendEmail).toBe(false);
-    expect(entryFor('social.friend_request.accepted').sendEmail).toBe(false);
+  const OCCURRED_AT = '2026-01-02T03:04:05.000Z';
+
+  it('builds no mail for the pre-existing friend-request types, unchanged from before the map refactor', () => {
+    expect(entryFor('social.friend_request.sent').buildEmail({}, OCCURRED_AT)).toBeNull();
+    expect(entryFor('social.friend_request.accepted').buildEmail({}, OCCURRED_AT)).toBeNull();
   });
 
   it('keeps every newly-mapped trigger type in-app only (no email), per the email scope decision', () => {
     const inAppOnlyEvents = [
       'wallet.deposit.completed',
       'wallet.manual_adjustment.created',
-      'wallet.withdrawal.requested',
       'wallet.withdrawal.completed',
       'wallet.withdrawal.failed',
       'chat.user.mentioned',
@@ -189,13 +188,57 @@ describe('notificationEventMap', () => {
     ] as const;
 
     for (const event of inAppOnlyEvents) {
-      expect(entryFor(event).sendEmail).toBe(false);
+      expect(entryFor(event).buildEmail({}, OCCURRED_AT)).toBeNull();
+      expect(entryFor(event).securityAlert).toBe(false);
     }
   });
 
-  it('keeps email enabled for the pre-existing withdrawal approve/reject types', () => {
-    expect(entryFor('wallet.withdrawal.approved').sendEmail).toBe(true);
-    expect(entryFor('wallet.withdrawal.rejected').sendEmail).toBe(true);
+  it('builds a preference-gated security alert mail for a requested withdrawal', () => {
+    const transactionId = randomUUID();
+    const payload = {
+      userId: randomUUID(),
+      amount: '10.00',
+      currency: 'USD',
+      transactionId,
+    };
+
+    const entry = entryFor('wallet.withdrawal.requested');
+
+    expect(entry.securityAlert).toBe(true);
+    expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'securityWithdrawalRequested',
+      data: {
+        amount: '10.00',
+        currency: 'USD',
+        transactionId,
+        occurredAt: OCCURRED_AT,
+      },
+    });
+  });
+
+  it('builds a withdrawal mail dated from the envelope, not the worker clock', () => {
+    const userId = randomUUID();
+    const transactionId = randomUUID();
+    const payload = {
+      userId,
+      amount: '10.00',
+      currency: 'USD',
+      transactionId,
+      adminId: randomUUID(),
+    };
+
+    expect(entryFor('wallet.withdrawal.approved').buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'withdrawalApproved',
+      data: {
+        amount: '10.00',
+        currency: 'USD',
+        transactionId,
+        occurredAt: OCCURRED_AT,
+      },
+    });
+    expect(
+      entryFor('wallet.withdrawal.rejected').buildEmail({ ...payload, reason: 'AML' }, OCCURRED_AT),
+    ).toMatchObject({ key: 'withdrawalRejected', data: { reason: 'AML' } });
   });
 
   describe('amount formatting in notification body text', () => {
@@ -258,56 +301,64 @@ describe('notificationEventMap', () => {
     const events = Object.keys(basePayloads) as (keyof typeof basePayloads)[];
 
     it.each(events)('trims the padded 18-decimal amount down to "100" in the %s body', (event) => {
-      const input = entryFor(event).handle(basePayloads[event]('100.000000000000000000'));
+      const input = entryFor(event).buildNotification(
+        basePayloads[event]('100.000000000000000000'),
+      );
 
-      expect(input?.body).toContain('100');
-      expect(input?.body).not.toContain('100.000000000000000000');
+      expect(input.body).toContain('100');
+      expect(input.body).not.toContain('100.000000000000000000');
     });
 
     it.each(events)(
       'resolves a fractional amount to "0.5", not "0.5000000000000000" or "1", in the %s body',
       (event) => {
-        const input = entryFor(event).handle(basePayloads[event]('0.500000000000000000'));
+        const input = entryFor(event).buildNotification(
+          basePayloads[event]('0.500000000000000000'),
+        );
 
-        expect(input?.body).toContain('0.5');
-        expect(input?.body).not.toContain('0.5000000000000000');
-        expect(input?.body).not.toContain(' 1 ');
+        expect(input.body).toContain('0.5');
+        expect(input.body).not.toContain('0.5000000000000000');
+        expect(input.body).not.toContain(' 1 ');
       },
     );
 
     it.each(events)(
       'adds a thousands separator, resolving to "1,234.5", in the %s body',
       (event) => {
-        const input = entryFor(event).handle(basePayloads[event]('1234.500000000000000000'));
+        const input = entryFor(event).buildNotification(
+          basePayloads[event]('1234.500000000000000000'),
+        );
 
-        expect(input?.body).toContain('1,234.5');
+        expect(input.body).toContain('1,234.5');
       },
     );
 
     it.each(events)(
       'does not collapse a tiny 18-decimal-scaled amount to "0" in the %s body',
       (event) => {
-        const input = entryFor(event).handle(basePayloads[event]('0.000000001000000000'));
+        const input = entryFor(event).buildNotification(
+          basePayloads[event]('0.000000001000000000'),
+        );
 
-        expect(input?.body).toContain('0.000000001');
+        expect(input.body).toContain('0.000000001');
       },
     );
   });
 
   it('routes wallet.bonus_rollover.completed through the same amount formatter as every other entry', () => {
-    const input = entryFor('wallet.bonus_rollover.completed').handle({
+    const input = entryFor('wallet.bonus_rollover.completed').buildNotification({
       userId: randomUUID(),
       creditId: randomUUID(),
       currency: 'EUR',
       creditedAmount: '1234.500000000000000000',
     });
 
-    expect(input?.body).toContain('1,234.5');
-    expect(input?.body).not.toContain('1234.500000000000000000');
+    expect(input.body).toContain('1,234.5');
+    expect(input.body).not.toContain('1234.500000000000000000');
   });
 
   it('leaves currency and reason untouched while only the amount substring is reformatted', () => {
-    const input = entryFor('wallet.manual_adjustment.created').handle({
+    const input = entryFor('wallet.manual_adjustment.created').buildNotification({
       userId: randomUUID(),
       amount: '100.000000000000000000',
       currency: 'EUR',
@@ -318,6 +369,6 @@ describe('notificationEventMap', () => {
       reason: 'goodwill credit',
     });
 
-    expect(input?.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
+    expect(input.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
   });
 });

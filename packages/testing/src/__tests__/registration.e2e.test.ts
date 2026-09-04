@@ -13,6 +13,7 @@ import {
   submitRegistration,
   verifyEmailByOtp,
   capturedEmailsFor,
+  waitForEmail,
   seedMinimal,
   type TestDb,
   type TestApp,
@@ -127,7 +128,7 @@ describe('registration email verification', () => {
     // code. Verification still stands - the block is on the session, not the address.
     const email = `reg-blocked-${randomUUID()}@e2e.test`;
     await submitRegistration(app, { email });
-    const otp = verificationOtpFor(email);
+    const otp = await verificationOtpFor(email);
     const db = app.container.get(DRIZZLE).db;
     const userId = await userIdFor(email);
     await db
@@ -156,7 +157,7 @@ describe('registration email verification', () => {
     // factor. The address is verified; the player still signs in through /identity/login.
     const email = `reg-2fa-${randomUUID()}@e2e.test`;
     await submitRegistration(app, { email });
-    const otp = verificationOtpFor(email);
+    const otp = await verificationOtpFor(email);
     const db = app.container.get(DRIZZLE).db;
     const userId = await userIdFor(email);
     await db.update(user).set({ twoFactorEnabled: true }).where(eq(user.id, userId!));
@@ -219,13 +220,11 @@ describe('registration email verification', () => {
     expect(players).toHaveLength(1);
     // The mail must say why it arrived. A bare "Reset your password" reaches someone who
     // never asked to reset anything and explains nothing about the sign-up they just tried.
-    const notice = capturedEmailsFor(email).find(
-      (e) => e.subject === 'You already have an account',
-    );
-    expect(notice).toBeDefined();
-    expect(notice?.body).toMatch(/\b\d{6}\b/);
+    const notice = await waitForEmail(email, (e) => e.subject === 'You already have an account');
+    expect(notice.text).toMatch(/\b\d{6}\b/);
     // Exactly one verification code was ever mailed - the one the real owner's own
     // sign-up produced. A second would hand a stranger a code that signs them in.
+    await waitForEmail(email, (e) => /verify/i.test(e.subject));
     expect(capturedEmailsFor(email).filter((e) => /verify/i.test(e.subject))).toHaveLength(1);
   });
 

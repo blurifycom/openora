@@ -1,4 +1,4 @@
-export type CapturedEmail = { to: string; subject: string; body: string };
+export type CapturedEmail = { to: string; subject: string; html: string; text: string };
 
 const captured: CapturedEmail[] = [];
 

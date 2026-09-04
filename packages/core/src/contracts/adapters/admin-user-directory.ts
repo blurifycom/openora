@@ -18,6 +18,7 @@ export type AdminUserRow = {
   createdAt: Date;
   isActive: boolean;
   role: string;
+  language: string | null;
   failedLoginAttempts?: number;
   lockoutUntil?: Date | null;
 };

@@ -448,6 +448,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const { svc, transport } = makeService();
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
+    await settle();
 
     const msg = await svc.sendGlobalMessage({
       userId: randomUUID(),
@@ -463,6 +464,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const { svc, transport } = makeService(undefined, undefined, ['media.example.com']);
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
+    await settle();
     const attachment = {
       kind: 'gif' as const,
       provider: 'example',
@@ -635,6 +637,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     const account = await seedUser(db, { name: 'Alice', username: 'alice' });
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
+    await settle();
 
     const msg = await svc.sendRoomMessage({
       userId: account.id,
@@ -669,6 +672,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     const account = await seedUser(db, { name: 'Alice', username: 'alice' });
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
+    await settle();
     const attachment = {
       kind: 'gif' as const,
       provider: 'example',

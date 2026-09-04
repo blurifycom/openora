@@ -5,7 +5,7 @@ import {
   ADMIN_PLAYER_ACTIVITY,
   ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
   IDENTITY_READER,
-  SEND_EMAIL,
+  MAIL_DISPATCH,
   SESSION_COMMANDS,
   CACHE,
   RATE_LIMITER,
@@ -21,6 +21,7 @@ const logger = createLogger('iam');
 export default {
   id: 'iam',
   dependsOn: ['identity'],
+  requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Captured from the provider factory so the event handlers below purge the SAME
     // singleton the AdminGuard reads (Container memoizes per token). Null until the
@@ -72,7 +73,7 @@ export default {
         new IamService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
-          c.get(SEND_EMAIL),
+          c.get(MAIL_DISPATCH),
           c.get(IDENTITY_READER),
           c.get(SESSION_COMMANDS),
           c.get(RATE_LIMITER),

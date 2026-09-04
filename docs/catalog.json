@@ -319,6 +319,12 @@
       ]
     },
     {
+      "id": "mail",
+      "group": "mail",
+      "tables": [],
+      "routes": []
+    },
+    {
       "id": "notifications",
       "group": "engagement",
       "tables": [
@@ -528,7 +534,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -563,6 +569,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
         "packages/core/src/pam/profile/plugin.ts",
@@ -632,24 +639,12 @@
       ]
     },
     {
-      "category": "email",
-      "interface": "SendEmailPort",
-      "token": "SEND_EMAIL",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/iam/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts"
-      ]
-    },
-    {
       "category": "email-template",
-      "interface": "EmailTemplateKey",
+      "interface": "RenderedEmail",
       "token": "EMAIL_TEMPLATE_RENDERER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts"
+        "packages/core/src/mail/plugin.ts"
       ]
     },
     {
@@ -747,6 +742,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts",
         "packages/core/src/wallet/plugin.ts"
@@ -774,13 +770,12 @@
       ]
     },
     {
-      "category": "notification",
-      "interface": "NotificationDeliveryAdapter",
-      "token": "NOTIFICATION_DELIVERY_ADAPTER",
+      "category": "mail",
+      "interface": "EmailMessage",
+      "token": "EMAIL_SENDER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/notifications/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts"
+        "packages/core/src/mail/plugin.ts"
       ]
     },
     {
@@ -1577,6 +1572,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "EncryptedMailSendJobSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
       "name": "EndRoundInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -1935,6 +1934,18 @@
     {
       "name": "LoginSecurityStateSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "MailRecipientSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
+      "name": "MailSendJobSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
+      "name": "MailTemplateSchema",
+      "file": "packages/core/src/contracts/schemas/mail.ts"
     },
     {
       "name": "ManualAdjustmentDirectionSchema",

@@ -16,11 +16,10 @@ import {
   KYC_WEBHOOK_VERIFIER,
   KycTierSchema,
   LOGIN_ENFORCEMENT,
+  MAIL_DISPATCH,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
   RG_LIMITS,
-  SEND_EMAIL,
-  EMAIL_TEMPLATE_RENDERER,
   UuidSchema,
   defaultResponsibleGamingConfig,
   domainEventSchemas,
@@ -226,15 +225,13 @@ export default {
       });
       kycRef = kyc;
 
-      const directory = c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null;
       const rg = new RgService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
         loginEnforcement: c.get(LOGIN_ENFORCEMENT),
         identityReader: c.get(IDENTITY_READER),
-        email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
-        directory,
-        templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
+        mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
+        audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       });
       rgRef = rg;

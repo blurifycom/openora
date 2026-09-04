@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   createAuth,
@@ -24,8 +25,7 @@ import type {
   CacheAdapter,
   RateLimiterAdapter,
   RateLimitKey,
-  SendEmailPort,
-  EmailTemplateRenderer,
+  MailDispatchPort,
   LoginInput,
   RegisterInput,
   Enable2faInput,
@@ -339,8 +339,7 @@ export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   identityReader: IdentityReader;
-  email?: SendEmailPort;
-  templateRenderer: EmailTemplateRenderer;
+  mailDispatch?: MailDispatchPort;
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
@@ -368,8 +367,7 @@ export class IdentityService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly identityReader: IdentityReader;
-  private readonly email?: SendEmailPort;
-  private readonly templateRenderer: EmailTemplateRenderer;
+  private readonly mailDispatch?: MailDispatchPort;
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
@@ -390,8 +388,7 @@ export class IdentityService {
     drizzle,
     events,
     identityReader,
-    email,
-    templateRenderer,
+    mailDispatch,
     options,
     limiter,
     platformConfig,
@@ -405,8 +402,7 @@ export class IdentityService {
     this.drizzle = drizzle;
     this.events = events;
     this.identityReader = identityReader;
-    this.email = email;
-    this.templateRenderer = templateRenderer;
+    this.mailDispatch = mailDispatch;
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
@@ -419,13 +415,24 @@ export class IdentityService {
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
-      ...(email ? { sendEmail: (args) => email.send(args) } : {}),
-      templateRenderer: this.templateRenderer,
-      getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      ...(mailDispatch
+        ? {
+            dispatchOtpMail: async ({ to, template }) => {
+              const idempotencyKey = `otp:${template.key}:${randomUUID()}`;
+              const recipient = await this.findUserByEmail(to);
+              if (recipient) {
+                await mailDispatch.toUser({ userId: recipient.id, template, idempotencyKey });
+                return;
+              }
+              await mailDispatch.toAddress({ email: to, template, idempotencyKey });
+            },
+          }
+        : {}),
       requireEmailVerification:
         this.platformConfig?.registration?.requireEmailVerification ?? false,
       isExistingAccountSignUp: (lookupEmail) =>
         this.existingAccountSignUps.has(lookupEmail.toLowerCase()),
+      isAdminPasswordReset: (lookupEmail) => this.isAdminPasswordReset(lookupEmail),
       onExistingUserSignUp: async (existing) => {
         const key = existing.email.toLowerCase();
         this.existingAccountSignUps.add(key);
@@ -455,22 +462,13 @@ export class IdentityService {
     });
   }
 
-  private async findUserByEmail(
-    email: string,
-  ): Promise<{ id: User['id']; language: string | null } | undefined> {
+  private async findUserByEmail(email: string): Promise<{ id: User['id'] } | undefined> {
     const [row] = await this.drizzle.db
-      .select({ id: user.id, language: user.language })
+      .select({ id: user.id })
       .from(user)
       .where(eq(user.email, email.toLowerCase()))
       .limit(1);
     return row;
-  }
-
-  // Used by the emailOTP plugin's sendVerificationOTP hook to pick a locale for the
-  // reset-password email - better-auth only gives us the target email, not a session.
-  private async resolveUserLanguage(email: string): Promise<string | null> {
-    const row = await this.findUserByEmail(email);
-    return row?.language ?? null;
   }
 
   private get api() {
@@ -1102,11 +1100,25 @@ export class IdentityService {
     }
   }
 
-  // Read by a downstream custom EmailTemplateRenderer (same CACHE binding) to tell an
-  // admin-triggered reset apart from a self-service one within the synchronous
-  // sendVerificationOTP -> templateRenderer.render call chain below.
   private adminPasswordResetMarkerKey(email: string): string {
     return `admin-password-reset:${email.toLowerCase()}`;
+  }
+
+  private async isAdminPasswordReset(email: string): Promise<boolean> {
+    if (!this.cache) {
+      return false;
+    }
+    const key = this.adminPasswordResetMarkerKey(email);
+    try {
+      const isAdmin = (await this.cache.get<boolean>(key)) === true;
+      if (isAdmin) {
+        await this.cache.delete(key);
+      }
+      return isAdmin;
+    } catch (err) {
+      identityLogger.warn({ err }, 'admin password reset marker cache read failed');
+      return false;
+    }
   }
 
   async adminRequestPasswordReset(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
@@ -1126,8 +1138,7 @@ export class IdentityService {
       identityLogger.warn({ email, err }, 'admin password reset marker cache write failed');
     }
 
-    // Mirrors requestPasswordReset: the OTP email (if any) is delivered through the
-    // sendEmail hook -> notifications; any underlying error is swallowed the same way.
+    // Mirrors requestPasswordReset - the send failure is swallowed the same way.
     try {
       await this.api.requestPasswordResetEmailOTP({
         body: { email },
@@ -1496,9 +1507,9 @@ export class IdentityService {
       makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
-    // Always returns success - never reveal whether the email exists. The reset
-    // email (if any) is delivered through the sendEmail hook -> notifications.
-    // Any underlying error is swallowed for the same anti-enumeration reason.
+    // Always returns success - never reveal whether the email exists. The reset OTP
+    // (if any) is enqueued through better-auth's emailOTP hook -> MAIL_DISPATCH. Any
+    // underlying error is swallowed for the same anti-enumeration reason.
     try {
       await this.api.requestPasswordResetEmailOTP({
         body: { email },

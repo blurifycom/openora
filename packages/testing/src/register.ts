@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import type { TestApp } from './app.js';
-import { capturedEmailsFor } from './captured-emails.js';
+import { capturedEmailsFor, type CapturedEmail } from './captured-emails.js';
 import { asPlayer, registrationRequestHeaders, type TestClient } from './request.js';
 
 export type RegisterPlayerInput = {
@@ -27,19 +27,34 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
+export async function waitForEmail(
+  email: string,
+  match: (mail: CapturedEmail) => boolean,
+  { timeoutMs = 5000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<CapturedEmail> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const hit = capturedEmailsFor(email).find(match);
+    if (hit) {
+      return hit;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`no email captured for ${email} within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 /**
  * The 6-digit code in the most recent verification email. Filtered by subject rather than
  * taking the newest mail outright: a sign-up on an address that already has an account
  * also mails a six-digit code, and picking that one up would silently test the wrong flow.
  */
-export function verificationOtpFor(email: string): string {
-  const [sent] = capturedEmailsFor(email).filter((mail) => /verify/i.test(mail.subject));
-  if (!sent) {
-    throw new Error(`no verification email captured for ${email}`);
-  }
-  const otp = /\b(\d{6})\b/.exec(sent.body)?.[1];
+export async function verificationOtpFor(email: string): Promise<string> {
+  const sent = await waitForEmail(email, (mail) => /verify/i.test(mail.subject));
+  const otp = /\b(\d{6})\b/.exec(sent.text)?.[1];
   if (!otp) {
-    throw new Error(`no verification code in email for ${email}: ${sent.body}`);
+    throw new Error(`no verification code in email for ${email}: ${sent.text}`);
   }
   return otp;
 }
@@ -54,7 +69,7 @@ export async function verifyEmailByOtp(app: TestApp, email: string) {
     method: 'POST',
     // Fresh client IP per attempt: the route also buckets callers by IP.
     headers: registrationRequestHeaders(),
-    body: JSON.stringify({ email, otp: verificationOtpFor(email) }),
+    body: JSON.stringify({ email, otp: await verificationOtpFor(email) }),
   });
   if (!res.ok) {
     throw new Error(`verify email failed (${res.status}): ${await res.text()}`);

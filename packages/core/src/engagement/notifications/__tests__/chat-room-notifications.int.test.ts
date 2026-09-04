@@ -7,13 +7,11 @@ import type { EventHandler, PluginContext, CoreTokenCatalog } from '@openora/cor
 import {
   ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
-  NOTIFICATION_DELIVERY_ADAPTER,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
   type AdminUserDirectory,
   type EnqueueOptions,
   type JobQueueAdapter,
-  type NotificationDeliveryAdapter,
   type QueueName,
   type WorkerRegistration,
 } from '@openora/core/contracts';
@@ -79,7 +77,6 @@ function bootPlugin() {
   });
   notificationsPlugin.register(ctx);
 
-  const delivery = mock<NotificationDeliveryAdapter>({ sendEmail: async () => undefined });
   const directory = mock<AdminUserDirectory>({ get: async () => null });
   const realtime = makeRealtimeTransport();
   const container = {
@@ -88,15 +85,13 @@ function bootPlugin() {
         ? db.drizzle
         : token === EVENT_BUS
           ? makeEventBus()
-          : token === NOTIFICATION_DELIVERY_ADAPTER
-            ? delivery
-            : token === ADMIN_USER_DIRECTORY
-              ? directory
-              : token === JOB_QUEUE
-                ? jobQueue
-                : token === REALTIME_TRANSPORT
-                  ? realtime
-                  : undefined,
+          : token === ADMIN_USER_DIRECTORY
+            ? directory
+            : token === JOB_QUEUE
+              ? jobQueue
+              : token === REALTIME_TRANSPORT
+                ? realtime
+                : undefined, // includes MAIL_DISPATCH - neither event in this file sends mail
     has: (token: unknown) => token !== PLATFORM_CONFIG,
     onDispose: () => undefined,
   };

@@ -188,7 +188,7 @@ describe('POST /identity/email/verify - player timezone capture', () => {
       headers: registrationRequestHeaders(),
       body: JSON.stringify({
         email,
-        otp: verificationOtpFor(email),
+        otp: await verificationOtpFor(email),
         timezone: 'Asia/Tokyo',
       }),
     });

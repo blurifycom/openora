@@ -1,25 +1,26 @@
 import * as z from 'zod';
 import {
-  ADMIN_USER_DIRECTORY,
   IDENTITY_READER,
   JOB_QUEUE,
-  NOTIFICATION_DELIVERY_ADAPTER,
+  MAIL_DISPATCH,
+  MailTemplateSchema,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
+  TimestampSchema,
   UuidSchema,
   domainEventSchemas,
+  formatMoneyAmount,
   queue,
-  type AdminUserDirectory,
   type DomainEventName,
   type DomainEventPayload,
   type IdentityReader,
   type JobQueueAdapter,
-  type NotificationDeliveryAdapter,
+  type MailDispatchPort,
+  type MailTemplate,
   type RealtimeTransport,
 } from '@openora/core/contracts';
 import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import {
   createNotificationsRouter,
   notificationsChannel,
@@ -42,37 +43,30 @@ const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 const KycResubmissionNotifyJobSchema = z.object({
   userId: UuidSchema,
   reason: z.string().nullable(),
+  eventId: UuidSchema.optional(),
 });
 
 const NotificationDispatchJobSchema = z.object({
   event: z.string(),
   input: CreateNotificationInputSchema,
-  sendEmail: z.boolean(),
+  email: MailTemplateSchema.nullish(),
   // Backlog jobs produced before security alerts existed omit this field.
-  sendSecurityAlertEmail: z.boolean().default(false),
+  securityAlert: z.boolean().default(false),
 });
 
 const SecurityAlertDispatchJobSchema = z.object({
   userId: UuidSchema,
   eventId: UuidSchema,
+  occurredAt: TimestampSchema,
 });
-
-function formatMoneyAmount(amount: string): string {
-  const match = /^(-)?(\d+)(?:\.(\d+))?$/.exec(amount);
-  if (!match) {
-    return amount;
-  }
-  const [, sign, integerPart, fractionPart] = match;
-  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const trimmedFraction = fractionPart ? fractionPart.replace(/0+$/, '') : '';
-  const magnitude = trimmedFraction ? `${groupedInteger}.${trimmedFraction}` : groupedInteger;
-  return sign ? `${sign}${magnitude}` : magnitude;
-}
 
 type NotificationMapEntry = {
   event: DomainEventName;
-  sendEmail: boolean;
-  handle: (payload: unknown) => CreateNotificationInput | null;
+  parse: (payload: unknown) => unknown;
+  buildNotification: (data: unknown) => CreateNotificationInput;
+  buildEmail: (data: unknown, occurredAt: string) => MailTemplate | null;
+  // Opt-in security alert: the mail is preference-gated and its enqueue errors reach the worker.
+  securityAlert: boolean;
 };
 
 // Drops null/undefined entity refs (eg a nullable roomId) so `data` only ever carries
@@ -92,21 +86,21 @@ function compactData(
 function mapEvent<K extends DomainEventName>(
   event: K,
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
-  options: { sendEmail: boolean },
+  options?: {
+    email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate;
+    securityAlert?: boolean;
+  },
 ): NotificationMapEntry {
   return {
     event,
-    sendEmail: options.sendEmail,
-    handle: (payload) => {
+    parse: (payload) => {
       const parsed = domainEventSchemas[event].safeParse(payload);
-      if (!parsed.success) {
-        return null;
-      }
-      // Library boundary: TS cannot narrow a domainEventSchemas lookup keyed by this
-      // function's own generic K to that one event's payload type; the pairing holds
-      // by domainEventSchemas' own definition (DomainEventPayload<K> is inferred from it).
-      return buildNotification(parsed.data as DomainEventPayload<K>);
+      return parsed.success ? parsed.data : null;
     },
+    buildNotification: (data) => buildNotification(data as DomainEventPayload<K>),
+    buildEmail: (data, occurredAt) =>
+      options?.email ? options.email(data as DomainEventPayload<K>, occurredAt) : null,
+    securityAlert: options?.securityAlert ?? false,
   };
 }
 
@@ -120,7 +114,17 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been approved and is being processed.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    {
+      email: (p, occurredAt) => ({
+        key: 'withdrawalApproved',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+    },
   ),
 
   mapEvent(
@@ -132,7 +136,18 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} was rejected and the funds were returned to your balance.${p.reason ? ` Reason: ${p.reason}.` : ''}`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: true },
+    {
+      email: (p, occurredAt) => ({
+        key: 'withdrawalRejected',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+          reason: p.reason,
+        },
+      }),
+    },
   ),
 
   mapEvent(
@@ -144,119 +159,96 @@ export const notificationEventMap: NotificationMapEntry[] = [
       body: `Your withdrawal request of ${formatMoneyAmount(p.amount)} ${p.currency} has been received and is pending review.`,
       data: { transactionId: p.transactionId },
     }),
-    { sendEmail: false },
+    {
+      email: (p, occurredAt) => ({
+        key: 'securityWithdrawalRequested',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+      securityAlert: true,
+    },
   ),
 
-  mapEvent(
-    'wallet.withdrawal.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.completed',
-      title: 'Withdrawal completed',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.withdrawal.completed', (p) => ({
+    userId: p.userId,
+    type: 'withdrawal.completed',
+    title: 'Withdrawal completed',
+    body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.withdrawal.failed',
-    (p) => ({
-      userId: p.userId,
-      type: 'withdrawal.failed',
-      title: 'Withdrawal failed',
-      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.withdrawal.failed', (p) => ({
+    userId: p.userId,
+    type: 'withdrawal.failed',
+    title: 'Withdrawal failed',
+    body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.deposit.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'deposit.completed',
-      title: 'Deposit completed',
-      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.deposit.completed', (p) => ({
+    userId: p.userId,
+    type: 'deposit.completed',
+    title: 'Deposit completed',
+    body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.manual_adjustment.created',
-    (p) => ({
-      userId: p.userId,
-      type: 'balance.adjusted',
-      title: 'Balance adjusted',
-      body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
-      data: { transactionId: p.transactionId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.manual_adjustment.created', (p) => ({
+    userId: p.userId,
+    type: 'balance.adjusted',
+    title: 'Balance adjusted',
+    body: `Your balance was ${p.direction === 'credit' ? 'credited' : 'debited'} ${formatMoneyAmount(p.amount)} ${p.currency}. Reason: ${p.reason}.`,
+    data: { transactionId: p.transactionId },
+  })),
 
-  mapEvent(
-    'wallet.bonus_rollover.completed',
-    (p) => ({
-      userId: p.userId,
-      type: 'wallet.bonus_rollover.completed',
-      title: 'Bonus unlocked',
-      body: `Your ${formatMoneyAmount(p.creditedAmount)} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
-      data: null,
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('wallet.bonus_rollover.completed', (p) => ({
+    userId: p.userId,
+    type: 'wallet.bonus_rollover.completed',
+    title: 'Bonus unlocked',
+    body: `Your ${formatMoneyAmount(p.creditedAmount)} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
+    data: null,
+  })),
 
-  mapEvent(
-    'chat.user.mentioned',
-    (p) => ({
-      userId: p.mentionedUserId,
-      type: 'chat.mention',
-      title: 'You were mentioned',
-      body: 'You were mentioned in a chat message.',
-      data: compactData({ roomId: p.roomId, messageId: p.messageId }),
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('chat.user.mentioned', (p) => ({
+    userId: p.mentionedUserId,
+    type: 'chat.mention',
+    title: 'You were mentioned',
+    body: 'You were mentioned in a chat message.',
+    data: compactData({ roomId: p.roomId, messageId: p.messageId }),
+  })),
 
   // Pre-existing types: in-app only, unchanged from before the declarative-map refactor.
-  mapEvent(
-    'social.friend_request.sent',
-    (p) => ({
-      userId: p.addresseeId,
-      type: 'social.friend_request.received',
-      title: 'New friend request',
-      body: `${p.requesterUsername} sent you a friend request.`,
-      data: { requesterId: p.requesterId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('social.friend_request.sent', (p) => ({
+    userId: p.addresseeId,
+    type: 'social.friend_request.received',
+    title: 'New friend request',
+    body: `${p.requesterUsername} sent you a friend request.`,
+    data: { requesterId: p.requesterId },
+  })),
 
-  mapEvent(
-    'social.friend_request.accepted',
-    (p) => ({
-      userId: p.requesterId,
-      type: 'social.friend_request.accepted',
-      title: 'Friend request accepted',
-      body: `${p.accepterUsername} accepted your friend request.`,
-      // accepterId, not requesterId: the recipient of THIS notification is the
-      // requester, so the linkable "other party" is whoever just accepted.
-      data: { accepterId: p.accepterId },
-    }),
-    { sendEmail: false },
-  ),
+  mapEvent('social.friend_request.accepted', (p) => ({
+    userId: p.requesterId,
+    type: 'social.friend_request.accepted',
+    title: 'Friend request accepted',
+    body: `${p.accepterUsername} accepted your friend request.`,
+    // accepterId, not requesterId: the recipient of THIS notification is the
+    // requester, so the linkable "other party" is whoever just accepted.
+    data: { accepterId: p.accepterId },
+  })),
 
-  mapEvent(
-    'chat.room.ownership.transferred',
-    (p) => ({
-      userId: p.newOwnerId,
-      type: 'chat.room.ownership_transferred',
-      title: 'You are now the owner of a chat room',
-      body: `The owner of "${p.roomName}" had their account removed, so ownership of the room has passed to you.`,
-      data: { roomId: p.roomId },
-    }),
-    { sendEmail: false },
-  ),
+  // In-app only: no `email` option passed to mapEvent, same as every other
+  // no-mail entry above (the old boolean `{ sendEmail: false }` shape no longer exists).
+  mapEvent('chat.room.ownership.transferred', (p) => ({
+    userId: p.newOwnerId,
+    type: 'chat.room.ownership_transferred',
+    title: 'You are now the owner of a chat room',
+    body: `The owner of "${p.roomName}" had their account removed, so ownership of the room has passed to you.`,
+    data: { roomId: p.roomId },
+  })),
 ];
 
 export function buildKycResubmissionNotification(payload: {
@@ -288,59 +280,56 @@ export function buildChatRoomScheduledForDeletionNotification(payload: {
 
 export default {
   id: 'notifications',
-  // ADMIN_USER_DIRECTORY (owned by identity) resolves the player's email for the
-  // delivery emails; pin load order so a split still finds the port. See ADR-0017.
-  dependsOn: ['identity'],
   register(ctx) {
-    ctx.provide(NOTIFICATION_DELIVERY_ADAPTER, () => new MockNotificationDeliveryAdapter());
-
     const logger = createLogger('notifications');
 
     // Subscriptions are wired before router factories run (boot order), so these refs are
     // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
-    let deliveryRef: NotificationDeliveryAdapter | null = null;
-    let directoryRef: AdminUserDirectory | null = null;
+    let mailDispatchRef: MailDispatchPort | null = null;
     let identityReaderRef: IdentityReader | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
-    // Best-effort email alongside the in-app notification; a missing user or delivery
-    // failure is logged, never thrown - the in-app notification already landed.
-    const sendEmail = (userId: string, title: string, body: string) => {
-      if (!deliveryRef || !directoryRef) {
+    const dispatchMail = async (
+      userId: string,
+      template: MailTemplate,
+      eventId: string,
+    ): Promise<void> => {
+      if (!mailDispatchRef) {
         return;
       }
-      const delivery = deliveryRef;
-      directoryRef
-        .get(userId)
-        .then((user) => {
-          if (!user?.email) {
-            logger.warn({ userId }, 'notification email skipped: no email for user');
-            return;
-          }
-          return delivery.sendEmail(user.email, title, body);
-        })
-        .catch((err) => logger.error({ err }, 'notification email delivery failed'));
+      try {
+        await mailDispatchRef.toUser({
+          userId,
+          template,
+          idempotencyKey: `notifications-mail:${eventId}`,
+        });
+      } catch (err) {
+        logger.error({ err, key: template.key }, 'notification mail enqueue failed');
+      }
     };
 
     // Security alerts are explicitly opt-in and require a currently verified email.
-    // Unlike the ordinary notification email helper above, delivery errors are surfaced to the
+    // Unlike the ordinary notification mail helper above, enqueue errors are surfaced to the
     // queue worker so they use its retry/dead-letter policy.
-    const sendSecurityAlertEmail = async (userId: string, title: string, body: string) => {
-      if (!deliveryRef || !directoryRef || !identityReaderRef) {
+    const dispatchSecurityAlertMail = async (
+      userId: string,
+      template: MailTemplate,
+      eventId: string,
+    ): Promise<void> => {
+      if (!mailDispatchRef || !identityReaderRef) {
         return;
       }
       if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(userId))) {
         return;
       }
-      const recipient = await directoryRef.get(userId);
-      if (!recipient?.email) {
-        logger.warn({ userId }, 'security alert email skipped: no email for user');
-        return;
-      }
-      await deliveryRef.sendEmail(recipient.email, title, body);
+      await mailDispatchRef.toUser({
+        userId,
+        template,
+        idempotencyKey: `security-alert-mail:${eventId}`,
+      });
     };
 
     const publishNotification = (
@@ -359,8 +348,11 @@ export default {
 
     for (const entry of notificationEventMap) {
       ctx.events.on(entry.event, (payload, envelope) => {
-        const input = entry.handle(payload);
-        if (!input || !jobQueueRef || !envelope) {
+        if (!jobQueueRef || !envelope) {
+          return;
+        }
+        const data = entry.parse(payload);
+        if (data === null) {
           return;
         }
         jobQueueRef
@@ -368,12 +360,12 @@ export default {
             NOTIFICATIONS_DISPATCH_QUEUE,
             {
               event: entry.event,
-              input: { ...input, eventId: envelope.eventId },
-              sendEmail: entry.sendEmail,
+              input: { ...entry.buildNotification(data), eventId: envelope.eventId },
+              email: entry.buildEmail(data, envelope.occurredAt),
               // `wallet.withdrawal.requested` already creates an in-app notification. Its
               // existing dispatch is enriched with a preference-gated email rather than adding
               // a second record or a second subscription.
-              sendSecurityAlertEmail: entry.event === 'wallet.withdrawal.requested',
+              securityAlert: entry.securityAlert,
             },
             {
               idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
@@ -407,7 +399,7 @@ export default {
       }
       await jobQueueRef.enqueue(
         SECURITY_ALERT_DISPATCH_QUEUE,
-        { userId: parsed.data.userId, eventId: envelope.eventId },
+        { userId: parsed.data.userId, eventId: envelope.eventId, occurredAt: envelope.occurredAt },
         {
           idempotencyKey: `security-login-alert:${envelope.eventId}`,
           attempts: 5,
@@ -460,7 +452,8 @@ export default {
                 roomId: p.roomId,
                 roomName: p.roomName,
               }),
-              sendEmail: false,
+              // In-app only: `email` is nullish on NotificationDispatchJobSchema, so
+              // omitting it is the current equivalent of the old `sendEmail: false`.
             },
             {
               idempotencyKey: `notifications-dispatch:${eventId}:${userId}`,
@@ -496,7 +489,7 @@ export default {
       jobQueueRef
         .enqueue(
           KYC_RESUBMISSION_NOTIFY_QUEUE,
-          { userId: p.userId, reason: p.reason },
+          { userId: p.userId, reason: p.reason, eventId: envelope.eventId },
           { idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}` },
         )
         .catch((err) => logger.error({ err }, 'kyc-resubmission-notify enqueue failed'));
@@ -515,7 +508,13 @@ export default {
           return;
         }
         publishNotification(record);
-        sendEmail(input.userId, input.title, input.body);
+        if (payload.eventId) {
+          await dispatchMail(
+            payload.userId,
+            { key: 'kycResubmissionRequested', data: { reason: payload.reason } },
+            payload.eventId,
+          );
+        }
       },
     });
 
@@ -529,26 +528,22 @@ export default {
         const record = await svcRef.create(payload.input);
         if (!record) {
           // A prior attempt may have already persisted the in-app notification. Continue so a
-          // retried security email can still be delivered through this job's retry policy.
-          if (payload.sendSecurityAlertEmail) {
-            await sendSecurityAlertEmail(
+          // retried security alert can still be delivered through this job's retry policy.
+          if (payload.securityAlert && payload.email && payload.input.eventId) {
+            await dispatchSecurityAlertMail(
               payload.input.userId,
-              payload.input.title,
-              payload.input.body,
+              payload.email,
+              payload.input.eventId,
             );
           }
           return;
         }
         publishNotification(record);
-        if (payload.sendEmail) {
-          sendEmail(payload.input.userId, payload.input.title, payload.input.body);
-        }
-        if (payload.sendSecurityAlertEmail) {
-          await sendSecurityAlertEmail(
-            payload.input.userId,
-            payload.input.title,
-            payload.input.body,
-          );
+        if (payload.email) {
+          const mailKey = payload.input.eventId ?? record.id;
+          await (payload.securityAlert
+            ? dispatchSecurityAlertMail(record.userId, payload.email, mailKey)
+            : dispatchMail(record.userId, payload.email, mailKey));
         }
       },
       onDeadLetter: (jobCtx, error) => {
@@ -563,10 +558,10 @@ export default {
       queue: SECURITY_ALERT_DISPATCH_QUEUE,
       schema: SecurityAlertDispatchJobSchema,
       handler: async ({ payload }) => {
-        await sendSecurityAlertEmail(
+        await dispatchSecurityAlertMail(
           payload.userId,
-          'New sign-in to your account',
-          'A new sign-in to your account was detected. If this was not you, secure your account immediately.',
+          { key: 'securityLoginAlert', data: { occurredAt: payload.occurredAt } },
+          payload.eventId,
         );
       },
       onDeadLetter: (jobCtx, error) => {
@@ -592,8 +587,7 @@ export default {
     ctx.routers.add('notifications', (c) => {
       const svc = new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;
-      deliveryRef = c.get(NOTIFICATION_DELIVERY_ADAPTER);
-      directoryRef = c.get(ADMIN_USER_DIRECTORY);
+      mailDispatchRef = c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null;
       identityReaderRef = c.get(IDENTITY_READER);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);

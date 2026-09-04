@@ -173,7 +173,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       (e) => e.subject === 'Your gambling limit was updated',
     );
     expect(rgEmails).toHaveLength(1);
-    expect(rgEmails[0]?.body).not.toContain('operator lowered on a support request');
+    expect(rgEmails[0]?.text).not.toContain('operator lowered on a support request');
 
     const beforeCount = (await readJson(await client.get('/notifications'))).total;
     const selfRes = await client.put('/compliance/limits', {
