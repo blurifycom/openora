@@ -209,6 +209,7 @@ export type {
   AdminUserDirectory,
   AdminPlayerSummary,
   AdminUserSortBy,
+  PlayerIdSearchOptions,
 } from './admin-user-directory.js';
 export { ADMIN_USER_DIRECTORY, ADMIN_USER_SORT_BY_VALUES } from './admin-user-directory.js';
 

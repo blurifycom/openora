@@ -82,8 +82,15 @@
     {
       "idx": 11,
       "version": "7",
+      "when": 1788296092259,
+      "tag": "0011_light_changeling",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
       "when": 1788340642047,
-      "tag": "0011_chat_moderation_expiry_recorded",
+      "tag": "0012_chat_moderation_expiry_recorded",
       "breakpoints": true
     }
   ]
