@@ -461,6 +461,16 @@ export const domainEventSchemas = {
     memberIds: z.array(UuidSchema),
     scheduledDeletionAt: TimestampSchema,
   }),
+  // The owner whose closure started the countdown came back, so the room is off death row
+  // and they own it again. Only ever cancels a countdown that same closure started - a room
+  // handed to a moderator is not taken back off them. Audited because it reverses a
+  // scheduled hard delete.
+  'chat.room.deletion.cancelled': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    ownerId: UuidSchema,
+    memberIds: z.array(UuidSchema),
+  }),
   // The countdown expired and the room plus every message in it was hard-deleted.
   // The audit record this produces is the only surviving trace of the room.
   'chat.private_room.purged': authContextBase.extend({
@@ -692,6 +702,15 @@ export const domainEventSchemas = {
   // this one is the PAM-side account closure. Both are terminal for a player's chat
   // ownership, so the chat module subscribes to both.
   'player.account.closed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
+  }),
+  // The inverse: an admin moved a closed player back to any other status. Pairs with
+  // `identity.user.reactivated` exactly as `player.account.closed` pairs with
+  // `identity.user.deactivated`, and chat subscribes to both so an account that comes back
+  // stops being rendered as a deleted one and its room's countdown is cancelled.
+  'player.account.reopened': authContextBase.extend({
     playerId: UuidSchema,
     userId: UuidSchema,
     actorId: UuidSchema,

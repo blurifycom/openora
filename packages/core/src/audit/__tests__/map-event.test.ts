@@ -178,6 +178,22 @@ describe('mapEventToRecord: chat room lifecycle after an owner account closes', 
     });
   });
 
+  it('records the cancellation when the closed owner comes back', async () => {
+    const row = await mapEventToRecord('chat.room.deletion.cancelled', {
+      roomId,
+      roomName: 'Wheel Spin',
+      ownerId: previousOwnerId,
+      memberIds: [previousOwnerId, '44444444-4444-4444-8444-444444444444'],
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: roomId,
+      after: { ownerId: previousOwnerId, scheduledDeletionAt: null, memberCount: 2 },
+    });
+  });
+
   // The purge itself has no case here on purpose: chat writes that record inside the
   // deleting transaction, because after a hard delete it is the room's only surviving trace
   // and a post-commit subscription would lose it to a crash. `chat.private_room.purged` is
@@ -185,20 +201,34 @@ describe('mapEventToRecord: chat room lifecycle after an owner account closes', 
   // `ChatRoomPurgeService.purgeRoom`.
 });
 
-describe('mapEventToRecord: player.account.closed', () => {
+describe('mapEventToRecord: player account closed and reopened', () => {
+  const payload = {
+    playerId: '55555555-5555-4555-8555-555555555555',
+    userId: '66666666-6666-4666-8666-666666666666',
+    actorId: '77777777-7777-4777-8777-777777777777',
+  };
+
   it('attributes the closure to the acting admin, against the subject player', async () => {
-    const row = await mapEventToRecord('player.account.closed', {
-      playerId: '55555555-5555-4555-8555-555555555555',
-      userId: '66666666-6666-4666-8666-666666666666',
-      actorId: '77777777-7777-4777-8777-777777777777',
-    });
+    const row = await mapEventToRecord('player.account.closed', payload);
 
     expect(row).toMatchObject({
       actorType: 'admin',
       actorId: '77777777-7777-4777-8777-777777777777',
       resourceType: 'player',
       resourceId: '55555555-5555-4555-8555-555555555555',
-      after: { status: 'closed' },
+      after: { closed: true },
+    });
+  });
+
+  it('records the reopening the same way, so the pair reads as one story', async () => {
+    const row = await mapEventToRecord('player.account.reopened', payload);
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: '77777777-7777-4777-8777-777777777777',
+      resourceType: 'player',
+      resourceId: '55555555-5555-4555-8555-555555555555',
+      after: { closed: false },
     });
   });
 });

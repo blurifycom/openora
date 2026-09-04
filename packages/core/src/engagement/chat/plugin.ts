@@ -35,6 +35,7 @@ import { createChatRouter } from './router/index.js';
 const CHAT_ROOM_PURGE_SCAN_QUEUE = queue('chat-room-purge-scan');
 const CHAT_ROOM_PURGE_QUEUE = queue('chat-room-purge');
 const CHAT_ACCOUNT_CLOSED_QUEUE = queue('chat-account-closed');
+const CHAT_ACCOUNT_REOPENED_QUEUE = queue('chat-account-reopened');
 
 // Daily at 03:15 UTC. The deadline the job checks has day granularity, so a finer tick buys
 // nothing and one missed run only deletes a day late. The timezone is pinned because the
@@ -51,10 +52,20 @@ const CHAT_ROOM_PURGE_BATCH = 500;
 // primary, so what it survives is a restart or a blip, not a permanently broken room.
 const RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
+// Per user AND per day, for the same reason the purge key is per room and per tick: the
+// driver retains completed jobs for 24h and failed ones for 7 days, and an `enqueue` whose
+// id is already in either set is a silent no-op. A user-only key would make a second
+// closure - after a reactivation, or after the first job dead-lettered - vanish without an
+// error. Day granularity still collapses the two triggers for one closure, which fire
+// within seconds of each other.
+const accountJobKey = (prefix: string, userId: string, at: Date) =>
+  `${prefix}:${userId}:${at.toISOString().slice(0, 10)}`;
+
 // The cron tick carries no state - the job's whole input is "what is due right now".
 const EmptyJobPayloadSchema = z.object({});
 const RoomPurgeJobSchema = z.object({ roomId: UuidSchema });
 const AccountClosedJobSchema = z.object({ userId: UuidSchema, closedAt: z.iso.datetime() });
+const AccountReopenedJobSchema = z.object({ userId: UuidSchema });
 
 export default {
   id: 'chat',
@@ -119,20 +130,48 @@ export default {
     // exact failure this module exists to prevent. An admin closing the player and the auth
     // user being deactivated are two views of the same fact and either can happen without
     // the other, so both collapse onto one job per user: the key dedupes them, and the
-    // handler is idempotent for the case where it does not. Deactivation is reversible and
-    // this is not - a reactivated player does not get their room back.
+    // handler is idempotent for the case where it does not. Both triggers are reversible, so
+    // both inverses are subscribed below: an account that comes back stops being rendered as
+    // a deleted one, and a countdown its closure started is cancelled rather than left to
+    // hard-delete the room 30 days after an action the operator undid. What does not come
+    // back is a room a moderator inherited - that transfer stands.
     const onAccountClosed = (userId: string) => {
       if (!jobQueueRef) {
+        logger.error({ userId }, 'chat account-closed dropped: job queue not bound yet');
+        return;
+      }
+      const closedAt = new Date();
+      jobQueueRef
+        .enqueue(
+          CHAT_ACCOUNT_CLOSED_QUEUE,
+          { userId, closedAt: closedAt.toISOString() },
+          { idempotencyKey: accountJobKey('chat-account-closed', userId, closedAt), ...RETRY },
+        )
+        .catch((err: unknown) =>
+          logger.error({ err, userId }, 'chat account-closed enqueue failed'),
+        );
+    };
+
+    // The mirror image: an account that came back has to stop being rendered as a deleted
+    // one, and any room its closure put on the deletion countdown has to come off it. On the
+    // queue for the same reason the closure is - the emit behind it is best-effort, and the
+    // work it undoes is a scheduled hard delete.
+    const onAccountReopened = (userId: string) => {
+      if (!jobQueueRef) {
+        logger.error({ userId }, 'chat account-reopened dropped: job queue not bound yet');
         return;
       }
       jobQueueRef
         .enqueue(
-          CHAT_ACCOUNT_CLOSED_QUEUE,
-          { userId, closedAt: new Date().toISOString() },
-          { idempotencyKey: `chat-account-closed:${userId}`, ...RETRY },
+          CHAT_ACCOUNT_REOPENED_QUEUE,
+          { userId },
+          {
+            idempotencyKey: accountJobKey('chat-account-reopened', userId, new Date()),
+            ...RETRY,
+          },
         )
         .catch((err: unknown) =>
-          logger.error({ err, userId }, 'chat account-closed enqueue failed'),
+          logger.error({ err, userId }, 'chat account-reopened enqueue failed'),
         );
     };
 
@@ -147,6 +186,20 @@ export default {
       const parsed = domainEventSchemas['identity.user.deactivated'].safeParse(payload);
       if (parsed.success) {
         onAccountClosed(parsed.data.userId);
+      }
+    });
+
+    ctx.events.on('player.account.reopened', (payload) => {
+      const parsed = domainEventSchemas['player.account.reopened'].safeParse(payload);
+      if (parsed.success) {
+        onAccountReopened(parsed.data.userId);
+      }
+    });
+
+    ctx.events.on('identity.user.reactivated', (payload) => {
+      const parsed = domainEventSchemas['identity.user.reactivated'].safeParse(payload);
+      if (parsed.success) {
+        onAccountReopened(parsed.data.userId);
       }
     });
 
@@ -168,6 +221,23 @@ export default {
         logger.error(
           { err: error, userId: jobCtx.payload.userId, jobId: jobCtx.id },
           'chat account-closed handling exhausted retries',
+        );
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: CHAT_ACCOUNT_REOPENED_QUEUE,
+      schema: AccountReopenedJobSchema,
+      handler: async ({ payload }) => {
+        if (!membershipRef) {
+          throw new Error('chat account-reopened: service not constructed yet');
+        }
+        await membershipRef.handleAccountReopened({ userId: payload.userId });
+      },
+      onDeadLetter: (jobCtx, error) => {
+        logger.error(
+          { err: error, userId: jobCtx.payload.userId, jobId: jobCtx.id },
+          'chat account-reopened handling exhausted retries',
         );
       },
     });
@@ -198,6 +268,12 @@ export default {
             );
         }
         logger.info({ count: due.length }, 'chat room purge dispatched');
+      },
+      // `schedule` never passes `attempts`, so the tick itself runs once and a failed scan
+      // is otherwise silent until tomorrow's. The rooms are not lost - the next tick reads
+      // the same deadlines - but the miss has to be visible.
+      onDeadLetter: (jobCtx, error) => {
+        logger.error({ err: error, jobId: jobCtx.id }, 'chat room purge scan failed');
       },
     });
 

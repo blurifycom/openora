@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import {
   DrizzleService,
   withAdvisoryXactLock,
@@ -653,6 +653,148 @@ export class ChatRoomMembershipService {
         memberIds: recipients.map((m) => m.userId),
       },
     } as const;
+  }
+
+  /**
+   * The inverse of {@link handleAccountClosed}, for an account that came back - an admin
+   * reactivated the auth user, or moved the player out of `closed`. Without it a closure is
+   * one-way in a way neither trigger is: the member row stays stamped, so the player renders
+   * as a deleted account on every roster forever and can never inherit a room again, and a
+   * countdown their closure started keeps running until the purge hard-deletes the room and
+   * its messages - a destructive outcome from an action the operator undid.
+   *
+   * Clearing the stamp is unconditional. Cancelling the countdown is not: it happens only
+   * when the room is still owner-less AND its deadline is exactly the one this player's
+   * closure wrote, which is the same three-stamp reasoning {@link rederiveHandover} uses. A
+   * room a moderator inherited is left alone - the successor keeps it, matching the accepted
+   * "a transfer is not reversible" behaviour. Idempotent: a row already clear does nothing.
+   */
+  async handleAccountReopened({ userId }: { userId: Uuid }) {
+    const rooms = await this.drizzle.db
+      .select({ id: chatRoom.id })
+      .from(chatRoomMember)
+      .innerJoin(chatRoom, eq(chatRoom.id, chatRoomMember.roomId))
+      .where(
+        and(
+          eq(chatRoomMember.userId, userId),
+          isNotNull(chatRoomMember.accountClosedAt),
+          eq(chatRoom.isPublic, false),
+          isNull(chatRoom.deletedAt),
+        ),
+      );
+    for (const { id: roomId } of rooms) {
+      const restored = await this.reopenAccountInRoom(roomId, userId);
+      if (restored) {
+        await this.announceDeletionCancelled(roomId, userId, restored);
+      }
+    }
+    return { success: true } as const;
+  }
+
+  /** The transactional half of {@link handleAccountReopened}, for one room. */
+  private reopenAccountInRoom(roomId: Uuid, userId: Uuid) {
+    return this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        // Read before the clear, because the closure instant is what decides whether the
+        // countdown below is this player's to cancel, and `returning` on the clear would
+        // hand back the new value.
+        const [member] = await t
+          .select({ accountClosedAt: chatRoomMember.accountClosedAt })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .limit(1);
+        // Clearing the stamp is the write guard, the same way setting it is on the way in:
+        // only the run that wins it does the work behind it, so a redelivery is a no-op.
+        const cleared = await t
+          .update(chatRoomMember)
+          .set({ accountClosedAt: null })
+          .where(
+            and(
+              eq(chatRoomMember.roomId, roomId),
+              eq(chatRoomMember.userId, userId),
+              isNotNull(chatRoomMember.accountClosedAt),
+            ),
+          )
+          .returning({ id: chatRoomMember.id });
+        const closedAt = member?.accountClosedAt;
+        if (cleared.length !== 1 || !closedAt) {
+          return null;
+        }
+        const [room] = await t
+          .select({
+            name: chatRoom.name,
+            creatorId: chatRoom.creatorId,
+            scheduledDeletionAt: chatRoom.scheduledDeletionAt,
+          })
+          .from(chatRoom)
+          .where(eq(chatRoom.id, roomId))
+          .limit(1);
+        // A room with a creator is one a moderator inherited, and the successor keeps it.
+        // A deadline that is not `closedAt + OWNERLESS_ROOM_RETENTION_DAYS` belongs to a
+        // different member's closure - this player was only a member of that room, and
+        // handing it to them because they happened to come back first would be a silent
+        // ownership grant. Same three-stamp reasoning `rederiveHandover` uses.
+        if (!room || room.creatorId || !room.scheduledDeletionAt) {
+          return null;
+        }
+        if (
+          room.scheduledDeletionAt.getTime() !==
+          closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS
+        ) {
+          return null;
+        }
+        // Ownership moves back as a pair, exactly as the handover moved it: `creatorId`
+        // gates room edit and delete, the member role gates the moderation guards.
+        const [uncancelled] = await t
+          .update(chatRoom)
+          .set({ creatorId: userId, scheduledDeletionAt: null })
+          .where(and(eq(chatRoom.id, roomId), isNotNull(chatRoom.scheduledDeletionAt)))
+          .returning({ id: chatRoom.id });
+        if (!uncancelled) {
+          return null;
+        }
+        await t
+          .update(chatRoomMember)
+          .set({ role: 'owner', roleAssignedAt: new Date() })
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+        const recipients = await t
+          .select({ userId: chatRoomMember.userId })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+        return { roomName: room.name, memberIds: recipients.map((m) => m.userId) };
+      }),
+    );
+  }
+
+  /**
+   * Post-commit half of the cancellation. Best-effort like every other announce here: the
+   * room is already off death row and no failure to say so can put it back on.
+   */
+  private async announceDeletionCancelled(
+    roomId: Uuid,
+    userId: Uuid,
+    restored: { roomName: string; memberIds: Uuid[] },
+  ) {
+    this.events.emit('chat.room.deletion.cancelled', {
+      roomId,
+      roomName: restored.roomName,
+      ownerId: userId,
+      memberIds: restored.memberIds,
+    });
+    await this.signalRoleChange(roomId, userId, 'owner');
+    // Same signal name as the countdown, with a null deadline: a client that renders the
+    // banner from this signal clears it from the same handler rather than needing a second
+    // one, and one that refetches the room reads the same null off `scheduledDeletionAt`.
+    const payload: ChatRoomScheduledForDeletionSignal = { roomId, scheduledDeletionAt: null };
+    try {
+      await this.transport?.signal?.(
+        chatChannel(roomId),
+        CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
+        payload,
+      );
+    } catch (err: unknown) {
+      logger.error({ err, roomId }, 'chat room deletion-cancelled signal failed');
+    }
   }
 
   /**

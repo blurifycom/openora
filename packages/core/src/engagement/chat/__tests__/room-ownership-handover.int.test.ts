@@ -725,6 +725,118 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
   });
 });
 
+describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
+  const CLOSED_AT = new Date('2026-08-31T10:00:00.000Z');
+
+  it('cancels the countdown and gives the room back to the owner who came back', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [memberId]);
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    expect((await readRoom(room.id))?.scheduledDeletionAt).not.toBeNull();
+
+    await services.membership.handleAccountReopened({ userId: ownerId });
+
+    const restored = await readRoom(room.id);
+    expect(restored?.scheduledDeletionAt).toBeNull();
+    expect(restored?.creatorId).toBe(ownerId);
+    const owner = await readMember(room.id, ownerId);
+    expect(owner.role).toBe('owner');
+    expect(owner.accountClosedAt).toBeNull();
+    // The room must actually be administrable again, not merely look it.
+    await expect(
+      services.chat.updatePrivateRoom({
+        id: room.id,
+        actorId: ownerId,
+        name: 'Back In Business',
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toBeDefined();
+    const cancelled = services.events.emit.mock.calls.find(
+      (args: unknown[]) => args[0] === 'chat.room.deletion.cancelled',
+    );
+    expect(cancelled?.[1]).toMatchObject({ roomId: room.id, ownerId });
+    expect((cancelled?.[1] as { memberIds: string[] }).memberIds).toEqual(
+      expect.arrayContaining([ownerId, memberId]),
+    );
+  });
+
+  it('clears the deleted-account flag but leaves a room a moderator inherited alone', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const modId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [modId]);
+    await promote(services, room, ownerId, modId);
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    expect((await readRoom(room.id))?.creatorId).toBe(modId);
+
+    await services.membership.handleAccountReopened({ userId: ownerId });
+
+    // The transfer stands - the successor keeps what they inherited.
+    expect((await readRoom(room.id))?.creatorId).toBe(modId);
+    const previousOwner = await readMember(room.id, ownerId);
+    expect(previousOwner.role).toBe('member');
+    // But the roster stops calling them a deleted account, and they can inherit again.
+    expect(previousOwner.accountClosedAt).toBeNull();
+    expect(
+      services.events.emit.mock.calls.some(
+        (args: unknown[]) => args[0] === 'chat.room.deletion.cancelled',
+      ),
+    ).toBe(false);
+  });
+
+  it('does not hand a room to a plain member whose own account reopens', async () => {
+    // The countdown belongs to the owner's closure. A member who was closed and comes back
+    // clears their own flag and nothing else - taking the room would be a silent grant.
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId, [memberId]);
+    await services.membership.handleAccountClosed({
+      userId: memberId,
+      closedAt: new Date('2026-08-30T10:00:00.000Z'),
+    });
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+
+    await services.membership.handleAccountReopened({ userId: memberId });
+
+    const room2 = await readRoom(room.id);
+    expect(room2?.creatorId).toBeNull();
+    expect(room2?.scheduledDeletionAt).toEqual(new Date(CLOSED_AT.getTime() + 30 * DAY_MS));
+    expect((await readMember(room.id, memberId)).accountClosedAt).toBeNull();
+    expect((await readMember(room.id, memberId)).role).toBe('member');
+  });
+
+  it('is a no-op the second time, so a redelivery cannot re-announce', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId);
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    await services.membership.handleAccountReopened({ userId: ownerId });
+    services.events.emit.mockClear();
+
+    await services.membership.handleAccountReopened({ userId: ownerId });
+
+    expect(services.events.emit).not.toHaveBeenCalled();
+    expect((await readRoom(room.id))?.creatorId).toBe(ownerId);
+  });
+
+  it('stops the purge that would otherwise have deleted the room anyway', async () => {
+    const services = makeServices();
+    const ownerId = randomUUID();
+    const room = await seedPrivateRoom(services, ownerId);
+    await services.membership.handleAccountClosed({ userId: ownerId, closedAt: CLOSED_AT });
+    await services.membership.handleAccountReopened({ userId: ownerId });
+
+    // The deadline it would have been purged on is long past by the test's own clock, so a
+    // room still carrying one would come back here. A cancelled one has nothing to be due.
+    expect(await services.purge.listDueRooms(100)).toEqual([]);
+    expect(await services.purge.purgeRoom(room.id)).toBe(false);
+    expect(await readRoom(room.id)).not.toBeNull();
+  });
+});
+
 describe('ChatService.listRoomMembers with a closed account (real PG)', () => {
   it('keeps the closed member on the roster, flagged', async () => {
     const services = makeServices();

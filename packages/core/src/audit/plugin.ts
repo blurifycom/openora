@@ -393,6 +393,23 @@ export async function mapEventToRecord(
   // chat writes it inside the deleting transaction (`ChatRoomPurgeService.purgeRoom`)
   // rather than through this post-commit subscription. Auditing it here as well would
   // double the row.
+  // The countdown was called off because the owner whose closure started it came back.
+  // Audited on its own because it reverses a scheduled hard delete, and because the room
+  // changing hands back is an ownership move like the two above.
+  if (topic === 'chat.room.deletion.cancelled') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+      after: {
+        ownerId: str(p['ownerId']),
+        scheduledDeletionAt: null,
+        memberCount: Array.isArray(p['memberIds']) ? p['memberIds'].length : null,
+      },
+    };
+  }
+
   if (topic === 'chat.room.ownership.transferred' || topic === 'chat.room.scheduled_for_deletion') {
     return {
       ...base,
@@ -414,16 +431,18 @@ export async function mapEventToRecord(
     };
   }
 
-  // An admin closed a player's account from the back office. resource = the subject player;
-  // the payload's userId is the subject's auth user, never the actor.
-  if (topic === 'player.account.closed') {
+  // An admin closed a player's account from the back office, or moved it back out of
+  // `closed`. resource = the subject player; the payload's userId is the subject's auth
+  // user, never the actor. `after.status` carries only the closed flag - the reopened
+  // event does not name the status it moved to, and the player's own update record does.
+  if (topic === 'player.account.closed' || topic === 'player.account.reopened') {
     return {
       ...base,
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
-      after: { status: 'closed' },
+      after: { closed: topic === 'player.account.closed' },
     };
   }
 
@@ -850,6 +869,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.role-changed',
   'chat.room.ownership.transferred',
   'chat.room.scheduled_for_deletion',
+  'chat.room.deletion.cancelled',
   // 'chat.private_room.purged' is written transactionally by chat, not subscribed here.
   'chat.user.mentioned',
   'compliance.limit.upserted',
@@ -898,6 +918,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'player.level.changed',
   'player.login_blocked',
   'player.account.closed',
+  'player.account.reopened',
   'social.friend_request.sent',
   'social.friend_request.accepted',
   'social.friendship.removed',

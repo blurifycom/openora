@@ -103,10 +103,12 @@ export const ChatMemberRoleChangedSignalSchema = z.object({
 export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
 
 // Payload of the CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL realtime signal. The deadline
-// travels with it so the banner can render immediately, without a room refetch.
+// travels with it so the banner can render immediately, without a room refetch. Null means
+// the countdown was cancelled - the closed owner came back - so one handler both raises and
+// clears the banner, and the value matches what a room refetch would read.
 export const ChatRoomScheduledForDeletionSignalSchema = z.object({
   roomId: UuidSchema,
-  scheduledDeletionAt: TimestampSchema,
+  scheduledDeletionAt: TimestampSchema.nullable(),
 });
 export type ChatRoomScheduledForDeletionSignal = z.infer<
   typeof ChatRoomScheduledForDeletionSignalSchema

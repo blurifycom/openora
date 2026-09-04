@@ -268,6 +268,18 @@ export class PlayerService implements PlayerActivityTracker {
       });
     }
 
+    // The inverse, and this is the only route out of `closed` - `remove()` has no undo. A
+    // closure is not the end of the story for the subscribers that acted on it: chat still
+    // renders this player as a deleted account on every roster it left them on, and any
+    // room it put on a deletion countdown is still counting down.
+    if (data.status !== undefined && data.status !== 'closed' && existing.status === 'closed') {
+      this.events.emit('player.account.reopened', {
+        playerId,
+        userId: existing.userId,
+        actorId,
+      });
+    }
+
     return this.fetchOneWithTags(playerId);
   }
 

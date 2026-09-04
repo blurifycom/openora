@@ -139,17 +139,26 @@ export class ChatRoomBanService {
     userId: Uuid;
     moderatorId: Uuid;
   }) {
-    await this.assertModerator(this.drizzle.db, roomId, moderatorId);
-    await this.drizzle.db
-      .update(chatRoomBan)
-      .set({ liftedAt: new Date(), liftedBy: moderatorId })
-      .where(
-        and(
-          eq(chatRoomBan.roomId, roomId),
-          eq(chatRoomBan.userId, userId),
-          isNull(chatRoomBan.liftedAt),
-        ),
-      );
+    // Authorized inside the lock, same as `banMember`: the ownership handover demotes a
+    // closing owner, and a check read outside it decides against a role that has already
+    // moved. Lifting a ban cannot strand a room the way banning could, but a moderation
+    // guard that is racy in one direction and not the other is the harder one to reason
+    // about later.
+    await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        await this.assertModerator(t, roomId, moderatorId);
+        await t
+          .update(chatRoomBan)
+          .set({ liftedAt: new Date(), liftedBy: moderatorId })
+          .where(
+            and(
+              eq(chatRoomBan.roomId, roomId),
+              eq(chatRoomBan.userId, userId),
+              isNull(chatRoomBan.liftedAt),
+            ),
+          );
+      }),
+    );
     await this.audit.record({
       actorId: moderatorId,
       actorType: 'player',

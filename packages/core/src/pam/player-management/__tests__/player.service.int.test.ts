@@ -531,6 +531,30 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
 
     expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
   });
+
+  // The inverse matters for the same reason: chat renders a closed player as a deleted
+  // account and puts their room on a deletion countdown, and neither undoes itself.
+  it('emits player.account.reopened when update moves the status out of closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.account.reopened', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+    });
+  });
+
+  it('does not emit reopened for a status change between two non-closed statuses', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'suspended' });
+
+    await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.account.reopened', expect.anything());
+  });
 });
 
 // Ported from chat-commands.service.test.ts (ChatCommandsService.searchPlayers/
