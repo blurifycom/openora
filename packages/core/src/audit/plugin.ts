@@ -761,6 +761,32 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.phone.verified') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { phoneVerified: p['previousPhoneVerified'] ?? null },
+      after: { phoneVerified: true },
+    };
+  }
+
+  if (topic === 'identity.security.login_withdrawal_alerts.updated') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { loginWithdrawalAlertsEnabled: p['previousEnabled'] ?? null },
+      after: { loginWithdrawalAlertsEnabled: p['enabled'] ?? null },
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -821,6 +847,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.trusted_device.revoked',
   'identity.password.reset',
   'identity.email.verified',
+  'identity.phone.verified',
+  'identity.security.login_withdrawal_alerts.updated',
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',

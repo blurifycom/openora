@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
+  IDENTITY_READER,
   JOB_QUEUE,
   NOTIFICATION_DELIVERY_ADAPTER,
   PLATFORM_CONFIG,
@@ -11,6 +12,7 @@ import {
   type AdminUserDirectory,
   type DomainEventName,
   type DomainEventPayload,
+  type IdentityReader,
   type JobQueueAdapter,
   type NotificationDeliveryAdapter,
   type RealtimeTransport,
@@ -32,6 +34,7 @@ const describeLimitValue = (amount: string | null, minutes: number | null): stri
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
+const SECURITY_ALERT_DISPATCH_QUEUE = queue('security-alert-dispatch');
 
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
@@ -45,6 +48,13 @@ const NotificationDispatchJobSchema = z.object({
   event: z.string(),
   input: CreateNotificationInputSchema,
   sendEmail: z.boolean(),
+  // Backlog jobs produced before security alerts existed omit this field.
+  sendSecurityAlertEmail: z.boolean().default(false),
+});
+
+const SecurityAlertDispatchJobSchema = z.object({
+  userId: UuidSchema,
+  eventId: UuidSchema,
 });
 
 function formatMoneyAmount(amount: string): string {
@@ -291,6 +301,7 @@ export default {
     let svcRef: NotificationsService | null = null;
     let deliveryRef: NotificationDeliveryAdapter | null = null;
     let directoryRef: AdminUserDirectory | null = null;
+    let identityReaderRef: IdentityReader | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
@@ -312,6 +323,24 @@ export default {
           return delivery.sendEmail(user.email, title, body);
         })
         .catch((err) => logger.error({ err }, 'notification email delivery failed'));
+    };
+
+    // Security alerts are explicitly opt-in and require a currently verified email.
+    // Unlike the ordinary notification email helper above, delivery errors are surfaced to the
+    // queue worker so they use its retry/dead-letter policy.
+    const sendSecurityAlertEmail = async (userId: string, title: string, body: string) => {
+      if (!deliveryRef || !directoryRef || !identityReaderRef) {
+        return;
+      }
+      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(userId))) {
+        return;
+      }
+      const recipient = await directoryRef.get(userId);
+      if (!recipient?.email) {
+        logger.warn({ userId }, 'security alert email skipped: no email for user');
+        return;
+      }
+      await deliveryRef.sendEmail(recipient.email, title, body);
     };
 
     const publishNotification = (
@@ -341,6 +370,10 @@ export default {
               event: entry.event,
               input: { ...input, eventId: envelope.eventId },
               sendEmail: entry.sendEmail,
+              // `wallet.withdrawal.requested` already creates an in-app notification. Its
+              // existing dispatch is enriched with a preference-gated email rather than adding
+              // a second record or a second subscription.
+              sendSecurityAlertEmail: entry.event === 'wallet.withdrawal.requested',
             },
             {
               idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
@@ -353,6 +386,35 @@ export default {
           );
       });
     }
+
+    ctx.events.on('identity.authentication.succeeded', async (payload, envelope) => {
+      const parsed = domainEventSchemas['identity.authentication.succeeded'].safeParse(payload);
+      if (!parsed.success || !jobQueueRef || !identityReaderRef) {
+        return;
+      }
+      if (!envelope?.eventId) {
+        logger.warn(
+          { userId: parsed.data.userId },
+          'security login alert enqueue skipped: missing event id',
+        );
+        return;
+      }
+      // Skip the job entirely for the normal opt-out case. Delivery checks the same
+      // current state again, so a preference or email change between here and the
+      // worker cannot result in a stale-address email.
+      if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(parsed.data.userId))) {
+        return;
+      }
+      await jobQueueRef.enqueue(
+        SECURITY_ALERT_DISPATCH_QUEUE,
+        { userId: parsed.data.userId, eventId: envelope.eventId },
+        {
+          idempotencyKey: `security-login-alert:${envelope.eventId}`,
+          attempts: 5,
+          backoff: { type: 'exponential', delayMs: 1000 },
+        },
+      );
+    });
 
     // Non-null `reason` marks an admin override (ADR-0037); player-initiated
     // limit changes always emit `reason: null`.
@@ -466,17 +528,51 @@ export default {
         }
         const record = await svcRef.create(payload.input);
         if (!record) {
+          // A prior attempt may have already persisted the in-app notification. Continue so a
+          // retried security email can still be delivered through this job's retry policy.
+          if (payload.sendSecurityAlertEmail) {
+            await sendSecurityAlertEmail(
+              payload.input.userId,
+              payload.input.title,
+              payload.input.body,
+            );
+          }
           return;
         }
         publishNotification(record);
         if (payload.sendEmail) {
-          sendEmail(record.userId, record.title, record.body);
+          sendEmail(payload.input.userId, payload.input.title, payload.input.body);
+        }
+        if (payload.sendSecurityAlertEmail) {
+          await sendSecurityAlertEmail(
+            payload.input.userId,
+            payload.input.title,
+            payload.input.body,
+          );
         }
       },
       onDeadLetter: (jobCtx, error) => {
         logger.error(
           { err: error, event: jobCtx.payload.event, jobId: jobCtx.id },
           'notification dispatch exhausted retries',
+        );
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: SECURITY_ALERT_DISPATCH_QUEUE,
+      schema: SecurityAlertDispatchJobSchema,
+      handler: async ({ payload }) => {
+        await sendSecurityAlertEmail(
+          payload.userId,
+          'New sign-in to your account',
+          'A new sign-in to your account was detected. If this was not you, secure your account immediately.',
+        );
+      },
+      onDeadLetter: (jobCtx, error) => {
+        logger.error(
+          { err: error, userId: jobCtx.payload.userId, jobId: jobCtx.id },
+          'security login alert delivery exhausted retries',
         );
       },
     });
@@ -498,6 +594,7 @@ export default {
       svcRef = svc;
       deliveryRef = c.get(NOTIFICATION_DELIVERY_ADAPTER);
       directoryRef = c.get(ADMIN_USER_DIRECTORY);
+      identityReaderRef = c.get(IDENTITY_READER);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;

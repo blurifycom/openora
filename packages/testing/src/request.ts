@@ -83,21 +83,21 @@ async function loginAs(
 
 /**
  * Authenticates as a player via a real better-auth session cookie (ADR-0019). Defaults
- * to `password123`; seeded players use `player.<n>@demo.igaming.dev`.
+ * to `password1234`; seeded players use `player.<n>@demo.igaming.dev`.
  */
 export async function asPlayer(
   app: Hono,
   creds: LoginCreds & { email: string },
 ): Promise<TestClient> {
-  return loginAs(app, 'asPlayer', creds.email, creds.password ?? 'password123');
+  return loginAs(app, 'asPlayer', creds.email, creds.password ?? 'password1234');
 }
 
 export type AdminCreds = LoginCreds;
 
 /**
  * Log in via `/identity/login` (better-auth) and return a client carrying the
- * session cookie. Defaults to the seeded admin (`admin@oss.dev` / `password123`).
+ * session cookie. Defaults to the seeded admin (`admin@oss.dev` / `password1234`).
  */
 export async function asAdmin(app: Hono, creds: AdminCreds = {}): Promise<TestClient> {
-  return loginAs(app, 'asAdmin', creds.email ?? 'admin@oss.dev', creds.password ?? 'password123');
+  return loginAs(app, 'asAdmin', creds.email ?? 'admin@oss.dev', creds.password ?? 'password1234');
 }

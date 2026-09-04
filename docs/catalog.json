@@ -20,9 +20,9 @@
       "group": "analytics",
       "tables": [],
       "routes": [
-        "analytics.conversion",
-        "analytics.ggr",
-        "analytics.summary"
+        "analytics.financial.ggr",
+        "analytics.financial.summary",
+        "analytics.funnel.conversion"
       ]
     },
     {
@@ -255,6 +255,7 @@
       "tables": [
         "account",
         "admin_trusted_device",
+        "phone_verification_session",
         "session",
         "sms_otp_session",
         "two_factor",
@@ -263,33 +264,37 @@
       ],
       "routes": [
         "identity.adminRequestPasswordReset",
+        "identity.adminSecurity.resetUserTwoFactor",
+        "identity.adminSecurity.revokeTrustedDevice",
+        "identity.adminSecurity.revokeUserTrustedDevice",
+        "identity.adminSecurity.status",
+        "identity.adminSecurity.trustCurrentDevice",
+        "identity.adminSecurity.trustedDevices",
         "identity.changeEmail",
         "identity.changePassword",
         "identity.disable2fa",
         "identity.enable2fa",
-        "identity.list",
-        "identity.listAll",
-        "identity.listMine",
         "identity.login",
         "identity.logout",
         "identity.me",
         "identity.phoneLoginRequest",
         "identity.phoneLoginVerify",
+        "identity.phoneVerification.confirm",
+        "identity.phoneVerification.request",
         "identity.regenerateBackupCodes",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
-        "identity.resetUserTwoFactor",
-        "identity.revoke",
-        "identity.revokeAll",
-        "identity.revokeMine",
-        "identity.revokeTrustedDevice",
-        "identity.revokeUserTrustedDevice",
+        "identity.security.loginWithdrawalAlerts",
+        "identity.security.me",
         "identity.sendEmailVerification",
-        "identity.status",
+        "identity.sessions.list",
+        "identity.sessions.listAll",
+        "identity.sessions.listMine",
+        "identity.sessions.revoke",
+        "identity.sessions.revokeAll",
+        "identity.sessions.revokeMine",
         "identity.streamSession",
-        "identity.trustCurrentDevice",
-        "identity.trustedDevices",
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.usernameAvailable",
@@ -423,41 +428,41 @@
         "wallet_withdrawal_address"
       ],
       "routes": [
-        "wallet.approve",
+        "wallet.assets.create",
+        "wallet.assets.delete",
+        "wallet.assets.list",
+        "wallet.assets.update",
+        "wallet.autoWithdrawalConfig.get",
+        "wallet.autoWithdrawalConfig.set",
+        "wallet.autoWithdrawalRules.delete",
+        "wallet.autoWithdrawalRules.get",
+        "wallet.autoWithdrawalRules.set",
+        "wallet.bonusRolloverConfig.get",
+        "wallet.bonusRolloverConfig.set",
         "wallet.bonusRolloverStatus",
-        "wallet.create",
-        "wallet.create",
-        "wallet.delete",
-        "wallet.delete",
-        "wallet.delete",
+        "wallet.custody.sweep.run",
         "wallet.deposit",
-        "wallet.get",
-        "wallet.get",
-        "wallet.get",
-        "wallet.getAddress",
+        "wallet.deposits.getAddress",
         "wallet.getBalance",
         "wallet.getBalances",
-        "wallet.list",
-        "wallet.list",
-        "wallet.list",
-        "wallet.list",
         "wallet.listAssets",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.manualAdjustment",
-        "wallet.reject",
-        "wallet.resolve",
-        "wallet.run",
-        "wallet.run",
-        "wallet.set",
-        "wallet.set",
-        "wallet.set",
+        "wallet.reconciliation.list",
+        "wallet.reconciliation.resolve",
+        "wallet.reconciliation.run",
         "wallet.setActiveCurrency",
         "wallet.streamBalance",
-        "wallet.update",
         "wallet.webhook",
         "wallet.webhookForProvider",
-        "wallet.withdraw"
+        "wallet.withdraw",
+        "wallet.withdrawalAddresses.create",
+        "wallet.withdrawalAddresses.delete",
+        "wallet.withdrawalAddresses.list",
+        "wallet.withdrawals.approve",
+        "wallet.withdrawals.list",
+        "wallet.withdrawals.reject"
       ]
     }
   ],
@@ -724,6 +729,7 @@
         "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/engagement/social/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
@@ -992,12 +998,15 @@
     "identity.2fa.lockout.triggered",
     "identity.2fa.reset",
     "identity.2fa.verified",
+    "identity.authentication.succeeded",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
     "identity.password.reset",
+    "identity.phone.verified",
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.security.login_withdrawal_alerts.updated",
     "identity.session.fingerprint_mismatch",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
@@ -1178,6 +1187,10 @@
     {
       "name": "AuditSortBySchema",
       "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuthenticationMethodSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
     },
     {
       "name": "AuthGuardReasonSchema",
@@ -2056,6 +2069,18 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "PhoneVerificationConfirmInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationRequestInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationRequestOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "PlatformConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -2308,6 +2333,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "SecurityControlsSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SelfExcludedLoginDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -2362,6 +2391,10 @@
     {
       "name": "SetDisplayCurrencyInputSchema",
       "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "SetLoginWithdrawalAlertsInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "SetPlayerLimitInputSchema",

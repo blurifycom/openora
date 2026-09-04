@@ -21,7 +21,7 @@ import {
 let db: TestDb;
 let app: TestApp;
 
-const login = (email: string, password = 'password123') =>
+const login = (email: string, password = 'password1234') =>
   app.app.request('/identity/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -248,7 +248,7 @@ describe('registration email verification', () => {
       },
       body: JSON.stringify({
         email,
-        password: 'password123',
+        password: 'password1234',
         username: username.toUpperCase(),
         acceptedTerms: true,
         acceptedAge: true,

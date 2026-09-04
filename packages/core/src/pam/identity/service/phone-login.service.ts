@@ -1,4 +1,4 @@
-import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   type EventBus,
@@ -34,6 +34,7 @@ import {
   hasFailedLoginWindowExpired,
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
+import { hashCode, generateCode } from '../../shared/otp.js';
 
 const MINUTE_MS = 60 * 1000;
 const OTP_TTL_MS = 5 * MINUTE_MS;
@@ -84,18 +85,6 @@ export function OtpCancelledError() {
     message: 'Too many incorrect attempts. Please request a new code.',
     data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },
   });
-}
-
-function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
-}
-
-function generateCode(): string {
-  const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-  if (process.env['NODE_ENV'] !== 'production') {
-    console.log(`SMS Verification code sent: ${code}`); // oxlint-disable-line no-console
-  }
-  return code;
 }
 
 type UserRow = Pick<
@@ -205,16 +194,26 @@ export class PhoneLoginService {
     const expiresAt = new Date(now + OTP_TTL_MS);
     const resendAfter = new Date(now + RESEND_COOLDOWN_MS);
 
+    // Role-filtered at the source: SMS is a single factor, so this flow only ever
+    // resolves a player. A backoffice account with a verified number stays on password
+    // plus its own second factor, and never becomes reachable through an SMS code.
     const [account] = await this.drizzle.db
-      .select({ id: user.id, phoneVerified: user.phoneVerified })
+      .select({
+        id: user.id,
+        phoneVerified: user.phoneVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+      })
       .from(user)
-      .where(eq(user.phoneNumber, phone))
+      .where(and(eq(user.phoneNumber, phone), eq(user.role, 'player')))
       .limit(1);
 
-    // Anti-enumeration: an unknown or unverified phone gets the same success-shaped
-    // response, minus the SMS. A caller cannot distinguish a real verified number from
-    // a fake or unverified one.
-    if (!account || !account.phoneVerified) {
+    // Anti-enumeration: an unknown, unverified, non-player, or 2FA-enabled phone gets the
+    // same success-shaped response, minus the SMS. A 2FA-enabled account's phone login is
+    // always rejected once the OTP is entered (see the guard below in `verifyOtp`), so
+    // sending a real code here would just be a billable no-op; folding it into the same
+    // shadow path also keeps a caller from telling 2FA-enabled accounts apart from
+    // unknown/unverified ones by response shape alone.
+    if (!account || !account.phoneVerified || account.twoFactorEnabled) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
       if (shadow && now - shadow.createdAt < RESEND_COOLDOWN_MS) {
@@ -413,8 +412,16 @@ export class PhoneLoginService {
       },
     );
 
-    // Mint the session directly - bypasses better-auth's TOTP plugin chain by design,
-    // so phone login never triggers a second factor.
+    // This flow mints sessions directly and cannot hand a challenge to better-auth's
+    // pending-2FA cookie. Refuse rather than silently downgrade a 2FA-protected
+    // account to a single SMS factor; a later dedicated handoff may replace this.
+    if (account.twoFactorEnabled) {
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Phone login requires an authenticator challenge for this account.',
+      });
+    }
+
+    // Mint the session directly only after the no-2FA guard above.
     // Delete the OTP and insert the new session atomically: if the insert fails the
     // OTP is not consumed and the user can retry with the same code.
     const token = randomUUID();
@@ -446,6 +453,13 @@ export class PhoneLoginService {
     });
 
     this.events.emit('identity.user.phone_login', {
+      userId: account.id,
+      playerId,
+      method: 'phone',
+      ip,
+      userAgent,
+    });
+    this.events.emit('identity.authentication.succeeded', {
       userId: account.id,
       playerId,
       method: 'phone',

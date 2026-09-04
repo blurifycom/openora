@@ -19,7 +19,7 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
     headers: registrationRequestHeaders(),
     body: JSON.stringify({
       email: input.email,
-      password: input.password ?? 'password123',
+      password: input.password ?? 'password1234',
       username: input.username ?? `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
       acceptedTerms: true,
       acceptedAge: true,

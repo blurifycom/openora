@@ -101,7 +101,7 @@ export const MemberSchema = z.object({
  * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
  * password was ever storable) and would only narrow an existing contract.
  */
-export const PasswordSchema = z.string().min(8).max(128);
+export const PasswordSchema = z.string().min(12).max(128);
 
 const credentialsBase = z.object({
   email: z.email(),
@@ -185,6 +185,32 @@ export const Disable2faInputSchema = z.object({
   code: TotpStepUpCodeSchema,
 });
 
+export const SecurityControlsSchema = z.object({
+  passwordMeetsPolicy: z.boolean(),
+  emailVerified: z.boolean(),
+  phoneNumber: E164PhoneSchema.nullable(),
+  phoneVerified: z.boolean(),
+  twoFactorEnabled: z.boolean(),
+  loginWithdrawalAlertsEnabled: z.boolean(),
+});
+
+export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
+
+export const PhoneVerificationRequestInputSchema = z.object({
+  phone: E164PhoneSchema,
+  currentPassword: z.string().min(8),
+  totpCode: TotpStepUpCodeSchema.optional(),
+});
+
+export const PhoneVerificationRequestOutputSchema = z.object({
+  expiresAt: TimestampSchema,
+  resendAfter: TimestampSchema,
+});
+
+export const PhoneVerificationConfirmInputSchema = z.object({
+  code: z.string().regex(/^[0-9]{6}$/),
+});
+
 export const RequestPasswordResetInputSchema = z.object({
   email: z.email(),
 });
@@ -264,6 +290,11 @@ export type E164Phone = z.infer<typeof E164PhoneSchema>;
 export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
 export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
+export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
+export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
+export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
+export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
+export type PhoneVerificationConfirmInput = z.infer<typeof PhoneVerificationConfirmInputSchema>;
 export type PhoneLoginErrorReason = z.infer<typeof PhoneLoginErrorReasonSchema>;
 export type PhoneLoginOtpInvalidReason = z.infer<typeof PhoneLoginOtpInvalidReasonSchema>;
 export type RegistrationFailureReason = z.infer<typeof RegistrationFailureReasonSchema>;

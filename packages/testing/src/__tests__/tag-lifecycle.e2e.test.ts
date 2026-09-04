@@ -45,7 +45,7 @@ async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
       'x-real-ip': ip,
       'user-agent': 'tag-lifecycle-e2e',
     },
-    body: JSON.stringify({ email, password: 'password123' }),
+    body: JSON.stringify({ email, password: 'password1234' }),
   });
   if (!loginRes.ok) {
     throw new Error(`login failed (${loginRes.status}): ${await loginRes.text()}`);

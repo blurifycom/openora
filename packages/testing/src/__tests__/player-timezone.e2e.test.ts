@@ -27,7 +27,7 @@ import {
 let db: TestDb;
 let app: TestApp;
 
-const PASSWORD = 'password123';
+const PASSWORD = 'password1234';
 
 type PlayerRead = { timezone: string | null; timezoneUpdatedAt: string | null };
 

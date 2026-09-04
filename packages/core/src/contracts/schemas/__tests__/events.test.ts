@@ -67,6 +67,48 @@ describe('eventCatalog', () => {
   });
 });
 
+describe('identity security event contracts', () => {
+  it('accepts an authentication-success event only with a supported credential method', () => {
+    const payload = {
+      userId: randomUUID(),
+      playerId: null,
+      method: 'totp',
+      ip: null,
+      userAgent: null,
+    };
+
+    expect(domainEventSchemas['identity.authentication.succeeded'].safeParse(payload).success).toBe(
+      true,
+    );
+    expect(
+      domainEventSchemas['identity.authentication.succeeded'].safeParse({
+        ...payload,
+        method: 'session_refresh',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires the before and after preference state for a login-withdrawal-alert change', () => {
+    const payload = {
+      userId: randomUUID(),
+      playerId: randomUUID(),
+      previousEnabled: false,
+      enabled: true,
+    };
+
+    expect(
+      domainEventSchemas['identity.security.login_withdrawal_alerts.updated'].safeParse(payload)
+        .success,
+    ).toBe(true);
+    expect(
+      domainEventSchemas['identity.security.login_withdrawal_alerts.updated'].safeParse({
+        ...payload,
+        previousEnabled: undefined,
+      }).success,
+    ).toBe(false);
+  });
+});
+
 // ADR-0016 requires forward-compatible payload evolution, and every deployment binds a
 // durable broker (ADR-0030/0032) - a pre-tiering (v4) compliance.kyc.* payload with no
 // `tier` at all can still be sitting in the backlog at rollout. Basic-tier is what every

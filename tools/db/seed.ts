@@ -11,7 +11,7 @@
  * DB connection, never boots the app. Reference seeders are composed explicitly here; the
  * consumer's own seed script does the same with the modules it enables.
  *
- *   pnpm db:seed                       # 36 players, admin@oss.dev / password123
+ *   pnpm db:seed                       # 36 players, admin@oss.dev / password1234
  *   pnpm db:seed --players=60          # more players
  *   pnpm db:seed --admin-email=me@x.io --admin-password=secret123
  *
@@ -56,10 +56,10 @@ async function main() {
     db,
     auth,
     playerCount: Number(arg('players') ?? 36),
-    password: arg('password') ?? 'password123',
+    password: arg('password') ?? 'password1234',
     admin: {
       email: arg('admin-email') ?? 'admin@oss.dev',
-      password: arg('admin-password') ?? 'password123',
+      password: arg('admin-password') ?? 'password1234',
       name: 'Platform Admin',
     },
     log: (m) => console.log(`  ${m}`),

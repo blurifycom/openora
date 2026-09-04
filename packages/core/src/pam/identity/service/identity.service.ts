@@ -50,6 +50,8 @@ import type {
   RegistrationFailureReason,
   GeoCheckCommands,
   PlayerProvisioning,
+  SecurityControls,
+  SetLoginWithdrawalAlertsInput,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -62,6 +64,7 @@ import {
   hasFailedLoginWindowExpired,
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
+import { getSecurityControls } from './security-controls.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -438,6 +441,10 @@ export class IdentityService {
         }
       },
       onPasswordReset: async (resetUser) => {
+        await this.drizzle.db
+          .update(user)
+          .set({ passwordMeetsPolicy: true })
+          .where(eq(user.id, resetUser.id));
         this.events.emit('identity.password.reset', {
           userId: resetUser.id,
           playerId: await this.identityReader.getPlayerIdByUserIdSafe(resetUser.id),
@@ -482,6 +489,14 @@ export class IdentityService {
   private async currentUserId(headers: Headers) {
     const session = await this.auth.api.getSession({ headers });
     return session?.user?.id ?? null;
+  }
+
+  private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
+    const controls = await getSecurityControls(this.drizzle, userId);
+    if (!controls) {
+      throw new UserNotFoundError(userId);
+    }
+    return controls;
   }
 
   // Same gate as password login and phone login, from the one shared implementation.
@@ -573,6 +588,10 @@ export class IdentityService {
       this.emitRegistrationFailed('email_already_registered', input, meta);
       return { status: 'check-email' as const };
     }
+    await this.drizzle.db
+      .update(user)
+      .set({ passwordMeetsPolicy: true })
+      .where(eq(user.id, body.user.id));
     let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
     try {
       consent = await this.recordRegistrationConsent(
@@ -850,6 +869,13 @@ export class IdentityService {
       this.events.emit('identity.user.login', {
         userId: body.user.id,
         playerId,
+        ip,
+        userAgent,
+      });
+      this.events.emit('identity.authentication.succeeded', {
+        userId: body.user.id,
+        playerId,
+        method: 'password',
         ip,
         userAgent,
       });
@@ -1259,6 +1285,15 @@ export class IdentityService {
         ip,
         userAgent,
       });
+      if (!sessionUserId) {
+        this.events.emit('identity.authentication.succeeded', {
+          userId,
+          playerId,
+          method: input.method,
+          ip,
+          userAgent,
+        });
+      }
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
       }
@@ -1330,11 +1365,22 @@ export class IdentityService {
 
     this.forwardCookies(verified, resHeaders);
     await this.trustedDevices?.trust(userId, { ip, userAgent });
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     this.events.emit('identity.2fa.verified', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       method: 'totp',
       trustedDevice: true,
+      ip,
+      userAgent,
+    });
+    // The challenge leg above ran without a session cookie, so better-auth minted a new
+    // session and this response carries it. That is a new authenticated session like any
+    // other, and the security alert has to see it.
+    this.events.emit('identity.authentication.succeeded', {
+      userId,
+      playerId,
+      method: 'totp',
       ip,
       userAgent,
     });
@@ -1517,7 +1563,75 @@ export class IdentityService {
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
+    if (userId) {
+      await this.drizzle.db
+        .update(user)
+        .set({ passwordMeetsPolicy: true })
+        .where(eq(user.id, userId));
+    }
     return SUCCESS;
+  }
+
+  async getSecurityControls(reqHeaders: NodeHeaders): Promise<SecurityControls> {
+    const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    return this.securityControlsFor(userId);
+  }
+
+  async setLoginWithdrawalAlerts(
+    input: SetLoginWithdrawalAlertsInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const [caller] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (caller?.role !== 'player') {
+      // A service-level denial still owes the audit log the same signal AdminGuard emits,
+      // since this check rejects before any shared guard runs (docs/standards/audit.md).
+      this.events.emit('identity.user.unauthorized_access', {
+        userId,
+        playerId: null,
+        resource: 'identity.security.login_withdrawal_alerts',
+        action: 'set',
+        ...(caller?.role ? { role: caller.role } : {}),
+        ip,
+        userAgent,
+      });
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Only players can set this preference.',
+      });
+    }
+    const before = await this.securityControlsFor(userId);
+    if (input.enabled && !before.emailVerified) {
+      throw new ORPCError('UNPROCESSABLE_CONTENT', {
+        message: 'Verify your email before enabling security alerts.',
+      });
+    }
+    if (before.loginWithdrawalAlertsEnabled === input.enabled) {
+      return before;
+    }
+    await this.drizzle.db
+      .update(user)
+      .set({ loginWithdrawalAlertsEnabled: input.enabled })
+      .where(eq(user.id, userId));
+    this.events.emit('identity.security.login_withdrawal_alerts.updated', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      previousEnabled: before.loginWithdrawalAlertsEnabled,
+      enabled: input.enabled,
+      ip,
+      userAgent,
+    });
+    return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
   }
 
   /**
@@ -1625,6 +1739,13 @@ export class IdentityService {
       .set({ ipAddress: ip, userAgent })
       .where(eq(session.token, body.token));
     this.events.emit('identity.user.login', { userId: body.user.id, playerId, ip, userAgent });
+    this.events.emit('identity.authentication.succeeded', {
+      userId: body.user.id,
+      playerId,
+      method: 'email_verification',
+      ip,
+      userAgent,
+    });
 
     const sessionDurationSeconds =
       this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
@@ -1639,6 +1760,8 @@ export class IdentityService {
 
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    const newEmail = input.newEmail.toLowerCase();
     const res = await this.api.changeEmail({
       body: { newEmail: input.newEmail },
       headers,
@@ -1646,6 +1769,36 @@ export class IdentityService {
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
+    if (userId) {
+      // better-auth's `/change-email` returns the same `{ status: true }` shape for the
+      // anti-enumeration no-op (target already owned by someone else) and for a deferred
+      // confirmation-email flow, where the address only actually changes once the
+      // confirmation link is clicked - neither of which touched this row yet. Requiring
+      // `user.email` to already equal the requested address scopes the disable to the
+      // one branch (`updateEmailWithoutVerification`) that updates it synchronously.
+      const [disabled] = await this.drizzle.db
+        .update(user)
+        .set({ loginWithdrawalAlertsEnabled: false })
+        .where(
+          and(
+            eq(user.id, userId),
+            eq(user.loginWithdrawalAlertsEnabled, true),
+            eq(user.email, newEmail),
+          ),
+        )
+        .returning({ id: user.id });
+      if (disabled) {
+        const { ip, userAgent } = extractClientMeta(reqHeaders);
+        this.events.emit('identity.security.login_withdrawal_alerts.updated', {
+          userId,
+          playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+          previousEnabled: true,
+          enabled: false,
+          ip,
+          userAgent,
+        });
+      }
+    }
     return SUCCESS;
   }
 
