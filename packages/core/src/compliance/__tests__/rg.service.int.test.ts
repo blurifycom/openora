@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
+  AuditWritePort,
   ExchangeRateReader,
   LoginEnforcementPort,
   MailDispatchPort,
@@ -58,15 +59,17 @@ function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRa
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
+  const audit = mock<AuditWritePort>({ record: vi.fn(async () => undefined) });
   const svc = new RgService({
     drizzle: db.drizzle,
     events,
     loginEnforcement: enforcement,
     mailDispatch: notifier?.mailDispatch ?? null,
+    audit,
     identityReader: makeIdentityReader(),
     rates,
   });
-  return { svc, events, enforcement };
+  return { svc, events, enforcement, audit };
 }
 
 async function seedExclusion(overrides: Partial<typeof rgExclusion.$inferInsert>) {
@@ -390,10 +393,10 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(calls[0]?.[0].idempotencyKey).not.toBe(calls[1]?.[0].idempotencyKey);
   });
 
-  it('swallows a notification failure once the limit has committed', async () => {
+  it('swallows a notification failure once the limit has committed, but audits it', async () => {
     const notifier = makeNotifier();
     vi.mocked(notifier.mailDispatch.toUser).mockRejectedValueOnce(new Error('queue down'));
-    const { svc } = makeService(notifier);
+    const { svc, audit } = makeService(notifier);
     const userId = randomUUID();
 
     await expect(
@@ -415,6 +418,13 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     ).resolves.toMatchObject({ period: 'daily' });
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'mail.regulatory_delivery.failed',
+        resourceId: userId,
+        after: { templateKey: 'rgLimitUpdated', reason: 'enqueue_failed' },
+      }),
+    );
   });
 
   it('two racing admin writes cannot land a raise through the read-then-decide window', async () => {

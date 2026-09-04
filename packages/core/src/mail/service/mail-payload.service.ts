@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 import {
   MailSendJobSchema,
   type EncryptedMailSendJob,
@@ -14,7 +14,10 @@ export type MailPayloadCipher = {
   decrypt(job: EncryptedMailSendJob): MailSendJob;
 };
 
-const toKey = (secret: string): Buffer => createHash('sha256').update(secret).digest();
+const MAIL_PAYLOAD_KEY_INFO = 'openora:mail-payload:v1';
+
+const toKey = (secret: string): Buffer =>
+  Buffer.from(hkdfSync('sha256', secret, Buffer.alloc(0), MAIL_PAYLOAD_KEY_INFO, 32));
 
 export function createMailPayloadCipher(secret: string): MailPayloadCipher {
   if (secret.length < MIN_MAIL_ENCRYPTION_SECRET_LENGTH) {

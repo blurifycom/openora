@@ -77,4 +77,15 @@ describe('assertSupportedLanguage', () => {
       UnsupportedLanguageError,
     );
   });
+
+  it.each(['en_US', '!!', 'e', 'en-'])(
+    'rejects a tag Intl cannot parse (%s) even with no supported list',
+    (tag) => {
+      expect(() => assertSupportedLanguage(tag)).toThrow(UnsupportedLanguageError);
+    },
+  );
+
+  it('still accepts the real tags better-auth issues (en-US)', () => {
+    expect(() => assertSupportedLanguage('en-US')).not.toThrow();
+  });
 });

@@ -2,8 +2,7 @@
 
 Outbound email leaves the platform one way: a caller hands `MAIL_DISPATCH` a
 `{ key, data }` template, the `mail` module enqueues it onto the `mail-send` queue, and
-the worker resolves the address, locale and display name, renders once, and sends. See
-ADR-0038.
+the worker resolves the address and locale, renders once, and sends. See ADR-0038.
 
 ## Interfaces
 
@@ -63,8 +62,11 @@ there is no automatic fallback to the platform's English renderer.
 
 `MAIL_DISPATCH` enqueues (with a short enqueue-retry); the `mail-send` worker retries the
 send five times with a growing gap and a bounded concurrency. The durable queue envelope is
-authenticated-encrypted with `AUTH_SECRET`, so addresses, OTPs, and invitation tokens are not
-readable from the queue backend. For a responsible-gambling or `kycResubmissionRequested`
+authenticated-encrypted with a key HKDF-derived from `AUTH_SECRET` (domain-separated from
+every other use of the secret), so addresses, OTPs, and invitation tokens are not readable
+from the queue backend. Rotating `AUTH_SECRET` makes any already-queued mail job
+undecryptable - drain `mail-send` first (see ADR-0038 "Deployment"). For a
+responsible-gambling or `kycResubmissionRequested`
 template the worker writes an `AUDIT_WRITER` entry on both outcomes -
 `mail.regulatory_delivery.sent` and `mail.regulatory_delivery.failed`, each carrying the
 template key, recipient locale and attempt - because the regulator asks about the

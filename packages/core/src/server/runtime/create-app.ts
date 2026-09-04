@@ -300,6 +300,15 @@ export async function createApp(
   // drain before the DB closes, since disposers run in reverse).
   const drizzle = container.get(DRIZZLE);
   const jobQueue = container.get(JOB_QUEUE);
+
+  const router: Record<string, AnyRouter> = {};
+  for (const [namespace, factory] of registry.routers.getAll()) {
+    if (namespace in router) {
+      throw new Error(`Router namespace "${namespace}" is registered by more than one plugin`);
+    }
+    router[namespace] = factory(container) as AnyRouter;
+  }
+
   for (const registration of registry.jobs.getAll()) {
     jobQueue.registerWorker(registration);
   }
@@ -310,14 +319,6 @@ export async function createApp(
     });
     relay.start();
     container.onDispose(() => relay.stop());
-  }
-
-  const router: Record<string, AnyRouter> = {};
-  for (const [namespace, factory] of registry.routers.getAll()) {
-    if (namespace in router) {
-      throw new Error(`Router namespace "${namespace}" is registered by more than one plugin`);
-    }
-    router[namespace] = factory(container) as AnyRouter;
   }
 
   if (!config.disableHealthModule) {

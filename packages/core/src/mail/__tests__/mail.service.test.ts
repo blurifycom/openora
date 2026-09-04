@@ -105,7 +105,7 @@ describe('MailService', () => {
     }
     await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de');
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'de@b.com' }));
   });
 
@@ -117,7 +117,7 @@ describe('MailService', () => {
       template: verify,
     });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de');
     expect(sender.send).toHaveBeenCalledWith({
       to: 'de@b.com',
       subject: 's',
@@ -126,7 +126,7 @@ describe('MailService', () => {
     });
   });
 
-  it('resolves a user recipient to its address, account locale and display name', async () => {
+  it('resolves a user recipient to its address and account locale', async () => {
     const { svc, renderer, sender } = build({
       directory: {
         get: vi.fn(async () => ({
@@ -143,28 +143,8 @@ describe('MailService', () => {
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr');
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'user@b.com' }));
-  });
-
-  it('passes a null name when the resolved user row has none', async () => {
-    const { svc, renderer } = build({
-      directory: {
-        get: vi.fn(async () => ({
-          id: 'u-1',
-          email: 'user@b.com',
-          name: null,
-          createdAt: new Date(),
-          isActive: true,
-          role: 'player',
-          language: 'fr',
-        })),
-      },
-    });
-
-    await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
-
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null);
   });
 
   it('skips - without throwing - when the user has no address (nothing to retry)', async () => {
@@ -174,6 +154,28 @@ describe('MailService', () => {
       svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: verify }),
     ).resolves.toBeUndefined();
     expect(sender.send).not.toHaveBeenCalled();
+  });
+
+  it('audits a no-recipient-email regulatory send as failed', async () => {
+    const { svc, audit } = build({ directory: { get: vi.fn(async () => null) } });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: rgLifted }, 1);
+
+    expect((audit as AuditWritePort).record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'mail.regulatory_delivery.failed',
+        resourceId: 'ghost',
+        after: { templateKey: 'rgCoolingOffLifted', reason: 'no_recipient_email', attempt: 1 },
+      }),
+    );
+  });
+
+  it('does not audit a no-recipient-email non-regulatory send', async () => {
+    const { svc, audit } = build({ directory: { get: vi.fn(async () => null) } });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: verify });
+
+    expect((audit as AuditWritePort).record).not.toHaveBeenCalled();
   });
 
   it('audits a delivered regulatory mail with its key, locale and attempt', async () => {
@@ -243,6 +245,24 @@ describe('MailService', () => {
           reason: 'Error',
           attempt: 5,
         },
+      }),
+    );
+  });
+
+  it('audits an undecryptable dead-lettered payload without knowing its template key', async () => {
+    const { svc, audit } = build();
+
+    await svc.onEncryptedDeliveryExhausted(
+      { ciphertext: 'bm90LXJlYWw', iv: 'bm90LXJlYWw', tag: 'bm90LXJlYWw' },
+      new Error('exhausted'),
+      5,
+    );
+
+    expect((audit as AuditWritePort).record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'mail.regulatory_delivery.failed',
+        resourceId: null,
+        after: expect.objectContaining({ reason: 'payload_undecryptable', attempt: 5 }),
       }),
     );
   });

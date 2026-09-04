@@ -39,14 +39,21 @@ pattern `wallet/plugin.ts` uses for `TAG_EVALUATION_COMMANDS`. The `MailService`
 memoized on first `MAIL_DISPATCH` resolution. It is deliberate, and it is why the plugin
 can bind a port `identity` needs while `identity` binds ports the mail worker needs.
 
-The worker itself needs the `MailService`, and the BullMQ worker starts consuming the
-moment it is registered - before router factories run, and in a `mail`-only split
-deployment no consumer resolves `MAIL_DISPATCH` at all. So the mail plugin registers an
-**empty router** whose only job is to force `mailService(c)` during the boot-time router
-loop, before the first job is picked up. `identity` and `iam` (which resolve
-`MAIL_DISPATCH` unconditionally) declare `requiresPorts: [MAIL_DISPATCH]`, so a split
-deployment that omits `mail` fails fast with a descriptive boot error (ADR-0024) rather
-than a bare "no provider" crash.
+The worker itself needs the `MailService`, and a BullMQ worker starts consuming the
+moment it is registered. In a `mail`-only split deployment no consumer resolves
+`MAIL_DISPATCH` at all, so nothing would build the service. So the mail plugin registers
+an **empty router** whose only job is to force `mailService(c)` during the boot-time
+router loop. For this to be race-free, `createApp` runs the router-factory loop _before_
+the worker-registration loop (`server/runtime/create-app.ts`) - a factory is the only
+boot hook where a plugin resolves container ports, so any module whose worker depends on
+a service its factory builds needs the factory to run first. This also closes the same
+latent gap in `compliance/plugin.ts`, whose workers assign their service refs only inside
+its router factory. `identity` and `iam` (which resolve `MAIL_DISPATCH` unconditionally)
+declare `requiresPorts: [MAIL_DISPATCH]`, so a split deployment that omits `mail` fails
+fast with a descriptive boot error (ADR-0024) rather than a bare "no provider" crash.
+
+A cleaner boot seam (`ctx.onReady((c) => …)` in the plugin API, letting `mail` drop the
+empty router) is deferred until a second no-route module needs boot-time port resolution.
 
 ### One transport port
 
@@ -89,6 +96,21 @@ untouched; the `MAIL_DISPATCH` enqueue is retried a few times with a short gap b
 gives up. The durable fix - an outbox row written in the caller's own transaction, with
 the queue as an accelerator - is a later ticket; the platform already has an outbox for
 events.
+
+## Deployment
+
+This change is not safe under an arbitrary rolling deploy:
+
+- **Drain `notifications-dispatch` first.** The dispatch job's payload changed from
+  `{ sendEmail: boolean }` to `{ email: MailTemplate | null }`. A new worker reads an old
+  payload fine, but an old worker rejects a new one (its required `sendEmail` is gone) and
+  dead-letters it. Stop producers and let the queue drain, or accept that in-flight jobs
+  enqueued during the window are lost, before rolling the workers.
+- **Drain `mail-send` before rotating `AUTH_SECRET`.** Queued mail-send envelopes are
+  authenticated-encrypted with a key derived from `AUTH_SECRET`; after a rotation no
+  already-queued job can be decrypted. The dead-letter path now records a
+  `mail.regulatory_delivery.failed` audit row (`reason: "payload_undecryptable"`) instead
+  of throwing, but the mail itself is gone.
 
 ## Consequences
 

@@ -12,6 +12,7 @@ import {
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
 import type {
+  AuditWritePort,
   LoginEnforcementPort,
   MailDispatchPort,
   MailTemplate,
@@ -262,6 +263,7 @@ export type RgServiceDeps = {
   loginEnforcement: LoginEnforcementPort;
   identityReader: IdentityReader;
   mailDispatch?: MailDispatchPort | null;
+  audit?: AuditWritePort | null;
   rates: ExchangeRateReader;
 };
 
@@ -280,6 +282,7 @@ export class RgService {
   private readonly loginEnforcement: LoginEnforcementPort;
   private readonly identityReader: IdentityReader;
   private readonly mailDispatch: MailDispatchPort | null;
+  private readonly audit: AuditWritePort | null;
   private readonly rates: ExchangeRateReader;
 
   constructor(deps: RgServiceDeps) {
@@ -288,6 +291,7 @@ export class RgService {
     this.loginEnforcement = deps.loginEnforcement;
     this.identityReader = deps.identityReader;
     this.mailDispatch = deps.mailDispatch ?? null;
+    this.audit = deps.audit ?? null;
     this.rates = deps.rates;
   }
 
@@ -762,6 +766,17 @@ export class RgService {
       });
     } catch (err) {
       logger.error({ err, userId, key: template.key }, 'RG player mail enqueue failed');
+      await this.audit
+        ?.record({
+          actorType: 'system',
+          action: 'mail.regulatory_delivery.failed',
+          resourceType: 'email',
+          resourceId: userId,
+          after: { templateKey: template.key, reason: 'enqueue_failed' },
+        })
+        .catch((auditErr) =>
+          logger.error({ err: auditErr }, 'RG player mail failure audit write failed'),
+        );
     }
   }
 }

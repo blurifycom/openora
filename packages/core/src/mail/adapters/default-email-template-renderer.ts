@@ -7,6 +7,8 @@ import {
   type RenderedEmail,
 } from '@openora/core/contracts';
 
+const DEFAULT_LOCALE = 'en';
+
 const escapeHtml = (value: string): string =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -16,14 +18,18 @@ const textToHtml = (text: string): string =>
     .map((block) => `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`)
     .join('\n');
 
+const DATE_FORMAT_OPTS = { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' } as const;
+
+const dateFormatter = (locale: string): Intl.DateTimeFormat => {
+  try {
+    return new Intl.DateTimeFormat(locale, DATE_FORMAT_OPTS);
+  } catch {
+    return new Intl.DateTimeFormat(DEFAULT_LOCALE, DATE_FORMAT_OPTS);
+  }
+};
+
 const formatEmailDate = (iso: string | null, locale: string): string =>
-  iso === null
-    ? 'further notice'
-    : `${new Intl.DateTimeFormat(locale, {
-        dateStyle: 'long',
-        timeStyle: 'short',
-        timeZone: 'UTC',
-      }).format(new Date(iso))} UTC`;
+  iso === null ? 'further notice' : `${dateFormatter(locale).format(new Date(iso))} UTC`;
 
 const formatMoney = (amount: string, currency: string): string =>
   `${formatMoneyAmount(amount)} ${currency}`;
@@ -122,7 +128,7 @@ const renderDefaultEmail = (template: MailTemplate, locale: string): RenderedEma
 };
 
 export class DefaultEmailTemplateRenderer implements EmailTemplateRenderer {
-  render(template: MailTemplate, locale: string, _recipientName?: string | null): RenderedEmail {
+  render(template: MailTemplate, locale: string): RenderedEmail {
     return renderDefaultEmail(template, locale);
   }
 }

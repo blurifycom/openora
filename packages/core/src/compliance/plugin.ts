@@ -231,6 +231,7 @@ export default {
         loginEnforcement: c.get(LOGIN_ENFORCEMENT),
         identityReader: c.get(IDENTITY_READER),
         mailDispatch: c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null,
+        audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       });
       rgRef = rg;

@@ -103,9 +103,13 @@ export class MailService {
   async deliver(job: MailSendJob, attempt = 1): Promise<void> {
     const resolved = await this.resolveRecipient(job);
     if (!resolved) {
+      await this.recordRegulatoryOutcome('mail.regulatory_delivery.failed', job, {
+        reason: 'no_recipient_email',
+        attempt,
+      });
       return;
     }
-    const rendered = await this.renderer.render(job.template, resolved.locale, resolved.name);
+    const rendered = await this.renderer.render(job.template, resolved.locale);
     await this.sender.send({
       to: resolved.email,
       subject: rendered.subject,
@@ -124,7 +128,7 @@ export class MailService {
 
   async onDeliveryExhausted(job: MailSendJob, error: Error, attempt = 1): Promise<void> {
     logger.error(
-      { err: error, key: job.template.key, recipient: job.recipient.kind },
+      { err: error.name, key: job.template.key, recipient: job.recipient.kind },
       'mail delivery exhausted retries',
     );
     const locale = await this.resolveLocale(job);
@@ -140,7 +144,26 @@ export class MailService {
     error: Error,
     attempt = 1,
   ): Promise<void> {
-    await this.onDeliveryExhausted(this.payloadCipher.decrypt(job), error, attempt);
+    let decrypted: MailSendJob;
+    try {
+      decrypted = this.payloadCipher.decrypt(job);
+    } catch (decryptErr) {
+      logger.error(
+        { err: (decryptErr as Error).name, queue: MAIL_SEND_QUEUE },
+        'mail dead-letter payload could not be decrypted',
+      );
+      await this.audit
+        ?.record({
+          actorType: 'system',
+          action: 'mail.regulatory_delivery.failed',
+          resourceType: 'email',
+          resourceId: null,
+          after: { reason: 'payload_undecryptable', queue: MAIL_SEND_QUEUE, attempt },
+        })
+        .catch((err) => logger.error({ err }, 'mail regulatory audit write failed'));
+      return;
+    }
+    await this.onDeliveryExhausted(decrypted, error, attempt);
   }
 
   // `after` carries no free text - error.name, not error.message: a provider bounce
@@ -178,13 +201,9 @@ export class MailService {
 
   private async resolveRecipient(
     job: MailSendJob,
-  ): Promise<{ email: string; locale: string; name: string | null } | null> {
+  ): Promise<{ email: string; locale: string } | null> {
     if (job.recipient.kind === 'address') {
-      return {
-        email: job.recipient.email,
-        locale: job.recipient.locale ?? DEFAULT_LOCALE,
-        name: null,
-      };
+      return { email: job.recipient.email, locale: job.recipient.locale ?? DEFAULT_LOCALE };
     }
     const row = await this.directory.get(job.recipient.userId);
     if (!row?.email) {
@@ -194,6 +213,6 @@ export class MailService {
       );
       return null;
     }
-    return { email: row.email, locale: row.language ?? DEFAULT_LOCALE, name: row.name ?? null };
+    return { email: row.email, locale: row.language ?? DEFAULT_LOCALE };
   }
 }

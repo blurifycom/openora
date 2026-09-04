@@ -1087,10 +1087,15 @@ export class IdentityService {
     if (!this.cache) {
       return false;
     }
+    const key = this.adminPasswordResetMarkerKey(email);
     try {
-      return (await this.cache.get<boolean>(this.adminPasswordResetMarkerKey(email))) === true;
+      const isAdmin = (await this.cache.get<boolean>(key)) === true;
+      if (isAdmin) {
+        await this.cache.delete(key);
+      }
+      return isAdmin;
     } catch (err) {
-      identityLogger.warn({ email, err }, 'admin password reset marker cache read failed');
+      identityLogger.warn({ err }, 'admin password reset marker cache read failed');
       return false;
     }
   }
@@ -1460,9 +1465,9 @@ export class IdentityService {
       makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
-    // Always returns success - never reveal whether the email exists. The reset
-    // email (if any) is delivered through the sendEmail hook -> notifications.
-    // Any underlying error is swallowed for the same anti-enumeration reason.
+    // Always returns success - never reveal whether the email exists. The reset OTP
+    // (if any) is enqueued through better-auth's emailOTP hook -> MAIL_DISPATCH. Any
+    // underlying error is swallowed for the same anti-enumeration reason.
     try {
       await this.api.requestPasswordResetEmailOTP({
         body: { email },

@@ -50,7 +50,10 @@ const {
   resetPasswordEmailOTPMock: vi.fn(),
   capturedAuthOptions: {
     current: undefined as
-      | { onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void }
+      | {
+          onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
+          isAdminPasswordReset?: (email: string) => boolean | Promise<boolean>;
+        }
       | undefined,
   },
 }));
@@ -809,6 +812,22 @@ describe('IdentityService.adminRequestPasswordReset (real PG)', () => {
     await expect(buildService().adminRequestPasswordReset(account.id, 'admin1')).resolves.toEqual({
       success: true,
     });
+  });
+
+  it('consumes the admin marker on the read that sees it, so a later self-reset is not "admin"', async () => {
+    const cache = realCache();
+    buildService({ cache });
+    const email = 'markerconsume@example.com';
+    await cache.set(`admin-password-reset:${email}`, true, { ttlMs: 120_000 });
+
+    const isAdminPasswordReset = capturedAuthOptions.current?.isAdminPasswordReset;
+    if (!isAdminPasswordReset) {
+      throw new Error('isAdminPasswordReset was not wired into createAuth');
+    }
+
+    expect(await isAdminPasswordReset(email)).toBe(true);
+    expect(await isAdminPasswordReset(email)).toBe(false);
+    expect(await cache.get(`admin-password-reset:${email}`)).toBeUndefined();
   });
 });
 

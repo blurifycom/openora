@@ -140,6 +140,17 @@ describe('DefaultEmailTemplateRenderer', () => {
     expect(session.text).toContain('60 minutes');
   });
 
+  it('falls back to a default locale instead of throwing on an unparseable tag', () => {
+    const render = () =>
+      renderer.render(
+        { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+        'en_US',
+      );
+
+    expect(render).not.toThrow();
+    expect(render().text).toContain('2026');
+  });
+
   it('formats the cooling-off date against the recipient locale', () => {
     const en = renderer.render(
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },

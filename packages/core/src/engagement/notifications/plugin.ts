@@ -50,8 +50,9 @@ const NotificationDispatchJobSchema = z.object({
 
 type NotificationMapEntry = {
   event: DomainEventName;
-  handle: (payload: unknown) => CreateNotificationInput | null;
-  buildEmail: (payload: unknown, occurredAt: string) => MailTemplate | null;
+  parse: (payload: unknown) => unknown;
+  buildNotification: (data: unknown) => CreateNotificationInput;
+  buildEmail: (data: unknown, occurredAt: string) => MailTemplate | null;
 };
 
 // Drops null/undefined entity refs (eg a nullable roomId) so `data` only ever carries
@@ -73,23 +74,15 @@ function mapEvent<K extends DomainEventName>(
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
   options?: { email: (payload: DomainEventPayload<K>, occurredAt: string) => MailTemplate },
 ): NotificationMapEntry {
-  const parse = (payload: unknown): DomainEventPayload<K> | null => {
-    const parsed = domainEventSchemas[event].safeParse(payload);
-    return parsed.success ? (parsed.data as DomainEventPayload<K>) : null;
-  };
   return {
     event,
-    handle: (payload) => {
-      const data = parse(payload);
-      return data ? buildNotification(data) : null;
+    parse: (payload) => {
+      const parsed = domainEventSchemas[event].safeParse(payload);
+      return parsed.success ? parsed.data : null;
     },
-    buildEmail: (payload, occurredAt) => {
-      if (!options?.email) {
-        return null;
-      }
-      const data = parse(payload);
-      return data ? options.email(data, occurredAt) : null;
-    },
+    buildNotification: (data) => buildNotification(data as DomainEventPayload<K>),
+    buildEmail: (data, occurredAt) =>
+      options?.email ? options.email(data as DomainEventPayload<K>, occurredAt) : null,
   };
 }
 
@@ -276,8 +269,11 @@ export default {
 
     for (const entry of notificationEventMap) {
       ctx.events.on(entry.event, (payload, envelope) => {
-        const input = entry.handle(payload);
-        if (!input || !jobQueueRef || !envelope) {
+        if (!jobQueueRef || !envelope) {
+          return;
+        }
+        const data = entry.parse(payload);
+        if (data === null) {
           return;
         }
         jobQueueRef
@@ -285,8 +281,8 @@ export default {
             NOTIFICATIONS_DISPATCH_QUEUE,
             {
               event: entry.event,
-              input: { ...input, eventId: envelope.eventId },
-              email: entry.buildEmail(payload, envelope.occurredAt),
+              input: { ...entry.buildNotification(data), eventId: envelope.eventId },
+              email: entry.buildEmail(data, envelope.occurredAt),
             },
             {
               idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
