@@ -1,16 +1,29 @@
 import * as z from 'zod';
-import { ClientMetaSchema, MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
+import {
+  ClientMetaSchema,
+  CurrencyTickerSchema,
+  MoneyAmountSchema,
+  TimestampSchema,
+  UuidSchema,
+} from './common.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
   LimitPeriodSchema,
+  LimitChangeKindSchema,
+  RgInitiatorSchema,
   ExclusionKindSchema,
 } from './compliance.js';
 import { TagKeySchema } from './tag.js';
-import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
+import { CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
-import { KycStatusSchema, KycStatusSourceSchema, PlayerStatusSchema } from './player.js';
+import {
+  KycStatusSchema,
+  KycStatusSourceSchema,
+  KycTierSchema,
+  PlayerStatusSchema,
+} from './player.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -21,9 +34,25 @@ const iamRoleEventBase = z
 const cmsPageEventBase = z
   .object({ pageId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
-const cmsBannerEventBase = z
-  .object({ bannerId: UuidSchema, actorId: UuidSchema })
+const cmsBannerConfigurationEventBase = z
+  .object({ bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+const cmsBannerImageEventBase = z
+  .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
+  .extend(authContextBase.shape);
+const cmsBannerScheduleEventBase = z
+  .object({
+    bannerScheduleId: UuidSchema,
+    bannerConfigurationId: UuidSchema,
+    placement: z.string(),
+    startsAt: TimestampSchema,
+    endsAt: TimestampSchema,
+    actorId: UuidSchema,
+  })
+  .extend(authContextBase.shape);
+const cmsBannerScheduleUpdatedEvent = cmsBannerScheduleEventBase.extend({
+  before: z.object({ endsAt: TimestampSchema }),
+});
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
 const tagPlayerEventBase = actorReasonBase
   .extend({ playerId: UuidSchema, tagKey: TagKeySchema })
@@ -36,8 +65,21 @@ const permissionLevelEntries = z.array(
 const walletTxnBase = z.object({
   userId: UuidSchema,
   amount: MoneyAmountSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   transactionId: UuidSchema,
+});
+
+const limitChangeBase = authContextBase.extend({
+  userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
+  limitId: UuidSchema,
+  type: LimitTypeSchema,
+  period: LimitPeriodSchema,
+  kind: LimitChangeKindSchema,
+  previousAmount: MoneyAmountSchema.nullable(),
+  previousMinutes: z.number().int().nullable(),
+  requestedAmount: MoneyAmountSchema.nullable(),
+  requestedMinutes: z.number().int().nullable(),
 });
 
 export const KycStatusUpdatedSchema = z.object({
@@ -48,6 +90,11 @@ export const KycStatusUpdatedSchema = z.object({
   previousStatus: KycStatusSchema,
   reason: z.string().nullable(),
   source: KycStatusSourceSchema,
+  // Forward-compatible (ADR-0016): every deployment binds RedisStreamsBroker (ADR-0030/
+  // 0032), so a durable backlog survives a restart. A pre-tiering (v4) payload in that
+  // backlog at rollout has no `tier` at all - everything WAS basic-only before tiering,
+  // so default it rather than let safeParse silently drop the event.
+  tier: KycTierSchema.default('basic'),
 });
 
 export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as const;
@@ -266,7 +313,7 @@ export const domainEventSchemas = {
     gameId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
-    currency: CurrencyCodeSchema,
+    currency: CurrencyTickerSchema,
   }),
   'gaming.round.ended': z.object({
     roundId: UuidSchema,
@@ -277,7 +324,7 @@ export const domainEventSchemas = {
   'wallet.bonus_rollover.completed': z.object({
     userId: UuidSchema,
     creditId: UuidSchema,
-    currency: CurrencyCodeSchema,
+    currency: CurrencyTickerSchema,
     creditedAmount: MoneyAmountSchema,
   }),
 
@@ -426,13 +473,31 @@ export const domainEventSchemas = {
     minutes: z.number().int().nullable(),
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
+    initiatedBy: RgInitiatorSchema,
+    reason: z.string().nullable(),
   }),
+  'rg.limit.change_requested': limitChangeBase.extend({
+    actorId: UuidSchema,
+    effectiveAt: TimestampSchema,
+    expiresAt: TimestampSchema,
+    initiatedBy: RgInitiatorSchema,
+  }),
+  'rg.limit.change_confirmed': limitChangeBase.extend({
+    actorId: UuidSchema,
+    initiatedBy: RgInitiatorSchema,
+  }),
+  'rg.limit.change_cancelled': limitChangeBase.extend({
+    actorId: UuidSchema,
+    initiatedBy: RgInitiatorSchema,
+  }),
+  'rg.limit.change_expired': limitChangeBase.extend({ expiresAt: TimestampSchema }),
   'rg.cooling_off.activated': actorReasonBase
     .extend({
       userId: UuidSchema,
       playerId: UuidSchema.nullable(),
       exclusionId: UuidSchema,
       expiresAt: TimestampSchema,
+      initiatedBy: RgInitiatorSchema,
     })
     .extend(authContextBase.shape),
   // durationMonths is the admin's chosen term, null when permanent - the regulatory
@@ -445,6 +510,7 @@ export const domainEventSchemas = {
       isPermanent: z.boolean(),
       durationMonths: z.number().int().nullable(),
       expiresAt: TimestampSchema.nullable(),
+      initiatedBy: RgInitiatorSchema,
     })
     .extend(authContextBase.shape),
   'rg.self_exclusion.lifted': actorReasonBase
@@ -481,6 +547,8 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     referenceId: z.string(),
     provider: z.string(),
+    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
+    tier: KycTierSchema.default('basic'),
   }),
 
   // A threshold-triggered re-KYC flipped a verified player to resubmission_requested.
@@ -489,6 +557,8 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     reason: z.string(),
+    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
+    tier: KycTierSchema.default('basic'),
   }),
 
   'compliance.kyc.high_risk_signal_detected': z.object({
@@ -499,6 +569,8 @@ export const domainEventSchemas = {
     dataCenterIpDetected: z.boolean(),
     duplicateDeviceDetected: z.boolean(),
     highRiskCountryDetected: z.boolean(),
+    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
+    tier: KycTierSchema.default('basic'),
   }),
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
@@ -507,9 +579,20 @@ export const domainEventSchemas = {
   'cms.page.created': cmsPageEventBase,
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
-  'cms.banner.created': cmsBannerEventBase,
-  'cms.banner.updated': cmsBannerEventBase,
-  'cms.banner.deleted': cmsBannerEventBase,
+  'cms.banner.configuration.created': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.set_default': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.unset_default': z
+    .object({
+      placement: z.string(),
+      previousBannerConfigurationId: UuidSchema.nullable(),
+      actorId: UuidSchema,
+    })
+    .extend(authContextBase.shape),
+  'cms.banner.image.set': cmsBannerImageEventBase,
+  'cms.banner.image.deleted': cmsBannerImageEventBase,
+  'cms.banner.schedule.created': cmsBannerScheduleEventBase,
+  'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role
@@ -612,7 +695,10 @@ export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof doma
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v3: actorId is nullable - null marks a system-driven flip (vendor/webhook/reverify),
   // which the audit writer records as actorType 'system'.
-  'compliance.kyc.updated': 4,
+  'compliance.kyc.updated': 5,
+  'compliance.kyc.submitted': 2,
+  'compliance.kyc.reverify_required': 2,
+  'compliance.kyc.high_risk_signal_detected': 2,
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
@@ -629,10 +715,11 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'wallet.manual_adjustment.created': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.
-  'rg.limit.set': 2,
+  'rg.limit.set': 4,
+  'rg.cooling_off.activated': 2,
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
   // v3: durationMonths added - the chosen term, explicit for the regulatory export.
-  'rg.self_exclusion.activated': 3,
+  'rg.self_exclusion.activated': 4,
 };
 
 export function getEventVersion(event: string): number {

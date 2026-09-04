@@ -44,7 +44,7 @@ export type {
 } from './wallet-commands.js';
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
-export type { WalletReader } from './wallet-reader.js';
+export type { WalletReader, WalletBalanceReading, WalletBalancesReading } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
 export type {
@@ -108,6 +108,7 @@ export type {
   KycResult,
   KycRiskSignals,
   KycStatusWriter,
+  KycStatusTransition,
   KycWebhookVerifier,
   KycCheckStatus,
   KycCheckResult,
@@ -139,6 +140,25 @@ export {
 
 export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';
 export { WALLET_ASSET_CATALOG } from './wallet-asset-catalog.js';
+
+export type { ExchangeRateQuote, ExchangeRateProvider } from './exchange-rate-provider.js';
+export {
+  CRYPTO_EXCHANGE_RATE_PROVIDER,
+  FIAT_EXCHANGE_RATE_PROVIDER,
+} from './exchange-rate-provider.js';
+
+export type { ExchangeRateReader } from './exchange-rate-reader.js';
+export { EXCHANGE_RATE_READER } from './exchange-rate-reader.js';
+
+export type {
+  SwapStatus,
+  SwapQuote,
+  SwapExecution,
+  SwapWebhookEvent,
+  SwapAdapter,
+  SwapWebhookVerifier,
+} from './swap.js';
+export { SWAP_ADAPTER, SWAP_WEBHOOK_VERIFIER } from './swap.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER } from './geo-ip.js';
@@ -189,6 +209,7 @@ export type {
   AdminUserDirectory,
   AdminPlayerSummary,
   AdminUserSortBy,
+  PlayerIdSearchOptions,
 } from './admin-user-directory.js';
 export { ADMIN_USER_DIRECTORY, ADMIN_USER_SORT_BY_VALUES } from './admin-user-directory.js';
 
@@ -236,6 +257,8 @@ export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
+export type { RgLimitsPort, RgLimitDecision, RgLimitExceededData } from './rg-limits.js';
+export { RG_LIMITS, RgLimitExceededError } from './rg-limits.js';
 
 export type {
   ChatSystemMessage,

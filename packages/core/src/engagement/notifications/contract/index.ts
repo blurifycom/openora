@@ -10,6 +10,8 @@ export const NOTIFICATION_TYPES = [
   'social.friend_request.received',
   'social.friend_request.accepted',
   'wallet.bonus_rollover.completed',
+  'chat.rain.received',
+  'rg.limit.admin_updated',
   'deposit.completed',
   'balance.adjusted',
   'withdrawal.requested',

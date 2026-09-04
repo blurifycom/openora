@@ -1,7 +1,42 @@
 # ADR-0031: Realtime Transport - SSE and HTTP over WebSockets
 
 **Date**: 2026-07-16
-**Status**: Proposed
+**Status**: Accepted
+
+> **Update (2026-08-31)**: `RedisPubSubRealtimeTransport` shipped, superseding
+> ADR-0032's note that `InProcessRealtimeTransport` stays as `createApp`'s production
+> default. It is deleted, not kept as a fallback: `REALTIME_TRANSPORT` now joins
+> `MESSAGE_BROKER`/`JOB_QUEUE`/`CACHE`/`RATE_LIMITER` in `assertDurableSeamsBound`
+> (`packages/core/src/server/runtime/assert-durable-seams.ts`) and auto-binds only
+> when `REDIS_URL` is set, exactly like the other four - there is no single-instance
+> "skip Redis" path. This is a breaking change for any operator running without
+> Redis: a deployment that only used it for realtime must now set `REDIS_URL` (it is
+> already a hard requirement for the other four seams in any deployment beyond a
+> single throwaway instance, so the marginal cost is one more seam on a connection
+> most operators already have). Every test tier binds the same driver too
+> (`bootTestApp`, and each `.int.test.ts` that exercises delivery, via
+> `createTestRedis`) - see ADR-0032's own philosophy, now extended to this seam.
+> **Update (2026-08-31)**: `RealtimePresence` is now genuinely shared, closing the
+> gap the note above disclosed. `RedisPresenceStore` (same file) replaces the
+> interim `LocalPresence` Map with one Redis sorted set per channel - member =
+> memberId, score = the epoch-ms of that member's most recent heartbeat from any
+> of its connections - so a member appears once regardless of how many
+> connections/tabs it has, matching point 4's "Presence via Redis (SET +
+> heartbeat TTL)" exactly, a decade-old pattern for self-expiring cluster
+> membership. `join()` fires a heartbeat immediately and every 15s
+> (`HEARTBEAT_INTERVAL_MS`) for as long as the connection lives; `getOnlineUserIds`
+> /`count` filter to scores newer than 45s (`PRESENCE_TTL_MS`, 3x the heartbeat -
+> tolerates two missed ticks without flapping a live connection offline). A
+> replica that dies without calling `leave()` (SIGKILL, OOM) simply stops
+> renewing its members' scores; they age past the cutoff and stop being read as
+> online with no cleanup process required to run - the property `/rain`
+> (`chat-commands.service.ts`) needs, since a plain SET with explicit add/remove
+> would instead leave a crashed replica's members in the set forever, diluting
+> every rain payout across phantom recipients permanently. `leave()`/`close()`
+> still remove immediately on the graceful path; expiry is the safety net, not
+> the primary path. Read cost: one `ZRANGEBYSCORE`/`ZCOUNT` per call, O(log N) to
+> seek the cutoff plus O(M) for the M members returned (exactly the answer's
+> size) - no per-connection scan, no keyspace SCAN.
 
 ## Context
 
@@ -143,9 +178,9 @@ change to the betting domain or the rest of the platform.
   shared replay buffer per topic and clients must handle a "resync over HTTP"
   directive when a disconnect outlives the retention window. That path needs a test -
   it is the one place a client can silently diverge from server state.
-- `RealtimePresence` ("N online") needs a shared store (Redis SET + heartbeat/TTL) to
-  work across instances; the base Pub/Sub driver ships without it (the port keeps
-  presence optional) until a feature needs it.
+- `RealtimePresence` ("N online") is backed by the shared `RedisPresenceStore` (see
+  the 2026-08-31 update above) - the port still keeps presence optional for
+  transports (eg a managed vendor) that source it from elsewhere.
 - Delivery latency is bounded by geography and internal hops (publish → Redis →
   replica → client), not the transport; genuine sub-100ms-global push would need edge
   PoPs (a managed vendor), which the transport choice does not by itself provide.

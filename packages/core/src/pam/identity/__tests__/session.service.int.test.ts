@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
@@ -81,11 +81,13 @@ describe('SessionService', () => {
 
     await service().revokeSession(account.id, target.id);
 
-    const [revoked] = await db.drizzle.db
-      .select({ expired: sql<boolean>`${session.expiresAt} <= now()` })
-      .from(session)
-      .where(eq(session.id, target.id));
-    expect(revoked?.expired).toBe(true);
+    const { items } = await service().listSessions({ userId: account.id, page: 1, limit: 20 });
+    // revokeSession stamps expiresAt with the database clock, so read the same clock back:
+    // an app-side Date.now() a millisecond behind the database would fail this on nothing.
+    const { rows } = await db.drizzle.db.execute<{ now: string }>(sql`select now() as now`);
+    expect(new Date(items[0]!.expiresAt).getTime()).toBeLessThanOrEqual(
+      new Date(rows[0]!.now).getTime(),
+    );
   });
 
   it('keeps the last-used timestamp when a session is revoked', async () => {

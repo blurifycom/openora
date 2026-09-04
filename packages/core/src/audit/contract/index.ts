@@ -1,6 +1,13 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  LimitChangeKindSchema,
+  LimitPeriodSchema,
+  LimitTypeSchema,
+  MoneyAmountSchema,
+  TimestampSchema,
+  UuidSchema,
+} from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 // The value tuple is the single source of truth: `z.enum` derives the contract here
@@ -77,6 +84,28 @@ export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({
 });
 export type AuditExportFilters = z.infer<typeof AuditExportFiltersSchema>;
 
+export const MyRgHistoryEntrySchema = z.object({
+  id: UuidSchema,
+  action: z.string(),
+  actorType: AuditActorTypeSchema,
+  createdAt: TimestampSchema,
+  type: LimitTypeSchema.nullable(),
+  period: LimitPeriodSchema.nullable(),
+  kind: LimitChangeKindSchema.nullable(),
+  previousAmount: MoneyAmountSchema.nullable(),
+  newAmount: MoneyAmountSchema.nullable(),
+  previousMinutes: z.number().int().nullable(),
+  newMinutes: z.number().int().nullable(),
+  effectiveAt: TimestampSchema.nullable(),
+  expiresAt: TimestampSchema.nullable(),
+});
+export type MyRgHistoryEntry = z.infer<typeof MyRgHistoryEntrySchema>;
+
+export const MyRgHistoryFiltersSchema = PageQuerySchema.extend({
+  sortOrder: SortOrderSchema.default('desc').optional(),
+});
+export type MyRgHistoryFilters = z.infer<typeof MyRgHistoryFiltersSchema>;
+
 export const auditContract = {
   list: oc
     .route({ method: 'GET', path: '/audit/logs' })
@@ -87,4 +116,9 @@ export const auditContract = {
     .route({ method: 'GET', path: '/audit/export' })
     .input(AuditExportFiltersSchema)
     .output(z.object({ csv: z.string() })),
+
+  listMyRgHistory: oc
+    .route({ method: 'GET', path: '/audit/me/rg-history' })
+    .input(MyRgHistoryFiltersSchema)
+    .output(paginated(MyRgHistoryEntrySchema)),
 };

@@ -177,12 +177,6 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     // `ready` gates connecting + group creation, and stays false until BOTH have
     // succeeded - so a Redis outage at loop start retries the whole handshake with
     // backoff rather than permanently abandoning this (topic, group)'s consumption.
-    // It is NOT reset on a later error: node-redis owns reconnection from there on
-    // (socket.reconnectStrategy re-establishes the connection and re-queues the
-    // blocked XREADGROUP), and the group already exists, so there is nothing to redo.
-    // Both steps are idempotent regardless - `connect()` throws 'Socket already
-    // opened' once the socket is open, hence the isOpen guard, and a re-created group
-    // comes back BUSYGROUP, which is tolerated below.
     const done = (async (): Promise<void> => {
       let ready = false;
       while (!stopped) {
@@ -222,6 +216,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
           if (stopped) {
             break;
           }
+          ready = false;
           this.logger.error({ err, key, group }, 'stream loop error, retrying');
           await delay(RETRY_DELAY_MS);
         }

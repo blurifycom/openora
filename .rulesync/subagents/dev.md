@@ -37,6 +37,18 @@ Your prompt contains requirements + acceptance criteria. Build to those. If the 
 - Services throw shared-factory domain errors (`makeNotFoundError` etc. from `@openora/core/server`); routers map them via `mapErrors`.
 - Drizzle: tables in the module's `schema/index.ts`; no cross-module FKs; `pnpm regen` after schema edits; never hand-edit migrations (ADR-0027).
 
+## Verify against a consumer without publishing
+
+A core change is only proven once something downstream consumes it. Do not wait for a canary
+to find that out. In the consumer checkout run `pnpm link:oss`, which repoints `@openora/*` at
+this checkout, then run `pnpm -F @openora/core watch` here and leave it running so every edit
+rebuilds `dist` and the consumer picks it up on its next reload. `pnpm unlink:oss` in the
+consumer restores the published package.
+
+Two things to tell whoever is working downstream: while linked their lockfile is hidden, so
+they must not touch dependencies or run `pnpm install`; and they import `dist`, not `src`, so
+an unbuilt core edit is invisible to them.
+
 ## Finish criteria
 
 - `pnpm verify --filter <package>` exits 0; schema changes have a generated migration.

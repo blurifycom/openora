@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import type {
   IdentityReader,
@@ -113,6 +113,28 @@ async function findingRows() {
 
 function listTransactionsReturning(events: PaymentWebhookEvent[]): PaymentAdapter {
   return mock<PaymentAdapter>({ listTransactions: vi.fn(async () => events) });
+}
+
+/**
+ * Poll until a claim row lands (`finishedAt IS NULL`), instead of assuming a fixed
+ * delay ran long enough to observe it - the assumption a fixed wait made is exactly
+ * what made the concurrency test below flaky under CI's less predictable scheduling.
+ */
+async function waitForOpenClaim(jobName: string, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const [row] = await db.drizzle.db
+      .select({ id: walletJobRun.id })
+      .from(walletJobRun)
+      .where(and(eq(walletJobRun.jobName, jobName), isNull(walletJobRun.finishedAt)));
+    if (row) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`waitForOpenClaim: no open claim for '${jobName}' within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 describe('ReconciliationService.runCycle - internal transfer exclusion', () => {
@@ -325,22 +347,31 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
 
 describe('ReconciliationService.runCycle - claim concurrency', () => {
   it('the second of two concurrent cycles returns immediately', async () => {
-    // A near-instant cycle can fully finish (clearing the claim) before the sibling's
-    // own claim attempt is even issued, which would let both legitimately succeed as
-    // two SEPARATE runs rather than actually racing. Hold the first cycle's claim open
-    // long enough for the second's insert to land while finishedAt is still NULL - that
-    // is the real race this test exists to prove.
+    // A cycle that finishes (clearing the claim) before the sibling's own claim
+    // attempt is even issued would let both legitimately succeed as two SEPARATE runs
+    // rather than actually racing - that is the real race this test exists to prove.
+    // Hold the first cycle open on an explicit gate and poll for its claim row instead
+    // of guessing a fixed delay is long enough: a fixed wait is exactly what made this
+    // test flaky under CI's less predictable scheduling.
+    let releaseFirstCycle!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirstCycle = resolve;
+    });
     const payment = mock<PaymentAdapter>({
-      listTransactions: vi.fn(() => new Promise((resolve) => setTimeout(() => resolve([]), 100))),
+      listTransactions: vi.fn(async () => {
+        await gate;
+        return [];
+      }),
     });
     const { reconciliation } = makeServices(payment);
 
-    const [first, second] = await Promise.all([
-      reconciliation.runCycle(),
-      reconciliation.runCycle(),
-    ]);
+    const first = reconciliation.runCycle();
+    await waitForOpenClaim('wallet-reconciliation');
 
-    const results = [first, second];
+    const second = await reconciliation.runCycle();
+    releaseFirstCycle();
+
+    const results = [await first, second];
     expect(results.filter((r) => r !== null)).toHaveLength(1);
     expect(results.filter((r) => r === null)).toHaveLength(1);
   });

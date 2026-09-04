@@ -4,13 +4,12 @@ import {
   type EventBus,
   makeNotFoundError,
   makeOwnershipError,
-  assertOwnership,
   serializeRow,
 } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
-import { userLimit, geoRule } from '../schema/index.js';
-import type { UpsertLimitInput, AddGeoRuleInput } from '../contract/index.js';
-import type { ClientMeta, GeoIpAdapter, IdentityReader, User } from '@openora/core/contracts';
+import { geoRule } from '../schema/index.js';
+import type { AddGeoRuleInput } from '../contract/index.js';
+import type { ClientMeta, GeoIpAdapter, User } from '@openora/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 
@@ -23,52 +22,7 @@ export class ComplianceService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly geoIp: GeoIpAdapter | null,
-    private readonly identityReader: IdentityReader,
   ) {}
-
-  async getLimitsForUser(userId: User['id']) {
-    const rows = await this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
-  }
-
-  async upsertLimit(userId: User['id'], input: UpsertLimitInput, meta?: ClientMeta) {
-    const row = findOneOrThrow(
-      await this.drizzle.db
-        .insert(userLimit)
-        .values({ ...input, userId })
-        .onConflictDoUpdate({
-          target: [userLimit.userId, userLimit.type, userLimit.period],
-          set: { amount: input.amount, minutes: input.minutes },
-        })
-        .returning(),
-      new LimitNotFoundError(userId),
-    );
-    this.events.emit('compliance.limit.upserted', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      limitId: row.id,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
-    return serializeRow(row, { dateFields: ['createdAt'] });
-  }
-
-  async removeLimit(id: string, userId: User['id'], meta?: ClientMeta): Promise<{ success: true }> {
-    const existing = findOneOrThrow(
-      await this.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)),
-      new LimitNotFoundError(id),
-    );
-    assertOwnership(existing.userId, userId, new LimitOwnershipError());
-    await this.drizzle.db.delete(userLimit).where(eq(userLimit.id, id));
-    this.events.emit('compliance.limit.removed', {
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      limitId: id,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
-    return { success: true };
-  }
 
   async geoCheck(ipAddress: string | null) {
     const countryCode =

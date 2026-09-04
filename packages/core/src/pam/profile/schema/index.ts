@@ -30,6 +30,7 @@ export const player = pgTable(
     phone: text(),
     country: text(),
     currency: text().notNull().default('USD'),
+    displayCurrency: text(),
     status: playerStatusEnum().notNull().default('active'),
     kycStatus: kycStatusEnum().notNull().default('pending'),
     level: integer().notNull().default(1),

@@ -10,9 +10,10 @@ import {
   RgFlagTypeSchema,
   RgFlagStatusSchema,
   MoneyAmountSchema,
+  CurrencyTickerInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
-import { LimitSchema, isConsistentLimit, isConsistentLimitAmount } from './limits.js';
+import { LimitSchema, LimitViewSchema, withLimitConsistencyRefinements } from './limits.js';
 
 export const RgExclusionSchema = z.object({
   id: UuidSchema,
@@ -32,22 +33,18 @@ export const RgExclusionSchema = z.object({
 });
 export type RgExclusion = z.infer<typeof RgExclusionSchema>;
 
-export const SetPlayerLimitInputSchema = z
-  .object({
+export const SetPlayerLimitInputSchema = withLimitConsistencyRefinements(
+  z.object({
     userId: UuidSchema,
     type: LimitTypeSchema,
     amount: MoneyAmountSchema.nullable(),
     minutes: z.number().int().positive().nullable(),
+    currency: CurrencyTickerInputSchema.nullable(),
     period: LimitPeriodSchema,
-  })
-  .refine(isConsistentLimit, {
-    message: "type 'session' requires period 'session' and vice versa",
-    path: ['period'],
-  })
-  .refine(isConsistentLimitAmount, {
-    message: "type 'session' requires minutes (not amount); other types require amount",
-    path: ['amount'],
-  });
+    reason: z.string().trim().min(1),
+    confirm: z.literal(true),
+  }),
+);
 export type SetPlayerLimitInput = z.infer<typeof SetPlayerLimitInputSchema>;
 
 // 24h .. 6 weeks (1008h) per the Confluence cooling-off window.
@@ -88,11 +85,33 @@ export const LiftCoolingOffInputSchema = z.object({
 export type LiftCoolingOffInput = z.infer<typeof LiftCoolingOffInputSchema>;
 
 export const RgSectionSchema = z.object({
-  limits: z.array(LimitSchema),
+  limits: z.array(LimitViewSchema),
   coolingOff: RgExclusionSchema.nullable(),
   selfExclusion: RgExclusionSchema.nullable(),
 });
 export type RgSection = z.infer<typeof RgSectionSchema>;
+
+const PendingChangeTargetSchema = z.object({ id: UuidSchema });
+
+export const SELF_SERVICE_BREAK_HOURS = [24, 168, 720] as const;
+export const SELF_SERVICE_EXCLUSION_MONTHS = [6, 12, 24, 60] as const;
+
+export const RequestCoolingOffInputSchema = z.object({
+  durationHours: z.literal(SELF_SERVICE_BREAK_HOURS),
+});
+export type RequestCoolingOffInput = z.infer<typeof RequestCoolingOffInputSchema>;
+
+export const RequestSelfExclusionInputSchema = z
+  .object({
+    isPermanent: z.boolean(),
+    durationMonths: z.literal(SELF_SERVICE_EXCLUSION_MONTHS).optional(),
+    confirm: z.literal(true),
+  })
+  .refine((v) => v.isPermanent || v.durationMonths !== undefined, {
+    message: 'durationMonths is required unless isPermanent is true',
+    path: ['durationMonths'],
+  });
+export type RequestSelfExclusionInput = z.infer<typeof RequestSelfExclusionInputSchema>;
 
 // Each flagType writes one known detail shape (see rg-monitoring.service.ts).
 export const LimitThresholdDetailSchema = z.object({
@@ -190,4 +209,26 @@ export const rgContract = {
     .route({ method: 'GET', path: '/compliance/rg-flags' })
     .input(ListRgFlagsInputSchema)
     .output(paginated(RgFlagListItemSchema)),
+
+  getMyRgSection: oc.route({ method: 'GET', path: '/compliance/rg/me' }).output(RgSectionSchema),
+
+  confirmPendingLimitChange: oc
+    .route({ method: 'POST', path: '/compliance/limits/{id}/pending/confirm' })
+    .input(PendingChangeTargetSchema)
+    .output(LimitViewSchema.nullable()),
+
+  cancelPendingLimitChange: oc
+    .route({ method: 'DELETE', path: '/compliance/limits/{id}/pending' })
+    .input(PendingChangeTargetSchema)
+    .output(LimitViewSchema),
+
+  requestCoolingOff: oc
+    .route({ method: 'POST', path: '/compliance/rg/cooling-off' })
+    .input(RequestCoolingOffInputSchema)
+    .output(RgExclusionSchema),
+
+  requestSelfExclusion: oc
+    .route({ method: 'POST', path: '/compliance/rg/self-exclusion' })
+    .input(RequestSelfExclusionInputSchema)
+    .output(RgExclusionSchema),
 };

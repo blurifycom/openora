@@ -5,6 +5,7 @@ import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   CACHE,
+  EXCHANGE_RATE_READER,
   GEO_IP_ADAPTER,
   GEO_CHECK_COMMANDS,
   JOB_QUEUE,
@@ -13,12 +14,15 @@ import {
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
+  KycTierSchema,
   LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
   REALTIME_TRANSPORT,
+  RG_LIMITS,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
   UuidSchema,
+  defaultResponsibleGamingConfig,
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
@@ -27,6 +31,7 @@ import {
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
+import { RgSelfServiceService } from './service/rg-self-service.service.js';
 import {
   RgMonitoringService,
   RG_EVAL_TRIGGERS,
@@ -34,6 +39,7 @@ import {
 } from './service/rg-monitoring.service.js';
 import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
+import { RgLimitGate } from './adapters/rg-limit-gate.js';
 
 const logger = createLogger('compliance');
 
@@ -42,7 +48,6 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(DRIZZLE),
     c.get(EVENT_BUS),
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
-    c.get(IDENTITY_READER),
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');
@@ -57,6 +62,9 @@ const RgMonitorJobSchema = z.object({});
 const KycDecisionSyncJobSchema = z.object({
   referenceId: z.string().min(1),
   status: z.enum(KYC_VENDOR_STATUSES),
+  // Set only when the adapter's parseWebhook attributed the decision to one tier; absent
+  // for a shared-workflow vendor session, where reconcile fans the decision across tiers.
+  tier: KycTierSchema.optional(),
   // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
   // watermark `reconcile` compares against, immune to job-processing reordering.
   receivedAt: z.iso.datetime(),
@@ -64,10 +72,11 @@ const KycDecisionSyncJobSchema = z.object({
 
 export default {
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
+  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit', 'exchange-rate'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
+    ctx.provide(RG_LIMITS, (c) => new RgLimitGate(monitoring(c), c.get(EXCHANGE_RATE_READER)));
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
@@ -83,18 +92,28 @@ export default {
     // but set before any real event/job arrives. See create-app.ts boot order.
     let kycRef: KycVerificationService | null = null;
     let rgRef: RgService | null = null;
+    let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
+    const monitoring = (c: TypedContainer<CoreTokenCatalog>) =>
+      (monitorRef ??= new RgMonitoringService({
+        drizzle: c.get(DRIZZLE),
+        directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
+        rates: c.get(EXCHANGE_RATE_READER),
+      }));
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
-      if (!parsed.success || !realtimeTransport || !envelope) {
+      // kycStatusChannel is the basic-tier withdrawal-status stream; advanced-tier
+      // updates have no consumer here yet (see tag-evaluation.service.ts's same guard).
+      if (!parsed.success || !realtimeTransport || !envelope || parsed.data.tier !== 'basic') {
         return;
       }
       return realtimeTransport.publish(kycStatusChannel(parsed.data.userId), {
         eventId: envelope.eventId,
         status: parsed.data.status,
+        tier: parsed.data.tier,
       });
     });
 
@@ -113,11 +132,7 @@ export default {
         return;
       }
       void jobQueueRef
-        .enqueue(
-          RG_EVAL_QUEUE,
-          { userId, trigger },
-          { idempotencyKey: `rg-eval:${userId}`, orderingKey: userId },
-        )
+        .enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId })
         .catch((err) => logger.error({ err }, 'rg-eval enqueue failed'));
     };
 
@@ -139,6 +154,12 @@ export default {
         enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
       }
     });
+    ctx.events.on('rg.limit.set', (payload) => {
+      const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
+      if (parsed.success) {
+        enqueueEval(parsed.data.userId, 'rg.limit.set');
+      }
+    });
 
     ctx.jobs.worker({
       queue: RG_EVAL_QUEUE,
@@ -157,6 +178,9 @@ export default {
         if (rgRef) {
           await rgRef.expireLapsedCoolingOffs();
         }
+        if (selfServiceRef) {
+          await selfServiceRef.expireStaleLimitChanges();
+        }
         if (monitorRef) {
           await monitorRef.sweep();
         }
@@ -171,6 +195,7 @@ export default {
             payload.referenceId,
             payload.status,
             new Date(payload.receivedAt),
+            payload.tier,
           );
         }
       },
@@ -210,10 +235,20 @@ export default {
         email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
         directory,
         templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
+        rates: c.get(EXCHANGE_RATE_READER),
       });
       rgRef = rg;
-      const rgMonitoring = new RgMonitoringService({ drizzle: c.get(DRIZZLE), directory });
-      monitorRef = rgMonitoring;
+      const rgMonitoring = monitoring(c);
+      const rgSelfService = new RgSelfServiceService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        rg,
+        monitoring: rgMonitoring,
+        identityReader: c.get(IDENTITY_READER),
+        config: platformConfig?.responsibleGambling ?? defaultResponsibleGamingConfig,
+        rates: c.get(EXCHANGE_RATE_READER),
+      });
+      selfServiceRef = rgSelfService;
 
       jobQueueRef = c.get(JOB_QUEUE);
       void jobQueueRef
@@ -232,6 +267,7 @@ export default {
         realtime: realtimeTransport,
         rg,
         rgMonitoring,
+        rgSelfService,
       });
     });
   },

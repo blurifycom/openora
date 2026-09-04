@@ -289,19 +289,20 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 18 modules, 231 routes, 41 adapter ports, 98 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 19 modules, 250 routes, 45 adapter ports, 105 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                    | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
 | `@openora/core/admin-console` | admin-console                                              | (owns none - reads through ports)                                                   | 8      |
 | `@openora/core/analytics`     | analytics                                                  | (owns none - reads through ports)                                                   | 3      |
-| `@openora/core/audit`         | audit                                                      | audit_log                                                                           | 2      |
+| `@openora/core/audit`         | audit                                                      | audit_log                                                                           | 3      |
 | `@openora/core/casino`        | gaming · lobby                                             | featured_slot, game, game_round, lobby_category + 1 more                            | 9      |
-| `@openora/core/cms`           | cms                                                        | banner, page                                                                        | 10     |
-| `@openora/core/compliance`    | compliance                                                 | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 20     |
+| `@openora/core/cms`           | cms                                                        | banner_configuration, banner_image, banner_schedule, page                           | 18     |
+| `@openora/core/compliance`    | compliance                                                 | geo_rule, kyc_verification, rg_exclusion, rg_flag + 1 more                          | 26     |
 | `@openora/core/engagement`    | chat · chat-commands · notifications · social              | chat_command_config, chat_message, chat_mute, chat_platform_ban + 11 more           | 72     |
+| `fx`                          | exchange-rate                                              | exchange_rate_quote                                                                 | 2      |
 | `@openora/core/iam`           | iam                                                        | admin_invitation, admin_role, admin_role_assignment, admin_role_permission          | 17     |
-| `@openora/core/pam`           | identity · player-management · player-note · profile · tag | account, admin_trusted_device, player, player_note + 8 more                         | 55     |
+| `@openora/core/pam`           | identity · player-management · player-note · profile · tag | account, admin_trusted_device, player, player_note + 8 more                         | 57     |
 | `@openora/core/wallet`        | wallet                                                     | auto_withdrawal_rule, wallet, wallet_asset, wallet_auto_withdrawal_config + 10 more | 35     |
 
 <!-- /gen:catalog-reference -->

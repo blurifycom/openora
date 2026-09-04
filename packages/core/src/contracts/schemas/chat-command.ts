@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { UuidSchema } from './common.js';
+import { CurrencyTickerInputSchema, MoneyAmountSchema, UuidSchema } from './common.js';
 import {
   ProfileCommandMetadataSchema,
   GiftCommandMetadataSchema,
@@ -57,6 +57,18 @@ export const ChatRoomIdSchema = z
   .union([UuidSchema, z.literal(GLOBAL_CHAT_ROOM_ID)])
   .transform((value) => (value === GLOBAL_CHAT_ROOM_ID ? null : value));
 export type ChatRoomIdInput = z.input<typeof ChatRoomIdSchema>;
+
+/**
+ * Shared wire input for every money-moving chat command (`/gift`, `/rain`, `/donate`).
+ * Omit `currency` and the debit falls on the sender's active currency; when supplied,
+ * the recipient is credited in this SAME currency - no conversion ever happens.
+ */
+export const ChatMoneyCommandInputSchema = z.object({
+  amount: MoneyAmountSchema,
+  currency: CurrencyTickerInputSchema.optional(),
+  roomId: ChatRoomIdSchema,
+  idempotencyKey: UuidSchema,
+});
 
 /** Canonical chat channel name used by both the chat and chat-commands modules. */
 export function chatChannel(roomId: string | null): string {

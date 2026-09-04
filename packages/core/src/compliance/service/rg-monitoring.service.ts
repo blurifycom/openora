@@ -1,18 +1,51 @@
-import { DrizzleService, pageToOffset, moneyToNumber, mapConcurrent } from '@openora/core/server';
+import {
+  DrizzleService,
+  createLogger,
+  pageToOffset,
+  moneyAdd,
+  moneyToNumber,
+  mapConcurrent,
+  type DrizzleDb,
+  type DrizzleTx,
+} from '@openora/core/server';
 import { and, eq, or, gt, gte, lte, isNull, inArray, asc, desc, sql, type SQL } from 'drizzle-orm';
-import type { AdminUserDirectory, LimitType, LimitPeriod, User } from '@openora/core/contracts';
+import type {
+  AdminUserDirectory,
+  ExchangeRateReader,
+  LimitType,
+  LimitPeriod,
+  User,
+} from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
+import { resolveLimitCurrency, RgLimitCurrencyUnresolvedError } from './rg.service.js';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { gameRound } from '@openora/core/casino/schema/gaming';
 import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
 import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 
+const logger = createLogger('compliance-rg-monitoring');
+
+export class RgRateUnavailableError extends Error {
+  constructor(
+    readonly limitType: LimitType,
+    readonly period: LimitPeriod,
+    readonly missingCurrency: string,
+    readonly limitCurrency: string,
+  ) {
+    super(
+      `No exchange rate available to convert ${missingCurrency} into ${limitCurrency} for the ${period} ${limitType} limit`,
+    );
+    this.name = 'RgRateUnavailableError';
+  }
+}
+
 // The recompute trigger carried on the enqueued job - which upstream event fired.
 export const RG_EVAL_TRIGGERS = [
   'wallet.deposit.completed',
   'gaming.round.ended',
   'rg.exclusion.login_blocked',
+  'rg.limit.set',
 ] as const;
 export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
@@ -25,15 +58,18 @@ const SWEEP_CONCURRENCY = 10;
 export type RgMonitoringDeps = {
   drizzle: DrizzleService;
   directory?: AdminUserDirectory | null;
+  rates: ExchangeRateReader;
 };
 
 export class RgMonitoringService {
   private readonly drizzle: DrizzleService;
   private readonly directory: AdminUserDirectory | null;
+  private readonly rates: ExchangeRateReader;
 
   constructor(deps: RgMonitoringDeps) {
     this.drizzle = deps.drizzle;
     this.directory = deps.directory ?? null;
+    this.rates = deps.rates;
   }
 
   async evaluateUser(userId: User['id'], trigger: RgEvalTrigger) {
@@ -69,7 +105,30 @@ export class RgMonitoringService {
       }
       const limitAmount = limit.amount;
       const { from } = periodWindow(limit.period as LimitPeriod, now);
-      const actualAmount = await this.spendFor(userId, limit.type as LimitType, from);
+      let actualAmount: string;
+      try {
+        const limitCurrency = (await resolveLimitCurrency(this.drizzle, limit)).currency;
+        actualAmount = await this.spendFor(
+          this.drizzle.db,
+          userId,
+          limit.type as LimitType,
+          limit.period as LimitPeriod,
+          from,
+          limitCurrency,
+        );
+      } catch (err) {
+        if (
+          !(err instanceof RgRateUnavailableError) &&
+          !(err instanceof RgLimitCurrencyUnresolvedError)
+        ) {
+          throw err;
+        }
+        logger.warn(
+          { err, userId, limitType: limit.type },
+          'RG flag evaluation skipped: rate or currency missing',
+        );
+        continue;
+      }
       // Threshold comparison is a review-flag decision, not a ledger write - moneyToNumber
       // is the documented single conversion point (see the helper's own doc comment).
       if (isAtThreshold(moneyToNumber(actualAmount), moneyToNumber(limitAmount))) {
@@ -198,41 +257,115 @@ export class RgMonitoringService {
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  private async spendFor(userId: User['id'], type: LimitType, from: Date) {
+  /**
+   * Spend counted against one money limit inside its period window, converted into
+   * `limitCurrency` and returned as a decimal string. Throws `RgRateUnavailableError`
+   * when a source currency has no available conversion rate, rather than treating that
+   * group as zero.
+   */
+  async spendFor(
+    db: DrizzleDb | DrizzleTx,
+    userId: User['id'],
+    type: LimitType,
+    period: LimitPeriod,
+    from: Date,
+    limitCurrency: string,
+  ) {
     if (type === 'deposit') {
-      return this.depositsSum(userId, from);
+      return this.convertedTotal(
+        await this.depositsByCurrency(db, userId, from),
+        type,
+        period,
+        limitCurrency,
+      );
     }
-    return this.betsSum(userId, from);
+    if (type === 'loss') {
+      return this.convertedTotal(
+        await this.netLossByCurrency(db, userId, from),
+        type,
+        period,
+        limitCurrency,
+      );
+    }
+    return this.convertedTotal(
+      await this.betsByCurrency(db, userId, from),
+      type,
+      period,
+      limitCurrency,
+    );
   }
 
-  // Decimal string, matching userLimit.amount (same unit as walletTransaction.amount).
-  // Open-ended at the top: the window's `to` is a JS clock reading, so a row the
-  // database stamped microseconds ahead of it would drop out of the very evaluation
-  // that row triggered.
-  private async depositsSum(userId: User['id'], from: Date) {
-    const [row] = await this.drizzle.db
-      .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
+  private async convertedTotal(
+    groups: { currency: string; total: string }[],
+    type: LimitType,
+    period: LimitPeriod,
+    limitCurrency: string,
+  ): Promise<string> {
+    let total = '0';
+    for (const group of groups) {
+      if (group.currency === limitCurrency) {
+        total = moneyAdd(total, group.total);
+        continue;
+      }
+      const converted = await this.rates.convert(group.total, group.currency, limitCurrency);
+      if (converted === null) {
+        throw new RgRateUnavailableError(type, period, group.currency, limitCurrency);
+      }
+      total = moneyAdd(total, converted);
+    }
+    return total;
+  }
+
+  private async depositsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    return db
+      .select({
+        currency: walletTransaction.currency,
+        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+      })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
       .where(
         and(
           eq(wallet.userId, userId),
           eq(walletTransaction.type, 'deposit'),
-          eq(walletTransaction.status, 'completed'),
+          // A pending deposit is a reservation the wallet took under the player's deposit
+          // lock before charging the PSP. Counting it is what stops two concurrent deposits
+          // from spending the same headroom; it is released to `failed` if the charge fails.
+          inArray(walletTransaction.status, ['completed', 'pending']),
           gte(walletTransaction.createdAt, from),
-          lte(walletTransaction.createdAt, new Date()),
+          // The database stamps createdAt, so the upper bound reads the same clock. An
+          // app-side new Date() that trails the database by a millisecond would drop a
+          // just-committed deposit out of the player's spend.
+          lte(walletTransaction.createdAt, sql`now()`),
         ),
-      );
-    return row?.total ?? '0';
+      )
+      .groupBy(walletTransaction.currency);
   }
 
-  // Decimal string, matching userLimit.amount (same unit as gameRound.betAmount).
-  private async betsSum(userId: User['id'], from: Date) {
-    const [rounds] = await this.drizzle.db
-      .select({ total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)` })
+  private async betsByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    return db
+      .select({
+        currency: gameRound.currency,
+        total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`,
+      })
       .from(gameRound)
-      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)));
-    return rounds?.total ?? '0';
+      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)))
+      .groupBy(gameRound.currency);
+  }
+
+  private async netLossByCurrency(db: DrizzleDb | DrizzleTx, userId: User['id'], from: Date) {
+    return db
+      .select({
+        currency: gameRound.currency,
+        total: sql<string>`greatest(coalesce(sum(${gameRound.betAmount} - ${gameRound.winAmount}), 0), 0)`,
+      })
+      .from(gameRound)
+      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)))
+      .groupBy(gameRound.currency);
+  }
+
+  clearLimitThresholdFlag(userId: User['id'], limitType: string): Promise<void> {
+    return this.clearFlag(userId, 'limit_threshold', limitType);
   }
 
   private async raiseFlag(

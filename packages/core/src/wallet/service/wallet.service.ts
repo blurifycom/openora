@@ -20,6 +20,7 @@ import {
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  RgLimitExceededError,
   DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
   type PaymentProviderRegistry,
@@ -30,7 +31,9 @@ import {
   type RateLimiterAdapter,
   type RateLimitKey,
   type WalletRail,
+  railFor as sharedRailFor,
   type PlayerTags,
+  type RgLimitsPort,
   type AuditWritePort,
   type TagEvaluationCommands,
   type TagKey,
@@ -149,6 +152,13 @@ export const WalletAssetUnsupportedError = makeConflictError(
 export const WalletAssetInUseError = makeConflictError(
   'WalletAssetInUseError',
   'Players still hold a balance in this currency',
+  { code: 'WALLET_ASSET_BALANCE_HELD' },
+);
+
+export const WalletAssetHasIssuedAddressesError = makeConflictError(
+  'WalletAssetHasIssuedAddressesError',
+  'A deposit address was already issued for this currency and network',
+  { code: 'WALLET_ASSET_ADDRESS_ISSUED' },
 );
 
 export const WalletAssetUnknownProviderError = makeConflictError(
@@ -159,6 +169,7 @@ export const WalletAssetUnknownProviderError = makeConflictError(
 export const WalletAssetHasInFlightTransactionsError = makeConflictError(
   'WalletAssetHasInFlightTransactionsError',
   'A pending or processing transaction exists for this currency and network',
+  { code: 'WALLET_ASSET_TRANSACTION_IN_FLIGHT' },
 );
 
 export const WithdrawalAddressAlreadyExistsError = makeConflictError(
@@ -214,11 +225,6 @@ export const AmbiguousDepositAddressError = createDomainError(
   (address, network) =>
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
-
-// Crypto currencies settle on the crypto rail through a custody/MPC vendor; everything
-// else on the fiat rail (a PSP). The concrete provider is recorded per transaction, not
-// here. Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
-const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
 // A saved-address book, not a payout allowlist: the cap only stops one account turning
 // the table into unbounded free storage. Not operator-configurable until someone asks.
@@ -366,12 +372,8 @@ export function assertAboveMinimumDeposit(
   }
 }
 
-export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
-  const set = cryptoCurrencies
-    ? new Set(cryptoCurrencies.map((c) => c.toUpperCase()))
-    : DEFAULT_CRYPTO_CURRENCIES;
-  return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
-}
+export const railFor: (currency: string, cryptoCurrencies?: readonly string[]) => WalletRail =
+  sharedRailFor;
 
 // Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
 // wallet. Every read and write of wallet_balance funnels through these three helpers,
@@ -428,6 +430,25 @@ export async function readWalletBalance(
       and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, balanceKey(currency))),
     );
   return row?.amount ?? '0';
+}
+
+export async function readWalletBalances(
+  txn: DrizzleDb,
+  userId: User['id'],
+): Promise<{ activeCurrency: string; balances: { currency: string; balance: string }[] }> {
+  const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+
+  if (!record) {
+    return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
+  }
+
+  const balances = await txn
+    .select({ currency: walletBalance.currency, balance: walletBalance.amount })
+    .from(walletBalance)
+    .where(eq(walletBalance.walletId, record.id))
+    .orderBy(walletBalance.currency);
+
+  return { activeCurrency: record.currency, balances };
 }
 
 export function debitWithdrawableBalance(
@@ -498,6 +519,9 @@ async function readLockedBonusAmount(
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
 const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
+
+/** Serialises one player's PSP deposits, so an RG reservation cannot be spent twice. */
+const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
 
 const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', 'manual_debit']);
 
@@ -642,6 +666,7 @@ export type WalletServiceDeps = {
   tagEvaluationCommands?: TagEvaluationCommands;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
+  rgLimits?: RgLimitsPort;
 };
 
 /**
@@ -664,6 +689,7 @@ export class WalletService {
   private readonly riskTags?: PlayerTags;
   private readonly tagEvaluationCommands?: TagEvaluationCommands;
   private readonly audit: AuditWritePort;
+  private readonly rgLimits?: RgLimitsPort;
 
   constructor({
     drizzle,
@@ -677,6 +703,7 @@ export class WalletService {
     riskTags,
     tagEvaluationCommands,
     audit,
+    rgLimits,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -689,6 +716,7 @@ export class WalletService {
     this.riskTags = riskTags;
     this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
+    this.rgLimits = rgLimits;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -734,6 +762,21 @@ export class WalletService {
     assertDepositAllowed(assets, currency, network);
     if (amount !== undefined) {
       assertAboveMinimumDeposit(assets, amount, currency, network);
+    }
+  }
+
+  private async assertWithinRgDepositLimit(
+    tx: DrizzleDb | DrizzleTx,
+    userId: User['id'],
+    amount: string,
+    currency: string,
+  ) {
+    if (!this.rgLimits) {
+      return;
+    }
+    const decision = await this.rgLimits.checkDeposit(tx, userId, amount, currency);
+    if (!decision.allowed) {
+      throw new RgLimitExceededError('deposit_limit_exceeded', decision);
     }
   }
 
@@ -803,19 +846,7 @@ export class WalletService {
   }
 
   async getBalances(userId: User['id']) {
-    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-
-    if (!record) {
-      return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
-    }
-
-    const rows = await this.drizzle.db
-      .select({ currency: walletBalance.currency, balance: walletBalance.amount })
-      .from(walletBalance)
-      .where(eq(walletBalance.walletId, record.id))
-      .orderBy(walletBalance.currency);
-
-    return { activeCurrency: record.currency, balances: rows };
+    return readWalletBalances(this.drizzle.db, userId);
   }
 
   // TODO: validate `currency` against a canonical supported-currency list once one
@@ -884,9 +915,10 @@ export class WalletService {
         .where(eq(wallet.userId, userId));
     }
 
-    const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
-
-    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+    // Reserve the RG headroom BEFORE charging the PSP: the check and the pending row that
+    // consumes it commit together under the player's deposit lock, so a second concurrent
+    // deposit reads the first one's reservation instead of spending the same headroom.
+    const reservation = await this.drizzle.db.transaction(async (txn) => {
       let walletRecord = preResolvedWallet;
       if (!walletRecord) {
         [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
@@ -897,30 +929,72 @@ export class WalletService {
           new WalletNotFoundError(userId),
         );
       }
-      const { row, replayed } = await this.insertIdempotentTransaction(txn, {
-        namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
-        walletId: walletRecord.id,
-        rawIdempotencyKey: idempotencyKey,
-        amount,
-        currency,
-        values: {
-          walletId: walletRecord.id,
-          type: 'deposit',
+      const holder = walletRecord;
+      return withAdvisoryXactLock(txn, depositSlotKey(userId), async () => {
+        const namespacedKey = idempotencyKey
+          ? namespacedIdempotencyKey(DEPOSIT_IDEMPOTENCY_NAMESPACE, idempotencyKey)
+          : undefined;
+        const existing = namespacedKey
+          ? await this.findByIdempotencyKey(txn, holder.id, namespacedKey)
+          : undefined;
+        if (existing) {
+          this.assertReplayMatches(existing, amount, currency);
+          return { walletRecord: holder, row: existing, replay: true };
+        }
+
+        await this.assertWithinRgDepositLimit(txn, userId, amount, currency);
+
+        const { row } = await this.insertIdempotentTransaction(txn, {
+          namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
+          walletId: holder.id,
+          rawIdempotencyKey: idempotencyKey,
           amount,
           currency,
-          status: 'completed',
-          direction: 'credit',
-          rail: this.resolveRail(currency),
-          providerName: provider,
-          providerRefId: psp.externalId,
-        },
+          values: {
+            walletId: holder.id,
+            type: 'deposit',
+            amount,
+            currency,
+            status: 'pending',
+            direction: 'credit',
+            rail: this.resolveRail(currency),
+            providerName: provider,
+          },
+        });
+        return { walletRecord: holder, row, replay: false };
       });
+    });
 
-      if (!replayed) {
-        await creditWalletBalance(txn, walletRecord.id, currency, amount);
+    if (reservation.replay) {
+      return { transactionId: reservation.row.id, status: reservation.row.status };
+    }
+
+    let psp: Awaited<ReturnType<PaymentAdapter['processDeposit']>>;
+    try {
+      psp = await this.payment.processDeposit(amount, currency, { userId, provider });
+    } catch (err) {
+      await this.releaseDepositReservation(reservation.row.id);
+      throw err;
+    }
+
+    // The status guard is the settle-once lock: only the update that moves the row out of
+    // `pending` credits the balance, so a retry that races here reads a replay instead.
+    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+      const [settled] = await txn
+        .update(walletTransaction)
+        .set({ status: 'completed', providerRefId: psp.externalId })
+        .where(
+          and(
+            eq(walletTransaction.id, reservation.row.id),
+            eq(walletTransaction.status, 'pending'),
+          ),
+        )
+        .returning();
+      if (!settled) {
+        return { transactionId: reservation.row.id, replayed: true };
       }
-
-      return { transactionId: row.id, replayed };
+      await creditWalletBalance(txn, reservation.walletRecord.id, currency, amount);
+      return { transactionId: settled.id, replayed: false };
     });
 
     if (!replayed) {
@@ -1088,6 +1162,24 @@ export class WalletService {
 
   // Pre-PSP replay check for deposit; also returns the resolved wallet so the transaction
   // below can skip re-selecting it. Throws IdempotencyKeyReuseError on an amount/currency mismatch.
+  /**
+   * Frees a reservation the PSP never charged. Failure to release only leaves the player's
+   * own headroom held until the row is reconciled, so it is logged rather than raised over
+   * the PSP error that caused it.
+   */
+  private async releaseDepositReservation(transactionId: WalletTransaction['id']): Promise<void> {
+    try {
+      await this.drizzle.db
+        .update(walletTransaction)
+        .set({ status: 'failed' })
+        .where(
+          and(eq(walletTransaction.id, transactionId), eq(walletTransaction.status, 'pending')),
+        );
+    } catch (err) {
+      logger.error({ err, transactionId }, 'deposit reservation release failed');
+    }
+  }
+
   private async findDepositReplay({
     userId,
     idempotencyKey,
@@ -2155,7 +2247,7 @@ export class WalletService {
           ),
         );
       if ((issued?.n ?? 0) > 0) {
-        throw new WalletAssetInUseError();
+        throw new WalletAssetHasIssuedAddressesError();
       }
       // Renaming a pair is a delete plus a create (the (currency, network) key AND
       // providerName are immutable), so this delete is the only way providerName ever
@@ -2729,31 +2821,53 @@ export class WalletService {
     // Shares the wallet mutation budget with deposit/withdraw: the row cap alone does
     // not bound writes, since deleting frees a slot and lets a client churn forever.
     await this.rateLimit(userId);
-    // ponytail: count-then-insert, so N concurrent creates can land N over the cap.
-    // Move to an insert...where (select count) < limit if that ever matters.
-    const [existing] = await this.drizzle.db
-      .select({ total: count() })
-      .from(walletWithdrawalAddress)
-      .where(eq(walletWithdrawalAddress.userId, userId));
-    if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
-      throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
+
+    // The slot is taken durably BEFORE the vendor call. Whitelisting first let every request
+    // past the cap reach the provider and create a destination there that no local row would
+    // ever describe, because the cap check only ran afterwards. The row is the reservation, and
+    // it is deleted again if the vendor refuses, so a rejected or unreachable provider still
+    // leaves the player no address they would believe they can withdraw to.
+    const reserved = await this.drizzle.db.transaction((txn) =>
+      withAdvisoryXactLock(txn, `withdrawal-address-cap:${userId}`, async () => {
+        const [existing] = await txn
+          .select({ total: count() })
+          .from(walletWithdrawalAddress)
+          .where(eq(walletWithdrawalAddress.userId, userId));
+        if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
+          throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
+        }
+
+        const [inserted] = await txn
+          .insert(walletWithdrawalAddress)
+          .values({ userId, ...input })
+          .onConflictDoNothing()
+          .returning();
+        if (!inserted) {
+          throw new WithdrawalAddressAlreadyExistsError();
+        }
+        return inserted;
+      }),
+    );
+
+    // The port is required to be idempotent, so releasing and retrying cannot orphan a
+    // destination. A row left behind by a failed release carries no providerWalletId, which
+    // the payout path re-registers rather than trusts - it is never a whitelist bypass.
+    let whitelisted: Awaited<ReturnType<typeof this.whitelistWithdrawalAddress>>;
+    try {
+      whitelisted = await this.whitelistWithdrawalAddress(userId, input);
+    } catch (err) {
+      await this.releaseWithdrawalAddressSlot(reserved.id);
+      throw err;
     }
 
-    // Registered with the custody provider BEFORE the row exists, so a rejected or unreachable
-    // provider leaves no saved address the player would believe they can withdraw to. The port
-    // is required to be idempotent, so the conflict path below cannot orphan a destination.
-    const whitelisted = await this.whitelistWithdrawalAddress(userId, input);
-
-    // onConflictDoNothing turns the unique index into a domain conflict rather than a
-    // 500 - a double-submitted form is a 409, not an incident.
-    const [row] = await this.drizzle.db
-      .insert(walletWithdrawalAddress)
-      .values({ userId, ...input, ...whitelisted })
-      .onConflictDoNothing()
-      .returning();
-    if (!row) {
-      throw new WithdrawalAddressAlreadyExistsError();
-    }
+    const [updated] = Object.keys(whitelisted).length
+      ? await this.drizzle.db
+          .update(walletWithdrawalAddress)
+          .set(whitelisted)
+          .where(eq(walletWithdrawalAddress.id, reserved.id))
+          .returning()
+      : [];
+    const row = updated ?? reserved;
 
     await this.audit.record({
       actorId: userId,
@@ -2861,6 +2975,17 @@ export class WalletService {
       .set({ providerName, providerWalletId })
       .where(eq(walletWithdrawalAddress.id, row.id));
     return providerWalletId;
+  }
+
+  /** Frees a reserved slot the vendor refused. Idempotent: a row already gone is a no-op. */
+  private async releaseWithdrawalAddressSlot(id: WithdrawalAddress['id']): Promise<void> {
+    try {
+      await this.drizzle.db
+        .delete(walletWithdrawalAddress)
+        .where(eq(walletWithdrawalAddress.id, id));
+    } catch (err) {
+      logger.error({ err, withdrawalAddressId: id }, 'withdrawal address slot release failed');
+    }
   }
 
   /**

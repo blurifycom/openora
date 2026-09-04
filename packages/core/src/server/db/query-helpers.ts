@@ -60,6 +60,15 @@ export function moneyScaleBy(amount: string, factor: string): string {
   return fromMinorUnits(product);
 }
 
+export function moneyDivide(dividend: string, divisor: string): string {
+  const divisorUnits = toMinorUnits(divisor);
+  if (divisorUnits === 0n) {
+    throw new RangeError('moneyDivide: division by zero');
+  }
+  const dividendUnits = toMinorUnits(dividend) * 10n ** BigInt(MONEY_SCALE);
+  return fromMinorUnits(dividendUnits / divisorUnits);
+}
+
 // Exact decimal addition and subtraction over the same bigint minor-units path. Used to
 // derive one side of a balance change from the other: reading the balance separately and
 // then updating it leaves a window for a concurrent writer, and an append-only audit row
@@ -70,6 +79,24 @@ export function moneyAdd(a: string, b: string): string {
 
 export function moneySubtract(a: string, b: string): string {
   return fromMinorUnits(toMinorUnits(a) - toMinorUnits(b));
+}
+
+export function moneyFloorToScale(amount: string, scale: number): string {
+  const divisor = 10n ** BigInt(MONEY_SCALE - scale);
+  return fromUnitsAtScale(toMinorUnits(amount) / divisor, scale);
+}
+
+export function moneyCeilToScale(amount: string, scale: number): string {
+  const divisor = 10n ** BigInt(MONEY_SCALE - scale);
+  const units = toMinorUnits(amount);
+  const scaledUnits = units / divisor + (units % divisor === 0n ? 0n : 1n);
+  return fromUnitsAtScale(scaledUnits, scale);
+}
+
+function fromUnitsAtScale(units: bigint, scale: number): string {
+  const digits = units.toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale) || '0';
+  return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
 }
 
 // Run `fn` over `items` with at most `concurrency` promises in flight, results in input
