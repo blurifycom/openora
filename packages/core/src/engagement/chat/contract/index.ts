@@ -70,6 +70,7 @@ export const ChatRoomSchema = z.object({
   joinCode: z.string().nullable(),
   creatorId: UuidSchema.nullable(),
   createdAt: TimestampSchema,
+  scheduledDeletionAt: TimestampSchema.nullable(),
   isBanned: z.boolean(),
   bannedUntil: TimestampSchema.nullable(),
 });
@@ -80,6 +81,7 @@ export const ChatRoomMemberSchema = z.object({
   role: ChatRoomRoleSchema,
   joinedAt: TimestampSchema,
   username: z.string().nullable(),
+  isDeletedAccount: z.boolean(),
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
@@ -91,6 +93,14 @@ export const ChatMemberRoleChangedSignalSchema = z.object({
   role: ChatRoomRoleSchema,
 });
 export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
+
+export const ChatRoomScheduledForDeletionSignalSchema = z.object({
+  roomId: UuidSchema,
+  scheduledDeletionAt: TimestampSchema.nullable(),
+});
+export type ChatRoomScheduledForDeletionSignal = z.infer<
+  typeof ChatRoomScheduledForDeletionSignalSchema
+>;
 
 // Envelope of the room channel's SIGNAL lane, served by `streamSignals`. `payload` stays
 // `unknown` because the vocabulary of names is open: a client parses the ones it asked for
@@ -134,6 +144,7 @@ export const ChatRoomUserSchema = z.object({
   blocked: z.boolean(),
   banId: UuidSchema.nullable(),
   banExpiresAt: TimestampSchema.nullable(),
+  isDeletedAccount: z.boolean(),
 });
 export type ChatRoomUser = z.infer<typeof ChatRoomUserSchema>;
 

@@ -269,7 +269,7 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
   const { deletedAt: _deletedAt, ...room } = record;
   return serializeRow(
     { ...room, isBanned: false, bannedUntil: null },
-    { dateFields: ['createdAt', 'bannedUntil'] },
+    { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
   );
 }
 
@@ -691,7 +691,7 @@ export class ChatService {
               : roomBanById.has(room.id) || Boolean(room.isPublic ? allPublicBan : allPrivateBan),
           bannedUntil: roomBanById.has(room.id) ? roomBanUntil : platformBanUntil,
         },
-        { dateFields: ['createdAt', 'bannedUntil'] },
+        { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
       );
     });
   }
@@ -1012,6 +1012,7 @@ export class ChatService {
           blocked: Boolean(ban),
           banId: ban?.id ?? null,
           banExpiresAt: ban?.expiresAt ?? null,
+          isDeletedAccount: member.accountClosedAt !== null,
         },
         { dateFields: ['joinedAt', 'banExpiresAt'] },
       );
@@ -2065,6 +2066,7 @@ export class ChatService {
         userId: chatRoomMember.userId,
         role: chatRoomMember.role,
         joinedAt: chatRoomMember.joinedAt,
+        accountClosedAt: chatRoomMember.accountClosedAt,
         username: user.name,
       })
       .from(chatRoomMember)
@@ -2078,9 +2080,13 @@ export class ChatService {
       .orderBy(asc(chatRoomMember.joinedAt));
     const summaries = await this.directory.lookupPlayers(members.map((m) => m.userId));
     const usernameByUserId = new Map(summaries.map((s) => [s.userId, s.username]));
-    return members.map((m) =>
+    return members.map(({ accountClosedAt, ...m }) =>
       serializeRow(
-        { ...m, username: usernameByUserId.get(m.userId) ?? m.username ?? null },
+        {
+          ...m,
+          username: usernameByUserId.get(m.userId) ?? m.username ?? null,
+          isDeletedAccount: accountClosedAt !== null,
+        },
         { dateFields: ['joinedAt'] },
       ),
     );

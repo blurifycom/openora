@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UuidSchema, TimestampSchema } from './common.js';
+import { UuidSchema, TimestampSchema, TimezoneSchema } from './common.js';
 
 export const THEMES = ['light', 'dark', 'system'] as const;
 export const OTP_CODE_LENGTH = 6;
@@ -46,6 +46,7 @@ export const PhoneLoginVerifyInputSchema = z.object({
   phone: E164PhoneSchema,
   code: z.string().regex(/^[0-9]{6}$/),
   rememberMe: z.boolean().optional(),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const PHONE_LOGIN_ERROR_REASONS = [
@@ -109,6 +110,7 @@ const credentialsBase = z.object({
 
 export const LoginInputSchema = credentialsBase.extend({
   rememberMe: z.boolean().optional(),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const LoginSecurityStateSchema = z.object({
@@ -121,6 +123,7 @@ export const RegisterInputSchema = credentialsBase.extend({
   username: UsernameSchema,
   acceptedTerms: z.literal(true),
   acceptedAge: z.literal(true),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const RegisterOutputSchema = z.object({ status: z.literal('check-email') });
@@ -155,6 +158,7 @@ export const Verify2faInputSchema = z.object({
   // Honoured only for `method: 'totp'` - a spent recovery code buys a session, not
   // a 30-day bypass - and only while the operator allows a non-zero window.
   trustDevice: z.boolean().default(false),
+  timezone: TimezoneSchema.optional(),
 });
 
 export const RegenerateBackupCodesInputSchema = z.object({
@@ -230,6 +234,9 @@ export const ResendEmailVerificationInputSchema = z.object({
 export const VerifyEmailInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
+  // Carried here too: `autoSignInAfterVerification` mints the first session on this route,
+  // and verification may come from a different device than sign-up.
+  timezone: TimezoneSchema.optional(),
 });
 
 export const UpdateProfileInputSchema = z

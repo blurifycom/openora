@@ -467,6 +467,31 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  'chat.room.ownership.transferred': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    previousOwnerId: UuidSchema,
+    newOwnerId: UuidSchema,
+    reason: z.literal('account-closed'),
+  }),
+  'chat.room.scheduled_for_deletion': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    previousOwnerId: UuidSchema,
+    memberIds: z.array(UuidSchema),
+    scheduledDeletionAt: TimestampSchema,
+  }),
+  'chat.room.deletion.cancelled': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    ownerId: UuidSchema,
+    memberIds: z.array(UuidSchema),
+  }),
+  'chat.private_room.purged': authContextBase.extend({
+    roomId: UuidSchema,
+    messageCount: z.number().int(),
+  }),
+
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': authContextBase.extend({
@@ -684,6 +709,16 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
+  }),
+  'player.account.closed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
+  }),
+  'player.account.reopened': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
   }),
 
   'social.friend_request.sent': authContextBase.extend({
