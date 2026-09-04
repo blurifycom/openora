@@ -61,3 +61,27 @@ export const CurrencyTickerSchema = z
   .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
 
 export const CurrencyTickerInputSchema = CurrencyTickerSchema.transform((c) => c.toUpperCase());
+
+/**
+ * An IANA zone name as a browser reports it (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
+ * Unbounded on purpose: `resolveTimezone` drops anything the tz database does not know, so no
+ * client value can fail the request that carried it. Display metadata - never gates anything.
+ */
+export const TimezoneSchema = z.string();
+export type Timezone = z.infer<typeof TimezoneSchema>;
+
+/**
+ * The canonical IANA name for `value`, or null when the tz database does not recognise it.
+ * Canonicalising keeps one stored spelling across the aliases browsers report (`US/Pacific`).
+ * A bare UTC offset (`+05:00`) is rejected even though `Intl` accepts one: an offset is a
+ * moment's arithmetic, not a zone, and goes wrong the next time DST moves.
+ */
+export function resolveTimezone(value: string): string | null {
+  let canonical: string;
+  try {
+    canonical = new Intl.DateTimeFormat(undefined, { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+  return /^[+-]/.test(canonical) ? null : canonical;
+}

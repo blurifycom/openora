@@ -168,6 +168,7 @@ export default {
           auth: c.get(AUTH_SESSION).auth,
           cache: c.get(CACHE),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
+          playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),

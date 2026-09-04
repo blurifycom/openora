@@ -16,6 +16,7 @@ import { parseCookies } from 'better-auth/cookies';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import { captureTimezone } from './capture-timezone.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
@@ -585,6 +586,9 @@ export class IdentityService {
       throw err;
     }
     const { playerId, consentStored } = consent;
+    // After the consent write, which is what materialises the player row the zone lands on.
+    // No session yet, but the browser is here now and a first login may be days away.
+    await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
     this.events.emit('identity.user.registered', {
       userId: body.user.id,
       playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
@@ -849,6 +853,7 @@ export class IdentityService {
         ip,
         userAgent,
       });
+      await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
       const sessionDurationSeconds =
         this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
@@ -1257,6 +1262,7 @@ export class IdentityService {
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
       }
+      await captureTimezone(this.playerProvisioning, userId, input.timezone);
     }
     return SUCCESS;
   }
@@ -1589,6 +1595,9 @@ export class IdentityService {
     if (account) {
       await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
+    // Before the 2FA branch below: that path ends the session it just minted, but the zone
+    // the browser reported is good either way.
+    await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
 
     // better-auth mints this session with `createSession`, which its twoFactor plugin only
     // hooks on the sign-in routes - so an enrolled account would get a full session from
