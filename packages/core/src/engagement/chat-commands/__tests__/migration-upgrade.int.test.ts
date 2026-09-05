@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { createTestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
+import { CommandConfigSchema, type CommandConfig } from '../contract/index.js';
 
 const STRIPED_TRAUMA_HASH = 'a58ec63c81a4cbd62603a8381da61c5c6d85b57af5d56ba79839d090fbcf0708';
 
@@ -33,6 +34,13 @@ async function migratePreviousHead(databaseUrl: string) {
        VALUES ($1, $2)`,
       [STRIPED_TRAUMA_HASH, 1787729046139],
     );
+    // The shape the pre-per-currency release seeded: a bare decimal string with no currency.
+    await pool.query(`
+      INSERT INTO "chat_command_config" ("key", "label", "config") VALUES
+        ('gift', 'Gift', '{"minAmount":"1.00000000"}'::jsonb),
+        ('rain', 'Rain', '{"minAmount":"1.00000000","maxRecipients":50}'::jsonb),
+        ('mention', 'Mention', NULL)
+    `);
   } finally {
     await pool.end();
   }
@@ -50,6 +58,28 @@ describe('chat-command migration upgrades', () => {
       );
 
       expect(relations.rows[0]).toEqual({ config: 'chat_command_config', gift: null });
+    } finally {
+      await pool.end();
+      await db.drop();
+    }
+  });
+
+  it('drops the legacy scalar amounts a per-currency build cannot read', async () => {
+    const db = await createTestDb([migratePreviousHead, migrate]);
+    const pool = new Pool({ connectionString: db.url });
+    try {
+      const rows = await pool.query<{ key: string; config: CommandConfig | null }>(
+        'SELECT "key", "config" FROM "chat_command_config" ORDER BY "key"',
+      );
+
+      expect(rows.rows).toEqual([
+        { key: 'gift', config: null },
+        { key: 'mention', config: null },
+        { key: 'rain', config: { maxRecipients: 50 } },
+      ]);
+      for (const row of rows.rows) {
+        expect(CommandConfigSchema.nullable().safeParse(row.config).success).toBe(true);
+      }
     } finally {
       await pool.end();
       await db.drop();

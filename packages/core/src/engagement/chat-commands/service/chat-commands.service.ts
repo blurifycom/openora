@@ -20,19 +20,32 @@ import type {
   CommandConfig,
   AdminCommandSortBy,
 } from '../contract/index.js';
-import { ChatCommandTypeSchema } from '../contract/index.js';
+import { ChatCommandTypeSchema, CommandConfigSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
 
-function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {
+// `key` is text and `config` is jsonb, so the column types are casts Postgres never enforced:
+// a row written by an older release can hold a key this build no longer knows or a config shape
+// it no longer accepts. Both are parsed here so one stale row loses its limit, or drops out of
+// the list, instead of failing output validation and taking the whole command list down.
+function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor | null {
+  const key = ChatCommandTypeSchema.safeParse(row.key);
+  if (!key.success) {
+    return null;
+  }
+  const config = CommandConfigSchema.safeParse(row.config);
   return {
-    key: ChatCommandTypeSchema.parse(row.key),
+    key: key.data,
     enabled: row.enabled,
     label: row.label,
     description: row.description ?? null,
-    config: row.config ?? null,
+    config: config.success ? config.data : null,
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function toDescriptors(rows: (typeof chatCommandConfig.$inferSelect)[]): ChatCommandDescriptor[] {
+  return rows.map(toDescriptor).filter((d) => d !== null);
 }
 
 const ADMIN_COMMAND_SORT_COLUMNS = {
@@ -56,7 +69,7 @@ export class ChatCommandsService {
       .select()
       .from(chatCommandConfig)
       .where(includeDisabled ? undefined : eq(chatCommandConfig.enabled, true));
-    return rows.map(toDescriptor);
+    return toDescriptors(rows);
   }
 
   async adminListCommands({
@@ -81,7 +94,7 @@ export class ChatCommandsService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatCommandConfig),
     ]);
-    return { items: rows.map(toDescriptor), total: Number(n), page, limit };
+    return { items: toDescriptors(rows), total: Number(n), page, limit };
   }
 
   async adminUpdateCommand(
@@ -116,7 +129,9 @@ export class ChatCommandsService {
       before: null,
       after: { enabled: input.enabled, config: input.config ?? null },
     });
-    return toDescriptor(row);
+    // The write just set `key` and `config` from contract-validated input, so this row cannot
+    // be the stale shape `toDescriptor` returns null for.
+    return findOneOrThrow(toDescriptors([row]), new CommandDisabledError(input.key));
   }
 
   async searchMentions({
