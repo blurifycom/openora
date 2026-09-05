@@ -127,6 +127,13 @@
       "when": 1788096761490,
       "tag": "0017_workable_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788422170282,
+      "tag": "0018_pretty_susan_delgado",
+      "breakpoints": true
     }
   ]
 }

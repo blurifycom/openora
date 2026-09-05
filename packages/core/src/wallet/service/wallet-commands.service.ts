@@ -10,6 +10,7 @@ import {
   type WalletDebitOutcome,
   type WalletCreditArgs,
   type WalletCreditOutcome,
+  type WalletProviderRef,
   type WalletTransactionType,
 } from '@openora/core/contracts';
 import {
@@ -75,6 +76,7 @@ export class WalletCommandsService implements WalletCommands {
     type: WalletTransactionType,
     amount: string,
     direction: ManualAdjustmentDirection,
+    providerRef?: WalletProviderRef,
   ) {
     return txn.insert(walletTransaction).values({
       walletId: row.id,
@@ -84,12 +86,19 @@ export class WalletCommandsService implements WalletCommands {
       status: 'completed',
       direction,
       rail: railFor(row.currency, this.platformConfig?.wallet?.cryptoCurrencies),
+      providerName: providerRef?.providerName,
+      providerRefId: providerRef?.providerRefId,
+      externalRoundId: providerRef?.externalRoundId,
+      metadata:
+        providerRef?.responseSnapshot !== undefined
+          ? JSON.stringify(providerRef.responseSnapshot)
+          : undefined,
     });
   }
 
   async debit(
     tx: unknown,
-    { userId, amount, type, currency }: WalletDebitArgs,
+    { userId, amount, type, currency, providerRef }: WalletDebitArgs,
   ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -140,7 +149,7 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit');
+    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
 
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
@@ -156,7 +165,15 @@ export class WalletCommandsService implements WalletCommands {
 
   async credit(
     tx: unknown,
-    { userId, amount, currency, type, allowNewCurrency, allowNewWallet }: WalletCreditArgs,
+    {
+      userId,
+      amount,
+      currency,
+      type,
+      providerRef,
+      allowNewCurrency,
+      allowNewWallet,
+    }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -180,7 +197,7 @@ export class WalletCommandsService implements WalletCommands {
       throw new Error('wallet credit: no row');
     }
 
-    await this.writeLedgerRow(txn, creditRow, type, amount, 'credit');
+    await this.writeLedgerRow(txn, creditRow, type, amount, 'credit', providerRef);
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {

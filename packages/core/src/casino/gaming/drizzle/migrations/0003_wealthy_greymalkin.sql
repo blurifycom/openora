@@ -1,0 +1,2 @@
+ALTER TABLE "game_round" ADD COLUMN "external_round_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "game_round_external_round_id_idx" ON "game_round" USING btree ("external_round_id") WHERE "game_round"."external_round_id" IS NOT NULL;

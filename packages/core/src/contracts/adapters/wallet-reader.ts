@@ -1,4 +1,18 @@
 import { createToken } from './token.js';
+import type { WalletTransactionType, WalletTransactionStatus } from '../schemas/wallet-tx.js';
+
+export type WalletProviderTransaction = {
+  id: string;
+  type: WalletTransactionType;
+  amount: string;
+  currency: string;
+  status: WalletTransactionStatus;
+  providerName: string;
+  providerRefId: string;
+  externalRoundId: string | null;
+  metadata: string | null;
+  createdAt: Date;
+};
 
 /** One player balance row, as returned by `WalletReader.getBalances`. */
 export type WalletBalanceReading = {
@@ -27,6 +41,13 @@ export type WalletReader = {
    * getWithdrawalCountInWindow (see TagEvaluationService's high_risk resweep).
    */
   getWithdrawalCountsInWindow?(userIds: string[], windowDays: number): Promise<Map<string, number>>;
+  /** Looks up the wallet_transaction row tagged with this (providerName, providerRefId) pair, if any. Optional for the same reason as getWithdrawalCountsInWindow above. */
+  findByProviderRef?(
+    providerName: string,
+    providerRefId: string,
+  ): Promise<WalletProviderTransaction | null>;
+  /** Current balance in the player's active wallet currency. Optional for the same reason as getWithdrawalCountsInWindow above. */
+  getBalance?(userId: string): Promise<{ balance: string; currency: string }>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

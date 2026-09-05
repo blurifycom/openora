@@ -19,6 +19,7 @@ export const WALLET_TRANSACTION_TYPES = [
   'rain',
   'manual_credit',
   'manual_debit',
+  'bet_reversal',
   'swap_out',
   'swap_in',
 ] as const;

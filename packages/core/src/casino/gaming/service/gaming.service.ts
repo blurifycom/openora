@@ -1,5 +1,6 @@
 import {
   type EventBus,
+  type DrizzleDb,
   createDomainError,
   makeNotFoundError,
   makeConflictError,
@@ -7,7 +8,7 @@ import {
   findOneOrThrow,
   serializeRow,
 } from '@openora/core/server';
-import { eq, and, asc, desc } from 'drizzle-orm';
+import { eq, and, asc, desc, sql } from 'drizzle-orm';
 import {
   RgLimitExceededError,
   type GameAdapter,
@@ -165,6 +166,60 @@ export class GamingService {
     });
 
     return { success: true };
+  }
+
+  /**
+   * `targetWhere` must repeat the partial index's predicate (schema/index.ts) - Postgres
+   * rejects ON CONFLICT against a partial index without it. Deltas add onto the stored
+   * value, not `excluded.<col>`, so concurrent callbacks each apply their own delta.
+   */
+  async accumulateExternalRound(
+    tx: unknown,
+    args: {
+      gameId: Game['id'];
+      userId: User['id'];
+      currency: string;
+      externalRoundId: NonNullable<GameRound['externalRoundId']>;
+      betDelta?: string;
+      winDelta?: string;
+      isFinal?: boolean;
+    },
+  ): Promise<{ roundId: GameRound['id']; betAmount: string; winAmount: string }> {
+    const txn = tx as DrizzleDb;
+    const betDelta = args.betDelta ?? '0';
+    const winDelta = args.winDelta ?? '0';
+    const status = args.isFinal ? 'completed' : 'active';
+    const endedAt = args.isFinal ? new Date() : undefined;
+    const [row] = await txn
+      .insert(gameRound)
+      .values({
+        gameId: args.gameId,
+        userId: args.userId,
+        currency: args.currency,
+        externalRoundId: args.externalRoundId,
+        betAmount: betDelta,
+        winAmount: winDelta,
+        status,
+        endedAt,
+      })
+      .onConflictDoUpdate({
+        target: gameRound.externalRoundId,
+        targetWhere: sql`${gameRound.externalRoundId} IS NOT NULL`,
+        set: {
+          betAmount: sql`${gameRound.betAmount} + ${betDelta}::numeric`,
+          winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
+          ...(args.isFinal ? { status, endedAt } : {}),
+        },
+      })
+      .returning({
+        id: gameRound.id,
+        betAmount: gameRound.betAmount,
+        winAmount: gameRound.winAmount,
+      });
+    if (!row) {
+      throw new Error('accumulateExternalRound: no row');
+    }
+    return { roundId: row.id, betAmount: row.betAmount, winAmount: row.winAmount };
   }
 
   async getUserRounds(userId: User['id']) {

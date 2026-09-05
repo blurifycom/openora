@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -7,6 +8,7 @@ import {
   timestamp,
   pgEnum,
   index,
+  uniqueIndex,
   jsonb,
 } from 'drizzle-orm/pg-core';
 import { GAME_TYPES } from '@openora/core/contracts';
@@ -45,11 +47,15 @@ export const gameRound = pgTable(
     currency: text().notNull(),
     startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp({ withTimezone: true }),
+    externalRoundId: text(),
   },
   (t) => [
     index('game_round_user_id_idx').on(t.userId),
     index('game_round_game_id_started_at_idx').on(t.gameId, t.startedAt),
     index('game_round_started_at_idx').on(t.startedAt),
+    uniqueIndex('game_round_external_round_id_idx')
+      .on(t.externalRoundId)
+      .where(sql`${t.externalRoundId} IS NOT NULL`),
   ],
 );
 
