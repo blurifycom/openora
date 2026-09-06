@@ -6,6 +6,7 @@ import {
   DrizzleService,
   findOneOrThrow,
   isUniqueConstraintViolation,
+  likeContains,
   pageToOffset,
   serializeRow,
 } from '@openora/core/server';
@@ -33,6 +34,7 @@ import {
 } from '../schema/index.js';
 import { GameProviderNotFoundError } from './game-provider.service.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
+import { categoriesByGameIds } from '../../shared/game-catalog.js';
 import type { UpdateGameInput } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
@@ -118,7 +120,7 @@ export class GamingService {
     isActive?: boolean;
   }) {
     const where = and(
-      q ? or(ilike(game.name, `%${q}%`), ilike(game.slug, `%${q}%`)) : undefined,
+      q ? or(ilike(game.name, likeContains(q)), ilike(game.slug, likeContains(q))) : undefined,
       providerId ? eq(game.providerId, providerId) : undefined,
       isActive === undefined ? undefined : eq(game.isActive, isActive),
       categoryId
@@ -146,7 +148,10 @@ export class GamingService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(game).where(where),
     ]);
-    const categories = await this.categoriesByGameIds(rows.map((r) => r.game.id));
+    const categories = await categoriesByGameIds(
+      this.drizzle.db,
+      rows.map((r) => r.game.id),
+    );
     return {
       items: rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] })),
       total: Number(n),
@@ -164,31 +169,8 @@ export class GamingService {
         .where(eq(game.id, id)),
       new GameNotFoundError(id),
     );
-    const categories = await this.categoriesByGameIds([row.game.id]);
+    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id]);
     return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
-  }
-
-  // One batched query for many games - never per-game lookups (no N+1).
-  private async categoriesByGameIds(gameIds: Game['id'][]) {
-    if (gameIds.length === 0) {
-      return new Map<Game['id'], (typeof gameCategory.$inferSelect)[]>();
-    }
-    const rows = await this.drizzle.db
-      .select({ gameId: gameCategoryGame.gameId, category: gameCategory })
-      .from(gameCategoryGame)
-      .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
-      .where(inArray(gameCategoryGame.gameId, gameIds))
-      .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
-    const map = new Map<Game['id'], (typeof gameCategory.$inferSelect)[]>();
-    for (const r of rows) {
-      const list = map.get(r.gameId);
-      if (list) {
-        list.push(r.category);
-      } else {
-        map.set(r.gameId, [r.category]);
-      }
-    }
-    return map;
   }
 
   async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {
@@ -299,6 +281,12 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & Actor) {
+    const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
+    const patch: Partial<typeof game.$inferInsert> = { ...patchInput };
+    const hasScalarChanges = Object.values(patch).some((value) => value !== undefined);
+    if (!hasScalarChanges && uniqueCategoryIds === undefined) {
+      return this.getGame(id);
+    }
     if (patchInput.providerId !== undefined) {
       findOneOrThrow(
         await this.drizzle.db
@@ -319,16 +307,16 @@ export class GamingService {
         throw new GameSlugTakenError();
       }
     }
-    if (categoryIds !== undefined) {
+    if (uniqueCategoryIds !== undefined) {
       const rows =
-        categoryIds.length > 0
+        uniqueCategoryIds.length > 0
           ? await this.drizzle.db
               .select()
               .from(gameCategory)
-              .where(inArray(gameCategory.id, categoryIds))
+              .where(inArray(gameCategory.id, uniqueCategoryIds))
           : [];
       const found = new Set(rows.map((r) => r.id));
-      const missing = categoryIds.find((categoryId) => !found.has(categoryId));
+      const missing = uniqueCategoryIds.find((categoryId) => !found.has(categoryId));
       if (missing) {
         throw new GameCategoryNotFoundError(missing);
       }
@@ -339,25 +327,15 @@ export class GamingService {
           await tx.select({ id: game.id }).from(game).where(eq(game.id, id)).limit(1),
           new GameNotFoundError(id),
         );
-        const { name, slug, providerId, aggregator, thumbnailUrl, isActive, metadata } = patchInput;
-        const patch: Partial<typeof game.$inferInsert> = {
-          name,
-          slug,
-          providerId,
-          aggregator,
-          thumbnailUrl,
-          isActive,
-          metadata,
-        };
-        if (Object.values(patch).some((value) => value !== undefined)) {
+        if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
-        if (categoryIds !== undefined) {
+        if (uniqueCategoryIds !== undefined) {
           await tx.delete(gameCategoryGame).where(eq(gameCategoryGame.gameId, id));
-          if (categoryIds.length > 0) {
+          if (uniqueCategoryIds.length > 0) {
             await tx
               .insert(gameCategoryGame)
-              .values(categoryIds.map((categoryId) => ({ gameId: id, categoryId })));
+              .values(uniqueCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
           }
         }
       });

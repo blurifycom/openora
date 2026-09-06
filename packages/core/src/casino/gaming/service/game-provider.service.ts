@@ -5,6 +5,7 @@ import {
   DrizzleService,
   findOneOrThrow,
   isUniqueConstraintViolation,
+  likeContains,
   serializeRow,
   pageToOffset,
 } from '@openora/core/server';
@@ -75,7 +76,9 @@ export class GameProviderService {
     isActive?: boolean;
   }) {
     const where = and(
-      q ? or(ilike(gameProvider.name, `%${q}%`), ilike(gameProvider.slug, `%${q}%`)) : undefined,
+      q
+        ? or(ilike(gameProvider.name, likeContains(q)), ilike(gameProvider.slug, likeContains(q)))
+        : undefined,
       isActive === undefined ? undefined : eq(gameProvider.isActive, isActive),
     );
     const [rows, [{ n }]] = await Promise.all([
@@ -114,27 +117,21 @@ export class GameProviderService {
         throw new GameProviderSlugTakenError();
       }
     }
-    const { slug, name, aggregatorVendorId, logoUrl, isActive } = patchInput;
-    const patch: Partial<typeof gameProvider.$inferInsert> = {
-      slug,
-      name,
-      aggregatorVendorId,
-      logoUrl,
-      isActive,
-    };
+    const patch: Partial<typeof gameProvider.$inferInsert> = { ...patchInput };
     const hasChanges = Object.values(patch).some((value) => value !== undefined);
+    if (!hasChanges) {
+      return toProviderDetail(existing);
+    }
     let updated: typeof gameProvider.$inferSelect;
     try {
-      updated = hasChanges
-        ? findOneOrThrow(
-            await this.drizzle.db
-              .update(gameProvider)
-              .set(patch)
-              .where(eq(gameProvider.id, id))
-              .returning(),
-            new GameProviderNotFoundError(id),
-          )
-        : existing;
+      updated = findOneOrThrow(
+        await this.drizzle.db
+          .update(gameProvider)
+          .set(patch)
+          .where(eq(gameProvider.id, id))
+          .returning(),
+        new GameProviderNotFoundError(id),
+      );
     } catch (error) {
       if (isUniqueConstraintViolation(error)) {
         throw new GameProviderSlugTakenError();

@@ -8,8 +8,10 @@ import {
   IdInputSchema,
   MoneyAmountSchema,
   PageQuerySchema,
+  QueryBooleanSchema,
   TimestampSchema,
   UuidSchema,
+  createKebabSlugSchema,
   paginated,
 } from '@openora/core/contracts';
 
@@ -73,9 +75,12 @@ export const EndRoundOutputSchema = z.object({
   outcome: z.unknown().optional(),
 });
 
-export const ListGamesInputSchema = z.object({
+const CatalogQueryBaseSchema = z.object({
   ...PageQuerySchema.shape,
   q: z.string().trim().min(1).max(64).optional(),
+});
+
+export const ListGamesInputSchema = CatalogQueryBaseSchema.extend({
   providerId: UuidSchema.optional(),
   categoryId: UuidSchema.optional(),
 });
@@ -113,49 +118,35 @@ export const gamingContract = {
     .output(z.array(GameCategorySummarySchema)),
 };
 
-// ---------------------------------------------------------------------------
 // Backoffice catalog management (game-config guarded in the router).
-// ---------------------------------------------------------------------------
 
 // kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
-export const CatalogSlugSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+export const CatalogSlugSchema = createKebabSlugSchema(64);
 
-const QueryBooleanSchema = z.preprocess(
-  (value) => (value === 'true' ? true : value === 'false' ? false : value),
-  z.boolean(),
-);
-
-export const GameProviderSchema = GameProviderSummarySchema.extend({
+export const GameProviderDetailSchema = GameProviderSummarySchema.extend({
   aggregatorVendorId: z.string().nullable(),
   isActive: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
-export type GameProviderDetail = z.infer<typeof GameProviderSchema>;
+export type GameProviderDetail = z.infer<typeof GameProviderDetailSchema>;
+// Alias kept for existing imports; new code uses GameProviderDetailSchema.
+export const GameProviderSchema = GameProviderDetailSchema;
 
-export const GameCategorySchema = GameCategorySummarySchema.extend({
+export const GameCategoryDetailSchema = GameCategorySummarySchema.extend({
   isActive: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
-export type GameCategoryDetail = z.infer<typeof GameCategorySchema>;
+export type GameCategoryDetail = z.infer<typeof GameCategoryDetailSchema>;
+// Alias kept for existing imports; new code uses GameCategoryDetailSchema.
+export const GameCategorySchema = GameCategoryDetailSchema;
 
-const CatalogFilterSchema = z.object({
-  ...PageQuerySchema.shape,
-  q: z.string().trim().min(1).max(64).optional(),
+const CatalogFilterSchema = CatalogQueryBaseSchema.extend({
   isActive: QueryBooleanSchema.optional(),
 });
 
-export const ListAdminGamesInputSchema = z.object({
-  ...PageQuerySchema.shape,
-  q: z.string().trim().min(1).max(64).optional(),
-  providerId: UuidSchema.optional(),
-  categoryId: UuidSchema.optional(),
+export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   isActive: QueryBooleanSchema.optional(),
 });
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
@@ -197,7 +188,7 @@ export const UpdateGameInputSchema = z.object({
   thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
   isActive: z.boolean().optional(),
   metadata: z.unknown().nullable().optional(),
-  categoryIds: z.array(UuidSchema).optional(),
+  categoryIds: z.array(UuidSchema).max(50).optional(),
 });
 export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
 
@@ -205,37 +196,37 @@ export const gamingAdminContract = {
   listAdminProviders: oc
     .route({ method: 'GET', path: '/backoffice/gaming/providers' })
     .input(CatalogFilterSchema)
-    .output(paginated(GameProviderSchema)),
+    .output(paginated(GameProviderDetailSchema)),
 
   getAdminProvider: oc
     .route({ method: 'GET', path: '/backoffice/gaming/providers/{id}' })
     .input(IdInputSchema)
-    .output(GameProviderSchema),
+    .output(GameProviderDetailSchema),
 
   updateProvider: oc
     .route({ method: 'PATCH', path: '/backoffice/gaming/providers/{id}' })
     .input(UpdateProviderInputSchema)
-    .output(GameProviderSchema),
+    .output(GameProviderDetailSchema),
 
   listAdminCategories: oc
     .route({ method: 'GET', path: '/backoffice/gaming/categories' })
     .input(CatalogFilterSchema)
-    .output(paginated(GameCategorySchema)),
+    .output(paginated(GameCategoryDetailSchema)),
 
   getAdminCategory: oc
     .route({ method: 'GET', path: '/backoffice/gaming/categories/{id}' })
     .input(IdInputSchema)
-    .output(GameCategorySchema),
+    .output(GameCategoryDetailSchema),
 
   createCategory: oc
     .route({ method: 'POST', path: '/backoffice/gaming/categories' })
     .input(CreateCategoryInputSchema)
-    .output(GameCategorySchema),
+    .output(GameCategoryDetailSchema),
 
   updateCategory: oc
     .route({ method: 'PATCH', path: '/backoffice/gaming/categories/{id}' })
     .input(UpdateCategoryInputSchema)
-    .output(GameCategorySchema),
+    .output(GameCategoryDetailSchema),
 
   updateGame: oc
     .route({ method: 'PATCH', path: '/backoffice/gaming/games/{id}' })

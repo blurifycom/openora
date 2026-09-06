@@ -3,6 +3,9 @@ import {
   findOneOrThrow,
   pageToOffset,
   isUniqueConstraintViolation,
+  escapeLike,
+  likeContains,
+  likePrefix,
   moneyToNumber,
   moneyEquals,
   moneyCompare,
@@ -41,6 +44,29 @@ describe('isUniqueConstraintViolation', () => {
     expect(isUniqueConstraintViolation({})).toBe(false);
     expect(isUniqueConstraintViolation(null)).toBe(false);
     expect(isUniqueConstraintViolation('23505')).toBe(false);
+  });
+});
+
+describe('escapeLike', () => {
+  it('escapes % _ and backslash so caller input matches literally', () => {
+    expect(escapeLike('100%_\\')).toBe('100\\%\\_\\\\');
+  });
+
+  it('leaves plain text unchanged', () => {
+    expect(escapeLike('pragmatic')).toBe('pragmatic');
+  });
+});
+
+describe('likeContains', () => {
+  it('wraps escaped input in % for a contains match', () => {
+    expect(likeContains('a%b')).toBe('%a\\%b%');
+  });
+});
+
+describe('likePrefix', () => {
+  it('appends % for a prefix match with escaped input', () => {
+    expect(likePrefix('rg.')).toBe('rg.%');
+    expect(likePrefix('a_b')).toBe('a\\_b%');
   });
 });
 

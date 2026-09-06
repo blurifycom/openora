@@ -109,6 +109,22 @@ function fromUnitsAtScale(units: bigint, scale: number): string {
   return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
 }
 
+// Escape LIKE wildcards so a caller-supplied value matches literally and a
+// stray % _ or \ can't widen the match. Backslash is the default PG escape char.
+export function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
+
+// `%value%` contains-match for ilike/like with caller input.
+export function likeContains(value: string): string {
+  return `%${escapeLike(value)}%`;
+}
+
+// `value%` prefix-match for ilike/like with caller input.
+export function likePrefix(value: string): string {
+  return `${escapeLike(value)}%`;
+}
+
 // Run `fn` over `items` with at most `concurrency` promises in flight, results in input
 // order. Use this instead of `Promise.all(items.map(fn))` whenever `items` comes from a
 // query (unbounded) and `fn` touches the DB: an uncapped fan-out opens one pool connection

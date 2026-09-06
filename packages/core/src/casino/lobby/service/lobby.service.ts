@@ -1,13 +1,15 @@
-import { createDomainError, DrizzleService, findOneOrThrow, cached } from '@openora/core/server';
+import {
+  createDomainError,
+  DrizzleService,
+  findOneOrThrow,
+  cached,
+  likeContains,
+} from '@openora/core/server';
 import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
-import {
-  game,
-  gameCategory,
-  gameCategoryGame,
-  gameProvider,
-} from '@openora/core/casino/schema/gaming';
+import { game, gameProvider, type GameCategory } from '@openora/core/casino/schema/gaming';
+import { categoriesByGameIds } from '../../shared/game-catalog.js';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
@@ -22,7 +24,7 @@ const FEATURED_CACHE_KEY = 'lobby:featured';
 function toGameSummary(row: {
   game: typeof game.$inferSelect;
   provider: typeof gameProvider.$inferSelect;
-  categories: (typeof gameCategory.$inferSelect)[];
+  categories: GameCategory[];
 }) {
   return {
     id: row.game.id,
@@ -98,7 +100,7 @@ export class LobbyService {
             .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
             .where(inArray(game.id, gameIds))
         : [];
-    const categories = await this.categoriesByGameIds(gameIds);
+    const categories = await categoriesByGameIds(db, gameIds);
 
     const gameMap = new Map(rows.map((r) => [r.game.id, r]));
 
@@ -153,7 +155,7 @@ export class LobbyService {
 
   async search(query: string) {
     const db = this.drizzle.db;
-    const whereClause = and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
+    const whereClause = and(ilike(game.name, likeContains(query)), eq(game.isActive, true));
 
     const rows = await db
       .select({ game, provider: gameProvider })
@@ -162,32 +164,11 @@ export class LobbyService {
       .where(whereClause)
       .orderBy(asc(game.name))
       .limit(50);
-    const categories = await this.categoriesByGameIds(rows.map((r) => r.game.id));
+    const categories = await categoriesByGameIds(
+      db,
+      rows.map((r) => r.game.id),
+    );
 
     return rows.map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] }));
-  }
-
-  // One batched query for many games - never per-game lookups (no N+1).
-  private async categoriesByGameIds(gameIds: string[]) {
-    if (gameIds.length === 0) {
-      return new Map<string, (typeof gameCategory.$inferSelect)[]>();
-    }
-    const db = this.drizzle.db;
-    const rows = await db
-      .select({ gameId: gameCategoryGame.gameId, category: gameCategory })
-      .from(gameCategoryGame)
-      .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
-      .where(inArray(gameCategoryGame.gameId, gameIds))
-      .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
-    const map = new Map<string, (typeof gameCategory.$inferSelect)[]>();
-    for (const r of rows) {
-      const list = map.get(r.gameId);
-      if (list) {
-        list.push(r.category);
-      } else {
-        map.set(r.gameId, [r.category]);
-      }
-    }
-    return map;
   }
 }

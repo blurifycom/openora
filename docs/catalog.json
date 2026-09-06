@@ -1655,6 +1655,10 @@
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
+      "name": "GameCategoryDetailSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "GameCategorySchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -1673,6 +1677,10 @@
     {
       "name": "GamePerformanceSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameProviderDetailSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "GameProviderSchema",
@@ -2209,6 +2217,10 @@
     {
       "name": "PublicWalletAssetSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "QueryBooleanSchema",
+      "file": "packages/core/src/contracts/kit.ts"
     },
     {
       "name": "RainCommandMetadataSchema",
