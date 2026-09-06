@@ -7,6 +7,7 @@ import type {
   RealtimeTransport,
 } from '@openora/core/contracts';
 import { ChatCommandsService } from '../chat-commands.service.js';
+import { ChatCommandDescriptorSchema } from '../../contract/index.js';
 
 const ENABLED_ROW = {
   key: 'gift',
@@ -90,6 +91,18 @@ describe('ChatCommandsService command registry', () => {
 
     expect(result.items).toHaveLength(2);
     expect(result.total).toBe(2);
+  });
+
+  it('emits a descriptor the route contract accepts for a single-currency limit', async () => {
+    const config = { minAmount: { currency: 'USD', amount: '1.00000000' }, maxRecipients: 100 };
+    const result = await makeService([[{ ...ENABLED_ROW, config }], [{ n: 1 }]]).adminListCommands({
+      page: 1,
+      limit: 10,
+      sortBy: 'key',
+      sortOrder: 'asc',
+    });
+
+    expect(ChatCommandDescriptorSchema.parse(result.items[0]).config).toEqual(config);
   });
 });
 

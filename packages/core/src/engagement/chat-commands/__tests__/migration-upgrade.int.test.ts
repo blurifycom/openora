@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { createTestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
+import { CommandConfigSchema } from '../contract/index.js';
 
 const STRIPED_TRAUMA_HASH = 'a58ec63c81a4cbd62603a8381da61c5c6d85b57af5d56ba79839d090fbcf0708';
 
@@ -38,6 +39,27 @@ async function migratePreviousHead(databaseUrl: string) {
   }
 }
 
+const LEGACY_ROWS = [
+  ['gift', '{"minAmount":"1.00000000"}'],
+  ['rain', '{"minAmount":{"USD":"4"},"maxRecipients":100}'],
+  ['donate', '{"minAmount":{"ETH":"0.01","BTC":"0.0001"},"maxAmount":{"USD":"50","BTC":"0.5"}}'],
+  ['profile', '{"minAmount":{"currency":"USD","amount":"7"}}'],
+];
+
+async function seedLegacyConfigs(databaseUrl: string) {
+  const pool = new Pool({ connectionString: databaseUrl });
+  try {
+    for (const [key, config] of LEGACY_ROWS) {
+      await pool.query(
+        `INSERT INTO chat_command_config (key, label, config) VALUES ($1, $1, $2::jsonb)`,
+        [key, config],
+      );
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
 describe('chat-command migration upgrades', () => {
   it('accepts a database migrated by the previous striped-trauma baseline', async () => {
     const db = await createTestDb([migratePreviousHead, migrate]);
@@ -50,6 +72,37 @@ describe('chat-command migration upgrades', () => {
       );
 
       expect(relations.rows[0]).toEqual({ config: 'chat_command_config', gift: null });
+    } finally {
+      await pool.end();
+      await db.drop();
+    }
+  });
+
+  it('rewrites both legacy limit shapes into a single currency/amount pair', async () => {
+    const db = await createTestDb([migratePreviousHead, seedLegacyConfigs, migrate]);
+    const pool = new Pool({ connectionString: db.url });
+    try {
+      const rows = await pool.query<{ key: string; config: Record<string, unknown> }>(
+        'SELECT key, config FROM chat_command_config ORDER BY key',
+      );
+      const byKey = Object.fromEntries(rows.rows.map((r) => [r.key, r.config]));
+
+      expect(byKey['gift']).toEqual({ minAmount: { currency: 'USD', amount: '1.00000000' } });
+      expect(byKey['rain']).toEqual({
+        minAmount: { currency: 'USD', amount: '4' },
+        maxRecipients: 100,
+      });
+      // No USD entry: the alphabetically first key wins, so every stand converges on the same row.
+      expect(byKey['donate']).toEqual({
+        minAmount: { currency: 'BTC', amount: '0.0001' },
+        maxAmount: { currency: 'USD', amount: '50' },
+      });
+      // Already converted - left untouched, so re-running the migration is safe.
+      expect(byKey['profile']).toEqual({ minAmount: { currency: 'USD', amount: '7' } });
+      // The bug this migration exists for: one unparseable row failed the whole list route.
+      for (const row of rows.rows) {
+        expect(CommandConfigSchema.safeParse(row.config).success).toBe(true);
+      }
     } finally {
       await pool.end();
       await db.drop();
