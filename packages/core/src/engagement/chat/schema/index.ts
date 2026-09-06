@@ -16,8 +16,9 @@ import {
   CHAT_ROOM_ROLES,
   CHAT_MODERATION_SCOPE_VALUES,
 } from '../contract/index.js';
-import { CHAT_MESSAGE_TYPES } from '@openora/core/contracts';
-import type { CommandMetadata, ChatAttachment } from '@openora/core/contracts';
+import { CHAT_MESSAGE_TYPES, ChatAttachmentSchema } from '@openora/core/contracts';
+import type { CommandMetadata } from '@openora/core/contracts';
+import { zodJsonb } from '@openora/core/server';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
@@ -60,8 +61,10 @@ export const chatMessage = pgTable(
     username: text().notNull(),
     content: text().notNull(),
     type: chatMessageType().notNull().default('user'),
+    // Not zodJsonb: `sanitizeCommandMetadata` repairs legacy money strings on read, so this
+    // column is parsed after that repair rather than before it. See `toSystemMessage`.
     metadata: jsonb().$type<CommandMetadata>(),
-    attachment: jsonb().$type<ChatAttachment>(),
+    attachment: zodJsonb(ChatAttachmentSchema, 'chat_message.attachment')(),
     isDeleted: boolean().notNull().default(false),
     deletedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

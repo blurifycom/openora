@@ -11,9 +11,9 @@ import {
   pgEnum,
   integer,
   decimal,
-  jsonb,
 } from 'drizzle-orm/pg-core';
-import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
+import { PlayerTagAssignMetadataSchema } from '../contract/player-tag-assign-metadata.js';
+import { zodJsonb } from '@openora/core/server';
 
 export const tagAssignRemoveSourceEnum = pgEnum('tag_assign_remove_source', tagAssignRemoveSource);
 export const tagKeyEnum = pgEnum('tag_key', tagKeys);
@@ -42,7 +42,7 @@ export const playerTag = pgTable(
     assignReason: text().notNull(),
     assignActor: tagAssignRemoveSourceEnum().notNull(),
     assignActorUserId: uuid() /* Potential FKey - user; null = system actor */,
-    assignMetadata: jsonb().$type<PlayerTagAssignMetadata>(),
+    assignMetadata: zodJsonb(PlayerTagAssignMetadataSchema, 'player_tag.assign_metadata')(),
     /* Removal data */
     removedAt: timestamp({ withTimezone: true }),
     removalReason: text(),
