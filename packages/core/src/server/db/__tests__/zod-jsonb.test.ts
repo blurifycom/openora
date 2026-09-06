@@ -23,10 +23,29 @@ describe('zodJsonb', () => {
     });
   });
 
-  // The shape written before the value became a per-currency record. One such row must cost
+  // A shape an earlier release wrote and this one no longer accepts. One such row must cost
   // its own config, not the whole response it was selected into.
   it('reads a value the schema rejects as null', () => {
     expect(column.mapFromDriverValue({ minAmount: '1.00000000' })).toBeNull();
+  });
+
+  // A compliance column reads as absent on drift like any other, but the drift is reported
+  // rather than logged: an empty risk-signal field must not look like a clean player.
+  it('reports rather than warns for a column marked severity error', () => {
+    const loud = pgTable('loud_probe', {
+      id: uuid().primaryKey(),
+      signals: zodJsonb(z.object({ vpn: z.boolean() }), 'loud_probe.signals', {
+        severity: 'error',
+      })(),
+    });
+
+    expect(loud.signals.mapFromDriverValue({ vpn: 'yes' })).toBeNull();
+  });
+
+  it('writes a value the schema accepts as json the driver can bind', () => {
+    expect(column.mapToDriverValue({ minAmount: { USD: '1.00' } })).toBe(
+      '{"minAmount":{"USD":"1.00"}}',
+    );
   });
 
   it('refuses to write a value the schema rejects', () => {
