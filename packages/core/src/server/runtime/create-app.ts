@@ -52,18 +52,20 @@ import type { CoreTokenCatalog } from './core-token-catalog.js';
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
 // only (lobby feeds, public CMS content, the game catalogue). NOTHING
 // authenticated or per-player (wallet, profile, notifications, admin, chat) - a
-// consumer overrides this via `httpCache.paths` or disables it with `httpCache: false`.
+// consumer replaces this wholesale via `httpCache.paths`, extends it via
+// `httpCache.additionalPaths`, or disables caching entirely with `httpCache: false`.
 // This list living in the domain-agnostic engine (rather than each module
-// declaring its own cacheable routes) is accepted debt.
+// declaring its own cacheable routes) is accepted debt. Exported so a consumer
+// using `paths` to add one prefix can spread this in instead of hand-copying it.
 // '/cms/banners' is excluded on purpose: its `listBanners` route is unguarded and returns
 // inactive banners, so HTTP-caching it would leak draft banners to a shared cache.
-const PUBLIC_HTTP_CACHE_PATHS: readonly string[] = [
+export const PUBLIC_HTTP_CACHE_PATHS = [
   '/lobby/categories',
   '/lobby/featured',
   '/lobby/search',
   '/cms/pages',
   '/gaming/games',
-];
+] as const;
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
@@ -109,9 +111,10 @@ export type CreateAppConfig = {
 
   igaming?: IgamingConfig;
 
-  // GET-only, path-prefix-matched Cache-Control on PUBLIC_HTTP_CACHE_PATHS (or a
-  // supplied override). `false` disables HTTP response caching entirely.
-  httpCache?: { paths?: string[]; maxAgeSeconds?: number } | false;
+  // GET-only, path-prefix-matched Cache-Control on PUBLIC_HTTP_CACHE_PATHS. `paths`
+  // replaces that default list wholesale; `additionalPaths` extends it instead (ignored
+  // if `paths` is also given). `false` disables HTTP response caching entirely.
+  httpCache?: { paths?: string[]; additionalPaths?: string[]; maxAgeSeconds?: number } | false;
 
   disableHealthModule?: boolean;
 };
@@ -379,7 +382,10 @@ export async function createApp(
   }
 
   if (config.httpCache !== false) {
-    const cachePaths = config.httpCache?.paths ?? PUBLIC_HTTP_CACHE_PATHS;
+    const cachePaths = config.httpCache?.paths ?? [
+      ...PUBLIC_HTTP_CACHE_PATHS,
+      ...(config.httpCache?.additionalPaths ?? []),
+    ];
     const maxAgeSeconds = config.httpCache?.maxAgeSeconds ?? DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS;
     const staleWhileRevalidateSeconds = config.httpCache?.maxAgeSeconds
       ? maxAgeSeconds * 2

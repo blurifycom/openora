@@ -80,6 +80,68 @@ describe('createApp - streaming responses opt out of transformation', () => {
   });
 });
 
+describe('createApp - httpCache.additionalPaths extends rather than replaces the default list', () => {
+  it('keeps the built-in cache paths cacheable while adding a consumer path', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const created = await createApp({
+        plugins: [],
+        databaseUrl: DUMMY_DATABASE_URL,
+        httpCache: { additionalPaths: ['/email-assets'] },
+      });
+      created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
+      created.app.get('/email-assets/banner.png', (c) => c.body('png'));
+      created.app.get('/wallet/balance', (c) => c.json({ ok: true }));
+
+      const builtIn = await created.app.request('/lobby/categories');
+      expect(builtIn.headers.get('cache-control')).toMatch(/^public,/);
+
+      const added = await created.app.request('/email-assets/banner.png');
+      expect(added.headers.get('cache-control')).toMatch(/^public,/);
+
+      const uncacheable = await created.app.request('/wallet/balance');
+      expect(uncacheable.headers.get('cache-control')).toBe('no-store');
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+
+  it('lets `paths` still replace the default list wholesale, ignoring additionalPaths', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const created = await createApp({
+        plugins: [],
+        databaseUrl: DUMMY_DATABASE_URL,
+        httpCache: { paths: ['/only-this'], additionalPaths: ['/ignored-since-paths-is-set'] },
+      });
+      created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
+      created.app.get('/ignored-since-paths-is-set', (c) => c.json({ ok: true }));
+
+      const builtIn = await created.app.request('/lobby/categories');
+      expect(builtIn.headers.get('cache-control')).toBe('no-store');
+
+      const ignored = await created.app.request('/ignored-since-paths-is-set');
+      expect(ignored.headers.get('cache-control')).toBe('no-store');
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+});
+
 describe('createApp - service name for the Redis Streams consumer group', () => {
   const saved = { redis: process.env['REDIS_URL'], manifest: process.env['SERVICE_MANIFEST'] };
 
