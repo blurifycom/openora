@@ -8,6 +8,7 @@ export {
   escapeLike,
   likeContains,
   likePrefix,
+  uniqueConstraintName,
   withAdvisoryXactLock,
   moneyToNumber,
   moneyEquals,

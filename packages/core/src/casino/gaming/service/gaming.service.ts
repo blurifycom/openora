@@ -5,10 +5,10 @@ import {
   makeConflictError,
   DrizzleService,
   findOneOrThrow,
-  isUniqueConstraintViolation,
   likeContains,
   pageToOffset,
   serializeRow,
+  uniqueConstraintName,
 } from '@openora/core/server';
 import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or } from 'drizzle-orm';
 import {
@@ -366,7 +366,9 @@ export class GamingService {
         }
       });
     } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
+      // The transaction also writes category links: only a slug collision maps
+      // to GameSlugTakenError, a link race must not masquerade as one.
+      if (uniqueConstraintName(error) === 'game_slug_key') {
         throw new GameSlugTakenError();
       }
       throw error;

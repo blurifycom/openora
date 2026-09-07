@@ -4,10 +4,10 @@ import {
   makeConflictError,
   DrizzleService,
   findOneOrThrow,
-  isUniqueConstraintViolation,
   likeContains,
   serializeRow,
   pageToOffset,
+  uniqueConstraintName,
 } from '@openora/core/server';
 import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
 import type { ClientMeta, User } from '@openora/core/contracts';
@@ -18,6 +18,10 @@ export const GameProviderNotFoundError = makeNotFoundError('GameProvider');
 export const GameProviderSlugTakenError = makeConflictError(
   'GameProviderSlugTakenError',
   'A provider with this slug already exists',
+);
+export const GameProviderVendorIdTakenError = makeConflictError(
+  'GameProviderVendorIdTakenError',
+  'A provider with this aggregator vendor ID already exists',
 );
 
 type Actor = {
@@ -117,6 +121,26 @@ export class GameProviderService {
         throw new GameProviderSlugTakenError();
       }
     }
+    // The unique index permits multiple NULLs, so only a concrete vendor id can clash.
+    if (
+      patchInput.aggregatorVendorId !== undefined &&
+      patchInput.aggregatorVendorId !== null &&
+      patchInput.aggregatorVendorId !== existing.aggregatorVendorId
+    ) {
+      const [clash] = await this.drizzle.db
+        .select({ id: gameProvider.id })
+        .from(gameProvider)
+        .where(
+          and(
+            eq(gameProvider.aggregatorVendorId, patchInput.aggregatorVendorId),
+            ne(gameProvider.id, id),
+          ),
+        )
+        .limit(1);
+      if (clash) {
+        throw new GameProviderVendorIdTakenError();
+      }
+    }
     const patch: Partial<typeof gameProvider.$inferInsert> = { ...patchInput };
     const hasChanges = Object.values(patch).some((value) => value !== undefined);
     if (!hasChanges) {
@@ -133,7 +157,12 @@ export class GameProviderService {
         new GameProviderNotFoundError(id),
       );
     } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
+      // Translate only the index that actually fired: a vendor-id collision must
+      // never surface as a slug conflict, and an unknown 23505 must not lie at all.
+      if (uniqueConstraintName(error) === 'game_provider_aggregator_vendor_id_key') {
+        throw new GameProviderVendorIdTakenError();
+      }
+      if (uniqueConstraintName(error) === 'game_provider_slug_key') {
         throw new GameProviderSlugTakenError();
       }
       throw error;

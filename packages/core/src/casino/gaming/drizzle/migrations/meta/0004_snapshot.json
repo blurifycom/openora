@@ -1,6 +1,6 @@
 {
-  "id": "ccedf03b-a79c-4e44-b7c6-64a2225a6c06",
-  "prevId": "148fd667-dcfd-4789-a33e-5869930e7fc8",
+  "id": "88b19872-bd4d-4410-b72b-504669287456",
+  "prevId": "ccedf03b-a79c-4e44-b7c6-64a2225a6c06",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -98,9 +98,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "game_provider_id_idx": {
           "name": "game_provider_id_idx",
@@ -113,9 +113,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "game_aggregator_idx": {
           "name": "game_aggregator_idx",
@@ -128,20 +128,20 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "game_provider_id_game_provider_id_fk": {
           "name": "game_provider_id_game_provider_id_fk",
           "tableFrom": "game",
-          "tableTo": "game_provider",
           "columnsFrom": ["provider_id"],
+          "tableTo": "game_provider",
           "columnsTo": ["id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -219,9 +219,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -273,9 +273,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "game_category_game_category_id_idx": {
           "name": "game_category_game_category_id_idx",
@@ -288,29 +288,29 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "game_category_game_game_id_game_id_fk": {
           "name": "game_category_game_game_id_game_id_fk",
           "tableFrom": "game_category_game",
-          "tableTo": "game",
           "columnsFrom": ["game_id"],
+          "tableTo": "game",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "game_category_game_category_id_game_category_id_fk": {
           "name": "game_category_game_category_id_game_category_id_fk",
           "tableFrom": "game_category_game",
-          "tableTo": "game_category",
           "columnsFrom": ["category_id"],
+          "tableTo": "game_category",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -393,9 +393,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "game_provider_aggregator_vendor_id_key": {
           "name": "game_provider_aggregator_vendor_id_key",
@@ -408,9 +408,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -497,9 +497,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "game_round_game_id_started_at_idx": {
           "name": "game_round_game_id_started_at_idx",
@@ -518,9 +518,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "game_round_started_at_idx": {
           "name": "game_round_started_at_idx",
@@ -533,20 +533,20 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "game_round_game_id_game_id_fk": {
           "name": "game_round_game_id_game_id_fk",
           "tableFrom": "game_round",
-          "tableTo": "game",
           "columnsFrom": ["game_id"],
+          "tableTo": "game",
           "columnsTo": ["id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -569,10 +569,10 @@
     }
   },
   "schemas": {},
+  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
-  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

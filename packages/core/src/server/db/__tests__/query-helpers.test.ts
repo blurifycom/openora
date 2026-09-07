@@ -3,6 +3,7 @@ import {
   findOneOrThrow,
   pageToOffset,
   isUniqueConstraintViolation,
+  uniqueConstraintName,
   escapeLike,
   likeContains,
   likePrefix,
@@ -44,6 +45,21 @@ describe('isUniqueConstraintViolation', () => {
     expect(isUniqueConstraintViolation({})).toBe(false);
     expect(isUniqueConstraintViolation(null)).toBe(false);
     expect(isUniqueConstraintViolation('23505')).toBe(false);
+  });
+});
+
+describe('uniqueConstraintName', () => {
+  it('reads the violated index off a 23505', () => {
+    expect(uniqueConstraintName({ code: '23505', constraint: 'game_provider_slug_key' })).toBe(
+      'game_provider_slug_key',
+    );
+  });
+
+  it('returns null when no constraint travelled with the error', () => {
+    expect(uniqueConstraintName({ code: '23505' })).toBeNull();
+    expect(uniqueConstraintName({ code: '23505', constraint: 42 })).toBeNull();
+    expect(uniqueConstraintName(null)).toBeNull();
+    expect(uniqueConstraintName('game_provider_slug_key')).toBeNull();
   });
 });
 

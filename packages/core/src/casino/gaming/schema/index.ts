@@ -76,6 +76,11 @@ export const game = pgTable(
     isActive: boolean().notNull().default(false),
     metadata: jsonb(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
+    // so old releases keep working until a follow-up drop migration lands.
+    // Never read or write from new code.
+    provider: text(),
+    category: text(),
   },
   (t) => [
     uniqueIndex('game_slug_key').on(t.slug),

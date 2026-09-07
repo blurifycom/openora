@@ -18,6 +18,7 @@ import {
   GameProviderService,
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
+  GameProviderVendorIdTakenError,
 } from '../service/game-provider.service.js';
 import { RgLimitExceededError } from '@openora/core/contracts';
 
@@ -81,7 +82,10 @@ export function createGamingRouter({
     updateProvider: os.updateProvider.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
-        { NOT_FOUND: GameProviderNotFoundError, CONFLICT: GameProviderSlugTakenError },
+        {
+          NOT_FOUND: GameProviderNotFoundError,
+          CONFLICT: [GameProviderSlugTakenError, GameProviderVendorIdTakenError],
+        },
         () => providers.updateProvider({ ...input, actorId: userId, ip, userAgent }),
       );
     }),

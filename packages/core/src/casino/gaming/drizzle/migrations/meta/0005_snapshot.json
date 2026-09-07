@@ -1,6 +1,6 @@
 {
-  "id": "ccedf03b-a79c-4e44-b7c6-64a2225a6c06",
-  "prevId": "148fd667-dcfd-4789-a33e-5869930e7fc8",
+  "id": "845dcf9b-314d-41fe-8716-8a81a4ad8c5d",
+  "prevId": "88b19872-bd4d-4410-b72b-504669287456",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -25,19 +25,19 @@
           "name": "slug",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "provider_id": {
           "name": "provider_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "aggregator": {
           "name": "aggregator",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "game_type": {
           "name": "game_type",

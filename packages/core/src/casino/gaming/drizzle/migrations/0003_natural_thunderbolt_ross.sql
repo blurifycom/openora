@@ -27,10 +27,12 @@ CREATE TABLE "game_provider" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "game" ALTER COLUMN "provider" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "game" ALTER COLUMN "category" DROP NOT NULL;--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "is_active" SET DEFAULT false;--> statement-breakpoint
-ALTER TABLE "game" ADD COLUMN "slug" text NOT NULL;--> statement-breakpoint
-ALTER TABLE "game" ADD COLUMN "provider_id" uuid NOT NULL;--> statement-breakpoint
-ALTER TABLE "game" ADD COLUMN "aggregator" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "game" ADD COLUMN "slug" text;--> statement-breakpoint
+ALTER TABLE "game" ADD COLUMN "provider_id" uuid;--> statement-breakpoint
+ALTER TABLE "game" ADD COLUMN "aggregator" text;--> statement-breakpoint
 ALTER TABLE "game_category_game" ADD CONSTRAINT "game_category_game_game_id_game_id_fk" FOREIGN KEY ("game_id") REFERENCES "public"."game"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "game_category_game" ADD CONSTRAINT "game_category_game_category_id_game_category_id_fk" FOREIGN KEY ("category_id") REFERENCES "public"."game_category"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "game_category_slug_key" ON "game_category" USING btree ("slug");--> statement-breakpoint
@@ -41,6 +43,4 @@ CREATE UNIQUE INDEX "game_provider_aggregator_vendor_id_key" ON "game_provider" 
 ALTER TABLE "game" ADD CONSTRAINT "game_provider_id_game_provider_id_fk" FOREIGN KEY ("provider_id") REFERENCES "public"."game_provider"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "game_slug_key" ON "game" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "game_provider_id_idx" ON "game" USING btree ("provider_id");--> statement-breakpoint
-CREATE INDEX "game_aggregator_idx" ON "game" USING btree ("aggregator");--> statement-breakpoint
-ALTER TABLE "game" DROP COLUMN "provider";--> statement-breakpoint
-ALTER TABLE "game" DROP COLUMN "category";
+CREATE INDEX "game_aggregator_idx" ON "game" USING btree ("aggregator");

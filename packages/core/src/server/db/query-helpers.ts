@@ -24,6 +24,16 @@ export function isUniqueConstraintViolation(e: unknown): boolean {
   return e.code === '23505';
 }
 
+// The violated unique index for a 23505 (pg exposes it as `constraint`), so a
+// table with several unique indexes can map each to its own typed error instead
+// of blaming the first one. Null when the cause carries no constraint name.
+export function uniqueConstraintName(e: unknown): string | null {
+  if (typeof e !== 'object' || e === null || !('constraint' in e)) {
+    return null;
+  }
+  return typeof e.constraint === 'string' ? e.constraint : null;
+}
+
 // The single sanctioned JS-side conversion point for a decimal-string money amount.
 // Ledger writes and balance comparisons stay in SQL (numeric arithmetic); this is only
 // for a coarse, non-ledger decision (a review-queue heuristic, a velocity/cap check)

@@ -9,6 +9,7 @@ import {
   GameProviderService,
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
+  GameProviderVendorIdTakenError,
 } from '../service/game-provider.service.js';
 
 let db: TestDb;
@@ -142,5 +143,19 @@ describe('GameProviderService (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).rejects.toBeInstanceOf(GameProviderNotFoundError);
+  });
+
+  it('updateProvider rejects a taken aggregatorVendorId with its own error, not a slug one', async () => {
+    await seedProvider({ slug: 'studio-a', aggregatorVendorId: 'vendor-1' });
+    const b = await seedProvider({ slug: 'studio-b' });
+    const { svc } = makeService();
+
+    const attempt = svc.updateProvider({
+      id: b.id,
+      aggregatorVendorId: 'vendor-1',
+      ...NO_CLIENT_META,
+    });
+    await expect(attempt).rejects.toBeInstanceOf(GameProviderVendorIdTakenError);
+    await expect(attempt).rejects.not.toBeInstanceOf(GameProviderSlugTakenError);
   });
 });
