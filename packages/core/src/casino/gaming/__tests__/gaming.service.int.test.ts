@@ -5,6 +5,7 @@ import type {
   PlayEligibilityPort,
   RgLimitsPort,
   WalletCommands,
+  WalletCreditOutcome,
   WalletDebitOutcome,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -17,6 +18,7 @@ import {
   GameNotFoundError,
   RgRestrictedError,
   InsufficientBalanceError,
+  WinCreditFailedError,
 } from '../service/gaming.service.js';
 
 let db: TestDb;
@@ -28,10 +30,13 @@ const eligibility = (isRestricted: boolean) =>
 
 const unrestricted = eligibility(false);
 
-function makeWalletCommands(debitResult: WalletDebitOutcome): WalletCommands {
+function makeWalletCommands(
+  debitResult: WalletDebitOutcome,
+  creditResult: WalletCreditOutcome = { ok: true, newBalance: '0' },
+): WalletCommands {
   return mock<WalletCommands>({
     debit: vi.fn().mockResolvedValue(debitResult),
-    credit: vi.fn(),
+    credit: vi.fn().mockResolvedValue(creditResult),
   });
 }
 
@@ -319,5 +324,79 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       'wallet.bonus_rollover.completed',
       expect.anything(),
     );
+  });
+});
+
+async function seedRound(gameId: string, userId: string) {
+  const [row] = await db.drizzle.db
+    .insert(gameRound)
+    .values({ gameId, userId, currency: 'USD', betAmount: '10', status: 'active' })
+    .returning();
+  return row!;
+}
+
+const settlingProvider = (winAmount?: string) =>
+  mock<GameAdapter>({
+    launchGame: vi.fn(),
+    endRound: vi.fn().mockResolvedValue(winAmount === undefined ? undefined : { winAmount }),
+  });
+
+describe('GamingService.endRound (real PG)', () => {
+  const userId = '00000000-0000-0000-0000-000000000501';
+
+  it('credits the provider-reported win to the round currency and records it on the round', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const svc = makeService({ provider: settlingProvider('42.50'), walletCommands });
+
+    expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '42.50' });
+
+    expect(walletCommands.credit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId, amount: '42.50', currency: 'USD', type: 'win' }),
+    );
+    const [settled] = await db.drizzle.db.select().from(gameRound);
+    expect(settled).toMatchObject({ status: 'completed', winAmount: '42.50' });
+  });
+
+  it('credits nothing when the provider reports no outcome', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const svc = makeService({ provider: settlingProvider(), walletCommands });
+
+    expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '0' });
+
+    expect(walletCommands.credit).not.toHaveBeenCalled();
+  });
+
+  it('pays a win once - a replayed end never asks the provider or credits again', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const provider = settlingProvider('7');
+    const svc = makeService({ provider, walletCommands });
+
+    await svc.endRound(userId, round.id);
+    expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '7.00' });
+
+    expect(provider.endRound).toHaveBeenCalledOnce();
+    expect(walletCommands.credit).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the round open when the win credit is refused, so the payout is not lost', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const walletCommands = makeWalletCommands(
+      { ok: true, newBalance: '0', currency: 'USD' },
+      { ok: false, reason: 'wallet not found' },
+    );
+    const svc = makeService({ provider: settlingProvider('7'), walletCommands });
+
+    await expect(svc.endRound(userId, round.id)).rejects.toBeInstanceOf(WinCreditFailedError);
+
+    const [unsettled] = await db.drizzle.db.select().from(gameRound);
+    expect(unsettled).toMatchObject({ status: 'active', winAmount: '0.00' });
   });
 });
