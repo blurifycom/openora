@@ -6,6 +6,7 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import {
   queue,
+  DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
@@ -165,6 +166,7 @@ async function seedProcessingWithdrawal(walletId: string, externalId: string) {
         currency: 'BTC',
         status: 'processing',
         rail: 'crypto',
+        providerName: DEFAULT_PAYMENT_PROVIDER,
         providerRefId: externalId,
       })
       .returning(),

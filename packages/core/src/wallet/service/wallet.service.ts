@@ -42,6 +42,7 @@ import {
   type ClientMeta,
   type Uuid,
   type PaginationOptions,
+  type WalletProviderRef,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -463,6 +464,16 @@ export async function resolveWalletBalance(
     balance: await readWalletBalance(txn, record.id, record.currency),
     currency: record.currency,
   };
+}
+
+export function providerRefCondition(
+  providerName: string,
+  providerRefId: WalletProviderRef['providerRefId'],
+) {
+  return and(
+    eq(walletTransaction.providerName, providerName),
+    eq(walletTransaction.providerRefId, providerRefId),
+  );
 }
 
 export function debitWithdrawableBalance(
@@ -1743,14 +1754,23 @@ export class WalletService {
 
   async reconcileWithdrawalStatus(
     event: Extract<PaymentWebhookEvent, { kind: 'withdrawal' }>,
+    providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
     const { externalId, status, txHash } = event;
     const [tx] = await this.drizzle.db
       .select()
       .from(walletTransaction)
-      .where(eq(walletTransaction.providerRefId, externalId));
+      .where(
+        and(
+          eq(walletTransaction.providerName, providerName),
+          eq(walletTransaction.providerRefId, externalId),
+        ),
+      );
     if (!tx || tx.type !== 'withdrawal') {
-      logger.warn({ externalId }, 'payment webhook: no matching withdrawal for providerRefId');
+      logger.warn(
+        { externalId, providerName },
+        'payment webhook: no matching withdrawal for providerRefId',
+      );
       return;
     }
     if (tx.status !== 'processing') {
@@ -2710,7 +2730,12 @@ export class WalletService {
       const [winner] = await txn
         .select()
         .from(walletTransaction)
-        .where(eq(walletTransaction.providerRefId, event.externalId));
+        .where(
+          and(
+            eq(walletTransaction.providerName, depositAddress.providerName),
+            eq(walletTransaction.providerRefId, event.externalId),
+          ),
+        );
       if (!winner) {
         throw new Error(
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,

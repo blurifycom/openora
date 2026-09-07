@@ -25,9 +25,7 @@ export default {
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());
     ctx.provide(ADMIN_GAME_REPORTING, (c) => new DrizzleAdminGameReporting(c.get(DRIZZLE)));
 
-    // One memoized instance backs both the router and the GAMING_COMMANDS port -
-    // constructed lazily on first access so a caller resolving GAMING_COMMANDS before the
-    // gaming router has mounted still gets the same instance.
+    // One memoized instance backs both the router and the GAMING_COMMANDS port.
     let svc: GamingService | null = null;
     const gamingService = (c: TypedContainer<CoreTokenCatalog>) =>
       (svc ??= new GamingService(

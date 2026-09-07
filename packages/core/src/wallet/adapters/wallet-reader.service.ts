@@ -6,7 +6,11 @@ import {
 } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
-import { readWalletBalances, resolveWalletBalance } from '../service/wallet.service.js';
+import {
+  providerRefCondition,
+  readWalletBalances,
+  resolveWalletBalance,
+} from '../service/wallet.service.js';
 
 function toProviderTransaction(
   row: typeof walletTransaction.$inferSelect,
@@ -107,12 +111,7 @@ export class WalletReaderService implements WalletReader {
       .select({ transaction: walletTransaction, userId: wallet.userId })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
-      .where(
-        and(
-          eq(walletTransaction.providerName, providerName),
-          eq(walletTransaction.providerRefId, providerRefId),
-        ),
-      );
+      .where(providerRefCondition(providerName, providerRefId));
     return row ? toProviderTransaction(row.transaction, row.userId) : null;
   }
 

@@ -34,6 +34,7 @@ import {
   balanceKey,
   debitWithdrawableBalance,
   debitWalletBalance,
+  providerRefCondition,
   railFor,
   readWalletBalance,
 } from './wallet.service.js';
@@ -71,11 +72,6 @@ export class WalletCommandsService implements WalletCommands {
   // optional) so a new call site can't compile without deciding it - `debit()` always
   // passes 'debit', `credit()` always passes 'credit', including the gift/rain/tip legs
   // that share one `type` for both sides of the transfer.
-  //
-  // A `providerRef` move is guarded by the (providerName, providerRefId) unique index:
-  // `onConflictDoNothing()` makes a replayed callback's insert a no-op, and the caller
-  // gets the original row back (`replayed: true`) instead of a raw unique-violation -
-  // same pattern as `creditDepositByAddress` (wallet.service.ts).
   private async writeLedgerRow(
     txn: DrizzleDb,
     row: { id: string; currency: string },
@@ -130,12 +126,7 @@ export class WalletCommandsService implements WalletCommands {
     const [row] = await txn
       .select()
       .from(walletTransaction)
-      .where(
-        and(
-          eq(walletTransaction.providerName, providerRef.providerName),
-          eq(walletTransaction.providerRefId, providerRef.providerRefId),
-        ),
-      );
+      .where(providerRefCondition(providerRef.providerName, providerRef.providerRefId));
     return row;
   }
 
@@ -159,18 +150,6 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available: '0' };
     }
 
-    if (type === 'bet' && this.rgLimits) {
-      const decision = await this.rgLimits.checkWager(
-        txn,
-        userId,
-        amount,
-        currency ?? row.currency,
-      );
-      if (!decision.allowed) {
-        throw new RgLimitExceededError('wager_limit_exceeded', decision);
-      }
-    }
-
     const debitCurrency = balanceKey(currency ?? row.currency);
     const debitRow = { ...row, currency: debitCurrency };
 
@@ -181,12 +160,22 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
-    // The balance mutation below must not run twice for the same providerRef. The `for
-    // ('update')` lock above already serializes every debit for this wallet, so a
-    // pre-check here (before mutating) is race-safe: a concurrent replay blocks on the
-    // lock until this transaction commits the ledger row, then sees it on its own check.
+    // Must run before checkWager below - a replay must never re-evaluate the wager limit
+    // against spend it already committed.
     if (providerRef && (await this.findByProviderRef(txn, providerRef))) {
       return { ok: true, newBalance: available, currency: debitCurrency };
+    }
+
+    if (type === 'bet' && this.rgLimits) {
+      const decision = await this.rgLimits.checkWager(
+        txn,
+        userId,
+        amount,
+        currency ?? row.currency,
+      );
+      if (!decision.allowed) {
+        throw new RgLimitExceededError('wager_limit_exceeded', decision);
+      }
     }
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
@@ -244,10 +233,8 @@ export class WalletCommandsService implements WalletCommands {
 
     const creditRow = { ...row, currency: balanceKey(currency) };
 
-    // Ledger row inserted before the balance mutation, unlike `debit()`: credit() takes no
-    // row lock (creditWalletBalance's atomic UPDATE doesn't need one), so a concurrent
-    // replay could otherwise pass a pre-check and double-credit before either insert
-    // commits. Inserting first and gating the mutation on `replayed` closes that race.
+    // Unlike debit(), credit() takes no row lock, so the ledger row is inserted (and its
+    // conflict resolved) before the balance mutation rather than after.
     const { replayed } = await this.writeLedgerRow(
       txn,
       creditRow,
