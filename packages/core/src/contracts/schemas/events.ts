@@ -261,6 +261,15 @@ export const domainEventSchemas = {
     previousEnabled: z.boolean(),
     enabled: z.boolean(),
   }),
+  'identity.security.withdrawal_pin.set': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    wasAlreadySet: z.boolean(),
+  }),
+  'identity.security.withdrawal_pin.removed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),

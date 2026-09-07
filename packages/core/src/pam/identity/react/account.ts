@@ -16,6 +16,7 @@ import type {
   PhoneVerificationRequestOutput,
   SecurityControls,
   SetLoginWithdrawalAlertsInput,
+  SetWithdrawalPinInput,
 } from '@openora/core/contracts';
 import type { Paginated } from '@openora/core/contracts/kit';
 import { useOrpcQueryUtils } from '@openora/core/react';
@@ -28,6 +29,11 @@ export type UseSetLoginWithdrawalAlertsResult = UseMutationResult<
   SecurityControls,
   Error,
   SetLoginWithdrawalAlertsInput
+>;
+export type UseSetWithdrawalPinResult = UseMutationResult<
+  SecurityControls,
+  Error,
+  SetWithdrawalPinInput
 >;
 export type UseRequestPhoneVerificationResult = UseMutationResult<
   PhoneVerificationRequestOutput,
@@ -117,6 +123,24 @@ export function useSetLoginWithdrawalAlerts(): UseSetLoginWithdrawalAlertsResult
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.security.loginWithdrawalAlerts.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useSetWithdrawalPin(): UseSetWithdrawalPinResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.security.setWithdrawalPin.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useRemoveWithdrawalPin() {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.security.removeWithdrawalPin.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }
