@@ -4,6 +4,7 @@ import {
   createLogger,
   findOneOrThrow,
   makeConflictError,
+  moneyToNumber,
   type DrizzleService,
   type EventBus,
   type DrizzleTx,
@@ -24,6 +25,7 @@ import { and, eq } from 'drizzle-orm';
 import * as z from 'zod';
 import { wallet, walletTransaction, type Wallet, type WalletTransaction } from '../schema/index.js';
 import {
+  BonusRolloverLockedError,
   InsufficientBalanceError,
   IdempotencyKeyReuseError,
   WalletNotFoundError,
@@ -31,6 +33,7 @@ import {
   creditWalletBalance,
   debitWithdrawableBalance,
   railFor,
+  readLockedBonusAmount,
   readWalletBalance,
 } from './wallet.service.js';
 
@@ -180,12 +183,20 @@ export class SwapService {
         return { row: winner, replayed: true };
       }
 
+      // Bonus-locked funds are not swappable, same as they are not withdrawable. The two
+      // refusals are told apart the way `withdraw` does it: a balance that covers the amount
+      // but a debit that did not land means rollover held it, and telling the player
+      // "insufficient balance" against a balance they can see would be a lie.
       const debited = await debitWithdrawableBalance(txn, current.id, fromCurrency, fromAmount);
       if (debited.length !== 1) {
-        throw new InsufficientBalanceError(
-          await readWalletBalance(txn, current.id, fromCurrency),
-          fromAmount,
-        );
+        const [available, locked] = await Promise.all([
+          readWalletBalance(txn, current.id, fromCurrency),
+          readLockedBonusAmount(txn, current.id, fromCurrency),
+        ]);
+        if (moneyToNumber(available) < moneyToNumber(fromAmount)) {
+          throw new InsufficientBalanceError(available, fromAmount);
+        }
+        throw new BonusRolloverLockedError(locked);
       }
 
       return { row: inserted, replayed: false };

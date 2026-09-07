@@ -6,8 +6,8 @@ import type { SwapAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
-import { InsufficientBalanceError } from '../service/wallet.service.js';
+import { wallet, walletBalance, walletBonusCredit, walletTransaction } from '../schema/index.js';
+import { BonusRolloverLockedError, InsufficientBalanceError } from '../service/wallet.service.js';
 import { SwapPairUnsupportedError, SwapService } from '../service/swap.service.js';
 
 let db: TestDb;
@@ -85,7 +85,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${walletBalance}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${walletBonusCredit}, ${walletBalance}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -188,6 +188,35 @@ describe('SwapService (real PG)', () => {
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(await legs(w.id)).toEqual([]);
     expect(await balancesOf(w.id)).toEqual({ USD: 10 });
+  });
+
+  it('names the bonus rollover, not a missing balance, when locked funds block the swap', async () => {
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletBonusCredit).values({
+      walletId: w.id,
+      userId: w.userId,
+      currency: 'USD',
+      sourceType: 'gift',
+      creditedAmount: '100',
+      rolloverMultiplier: '1',
+      rolloverRequired: '100',
+      rolloverProgress: '0',
+      status: 'active',
+    });
+    const adapter = makeAdapter();
+
+    await expect(
+      makeService(adapter).swap({
+        userId: w.userId,
+        fromCurrency: 'USD',
+        toCurrency: 'BTC',
+        fromAmount: '100',
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toBeInstanceOf(BonusRolloverLockedError);
+
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(await balancesOf(w.id)).toEqual({ USD: 100 });
   });
 
   it('trades once for a replayed idempotency key', async () => {
