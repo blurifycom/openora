@@ -5,10 +5,6 @@ import { WALLET_TRANSACTION_TYPES, type WalletTransactionType } from '@openora/c
 // drizzle/migrations/0014_abandoned_madripoor.sql. Kept in lockstep here so a future type
 // added to WALLET_TRANSACTION_TYPES fails this test instead of silently backfilling as
 // NULL (or, worse, someone guessing a direction for it).
-// swap_in/swap_out and bet_reversal did not exist when migration 0014 ran (no historical
-// rows to backfill), but they are classified here anyway so this test keeps forcing a
-// direction decision for every current type: reversing a bet returns the stake to the
-// player, so it is a credit.
 const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = [
   'deposit',
   'win',

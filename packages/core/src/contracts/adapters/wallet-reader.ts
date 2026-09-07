@@ -3,6 +3,8 @@ import type { WalletTransactionType, WalletTransactionStatus } from '../schemas/
 
 export type WalletProviderTransaction = {
   id: string;
+  walletId: string;
+  userId: string;
   type: WalletTransactionType;
   amount: string;
   currency: string;

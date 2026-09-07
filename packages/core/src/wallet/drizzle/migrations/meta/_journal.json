@@ -134,6 +134,13 @@
       "when": 1788851870754,
       "tag": "0018_marvelous_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788775636543,
+      "tag": "0019_awesome_drax",
+      "breakpoints": true
     }
   ]
 }

@@ -39,6 +39,12 @@ export const WinCreditFailedError = createDomainError<[roundId: string, reason: 
   (roundId, reason) => `win credit failed for round ${roundId}: ${reason}`,
 );
 
+export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundId: string]>(
+  'ExternalRoundOwnerMismatchError',
+  (externalRoundId) =>
+    `externalRoundId ${externalRoundId} is already tagged to a different game/user`,
+);
+
 function toGame(record: typeof game.$inferSelect) {
   return {
     id: record.id,
@@ -253,6 +259,9 @@ export class GamingService {
           winAmount: sql`${gameRound.winAmount} + ${winDelta}::numeric`,
           ...(args.isFinal ? { status, endedAt } : {}),
         },
+        // A conflicting row owned by a different game/user is left untouched (0 rows
+        // returned) instead of merging deltas onto someone else's round.
+        setWhere: and(eq(gameRound.userId, args.userId), eq(gameRound.gameId, args.gameId)),
       })
       .returning({
         id: gameRound.id,
@@ -260,7 +269,7 @@ export class GamingService {
         winAmount: gameRound.winAmount,
       });
     if (!row) {
-      throw new Error('accumulateExternalRound: no row');
+      throw new ExternalRoundOwnerMismatchError(args.externalRoundId);
     }
     return { roundId: row.id, betAmount: row.betAmount, winAmount: row.winAmount };
   }

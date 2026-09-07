@@ -157,7 +157,7 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_status_type_created_at_idx').on(t.status, t.type, t.createdAt),
     index('wallet_transaction_wallet_id_type_status_idx').on(t.walletId, t.type, t.status),
     uniqueIndex('wallet_transaction_provider_ref_id_idx')
-      .on(t.providerRefId)
+      .on(t.providerName, t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
     index('wallet_transaction_external_round_id_idx').on(t.externalRoundId),
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')

@@ -86,8 +86,6 @@ describe('WalletReaderService.findByProviderRef (real PG)', () => {
     });
     const original = await svc.findByProviderRef('aggregator-x', 'ref-2');
 
-    // Unrelated activity on the same wallet in between - a replay must still resolve
-    // the exact original response, not one reconstructed from current state.
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
       type: 'win',

@@ -419,7 +419,7 @@ describe('WalletCommandsService providerRef tagging (real PG)', () => {
     expect(JSON.parse(rows[0]?.metadata ?? 'null')).toEqual({ balance: '70.00' });
   });
 
-  it('the loss branch never gets tagged with a providerRef even when one is passed', async () => {
+  it('the loss branch tags its ledger row with a passed providerRef', async () => {
     const w = await seedWallet({ balance: '100' });
 
     await svc.debit(db.drizzle.db, {
@@ -430,7 +430,11 @@ describe('WalletCommandsService providerRef tagging (real PG)', () => {
     });
 
     const rows = await txRows(w.id);
-    expect(rows[0]).toMatchObject({ type: 'loss', providerName: null, providerRefId: null });
+    expect(rows[0]).toMatchObject({
+      type: 'loss',
+      providerName: 'aggregator-x',
+      providerRefId: 'ref-loss-1',
+    });
   });
 
   it('leaves providerName/providerRefId/externalRoundId/metadata null when no providerRef is passed', async () => {
@@ -445,6 +449,60 @@ describe('WalletCommandsService providerRef tagging (real PG)', () => {
       externalRoundId: null,
       metadata: null,
     });
+  });
+});
+
+describe('WalletCommandsService providerRef replay safety (real PG)', () => {
+  it('debit does not double-debit a replayed (providerName, providerRefId)', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-replay-debit' };
+
+    const first = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+    const second = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(Number(first.ok && first.newBalance)).toBe(90);
+    expect(Number(second.ok && second.newBalance)).toBe(90);
+    expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('credit does not double-credit a replayed (providerName, providerRefId)', async () => {
+    const w = await seedWallet({ balance: '50' });
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-replay-credit' };
+
+    const first = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+    const second = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(Number(first.ok && first.newBalance)).toBe(70);
+    expect(Number(second.ok && second.newBalance)).toBe(70);
+    expect(await balanceOf(w.userId)).toBe(70);
+    expect(await txRows(w.id)).toHaveLength(1);
   });
 });
 

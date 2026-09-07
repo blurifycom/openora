@@ -26,6 +26,7 @@ import {
   walletBonusCredit,
   walletBonusRolloverConfig,
   type Wallet,
+  type WalletTransaction,
 } from '../schema/index.js';
 import type { BonusCreditSourceType, ManualAdjustmentDirection } from '../contract/index.js';
 import {
@@ -66,19 +67,24 @@ export class WalletCommandsService implements WalletCommands {
     private readonly rgLimits?: RgLimitsPort,
   ) {}
 
-  // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
-  // `direction` is required (not optional) so a new call site can't compile without deciding
-  // it - `debit()` always passes 'debit', `credit()` always passes 'credit', including the
-  // gift/rain/tip legs that share one `type` for both sides of the transfer.
-  private writeLedgerRow(
+  // Completed ledger row shared by every gameplay move. `direction` is required (not
+  // optional) so a new call site can't compile without deciding it - `debit()` always
+  // passes 'debit', `credit()` always passes 'credit', including the gift/rain/tip legs
+  // that share one `type` for both sides of the transfer.
+  //
+  // A `providerRef` move is guarded by the (providerName, providerRefId) unique index:
+  // `onConflictDoNothing()` makes a replayed callback's insert a no-op, and the caller
+  // gets the original row back (`replayed: true`) instead of a raw unique-violation -
+  // same pattern as `creditDepositByAddress` (wallet.service.ts).
+  private async writeLedgerRow(
     txn: DrizzleDb,
     row: { id: string; currency: string },
     type: WalletTransactionType,
     amount: string,
     direction: ManualAdjustmentDirection,
     providerRef?: WalletProviderRef,
-  ) {
-    return txn.insert(walletTransaction).values({
+  ): Promise<{ row: WalletTransaction; replayed: boolean }> {
+    const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
       type,
       amount,
@@ -94,6 +100,43 @@ export class WalletCommandsService implements WalletCommands {
           ? JSON.stringify(providerRef.responseSnapshot)
           : undefined,
     });
+
+    if (!providerRef) {
+      const [inserted] = await insertQuery.returning();
+      if (!inserted) {
+        throw new Error('wallet ledger row: insert returned no row');
+      }
+      return { row: inserted, replayed: false };
+    }
+
+    const [inserted] = await insertQuery.onConflictDoNothing().returning();
+    if (inserted) {
+      return { row: inserted, replayed: false };
+    }
+
+    const existing = await this.findByProviderRef(txn, providerRef);
+    if (!existing) {
+      throw new Error(
+        `wallet ledger row: idempotency conflict but no row found (provider=${providerRef.providerName} ref=${providerRef.providerRefId})`,
+      );
+    }
+    return { row: existing, replayed: true };
+  }
+
+  private async findByProviderRef(
+    txn: DrizzleDb,
+    providerRef: WalletProviderRef,
+  ): Promise<WalletTransaction | undefined> {
+    const [row] = await txn
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.providerName, providerRef.providerName),
+          eq(walletTransaction.providerRefId, providerRef.providerRefId),
+        ),
+      );
+    return row;
   }
 
   async debit(
@@ -134,7 +177,15 @@ export class WalletCommandsService implements WalletCommands {
     const available = await readWalletBalance(txn, row.id, debitCurrency);
 
     if (type === 'loss') {
-      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit');
+      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
+      return { ok: true, newBalance: available, currency: debitCurrency };
+    }
+
+    // The balance mutation below must not run twice for the same providerRef. The `for
+    // ('update')` lock above already serializes every debit for this wallet, so a
+    // pre-check here (before mutating) is race-safe: a concurrent replay blocks on the
+    // lock until this transaction commits the ledger row, then sees it on its own check.
+    if (providerRef && (await this.findByProviderRef(txn, providerRef))) {
       return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
@@ -192,12 +243,28 @@ export class WalletCommandsService implements WalletCommands {
     }
 
     const creditRow = { ...row, currency: balanceKey(currency) };
+
+    // Ledger row inserted before the balance mutation, unlike `debit()`: credit() takes no
+    // row lock (creditWalletBalance's atomic UPDATE doesn't need one), so a concurrent
+    // replay could otherwise pass a pre-check and double-credit before either insert
+    // commits. Inserting first and gating the mutation on `replayed` closes that race.
+    const { replayed } = await this.writeLedgerRow(
+      txn,
+      creditRow,
+      type,
+      amount,
+      'credit',
+      providerRef,
+    );
+    if (replayed) {
+      const currentBalance = await readWalletBalance(txn, row.id, balanceKey(currency));
+      return { ok: true, newBalance: currentBalance };
+    }
+
     const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
-
-    await this.writeLedgerRow(txn, creditRow, type, amount, 'credit', providerRef);
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {

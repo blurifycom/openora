@@ -19,6 +19,7 @@ import {
   RgRestrictedError,
   InsufficientBalanceError,
   WinCreditFailedError,
+  ExternalRoundOwnerMismatchError,
 } from '../service/gaming.service.js';
 
 let db: TestDb;
@@ -416,8 +417,8 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       winDelta: '0',
     });
 
-    expect(result.betAmount).toBe('10.00');
-    expect(result.winAmount).toBe('0.00');
+    expect(Number(result.betAmount)).toBe(10);
+    expect(Number(result.winAmount)).toBe(0);
     const rows = await db.drizzle.db.select().from(gameRound);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -452,8 +453,8 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     });
 
     expect(second.roundId).toBe(first.roundId);
-    expect(second.betAmount).toBe('15.00');
-    expect(second.winAmount).toBe('20.00');
+    expect(Number(second.betAmount)).toBe(15);
+    expect(Number(second.winAmount)).toBe(20);
     const rows = await db.drizzle.db.select().from(gameRound);
     expect(rows).toHaveLength(1);
   });
@@ -537,5 +538,53 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       .where(eq(gameRound.id, result.roundId));
     expect(rows[0]).toMatchObject({ status: 'completed' });
     expect(rows[0]?.endedAt).not.toBeNull();
+  });
+
+  it('refuses to merge a delta onto a round owned by a different user', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b6', name: 'Aces' });
+    const svc = makeService();
+    const ownerId = '00000000-0000-0000-0000-000000000506';
+    const otherId = '00000000-0000-0000-0000-000000000507';
+
+    await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId: ownerId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-6',
+      betDelta: '10',
+    });
+
+    await expect(
+      svc.accumulateExternalRound(db.drizzle.db, {
+        gameId: created.id,
+        userId: otherId,
+        currency: 'USD',
+        externalRoundId: 'ext-round-6',
+        betDelta: '5',
+      }),
+    ).rejects.toThrow(ExternalRoundOwnerMismatchError);
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.externalRoundId, 'ext-round-6'));
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.betAmount)).toBe(10);
+  });
+
+  it('preserves a sub-cent crypto delta instead of rounding it to zero', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b7', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000508';
+
+    const result = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'BTC',
+      externalRoundId: 'ext-round-7',
+      betDelta: '0.000000000000000001',
+    });
+
+    expect(result.betAmount).toBe('0.000000000000000001');
   });
 });

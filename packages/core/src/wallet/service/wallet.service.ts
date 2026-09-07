@@ -451,6 +451,20 @@ export async function readWalletBalances(
   return { activeCurrency: record.currency, balances };
 }
 
+export async function resolveWalletBalance(
+  txn: DrizzleDb,
+  userId: User['id'],
+): Promise<{ balance: string; currency: string }> {
+  const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+  if (!record) {
+    return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
+  }
+  return {
+    balance: await readWalletBalance(txn, record.id, record.currency),
+    currency: record.currency,
+  };
+}
+
 export function debitWithdrawableBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -832,17 +846,8 @@ export class WalletService {
     }
   }
 
-  async getBalance(userId: User['id']) {
-    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-
-    if (!record) {
-      return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
-    }
-
-    return {
-      balance: await readWalletBalance(this.drizzle.db, record.id, record.currency),
-      currency: record.currency,
-    };
+  getBalance(userId: User['id']) {
+    return resolveWalletBalance(this.drizzle.db, userId);
   }
 
   async getBalances(userId: User['id']) {
