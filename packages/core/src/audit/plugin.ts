@@ -787,6 +787,33 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.withdrawal_pin.set') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      // Booleans only - the PIN and its hash never reach the audit trail.
+      before: { withdrawalPinSet: p['wasAlreadySet'] ?? null },
+      after: { withdrawalPinSet: true },
+    };
+  }
+
+  if (topic === 'identity.security.withdrawal_pin.removed') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { withdrawalPinSet: true },
+      after: { withdrawalPinSet: false },
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -849,6 +876,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.email.verified',
   'identity.phone.verified',
   'identity.security.login_withdrawal_alerts.updated',
+  'identity.security.withdrawal_pin.set',
+  'identity.security.withdrawal_pin.removed',
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',

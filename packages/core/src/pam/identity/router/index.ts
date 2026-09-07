@@ -11,6 +11,7 @@ import {
 import { identityContract } from '../contract/index.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { PhoneVerificationService } from '../service/phone-verification.service.js';
+import type { WithdrawalPinService } from '../service/withdrawal-pin.service.js';
 import {
   IdentityService,
   UsernameConflictError,
@@ -44,6 +45,7 @@ export function createIdentityRouter(
   adminGuard: AdminGuard,
   eventBus: EventBus,
   adminSecurity: AdminSecurityService,
+  withdrawalPin: WithdrawalPinService,
 ) {
   const os = implement(identityContract).$context<OssContext>();
 
@@ -96,6 +98,14 @@ export function createIdentityRouter(
 
       loginWithdrawalAlerts: os.security.loginWithdrawalAlerts.handler(({ input, context }) =>
         identity.setLoginWithdrawalAlerts(input, context.request.headers),
+      ),
+
+      setWithdrawalPin: os.security.setWithdrawalPin.handler(({ input, context }) =>
+        withdrawalPin.set(getUserId(context), input, context.request.headers, context.clientMeta),
+      ),
+
+      removeWithdrawalPin: os.security.removeWithdrawalPin.handler(({ context }) =>
+        withdrawalPin.remove(getUserId(context), context.clientMeta),
       ),
     },
 

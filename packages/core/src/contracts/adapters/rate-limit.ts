@@ -18,6 +18,7 @@ export const RATE_LIMIT_KEYS = {
   PASSWORD_RESET_VERIFY: 'pwreset-verify',
   PASSWORD_RESET: 'pwreset',
   CHANGE_PASSWORD: 'change-password',
+  WITHDRAWAL_PIN_MUTATION: 'withdrawal-pin-mutation',
   EMAIL_VERIFICATION: 'email-verify',
   VERIFY_EMAIL: 'verify-email',
   WALLET_MUTATION: 'wallet-mutation',

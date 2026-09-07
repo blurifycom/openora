@@ -25,6 +25,8 @@ import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
 import { PhoneVerificationService } from './service/phone-verification.service.js';
+import { WithdrawalPinService } from './service/withdrawal-pin.service.js';
+import { MIN_WITHDRAWAL_PIN_SECRET_LENGTH } from './service/withdrawal-pin-hash.service.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
@@ -88,6 +90,13 @@ export default {
     // calling the original.
     let adminSecurity: AdminSecurityService | undefined;
     const resolveAdminSecurity = (c: IdentityContainer) => (adminSecurity ??= makeAdminSecurity(c));
+
+    const withdrawalPinHmacSecret = process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ?? '';
+    if (withdrawalPinHmacSecret.length < MIN_WITHDRAWAL_PIN_SECRET_LENGTH) {
+      throw new Error(
+        `identity: WITHDRAWAL_PIN_HMAC_SECRET must be at least ${MIN_WITHDRAWAL_PIN_SECRET_LENGTH} characters - the withdrawal PIN is hashed with it`,
+      );
+    }
 
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());
     // Platform default SMS transport: logs the OTP to stdout. A consumer overlay
@@ -174,6 +183,15 @@ export default {
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
         resolveAdminSecurity(c),
+        new WithdrawalPinService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          limiter: c.get(RATE_LIMITER),
+          auth: c.get(AUTH_SESSION).auth,
+          identityReader: c.get(IDENTITY_READER),
+          twoFactorLockout: makeTwoFactorLockout(c),
+          hmacSecret: withdrawalPinHmacSecret,
+        }),
       );
     });
   },

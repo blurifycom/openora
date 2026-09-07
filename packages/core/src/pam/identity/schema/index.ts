@@ -43,6 +43,11 @@ export const user = pgTable(
     // and each qualifying password write records the policy state explicitly.
     passwordMeetsPolicy: boolean().notNull().default(false),
     loginWithdrawalAlertsEnabled: boolean().notNull().default(false),
+    // A 4-digit withdrawal PIN, independent of the login credential. HMAC-SHA256'd with
+    // a dedicated secret (never the plaintext) - "is a PIN set" is derived as
+    // `withdrawalPinHash !== null`, no separate boolean column.
+    withdrawalPinHash: text(),
+    withdrawalPinSetAt: timestamp({ withTimezone: true }),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
     // Second-factor lockout, counted separately from the password-login columns above:
