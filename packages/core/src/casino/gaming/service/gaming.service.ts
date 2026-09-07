@@ -31,6 +31,12 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
+// Thrown inside the settlement transaction, so the round stays `active` and the win can be
+// settled again rather than being lost silently.
+export const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
+  'WinCreditFailedError',
+  (roundId, reason) => `win credit failed for round ${roundId}: ${reason}`,
+);
 
 function toGame(record: typeof game.$inferSelect) {
   return {
@@ -141,9 +147,9 @@ export class GamingService {
   async endRound(
     userId: User['id'],
     roundId: GameRound['id'],
-  ): Promise<{ success: true; outcome?: unknown }> {
+  ): Promise<{ success: true; winAmount: string }> {
     // Without RLS (ADR-0026, single-tenant) this userId filter is the sole access guard.
-    findOneOrThrow(
+    const round = findOneOrThrow(
       await this.drizzle.db
         .select()
         .from(gameRound)
@@ -151,12 +157,49 @@ export class GamingService {
       new GameRoundNotFoundError(roundId),
     );
 
-    await this.provider.endRound(roundId);
+    // A round that already closed reports what it paid and stops here - re-calling the
+    // provider would ask a settled round for its outcome a second time.
+    if (round.status !== 'active') {
+      return { success: true, winAmount: round.winAmount };
+    }
 
-    await this.drizzle.db
-      .update(gameRound)
-      .set({ status: 'completed', endedAt: new Date() })
-      .where(and(eq(gameRound.id, roundId), eq(gameRound.userId, userId)));
+    const outcome = await this.provider.endRound(roundId);
+    // The provider's number, never the caller's: the win is credited off this alone.
+    const winAmount = outcome?.winAmount ?? '0';
+
+    const paid = await this.drizzle.db.transaction(async (tx) => {
+      // `status = 'active'` is the payout guard: two concurrent end-round calls both
+      // reach here, only one updates a row, so the win is credited exactly once.
+      const settled = await tx
+        .update(gameRound)
+        .set({ status: 'completed', endedAt: new Date(), winAmount })
+        .where(
+          and(
+            eq(gameRound.id, roundId),
+            eq(gameRound.userId, userId),
+            eq(gameRound.status, 'active'),
+          ),
+        )
+        .returning({ id: gameRound.id });
+      if (settled.length === 0) {
+        return false;
+      }
+      if (Number(winAmount) > 0) {
+        // The bet already opened this currency's balance, so `allowNewCurrency` only
+        // covers a player whose active currency moved between start and settlement.
+        const credited = await this.walletCommands.credit(tx, {
+          userId,
+          amount: winAmount,
+          currency: round.currency,
+          type: 'win',
+          allowNewCurrency: true,
+        });
+        if (!credited.ok) {
+          throw new WinCreditFailedError(roundId, credited.reason);
+        }
+      }
+      return true;
+    });
 
     this.events.emit('gaming.round.ended', {
       roundId,
@@ -164,7 +207,7 @@ export class GamingService {
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
     });
 
-    return { success: true };
+    return { success: true, winAmount: paid ? winAmount : round.winAmount };
   }
 
   async getUserRounds(userId: User['id']) {

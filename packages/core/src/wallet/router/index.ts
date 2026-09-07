@@ -21,6 +21,7 @@ import {
   type RateLimiterAdapter,
   type RateLimitKey,
   type RealtimeTransport,
+  type SwapWebhookEvent,
   type User,
 } from '@openora/core/contracts';
 import { walletContract, type WalletBalanceUpdate } from '../contract/index.js';
@@ -56,6 +57,11 @@ import {
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
 } from '../service/wallet.service.js';
+import {
+  SwapService,
+  SwapPairUnsupportedError,
+  SwapUnavailableError,
+} from '../service/swap.service.js';
 import {
   ReconciliationService,
   ReconciliationFindingNotFoundError,
@@ -134,6 +140,22 @@ export type WalletRouterDeps = {
   reconciliationQueue: QueueName;
   realtime: RealtimeTransport;
   limiter?: RateLimiterAdapter<RateLimitKey>;
+  /** Absent when no SWAP_ADAPTER is bound - every swap route then refuses. */
+  swap?: SwapService;
+  swapWebhook?: SwapWebhookPort;
+};
+
+/** The verifier/parser pair for an inbound swap webhook, bound together for the same reason
+ * the payment one is: never verify with one vendor's key and parse with another's format. */
+export type SwapWebhookPort = {
+  verify(
+    rawBody: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): boolean | Promise<boolean>;
+  parse(
+    rawBody: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): SwapWebhookEvent | null;
 };
 
 export function createWalletRouter({
@@ -146,6 +168,8 @@ export function createWalletRouter({
   reconciliationQueue,
   realtime,
   limiter,
+  swap,
+  swapWebhook,
 }: WalletRouterDeps) {
   const os = implement(walletContract).$context<OssContext>();
 
@@ -155,6 +179,15 @@ export function createWalletRouter({
       makeRateLimitKey(RATE_LIMIT_KEYS.WALLET_WEBHOOK, context.clientMeta.ip ?? 'unknown'),
       WALLET_WEBHOOK_RATE_LIMIT,
     );
+
+  // Every swap route funnels through this, so an operator with no swap vendor bound gets
+  // one consistent refusal instead of a 500 from an undefined service.
+  const requireSwap = (): SwapService => {
+    if (!swap) {
+      throw new SwapUnavailableError();
+    }
+    return swap;
+  };
 
   return os.router({
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
@@ -479,6 +512,48 @@ export function createWalletRouter({
           userAgent,
         } = await adminGuard.assert(context, 'bonus-rollover-config', 'update');
         return wallet.setBonusRolloverConfig(adminId, input, { ip, userAgent });
+      }),
+    },
+
+    swap: {
+      quote: os.swap.quote.handler(({ input }) =>
+        mapErrors({ CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError] }, () =>
+          requireSwap().quote(input),
+        ),
+      ),
+
+      execute: os.swap.execute.handler(({ input, context }) =>
+        mapErrors(
+          {
+            NOT_FOUND: WalletNotFoundError,
+            CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError, IdempotencyKeyReuseError],
+            BAD_REQUEST: InsufficientBalanceError,
+            // SwapFillAmountMissingError is deliberately unmapped: the vendor filled but
+            // would not say how much, which is a 500 on our side of the seam, not a 4xx
+            // the caller can act on.
+          },
+          () => requireSwap().swap({ userId: getUserId(context), ...input }),
+        ),
+      ),
+
+      webhook: os.swap.webhook.handler(async ({ context }) => {
+        await throttleWebhook(context);
+        // A missing binding, a bad signature and an unparseable body all answer the same
+        // way - the endpoint must never confirm which vendor is bound.
+        const rawBody = context.rawBody;
+        if (
+          !swap ||
+          !swapWebhook ||
+          rawBody === undefined ||
+          !(await swapWebhook.verify(rawBody, context.request.headers))
+        ) {
+          throw new ORPCError('UNAUTHORIZED', { message: 'Invalid swap webhook signature' });
+        }
+        const event = swapWebhook.parse(rawBody, context.request.headers);
+        if (event) {
+          await swap.reconcileSwapStatus(event);
+        }
+        return { ok: true as const };
       }),
     },
 
