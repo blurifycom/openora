@@ -93,6 +93,12 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Your self-exclusion has been lifted',
     text: 'Your self-exclusion has been lifted and you can log in again.',
   }),
+  depositCompleted: (data, locale) => ({
+    subject: 'Your deposit has arrived',
+    text:
+      `Your deposit of ${formatMoney(data.amount, data.currency)} has been completed and is now available in your balance.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
+  }),
   withdrawalApproved: (data, locale) => ({
     subject: 'Your withdrawal was approved',
     text:
