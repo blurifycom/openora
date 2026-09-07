@@ -179,7 +179,6 @@ describe('notificationEventMap', () => {
 
   it('keeps every newly-mapped trigger type in-app only (no email), per the email scope decision', () => {
     const inAppOnlyEvents = [
-      'wallet.deposit.completed',
       'wallet.manual_adjustment.created',
       'wallet.withdrawal.completed',
       'wallet.withdrawal.failed',
@@ -207,6 +206,22 @@ describe('notificationEventMap', () => {
     expect(entry.securityAlert).toBe(true);
     expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
       key: 'securityWithdrawalRequested',
+      data: {
+        amount: '10.00',
+        currency: 'USD',
+        transactionId,
+        occurredAt: OCCURRED_AT,
+      },
+    });
+  });
+
+  it('builds a deposit-completed mail dated from the envelope, not the worker clock', () => {
+    const userId = randomUUID();
+    const transactionId = randomUUID();
+    const payload = { userId, amount: '10.00', currency: 'USD', transactionId, playerId: null };
+
+    expect(entryFor('wallet.deposit.completed').buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'depositCompleted',
       data: {
         amount: '10.00',
         currency: 'USD',
