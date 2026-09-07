@@ -17,6 +17,7 @@ import type {
   CacheAdapter,
   ClientMeta,
   LobbySectionCatalog,
+  LobbySectionConfig,
   LobbySectionData,
   LobbySectionDefinition,
   LobbySectionDefinitionInput,
@@ -29,7 +30,8 @@ import type {
   LobbyResolvedSection,
   ReplaceLobbyLayoutInput,
 } from '../contract/index.js';
-import { lobbyLayout, lobbySection } from '../schema/index.js';
+import { lobbyLayout, lobbySection, type LobbySection } from '../schema/index.js';
+
 export const LobbySectionNotFoundError = makeNotFoundError('LobbySection');
 export const LobbySectionFieldError = createDomainError<[message: string]>(
   'LobbySectionFieldError',
@@ -51,7 +53,7 @@ type PreparedLayoutSection = {
   id: string;
   isNew: boolean;
   type: LobbySectionType;
-  config: (typeof lobbySection.$inferInsert)['config'];
+  config: LobbySectionConfig;
   isEnabled: boolean;
   sortOrder: number;
 };
@@ -83,6 +85,7 @@ export class LobbyService {
           .select({ version: lobbyLayout.version })
           .from(lobbyLayout)
           .where(eq(lobbyLayout.layoutKey, GLOBAL_LAYOUT_KEY));
+
         return {
           version: layout?.version ?? 0,
           sections: await this.loadAdminSections(tx),
@@ -94,9 +97,12 @@ export class LobbyService {
 
   async replaceLayout(input: ReplaceLobbyLayoutInput & Actor): Promise<LobbyAdminLayout> {
     const { actorId, ip, userAgent } = input;
+
     this.assertUniqueSectionIds(input.sections.flatMap((section) => section.id ?? []));
+
     const preparedSections = input.sections.map((section, sortOrder) => {
       const definition = this.requireDefinition(section.type);
+
       return {
         id: section.id ?? randomUUID(),
         isNew: section.id === undefined,
@@ -114,14 +120,17 @@ export class LobbyService {
           .insert(lobbyLayout)
           .values({ layoutKey: GLOBAL_LAYOUT_KEY })
           .onConflictDoNothing({ target: lobbyLayout.layoutKey });
+
         const [layout] = await tx
           .select()
           .from(lobbyLayout)
           .where(eq(lobbyLayout.layoutKey, GLOBAL_LAYOUT_KEY))
           .for('update');
+
         if (!layout) {
           throw new Error('Lobby layout row missing after upsert');
         }
+
         if (layout.version !== input.version) {
           throw new LobbyLayoutVersionConflictError(input.version, layout.version);
         }
@@ -141,6 +150,7 @@ export class LobbyService {
     );
 
     await invalidate(this.cache, LAYOUT_CACHE_KEY);
+
     this.events.emit('lobby.layout.updated', {
       actorId,
       ip: ip ?? null,
@@ -148,6 +158,7 @@ export class LobbyService {
       before,
       after,
     });
+
     return after;
   }
 
@@ -157,72 +168,92 @@ export class LobbyService {
       .from(lobbySection)
       .where(eq(lobbySection.isEnabled, true))
       .orderBy(asc(lobbySection.sortOrder), asc(lobbySection.createdAt));
+
     const groups = this.groupSections(sections);
+
     const resolvedGroups = await mapConcurrent(
       [...groups.entries()],
       SECTION_OPERATION_CONCURRENCY,
-      async ([type, group]) => {
-        const definition = this.sectionCatalog.get(type);
-        if (!definition) {
-          logger.warn(
-            { type, sectionIds: group.map((section) => section.id) },
-            'Skipping lobby sections with unknown type',
-          );
-          return new Map<string, { id: string; type: string; data: LobbySectionData }>();
-        }
-        const validSections: LobbySectionDefinitionInput[] = [];
-        for (const section of group) {
-          try {
-            validSections.push({
-              id: section.id,
-              config: definition.parseConfig(section.config),
-            });
-          } catch (err) {
-            logger.warn(
-              { err, type, sectionId: section.id },
-              'Skipping lobby section with invalid config',
-            );
-          }
-        }
-        if (validSections.length === 0) {
-          return new Map<string, { id: string; type: string; data: LobbySectionData }>();
-        }
-        let data: Map<string, LobbySectionData>;
-        try {
-          data = await definition.resolve(validSections);
-        } catch (err) {
-          logger.warn({ err, type }, 'Skipping lobby sections that failed to resolve');
-          return new Map<string, { id: string; type: string; data: LobbySectionData }>();
-        }
-        const resolved = new Map<string, { id: string; type: string; data: LobbySectionData }>();
-        for (const section of group) {
-          const sectionData = data.get(section.id);
-          if (sectionData === undefined) {
-            logger.warn(
-              { type, sectionId: section.id },
-              'Skipping lobby section that was not resolved',
-            );
-            continue;
-          }
-          resolved.set(section.id, { id: section.id, type, data: sectionData });
-        }
-        return resolved;
-      },
+      ([type, group]) => this.resolveSectionGroup(type, group),
     );
     const byId = new Map(resolvedGroups.flatMap((group) => [...group]));
+
     return sections.flatMap((section) => {
       const resolved = byId.get(section.id);
       return resolved ? [resolved] : [];
     });
   }
 
+  private async resolveSectionGroup(
+    type: string,
+    group: LobbySection[],
+  ): Promise<Map<string, LobbyResolvedSection>> {
+    const definition = this.sectionCatalog.get(type);
+
+    if (!definition) {
+      logger.warn(
+        { type, sectionIds: group.map((section) => section.id) },
+        'Skipping lobby sections with unknown type',
+      );
+      return new Map<string, LobbyResolvedSection>();
+    }
+
+    const validSections: LobbySectionDefinitionInput[] = [];
+
+    for (const section of group) {
+      try {
+        validSections.push({
+          id: section.id,
+          config: definition.parseConfig(section.config),
+        });
+      } catch (err) {
+        logger.warn(
+          { err, type, sectionId: section.id },
+          'Skipping lobby section with invalid config',
+        );
+      }
+    }
+
+    if (validSections.length === 0) {
+      return new Map<string, LobbyResolvedSection>();
+    }
+
+    let data: Map<string, LobbySectionData>;
+    try {
+      data = await definition.resolve(validSections);
+    } catch (err) {
+      logger.warn({ err, type }, 'Skipping lobby sections that failed to resolve');
+      return new Map<string, LobbyResolvedSection>();
+    }
+
+    const resolved = new Map<string, LobbyResolvedSection>();
+
+    for (const section of group) {
+      const sectionData = data.get(section.id);
+
+      if (sectionData === undefined) {
+        logger.warn(
+          { type, sectionId: section.id },
+          'Skipping lobby section that was not resolved',
+        );
+        continue;
+      }
+
+      resolved.set(section.id, { id: section.id, type, data: sectionData });
+    }
+
+    return resolved;
+  }
+
   private async validateSections(sections: PreparedLayoutSection[]) {
     const groups = this.groupSections(sections);
+
     await mapConcurrent(
       [...groups.entries()],
       SECTION_OPERATION_CONCURRENCY,
       async ([type, group]) => {
         const definition = this.requireDefinition(type);
+
         try {
           const validation = await definition.validate?.(
             group.map((section) => ({ id: section.id, config: section.config })),
@@ -247,10 +278,7 @@ export class LobbyService {
     );
   }
 
-  private parseConfig(
-    definition: LobbySectionDefinition,
-    config: (typeof lobbySection.$inferInsert)['config'],
-  ) {
+  private parseConfig(definition: LobbySectionDefinition, config: LobbySectionConfig) {
     try {
       return definition.parseConfig(config);
     } catch (error) {
@@ -262,6 +290,7 @@ export class LobbyService {
 
   private groupSections<T extends LobbySectionDefinitionInput & { type: string }>(sections: T[]) {
     const groups = new Map<string, T[]>();
+
     for (const section of sections) {
       const group = groups.get(section.type);
       if (group) {
@@ -270,34 +299,29 @@ export class LobbyService {
         groups.set(section.type, [section]);
       }
     }
+
     return groups;
   }
 
   private requireDefinition(type: string): LobbySectionDefinition {
     const definition = this.sectionCatalog.get(type);
+
     if (!definition) {
       throw new LobbySectionFieldError(`Unknown lobby section type: ${type}`);
     }
+
     return definition;
   }
 
-  private async loadAdminSections(tx: DrizzleTx): Promise<LobbyAdminSection[]> {
+  private async loadAdminSections(tx: DrizzleTx) {
     const sections = await tx
       .select()
       .from(lobbySection)
       .orderBy(asc(lobbySection.sortOrder), asc(lobbySection.createdAt));
-    return sections.map((section) => {
-      const serialized = serializeRow(section, { dateFields: ['createdAt', 'updatedAt'] });
-      return {
-        id: section.id,
-        type: section.type,
-        config: section.config,
-        sortOrder: section.sortOrder,
-        isEnabled: section.isEnabled,
-        createdAt: serialized.createdAt,
-        updatedAt: serialized.updatedAt,
-      };
-    });
+
+    return sections.map((section) =>
+      serializeRow(section, { dateFields: ['createdAt', 'updatedAt'] as const }),
+    );
   }
 
   private assertUniqueSectionIds(sectionIds: string[]) {
@@ -311,14 +335,18 @@ export class LobbyService {
     preparedSections: PreparedLayoutSection[],
   ) {
     const existingById = new Map(existingSections.map((section) => [section.id, section]));
+
     for (const section of preparedSections) {
       if (section.isNew) {
         continue;
       }
+
       const existing = existingById.get(section.id);
+
       if (!existing) {
         throw new LobbySectionNotFoundError(section.id);
       }
+
       if (existing.type !== section.type) {
         throw new LobbySectionFieldError(
           `Section type is '${existing.type}', not '${section.type}'`,
@@ -329,10 +357,12 @@ export class LobbyService {
 
   private async replaceSections(tx: DrizzleTx, sections: PreparedLayoutSection[]) {
     const sectionIds = sections.map((section) => section.id);
+
     if (sectionIds.length === 0) {
       await tx.delete(lobbySection);
       return;
     }
+
     await tx.delete(lobbySection).where(notInArray(lobbySection.id, sectionIds));
     await tx
       .insert(lobbySection)

@@ -2,6 +2,7 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   LobbyLayoutSectionSnapshotSchema,
+  LobbyLayoutSnapshotSchema,
   LobbySectionConfigSchema,
   LobbySectionDataSchema,
   LobbySectionTypeSchema,
@@ -17,8 +18,7 @@ export const LobbyAdminSectionSchema = LobbyLayoutSectionSnapshotSchema.extend({
 });
 export type LobbyAdminSection = z.infer<typeof LobbyAdminSectionSchema>;
 
-export const LobbyAdminLayoutSchema = z.object({
-  version: z.number().int().min(0),
+export const LobbyAdminLayoutSchema = LobbyLayoutSnapshotSchema.extend({
   sections: z.array(LobbyAdminSectionSchema).max(LOBBY_SECTION_COUNT_MAX),
 });
 export type LobbyAdminLayout = z.infer<typeof LobbyAdminLayoutSchema>;
