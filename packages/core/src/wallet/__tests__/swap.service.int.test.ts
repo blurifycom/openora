@@ -90,6 +90,34 @@ beforeEach(async () => {
 });
 
 describe('SwapService (real PG)', () => {
+  it('prices a pair through the bound desk', async () => {
+    const w = await seedWallet();
+    const adapter = makeAdapter();
+
+    await expect(
+      makeService(adapter).quote({
+        userId: w.userId,
+        fromCurrency: 'USD',
+        toCurrency: 'BTC',
+        fromAmount: '100',
+      }),
+    ).resolves.toMatchObject({ toAmount: '0.00152' });
+  });
+
+  it('refuses to price a pair the desk does not make', async () => {
+    const w = await seedWallet();
+    const adapter = makeAdapter({ supportsPair: vi.fn().mockReturnValue(false) });
+
+    await expect(
+      makeService(adapter).quote({
+        userId: w.userId,
+        fromCurrency: 'USD',
+        toCurrency: 'BTC',
+        fromAmount: '100',
+      }),
+    ).rejects.toBeInstanceOf(SwapPairUnsupportedError);
+  });
+
   it('books both legs and moves both balances on a filled swap', async () => {
     const w = await seedWallet();
     const events = makeEventBus();

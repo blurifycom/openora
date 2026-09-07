@@ -516,9 +516,9 @@ export function createWalletRouter({
     },
 
     swap: {
-      quote: os.swap.quote.handler(({ input }) =>
+      quote: os.swap.quote.handler(({ input, context }) =>
         mapErrors({ CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError] }, () =>
-          requireSwap().quote(input),
+          requireSwap().quote({ userId: getUserId(context), ...input }),
         ),
       ),
 

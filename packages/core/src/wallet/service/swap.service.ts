@@ -110,11 +110,21 @@ export class SwapService {
     this.limiter = deps.limiter;
   }
 
-  async quote(input: {
+  /**
+   * Player-scoped even though a price is not player-specific: a quote is a vendor call the
+   * desk bills for, so it is behind the session and the same per-player throttle the swap
+   * itself takes rather than an open pricing endpoint.
+   */
+  async quote({
+    userId,
+    ...input
+  }: {
+    userId: User['id'];
     fromCurrency: string;
     toCurrency: string;
     fromAmount: string;
   }): Promise<SwapQuote> {
+    await this.rateLimit(userId);
     this.assertPair(input.fromCurrency, input.toCurrency);
     const quote = await this.adapter.getQuote(input);
     if (!quote) {
