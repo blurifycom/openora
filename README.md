@@ -1,4 +1,4 @@
-# OSS iGaming Framework
+# AI-Native Open-source Casino Platform Framework
 
 [![Pipeline](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml/badge.svg?branch=dev)](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml)
 [![npm](https://img.shields.io/npm/v/@openora/core?label=%40openora%2Fcore)](https://www.npmjs.com/package/@openora/core)
@@ -10,7 +10,7 @@
 [![Code of Conduct](https://img.shields.io/badge/code%20of%20conduct-v2.1-ff69b4.svg)](./CODE_OF_CONDUCT.md)
 [![Discussions](https://img.shields.io/github/discussions/blurifycom/openora?label=discussions&color=6f42c1)](https://github.com/blurifycom/openora/discussions)
 
-> Open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it, deploy it - without forking core.
+> Open-source, headless, plugin-based, AI-native Casino Platform Framework. Clone it, extend it, deploy it - without forking core.
 
 The platform ships the backend surface (auth, wallet, player management, compliance, audit, chat, backoffice) as composable modules and a typed SDK. Game lobby and CMS are early; bonuses, tournaments, affiliates and jackpots are not built yet - the order is being picked in [Discussions](https://github.com/blurifycom/openora/discussions/24). Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
 
