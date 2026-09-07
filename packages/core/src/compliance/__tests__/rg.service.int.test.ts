@@ -2,12 +2,10 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
-  AdminPlayerSummary,
-  AdminUserDirectory,
-  EmailTemplateRenderer,
+  AuditWritePort,
   ExchangeRateReader,
   LoginEnforcementPort,
-  SendEmailPort,
+  MailDispatchPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -32,21 +30,14 @@ import {
 let db: TestDb;
 
 type Notifier = {
-  email: SendEmailPort;
-  directory: AdminUserDirectory;
-  templateRenderer: EmailTemplateRenderer;
+  mailDispatch: MailDispatchPort;
 };
 
-function makeNotifier(email = 'player@example.com'): Notifier {
+function makeNotifier(): Notifier {
   return {
-    email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
-    directory: mock<AdminUserDirectory>({
-      lookupPlayers: vi.fn(async (ids: string[]) =>
-        ids.map((userId) => mock<AdminPlayerSummary>({ userId, email, language: 'en' })),
-      ),
-    }),
-    templateRenderer: mock<EmailTemplateRenderer>({
-      render: vi.fn(async () => ({ subject: 'subject', body: 'body' })),
+    mailDispatch: mock<MailDispatchPort>({
+      toUser: vi.fn(async () => undefined),
+      toAddress: vi.fn(async () => undefined),
     }),
   };
 }
@@ -68,17 +59,17 @@ function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRa
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
+  const audit = mock<AuditWritePort>({ record: vi.fn(async () => undefined) });
   const svc = new RgService({
     drizzle: db.drizzle,
     events,
     loginEnforcement: enforcement,
-    email: notifier?.email ?? null,
-    directory: notifier?.directory ?? null,
-    templateRenderer: notifier?.templateRenderer ?? null,
+    mailDispatch: notifier?.mailDispatch ?? null,
+    audit,
     identityReader: makeIdentityReader(),
     rates,
   });
-  return { svc, events, enforcement };
+  return { svc, events, enforcement, audit };
 }
 
 async function seedExclusion(overrides: Partial<typeof rgExclusion.$inferInsert>) {
@@ -349,12 +340,12 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(dto).toMatchObject({ minutes: 60, amount: null });
   });
 
-  it('emails the player when a mail port, directory, and template renderer are bound', async () => {
+  it('dispatches an RG mail keyed by this limit version when the mail port is bound', async () => {
     const notifier = makeNotifier();
     const { svc } = makeService(notifier);
     const userId = randomUUID();
 
-    await svc.setPlayerLimit(
+    const dto = await svc.setPlayerLimit(
       userId,
       {
         userId,
@@ -370,16 +361,42 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       'admin',
     );
 
-    expect(notifier.templateRenderer.render).toHaveBeenCalled();
-    expect(notifier.email.send).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 'player@example.com', subject: 'subject', body: 'body' }),
+    expect(notifier.mailDispatch.toUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId,
+        template: expect.objectContaining({ key: 'rgLimitUpdated' }),
+        idempotencyKey: expect.stringMatching(new RegExp(`^rg-notify:rgLimitUpdated:${dto.id}:`)),
+      }),
     );
   });
 
-  it('swallows a notification failure once the limit has committed', async () => {
+  it('uses a distinct mail idempotency key after updating the same limit', async () => {
     const notifier = makeNotifier();
-    vi.mocked(notifier.email.send).mockRejectedValueOnce(new Error('smtp down'));
     const { svc } = makeService(notifier);
+    const userId = randomUUID();
+    const input = {
+      userId,
+      type: 'deposit' as const,
+      amount: '200',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily' as const,
+      reason: 'initial limit',
+      confirm: true as const,
+    };
+
+    await svc.setPlayerLimit(userId, input, randomUUID(), 'admin');
+    await svc.setPlayerLimit(userId, { ...input, amount: '100' }, randomUUID(), 'admin');
+
+    const calls = vi.mocked(notifier.mailDispatch.toUser).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[0].idempotencyKey).not.toBe(calls[1]?.[0].idempotencyKey);
+  });
+
+  it('swallows a notification failure once the limit has committed, but audits it', async () => {
+    const notifier = makeNotifier();
+    vi.mocked(notifier.mailDispatch.toUser).mockRejectedValueOnce(new Error('queue down'));
+    const { svc, audit } = makeService(notifier);
     const userId = randomUUID();
 
     await expect(
@@ -401,6 +418,13 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     ).resolves.toMatchObject({ period: 'daily' });
     const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     expect(rows).toHaveLength(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'mail.regulatory_delivery.failed',
+        resourceId: userId,
+        after: { templateKey: 'rgLimitUpdated', reason: 'enqueue_failed' },
+      }),
+    );
   });
 
   it('two racing admin writes cannot land a raise through the read-then-decide window', async () => {

@@ -34,6 +34,18 @@ export const MoneyAmountSchema = z.string().regex(
 );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
 
+export function formatMoneyAmount(amount: string): string {
+  const match = /^(-)?(\d+)(?:\.(\d+))?$/.exec(amount);
+  if (!match) {
+    return amount;
+  }
+  const [, sign, integerPart, fractionPart] = match;
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const trimmedFraction = fractionPart ? fractionPart.replace(/0+$/, '') : '';
+  const magnitude = trimmedFraction ? `${groupedInteger}.${trimmedFraction}` : groupedInteger;
+  return sign ? `${sign}${magnitude}` : magnitude;
+}
+
 export const AUTH_GUARD_REASONS = [
   'missing_request_context',
   'authentication_required',
@@ -61,3 +73,27 @@ export const CurrencyTickerSchema = z
   .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
 
 export const CurrencyTickerInputSchema = CurrencyTickerSchema.transform((c) => c.toUpperCase());
+
+/**
+ * An IANA zone name as a browser reports it (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
+ * Unbounded on purpose: `resolveTimezone` drops anything the tz database does not know, so no
+ * client value can fail the request that carried it. Display metadata - never gates anything.
+ */
+export const TimezoneSchema = z.string();
+export type Timezone = z.infer<typeof TimezoneSchema>;
+
+/**
+ * The canonical IANA name for `value`, or null when the tz database does not recognise it.
+ * Canonicalising keeps one stored spelling across the aliases browsers report (`US/Pacific`).
+ * A bare UTC offset (`+05:00`) is rejected even though `Intl` accepts one: an offset is a
+ * moment's arithmetic, not a zone, and goes wrong the next time DST moves.
+ */
+export function resolveTimezone(value: string): string | null {
+  let canonical: string;
+  try {
+    canonical = new Intl.DateTimeFormat(undefined, { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+  return /^[+-]/.test(canonical) ? null : canonical;
+}

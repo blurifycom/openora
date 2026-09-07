@@ -7,9 +7,7 @@ import {
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
   PLAY_ELIGIBILITY,
-  NOTIFICATION_DELIVERY_ADAPTER,
-  SEND_EMAIL,
-  EMAIL_TEMPLATE_RENDERER,
+  MAIL_DISPATCH,
   GEO_CHECK_COMMANDS,
   PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
@@ -26,7 +24,7 @@ import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
-import { DefaultEmailTemplateRenderer } from './adapters/default-email-template-renderer.js';
+import { PhoneVerificationService } from './service/phone-verification.service.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
@@ -81,6 +79,7 @@ function makeAdminSecurity(c: IdentityContainer) {
 
 export default {
   id: 'identity',
+  requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
     // separate `makeAdminSecurity(c)` calls would construct two independent
@@ -101,12 +100,6 @@ export default {
     );
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
     ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
-    // Resolved lazily so identity does not depend on the notifications plugin's load order.
-    ctx.provide(SEND_EMAIL, (c) => ({
-      send: ({ to, subject, body }) =>
-        c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
-    }));
-    ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new DefaultEmailTemplateRenderer());
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
@@ -147,8 +140,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           identityReader: c.get(IDENTITY_READER),
-          email: c.get(SEND_EMAIL),
-          templateRenderer: c.get(EMAIL_TEMPLATE_RENDERER),
+          mailDispatch: c.get(MAIL_DISPATCH),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
@@ -168,6 +160,16 @@ export default {
           auth: c.get(AUTH_SESSION).auth,
           cache: c.get(CACHE),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
+          playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
+        }),
+        new PhoneVerificationService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          sms: c.get(SMS_ADAPTER),
+          limiter: c.get(RATE_LIMITER),
+          auth: c.get(AUTH_SESSION).auth,
+          identityReader: c.get(IDENTITY_READER),
+          twoFactorLockout: makeTwoFactorLockout(c),
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),

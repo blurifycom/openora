@@ -20,7 +20,7 @@ Service methods are data-in/data-out; side effects (DB writes, event emits, adap
 - Tokens are typed symbols: `createToken<T>('NAME')`, declared with the port in `packages/core/src/contracts/adapters/`.
 - `Container` (`@openora/core/server`) wires factories: `register(token, factory)` (last-wins = overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
 - Services take deps by type via constructor; never touch the container. `plugin.ts` builds them: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
-- A dep captured in a closure is a smell - make it a port + token (canonical fix: `SEND_EMAIL` in identity).
+- A dep captured in a closure is a smell - make it a port + token (canonical fix: `MAIL_DISPATCH` in mail).
 
 ```ts
 // bad - the service reaches into the container and hides what it depends on
@@ -44,7 +44,7 @@ Canonical wiring to copy: `packages/core/src/wallet/plugin.ts` (provides `PAYMEN
 
 ## Ports & adapters (hexagonal)
 
-Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT_ADAPTER`, `KYC_ADAPTER`, `MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`, `SEND_EMAIL`, ...). Adapters = impls in modules, bound in `plugin.ts`, swapped by a later-loading overlay re-`provide`ing the token. Services depend only on the port. A third-party integration is always a port + impl, never an inline `fetch`/SDK call.
+Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT_ADAPTER`, `KYC_ADAPTER`, `MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`, `EMAIL_SENDER`, ...). Adapters = impls in modules, bound in `plugin.ts`, swapped by a later-loading overlay re-`provide`ing the token. Services depend only on the port. A third-party integration is always a port + impl, never an inline `fetch`/SDK call.
 
 ## Cross-module communication (lint-enforced)
 

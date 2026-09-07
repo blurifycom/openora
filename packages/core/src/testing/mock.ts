@@ -208,6 +208,7 @@ export const makeIdentityReader = (): IdentityReader =>
     getPlayerIdsByUserIdsSafe: vi.fn().mockResolvedValue(new Map()),
     getPlayerKycStatusByUserId: vi.fn().mockResolvedValue(null),
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
+    canReceiveLoginWithdrawalAlerts: vi.fn().mockResolvedValue(false),
   });
 
 const matches = (refs: readonly string[], resource: string, action: string) =>

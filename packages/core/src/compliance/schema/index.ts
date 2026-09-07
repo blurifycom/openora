@@ -25,9 +25,11 @@ import {
   geoRuleActions,
   MONEY_SCALE,
   MONEY_PRECISION,
-  type KycRiskSignals,
-  type KycCheckResult,
+  KycCheckResultSchema,
 } from '@openora/core/contracts';
+import { zodJsonb } from '@openora/core/server';
+import * as z from 'zod';
+import { KycRiskSignalsSchema } from '../contract/index.js';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
 
@@ -99,8 +101,15 @@ export const kycVerification = pgTable(
     status: kycVerificationStatus().notNull(),
     documentTypes: jsonb().$type<(typeof KYC_DOCUMENT_TYPES)[number][]>().notNull().default([]),
     decisionReason: text(),
-    riskSignals: jsonb().$type<KycRiskSignals>(),
-    checks: jsonb().$type<KycCheckResult[]>(),
+    // severity 'error': an operator approves or rejects a player against these. A signal
+    // silently read as absent reads like a clean player, so drift here is reported, not
+    // just logged.
+    riskSignals: zodJsonb(KycRiskSignalsSchema, 'kyc_verification.risk_signals', {
+      severity: 'error',
+    })(),
+    checks: zodJsonb(z.array(KycCheckResultSchema), 'kyc_verification.checks', {
+      severity: 'error',
+    })(),
     triggeredBy: kycTriggeredBy().notNull(),
     // High-water mark of deposits at the last reverify_threshold fire, so re-KYC triggers
     // once per fresh threshold band rather than on every deposit.

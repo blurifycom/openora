@@ -195,6 +195,20 @@ describe('PhoneLoginService.requestOtp (real PG + real Redis)', () => {
     expect(row.codeHash).toBe(existing.codeHash);
   });
 
+  it('anti-enumeration: a 2FA-enabled verified phone returns the success shape, sends no SMS, and writes no row', async () => {
+    // verifyOtp's FORBIDDEN guard means a 2FA-enabled account's phone login can never
+    // succeed, so requestOtp must not spend a real SMS on it either.
+    await seedUser({ twoFactorEnabled: true });
+    const { svc, events, sms } = build();
+
+    const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
+
+    expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
+    expect(sms.sendOtp).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(await otpRows()).toHaveLength(0);
+  });
+
   it('supersedes an expired-cooldown prior OTP in place and emits cancelled(new_otp_requested)', async () => {
     const account = await seedUser();
     const prior = await seedOtp(account.id, {
@@ -495,5 +509,25 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
       expect.objectContaining({ userId: account.id, status: 'suspended' }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.phone_login', expect.anything());
+  });
+
+  it('refuses SMS-only login for a 2FA-enabled account without consuming its OTP', async () => {
+    const code = '123456';
+    const account = await seedUser({ twoFactorEnabled: true });
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc, events } = build();
+    const resHeaders = new Headers();
+
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(resHeaders.get('set-cookie')).toBeNull();
+    expect(await sessionRows()).toHaveLength(0);
+    expect(await otpRows()).toHaveLength(1);
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.anything(),
+    );
   });
 });

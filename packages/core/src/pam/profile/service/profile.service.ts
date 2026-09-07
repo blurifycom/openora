@@ -13,6 +13,7 @@ import type {
   ExchangeRateReader,
   AuditWritePort,
 } from '@openora/core/contracts';
+import { resolveTimezone } from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import type {
@@ -86,13 +87,38 @@ export class ProfileService implements PlayerProvisioning {
     return this.ensureProfile(userId);
   }
 
-  async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
-    const { email, username } = await this.ensureProfile(userId);
-    const [record] = await this.drizzle.db
+  /**
+   * Stores the IANA zone the browser reported. Display metadata - it never gates anything and
+   * stays out of RG windows and audit records, which remain UTC. `timezoneUpdatedAt` moves on
+   * every accepted capture, including one repeating the stored zone, so it reads as "last
+   * confirmed". An unrecognised zone, and a player with no row yet, are both silent no-ops.
+   */
+  async recordTimezone(userId: User['id'], timezone: string): Promise<void> {
+    const resolved = resolveTimezone(timezone);
+    if (!resolved) {
+      return;
+    }
+    await this.drizzle.db
       .update(player)
-      .set(data)
-      .where(eq(player.userId, userId))
-      .returning();
+      .set({ timezone: resolved, timezoneUpdatedAt: new Date() })
+      .where(eq(player.userId, userId));
+  }
+
+  async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
+    // The zone has its own validation and its own timestamp, so it is written separately.
+    const { timezone, ...fields } = data;
+    const { email, username } = await this.ensureProfile(userId);
+    if (timezone !== undefined) {
+      await this.recordTimezone(userId, timezone);
+    }
+    // Drizzle rejects an empty `set`, so an update carrying only the zone reads the row back.
+    const [record] = Object.keys(fields).length
+      ? await this.drizzle.db
+          .update(player)
+          .set(fields)
+          .where(eq(player.userId, userId))
+          .returning()
+      : await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     return toPlayer(record, email, username);
   }
 

@@ -101,6 +101,19 @@ export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as 
 export const TwoFactorMethodSchema = z.enum(TWO_FACTOR_METHODS);
 export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
 
+// A session is only authenticated after a credential-bearing flow completes. This is
+// deliberately narrower than session refresh and distinct from 2FA enrolment, which
+// changes account configuration but does not create a new authenticated session.
+export const AUTHENTICATION_METHODS = [
+  'password',
+  'email_verification',
+  'phone',
+  'totp',
+  'backup_code',
+] as const;
+export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);
+export type AuthenticationMethod = z.infer<typeof AuthenticationMethodSchema>;
+
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
@@ -122,6 +135,11 @@ export const domainEventSchemas = {
   'identity.user.login': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+  'identity.authentication.succeeded': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    method: AuthenticationMethodSchema,
   }),
   'identity.user.login.failed': authContextBase.extend({
     email: z.email(),
@@ -229,6 +247,19 @@ export const domainEventSchemas = {
   'identity.email.verified': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+  'identity.phone.verified': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    // Re-binding a different number is the same topic, so the audit record needs the
+    // state it replaced rather than assuming every verification starts from unverified.
+    previousPhoneVerified: z.boolean(),
+  }),
+  'identity.security.login_withdrawal_alerts.updated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    previousEnabled: z.boolean(),
+    enabled: z.boolean(),
   }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,
@@ -460,6 +491,31 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  'chat.room.ownership.transferred': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    previousOwnerId: UuidSchema,
+    newOwnerId: UuidSchema,
+    reason: z.literal('account-closed'),
+  }),
+  'chat.room.scheduled_for_deletion': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    previousOwnerId: UuidSchema,
+    memberIds: z.array(UuidSchema),
+    scheduledDeletionAt: TimestampSchema,
+  }),
+  'chat.room.deletion.cancelled': authContextBase.extend({
+    roomId: UuidSchema,
+    roomName: z.string(),
+    ownerId: UuidSchema,
+    memberIds: z.array(UuidSchema),
+  }),
+  'chat.private_room.purged': authContextBase.extend({
+    roomId: UuidSchema,
+    messageCount: z.number().int(),
+  }),
+
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': authContextBase.extend({
@@ -677,6 +733,16 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
+  }),
+  'player.account.closed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
+  }),
+  'player.account.reopened': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
   }),
 
   'social.friend_request.sent': authContextBase.extend({

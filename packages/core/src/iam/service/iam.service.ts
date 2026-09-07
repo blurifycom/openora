@@ -24,7 +24,7 @@ import {
 } from '@openora/core/server';
 import { eq, and, gt, inArray, sql, asc, desc } from 'drizzle-orm';
 import type {
-  SendEmailPort,
+  MailDispatchPort,
   AdminPermissionResolver,
   AdminGrant,
   IdentityReader,
@@ -284,7 +284,7 @@ export class IamService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    private readonly email: SendEmailPort,
+    private readonly mailDispatch: MailDispatchPort,
     private readonly identityReader: IdentityReader,
     private readonly sessionCommands?: SessionCommands,
     private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
@@ -857,10 +857,14 @@ export class IamService {
       new InvitationNotFoundError(input.email),
     );
 
-    await this.email.send({
-      to: input.email,
-      subject: 'You have been invited as an administrator',
-      body: `Your admin invitation token: ${token}. It expires at ${expiresAt.toISOString()}.`,
+    await this.mailDispatch.toAddress({
+      email: input.email,
+      locale: 'en',
+      template: {
+        key: 'adminInvitation',
+        data: { token, expiresAt: expiresAt.toISOString() },
+      },
+      idempotencyKey: `admin-invitation:${row.id}`,
     });
 
     return toInvitationDto(row);

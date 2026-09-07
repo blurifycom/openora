@@ -15,6 +15,7 @@ export {
   submitRegistration,
   verificationOtpFor,
   verifyEmailByOtp,
+  waitForEmail,
   type RegisterPlayerInput,
 } from './register.js';
 export { capturedEmailsFor, clearCapturedEmails, type CapturedEmail } from './captured-emails.js';

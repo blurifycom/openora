@@ -7,6 +7,12 @@ export const UnsupportedLanguageError = createDomainError(
 );
 
 export function assertSupportedLanguage(language: string, platformConfig?: PlatformConfig) {
+  try {
+    Intl.getCanonicalLocales(language);
+  } catch {
+    throw new UnsupportedLanguageError(language);
+  }
+
   const supportedLanguages = platformConfig?.supportedLanguages;
   if (
     supportedLanguages &&

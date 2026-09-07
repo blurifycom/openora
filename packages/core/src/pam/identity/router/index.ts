@@ -1,4 +1,4 @@
-import { implement } from '@orpc/server';
+import { implement, ORPCError } from '@orpc/server';
 import {
   type OssContext,
   AdminGuard,
@@ -10,6 +10,7 @@ import {
 } from '@openora/core/server';
 import { identityContract } from '../contract/index.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
+import { PhoneVerificationService } from '../service/phone-verification.service.js';
 import {
   IdentityService,
   UsernameConflictError,
@@ -27,10 +28,19 @@ import {
 } from '../service/admin-security.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
+function requireSessionId(context: OssContext) {
+  const sessionId = getSessionId(context);
+  if (!sessionId) {
+    throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+  }
+  return sessionId;
+}
+
 export function createIdentityRouter(
   identity: IdentityService,
   sessionSvc: SessionService,
   phoneLogin: PhoneLoginService,
+  phoneVerification: PhoneVerificationService,
   adminGuard: AdminGuard,
   eventBus: EventBus,
   adminSecurity: AdminSecurityService,
@@ -78,6 +88,37 @@ export function createIdentityRouter(
       }
       return identity.me(context.request.headers);
     }),
+
+    security: {
+      me: os.security.me.handler(({ context }) =>
+        identity.getSecurityControls(context.request.headers),
+      ),
+
+      loginWithdrawalAlerts: os.security.loginWithdrawalAlerts.handler(({ input, context }) =>
+        identity.setLoginWithdrawalAlerts(input, context.request.headers),
+      ),
+    },
+
+    phoneVerification: {
+      request: os.phoneVerification.request.handler(({ input, context }) =>
+        phoneVerification.request({
+          userId: getUserId(context),
+          sessionId: requireSessionId(context),
+          input,
+          reqHeaders: context.request.headers,
+          meta: context.clientMeta,
+        }),
+      ),
+
+      confirm: os.phoneVerification.confirm.handler(({ input, context }) =>
+        phoneVerification.confirm({
+          userId: getUserId(context),
+          sessionId: requireSessionId(context),
+          input,
+          meta: context.clientMeta,
+        }),
+      ),
+    },
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
       const userId = getUserId(context);

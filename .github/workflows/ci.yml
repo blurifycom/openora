@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # `edited` too: the PR title is linted below, so a retitle has to re-run the check.
+    types: [opened, synchronize, reopened, edited]
   workflow_call:
 
 concurrency:
@@ -26,6 +28,12 @@ jobs:
           turbo-cache: 'false'
       - name: Commitlint
         run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
+      # A squash merge takes the PR title as the commit subject, so an unlinted title
+      # lands on dev as a commit commitlint would have rejected.
+      - name: Commitlint PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$PR_TITLE" | pnpm commitlint
 
   verify:
     runs-on: ubuntu-latest

@@ -180,6 +180,28 @@ export const RegistrationConfigSchema = z
   })
   .strict();
 
+/**
+ * Structural check on a cron expression: 5 fields, or 6 with a leading seconds field.
+ * Not a full parse - the driver owns that - but it turns the typo class that would
+ * otherwise surface as one `logger.error` at boot and a job that never ticks into a
+ * config-validation failure.
+ */
+export const CronExpressionSchema = z
+  .string()
+  .regex(
+    /^[0-9A-Za-z*?,\-/]+( [0-9A-Za-z*?,\-/]+){4,5}$/,
+    'must be a 5- or 6-field cron expression',
+  );
+
+/**
+ * Offset off the :00/:15/:30/:45 tick the wallet custody sweep owns, so the in-process
+ * driver never runs the moderation-expiry sweep alongside a money path. Cadence sets
+ * audit-trail latency only - a lapsed mute stops being enforced at its own `expiresAt`
+ * with or without the job, and the entry is dated from the row, so a late run still
+ * records the right instant.
+ */
+export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
+
 export const HostAllowlistEntrySchema = z
   .string()
   .trim()
@@ -209,6 +231,18 @@ export const ChatConfigSchema = z
   .object({
     /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
     allowedAttachmentHosts: z.array(HostAllowlistEntrySchema).default([]),
+    /**
+     * Cron knob for the sweep that audits a mute or platform ban lapsing on its own.
+     * Static config, not a DB row. Absent means the built-in default applies; the cadence
+     * only sets how soon the lapse shows in the audit trail - enforcement already stops
+     * at `expiresAt` without it.
+     */
+    moderationExpiry: z
+      .object({
+        cron: CronExpressionSchema.default(CHAT_MODERATION_EXPIRY_DEFAULT_CRON),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;

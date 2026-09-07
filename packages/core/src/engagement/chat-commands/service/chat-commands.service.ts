@@ -40,6 +40,8 @@ const ADMIN_COMMAND_SORT_COLUMNS = {
   updatedAt: chatCommandConfig.updatedAt,
 } as const satisfies Record<AdminCommandSortBy, unknown>;
 
+const isStaffRole = (role: string | undefined) => role === 'admin' || role === 'super-admin';
+
 export class ChatCommandsService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -128,25 +130,30 @@ export class ChatCommandsService {
     roomId: Uuid | null;
     viewerId: Uuid;
   }) {
+    const query = q.trim();
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
-    if (onlineUserIds.length === 0) {
+    if (query.length === 0 && onlineUserIds.length === 0) {
       return [];
     }
 
     const onlineIds = new Set(onlineUserIds);
-    const query = q.trim();
+    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    excluded.add(viewerId);
     const canSeeAdminUsers = await this.canSeeAdminUsers(viewerId);
     let ids =
       query.length === 0
         ? onlineUserIds
-        : await this.directory.findPlayerIds(query, Math.max(limit, onlineUserIds.length));
+        : await this.directory.findPlayerIds(query, limit, {
+            excludeUserIds: [...excluded],
+            playerOnly: true,
+          });
     if (canSeeAdminUsers && query.length > 0) {
       const onlineAccounts = await this.directory.lookupUsers(onlineUserIds);
       const queryLower = query.toLowerCase();
       const matchingAdminIds = onlineAccounts
         .filter(
           (account) =>
-            (account.role === 'admin' || account.role === 'super-admin') &&
+            isStaffRole(account.role) &&
             [account.name, account.email].some((value) =>
               value?.toLowerCase().includes(queryLower),
             ),
@@ -157,30 +164,32 @@ export class ChatCommandsService {
     if (ids.length === 0) {
       return [];
     }
-    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
-    const filteredIds = ids
-      .filter((id) => id !== viewerId && onlineIds.has(id) && !excluded.has(id))
-      .slice(0, limit);
-    if (filteredIds.length === 0) {
+    const candidateIds = ids.filter(
+      (id) => !excluded.has(id) && (query.length > 0 || onlineIds.has(id)),
+    );
+    if (candidateIds.length === 0) {
       return [];
     }
-    const summaries = await this.directory.lookupPlayers(filteredIds);
+    const summaries = await this.directory.lookupPlayers(candidateIds);
     if (!canSeeAdminUsers) {
-      return summaries.map((s) => ({ userId: s.userId, username: s.username }));
+      return summaries.slice(0, limit).map((s) => ({ userId: s.userId, username: s.username }));
     }
 
     const summaryById = new Map(summaries.map((summary) => [summary.userId, summary.username]));
-    const accounts = canSeeAdminUsers ? await this.directory.lookupUsers(filteredIds) : [];
+    const accounts = await this.directory.lookupUsers(candidateIds);
     const accountsById = new Map(accounts.map((account) => [account.id, account]));
-    const visible = filteredIds.map((userId) => {
+    const visible = candidateIds.flatMap((userId) => {
       const username = summaryById.get(userId);
       if (username) {
-        return { userId, username };
+        return [{ userId, username }];
       }
       const account = accountsById.get(userId);
-      return account ? { userId, username: account.name ?? account.email } : null;
+      if (!account || !onlineIds.has(userId)) {
+        return [];
+      }
+      return [{ userId, username: account.name ?? account.email }];
     });
-    return visible.filter((user): user is { userId: Uuid; username: string } => user !== null);
+    return visible.slice(0, limit);
   }
 
   private async canSeeAdminUsers(viewerId: Uuid) {
@@ -188,6 +197,6 @@ export class ChatCommandsService {
       return false;
     }
     const viewer = await this.directory.get(viewerId);
-    return viewer?.role === 'admin' || viewer?.role === 'super-admin';
+    return isStaffRole(viewer?.role);
   }
 }

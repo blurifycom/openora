@@ -252,6 +252,26 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
     expect(await dir.findPlayerIds('zzzz')).toEqual([]);
   });
 
+  it('excludes ids before applying the limit for player-only searches', async () => {
+    const { dir } = makeDirectory();
+    const excluded = await seedUser(db, { email: 'candidate-excluded@example.com' });
+    await seedUser(db, { email: 'candidate-without-profile@example.com' });
+    const first = await seedUser(db, { email: 'candidate-first@example.com' });
+    const second = await seedUser(db, { email: 'candidate-second@example.com' });
+    await Promise.all([
+      seedPlayer(excluded.id, { username: 'candidate-excluded' }),
+      seedPlayer(first.id, { username: 'candidate-first' }),
+      seedPlayer(second.id, { username: 'candidate-second' }),
+    ]);
+
+    const ids = await dir.findPlayerIds('candidate', 2, {
+      excludeUserIds: [excluded.id],
+      playerOnly: true,
+    });
+
+    expect([...ids].sort()).toEqual([first.id, second.id].sort());
+  });
+
   it('matches an exact playerId', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser(db, { email: 'carlos@example.com' });

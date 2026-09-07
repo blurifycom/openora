@@ -385,6 +385,52 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'chat.room.deletion.cancelled') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+      after: {
+        ownerId: str(p['ownerId']),
+        scheduledDeletionAt: null,
+        memberCount: Array.isArray(p['memberIds']) ? p['memberIds'].length : null,
+      },
+    };
+  }
+
+  if (topic === 'chat.room.ownership.transferred' || topic === 'chat.room.scheduled_for_deletion') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+      after:
+        topic === 'chat.room.ownership.transferred'
+          ? {
+              previousOwnerId: str(p['previousOwnerId']),
+              newOwnerId: str(p['newOwnerId']),
+              reason: p['reason'] ?? null,
+            }
+          : {
+              previousOwnerId: str(p['previousOwnerId']),
+              scheduledDeletionAt: p['scheduledDeletionAt'] ?? null,
+              memberCount: Array.isArray(p['memberIds']) ? p['memberIds'].length : null,
+            },
+    };
+  }
+
+  if (topic === 'player.account.closed' || topic === 'player.account.reopened') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      after: { closed: topic === 'player.account.closed' },
+    };
+  }
+
   // actorType = admin (the only path flipping isActive is the back-office route);
   // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
@@ -715,6 +761,32 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.phone.verified') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { phoneVerified: p['previousPhoneVerified'] ?? null },
+      after: { phoneVerified: true },
+    };
+  }
+
+  if (topic === 'identity.security.login_withdrawal_alerts.updated') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { loginWithdrawalAlertsEnabled: p['previousEnabled'] ?? null },
+      after: { loginWithdrawalAlertsEnabled: p['enabled'] ?? null },
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -775,6 +847,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.trusted_device.revoked',
   'identity.password.reset',
   'identity.email.verified',
+  'identity.phone.verified',
+  'identity.security.login_withdrawal_alerts.updated',
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',
@@ -806,6 +880,9 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   // chat.gift.sent
   // chat.rain.distributed
   'chat.room.member.role-changed',
+  'chat.room.ownership.transferred',
+  'chat.room.scheduled_for_deletion',
+  'chat.room.deletion.cancelled',
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
@@ -852,6 +929,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'tag.rule.upserted',
   'player.level.changed',
   'player.login_blocked',
+  'player.account.closed',
+  'player.account.reopened',
   'social.friend_request.sent',
   'social.friend_request.accepted',
   'social.friendship.removed',

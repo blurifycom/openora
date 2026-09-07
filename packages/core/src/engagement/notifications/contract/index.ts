@@ -18,6 +18,8 @@ export const NOTIFICATION_TYPES = [
   'withdrawal.completed',
   'withdrawal.failed',
   'chat.mention',
+  'chat.room.ownership_transferred',
+  'chat.room.scheduled_for_deletion',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;

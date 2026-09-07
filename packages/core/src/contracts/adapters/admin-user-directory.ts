@@ -18,6 +18,7 @@ export type AdminUserRow = {
   createdAt: Date;
   isActive: boolean;
   role: string;
+  language: string | null;
   failedLoginAttempts?: number;
   lockoutUntil?: Date | null;
 };
@@ -38,6 +39,11 @@ export type AdminUserListOptions = {
   search?: string;
   sortBy?: AdminUserSortBy;
   sortOrder?: SortOrder;
+};
+
+export type PlayerIdSearchOptions = {
+  excludeUserIds?: readonly string[];
+  playerOnly?: boolean;
 };
 
 /**
@@ -78,8 +84,10 @@ export type AdminUserDirectory = {
    * Resolves a free-text player filter to a capped set of userIds, matched against
    * email or the identity-owned username. Empty = all candidates.
    * limit caps both sub-queries and the merged set; defaults to 1000 (the implementation cap).
+   * Callers can exclude known ids before the limit is applied and restrict the
+   * result to accounts with player records.
    */
-  findPlayerIds(query: string, limit?: number): Promise<string[]>;
+  findPlayerIds(query: string, limit?: number, options?: PlayerIdSearchOptions): Promise<string[]>;
   /**
    * Exact-match resolution by display name (case-insensitive) - for callers that
    * already have a complete, known username (not a partial search term), eg chat

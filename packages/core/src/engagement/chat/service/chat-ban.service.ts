@@ -144,12 +144,17 @@ export class ChatBanService {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
     const concreteRoomId = scope === 'room' ? roomId : null;
+    const liftedAt = new Date();
     const [lifted] = await this.drizzle.db
       .update(chatPlatformBan)
-      .set({ liftedAt: new Date(), liftedBy: actorId })
+      .set({ liftedAt, liftedBy: actorId })
       .where(
         and(
           eq(chatPlatformBan.userId, userId),
+          // Same predicate listBans and assertCanSend apply: a lapsed ban is not active,
+          // so there is nothing to lift. Without this an admin lifting a row that has
+          // just expired puts both `expired` and `lifted` on its trail.
+          or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, liftedAt)),
           eq(chatPlatformBan.scope, scope),
           concreteRoomId
             ? eq(chatPlatformBan.roomId, concreteRoomId)

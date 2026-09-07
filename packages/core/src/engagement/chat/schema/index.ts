@@ -16,8 +16,9 @@ import {
   CHAT_ROOM_ROLES,
   CHAT_MODERATION_SCOPE_VALUES,
 } from '../contract/index.js';
-import { CHAT_MESSAGE_TYPES } from '@openora/core/contracts';
-import type { CommandMetadata, ChatAttachment } from '@openora/core/contracts';
+import { CHAT_MESSAGE_TYPES, ChatAttachmentSchema } from '@openora/core/contracts';
+import type { CommandMetadata } from '@openora/core/contracts';
+import { zodJsonb } from '@openora/core/server';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
@@ -38,12 +39,16 @@ export const chatRoom = pgTable(
     creatorId: uuid(), // bare id - cross-module (user from pam/identity), no FK
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp({ withTimezone: true }),
+    scheduledDeletionAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chat_room_slug_key').on(t.slug),
     uniqueIndex('chat_room_join_code_key').on(t.joinCode),
     index('chat_room_deleted_at_idx').on(t.deletedAt),
     index('chat_room_creator_public_deleted_at_idx').on(t.creatorId, t.isPublic, t.deletedAt),
+    index('chat_room_scheduled_deletion_idx')
+      .on(t.scheduledDeletionAt)
+      .where(sql`${t.scheduledDeletionAt} IS NOT NULL`),
   ],
 );
 
@@ -51,13 +56,15 @@ export const chatMessage = pgTable(
   'chat_message',
   {
     id: uuid().primaryKey().defaultRandom(),
-    roomId: uuid().references(() => chatRoom.id),
+    roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     userId: uuid().notNull(),
     username: text().notNull(),
     content: text().notNull(),
     type: chatMessageType().notNull().default('user'),
+    // Not zodJsonb: `sanitizeCommandMetadata` repairs legacy money strings on read, so this
+    // column is parsed after that repair rather than before it. See `toSystemMessage`.
     metadata: jsonb().$type<CommandMetadata>(),
-    attachment: jsonb().$type<ChatAttachment>(),
+    attachment: zodJsonb(ChatAttachmentSchema, 'chat_message.attachment')(),
     isDeleted: boolean().notNull().default(false),
     deletedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -66,6 +73,7 @@ export const chatMessage = pgTable(
     index('chat_msg_room_id_created_at_idx').on(t.roomId, t.createdAt),
     index('chat_msg_created_at_idx').on(t.createdAt),
     index('chat_msg_deleted_at_idx').on(t.deletedAt),
+    index('chat_msg_user_id_created_at_idx').on(t.userId, t.createdAt),
   ],
 );
 
@@ -125,6 +133,7 @@ export const chatRoomMember = pgTable(
     // Null for plain members; set when a role above `member` is granted, cleared on revoke.
     // Ownership transfer picks the successor by the earliest assignment among moderators.
     roleAssignedAt: timestamp({ withTimezone: true }),
+    accountClosedAt: timestamp({ withTimezone: true }),
     joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -245,12 +254,13 @@ export const chatPlatformBan = pgTable(
     userId: uuid().notNull(),
     bannedBy: uuid().notNull(),
     scope: chatModerationScope().notNull().default('__all_public'),
-    roomId: uuid().references(() => chatRoom.id),
+    roomId: uuid().references(() => chatRoom.id, { onDelete: 'cascade' }),
     reason: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
+    expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chat_platform_ban_active_scope_key')
@@ -260,6 +270,7 @@ export const chatPlatformBan = pgTable(
       .on(t.userId, t.scope, t.roomId)
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_platform_ban_user_idx').on(t.userId),
+    index('chat_platform_ban_expires_at_idx').on(t.expiresAt),
   ],
 );
 
@@ -276,6 +287,7 @@ export const chatMute = pgTable(
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
+    expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     index('chat_mute_user_room_idx').on(t.userId, t.roomId),

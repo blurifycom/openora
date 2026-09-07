@@ -32,6 +32,7 @@ import type {
   ChatAttachment,
 } from '@openora/core/contracts';
 import {
+  CommandMetadataSchema,
   chatBlockLockKey,
   chatChannel,
   GLOBAL_CHAT_ROOM_ID,
@@ -269,7 +270,7 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
   const { deletedAt: _deletedAt, ...room } = record;
   return serializeRow(
     { ...room, isBanned: false, bannedUntil: null },
-    { dateFields: ['createdAt', 'bannedUntil'] },
+    { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
   );
 }
 
@@ -311,20 +312,49 @@ function sanitizeCommandMetadata(metadata: unknown): unknown {
   return Object.fromEntries(entries);
 }
 
-function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage {
+// A system message IS its command metadata, and the column is jsonb - a shape Postgres never
+// enforced, so a row can outlive the contract that wrote it. Sanitizing first keeps the
+// deliberate repair path (legacy money strings) working; what still fails to parse cannot be
+// rendered as any system message the contract describes.
+function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage | null {
   const message = toMessage(record);
-  return {
-    ...message,
-    metadata: sanitizeCommandMetadata(message.metadata),
-    actorId: message.userId,
-  } as ChatSystemMessage;
+  const metadata = CommandMetadataSchema.safeParse(sanitizeCommandMetadata(message.metadata));
+  if (!metadata.success) {
+    logger.warn(
+      { messageId: record.id, issues: metadata.error.issues.slice(0, 3) },
+      'system message metadata no longer matches its contract, omitted from listing',
+    );
+    return null;
+  }
+  return { ...message, metadata: metadata.data, actorId: message.userId } as ChatSystemMessage;
 }
 
-function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
+function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage | null {
   if (record.type === 'system') {
     return toSystemMessage(record);
   }
   return toMessage(record) as ChatMessage;
+}
+
+// One unreadable system message drops out of the page; the rest of the history is still
+// served. Failing the whole listing would take a room's chat down over a single old row.
+function toPublicMessages(records: (typeof chatMessage.$inferSelect)[]): ChatMessage[] {
+  return records.map(toPublicMessage).filter((message) => message !== null);
+}
+
+// The message this service just inserted, which is always a `user` row.
+function toSentMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
+  return toMessage(record) as ChatMessage;
+}
+
+// A system message this service just wrote: its metadata came in typed by the contract, so
+// it needs neither the legacy repair nor the re-parse a stored row does.
+function toWrittenSystemMessage(
+  record: typeof chatMessage.$inferSelect,
+  metadata: CommandMetadata,
+): ChatSystemMessage {
+  const message = toMessage(record);
+  return { ...message, metadata, actorId: message.userId } as ChatSystemMessage;
 }
 
 const BLOCKED_USER_SORT_COLUMNS = { createdAt: chatUserBlock.createdAt } as const satisfies Record<
@@ -691,7 +721,7 @@ export class ChatService {
               : roomBanById.has(room.id) || Boolean(room.isPublic ? allPublicBan : allPrivateBan),
           bannedUntil: roomBanById.has(room.id) ? roomBanUntil : platformBanUntil,
         },
-        { dateFields: ['createdAt', 'bannedUntil'] },
+        { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
       );
     });
   }
@@ -1012,6 +1042,7 @@ export class ChatService {
           blocked: Boolean(ban),
           banId: ban?.id ?? null,
           banExpiresAt: ban?.expiresAt ?? null,
+          isDeletedAccount: member.accountClosedAt !== null,
         },
         { dateFields: ['joinedAt', 'banExpiresAt'] },
       );
@@ -1070,7 +1101,7 @@ export class ChatService {
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
-    return messages.map(toPublicMessage);
+    return toPublicMessages(messages);
   }
 
   async listAdminRoomMessages({
@@ -1123,7 +1154,10 @@ export class ChatService {
         .where(where),
     ]);
     return {
-      items: rows.map(({ message, playerId }) => ({ ...toPublicMessage(message), playerId })),
+      items: rows.flatMap(({ message, playerId }) => {
+        const mapped = toPublicMessage(message);
+        return mapped ? [{ ...mapped, playerId }] : [];
+      }),
       total: Number(n),
       page,
       limit,
@@ -1261,7 +1295,7 @@ export class ChatService {
       userId,
     });
 
-    const message = toPublicMessage(record);
+    const message = toSentMessage(record);
     publishChatEvent(this.transport, roomId, message);
     emitMentions({
       events: this.events,
@@ -1311,7 +1345,7 @@ export class ChatService {
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
-    return messages.map(toPublicMessage);
+    return toPublicMessages(messages);
   }
 
   async sendGlobalMessage({
@@ -1347,7 +1381,7 @@ export class ChatService {
       userId,
     });
 
-    const message = toPublicMessage(record);
+    const message = toSentMessage(record);
     publishChatEvent(this.transport, null, message);
     emitMentions({
       events: this.events,
@@ -2028,7 +2062,7 @@ export class ChatService {
         metadata: args.metadata,
       })
       .returning();
-    const msg = toSystemMessage(record);
+    const msg = toWrittenSystemMessage(record, args.metadata);
     // Only auto-publish when this call owns the write (no caller-managed transaction).
     // When `tx` is passed, the caller's transaction hasn't committed yet - publishing
     // here would leak a message to clients before (or even if) it actually commits.
@@ -2050,7 +2084,7 @@ export class ChatService {
       .set({ metadata: args.metadata })
       .where(eq(chatMessage.id, args.messageId))
       .returning();
-    const message = toSystemMessage(record);
+    const message = toWrittenSystemMessage(record, args.metadata);
     if (!args.tx) {
       publishChatEvent(this.transport, message.roomId, message);
     }
@@ -2065,6 +2099,7 @@ export class ChatService {
         userId: chatRoomMember.userId,
         role: chatRoomMember.role,
         joinedAt: chatRoomMember.joinedAt,
+        accountClosedAt: chatRoomMember.accountClosedAt,
         username: user.name,
       })
       .from(chatRoomMember)
@@ -2078,9 +2113,13 @@ export class ChatService {
       .orderBy(asc(chatRoomMember.joinedAt));
     const summaries = await this.directory.lookupPlayers(members.map((m) => m.userId));
     const usernameByUserId = new Map(summaries.map((s) => [s.userId, s.username]));
-    return members.map((m) =>
+    return members.map(({ accountClosedAt, ...m }) =>
       serializeRow(
-        { ...m, username: usernameByUserId.get(m.userId) ?? m.username ?? null },
+        {
+          ...m,
+          username: usernameByUserId.get(m.userId) ?? m.username ?? null,
+          isDeletedAccount: accountClosedAt !== null,
+        },
         { dateFields: ['joinedAt'] },
       ),
     );

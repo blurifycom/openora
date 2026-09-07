@@ -39,6 +39,10 @@ export const user = pgTable(
     phoneNumber: text().unique(),
     phoneVerified: boolean().notNull().default(false),
     phoneVerifiedAt: timestamp({ withTimezone: true }),
+    // A hash does not reveal a legacy password's length, so existing rows start false
+    // and each qualifying password write records the policy state explicitly.
+    passwordMeetsPolicy: boolean().notNull().default(false),
+    loginWithdrawalAlertsEnabled: boolean().notNull().default(false),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
     // Second-factor lockout, counted separately from the password-login columns above:
@@ -178,6 +182,33 @@ export const smsOtpSession = pgTable(
   (t) => [index('sms_otp_session_phone_idx').on(t.phone)],
 );
 
+// One live phone-binding challenge per user. This is deliberately separate from
+// smsOtpSession, which belongs to unauthenticated phone login and must never confer
+// authority to change a standing login credential.
+export const phoneVerificationSession = pgTable(
+  'phone_verification_session',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid()
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    sessionId: uuid()
+      .notNull()
+      .references(() => session.id, { onDelete: 'cascade' }),
+    phone: text().notNull(),
+    codeHash: text().notNull(),
+    reauthenticatedAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    failedAttempts: integer().notNull().default(0),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('phone_verification_session_phone_idx').on(t.phone),
+    index('phone_verification_session_session_id_idx').on(t.sessionId),
+  ],
+);
+
 // Server-side trusted-device registry. better-auth issues its own opaque trust cookie,
 // which cannot be listed or revoked; a device only skips the second factor when BOTH
 // that cookie and an unrevoked row here are present, so revoking the row forces 2FA on
@@ -209,6 +240,7 @@ export const adminTrustedDevice = pgTable(
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type SmsOtpSession = typeof smsOtpSession.$inferSelect;
+export type PhoneVerificationSession = typeof phoneVerificationSession.$inferSelect;
 export type Account = typeof account.$inferSelect;
 export type Verification = typeof verification.$inferSelect;
 export type TwoFactor = typeof twoFactor.$inferSelect;

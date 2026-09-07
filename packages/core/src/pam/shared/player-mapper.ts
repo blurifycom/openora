@@ -24,6 +24,8 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
     totalWagered: row.totalWagered,
     totalDeposits: row.totalDeposits,
     lastSeenAt: row.lastSeenAt ? row.lastSeenAt.toISOString() : null,
+    timezone: row.timezone,
+    timezoneUpdatedAt: row.timezoneUpdatedAt ? row.timezoneUpdatedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

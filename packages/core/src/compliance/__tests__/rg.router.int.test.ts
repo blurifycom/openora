@@ -4,12 +4,11 @@ import { eq, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type {
-  AdminUserDirectory,
   ExchangeRateReader,
   KycAdapter,
   KycWebhookVerifier,
   LoginEnforcementPort,
-  SendEmailPort,
+  MailDispatchPort,
   JobQueueAdapter,
 } from '@openora/core/contracts';
 import { defaultResponsibleGamingConfig, queue } from '@openora/core/contracts';
@@ -81,8 +80,10 @@ function build(adminGuard: AdminGuard) {
     drizzle: db.drizzle,
     events,
     loginEnforcement: enforcement,
-    email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
-    directory: mock<AdminUserDirectory>({ lookupPlayers: vi.fn(async () => []) }),
+    mailDispatch: mock<MailDispatchPort>({
+      toUser: vi.fn(async () => undefined),
+      toAddress: vi.fn(async () => undefined),
+    }),
     identityReader: makeIdentityReader(),
     rates: identityRates(),
   });

@@ -7,6 +7,7 @@ const CORE_PLUGIN_MODULES = [
   { id: 'audit', path: '@openora/core/audit/plugin' },
   { id: 'identity', path: '@openora/core/pam/plugins/identity' },
   { id: 'iam', path: '@openora/core/iam/plugin' },
+  { id: 'mail', path: '@openora/core/mail/plugin' },
   { id: 'notifications', path: '@openora/core/engagement/plugins/notifications' },
   { id: 'exchange-rate', path: '@openora/core/fx/plugins/exchange-rate' },
   { id: 'wallet', path: '@openora/core/wallet/plugins/wallet' },

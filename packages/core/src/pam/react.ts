@@ -15,9 +15,17 @@ export {
   useUpdateProfile,
   useChangePassword,
   useSendEmailVerification,
+  useMySecurityControls,
+  useSetLoginWithdrawalAlerts,
+  useRequestPhoneVerification,
+  useConfirmPhoneVerification,
   useMySessions,
   useRevokeMySession,
   type Enable2faResult,
+  type UseMySecurityControlsResult,
+  type UseSetLoginWithdrawalAlertsResult,
+  type UseRequestPhoneVerificationResult,
+  type UseConfirmPhoneVerificationResult,
 } from './identity/react/account.js';
 export {
   usePlayerProfile,

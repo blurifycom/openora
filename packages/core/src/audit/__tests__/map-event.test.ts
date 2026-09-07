@@ -131,3 +131,98 @@ describe('mapEventToRecord: identity.user.registration.failed', () => {
     expect(row.actorId).toBeUndefined();
   });
 });
+
+describe('mapEventToRecord: chat room lifecycle after an owner account closes', () => {
+  const roomId = '11111111-1111-4111-8111-111111111111';
+  const previousOwnerId = '22222222-2222-4222-8222-222222222222';
+
+  it('attributes an ownership transfer to the system, against the room', async () => {
+    const row = await mapEventToRecord('chat.room.ownership.transferred', {
+      roomId,
+      roomName: 'Wheel Spin',
+      previousOwnerId,
+      newOwnerId: '33333333-3333-4333-8333-333333333333',
+      reason: 'account-closed',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: roomId,
+      after: {
+        previousOwnerId,
+        newOwnerId: '33333333-3333-4333-8333-333333333333',
+        reason: 'account-closed',
+      },
+    });
+  });
+
+  it('records the countdown deadline and how many members it affects', async () => {
+    const row = await mapEventToRecord('chat.room.scheduled_for_deletion', {
+      roomId,
+      roomName: 'Wheel Spin',
+      previousOwnerId,
+      memberIds: [previousOwnerId, '44444444-4444-4444-8444-444444444444'],
+      scheduledDeletionAt: '2026-09-30T10:00:00.000Z',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: roomId,
+      after: {
+        previousOwnerId,
+        scheduledDeletionAt: '2026-09-30T10:00:00.000Z',
+        memberCount: 2,
+      },
+    });
+  });
+
+  it('records the cancellation when the closed owner comes back', async () => {
+    const row = await mapEventToRecord('chat.room.deletion.cancelled', {
+      roomId,
+      roomName: 'Wheel Spin',
+      ownerId: previousOwnerId,
+      memberIds: [previousOwnerId, '44444444-4444-4444-8444-444444444444'],
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'chat_room',
+      resourceId: roomId,
+      after: { ownerId: previousOwnerId, scheduledDeletionAt: null, memberCount: 2 },
+    });
+  });
+});
+
+describe('mapEventToRecord: player account closed and reopened', () => {
+  const payload = {
+    playerId: '55555555-5555-4555-8555-555555555555',
+    userId: '66666666-6666-4666-8666-666666666666',
+    actorId: '77777777-7777-4777-8777-777777777777',
+  };
+
+  it('attributes the closure to the acting admin, against the subject player', async () => {
+    const row = await mapEventToRecord('player.account.closed', payload);
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: '77777777-7777-4777-8777-777777777777',
+      resourceType: 'player',
+      resourceId: '55555555-5555-4555-8555-555555555555',
+      after: { closed: true },
+    });
+  });
+
+  it('records the reopening the same way, so the pair reads as one story', async () => {
+    const row = await mapEventToRecord('player.account.reopened', payload);
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: '77777777-7777-4777-8777-777777777777',
+      resourceType: 'player',
+      resourceId: '55555555-5555-4555-8555-555555555555',
+      after: { closed: false },
+    });
+  });
+});

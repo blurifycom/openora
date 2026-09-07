@@ -1,4 +1,4 @@
-export type { AuthOptions, Auth, SendEmail } from './auth.js';
+export type { AuthOptions, Auth, DispatchOtpMail } from './auth.js';
 export { createAuth } from './auth.js';
 export { AdminGuard, ADMIN_GUARD } from './admin-guard.js';
 export type { AdminCaller } from './admin-guard.js';

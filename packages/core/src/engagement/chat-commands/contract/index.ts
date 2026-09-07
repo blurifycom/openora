@@ -23,11 +23,14 @@ export const CHAT_COMMAND_TYPES = [
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
-const PerCurrencyAmountSchema = z.record(CurrencyTickerSchema, MoneyAmountSchema);
+const CurrencyAmountSchema = z.object({
+  currency: CurrencyTickerSchema,
+  amount: MoneyAmountSchema,
+});
 
 export const CommandConfigSchema = z.object({
-  maxAmount: PerCurrencyAmountSchema.optional(),
-  minAmount: PerCurrencyAmountSchema.optional(),
+  maxAmount: CurrencyAmountSchema.optional(),
+  minAmount: CurrencyAmountSchema.optional(),
   maxRecipients: z.number().int().positive().optional(),
 });
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;

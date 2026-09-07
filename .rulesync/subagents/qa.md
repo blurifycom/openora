@@ -21,7 +21,7 @@ Report both: test files written (with pass/fail) AND a short walkthrough log (wh
 
 ## Environment
 
-- `docker compose up` starts postgres; `pnpm db:seed` creates demo data (`admin@oss.dev` / `password123`).
+- `docker compose up` starts postgres; `pnpm db:seed` creates demo data (`admin@oss.dev` / `password1234`).
 - In-process integration tests need no server. For black-box specs, ask which consumer API URL to target if none is running.
 
 ## Test writing conventions

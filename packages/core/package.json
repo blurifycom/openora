@@ -214,6 +214,26 @@
       "import": "./dist/cms/contract/index.js",
       "default": "./dist/cms/contract/index.js"
     },
+    "./mail": {
+      "types": "./dist/mail/index.d.ts",
+      "import": "./dist/mail/index.js",
+      "default": "./dist/mail/index.js"
+    },
+    "./mail/plugin": {
+      "types": "./dist/mail/plugin.d.ts",
+      "import": "./dist/mail/plugin.js",
+      "default": "./dist/mail/plugin.js"
+    },
+    "./mail/contract": {
+      "types": "./dist/mail/contract/index.d.ts",
+      "import": "./dist/mail/contract/index.js",
+      "default": "./dist/mail/contract/index.js"
+    },
+    "./mail/contracts": {
+      "types": "./dist/mail/contract/index.d.ts",
+      "import": "./dist/mail/contract/index.js",
+      "default": "./dist/mail/contract/index.js"
+    },
     "./compliance/server": {
       "types": "./dist/compliance/server.d.ts",
       "import": "./dist/compliance/server.js",

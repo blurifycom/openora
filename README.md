@@ -48,7 +48,7 @@ Node 26+, pnpm 11+, Docker.
 
 ## Quick start
 
-Two ways to get the API up at `http://localhost:3001`. Demo credentials after seeding: `admin@oss.dev` / `password123`.
+Two ways to get the API up at `http://localhost:3001`. Demo credentials after seeding: `admin@oss.dev` / `password1234`.
 
 ### 1. Via agents / MCP (one command)
 

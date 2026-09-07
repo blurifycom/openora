@@ -37,6 +37,11 @@ export const player = pgTable(
     totalWagered: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     totalDeposits: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     lastSeenAt: timestamp({ withTimezone: true }),
+    // The IANA zone the player's browser last reported; null until a device reports one,
+    // never derived from `country` or `registrationIp`.
+    timezone: text(),
+    // Last confirmed by a device, not last changed: it moves on every accepted capture.
+    timezoneUpdatedAt: timestamp({ withTimezone: true }),
     termsVersion: text(),
     termsAcceptedAt: timestamp({ withTimezone: true }),
     ageAcceptedAt: timestamp({ withTimezone: true }),

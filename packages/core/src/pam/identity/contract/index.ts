@@ -28,6 +28,11 @@ import {
   PhoneLoginRequestOutputSchema,
   PhoneLoginVerifyInputSchema,
   LoginSecurityStateSchema,
+  SecurityControlsSchema,
+  SetLoginWithdrawalAlertsInputSchema,
+  PhoneVerificationRequestInputSchema,
+  PhoneVerificationRequestOutputSchema,
+  PhoneVerificationConfirmInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import * as z from 'zod';
@@ -135,6 +140,27 @@ export const identityContract = {
   logout: oc.route({ method: 'POST', path: '/identity/logout' }).output(IdentitySuccessSchema),
 
   me: oc.route({ method: 'GET', path: '/identity/me' }).output(UserSchema.nullable()),
+
+  security: {
+    me: oc.route({ method: 'GET', path: '/identity/security/me' }).output(SecurityControlsSchema),
+
+    loginWithdrawalAlerts: oc
+      .route({ method: 'POST', path: '/identity/security/login-withdrawal-alerts' })
+      .input(SetLoginWithdrawalAlertsInputSchema)
+      .output(SecurityControlsSchema),
+  },
+
+  phoneVerification: {
+    request: oc
+      .route({ method: 'POST', path: '/identity/phone-verification/request' })
+      .input(PhoneVerificationRequestInputSchema)
+      .output(PhoneVerificationRequestOutputSchema),
+
+    confirm: oc
+      .route({ method: 'POST', path: '/identity/phone-verification/confirm' })
+      .input(PhoneVerificationConfirmInputSchema)
+      .output(SecurityControlsSchema),
+  },
 
   streamSession: oc
     .route({ method: 'GET', path: '/identity/session/stream' })

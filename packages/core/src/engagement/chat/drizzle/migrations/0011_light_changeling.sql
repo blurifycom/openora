@@ -1,0 +1,1 @@
+CREATE INDEX "chat_msg_user_id_created_at_idx" ON "chat_message" USING btree ("user_id","created_at");
