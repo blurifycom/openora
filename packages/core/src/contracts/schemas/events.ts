@@ -361,6 +361,18 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  // A currency swap filled: the player's `fromCurrency` balance was debited and
+  // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
+  // filled, never the quoted number.
+  'wallet.swap.completed': z.object({
+    userId: UuidSchema,
+    transactionId: UuidSchema,
+    fromCurrency: CurrencyTickerSchema,
+    fromAmount: MoneyAmountSchema,
+    toCurrency: CurrencyTickerSchema,
+    toAmount: MoneyAmountSchema,
+  }),
+
   'wallet.bonus_rollover.completed': z.object({
     userId: UuidSchema,
     creditId: UuidSchema,

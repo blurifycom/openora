@@ -60,7 +60,9 @@ export const EndRoundInputSchema = z.object({
 
 export const EndRoundOutputSchema = z.object({
   success: z.literal(true),
-  outcome: z.unknown().optional(),
+  // What the round paid, in its own currency - '0' for a losing round. The provider's
+  // number: the player never sends it and cannot influence it.
+  winAmount: MoneyAmountSchema,
 });
 
 export const gamingContract = {

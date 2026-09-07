@@ -19,6 +19,8 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  SWAP_ADAPTER,
+  SWAP_WEBHOOK_VERIFIER,
   AUDIT_WRITER,
   JOB_QUEUE,
   UuidSchema,
@@ -41,6 +43,7 @@ import { createWalletRouter, walletBalanceChannel } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 import { ReconciliationService } from './service/reconciliation.service.js';
+import { SwapService } from './service/swap.service.js';
 
 const logger = createLogger('wallet');
 
@@ -135,6 +138,16 @@ export default {
         'withdrawal',
         envelope.eventId,
       );
+    });
+    // Both sides of a swap moved, so both currencies get a signal - a client watching
+    // only its active currency would otherwise miss the leg it swapped out of.
+    ctx.events.on('wallet.swap.completed', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.swap.completed'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(parsed.data.userId, parsed.data.fromCurrency, 'swap', envelope.eventId);
+      publishBalanceChanged(parsed.data.userId, parsed.data.toCurrency, 'swap', envelope.eventId);
     });
     ctx.events.on('wallet.manual_adjustment.created', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.manual_adjustment.created'].safeParse(payload);
@@ -275,6 +288,29 @@ export default {
           .catch((err) => logger.error({ err }, 'wallet-reconciliation schedule failed'));
       }
 
+      // No SWAP_ADAPTER bound is the resting state (core binds none) - the swap routes
+      // then refuse rather than the module failing to load.
+      const swapAdapter = c.has(SWAP_ADAPTER) ? c.get(SWAP_ADAPTER) : undefined;
+      const swapVerifier = c.has(SWAP_WEBHOOK_VERIFIER) ? c.get(SWAP_WEBHOOK_VERIFIER) : undefined;
+      const swap = swapAdapter
+        ? new SwapService({
+            drizzle: c.get(DRIZZLE),
+            events: c.get(EVENT_BUS),
+            adapter: swapAdapter,
+            platformConfig,
+            limiter: c.get(RATE_LIMITER),
+          })
+        : undefined;
+      // A webhook needs BOTH: an adapter that parses the vendor's format and that same
+      // vendor's verifier. One without the other leaves the route refusing everything.
+      const swapWebhook =
+        swapAdapter?.parseWebhook && swapVerifier
+          ? {
+              verify: swapVerifier.verify.bind(swapVerifier),
+              parse: swapAdapter.parseWebhook.bind(swapAdapter),
+            }
+          : undefined;
+
       return createWalletRouter({
         wallet: walletService,
         adminGuard: c.get(ADMIN_GUARD),
@@ -285,6 +321,8 @@ export default {
         reconciliationQueue: WALLET_RECONCILIATION_QUEUE,
         realtime: realtimeTransport,
         limiter: c.get(RATE_LIMITER),
+        swap,
+        swapWebhook,
       });
     });
   },

@@ -462,6 +462,9 @@
         "wallet.reconciliation.run",
         "wallet.setActiveCurrency",
         "wallet.streamBalance",
+        "wallet.swap.execute",
+        "wallet.swap.quote",
+        "wallet.swap.webhook",
         "wallet.webhook",
         "wallet.webhookForProvider",
         "wallet.withdraw",
@@ -896,8 +899,10 @@
       "category": "swap",
       "interface": "SwapAdapter",
       "token": "SWAP_ADAPTER",
-      "status": "stub",
-      "boundIn": []
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
     },
     {
       "category": "tag-evaluation-commands",
@@ -1052,6 +1057,7 @@
     "wallet.deposit.completed",
     "wallet.manual_adjustment.created",
     "wallet.reconciliation.alert",
+    "wallet.swap.completed",
     "wallet.withdrawal.approved",
     "wallet.withdrawal.completed",
     "wallet.withdrawal.failed",
@@ -2450,6 +2456,22 @@
     {
       "name": "SubmitKycOutputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "SwapInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapQuoteInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapQuoteSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "SystemChatMessageSchema",
