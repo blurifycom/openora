@@ -287,6 +287,15 @@ export class GamingService {
     if (!hasScalarChanges && uniqueCategoryIds === undefined) {
       return this.getGame(id);
     }
+    const [beforeRow] = await this.drizzle.db.select().from(game).where(eq(game.id, id)).limit(1);
+    if (!beforeRow) {
+      throw new GameNotFoundError(id);
+    }
+    const beforeLinks = await this.drizzle.db
+      .select({ categoryId: gameCategoryGame.categoryId })
+      .from(gameCategoryGame)
+      .where(eq(gameCategoryGame.gameId, id));
+    const beforeCategoryIds = beforeLinks.map((r) => r.categoryId);
     if (patchInput.providerId !== undefined) {
       findOneOrThrow(
         await this.drizzle.db
@@ -345,9 +354,34 @@ export class GamingService {
       }
       throw error;
     }
+    const [afterRow] = await this.drizzle.db.select().from(game).where(eq(game.id, id)).limit(1);
+    if (!afterRow) {
+      throw new GameNotFoundError(id);
+    }
+    const afterCategoryIds = uniqueCategoryIds ?? beforeCategoryIds;
     this.events.emit('gaming.game.updated', {
       gameId: id,
       actorId,
+      before: {
+        slug: beforeRow.slug,
+        name: beforeRow.name,
+        providerId: beforeRow.providerId,
+        aggregator: beforeRow.aggregator,
+        thumbnailUrl: beforeRow.thumbnailUrl,
+        isActive: beforeRow.isActive,
+        categoryIds: beforeCategoryIds,
+        metadata: beforeRow.metadata ?? null,
+      },
+      after: {
+        slug: afterRow.slug,
+        name: afterRow.name,
+        providerId: afterRow.providerId,
+        aggregator: afterRow.aggregator,
+        thumbnailUrl: afterRow.thumbnailUrl,
+        isActive: afterRow.isActive,
+        categoryIds: afterCategoryIds,
+        metadata: afterRow.metadata ?? null,
+      },
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });

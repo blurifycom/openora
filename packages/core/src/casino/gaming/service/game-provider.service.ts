@@ -141,8 +141,20 @@ export class GameProviderService {
     this.events.emit('gaming.provider.updated', {
       providerId: updated.id,
       actorId,
-      before: { slug: existing.slug, name: existing.name },
-      after: { slug: updated.slug, name: updated.name },
+      before: {
+        slug: existing.slug,
+        name: existing.name,
+        aggregatorVendorId: existing.aggregatorVendorId,
+        logoUrl: existing.logoUrl,
+        isActive: existing.isActive,
+      },
+      after: {
+        slug: updated.slug,
+        name: updated.name,
+        aggregatorVendorId: updated.aggregatorVendorId,
+        logoUrl: updated.logoUrl,
+        isActive: updated.isActive,
+      },
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });

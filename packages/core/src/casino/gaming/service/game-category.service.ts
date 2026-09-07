@@ -139,6 +139,9 @@ export class GameCategoryService {
       categoryId: record.id,
       slug: record.slug,
       name: record.name,
+      icon: record.icon,
+      sortOrder: record.sortOrder,
+      isActive: record.isActive,
       actorId,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
@@ -185,8 +188,20 @@ export class GameCategoryService {
     this.events.emit('gaming.category.updated', {
       categoryId: updated.id,
       actorId,
-      before: { slug: existing.slug, name: existing.name },
-      after: { slug: updated.slug, name: updated.name },
+      before: {
+        slug: existing.slug,
+        name: existing.name,
+        icon: existing.icon,
+        sortOrder: existing.sortOrder,
+        isActive: existing.isActive,
+      },
+      after: {
+        slug: updated.slug,
+        name: updated.name,
+        icon: updated.icon,
+        sortOrder: updated.sortOrder,
+        isActive: updated.isActive,
+      },
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
