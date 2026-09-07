@@ -6,6 +6,7 @@ export * from './player.js';
 export * from './wallet-tx.js';
 export * from './display-currency.js';
 export * from './game.js';
+export * from './lobby.js';
 export * from './igaming-config.js';
 export * from './tag.js';
 export * from './platform-config.js';

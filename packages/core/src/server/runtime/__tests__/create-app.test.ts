@@ -90,11 +90,11 @@ describe('createApp - httpCache.additionalPaths extends rather than replaces the
         databaseUrl: DUMMY_DATABASE_URL,
         httpCache: { additionalPaths: ['/email-assets'] },
       });
-      created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
+      created.app.get('/lobby/layout', (c) => c.json({ ok: true }));
       created.app.get('/email-assets/banner.png', (c) => c.body('png'));
       created.app.get('/wallet/balance', (c) => c.json({ ok: true }));
 
-      const builtIn = await created.app.request('/lobby/categories');
+      const builtIn = await created.app.request('/lobby/layout');
       expect(builtIn.headers.get('cache-control')).toMatch(/^public,/);
 
       const added = await created.app.request('/email-assets/banner.png');
@@ -122,10 +122,10 @@ describe('createApp - httpCache.additionalPaths extends rather than replaces the
         databaseUrl: DUMMY_DATABASE_URL,
         httpCache: { paths: ['/only-this'], additionalPaths: ['/ignored-since-paths-is-set'] },
       });
-      created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
+      created.app.get('/lobby/layout', (c) => c.json({ ok: true }));
       created.app.get('/ignored-since-paths-is-set', (c) => c.json({ ok: true }));
 
-      const builtIn = await created.app.request('/lobby/categories');
+      const builtIn = await created.app.request('/lobby/layout');
       expect(builtIn.headers.get('cache-control')).toBe('no-store');
 
       const ignored = await created.app.request('/ignored-since-paths-is-set');

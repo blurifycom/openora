@@ -585,6 +585,18 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'lobby.layout.updated') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'lobby-layout',
+      resourceId: null,
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
   // System-generated in-app notification (fed by a wallet withdrawal event); the
   // recipient is the notification's subject, not an acting player.
   if (topic === 'notifications.created') {
@@ -864,6 +876,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',
+  'lobby.layout.updated',
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.user.ignored',

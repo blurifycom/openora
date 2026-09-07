@@ -307,15 +307,13 @@
       "id": "lobby",
       "group": "casino",
       "tables": [
-        "featured_slot",
-        "lobby_category",
-        "lobby_category_game"
+        "lobby_layout",
+        "lobby_section"
       ],
       "routes": [
-        "lobby.getCategoryBySlug",
-        "lobby.getFeatured",
-        "lobby.listCategories",
-        "lobby.search"
+        "lobby.getAdminLayout",
+        "lobby.getLayout",
+        "lobby.replaceLayout"
       ]
     },
     {
@@ -760,6 +758,15 @@
       ]
     },
     {
+      "category": "lobby-section-catalog",
+      "interface": "LobbySectionDefinitionInput",
+      "token": "LOBBY_SECTION_CATALOG",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/lobby/plugin.ts"
+      ]
+    },
+    {
       "category": "login-enforcement",
       "interface": "LoginEnforcementPort",
       "token": "LOGIN_ENFORCEMENT",
@@ -1018,6 +1025,7 @@
     "identity.user.registration.failed",
     "identity.user.unauthorized_access",
     "identity.user.unlocked",
+    "lobby.layout.updated",
     "notifications.created",
     "player.account.closed",
     "player.account.reopened",
@@ -1604,10 +1612,6 @@
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
-      "name": "FeaturedSlotSchema",
-      "file": "packages/core/src/casino/lobby/contract/index.ts"
-    },
-    {
       "name": "FeatureFlagsSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -1678,10 +1682,6 @@
     {
       "name": "GameSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
-    },
-    {
-      "name": "GameSummarySchema",
-      "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
       "name": "GameTypeSchema",
@@ -1920,12 +1920,40 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
-      "name": "LobbyCategoryDetailSchema",
+      "name": "LobbyAdminLayoutSchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
-      "name": "LobbyCategorySchema",
+      "name": "LobbyAdminSectionSchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbyLayoutSectionSnapshotSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbyLayoutSnapshotSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbyResolvedSectionSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbySectionConfigSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbySectionDataSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbySectionSaveInputSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbySectionTypeSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
     },
     {
       "name": "LoginInputSchema",
@@ -2262,6 +2290,10 @@
     {
       "name": "removePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "ReplaceLobbyLayoutInputSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
       "name": "replacePlayerTagSchema",

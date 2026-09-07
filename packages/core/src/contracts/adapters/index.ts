@@ -84,6 +84,18 @@ export type { CacheAdapter } from './cache.js';
 export { CACHE } from './cache.js';
 
 export type {
+  LobbySectionCatalog,
+  LobbySectionDefinition,
+  LobbySectionDefinitionInput,
+  LobbySectionValidationResult,
+} from './lobby-section-catalog.js';
+export {
+  createLobbySectionCatalog,
+  defineLobbySection,
+  LOBBY_SECTION_CATALOG,
+} from './lobby-section-catalog.js';
+
+export type {
   RealtimeTransport,
   RealtimePresence,
   RealtimeSignal,

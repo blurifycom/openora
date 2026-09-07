@@ -59,13 +59,7 @@ import type { CoreTokenCatalog } from './core-token-catalog.js';
 // using `paths` to add one prefix can spread this in instead of hand-copying it.
 // '/cms/banners' is excluded on purpose: its `listBanners` route is unguarded and returns
 // inactive banners, so HTTP-caching it would leak draft banners to a shared cache.
-export const PUBLIC_HTTP_CACHE_PATHS = [
-  '/lobby/categories',
-  '/lobby/featured',
-  '/lobby/search',
-  '/cms/pages',
-  '/gaming/games',
-] as const;
+export const PUBLIC_HTTP_CACHE_PATHS = ['/lobby/layout', '/cms/pages', '/gaming/games'] as const;
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
