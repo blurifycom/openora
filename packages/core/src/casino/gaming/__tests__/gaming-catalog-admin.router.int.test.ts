@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { GameAdapter, PlayEligibilityPort, WalletCommands } from '@openora/core/contracts';
@@ -157,6 +157,7 @@ describe('gaming catalog router authz', () => {
         slug: `aces-${randomUUID()}`,
         providerId: provider!.id,
         aggregator: 'direct',
+        isActive: true,
       })
       .returning();
     await db.drizzle.db
@@ -170,6 +171,14 @@ describe('gaming catalog router authz', () => {
     await expect(call(router.listCategories, {}, { context: CTX })).resolves.toMatchObject([
       { slug: 'slots' },
     ]);
+    await expect(call(router.getGame, { id: g!.id }, { context: CTX })).resolves.toMatchObject({
+      name: 'Aces',
+      isActive: true,
+    });
+    await db.drizzle.db.update(game).set({ isActive: false }).where(eq(game.id, g!.id));
+    await expect(call(router.getGame, { id: g!.id }, { context: CTX })).rejects.toBeInstanceOf(
+      ORPCError,
+    );
   });
 
   it('creates a category and patches a game through the guarded routes', async () => {

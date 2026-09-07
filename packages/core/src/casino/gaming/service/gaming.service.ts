@@ -34,7 +34,11 @@ import {
 } from '../schema/index.js';
 import { GameProviderNotFoundError } from './game-provider.service.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
-import { categoriesByGameIds } from '../../shared/game-catalog.js';
+import {
+  categoriesByGameIds,
+  isGamePlayable,
+  playableGameCondition,
+} from '../../shared/game-catalog.js';
 import type { UpdateGameInput } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
@@ -122,7 +126,11 @@ export class GamingService {
     const where = and(
       q ? or(ilike(game.name, likeContains(q)), ilike(game.slug, likeContains(q))) : undefined,
       providerId ? eq(game.providerId, providerId) : undefined,
-      isActive === undefined ? undefined : eq(game.isActive, isActive),
+      isActive === true
+        ? playableGameCondition()
+        : isActive === undefined
+          ? undefined
+          : eq(game.isActive, isActive),
       categoryId
         ? exists(
             this.drizzle.db
@@ -146,7 +154,11 @@ export class GamingService {
         .orderBy(asc(game.name))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
-      this.drizzle.db.select({ n: count() }).from(game).where(where),
+      this.drizzle.db
+        .select({ n: count() })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(where),
     ]);
     const categories = await categoriesByGameIds(
       this.drizzle.db,
@@ -160,7 +172,7 @@ export class GamingService {
     };
   }
 
-  async getGame(id: string) {
+  async getGame(id: string, opts: { activeOnly?: boolean } = {}) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .select({ game, provider: gameProvider })
@@ -169,6 +181,11 @@ export class GamingService {
         .where(eq(game.id, id)),
       new GameNotFoundError(id),
     );
+    // The public detail route passes activeOnly: internal callers (updateGame's
+    // return value) keep the unfiltered row so an admin still sees what they wrote.
+    if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
+      throw new GameNotFoundError(id);
+    }
     const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id]);
     return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
   }
@@ -182,7 +199,7 @@ export class GamingService {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
-    await this.getGame(gameId);
+    await this.getGame(gameId, { activeOnly: true });
 
     const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the

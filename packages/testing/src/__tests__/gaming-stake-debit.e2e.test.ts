@@ -66,7 +66,7 @@ beforeAll(async () => {
   const [providerRow] = await app.container
     .get(DRIZZLE)
     .db.insert(gameProvider)
-    .values({ slug: `e2e-studio-${randomUUID()}`, name: 'E2E Studio' })
+    .values({ slug: `e2e-studio-${randomUUID()}`, name: 'E2E Studio', isActive: true })
     .returning();
   const [categoryRow] = await app.container
     .get(DRIZZLE)
@@ -81,6 +81,7 @@ beforeAll(async () => {
       slug: `stake-debit-e2e-${randomUUID()}`,
       providerId: providerRow!.id,
       aggregator: 'direct',
+      isActive: true,
     })
     .returning();
   await app.container

@@ -131,7 +131,7 @@ beforeAll(async () => {
   const [providerRow] = await appMain.container
     .get(DRIZZLE)
     .db.insert(gameProvider)
-    .values({ slug: `qa-studio-${randomUUID()}`, name: 'QA Studio' })
+    .values({ slug: `qa-studio-${randomUUID()}`, name: 'QA Studio', isActive: true })
     .returning();
   const [categoryRow] = await appMain.container
     .get(DRIZZLE)
@@ -146,6 +146,7 @@ beforeAll(async () => {
       slug: `bonus-rollover-qa-${randomUUID()}`,
       providerId: providerRow!.id,
       aggregator: 'direct',
+      isActive: true,
     })
     .returning();
   await appMain.container

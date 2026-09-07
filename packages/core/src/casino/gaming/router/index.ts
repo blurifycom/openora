@@ -38,7 +38,9 @@ export function createGamingRouter({
     listGames: os.listGames.handler(({ input }) => gaming.listGames({ ...input, isActive: true })),
 
     getGame: os.getGame.handler(({ input }) =>
-      mapErrors({ NOT_FOUND: GameNotFoundError }, () => gaming.getGame(input.id)),
+      mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
+        gaming.getGame(input.id, { activeOnly: true }),
+      ),
     ),
 
     startRound: os.startRound.handler(({ input, context }) =>

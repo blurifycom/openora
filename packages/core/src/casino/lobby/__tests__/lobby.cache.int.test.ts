@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
@@ -10,7 +11,7 @@ import {
 } from '@openora/core/casino/schema/gaming';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
-import { featuredSlot } from '../schema/index.js';
+import { featuredSlot, lobbyCategory, lobbyCategoryGame } from '../schema/index.js';
 import { LobbyService } from '../service/lobby.service.js';
 
 let db: TestDb;
@@ -84,5 +85,65 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
     await db.drizzle.db.update(game).set({ name: 'Renamed' }).where(eq(game.id, g.id));
     const second = await svc.getFeatured();
     expect(second).toEqual(first);
+  });
+});
+
+describe('LobbyService public game gates (real PG)', () => {
+  async function seedPlayableGame(name: string) {
+    const tag = randomUUID();
+    const [provider] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: `studio-${tag}`, name: `${name} Studio`, isActive: true })
+      .returning();
+    const [row] = await db.drizzle.db
+      .insert(game)
+      .values({
+        name,
+        slug: `game-${tag}`,
+        providerId: provider!.id,
+        aggregator: 'direct',
+        isActive: true,
+      })
+      .returning();
+    return { provider: provider!, row: row! };
+  }
+
+  it('search hides inactive games and games of deactivated providers', async () => {
+    await seedPlayableGame('Gate Search Live');
+    const dark = await seedPlayableGame('Gate Search Dark');
+    await db.drizzle.db.update(game).set({ isActive: false }).where(eq(game.id, dark.row.id));
+    const orphaned = await seedPlayableGame('Gate Search Orphaned');
+    await db.drizzle.db
+      .update(gameProvider)
+      .set({ isActive: false })
+      .where(eq(gameProvider.id, orphaned.provider.id));
+
+    const svc = new LobbyService(db.drizzle);
+    expect((await svc.search('gate search')).map((r) => r.name)).toEqual(['Gate Search Live']);
+  });
+
+  it('getCategoryGames hides inactive games and games of deactivated providers', async () => {
+    const tag = randomUUID();
+    const [category] = await db.drizzle.db
+      .insert(lobbyCategory)
+      .values({ slug: `gate-${tag}`, name: 'Gate' })
+      .returning();
+    const live = await seedPlayableGame('Gate Feed Live');
+    const dark = await seedPlayableGame('Gate Feed Dark');
+    await db.drizzle.db.update(game).set({ isActive: false }).where(eq(game.id, dark.row.id));
+    const orphaned = await seedPlayableGame('Gate Feed Orphaned');
+    await db.drizzle.db
+      .update(gameProvider)
+      .set({ isActive: false })
+      .where(eq(gameProvider.id, orphaned.provider.id));
+    await db.drizzle.db.insert(lobbyCategoryGame).values([
+      { gameId: live.row.id, categoryId: category!.id, sortOrder: 0 },
+      { gameId: dark.row.id, categoryId: category!.id, sortOrder: 1 },
+      { gameId: orphaned.row.id, categoryId: category!.id, sortOrder: 2 },
+    ]);
+
+    const svc = new LobbyService(db.drizzle);
+    const feed = await svc.getCategoryGames(category!.slug);
+    expect(feed.games.map((g) => g.name)).toEqual(['Gate Feed Live']);
   });
 });

@@ -9,7 +9,7 @@ import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
 import { game, gameProvider, type GameCategory } from '@openora/core/casino/schema/gaming';
-import { categoriesByGameIds } from '../../shared/game-catalog.js';
+import { categoriesByGameIds, playableGameCondition } from '../../shared/game-catalog.js';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
@@ -98,7 +98,7 @@ export class LobbyService {
             .select({ game, provider: gameProvider })
             .from(game)
             .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-            .where(inArray(game.id, gameIds))
+            .where(and(inArray(game.id, gameIds), playableGameCondition()))
         : [];
     const categories = await categoriesByGameIds(db, gameIds);
 
@@ -155,7 +155,7 @@ export class LobbyService {
 
   async search(query: string) {
     const db = this.drizzle.db;
-    const whereClause = and(ilike(game.name, likeContains(query)), eq(game.isActive, true));
+    const whereClause = and(ilike(game.name, likeContains(query)), playableGameCondition());
 
     const rows = await db
       .select({ game, provider: gameProvider })

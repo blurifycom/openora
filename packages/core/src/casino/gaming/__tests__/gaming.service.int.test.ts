@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
   PlayEligibilityPort,
@@ -71,7 +71,7 @@ function makeService({
 async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(gameProvider)
-    .values({ slug: `studio-${randomUUID()}`, name: 'Studio', ...overrides })
+    .values({ slug: `studio-${randomUUID()}`, name: 'Studio', isActive: true, ...overrides })
     .returning();
   return row!;
 }
@@ -87,7 +87,7 @@ async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert>
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categoryIds?: string[]) {
   const [provider] = await db.drizzle.db
     .insert(gameProvider)
-    .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio' })
+    .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio', isActive: true })
     .returning();
   const ids = categoryIds ?? [(await seedCategory()).id];
   const [row] = await db.drizzle.db
@@ -97,6 +97,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categ
       slug: `game-${randomUUID()}`,
       providerId: provider!.id,
       aggregator: 'direct',
+      isActive: true,
       ...overrides,
     })
     .returning();
@@ -181,6 +182,25 @@ describe('GamingService lobby (real PG)', () => {
       GameNotFoundError,
     );
   });
+
+  it('getGame hides inactive games and deactivated providers only behind activeOnly', async () => {
+    const dark = await seedGame({ name: 'Dark', isActive: false });
+    const orphaned = await seedGame({ name: 'Orphaned' });
+    await db.drizzle.db
+      .update(gameProvider)
+      .set({ isActive: false })
+      .where(eq(gameProvider.id, orphaned.providerId));
+    const svc = makeService();
+
+    await expect(svc.getGame(dark.id, { activeOnly: true })).rejects.toBeInstanceOf(
+      GameNotFoundError,
+    );
+    await expect(svc.getGame(orphaned.id, { activeOnly: true })).rejects.toBeInstanceOf(
+      GameNotFoundError,
+    );
+    await expect(svc.getGame(dark.id)).resolves.toMatchObject({ name: 'Dark', isActive: false });
+    await expect(svc.getGame(orphaned.id)).resolves.toMatchObject({ name: 'Orphaned' });
+  });
 });
 
 const refusingLimits = () =>
@@ -252,6 +272,44 @@ describe('GamingService.startRound (real PG)', () => {
     expect(launchGame).not.toHaveBeenCalled();
   });
 
+  it('404s an inactive game without touching the wallet or provider', async () => {
+    const created = await seedGame({ name: 'Dark', isActive: false });
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const launchGame = vi.fn();
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+    });
+
+    await expect(
+      svc.startRound('00000000-0000-0000-0000-000000000311', created.id, 'USD', '10'),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+    expect(walletCommands.debit).not.toHaveBeenCalled();
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
+  it('404s a game on a deactivated provider without touching the wallet or provider', async () => {
+    const created = await seedGame({ name: 'Orphaned' });
+    await db.drizzle.db
+      .update(gameProvider)
+      .set({ isActive: false })
+      .where(eq(gameProvider.id, created.providerId));
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const launchGame = vi.fn();
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+    });
+
+    await expect(
+      svc.startRound('00000000-0000-0000-0000-000000000312', created.id, 'USD', '10'),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+    expect(walletCommands.debit).not.toHaveBeenCalled();
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
   it('debits the stake and persists the round on sufficient balance', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a1', name: 'Aces' });
     const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
@@ -297,6 +355,25 @@ describe('GamingService.startRound (real PG)', () => {
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
     expect(launchGame).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+});
+
+describe('GamingService listGames provider gate (real PG)', () => {
+  it('hides games of deactivated providers from the active listing only', async () => {
+    const live = await seedGame({ name: 'Live Game' });
+    const hidden = await seedGame({ name: 'Hidden Game' });
+    await db.drizzle.db
+      .update(gameProvider)
+      .set({ isActive: false })
+      .where(eq(gameProvider.id, hidden.providerId));
+    const svc = makeService();
+
+    const pub = await svc.listGames({ page: 1, limit: 10, isActive: true });
+    expect(pub.items.map((g) => g.id)).toEqual([live.id]);
+    expect(pub.total).toBe(1);
+
+    const admin = await svc.listGames({ page: 1, limit: 10 });
+    expect(admin.total).toBe(2);
   });
 });
 
