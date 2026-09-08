@@ -144,20 +144,26 @@ export function createIdentityRouter(
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
       const userId = getUserId(context);
-      const sessionId = getSessionId(context);
+      const connectionSessionId = getSessionId(context);
       return createEventStreamGenerator(
         (push) => {
           const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
-            if (event.userId === userId) {
-              push({ type: 'revoked' });
+            if (event.userId !== userId) {
+              return;
             }
+            // Self-service password change spares the acting session via
+            // exceptSessionId; the admin revoke-all path leaves it unset and kicks all.
+            if (event.exceptSessionId && event.exceptSessionId === connectionSessionId) {
+              return;
+            }
+            push({ type: 'revoked' });
           });
           // A single-session revoke - including the idle-timeout expiry `SessionIdleService`
           // performs - only ever names one session. Without this, the tab it just killed
           // gets no signal at all: the DB write and the audit row already happened, but the
           // open tab keeps rendering as signed in until its next request happens to 401.
           const unsubscribeSessionRevoked = eventBus.on('identity.session.revoked', (event) => {
-            if (event.userId === userId && event.sessionId === sessionId) {
+            if (event.userId === userId && event.sessionId === connectionSessionId) {
               push({ type: 'revoked' });
             }
           });
@@ -219,7 +225,10 @@ export function createIdentityRouter(
     resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
 
     changePassword: os.changePassword.handler(({ input, context }) =>
-      identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers()),
+      identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers(), {
+        userId: getUserId(context),
+        sessionId: requireSessionId(context),
+      }),
     ),
 
     sendEmailVerification: os.sendEmailVerification.handler(({ input, context }) =>
