@@ -1,6 +1,6 @@
 import { ORPCError } from '@orpc/server';
 import { DatabaseError } from 'pg';
-import { and, eq, gt, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import {
   type Auth,
   type EventBus,
@@ -19,8 +19,9 @@ import type {
   SmsAdapter,
   User,
 } from '@openora/core/contracts';
-import { account, phoneVerificationSession, user, type Session } from '../schema/index.js';
+import { phoneVerificationSession, user, type Session } from '../schema/index.js';
 import { getSecurityControls } from './security-controls.service.js';
+import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
 import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
 import { hashCode, generateCode } from '../../shared/otp.js';
@@ -53,14 +54,6 @@ function isPhoneNumberCollision(error: unknown): boolean {
     cause.constraint === 'user_phoneNumber_unique'
   );
 }
-
-type VerifyTotpApi = {
-  verifyTOTP(opts: {
-    body: { code: string; trustDevice: false };
-    headers: Headers;
-    asResponse: true;
-  }): Promise<Response>;
-};
 
 export type PhoneVerificationServiceDeps = {
   drizzle: DrizzleService;
@@ -99,64 +92,6 @@ export class PhoneVerificationService {
     this.twoFactorLockout = twoFactorLockout;
   }
 
-  private async assertFreshReauthentication({
-    userId,
-    headers,
-    currentPassword,
-    totpCode,
-    twoFactorEnabled,
-    meta,
-  }: {
-    userId: User['id'];
-    headers: Headers;
-    currentPassword: PhoneVerificationRequestInput['currentPassword'];
-    totpCode: PhoneVerificationRequestInput['totpCode'];
-    twoFactorEnabled: boolean;
-    meta: ClientMeta;
-  }) {
-    const [credential] = await this.drizzle.db
-      .select({ password: account.password })
-      .from(account)
-      .where(and(eq(account.userId, userId), isNotNull(account.password)))
-      .limit(1);
-    if (!credential?.password) {
-      throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
-    }
-
-    const authContext = await this.auth.$context;
-    const passwordMatches = await authContext.password.verify({
-      password: currentPassword,
-      hash: credential.password,
-    });
-    if (!passwordMatches) {
-      throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
-    }
-
-    if (!twoFactorEnabled) {
-      return;
-    }
-    if (!totpCode) {
-      throw new ORPCError('UNPROCESSABLE_CONTENT', {
-        message: 'An authenticator code is required.',
-      });
-    }
-
-    await this.twoFactorLockout?.assertNotLocked(userId);
-    // Library boundary: the base Auth API type omits endpoints contributed by the
-    // twoFactor plugin, but createAuth always installs that plugin for identity.
-    const api = this.auth.api as unknown as VerifyTotpApi;
-    const verification = await api.verifyTOTP({
-      body: { code: totpCode, trustDevice: false },
-      headers,
-      asResponse: true,
-    });
-    if (!verification.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, meta);
-      throw new ORPCError('UNAUTHORIZED', { message: 'Invalid authenticator code.' });
-    }
-    await this.twoFactorLockout?.reset(userId);
-  }
-
   async request({
     userId,
     sessionId,
@@ -187,7 +122,10 @@ export class PhoneVerificationService {
         message: 'Only players can verify a phone number.',
       });
     }
-    await this.assertFreshReauthentication({
+    await assertFreshReauthentication({
+      drizzle: this.drizzle,
+      auth: this.auth,
+      twoFactorLockout: this.twoFactorLockout,
       userId,
       headers: nodeHeadersToHeaders(reqHeaders),
       currentPassword: input.currentPassword,

@@ -301,6 +301,8 @@
         "identity.resetPassword",
         "identity.security.loginWithdrawalAlerts",
         "identity.security.me",
+        "identity.security.removeWithdrawalPin",
+        "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
         "identity.sessions.list",
         "identity.sessions.listAll",
@@ -474,6 +476,9 @@
         "wallet.reconciliation.run",
         "wallet.setActiveCurrency",
         "wallet.streamBalance",
+        "wallet.swap.execute",
+        "wallet.swap.quote",
+        "wallet.swap.webhook",
         "wallet.webhook",
         "wallet.webhookForProvider",
         "wallet.withdraw",
@@ -908,8 +913,10 @@
       "category": "swap",
       "interface": "SwapAdapter",
       "token": "SWAP_ADAPTER",
-      "status": "stub",
-      "boundIn": []
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
     },
     {
       "category": "tag-evaluation-commands",
@@ -1020,6 +1027,8 @@
     "identity.phone_otp.requested",
     "identity.profile.updated",
     "identity.security.login_withdrawal_alerts.updated",
+    "identity.security.withdrawal_pin.removed",
+    "identity.security.withdrawal_pin.set",
     "identity.session.fingerprint_mismatch",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
@@ -1066,6 +1075,7 @@
     "wallet.deposit.completed",
     "wallet.manual_adjustment.created",
     "wallet.reconciliation.alert",
+    "wallet.swap.completed",
     "wallet.withdrawal.approved",
     "wallet.withdrawal.completed",
     "wallet.withdrawal.failed",
@@ -2478,6 +2488,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "SetWithdrawalPinInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SignedMoneyAmountSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
@@ -2504,6 +2518,22 @@
     {
       "name": "SubmitKycOutputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "SwapInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapQuoteInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapQuoteSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "SystemChatMessageSchema",
@@ -2732,6 +2762,10 @@
     {
       "name": "WithdrawalAddressSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalPinSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "WithdrawalQueueFilterSchema",

@@ -192,9 +192,26 @@ export const SecurityControlsSchema = z.object({
   phoneVerified: z.boolean(),
   twoFactorEnabled: z.boolean(),
   loginWithdrawalAlertsEnabled: z.boolean(),
+  withdrawalPinSet: z.boolean(),
 });
 
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
+
+export const WithdrawalPinSchema = z.string().regex(/^[0-9]{4}$/);
+
+// Set and Change share this one shape - Change asks for a fresh password/TOTP the same
+// as Set, never the current PIN (matches the product's identical Set/Change UX).
+export const SetWithdrawalPinInputSchema = z
+  .object({
+    pin: WithdrawalPinSchema,
+    confirmPin: WithdrawalPinSchema,
+    currentPassword: z.string().min(8),
+    totpCode: TotpStepUpCodeSchema.optional(),
+  })
+  .refine((v) => v.pin === v.confirmPin, {
+    message: 'PIN and confirmation must match.',
+    path: ['confirmPin'],
+  });
 
 export const PhoneVerificationRequestInputSchema = z.object({
   phone: E164PhoneSchema,
@@ -292,6 +309,7 @@ export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSche
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
 export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
 export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
+export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
 export type PhoneVerificationConfirmInput = z.infer<typeof PhoneVerificationConfirmInputSchema>;

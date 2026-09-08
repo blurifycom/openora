@@ -90,7 +90,12 @@ export const WalletBalancesSchema = z.object({
 // stale number on screen with no self-correction. This shape only tells the client WHAT
 // changed; the client re-fetches getBalance(s)/listTransactions, which is cheap and
 // always internally consistent.
-export const WalletBalanceChangeReasonSchema = z.enum(['deposit', 'withdrawal', 'adjustment']);
+export const WalletBalanceChangeReasonSchema = z.enum([
+  'deposit',
+  'withdrawal',
+  'adjustment',
+  'swap',
+]);
 export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
 
 export const WalletBalanceUpdateSchema = z.object({
@@ -361,6 +366,43 @@ export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema 
 export const RejectWithdrawalInputSchema = z.object({
   withdrawalId: UuidSchema,
   reason: z.string().min(1),
+});
+
+// A vendor quote id is the vendor's own string, not a uuid we mint - bounded, never parsed.
+const SwapQuoteIdSchema = z.string().trim().min(1).max(128);
+
+export const SwapQuoteInputSchema = z.object({
+  fromCurrency: WalletCurrencyInputSchema,
+  toCurrency: WalletCurrencyInputSchema,
+  fromAmount: PositiveMoneyAmountSchema,
+});
+
+// `toAmount` is what the player receives, net of `fee`, and is the only binding number -
+// `rate` is informational and must never be multiplied out to reach an amount.
+export const SwapQuoteSchema = z.object({
+  quoteId: SwapQuoteIdSchema,
+  fromCurrency: WalletCurrencyCodeSchema,
+  toCurrency: WalletCurrencyCodeSchema,
+  fromAmount: MoneyAmountSchema,
+  toAmount: MoneyAmountSchema,
+  rate: MoneyAmountSchema,
+  fee: MoneyAmountSchema,
+  feeCurrency: WalletCurrencyCodeSchema,
+  asOf: TimestampSchema,
+  expiresAt: TimestampSchema,
+});
+
+export const SwapInputSchema = SwapQuoteInputSchema.extend({
+  // Optional: a vendor that does not hold quotes prices the swap at execution time.
+  quoteId: SwapQuoteIdSchema.optional(),
+  idempotencyKey: UuidSchema,
+});
+
+export const SwapResultSchema = z.object({
+  transactionId: UuidSchema,
+  status: WalletTransactionStatusSchema,
+  // Null until the vendor reports a fill - an async desk settles by webhook.
+  toAmount: MoneyAmountSchema.nullable(),
 });
 
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
@@ -702,6 +744,25 @@ export const walletContract = {
       .route({ method: 'PATCH', path: '/backoffice/wallet/bonus-rollover-config' })
       .input(SetBonusRolloverConfigInputSchema)
       .output(BonusRolloverConfigSchema),
+  },
+
+  swap: {
+    quote: oc
+      .route({ method: 'POST', path: '/wallet/swap/quote', summary: 'Price a currency swap' })
+      .input(SwapQuoteInputSchema)
+      .output(SwapQuoteSchema),
+
+    execute: oc
+      .route({ method: 'POST', path: '/wallet/swap', summary: 'Swap between own balances' })
+      .input(SwapInputSchema)
+      .output(SwapResultSchema),
+
+    // Unauthenticated like the payment webhook, and verified by its own SWAP_WEBHOOK_VERIFIER
+    // - a swap desk signs with a different key than the PSP.
+    webhook: oc
+      .route({ method: 'POST', path: '/wallet/swap/webhook' })
+      .input(PaymentWebhookInputSchema)
+      .output(PaymentWebhookOutputSchema),
   },
 
   webhook: oc

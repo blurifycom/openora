@@ -189,13 +189,27 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { transactionId: p.transactionId },
   })),
 
-  mapEvent('wallet.deposit.completed', (p) => ({
-    userId: p.userId,
-    type: 'deposit.completed',
-    title: 'Deposit completed',
-    body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-    data: { transactionId: p.transactionId },
-  })),
+  mapEvent(
+    'wallet.deposit.completed',
+    (p) => ({
+      userId: p.userId,
+      type: 'deposit.completed',
+      title: 'Deposit completed',
+      body: `Your deposit of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
+      data: { transactionId: p.transactionId },
+    }),
+    {
+      email: (p, occurredAt) => ({
+        key: 'depositCompleted',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+    },
+  ),
 
   mapEvent('wallet.manual_adjustment.created', (p) => ({
     userId: p.userId,
