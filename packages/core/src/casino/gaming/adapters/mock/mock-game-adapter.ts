@@ -8,6 +8,8 @@ export class MockGameAdapter implements GameAdapter {
   }
 
   async endRound(_externalRoundId: string) {
-    // no-op for mock provider
+    // no-op for mock provider: it reports no outcome, so no round it closes ever pays a
+    // win. Deliberate - this adapter is the default GAME_ADAPTER binding in every ring,
+    // and a fabricated `winAmount` here would credit real balances.
   }
 }

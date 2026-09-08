@@ -263,6 +263,15 @@ export const domainEventSchemas = {
     previousEnabled: z.boolean(),
     enabled: z.boolean(),
   }),
+  'identity.security.withdrawal_pin.set': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    wasAlreadySet: z.boolean(),
+  }),
+  'identity.security.withdrawal_pin.removed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -358,6 +367,17 @@ export const domainEventSchemas = {
     actorId: UuidSchema.optional(),
     before: lobbyLayoutAuditSnapshotSchema,
     after: lobbyLayoutAuditSnapshotSchema,
+  }),
+  // A currency swap filled: the player's `fromCurrency` balance was debited and
+  // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
+  // filled, never the quoted number.
+  'wallet.swap.completed': z.object({
+    userId: UuidSchema,
+    transactionId: UuidSchema,
+    fromCurrency: CurrencyTickerSchema,
+    fromAmount: MoneyAmountSchema,
+    toCurrency: CurrencyTickerSchema,
+    toAmount: MoneyAmountSchema,
   }),
 
   'wallet.bonus_rollover.completed': z.object({

@@ -111,7 +111,7 @@ export {
   ACCESS_REVOKED_SIGNAL,
 } from './realtime.js';
 
-export type { GameAdapter } from './game.js';
+export type { GameAdapter, RoundOutcome } from './game.js';
 export { GAME_ADAPTER } from './game.js';
 
 export type {

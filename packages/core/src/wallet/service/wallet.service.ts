@@ -488,7 +488,7 @@ export function debitWithdrawableBalance(
     .returning({ amount: walletBalance.amount });
 }
 
-async function readLockedBonusAmount(
+export async function readLockedBonusAmount(
   txn: DrizzleDb,
   walletId: Wallet['id'],
   currency: string,

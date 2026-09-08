@@ -15,6 +15,7 @@ export async function getSecurityControls(
       phoneVerified: user.phoneVerified,
       twoFactorEnabled: user.twoFactorEnabled,
       loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+      withdrawalPinHash: user.withdrawalPinHash,
     })
     .from(user)
     .where(eq(user.id, userId))
@@ -23,10 +24,12 @@ export async function getSecurityControls(
     return null;
   }
   const phone = E164PhoneSchema.safeParse(row.phoneNumber);
+  const { withdrawalPinHash, ...rest } = row;
   return {
-    ...row,
+    ...rest,
     phoneNumber: phone.success ? phone.data : null,
     phoneVerified: phone.success && row.phoneVerified,
     twoFactorEnabled: row.twoFactorEnabled ?? false,
+    withdrawalPinSet: withdrawalPinHash !== null,
   };
 }

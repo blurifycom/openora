@@ -30,6 +30,7 @@ import {
   LoginSecurityStateSchema,
   SecurityControlsSchema,
   SetLoginWithdrawalAlertsInputSchema,
+  SetWithdrawalPinInputSchema,
   PhoneVerificationRequestInputSchema,
   PhoneVerificationRequestOutputSchema,
   PhoneVerificationConfirmInputSchema,
@@ -147,6 +148,17 @@ export const identityContract = {
     loginWithdrawalAlerts: oc
       .route({ method: 'POST', path: '/identity/security/login-withdrawal-alerts' })
       .input(SetLoginWithdrawalAlertsInputSchema)
+      .output(SecurityControlsSchema),
+
+    // Set and Change share this one upsert route (identical New PIN/Confirm PIN/Save
+    // flow); Remove is a separate route with no confirmation step, per AC.
+    setWithdrawalPin: oc
+      .route({ method: 'POST', path: '/identity/security/withdrawal-pin' })
+      .input(SetWithdrawalPinInputSchema)
+      .output(SecurityControlsSchema),
+
+    removeWithdrawalPin: oc
+      .route({ method: 'DELETE', path: '/identity/security/withdrawal-pin' })
       .output(SecurityControlsSchema),
   },
 

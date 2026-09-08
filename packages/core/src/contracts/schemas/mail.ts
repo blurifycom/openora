@@ -12,6 +12,7 @@ export const MAIL_TEMPLATE_KEYS = [
   'rgCoolingOffLifted',
   'rgSelfExclusionActivated',
   'rgSelfExclusionLifted',
+  'depositCompleted',
   'withdrawalApproved',
   'withdrawalRejected',
   'kycResubmissionRequested',
@@ -48,6 +49,7 @@ export const EmailTemplateDataSchemas = {
     isPermanent: z.boolean(),
   }),
   rgSelfExclusionLifted: z.object({}),
+  depositCompleted: z.object({ ...WithdrawalDetailsShape }),
   withdrawalApproved: z.object({ ...WithdrawalDetailsShape }),
   withdrawalRejected: z.object({
     ...WithdrawalDetailsShape,
@@ -76,6 +78,7 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('rgCoolingOffLifted'),
   templateVariant('rgSelfExclusionActivated'),
   templateVariant('rgSelfExclusionLifted'),
+  templateVariant('depositCompleted'),
   templateVariant('withdrawalApproved'),
   templateVariant('withdrawalRejected'),
   templateVariant('kycResubmissionRequested'),
