@@ -1264,9 +1264,10 @@ describe('IdentityService.trustCurrentDevice', () => {
     trusted.headers.append('set-cookie', 'better-auth.trust_device=granted; Path=/; HttpOnly');
     verifyTotpMock.mockResolvedValue(trusted);
     const trustedDevices = makeTrustedDevices();
+    const events = makeEventBus();
     const resHeaders = new Headers();
 
-    await buildService({ trustedDevices }).trustCurrentDevice(
+    await buildService({ trustedDevices, events }).trustCurrentDevice(
       { password: 'rightpass1', code: '123456' },
       { cookie: 'better-auth.session_token=live', 'user-agent': BROWSER_UA },
       resHeaders,
@@ -1277,6 +1278,17 @@ describe('IdentityService.trustCurrentDevice', () => {
     expect(call?.[0].headers.get('cookie')).toBe('better-auth.two_factor=pending-value');
     expect(resHeaders.getSetCookie().join(';')).toContain('trust_device=granted');
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(true);
+    // The event carries the method that was actually spent, not a literal - a
+    // reader (security alerts, audit) must see `totp` for the reason it is `totp`
+    // here: this route rejects every other method before it ever gets this far.
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.verified',
+      expect.objectContaining({ method: 'totp', trustedDevice: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.objectContaining({ method: 'totp' }),
+    );
   });
 
   it('refuses an account that has no second factor to trust', async () => {
