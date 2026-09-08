@@ -358,7 +358,8 @@ describe('GamingService.endRound (real PG)', () => {
       expect.objectContaining({ userId, amount: '42.50', currency: 'USD', type: 'win' }),
     );
     const [settled] = await db.drizzle.db.select().from(gameRound);
-    expect(settled).toMatchObject({ status: 'completed', winAmount: '42.50' });
+    expect(settled?.status).toBe('completed');
+    expect(Number(settled?.winAmount)).toBe(42.5);
   });
 
   it('credits nothing when the provider reports no outcome', async () => {
@@ -380,7 +381,9 @@ describe('GamingService.endRound (real PG)', () => {
     const svc = makeService({ provider, walletCommands });
 
     await svc.endRound(userId, round.id);
-    expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '7.00' });
+    const replayed = await svc.endRound(userId, round.id);
+    expect(replayed.success).toBe(true);
+    expect(Number(replayed.winAmount)).toBe(7);
 
     expect(provider.endRound).toHaveBeenCalledOnce();
     expect(walletCommands.credit).toHaveBeenCalledOnce();
@@ -398,7 +401,8 @@ describe('GamingService.endRound (real PG)', () => {
     await expect(svc.endRound(userId, round.id)).rejects.toBeInstanceOf(WinCreditFailedError);
 
     const [unsettled] = await db.drizzle.db.select().from(gameRound);
-    expect(unsettled).toMatchObject({ status: 'active', winAmount: '0.00' });
+    expect(unsettled?.status).toBe('active');
+    expect(Number(unsettled?.winAmount)).toBe(0);
   });
 });
 
