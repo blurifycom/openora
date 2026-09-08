@@ -1,0 +1,2 @@
+DROP INDEX "wallet_transaction_provider_ref_id_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "wallet_transaction_provider_ref_id_idx" ON "wallet_transaction" USING btree ("provider_name","provider_ref_id") WHERE "wallet_transaction"."provider_ref_id" IS NOT NULL;
