@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { asc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, inArray, notInArray, sql } from 'drizzle-orm';
 import {
   cached,
   createDomainError,
   createLogger,
+  findOneOrThrow,
   invalidate,
   mapConcurrent,
   makeNotFoundError,
@@ -30,9 +31,21 @@ import type {
   LobbyResolvedSection,
   ReplaceLobbyLayoutInput,
 } from '../contract/index.js';
-import { lobbyLayout, lobbySection, type LobbySection } from '../schema/index.js';
+import {
+  featuredSlot,
+  lobbyCategory,
+  lobbyCategoryGame,
+  lobbyLayout,
+  lobbySection,
+  type LobbySection,
+} from '../schema/index.js';
+import { game } from '@openora/core/casino/schema/gaming';
 
 export const LobbySectionNotFoundError = makeNotFoundError('LobbySection');
+export const LobbyCategoryNotFoundError = createDomainError(
+  'LobbyCategoryNotFoundError',
+  (slug: string) => `Lobby category not found: ${slug}`,
+);
 export const LobbySectionFieldError = createDomainError<[message: string]>(
   'LobbySectionFieldError',
   (message) => message,
@@ -65,6 +78,24 @@ const LAYOUT_LOCK_KEY = 'lobby:global-layout';
 const LOBBY_CACHE_TTL_MS = 30_000;
 const LAYOUT_CACHE_KEY = 'lobby:layout';
 const SECTION_OPERATION_CONCURRENCY = 5;
+const CATEGORIES_CACHE_KEY = 'lobby:categories';
+const FEATURED_CACHE_KEY = 'lobby:featured';
+
+function toGameSummary(record: {
+  id: string;
+  name: string;
+  provider: string;
+  category: string;
+  thumbnailUrl: string | null;
+}) {
+  return {
+    id: record.id,
+    name: record.name,
+    provider: record.provider,
+    category: record.category,
+    thumbnailUrl: record.thumbnailUrl,
+  };
+}
 
 export class LobbyService {
   constructor(
@@ -76,6 +107,96 @@ export class LobbyService {
 
   async getLayout() {
     return cached(this.cache, LAYOUT_CACHE_KEY, LOBBY_CACHE_TTL_MS, () => this.loadLayout());
+  }
+
+  async listCategories() {
+    return cached(this.cache, CATEGORIES_CACHE_KEY, LOBBY_CACHE_TTL_MS, async () => {
+      const db = this.drizzle.db;
+      const [categories, counts] = await Promise.all([
+        db.select().from(lobbyCategory).orderBy(asc(lobbyCategory.sortOrder)),
+        db
+          .select({ categoryId: lobbyCategoryGame.categoryId, n: count() })
+          .from(lobbyCategoryGame)
+          .groupBy(lobbyCategoryGame.categoryId),
+      ]);
+
+      const countMap = new Map(counts.map((row) => [row.categoryId, Number(row.n)]));
+
+      return categories.map((category) => ({
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        sortOrder: category.sortOrder,
+        gameCount: countMap.get(category.id) ?? 0,
+      }));
+    });
+  }
+
+  async getCategoryGames(slug: string) {
+    const db = this.drizzle.db;
+    const category = findOneOrThrow(
+      await db.select().from(lobbyCategory).where(eq(lobbyCategory.slug, slug)),
+      new LobbyCategoryNotFoundError(slug),
+    );
+    const links = await db
+      .select()
+      .from(lobbyCategoryGame)
+      .where(eq(lobbyCategoryGame.categoryId, category.id))
+      .orderBy(asc(lobbyCategoryGame.sortOrder));
+    const gameIds = links.map((link) => link.gameId);
+    const games =
+      gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
+    const gameMap = new Map(games.map((item) => [item.id, item]));
+
+    return {
+      id: category.id,
+      name: category.name,
+      slug: category.slug,
+      games: gameIds
+        .map((id) => gameMap.get(id))
+        .filter((item): item is typeof game.$inferSelect => item !== undefined)
+        .map(toGameSummary),
+    };
+  }
+
+  async getFeatured() {
+    return cached(this.cache, FEATURED_CACHE_KEY, LOBBY_CACHE_TTL_MS, async () => {
+      const db = this.drizzle.db;
+      const slots = await db
+        .select()
+        .from(featuredSlot)
+        .where(eq(featuredSlot.isActive, true))
+        .orderBy(asc(featuredSlot.placement), asc(featuredSlot.sortOrder));
+      const gameIds = [...new Set(slots.map((slot) => slot.gameId))];
+      const games =
+        gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
+      const gameMap = new Map(games.map((item) => [item.id, item]));
+
+      return slots.map((slot) => {
+        const game = gameMap.get(slot.gameId);
+        return {
+          id: slot.id,
+          title: slot.title,
+          gameId: slot.gameId,
+          gameName: game?.name ?? '',
+          thumbnailUrl: game?.thumbnailUrl ?? null,
+          placement: slot.placement,
+          sortOrder: slot.sortOrder,
+        };
+      });
+    });
+  }
+
+  async search(query: string) {
+    const whereClause = and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
+    const games = await this.drizzle.db
+      .select()
+      .from(game)
+      .where(whereClause)
+      .orderBy(asc(game.name))
+      .limit(50);
+
+    return games.map(toGameSummary);
   }
 
   async getAdminLayout(): Promise<LobbyAdminLayout> {

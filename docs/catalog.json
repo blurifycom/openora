@@ -309,13 +309,20 @@
       "id": "lobby",
       "group": "casino",
       "tables": [
+        "featured_slot",
+        "lobby_category",
+        "lobby_category_game",
         "lobby_layout",
         "lobby_section"
       ],
       "routes": [
         "lobby.getAdminLayout",
+        "lobby.getCategoryBySlug",
+        "lobby.getFeatured",
         "lobby.getLayout",
-        "lobby.replaceLayout"
+        "lobby.listCategories",
+        "lobby.replaceLayout",
+        "lobby.search"
       ]
     },
     {
@@ -1622,6 +1629,10 @@
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
+      "name": "FeaturedSlotSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
       "name": "FeatureFlagsSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -1692,6 +1703,10 @@
     {
       "name": "GameSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameSummarySchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
       "name": "GameTypeSchema",
@@ -1935,6 +1950,14 @@
     },
     {
       "name": "LobbyAdminSectionSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbyCategoryDetailSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbyCategorySchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {

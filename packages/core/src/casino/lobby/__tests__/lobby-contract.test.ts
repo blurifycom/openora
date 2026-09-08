@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ReplaceLobbyLayoutInputSchema } from '../contract/index.js';
+import { lobbyContract, ReplaceLobbyLayoutInputSchema } from '../contract/index.js';
 
 describe('ReplaceLobbyLayoutInputSchema', () => {
   it('accepts arbitrary operator-defined section types with JSON object config', () => {
@@ -27,5 +27,19 @@ describe('ReplaceLobbyLayoutInputSchema', () => {
         ReplaceLobbyLayoutInputSchema.safeParse({ version: 0, sections: [section] }).success,
       ).toBe(false);
     }
+  });
+});
+
+describe('lobbyContract', () => {
+  it('exports legacy public, layout, and admin routes from one typed contract', () => {
+    expect(Object.keys(lobbyContract)).toEqual([
+      'listCategories',
+      'getCategoryBySlug',
+      'getFeatured',
+      'search',
+      'getLayout',
+      'getAdminLayout',
+      'replaceLayout',
+    ]);
   });
 });

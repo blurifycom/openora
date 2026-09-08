@@ -1,8 +1,9 @@
 import { implement } from '@orpc/server';
 import { mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
-import { lobbyAdminContract, lobbyContract } from '../contract/index.js';
+import { lobbyContract } from '../contract/index.js';
 import {
   LobbyService,
+  LobbyCategoryNotFoundError,
   LobbyLayoutVersionConflictError,
   LobbySectionFieldError,
   LobbySectionNotFoundError,
@@ -18,10 +19,21 @@ export function createLobbyRouter({
   lobby: LobbyService;
   adminGuard: AdminGuard;
 }) {
-  const os = implement({ ...lobbyContract, ...lobbyAdminContract }).$context<OssContext>();
+  const os = implement(lobbyContract).$context<OssContext>();
 
   return os.router({
     getLayout: os.getLayout.handler(() => lobby.getLayout()),
+    listCategories: os.listCategories.handler(() => lobby.listCategories()),
+
+    getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: LobbyCategoryNotFoundError }, () =>
+        lobby.getCategoryGames(input.slug),
+      ),
+    ),
+
+    getFeatured: os.getFeatured.handler(() => lobby.getFeatured()),
+
+    search: os.search.handler(({ input }) => lobby.search(input.q)),
 
     getAdminLayout: os.getAdminLayout.handler(async ({ context }) => {
       await adminGuard.assert(context, 'game-config', 'view');

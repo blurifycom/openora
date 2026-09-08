@@ -16,8 +16,5 @@ CREATE TABLE "lobby_section" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-DROP TABLE "featured_slot" CASCADE;--> statement-breakpoint
-DROP TABLE "lobby_category" CASCADE;--> statement-breakpoint
-DROP TABLE "lobby_category_game" CASCADE;--> statement-breakpoint
 CREATE UNIQUE INDEX "lobby_layout_layout_key_key" ON "lobby_layout" USING btree ("layout_key");--> statement-breakpoint
 CREATE INDEX "lobby_section_sort_order_idx" ON "lobby_section" USING btree ("sort_order");

@@ -12,6 +12,39 @@ import {
 
 export const LOBBY_SECTION_COUNT_MAX = 20;
 
+export const GameSummarySchema = z.object({
+  id: UuidSchema,
+  name: z.string(),
+  provider: z.string(),
+  category: z.string(),
+  thumbnailUrl: z.string().nullable(),
+});
+
+export const LobbyCategorySchema = z.object({
+  id: UuidSchema,
+  name: z.string(),
+  slug: z.string(),
+  sortOrder: z.number(),
+  gameCount: z.number(),
+});
+
+export const LobbyCategoryDetailSchema = z.object({
+  id: UuidSchema,
+  name: z.string(),
+  slug: z.string(),
+  games: z.array(GameSummarySchema),
+});
+
+export const FeaturedSlotSchema = z.object({
+  id: UuidSchema,
+  title: z.string(),
+  gameId: UuidSchema,
+  gameName: z.string(),
+  thumbnailUrl: z.string().nullable(),
+  placement: z.string(),
+  sortOrder: z.number(),
+});
+
 export const LobbyAdminSectionSchema = LobbyLayoutSectionSnapshotSchema.extend({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -49,12 +82,28 @@ export const LobbyResolvedSectionSchema = z.object({
 export type LobbyResolvedSection = z.infer<typeof LobbyResolvedSectionSchema>;
 
 export const lobbyContract = {
+  listCategories: oc
+    .route({ method: 'GET', path: '/lobby/categories' })
+    .output(z.array(LobbyCategorySchema)),
+
+  getCategoryBySlug: oc
+    .route({ method: 'GET', path: '/lobby/categories/{slug}' })
+    .input(z.object({ slug: z.string() }))
+    .output(LobbyCategoryDetailSchema),
+
+  getFeatured: oc
+    .route({ method: 'GET', path: '/lobby/featured' })
+    .output(z.array(FeaturedSlotSchema)),
+
+  search: oc
+    .route({ method: 'GET', path: '/lobby/search' })
+    .input(z.object({ q: z.string() }))
+    .output(z.array(GameSummarySchema)),
+
   getLayout: oc
     .route({ method: 'GET', path: '/lobby/layout' })
     .output(z.array(LobbyResolvedSectionSchema)),
-};
 
-export const lobbyAdminContract = {
   getAdminLayout: oc
     .route({ method: 'GET', path: '/backoffice/lobby/layout' })
     .output(LobbyAdminLayoutSchema),
