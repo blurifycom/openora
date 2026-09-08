@@ -10,6 +10,7 @@ import {
   type WalletDebitOutcome,
   type WalletCreditArgs,
   type WalletCreditOutcome,
+  type WalletProviderRef,
   type WalletTransactionType,
 } from '@openora/core/contracts';
 import {
@@ -25,6 +26,7 @@ import {
   walletBonusCredit,
   walletBonusRolloverConfig,
   type Wallet,
+  type WalletTransaction,
 } from '../schema/index.js';
 import type { BonusCreditSourceType, ManualAdjustmentDirection } from '../contract/index.js';
 import {
@@ -32,6 +34,7 @@ import {
   balanceKey,
   debitWithdrawableBalance,
   debitWalletBalance,
+  providerRefCondition,
   railFor,
   readWalletBalance,
 } from './wallet.service.js';
@@ -65,18 +68,19 @@ export class WalletCommandsService implements WalletCommands {
     private readonly rgLimits?: RgLimitsPort,
   ) {}
 
-  // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
-  // `direction` is required (not optional) so a new call site can't compile without deciding
-  // it - `debit()` always passes 'debit', `credit()` always passes 'credit', including the
-  // gift/rain/tip legs that share one `type` for both sides of the transfer.
-  private writeLedgerRow(
+  // Completed ledger row shared by every gameplay move. `direction` is required (not
+  // optional) so a new call site can't compile without deciding it - `debit()` always
+  // passes 'debit', `credit()` always passes 'credit', including the gift/rain/tip legs
+  // that share one `type` for both sides of the transfer.
+  private async writeLedgerRow(
     txn: DrizzleDb,
     row: { id: string; currency: string },
     type: WalletTransactionType,
     amount: string,
     direction: ManualAdjustmentDirection,
-  ) {
-    return txn.insert(walletTransaction).values({
+    providerRef?: WalletProviderRef,
+  ): Promise<{ row: WalletTransaction; replayed: boolean }> {
+    const insertQuery = txn.insert(walletTransaction).values({
       walletId: row.id,
       type,
       amount,
@@ -84,12 +88,51 @@ export class WalletCommandsService implements WalletCommands {
       status: 'completed',
       direction,
       rail: railFor(row.currency, this.platformConfig?.wallet?.cryptoCurrencies),
+      providerName: providerRef?.providerName,
+      providerRefId: providerRef?.providerRefId,
+      externalRoundId: providerRef?.externalRoundId,
+      metadata:
+        providerRef?.responseSnapshot !== undefined
+          ? JSON.stringify(providerRef.responseSnapshot)
+          : undefined,
     });
+
+    if (!providerRef) {
+      const [inserted] = await insertQuery.returning();
+      if (!inserted) {
+        throw new Error('wallet ledger row: insert returned no row');
+      }
+      return { row: inserted, replayed: false };
+    }
+
+    const [inserted] = await insertQuery.onConflictDoNothing().returning();
+    if (inserted) {
+      return { row: inserted, replayed: false };
+    }
+
+    const existing = await this.findByProviderRef(txn, providerRef);
+    if (!existing) {
+      throw new Error(
+        `wallet ledger row: idempotency conflict but no row found (provider=${providerRef.providerName} ref=${providerRef.providerRefId})`,
+      );
+    }
+    return { row: existing, replayed: true };
+  }
+
+  private async findByProviderRef(
+    txn: DrizzleDb,
+    providerRef: WalletProviderRef,
+  ): Promise<WalletTransaction | undefined> {
+    const [row] = await txn
+      .select()
+      .from(walletTransaction)
+      .where(providerRefCondition(providerRef.providerName, providerRef.providerRefId));
+    return row;
   }
 
   async debit(
     tx: unknown,
-    { userId, amount, type, currency }: WalletDebitArgs,
+    { userId, amount, type, currency, providerRef }: WalletDebitArgs,
   ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -107,6 +150,22 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available: '0' };
     }
 
+    const debitCurrency = balanceKey(currency ?? row.currency);
+    const debitRow = { ...row, currency: debitCurrency };
+
+    const available = await readWalletBalance(txn, row.id, debitCurrency);
+
+    if (type === 'loss') {
+      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
+      return { ok: true, newBalance: available, currency: debitCurrency };
+    }
+
+    // Must run before checkWager below - a replay must never re-evaluate the wager limit
+    // against spend it already committed.
+    if (providerRef && (await this.findByProviderRef(txn, providerRef))) {
+      return { ok: true, newBalance: available, currency: debitCurrency };
+    }
+
     if (type === 'bet' && this.rgLimits) {
       const decision = await this.rgLimits.checkWager(
         txn,
@@ -117,16 +176,6 @@ export class WalletCommandsService implements WalletCommands {
       if (!decision.allowed) {
         throw new RgLimitExceededError('wager_limit_exceeded', decision);
       }
-    }
-
-    const debitCurrency = balanceKey(currency ?? row.currency);
-    const debitRow = { ...row, currency: debitCurrency };
-
-    const available = await readWalletBalance(txn, row.id, debitCurrency);
-
-    if (type === 'loss') {
-      await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit');
-      return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
@@ -140,7 +189,7 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit');
+    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
 
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
@@ -156,7 +205,15 @@ export class WalletCommandsService implements WalletCommands {
 
   async credit(
     tx: unknown,
-    { userId, amount, currency, type, allowNewCurrency, allowNewWallet }: WalletCreditArgs,
+    {
+      userId,
+      amount,
+      currency,
+      type,
+      allowNewCurrency,
+      allowNewWallet,
+      providerRef,
+    }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -175,12 +232,26 @@ export class WalletCommandsService implements WalletCommands {
     }
 
     const creditRow = { ...row, currency: balanceKey(currency) };
+
+    // Unlike debit(), credit() takes no row lock, so the ledger row is inserted (and its
+    // conflict resolved) before the balance mutation rather than after.
+    const { replayed } = await this.writeLedgerRow(
+      txn,
+      creditRow,
+      type,
+      amount,
+      'credit',
+      providerRef,
+    );
+    if (replayed) {
+      const currentBalance = await readWalletBalance(txn, row.id, balanceKey(currency));
+      return { ok: true, newBalance: currentBalance };
+    }
+
     const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
-
-    await this.writeLedgerRow(txn, creditRow, type, amount, 'credit');
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {

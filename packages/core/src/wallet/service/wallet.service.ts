@@ -42,6 +42,7 @@ import {
   type ClientMeta,
   type Uuid,
   type PaginationOptions,
+  type WalletProviderRef,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -244,7 +245,7 @@ function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddr
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
 // reads as their active currency before one is created on first deposit.
-const DEFAULT_WALLET_CURRENCY = 'USD';
+export const DEFAULT_WALLET_CURRENCY = 'USD';
 
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
@@ -449,6 +450,30 @@ export async function readWalletBalances(
     .orderBy(walletBalance.currency);
 
   return { activeCurrency: record.currency, balances };
+}
+
+export async function resolveWalletBalance(
+  txn: DrizzleDb,
+  userId: User['id'],
+): Promise<{ balance: string; currency: string }> {
+  const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+  if (!record) {
+    return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
+  }
+  return {
+    balance: await readWalletBalance(txn, record.id, record.currency),
+    currency: record.currency,
+  };
+}
+
+export function providerRefCondition(
+  providerName: string,
+  providerRefId: WalletProviderRef['providerRefId'],
+) {
+  return and(
+    eq(walletTransaction.providerName, providerName),
+    eq(walletTransaction.providerRefId, providerRefId),
+  );
 }
 
 export function debitWithdrawableBalance(
@@ -832,17 +857,8 @@ export class WalletService {
     }
   }
 
-  async getBalance(userId: User['id']) {
-    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-
-    if (!record) {
-      return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
-    }
-
-    return {
-      balance: await readWalletBalance(this.drizzle.db, record.id, record.currency),
-      currency: record.currency,
-    };
+  getBalance(userId: User['id']) {
+    return resolveWalletBalance(this.drizzle.db, userId);
   }
 
   async getBalances(userId: User['id']) {
@@ -1738,14 +1754,23 @@ export class WalletService {
 
   async reconcileWithdrawalStatus(
     event: Extract<PaymentWebhookEvent, { kind: 'withdrawal' }>,
+    providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
     const { externalId, status, txHash } = event;
     const [tx] = await this.drizzle.db
       .select()
       .from(walletTransaction)
-      .where(eq(walletTransaction.providerRefId, externalId));
+      .where(
+        and(
+          eq(walletTransaction.providerName, providerName),
+          eq(walletTransaction.providerRefId, externalId),
+        ),
+      );
     if (!tx || tx.type !== 'withdrawal') {
-      logger.warn({ externalId }, 'payment webhook: no matching withdrawal for providerRefId');
+      logger.warn(
+        { externalId, providerName },
+        'payment webhook: no matching withdrawal for providerRefId',
+      );
       return;
     }
     if (tx.status !== 'processing') {
@@ -2705,7 +2730,12 @@ export class WalletService {
       const [winner] = await txn
         .select()
         .from(walletTransaction)
-        .where(eq(walletTransaction.providerRefId, event.externalId));
+        .where(
+          and(
+            eq(walletTransaction.providerName, depositAddress.providerName),
+            eq(walletTransaction.providerRefId, event.externalId),
+          ),
+        );
       if (!winner) {
         throw new Error(
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,

@@ -442,7 +442,7 @@ export class ReconciliationService {
     for (const event of withdrawals) {
       // Reconciliation is the same normalization a webhook produces, polled instead of
       // pushed - already idempotent, already guards on status === 'processing'.
-      await this.wallet.reconcileWithdrawalStatus(event);
+      await this.wallet.reconcileWithdrawalStatus(event, providerName);
       counts.withdrawalsReconciled += 1;
     }
   }
@@ -469,7 +469,10 @@ export class ReconciliationService {
     if (deposits.length === 0) {
       return;
     }
-    const byExternalId = await this.batchLookupByProviderRefId(deposits.map((d) => d.externalId));
+    const byExternalId = await this.batchLookupByProviderRefId(
+      providerName,
+      deposits.map((d) => d.externalId),
+    );
 
     for (const event of deposits) {
       const tx = byExternalId.get(event.externalId);
@@ -513,6 +516,7 @@ export class ReconciliationService {
   // Single chunked inArray(...) batch read (chunks well under the parameter ceiling) -
   // never one query per vendor transaction over a window that is routinely thousands of rows.
   private async batchLookupByProviderRefId(
+    providerName: string,
     externalIds: string[],
   ): Promise<Map<string, WalletTransaction>> {
     const byExternalId = new Map<string, WalletTransaction>();
@@ -520,7 +524,12 @@ export class ReconciliationService {
       const rows = await this.drizzle.db
         .select()
         .from(walletTransaction)
-        .where(inArray(walletTransaction.providerRefId, batch));
+        .where(
+          and(
+            eq(walletTransaction.providerName, providerName),
+            inArray(walletTransaction.providerRefId, batch),
+          ),
+        );
       for (const row of rows) {
         if (row.providerRefId) {
           byExternalId.set(row.providerRefId, row);
@@ -591,12 +600,15 @@ export class ReconciliationService {
 
       const status = await provider?.adapter.getWithdrawalStatus?.(tx.providerRefId);
       if (status) {
-        await this.wallet.reconcileWithdrawalStatus({
-          kind: 'withdrawal',
-          externalId: tx.providerRefId,
-          status: status.status,
-          ...(status.txHash ? { txHash: status.txHash } : {}),
-        });
+        await this.wallet.reconcileWithdrawalStatus(
+          {
+            kind: 'withdrawal',
+            externalId: tx.providerRefId,
+            status: status.status,
+            ...(status.txHash ? { txHash: status.txHash } : {}),
+          },
+          providerName,
+        );
         continue;
       }
 

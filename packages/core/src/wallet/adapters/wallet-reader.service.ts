@@ -1,8 +1,39 @@
 import { DrizzleService } from '@openora/core/server';
-import { type WalletReader, type WalletBalancesReading } from '@openora/core/contracts';
+import {
+  type WalletReader,
+  type WalletBalancesReading,
+  type WalletProviderTransaction,
+} from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
-import { readWalletBalances } from '../service/wallet.service.js';
+import {
+  providerRefCondition,
+  readWalletBalances,
+  resolveWalletBalance,
+} from '../service/wallet.service.js';
+
+function toProviderTransaction(
+  row: typeof walletTransaction.$inferSelect,
+  userId: string,
+): WalletProviderTransaction {
+  if (row.providerName === null || row.providerRefId === null) {
+    throw new Error('toProviderTransaction: matched row is missing its provider ref columns');
+  }
+  return {
+    id: row.id,
+    walletId: row.walletId,
+    userId,
+    type: row.type,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    providerName: row.providerName,
+    providerRefId: row.providerRefId,
+    externalRoundId: row.externalRoundId,
+    metadata: row.metadata,
+    createdAt: row.createdAt,
+  };
+}
 
 export class WalletReaderService implements WalletReader {
   constructor(private readonly drizzle: DrizzleService) {}
@@ -70,5 +101,21 @@ export class WalletReaderService implements WalletReader {
       result.set(row.userId, Number(row.n));
     }
     return result;
+  }
+
+  async findByProviderRef(
+    providerName: string,
+    providerRefId: string,
+  ): Promise<WalletProviderTransaction | null> {
+    const [row] = await this.drizzle.db
+      .select({ transaction: walletTransaction, userId: wallet.userId })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(providerRefCondition(providerName, providerRefId));
+    return row ? toProviderTransaction(row.transaction, row.userId) : null;
+  }
+
+  getBalance(userId: string): Promise<{ balance: string; currency: string }> {
+    return resolveWalletBalance(this.drizzle.db, userId);
   }
 }

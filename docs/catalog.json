@@ -696,6 +696,15 @@
       ]
     },
     {
+      "category": "gaming-commands",
+      "interface": "GamingAccumulateExternalRoundArgs",
+      "token": "GAMING_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
       "category": "geo-check-commands",
       "interface": "GeoCheckCommands",
       "token": "GEO_CHECK_COMMANDS",
@@ -939,7 +948,7 @@
     },
     {
       "category": "wallet-commands",
-      "interface": "WalletDebitArgs",
+      "interface": "WalletProviderRef",
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
@@ -949,7 +958,7 @@
     },
     {
       "category": "wallet-reader",
-      "interface": "WalletBalanceReading",
+      "interface": "WalletProviderTransaction",
       "token": "WALLET_READER",
       "status": "wired",
       "boundIn": [

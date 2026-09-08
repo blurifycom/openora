@@ -368,6 +368,144 @@ describe('WalletCommandsService ledger direction (real PG)', () => {
   });
 });
 
+describe('WalletCommandsService providerRef tagging (real PG)', () => {
+  it('debit writes providerName/providerRefId/externalRoundId/metadata exactly as passed', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef: {
+        providerName: 'aggregator-x',
+        providerRefId: 'ref-debit-1',
+        externalRoundId: 'round-1',
+        responseSnapshot: { balance: '90.00', currency: 'USD' },
+      },
+    });
+
+    const rows = await txRows(w.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      providerName: 'aggregator-x',
+      providerRefId: 'ref-debit-1',
+      externalRoundId: 'round-1',
+    });
+    expect(JSON.parse(rows[0]?.metadata ?? 'null')).toEqual({ balance: '90.00', currency: 'USD' });
+  });
+
+  it('credit writes providerName/providerRefId/externalRoundId/metadata exactly as passed', async () => {
+    const w = await seedWallet({ balance: '50' });
+
+    await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef: {
+        providerName: 'aggregator-x',
+        providerRefId: 'ref-credit-1',
+        externalRoundId: 'round-2',
+        responseSnapshot: { balance: '70.00' },
+      },
+    });
+
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({
+      providerName: 'aggregator-x',
+      providerRefId: 'ref-credit-1',
+      externalRoundId: 'round-2',
+    });
+    expect(JSON.parse(rows[0]?.metadata ?? 'null')).toEqual({ balance: '70.00' });
+  });
+
+  it('the loss branch tags its ledger row with a passed providerRef', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '0',
+      type: 'loss',
+      providerRef: { providerName: 'aggregator-x', providerRefId: 'ref-loss-1' },
+    });
+
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({
+      type: 'loss',
+      providerName: 'aggregator-x',
+      providerRefId: 'ref-loss-1',
+    });
+  });
+
+  it('leaves providerName/providerRefId/externalRoundId/metadata null when no providerRef is passed', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
+
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({
+      providerName: null,
+      providerRefId: null,
+      externalRoundId: null,
+      metadata: null,
+    });
+  });
+});
+
+describe('WalletCommandsService providerRef replay safety (real PG)', () => {
+  it('debit does not double-debit a replayed (providerName, providerRefId)', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-replay-debit' };
+
+    const first = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+    const second = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(Number(first.ok && first.newBalance)).toBe(90);
+    expect(Number(second.ok && second.newBalance)).toBe(90);
+    expect(await balanceOf(w.userId)).toBe(90);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('credit does not double-credit a replayed (providerName, providerRefId)', async () => {
+    const w = await seedWallet({ balance: '50' });
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-replay-credit' };
+
+    const first = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+    const second = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(Number(first.ok && first.newBalance)).toBe(70);
+    expect(Number(second.ok && second.newBalance)).toBe(70);
+    expect(await balanceOf(w.userId)).toBe(70);
+    expect(await txRows(w.id)).toHaveLength(1);
+  });
+});
+
 describe('WalletCommandsService ledger sequence (real PG)', () => {
   it('nets a deposit-like credit, a bet debit, and a win credit into one running balance', async () => {
     const w = await seedWallet({ balance: '0' });

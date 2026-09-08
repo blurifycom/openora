@@ -154,7 +154,7 @@ export class FinancialAnalyticsService {
         select distinct currency
         from ${walletTransaction}
         where status = ${COMPLETED_STATUS}
-          and type in ('bet', 'win')
+          and type in ('bet', 'win', 'bet_reversal')
           and created_at between ${range.from} and ${range.to}
           ${currencyFilter}
         ${forceCurrency}
@@ -167,10 +167,11 @@ export class FinancialAnalyticsService {
           currency,
           date_trunc(${granularity}, created_at) as bucket,
           coalesce(sum(amount) filter (where type = 'bet'), 0)
+            - coalesce(sum(amount) filter (where type = 'bet_reversal'), 0)
             - coalesce(sum(amount) filter (where type = 'win'), 0) as ggr
         from ${walletTransaction}
         where status = ${COMPLETED_STATUS}
-          and type in ('bet', 'win')
+          and type in ('bet', 'win', 'bet_reversal')
           and created_at between ${range.from} and ${range.to}
           ${currencyFilter}
         group by 1, 2
