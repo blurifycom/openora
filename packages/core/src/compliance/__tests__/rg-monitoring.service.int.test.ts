@@ -64,8 +64,12 @@ async function seedPlayer(userId: string, currency: string) {
   await db.drizzle.db.insert(player).values({ userId, currency, kycStatus: 'verified' });
 }
 
-const seedDeposit = (userId: string, amount: string, createdAt = new Date()) =>
-  seedCompletedDeposit(db, userId, amount, { createdAt });
+// No createdAt unless a case wants a backdated one: the column defaults to the database
+// clock, and the spend window's upper bound is `now()` on that same clock. An app-side
+// `new Date()` a millisecond ahead of the database - the host clock running ahead of the
+// container's is enough - puts the deposit past the window and out of the player's spend.
+const seedDeposit = (userId: string, amount: string, createdAt?: Date) =>
+  seedCompletedDeposit(db, userId, amount, createdAt ? { createdAt } : {});
 
 async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [g] = await db.drizzle.db
