@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import {
   createApp,
@@ -24,6 +25,8 @@ import { user, session, account, verification, twoFactor } from '@openora/core/p
 import { SseClientAuthorizer } from '@openora/core/testing';
 import { acquireTestRedisDatabase } from './redis.js';
 import type { Hono } from 'hono';
+
+const REDIS_READY_TIMEOUT_MS = 10_000;
 
 export type TestApp = {
   /** The Hono app - drive it directly with `app.request(path, init)`. */
@@ -64,6 +67,7 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   const redisDatabase = await acquireTestRedisDatabase();
   const serviceName = `test-${randomUUID()}`;
+  let client: ReturnType<typeof createRedisClient> | undefined;
 
   const created = await createApp(
     {
@@ -84,6 +88,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
     },
     (container: Container<CoreTokenCatalog>) => {
       const redis = createRedisClient(redisDatabase.url);
+      client = redis;
       container.onDispose(() => redis.close());
 
       container.register(MESSAGE_BROKER, () => {
@@ -111,6 +116,15 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
       }
     },
   );
+
+  // `createRedisClient` fires connect() without awaiting it - right in production, where
+  // boot must not block on Redis, wrong for a test that issues its first request straight
+  // after this returns. The login limiter is `onUnavailable: 'deny'`, so a request that
+  // beats the handshake is answered with a fail-closed 429 rather than reaching the route.
+  // Only reproducible under load, which is exactly when the handshake is slowest.
+  if (client && !client.isReady) {
+    await once(client, 'ready', { signal: AbortSignal.timeout(REDIS_READY_TIMEOUT_MS) });
+  }
 
   return {
     app: created.app,
