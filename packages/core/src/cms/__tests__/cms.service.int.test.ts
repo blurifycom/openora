@@ -508,7 +508,7 @@ describe('CmsService.getPublicBanner (real PG + real Redis)', () => {
 describe('CmsService.createBannerSchedule (real PG)', () => {
   it('creates a schedule and emits cms.banner.schedule.created', async () => {
     const { svc, events } = makeService();
-    const defaultConfig = await makeDefaultConfiguration(svc, 'home-top');
+    await makeDefaultConfiguration(svc, 'home-top');
     const target = await makeSchedulableConfiguration(svc, 'home-top');
 
     const startsAt = new Date(Date.now() + 60_000).toISOString();
@@ -538,7 +538,6 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
       endsAt,
       actorId: ADMIN_ID,
     });
-    expect(defaultConfig.placement).toBe('home-top');
   });
 
   it('rejects scheduling the placement default itself', async () => {
@@ -719,7 +718,11 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
     ]);
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const rejected = results.filter((result) => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    // The loser must lose to the overlap check, not to a deadlock or a raw constraint
+    // violation escaping the advisory lock - those reject too, and would look identical.
+    expect(rejected[0]?.reason).toBeInstanceOf(BannerScheduleOverlapError);
   });
 
   it('rejects promoting a configuration with an attached schedule', async () => {

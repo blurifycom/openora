@@ -167,9 +167,17 @@ async function storedConfigurations() {
 }
 
 describe('cms router authz', () => {
-  it.each(GUARDED_ROUTES)('rejects $name for a non-privileged caller', async ({ invoke }) => {
-    await expect(invoke(routerWith(denyingGuard()))).rejects.toBeInstanceOf(ORPCError);
-  });
+  // FORBIDDEN specifically, not merely "some ORPCError": most of these are invoked with
+  // ids that do not exist, so a route that lost its guard would still reject - with
+  // NOT_FOUND - and the looser assertion would stay green right through the hole.
+  it.each(GUARDED_ROUTES)(
+    'rejects $name with FORBIDDEN for a non-privileged caller',
+    async ({ invoke }) => {
+      await expect(invoke(routerWith(denyingGuard()))).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    },
+  );
 
   it('writes nothing when the guard rejects a create', async () => {
     await expect(
@@ -178,7 +186,7 @@ describe('cms router authz', () => {
         { slug: 'about', title: 'About' },
         { context: CTX },
       ),
-    ).rejects.toBeInstanceOf(ORPCError);
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(await storedPages()).toHaveLength(0);
   });
@@ -190,7 +198,7 @@ describe('cms router authz', () => {
         { placement: 'home', layout: 'single' },
         { context: CTX },
       ),
-    ).rejects.toBeInstanceOf(ORPCError);
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(await storedConfigurations()).toHaveLength(0);
   });
@@ -574,7 +582,7 @@ describe('cms router banner schedule publication authorization', () => {
         { id: target.id, startsAt, endsAt },
         { context: CTX },
       ),
-    ).rejects.toBeInstanceOf(ORPCError);
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     await call(
       setupRouter.createBannerSchedule,
@@ -588,7 +596,7 @@ describe('cms router banner schedule publication authorization', () => {
         { id: target.id, endsAt: new Date(Date.now() + 90_000).toISOString() },
         { context: CTX },
       ),
-    ).rejects.toBeInstanceOf(ORPCError);
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(createOnlyGuard.assert).toHaveBeenCalledWith(CTX, 'content', 'publish');
   });
