@@ -70,63 +70,50 @@ function withDatabase(adminUrl: string, database: string): string {
   return url.toString();
 }
 
+/** Every database `createTestDb` creates carries this prefix, so a sweep can find them. */
+export const TEST_DATABASE_PREFIX = 'test_';
+
+/** The admin connection string a sweep needs, resolved the same way `createTestDb` does. */
+export const adminDatabaseUrl = (): string => ADMIN_DATABASE_URL;
+
 /** A per-module migration entrypoint (`packages/core/src/<module>/migrate.ts`). */
 export type Migration = (databaseUrl: string) => Promise<unknown>;
 
 export type TestDb = {
   url: string;
   drizzle: DrizzleService;
+  /** Close the pool. The database itself is dropped by the global teardown. */
   drop: () => Promise<void>;
 };
 
 /**
- * Wait for every other backend on `database` to disconnect, so the FORCE drop below has
- * nothing left to terminate.
+ * Create a throwaway `TEST_DATABASE_PREFIX`-prefixed database, apply the given per-module
+ * migrations against it, and return a `DrizzleService` bound to it. `drop()` disposes the
+ * pool; the database itself is removed in bulk by `global-setup.ts`.
  *
- * `pool.end()` resolves once the pool stops handing out clients, but a socket it already
- * closed can still be registered server-side for a moment. Dropping in that window makes
- * Postgres terminate the backend (57P01), and `pg` surfaces that on the client as an
- * error with no listener left to catch it - an uncaught exception that fails the whole
- * vitest run even though every test passed. Only reproducible under parallel load, which
- * is exactly when a lingering socket is slowest to close.
- *
- * Best-effort: a backend that outlives the timeout is left to FORCE, since a stuck
- * teardown must never be worse than the race it is avoiding.
- */
-async function waitForIdleBackends(admin: Pool, database: string, timeoutMs = 2000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const { rows } = await admin.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM pg_stat_activity
-       WHERE datname = $1 AND pid <> pg_backend_pid()`,
-      [database],
-    );
-    if (rows[0]?.count === '0') {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
-
-/**
- * Create a throwaway `test_<random>` database, apply the given per-module migrations
- * against it, and return a `DrizzleService` bound to it. `drop()` disposes the pool
- * and drops the database with FORCE (terminating any lingering backends).
+ * Deferring the removal is not tidiness, it is throughput. `DROP DATABASE` forces a
+ * cluster-wide immediate checkpoint (measured: `CREATE DATABASE` requests none, `DROP`
+ * requests exactly one), and every other backend on the cluster waits it out. With one
+ * drop per test file and workers running in parallel, those checkpoints queue up: a
+ * single one was measured at 25s on a local cluster with `fsync` on, long enough to
+ * blow the 30s hook timeout in unrelated files in both integration tiers at once.
+ * Sweeping once per run instead cut the tier from 116s to 87s under parallel load.
  *
  * `DrizzleService` reads `DATABASE_URL` in its constructor, so this points the env at
  * the ephemeral url just before constructing it - safe because a test file owns one db.
  */
 export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
-  const database = `test_${randomUUID().replaceAll('-', '')}`;
+  const database = `${TEST_DATABASE_PREFIX}${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: ADMIN_DATABASE_URL, connectionTimeoutMillis: 5000 });
   try {
     await admin.query(`CREATE DATABASE "${database}"`);
   } catch (err) {
-    await admin.end();
     if (isConnectionError(err)) {
       throw new Error(INFRA_HINT, { cause: err });
     }
     throw err;
+  } finally {
+    await admin.end();
   }
 
   const url = withDatabase(ADMIN_DATABASE_URL, database);
@@ -142,9 +129,6 @@ export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
     drizzle,
     async drop(): Promise<void> {
       await drizzle.dispose();
-      await waitForIdleBackends(admin, database);
-      await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
-      await admin.end();
     },
   };
 }

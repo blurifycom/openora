@@ -17,6 +17,11 @@ export default defineConfig({
     // src/redis.ts). More workers than slices and two suites flush each other's keys.
     maxWorkers: 2,
     testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // 60s, not the usual 30: a teardown sweep of the per-suite databases forces one
+    // cluster-wide checkpoint per drop, and on a local cluster with `fsync` on the first
+    // of those was measured at 55s. Every backend waits it out, including a hook in the
+    // other integration tier still running its tail. CI turns `fsync` off, so there the
+    // ceiling is never approached.
+    hookTimeout: 60_000,
   },
 });
