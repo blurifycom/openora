@@ -44,3 +44,85 @@ ALTER TABLE "game" ADD CONSTRAINT "game_provider_id_game_provider_id_fk" FOREIGN
 CREATE UNIQUE INDEX "game_slug_key" ON "game" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "game_provider_id_idx" ON "game" USING btree ("provider_id");--> statement-breakpoint
 CREATE INDEX "game_aggregator_idx" ON "game" USING btree ("aggregator");
+--> statement-breakpoint
+-- Backfill (previously standalone 0004): the DDL above added game.slug /
+-- game.provider_id / game.aggregator as nullable and left the legacy
+-- game.provider / game.category text columns in place (expand-only, so old
+-- releases keep working). The statements below resolve every pre-existing row
+-- into the new shape; the trailing ALTERs enforce NOT NULL once no NULL
+-- remains (see schema/index.ts).
+INSERT INTO "game_provider" ("slug", "name", "is_active", "updated_at")
+SELECT
+	CASE WHEN "s"."rn" = 1 THEN "s"."base" ELSE "s"."base" || '-' || "s"."rn" END,
+	"s"."provider",
+	true,
+	now()
+FROM (
+	SELECT
+		"b"."provider" AS "provider",
+		"b"."base" AS "base",
+		ROW_NUMBER() OVER (PARTITION BY "b"."base" ORDER BY "b"."provider") AS "rn"
+	FROM (
+		SELECT DISTINCT
+			COALESCE("legacy"."provider", 'Unknown') AS "provider",
+			COALESCE(
+				NULLIF(left(lower(regexp_replace(regexp_replace(COALESCE("legacy"."provider", 'Unknown'), '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
+				'provider-' || left(md5(COALESCE("legacy"."provider", 'Unknown')), 8)
+			) AS "base"
+		FROM "game" "legacy"
+	) "b"
+) "s";--> statement-breakpoint
+INSERT INTO "game_category" ("slug", "name", "updated_at")
+SELECT
+	CASE WHEN "s"."rn" = 1 THEN "s"."base" ELSE "s"."base" || '-' || "s"."rn" END,
+	"s"."category",
+	now()
+FROM (
+	SELECT
+		"b"."category" AS "category",
+		"b"."base" AS "base",
+		ROW_NUMBER() OVER (PARTITION BY "b"."base" ORDER BY "b"."category") AS "rn"
+	FROM (
+		SELECT DISTINCT
+			COALESCE("legacy"."category", 'Uncategorized') AS "category",
+			COALESCE(
+				NULLIF(left(lower(regexp_replace(regexp_replace(COALESCE("legacy"."category", 'Uncategorized'), '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
+				'category-' || left(md5(COALESCE("legacy"."category", 'Uncategorized')), 8)
+			) AS "base"
+		FROM "game" "legacy"
+	) "b"
+) "s";--> statement-breakpoint
+INSERT INTO "game_category_game" ("game_id", "category_id")
+SELECT "g"."id", "c"."id" FROM "game" "g"
+JOIN "game_category" "c" ON "c"."name" = COALESCE("g"."category", 'Uncategorized');--> statement-breakpoint
+UPDATE "game" "g"
+SET "slug" = "s"."slug", "provider_id" = "p"."id", "aggregator" = 'direct'
+FROM (
+	SELECT
+		"b"."id" AS "id",
+		"b"."provider" AS "provider",
+		CASE WHEN "b"."rn" = 1 THEN "b"."base" ELSE "b"."base" || '-' || "b"."rn" END AS "slug"
+	FROM (
+		SELECT
+			"row"."id" AS "id",
+			COALESCE("row"."provider", 'Unknown') AS "provider",
+			COALESCE(
+				NULLIF(left(lower(regexp_replace(regexp_replace("row"."name", '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
+				'game-' || left("row"."id"::text, 8)
+			) AS "base",
+			ROW_NUMBER() OVER (
+				PARTITION BY COALESCE(
+					NULLIF(left(lower(regexp_replace(regexp_replace("row"."name", '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
+					'game-' || left("row"."id"::text, 8)
+				)
+				ORDER BY "row"."id"
+			) AS "rn"
+		FROM "game" "row"
+	) "b"
+) "s"
+JOIN "game_provider" "p" ON "p"."name" = "s"."provider"
+WHERE "g"."id" = "s"."id";
+--> statement-breakpoint
+ALTER TABLE "game" ALTER COLUMN "slug" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "game" ALTER COLUMN "provider_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "game" ALTER COLUMN "aggregator" SET NOT NULL;

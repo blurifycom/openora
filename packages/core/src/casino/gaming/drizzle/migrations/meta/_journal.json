@@ -29,20 +29,6 @@
       "when": 1788796793631,
       "tag": "0003_natural_thunderbolt_ross",
       "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1788796829138,
-      "tag": "0004_backfill_legacy_fields",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1788796868979,
-      "tag": "0005_breezy_ezekiel",
-      "breakpoints": true
     }
   ]
 }

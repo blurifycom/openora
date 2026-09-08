@@ -25,19 +25,19 @@
           "name": "slug",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "provider_id": {
           "name": "provider_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "aggregator": {
           "name": "aggregator",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "game_type": {
           "name": "game_type",

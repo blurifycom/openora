@@ -50,32 +50,17 @@ afterAll(async () => {
   await db.drop();
 });
 
-describe('gaming expand migration 0003-0005 (real PG)', () => {
-  it('expands without dropping legacy columns or failing on legacy rows', async () => {
+describe('gaming catalog migration 0003 (real PG)', () => {
+  it('expands, backfills and enforces NOT NULL in one migration, keeping legacy columns', async () => {
     await apply(['0000', '0001', '0002']);
     await db.drizzle.db.execute(sql`
       INSERT INTO "game" ("name", "provider", "category", "is_active") VALUES
-        ('Roulette', 'Pragmatic Play', 'Table Games', true)`);
-
-    await apply(['0003']);
-
-    // Expand-only: legacy columns survive for old releases, new ones arrive nullable.
-    const expanded = await nullability();
-    expect(expanded.get('provider')).toBe('YES');
-    expect(expanded.get('category')).toBe('YES');
-    expect(expanded.get('slug')).toBe('YES');
-    expect(expanded.get('provider_id')).toBe('YES');
-    expect(expanded.get('aggregator')).toBe('YES');
-  });
-
-  it('backfills providers, slugs, categories and links from legacy rows', async () => {
-    await db.drizzle.db.execute(sql`
-      INSERT INTO "game" ("name", "provider", "category", "is_active") VALUES
+        ('Roulette', 'Pragmatic Play', 'Table Games', true),
         ('Roulette', 'NetEnt', 'Slots', true),
         ('Aces', 'ACME', 'Slots', false),
         ('Kings', 'Acme', 'Slots', true)`);
 
-    await apply(['0004']);
+    await apply(['0003']);
 
     const providers = await db.drizzle.db
       .select({ slug: gameProvider.slug, name: gameProvider.name, isActive: gameProvider.isActive })
@@ -118,10 +103,6 @@ describe('gaming expand migration 0003-0005 (real PG)', () => {
     expect(categories.map((c) => c.slug).sort()).toEqual(['slots', 'table-games']);
     const links = await db.drizzle.db.select().from(gameCategoryGame);
     expect(links).toHaveLength(4);
-  });
-
-  it('enforces NOT NULL once every row is backfilled', async () => {
-    await apply(['0005']);
 
     const enforced = await nullability();
     expect(enforced.get('slug')).toBe('NO');
