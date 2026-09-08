@@ -136,3 +136,82 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     expect([...afterRetry.values()].every((r) => r.publishedAt !== null)).toBe(true);
   });
 });
+
+/** A promise plus the function that settles it, for coordinating with a blocked publish. */
+function deferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve: () => resolve() };
+}
+
+// The poll loop is what actually delivers events in production; drainOnce is only the
+// unit of work it repeats. An error escaping the interval callback would kill the loop
+// silently, and a stop() that returned while a publish was still in flight would let a
+// shutting-down process tear the connection out from under it.
+describe('OutboxRelay poll loop (real PG)', () => {
+  it('publishes on its own, with nobody calling drainOnce', async () => {
+    const row = await seedRow();
+    const relay = new OutboxRelay(db.drizzle.db, brokerThat(), { intervalMs: 10 });
+
+    relay.start();
+    try {
+      await vi.waitFor(async () => {
+        expect((await rowsById()).get(row.eventId)?.publishedAt).not.toBeNull();
+      });
+    } finally {
+      await relay.stop();
+    }
+  });
+
+  it('reports a failing drain to onError and keeps polling', async () => {
+    await seedRow();
+    const errors: unknown[] = [];
+    const broker = brokerThat(() => {
+      throw new Error('broker unreachable');
+    });
+    const relay = new OutboxRelay(db.drizzle.db, broker, {
+      intervalMs: 10,
+      onError: (err) => errors.push(err),
+    });
+
+    relay.start();
+    try {
+      // More than one: a loop that died on the first rejection would report exactly once.
+      await vi.waitFor(() => expect(errors.length).toBeGreaterThan(1));
+    } finally {
+      await relay.stop();
+    }
+    expect(errors[0]).toMatchObject({ message: 'broker unreachable' });
+  });
+
+  it('stops the timer but waits for the drain already in flight', async () => {
+    await seedRow();
+    const publishStarted = deferred();
+    const releasePublish = deferred();
+    const broker: MessageBrokerAdapter = {
+      publish: vi.fn(async () => {
+        publishStarted.resolve();
+        await releasePublish.promise;
+      }),
+      subscribe: () => () => {},
+      close: async () => {},
+    };
+    const relay = new OutboxRelay(db.drizzle.db, broker, { intervalMs: 10 });
+
+    relay.start();
+    await publishStarted.promise;
+
+    let stopped = false;
+    const stopping = relay.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopped).toBe(false);
+
+    releasePublish.resolve();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+});

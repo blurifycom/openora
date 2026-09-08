@@ -23,6 +23,13 @@ beforeEach(async () => {
 });
 
 describe('assertRateLimit / makeRateLimitError', () => {
+  // Call sites pass an optional token straight through rather than guarding it - the
+  // wallet's withdrawal path is one. A no-op that stopped being a no-op would throw on
+  // every one of them, in a deployment that never asked for a limiter at all.
+  it('is a no-op when no limiter is bound', async () => {
+    await expect(assertRateLimit(undefined, 'k', OPTS)).resolves.toBeUndefined();
+  });
+
   it('throws a TOO_MANY_REQUESTS ORPCError carrying retryAfterMs once the limit is hit', async () => {
     for (let i = 0; i < OPTS.limit; i++) {
       await assertRateLimit(limiter, 'k', OPTS);

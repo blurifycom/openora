@@ -7,6 +7,8 @@ import {
   moneyCompare,
   moneyScaleBy,
   moneyDivide,
+  moneyAdd,
+  moneySubtract,
   moneyFloorToScale,
   moneyCeilToScale,
   mapConcurrent,
@@ -108,6 +110,34 @@ describe('moneyScaleBy', () => {
 
   it('truncates past MONEY_SCALE rather than rounding up', () => {
     expect(moneyScaleBy('1.000000000000000001', '0.5')).toBe('0.500000000000000000');
+  });
+});
+
+// These derive one side of a balance change from the other rather than reading the
+// balance back, so a drift here writes a wrong `before` into an append-only audit row.
+// The RG deposit-limit gate sums a player's spend through moneyAdd.
+describe('moneyAdd / moneySubtract', () => {
+  it('adds and subtracts exactly, at MONEY_SCALE', () => {
+    expect(moneyAdd('10', '2.5')).toBe('12.500000000000000000');
+    expect(moneySubtract('10', '2.5')).toBe('7.500000000000000000');
+  });
+
+  it('is exact where float arithmetic drifts', () => {
+    expect(0.1 + 0.2).not.toBe(0.3);
+    expect(moneyAdd('0.1', '0.2')).toBe('0.300000000000000000');
+    expect(moneySubtract('0.3', '0.1')).toBe('0.200000000000000000');
+  });
+
+  it('keeps the last unit at MONEY_SCALE rather than losing it', () => {
+    expect(moneyAdd('0.000000000000000001', '0.000000000000000002')).toBe('0.000000000000000003');
+  });
+
+  it('goes negative rather than clamping - an overdrawn balance must be visible', () => {
+    expect(moneySubtract('1', '2.25')).toBe('-1.250000000000000000');
+  });
+
+  it('round-trips: subtracting what was added returns the original', () => {
+    expect(moneySubtract(moneyAdd('19.99', '0.01'), '0.01')).toBe('19.990000000000000000');
   });
 });
 
