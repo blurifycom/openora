@@ -1,5 +1,5 @@
 {
-  "id": "e309fc35-0cec-4d3d-90e9-58c3b2f4fcdd",
+  "id": "51be7008-4f67-4c22-9dd8-6eac47fb07d9",
   "prevId": "c54c97b7-443f-4926-a6f3-7ea64065abc9",
   "version": "7",
   "dialect": "postgresql",
@@ -825,6 +825,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "anti_phishing_code": {
+          "name": "anti_phishing_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anti_phishing_code_set_at": {
+          "name": "anti_phishing_code_set_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "failed_login_attempts": {
           "name": "failed_login_attempts",
           "type": "integer",
@@ -908,13 +920,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "two_factor_method": {
-          "name": "two_factor_method",
-          "type": "two_factor_method",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -1070,11 +1075,6 @@
       "name": "user_theme",
       "schema": "public",
       "values": ["light", "dark", "system"]
-    },
-    "public.two_factor_method": {
-      "name": "two_factor_method",
-      "schema": "public",
-      "values": ["app", "email", "sms"]
     }
   },
   "schemas": {},

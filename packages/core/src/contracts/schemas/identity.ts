@@ -225,9 +225,17 @@ export const SecurityControlsSchema = z.object({
   twoFactorEnabled: z.boolean(),
   loginWithdrawalAlertsEnabled: z.boolean(),
   withdrawalPinSet: z.boolean(),
+  // Raw value, not a boolean - this code authorizes nothing (unlike the withdrawal PIN), it's
+  // a recognition signal readable only by the authenticated player it belongs to, same gate as
+  // the rest of this schema.
+  antiPhishingCode: z.string().nullable(),
 });
 
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
+
+// Non-empty after trimming incidental leading/trailing whitespace (eg from copy-paste),
+// otherwise fully unrestricted and case-sensitive - no reauth, set/overwrite only.
+export const SetAntiPhishingCodeInputSchema = z.object({ code: z.string().trim().min(1) });
 
 export const WithdrawalPinSchema = z.string().regex(/^[0-9]{4}$/);
 
@@ -345,6 +353,7 @@ export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
 export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
 export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
+export type SetAntiPhishingCodeInput = z.infer<typeof SetAntiPhishingCodeInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
 export type PhoneVerificationConfirmInput = z.infer<typeof PhoneVerificationConfirmInputSchema>;

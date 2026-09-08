@@ -61,6 +61,7 @@ import type {
   PlayerProvisioning,
   SecurityControls,
   SetLoginWithdrawalAlertsInput,
+  SetAntiPhishingCodeInput,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -1897,6 +1898,57 @@ export class IdentityService {
       userAgent,
     });
     return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
+  }
+
+  /**
+   * Sets (or overwrites) the player's anti-phishing code: a free-text, case-sensitive
+   * recognition phrase stamped into every outgoing platform email so the player can tell a
+   * genuine email from a phishing attempt. Unlike the withdrawal PIN this authorizes nothing,
+   * so - like `setLoginWithdrawalAlerts` - it takes no reauth and there is no remove route;
+   * calling it again with a new value just changes the code.
+   */
+  async setAntiPhishingCode(
+    input: SetAntiPhishingCodeInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const [caller] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (caller?.role !== 'player') {
+      // A service-level denial still owes the audit log the same signal AdminGuard emits,
+      // since this check rejects before any shared guard runs (docs/standards/audit.md).
+      this.events.emit('identity.user.unauthorized_access', {
+        userId,
+        playerId: null,
+        resource: 'identity.security.anti_phishing_code',
+        action: 'set',
+        ...(caller?.role ? { role: caller.role } : {}),
+        ip,
+        userAgent,
+      });
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Only players can set this preference.',
+      });
+    }
+    const before = await this.securityControlsFor(userId);
+    await this.drizzle.db
+      .update(user)
+      .set({ antiPhishingCode: input.code, antiPhishingCodeSetAt: new Date() })
+      .where(eq(user.id, userId));
+    this.events.emit('identity.security.anti_phishing_code.set', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      ip,
+      userAgent,
+    });
+    return { ...before, antiPhishingCode: input.code };
   }
 
   /**

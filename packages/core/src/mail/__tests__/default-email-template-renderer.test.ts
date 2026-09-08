@@ -151,6 +151,48 @@ describe('DefaultEmailTemplateRenderer', () => {
     expect(render().text).toContain('2026');
   });
 
+  it('appends the anti-phishing code as a footer line on text and html when provided', () => {
+    const result = renderer.render(
+      { key: 'verifyEmail', data: { otp: '123456' } },
+      'en',
+      null,
+      'Sunny Meadow',
+    );
+
+    expect(result.text).toBe(
+      'Your email verification code is: 123456\n\nYour anti-phishing code: Sunny Meadow',
+    );
+    expect(result.html).toContain('Your anti-phishing code: Sunny Meadow');
+  });
+
+  it('HTML-escapes the anti-phishing code the same way as the rest of the body', () => {
+    const result = renderer.render(
+      { key: 'verifyEmail', data: { otp: '123456' } },
+      'en',
+      null,
+      '<script>alert(1)</script> & "quoted"',
+    );
+
+    expect(result.text).toContain('<script>alert(1)</script> & "quoted"');
+    expect(result.html).not.toContain('<script>alert(1)</script>');
+    expect(result.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quoted&quot;');
+  });
+
+  it('omits the footer line entirely when the code is omitted or null', () => {
+    const omitted = renderer.render({ key: 'verifyEmail', data: { otp: '123456' } }, 'en');
+    const nullCode = renderer.render(
+      { key: 'verifyEmail', data: { otp: '123456' } },
+      'en',
+      null,
+      null,
+    );
+
+    expect(omitted.text).toBe('Your email verification code is: 123456');
+    expect(omitted.text).not.toContain('anti-phishing');
+    expect(nullCode.text).toBe('Your email verification code is: 123456');
+    expect(nullCode.text).not.toContain('anti-phishing');
+  });
+
   it('formats the cooling-off date against the recipient locale', () => {
     const en = renderer.render(
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },

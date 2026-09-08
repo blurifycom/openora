@@ -105,7 +105,7 @@ describe('MailService', () => {
     }
     await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'de@b.com' }));
   });
 
@@ -117,7 +117,7 @@ describe('MailService', () => {
       template: verify,
     });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
     expect(sender.send).toHaveBeenCalledWith({
       to: 'de@b.com',
       subject: 's',
@@ -137,13 +137,14 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'fr',
+          antiPhishingCode: null,
         })),
       },
     });
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada', null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'user@b.com' }));
   });
 
@@ -158,13 +159,43 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'fr',
+          antiPhishingCode: null,
         })),
       },
     });
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null, null);
+  });
+
+  it('threads the user anti-phishing code through to the renderer, and sends null when the recipient is an address (no account yet)', async () => {
+    const { svc, renderer: userRenderer } = build({
+      directory: {
+        get: vi.fn(async () => ({
+          id: 'u-1',
+          email: 'user@b.com',
+          name: 'Ada',
+          createdAt: new Date(),
+          isActive: true,
+          role: 'player',
+          language: 'fr',
+          antiPhishingCode: 'Sunny Meadow',
+        })),
+      },
+    });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
+
+    expect(userRenderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada', 'Sunny Meadow');
+
+    const { svc: addressSvc, renderer: addressRenderer } = build();
+    await addressSvc.deliver({
+      recipient: { kind: 'address', email: 'de@b.com', locale: 'de' },
+      template: verify,
+    });
+
+    expect(addressRenderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
   });
 
   it('skips - without throwing - when the user has no address (nothing to retry)', async () => {
@@ -209,6 +240,7 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'de',
+          antiPhishingCode: null,
         })),
       },
     });
@@ -244,6 +276,7 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'de',
+          antiPhishingCode: null,
         })),
       },
     });

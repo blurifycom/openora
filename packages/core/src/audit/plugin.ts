@@ -814,6 +814,19 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.anti_phishing_code.set') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      // The code value never reaches the audit trail, only that it was set.
+      after: { antiPhishingCodeSet: true },
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -878,6 +891,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.security.login_withdrawal_alerts.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
+  'identity.security.anti_phishing_code.set',
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',

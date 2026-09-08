@@ -53,6 +53,11 @@ export const user = pgTable(
     // `withdrawalPinHash !== null`, no separate boolean column.
     withdrawalPinHash: text(),
     withdrawalPinSetAt: timestamp({ withTimezone: true }),
+    // Player-set, free-text, case-sensitive recognition phrase stamped into every outgoing
+    // platform email so the player can tell a genuine email from a phishing attempt. Plaintext
+    // (not hashed) - read back verbatim both to the owning player and into outgoing email.
+    antiPhishingCode: text(),
+    antiPhishingCodeSetAt: timestamp({ withTimezone: true }),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
     // Second-factor lockout, counted separately from the password-login columns above:

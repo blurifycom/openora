@@ -16,6 +16,7 @@ export async function getSecurityControls(
       twoFactorEnabled: user.twoFactorEnabled,
       loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
       withdrawalPinHash: user.withdrawalPinHash,
+      antiPhishingCode: user.antiPhishingCode,
     })
     .from(user)
     .where(eq(user.id, userId))

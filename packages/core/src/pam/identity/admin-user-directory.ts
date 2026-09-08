@@ -41,6 +41,7 @@ function toRow(r: typeof user.$inferSelect) {
     language: r.language ?? null,
     failedLoginAttempts: r.failedLoginAttempts,
     lockoutUntil: r.lockoutUntil,
+    antiPhishingCode: r.antiPhishingCode,
   };
 }
 
