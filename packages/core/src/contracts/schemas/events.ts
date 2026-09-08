@@ -7,7 +7,6 @@ import {
   UuidSchema,
 } from './common.js';
 import {
-  GeoRuleActionSchema,
   LimitTypeSchema,
   LimitPeriodSchema,
   LimitChangeKindSchema,
@@ -15,7 +14,6 @@ import {
   ExclusionKindSchema,
 } from './compliance.js';
 import { TagKeySchema } from './tag.js';
-import { CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
 import {
@@ -514,14 +512,6 @@ export const domainEventSchemas = {
   'chat.private_room.purged': authContextBase.extend({
     roomId: UuidSchema,
     messageCount: z.number().int(),
-  }),
-
-  // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
-  // acting admin so the audit log can attribute the mutation.
-  'compliance.geo-rule.added': authContextBase.extend({
-    countryCode: CountryCodeSchema,
-    action: GeoRuleActionSchema,
-    actorId: UuidSchema.optional(),
   }),
 
   'compliance.limit.upserted': authContextBase.extend({

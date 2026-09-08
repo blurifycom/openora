@@ -45,8 +45,8 @@ const logger = createLogger('compliance');
 const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new ComplianceService(
     c.get(DRIZZLE),
-    c.get(EVENT_BUS),
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
+    c.get(AUDIT_WRITER),
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');

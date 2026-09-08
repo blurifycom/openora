@@ -7,7 +7,6 @@ import {
   KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
-  GeoRuleActionSchema,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
@@ -150,18 +149,55 @@ export const BulkApproveKycOutputSchema = z.object({
 });
 export type BulkApproveKycOutput = z.infer<typeof BulkApproveKycOutputSchema>;
 
-export const GeoRuleSchema = z.object({
+export const CountryRuleSchema = z.object({
   id: UuidSchema,
   countryCode: CountryCodeSchema,
-  action: GeoRuleActionSchema,
+  blacklisted: z.boolean(),
+  redirectIp: z.boolean(),
+  kycRequired: z.boolean(),
   createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.nullable(),
+  updatedBy: UuidSchema.nullable(),
 });
-export type GeoRule = z.infer<typeof GeoRuleSchema>;
+export type CountryRule = z.infer<typeof CountryRuleSchema>;
 
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
-export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
+// Blacklisting a country requires explicit confirmation before the rule is saved
+// (defense-in-depth server-side check; the real confirmation UX is the Backoffice dialog).
+export const UpsertCountryRuleInputSchema = z
+  .object({
+    countryCode: CountryCodeSchema,
+    blacklisted: z.boolean(),
+    redirectIp: z.boolean(),
+    kycRequired: z.boolean(),
+    confirmBlacklist: z.boolean().optional(),
+  })
+  .refine((input) => !input.blacklisted || input.confirmBlacklist === true, {
+    message: 'confirmBlacklist must be true when blacklisted is true',
+    path: ['confirmBlacklist'],
+  });
+export type UpsertCountryRuleInput = z.infer<typeof UpsertCountryRuleInputSchema>;
+
+export const GlobalKycConfigSchema = z.object({
+  enabled: z.boolean(),
+  updatedAt: TimestampSchema.nullable(),
+  updatedBy: UuidSchema.nullable(),
+});
+export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
+
+// Enabling or disabling the platform-wide toggle always requires explicit confirmation -
+// same defense-in-depth reasoning as UpsertCountryRuleInputSchema above.
+export const SetGlobalKycConfigInputSchema = z
+  .object({
+    enabled: z.boolean(),
+    confirm: z.boolean(),
+  })
+  .refine((input) => input.confirm === true, {
+    message: 'confirm must be true',
+    path: ['confirm'],
+  });
+export type SetGlobalKycConfigInput = z.infer<typeof SetGlobalKycConfigInputSchema>;
 
 const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
@@ -186,14 +222,23 @@ export const complianceContract = {
 
   geoCheck: oc.route({ method: 'GET', path: '/compliance/geo-check' }).output(GeoCheckOutputSchema),
 
-  addGeoRule: oc
-    .route({ method: 'POST', path: '/compliance/geo-rules' })
-    .input(AddGeoRuleInputSchema)
-    .output(GeoRuleSchema),
+  upsertCountryRule: oc
+    .route({ method: 'PUT', path: '/compliance/country-rules' })
+    .input(UpsertCountryRuleInputSchema)
+    .output(CountryRuleSchema),
 
-  listGeoRules: oc
-    .route({ method: 'GET', path: '/compliance/geo-rules' })
-    .output(z.array(GeoRuleSchema)),
+  listCountryRules: oc
+    .route({ method: 'GET', path: '/compliance/country-rules' })
+    .output(z.array(CountryRuleSchema)),
+
+  getGlobalKycConfig: oc
+    .route({ method: 'GET', path: '/compliance/global-kyc' })
+    .output(GlobalKycConfigSchema),
+
+  setGlobalKycConfig: oc
+    .route({ method: 'PUT', path: '/compliance/global-kyc' })
+    .input(SetGlobalKycConfigInputSchema)
+    .output(GlobalKycConfigSchema),
 
   getPlayerKyc: oc
     .route({ method: 'GET', path: '/compliance/players/{userId}/kyc' })

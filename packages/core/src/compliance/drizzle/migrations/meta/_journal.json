@@ -57,6 +57,13 @@
       "when": 1788278352775,
       "tag": "0007_romantic_toxin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788278352776,
+      "tag": "0008_country_rule_and_global_kyc",
+      "breakpoints": true
     }
   ]
 }

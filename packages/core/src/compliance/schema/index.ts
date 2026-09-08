@@ -22,7 +22,6 @@ import {
   limitTypes,
   limitPeriods,
   LIMIT_CHANGE_KINDS,
-  geoRuleActions,
   MONEY_SCALE,
   MONEY_PRECISION,
   KycCheckResultSchema,
@@ -82,11 +81,30 @@ export const userLimit = pgTable(
   ],
 );
 
-export const geoRule = pgTable('geo_rule', {
+// Rewrite of the old binary allow/block geo rule: three independent per-country flags.
+// Row presence = "country has a rule"; a country with no row reads as blacklisted=false,
+// redirectIp=false, kycRequired=true (the defaults below) per the Regulatory Overview spec.
+export const countryRule = pgTable('country_rule', {
   id: uuid().primaryKey().defaultRandom(),
-  countryCode: text().notNull().unique('geo_rule_country_code_unique'),
-  action: text({ enum: geoRuleActions }).notNull(),
+  countryCode: text().notNull().unique('country_rule_country_code_unique'),
+  blacklisted: boolean().notNull().default(false),
+  redirectIp: boolean().notNull().default(false),
+  kycRequired: boolean().notNull().default(true),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true }),
+  updatedBy: uuid(),
+});
+
+// Platform-wide KYC toggle (admin-editable, audited). Does not overwrite a country's own
+// kycRequired exemption - see docs/modules/compliance.md. Singleton row keyed by
+// singletonKey, same pattern as wallet's walletAutoWithdrawalConfig.
+export const globalKycConfig = pgTable('global_kyc_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique('global_kyc_config_singleton_key_unique').default('global'),
+  enabled: boolean().notNull().default(true),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true }),
+  updatedBy: uuid(),
 });
 
 // Append-only history: the player's current verification is the latest row by createdAt.
@@ -198,7 +216,8 @@ export const rgFlag = pgTable(
 );
 
 export type UserLimit = typeof userLimit.$inferSelect;
-export type GeoRule = typeof geoRule.$inferSelect;
+export type CountryRule = typeof countryRule.$inferSelect;
+export type GlobalKycConfig = typeof globalKycConfig.$inferSelect;
 export type KycVerification = typeof kycVerification.$inferSelect;
 export type RgExclusion = typeof rgExclusion.$inferSelect;
 export type RgFlag = typeof rgFlag.$inferSelect;
