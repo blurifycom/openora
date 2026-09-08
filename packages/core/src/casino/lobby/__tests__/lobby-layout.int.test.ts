@@ -141,6 +141,33 @@ describe('LobbyService aggregate layout', () => {
     ]);
   });
 
+  it('skips resolver data that does not satisfy the public response schema', async () => {
+    const definition: LobbySectionDefinition = {
+      ...heroDefinition(),
+      async resolve(sections) {
+        return new Map(sections.map((section) => [section.id, { score: Number.NaN }]));
+      },
+    };
+    const { svc } = service([definition]);
+    await svc.replaceLayout({ version: 0, sections: [hero('Visible')], ...ACTOR });
+
+    await expect(svc.getLayout()).resolves.toEqual([]);
+  });
+
+  it('propagates unexpected section validator failures', async () => {
+    const definition: LobbySectionDefinition = {
+      ...heroDefinition(),
+      async validate() {
+        throw new Error('validator unavailable');
+      },
+    };
+    const { svc } = service([definition]);
+
+    await expect(
+      svc.replaceLayout({ version: 0, sections: [hero('Visible')], ...ACTOR }),
+    ).rejects.toThrow('validator unavailable');
+  });
+
   it('emits one audit event with complete generic before and after states', async () => {
     const { svc, events } = service();
     const saved = await svc.replaceLayout({

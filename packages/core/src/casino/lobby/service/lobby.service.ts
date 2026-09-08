@@ -14,6 +14,7 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
+import { LobbySectionDataSchema } from '@openora/core/contracts';
 import type {
   CacheAdapter,
   ClientMeta,
@@ -23,6 +24,7 @@ import type {
   LobbySectionDefinition,
   LobbySectionDefinitionInput,
   LobbySectionType,
+  LobbySectionValidationResult,
   User,
 } from '@openora/core/contracts';
 import type {
@@ -360,7 +362,17 @@ export class LobbyService {
         continue;
       }
 
-      resolved.set(section.id, { id: section.id, type, data: sectionData });
+      const parsedData = LobbySectionDataSchema.safeParse(sectionData);
+
+      if (!parsedData.success) {
+        logger.warn(
+          { issues: parsedData.error.issues, type, sectionId: section.id },
+          'Skipping lobby section with invalid resolved data',
+        );
+        continue;
+      }
+
+      resolved.set(section.id, { id: section.id, type, data: parsedData.data });
     }
 
     return resolved;
@@ -374,25 +386,20 @@ export class LobbyService {
       SECTION_OPERATION_CONCURRENCY,
       async ([type, group]) => {
         const definition = this.requireDefinition(type);
+        let validation: LobbySectionValidationResult | undefined;
 
         try {
-          const validation = await definition.validate?.(
+          validation = await definition.validate?.(
             group.map((section) => ({ id: section.id, config: section.config })),
           );
-          if (validation && !validation.valid) {
-            throw new LobbySectionFieldError(
-              `Invalid '${type}' section configuration: ${validation.message}`,
-            );
-          }
         } catch (error) {
-          if (error instanceof LobbySectionFieldError) {
-            throw error;
-          }
-          // Section validate is a pure config check (no I/O); any throw is invalid
-          // config, never a transient failure. Logged for ops before mapping to 400.
           logger.error({ err: error, type }, 'Lobby section validation failed');
+          throw error;
+        }
+
+        if (validation && !validation.valid) {
           throw new LobbySectionFieldError(
-            `Invalid '${type}' section configuration: ${errorMessage(error)}`,
+            `Invalid '${type}' section configuration: ${validation.message}`,
           );
         }
       },
