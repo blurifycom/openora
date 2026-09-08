@@ -1,6 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { sql } from 'drizzle-orm';
 // Every module owns its own migration tracking table + history (ADR-0027) - a full
 // test DB must apply all of them or integration tests hit "relation does not exist".
 // `server/migrate` covers only the engine-owned `outbox` table; everything else is a
@@ -48,43 +47,53 @@ export async function applyMigrations(url: string): Promise<void> {
   await applyAllMigrations(url);
 }
 
+/** The migrated database `global-setup.ts` builds once; every suite clones it. */
+export const TEMPLATE_DATABASE = 'oss_igaming_test_tpl';
+
+const testUrl = () => process.env['TEST_DATABASE_URL'] ?? DEFAULT_TEST_URL;
+
+/** The same server and credentials as TEST_DATABASE_URL, pointed at `database`. */
+export function urlForDatabase(database: string): string {
+  const url = new URL(testUrl());
+  url.pathname = `/${database}`;
+  return url.toString();
+}
+
+/** A connection for CREATE/DROP DATABASE, which cannot run against their own target. */
+export const adminUrl = (): string => urlForDatabase('postgres');
+
 export type TestDb = {
   /** The connection string the app under test must use. */
   url: string;
-  /** Delete all rows from every table (keeps the schema). Call between suites. */
-  truncateAll(): Promise<void>;
-  /** Close the migration pool. Call once in global teardown. */
+  /** Close the pool. The database itself is dropped by the global teardown. */
   dispose(): Promise<void>;
 };
 
 /**
- * Prepare a real Postgres test database: apply the platform migrations, then
- * hand back a `url` to point the app at plus truncate/dispose helpers.
+ * Clone the migrated template into a database of this suite's own and hand back a `url`
+ * to point the app at.
  *
- * The database must already exist (CI creates it; locally run
- * `createdb oss_igaming_test` or the `db:test:setup` script). Override the
- * target with `TEST_DATABASE_URL`.
+ * A database per suite is what lets this tier run its files in parallel: they seed
+ * players, wallets and rooms under fixed ids and would otherwise read each other's rows.
+ * Cloning rather than migrating keeps that affordable - `CREATE DATABASE ... TEMPLATE`
+ * is a file copy, around 50ms, against roughly 250ms of migration checks per suite.
+ *
+ * `TEST_DATABASE_URL` selects the server; the database it names is not otherwise used.
  */
 export async function setupTestDb(): Promise<TestDb> {
-  const url = process.env['TEST_DATABASE_URL'] ?? DEFAULT_TEST_URL;
-  await applyAllMigrations(url);
+  const database = `${TEMPLATE_DATABASE}_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: adminUrl(), connectionTimeoutMillis: 5000 });
+  try {
+    await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${TEMPLATE_DATABASE}"`);
+  } finally {
+    await admin.end();
+  }
 
+  const url = urlForDatabase(database);
   const pool = new Pool({ connectionString: url });
-  const db = drizzle(pool, { casing: 'snake_case' });
 
   return {
     url,
-    async truncateAll() {
-      const rows = await db.execute<{ tablename: string }>(sql`
-        SELECT tablename FROM pg_tables
-        WHERE schemaname = 'public' AND tablename NOT LIKE '\\_\\_drizzle%'
-      `);
-      const tables = rows.rows.map((r) => `"public"."${r.tablename}"`);
-      if (tables.length === 0) {
-        return;
-      }
-      await db.execute(sql.raw(`TRUNCATE ${tables.join(', ')} RESTART IDENTITY CASCADE`));
-    },
     async dispose() {
       await pool.end();
     },
