@@ -1,6 +1,6 @@
 {
-  "id": "0dbd835c-03ef-46c7-a761-584489e78605",
-  "prevId": "148fd667-dcfd-4789-a33e-5869930e7fc8",
+  "id": "209f0c47-1565-4529-9ae8-e7818c40b87a",
+  "prevId": "0dbd835c-03ef-46c7-a761-584489e78605",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -109,14 +109,14 @@
         },
         "bet_amount": {
           "name": "bet_amount",
-          "type": "numeric(18, 2)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
         },
         "win_amount": {
           "name": "win_amount",
-          "type": "numeric(18, 2)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"

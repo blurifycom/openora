@@ -50,7 +50,7 @@ afterAll(async () => {
   await db.drop();
 });
 
-describe('gaming catalog migration 0003 (real PG)', () => {
+describe('gaming catalog migration 0005 (real PG)', () => {
   it('expands, backfills and enforces NOT NULL in one migration, keeping legacy columns', async () => {
     await apply(['0000', '0001', '0002']);
     await db.drizzle.db.execute(sql`
@@ -60,7 +60,7 @@ describe('gaming catalog migration 0003 (real PG)', () => {
         ('Aces', 'ACME', 'Slots', false),
         ('Kings', 'Acme', 'Slots', true)`);
 
-    await apply(['0003']);
+    await apply(['0003', '0004', '0005']);
 
     const providers = await db.drizzle.db
       .select({ slug: gameProvider.slug, name: gameProvider.name, isActive: gameProvider.isActive })

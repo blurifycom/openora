@@ -26,8 +26,22 @@
     {
       "idx": 3,
       "version": "7",
+      "when": 1788188590022,
+      "tag": "0003_wealthy_greymalkin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788775630491,
+      "tag": "0004_serious_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
       "when": 1788796793631,
-      "tag": "0003_natural_thunderbolt_ross",
+      "tag": "0005_natural_thunderbolt_ross",
       "breakpoints": true
     }
   ]

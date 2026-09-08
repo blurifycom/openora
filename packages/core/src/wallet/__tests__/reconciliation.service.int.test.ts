@@ -234,6 +234,7 @@ describe('ReconciliationService.runCycle - amount and currency mismatch', () => 
           currency: 'BTC',
           status: 'completed',
           rail: 'crypto',
+          providerName: 'default',
           providerRefId: externalId,
         })
         .returning(),

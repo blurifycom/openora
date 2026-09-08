@@ -1524,7 +1524,11 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     const { svc, events } = makeService();
     const w = await seedWallet();
     const externalId = randomUUID();
-    const tx = await seedTx(w.id, { status: 'processing', providerRefId: externalId });
+    const tx = await seedTx(w.id, {
+      status: 'processing',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
+      providerRefId: externalId,
+    });
 
     await svc.reconcileWithdrawalStatus({
       kind: 'withdrawal',
@@ -1544,6 +1548,7 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     const tx = await seedTx(w.id, {
       status: 'processing',
       amount: '40',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
       providerRefId: externalId,
     });
 
@@ -1558,7 +1563,12 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     const { svc, events } = makeService();
     const w = await seedWallet({ balance: '0' });
     const externalId = randomUUID();
-    const tx = await seedTx(w.id, { status: 'completed', amount: '40', providerRefId: externalId });
+    const tx = await seedTx(w.id, {
+      status: 'completed',
+      amount: '40',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
+      providerRefId: externalId,
+    });
 
     await svc.reconcileWithdrawalStatus({ kind: 'withdrawal', externalId, status: 'failed' });
 

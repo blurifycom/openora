@@ -21,6 +21,7 @@ import {
   RgRestrictedError,
   InsufficientBalanceError,
   WinCreditFailedError,
+  ExternalRoundOwnerMismatchError,
 } from '../service/gaming.service.js';
 import { GameProviderNotFoundError } from '../service/game-provider.service.js';
 import { GameCategoryNotFoundError } from '../service/game-category.service.js';
@@ -607,7 +608,8 @@ describe('GamingService.endRound (real PG)', () => {
       expect.objectContaining({ userId, amount: '42.50', currency: 'USD', type: 'win' }),
     );
     const [settled] = await db.drizzle.db.select().from(gameRound);
-    expect(settled).toMatchObject({ status: 'completed', winAmount: '42.50' });
+    expect(settled?.status).toBe('completed');
+    expect(Number(settled?.winAmount)).toBe(42.5);
   });
 
   it('credits nothing when the provider reports no outcome', async () => {
@@ -629,7 +631,9 @@ describe('GamingService.endRound (real PG)', () => {
     const svc = makeService({ provider, walletCommands });
 
     await svc.endRound(userId, round.id);
-    expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '7.00' });
+    const replayed = await svc.endRound(userId, round.id);
+    expect(replayed.success).toBe(true);
+    expect(Number(replayed.winAmount)).toBe(7);
 
     expect(provider.endRound).toHaveBeenCalledOnce();
     expect(walletCommands.credit).toHaveBeenCalledOnce();
@@ -647,6 +651,194 @@ describe('GamingService.endRound (real PG)', () => {
     await expect(svc.endRound(userId, round.id)).rejects.toBeInstanceOf(WinCreditFailedError);
 
     const [unsettled] = await db.drizzle.db.select().from(gameRound);
-    expect(unsettled).toMatchObject({ status: 'active', winAmount: '0.00' });
+    expect(unsettled?.status).toBe('active');
+    expect(Number(unsettled?.winAmount)).toBe(0);
+  });
+});
+
+describe('GamingService.accumulateExternalRound (real PG)', () => {
+  it('creates a game_round row on the first call for a given externalRoundId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b1', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000501';
+
+    const result = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-1',
+      betDelta: '10',
+      winDelta: '0',
+    });
+
+    expect(Number(result.betAmount)).toBe(10);
+    expect(Number(result.winAmount)).toBe(0);
+    const rows = await db.drizzle.db.select().from(gameRound);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: result.roundId,
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-1',
+      status: 'active',
+    });
+  });
+
+  it('accumulates betAmount/winAmount on every subsequent call for the same externalRoundId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b2', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000502';
+
+    const first = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-2',
+      betDelta: '10',
+    });
+    const second = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-2',
+      betDelta: '5',
+      winDelta: '20',
+    });
+
+    expect(second.roundId).toBe(first.roundId);
+    expect(Number(second.betAmount)).toBe(15);
+    expect(Number(second.winAmount)).toBe(20);
+    const rows = await db.drizzle.db.select().from(gameRound);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('loses no update when two calls race against the same externalRoundId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b3', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000503';
+
+    await Promise.all([
+      svc.accumulateExternalRound(db.drizzle.db, {
+        gameId: created.id,
+        userId,
+        currency: 'USD',
+        externalRoundId: 'ext-round-3',
+        betDelta: '10',
+      }),
+      svc.accumulateExternalRound(db.drizzle.db, {
+        gameId: created.id,
+        userId,
+        currency: 'USD',
+        externalRoundId: 'ext-round-3',
+        betDelta: '7',
+      }),
+    ]);
+
+    const rows = await db.drizzle.db.select().from(gameRound);
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.betAmount)).toBe(17);
+  });
+
+  it('rolls back the accumulated round together with the caller transaction', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b4', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000504';
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await svc.accumulateExternalRound(tx, {
+          gameId: created.id,
+          userId,
+          currency: 'USD',
+          externalRoundId: 'ext-round-4',
+          betDelta: '10',
+        });
+        throw new Error('caller rolled back');
+      }),
+    ).rejects.toThrow('caller rolled back');
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.externalRoundId, 'ext-round-4'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('marks the round completed with endedAt set when the terminating callback passes isFinal', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b5', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000505';
+
+    await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-5',
+      betDelta: '10',
+    });
+    const result = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-5',
+      winDelta: '15',
+      isFinal: true,
+    });
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.id, result.roundId));
+    expect(rows[0]).toMatchObject({ status: 'completed' });
+    expect(rows[0]?.endedAt).not.toBeNull();
+  });
+
+  it('refuses to merge a delta onto a round owned by a different user', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b6', name: 'Aces' });
+    const svc = makeService();
+    const ownerId = '00000000-0000-0000-0000-000000000506';
+    const otherId = '00000000-0000-0000-0000-000000000507';
+
+    await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId: ownerId,
+      currency: 'USD',
+      externalRoundId: 'ext-round-6',
+      betDelta: '10',
+    });
+
+    await expect(
+      svc.accumulateExternalRound(db.drizzle.db, {
+        gameId: created.id,
+        userId: otherId,
+        currency: 'USD',
+        externalRoundId: 'ext-round-6',
+        betDelta: '5',
+      }),
+    ).rejects.toThrow(ExternalRoundOwnerMismatchError);
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(gameRound)
+      .where(eq(gameRound.externalRoundId, 'ext-round-6'));
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.betAmount)).toBe(10);
+  });
+
+  it('preserves a sub-cent crypto delta instead of rounding it to zero', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000b7', name: 'Aces' });
+    const svc = makeService();
+    const userId = '00000000-0000-0000-0000-000000000508';
+
+    const result = await svc.accumulateExternalRound(db.drizzle.db, {
+      gameId: created.id,
+      userId,
+      currency: 'BTC',
+      externalRoundId: 'ext-round-7',
+      betDelta: '0.000000000000000001',
+    });
+
+    expect(result.betAmount).toBe('0.000000000000000001');
   });
 });

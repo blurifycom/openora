@@ -124,8 +124,8 @@ describe('gaming stake debit e2e', () => {
       .db.select()
       .from(gameRound)
       .where(eq(gameRound.id, body.roundId));
-    expect(round?.betAmount).toBe('30.00');
-    expect(round?.winAmount).toBe('0.00');
+    expect(round?.betAmount).toBe('30.000000000000000000');
+    expect(round?.winAmount).toBe('0.000000000000000000');
 
     const [walletRow] = await app.container
       .get(DRIZZLE)

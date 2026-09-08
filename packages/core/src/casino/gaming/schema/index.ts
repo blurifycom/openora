@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -11,7 +12,7 @@ import {
   uniqueIndex,
   jsonb,
 } from 'drizzle-orm/pg-core';
-import { GAME_TYPES } from '@openora/core/contracts';
+import { GAME_TYPES, MONEY_PRECISION, MONEY_SCALE } from '@openora/core/contracts';
 import { GAME_ROUND_STATUSES } from '../contract/index.js';
 
 // Derives from the contract tuple so the Zod schema and DB enum can never drift.
@@ -116,16 +117,20 @@ export const gameRound = pgTable(
       .references(() => game.id),
     userId: uuid().notNull(),
     status: gameRoundStatusEnum().notNull().default('active'),
-    betAmount: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
-    winAmount: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
+    betAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
+    winAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
     currency: text().notNull(),
     startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp({ withTimezone: true }),
+    externalRoundId: text(),
   },
   (t) => [
     index('game_round_user_id_idx').on(t.userId),
     index('game_round_game_id_started_at_idx').on(t.gameId, t.startedAt),
     index('game_round_started_at_idx').on(t.startedAt),
+    uniqueIndex('game_round_external_round_id_idx')
+      .on(t.externalRoundId)
+      .where(sql`${t.externalRoundId} IS NOT NULL`),
   ],
 );
 
