@@ -934,7 +934,16 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    expect(result.transactionId).toBeDefined();
+    // The whitelist check passing is only half of it - the withdrawal it let through has
+    // to be the one that was asked for, held at pending against a debited balance.
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      type: 'withdrawal',
+      status: 'pending',
+      amount: '1.000000000000000000',
+      currency: 'BTC',
+    });
+    expect(await balanceOf(w.userId)).toBe(4);
   });
 
   it('refuses a tag the player never whitelisted on an address they did', async () => {
@@ -1048,7 +1057,15 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    expect(result.transactionId).toBeDefined();
+    // No address book, no whitelist check - and the withdrawal still has to land whole.
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      type: 'withdrawal',
+      status: 'pending',
+      amount: '1.000000000000000000',
+      currency: 'BTC',
+    });
+    expect(await balanceOf(w.userId)).toBe(4);
   });
 });
 

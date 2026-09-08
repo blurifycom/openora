@@ -50,11 +50,20 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
     expect(transition).toEqual({ playerId, previousStatus: 'pending' });
   });
 
-  it('is a silent no-op when the status is unchanged', async () => {
+  // The null is the contract, not an implementation detail: compliance emits its
+  // transition event only when this returns one, so a conditional UPDATE that stopped
+  // being conditional would double-emit on every repeated vendor decision.
+  it('returns null and leaves the row alone when the status is unchanged', async () => {
     const writer = makeWriter();
     const { userId } = await seedPlayer({ kycStatus: 'verified' });
 
-    await writer.setStatus(userId, 'verified', { actorId: null, source: 'vendor' });
+    const transition = await writer.setStatus(userId, 'verified', {
+      actorId: null,
+      source: 'vendor',
+    });
+
+    expect(transition).toBeNull();
+    expect(await statusOf(userId)).toBe('verified');
   });
 
   it('throws PlayerNotFoundError for a user with no player profile and emits nothing', async () => {

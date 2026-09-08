@@ -1,7 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as z from 'zod';
 import { pgTable, uuid } from 'drizzle-orm/pg-core';
 import { zodJsonb } from '../zod-jsonb.js';
+
+// The severity split is only observable through the logger: both severities read as
+// null, and it is the error level that reaches the bound error tracker.
+const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
+vi.mock('../../kernel/logger.js', () => ({ createLogger: () => log }));
 
 const ConfigSchema = z.object({ minAmount: z.record(z.string(), z.string()).optional() });
 
@@ -38,8 +43,29 @@ describe('zodJsonb', () => {
         severity: 'error',
       })(),
     });
+    log.warn.mockClear();
+    log.error.mockClear();
 
     expect(loud.signals.mapFromDriverValue({ vpn: 'yes' })).toBeNull();
+
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ column: 'loud_probe.signals', err: expect.anything() }),
+      expect.any(String),
+    );
+  });
+
+  it('warns rather than reports for a column left at the default severity', () => {
+    log.warn.mockClear();
+    log.error.mockClear();
+
+    expect(column.mapFromDriverValue({ minAmount: '1.00000000' })).toBeNull();
+
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ column: 'probe.config' }),
+      expect.any(String),
+    );
   });
 
   it('writes a value the schema accepts as json the driver can bind', () => {

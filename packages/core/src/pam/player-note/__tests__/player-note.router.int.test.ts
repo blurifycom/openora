@@ -65,7 +65,7 @@ describe('player note router', () => {
 
     await expect(
       call(router.create, { playerId: PLAYER_ID, content: 'Private note' }, { context: CTX }),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(audit.record).not.toHaveBeenCalled();
   });

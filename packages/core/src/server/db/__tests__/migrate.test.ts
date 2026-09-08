@@ -85,7 +85,11 @@ describe('runMigrations', () => {
       databaseUrl: 'postgres://test',
     });
 
-    expect(calls).not.toContain(undefined);
+    // Bookkeeping only: the schema and table bootstrap, the pending-migration read, and
+    // the pool close. Nothing may reach the connection on behalf of an absent option.
+    expect(calls).toContain('SELECT hash FROM "drizzle"."__drizzle_migrations"');
+    expect(calls.some((sql) => sql.startsWith('CREATE EXTENSION'))).toBe(false);
+    expect(calls.some((sql) => sql.startsWith('UPDATE'))).toBe(false);
     expect(calls).toContain('end');
   });
 

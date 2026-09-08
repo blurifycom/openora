@@ -31,6 +31,10 @@ describe('DrizzleUserCommands.setUsername', () => {
     expect(row?.username).toBe('after_name');
   });
 
+  // CONFLICT is asserted rather than "it threw": the port narrows on the constraint
+  // name, so a broken narrowing that relabels any 23505 as a username clash has to fail
+  // here. The converse case - some other unique constraint reaching this catch - is not
+  // testable through the port, which writes the username column and nothing else.
   it('rejects a handle already taken, case-insensitively', async () => {
     await seedUser(db, { name: 'taken_name', username: 'taken_name' });
     const account = await seedUser(db, { name: 'free_name', username: 'free_name' });
@@ -38,15 +42,5 @@ describe('DrizzleUserCommands.setUsername', () => {
     await expect(commands().setUsername(account.id, 'TAKEN_NAME')).rejects.toMatchObject({
       code: 'CONFLICT',
     });
-  });
-
-  it('lets other unique violations through untouched', async () => {
-    const existing = await seedUser(db, { name: 'other_name', username: 'other_name' });
-    const account = await seedUser(db, { name: 'mine_name', username: 'mine_name' });
-
-    // Email collides, not the username - the port must not relabel it as a username clash.
-    await expect(
-      db.drizzle.db.update(user).set({ email: existing.email }).where(eq(user.id, account.id)),
-    ).rejects.toThrow();
   });
 });
