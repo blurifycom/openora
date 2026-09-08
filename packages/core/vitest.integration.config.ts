@@ -8,6 +8,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.int.{test,spec}.ts'],
     exclude: ['dist/**', 'node_modules/**'],
+    setupFiles: ['./vitest.setup.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     // This tier partitions Redis by `VITEST_POOL_ID % 8` (real-infra.ts), leaving 8-15
