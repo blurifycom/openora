@@ -14,9 +14,9 @@ import {
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, lte, ne, sql } from 'drizzle-orm';
 import * as z from 'zod';
-import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import { user, session, account, verification, twoFactor, type Session } from '../schema/index.js';
 import { captureTimezone } from './capture-timezone.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
@@ -85,6 +85,33 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
+}
+
+// Deletes every session row for `userId` created at or before `deadline`, except the
+// caller's freshly minted one (matched by `sparedToken`), and returns the ids of what
+// it deleted. Run a short delay after a password change: better-auth rotates the
+// password hash and deletes sessions in separate, untransacted statements, so a
+// sign-in that verified the OLD password just before the rotation can still insert
+// its session row immediately after `deleteUserSessions()` ran. That row predates
+// `deadline` (captured once the change is known committed), so this catches it while
+// sparing anything created afterwards.
+// Exported for direct testing; the service schedules it via setTimeout.
+export async function sweepRacedSessionsAfterPasswordChange(
+  db: DrizzleService['db'],
+  params: { userId: User['id']; sparedToken: Session['token']; deadline: Date },
+): Promise<Session['id'][]> {
+  const { userId, sparedToken, deadline } = params;
+  const deleted = await db
+    .delete(session)
+    .where(
+      and(
+        eq(session.userId, userId),
+        ne(session.token, sparedToken),
+        lte(session.createdAt, deadline),
+      ),
+    )
+    .returning({ id: session.id });
+  return deleted.map((row) => row.id);
 }
 
 // better-auth returns Date objects and may omit theme/language; the public
@@ -160,6 +187,22 @@ function hasTrustDeviceCookie(headers: Headers): boolean {
   return false;
 }
 
+// better-auth sets `<prefix>.dont_remember` when a user signs in with `rememberMe: false`.
+// Presence is enough here: we only use it to shorten the caller's own rotated session,
+// so a forged cookie can at worst clamp its owner's session earlier - never extend one.
+function hasDontRememberCookie(headers: Headers): boolean {
+  const cookieHeader = headers.get('cookie');
+  if (!cookieHeader) {
+    return false;
+  }
+  for (const [name] of parseCookies(cookieHeader)) {
+    if (name.endsWith('.dont_remember') || name === 'dont_remember') {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Drops the one pair and leaves every other byte alone: the cookies that stay carry
 // signed, percent-encoded values better-auth re-verifies exactly as the browser sent them.
 function withoutTrustDeviceCookie(headers: Headers): Headers {
@@ -213,7 +256,11 @@ type ExtendedAuthApi = {
   resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
   sendVerificationOTP: AuthCall<{ email: string; type: 'email-verification' }>;
   verifyEmailOTP: AuthCall<{ email: string; otp: string }>;
-  changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
+  changePassword: AuthCall<{
+    currentPassword: string;
+    newPassword: string;
+    revokeOtherSessions?: boolean;
+  }>;
   changeEmail: AuthCall<{ newEmail: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
 };
@@ -308,6 +355,15 @@ const VERIFY_EMAIL_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+// How long after a password change to re-sweep the user's sessions for a row that a
+// concurrent old-password sign-in raced in just after better-auth's revoke ran. This
+// is the residual exposure window; keep it short.
+const RACED_SESSION_SWEEP_DELAY_MS = 2_000;
+// better-auth's `createSession` gives a `dontRememberMe` session this fixed TTL
+// (`getDate(3600 * 24, 'sec')`). `revokeOtherSessions` mints the caller's replacement
+// session without that flag, so we re-apply the clamp when the request carries the
+// `dont_remember` cookie. Matches `SESSION_TTL_MS` in phone-login.service.
+const DONT_REMEMBER_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 // Fails closed: every call spends real money on an `sms` enrolment and fills a mailbox
 // on an `email` one, and better-auth issues a fresh code per send, so an unbounded
@@ -518,8 +574,18 @@ export class IdentityService {
   }
 
   private async currentUserId(headers: Headers) {
-    const session = await this.auth.api.getSession({ headers });
-    return session?.user?.id ?? null;
+    return (await this.currentSession(headers))?.userId ?? null;
+  }
+
+  // Both the caller's userId and the id of the session row they are authenticating
+  // with, for handlers that must tell the caller's own device apart from their others
+  // (eg sparing the acting session from a revoke-all).
+  private async currentSession(
+    headers: Headers,
+  ): Promise<{ userId: User['id']; sessionId?: Session['id'] } | null> {
+    const resolved = await this.auth.api.getSession({ headers });
+    const userId = resolved?.user?.id;
+    return userId ? { userId, sessionId: resolved?.session?.id } : null;
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
@@ -1813,26 +1879,124 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async changePassword(input: ChangePasswordInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  async changePassword(
+    input: ChangePasswordInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+    caller: { userId: User['id']; sessionId: Session['id'] },
+  ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const userId = await this.currentUserId(headers);
-    await assertRateLimit(
-      this.limiter,
-      `change-password:${userId ?? 'anonymous'}`,
-      CHANGE_PASSWORD_RATE_LIMIT,
-    );
+    const { userId, sessionId } = caller;
+    await assertRateLimit(this.limiter, `change-password:${userId}`, CHANGE_PASSWORD_RATE_LIMIT);
     const res = await this.api.changePassword({
-      body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
+      // revokeOtherSessions: better-auth deletes every session for this user and
+      // mints a fresh one for the caller; forwardCookies below ships that cookie.
+      body: {
+        currentPassword: input.currentPassword,
+        newPassword: input.newPassword,
+        revokeOtherSessions: true,
+      },
       headers,
       asResponse: true,
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    if (userId) {
+    // Captured once the rotation is known committed - the deferred sweep below deletes
+    // any session row created at or before this instant (i.e. one a concurrent
+    // old-password sign-in raced in), sparing anything created afterwards.
+    const sweepDeadline = new Date();
+    // The token of the session better-auth just minted for the caller. `ensureOk` only
+    // reads the body on failure, so this read is safe here.
+    const rotatedToken =
+      ((await res.json().catch(() => ({}))) as { token?: string | null }).token ?? null;
+    // better-auth's response only carries the token, not the row id - look the row up
+    // once here and reuse its id both to clamp the dontRememberMe TTL below and to
+    // spare this (legitimate) session from the sweep's own revoke push further down.
+    const rotated = rotatedToken
+      ? (
+          await this.drizzle.db
+            .select({ id: session.id })
+            .from(session)
+            .where(eq(session.token, rotatedToken))
+            .limit(1)
+        )[0]
+      : undefined;
+    // `revokeOtherSessions` makes better-auth mint the replacement session via
+    // `createSession(userId)` with no `dontRememberMe` argument, so a caller who signed
+    // in with `rememberMe: false` silently gets a full-TTL row. better-auth's own
+    // `setSessionCookie` still honours the `dont_remember` cookie for the cookie maxAge,
+    // but not the DB row - clamp it back to the non-remembered TTL to match.
+    if (rotated && hasDontRememberCookie(headers)) {
       await this.drizzle.db
-        .update(user)
-        .set({ passwordMeetsPolicy: true })
-        .where(eq(user.id, userId));
+        .update(session)
+        .set({ expiresAt: new Date(Date.now() + DONT_REMEMBER_SESSION_TTL_MS) })
+        .where(eq(session.id, rotated.id));
+    }
+    await this.drizzle.db
+      .update(user)
+      .set({ passwordMeetsPolicy: true })
+      .where(eq(user.id, userId));
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    // Dedicated, non-sensitive record that the login credential itself changed -
+    // the audit mapper keys the action off the topic, so a plain
+    // `identity.sessions.revoked_all` alone would read as "revoked all sessions",
+    // not "changed password". Every state-changing credential action needs its own
+    // accurately named audit record.
+    this.events.emit('identity.password.changed', {
+      userId,
+      playerId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    // Same event the admin "revoke all sessions" path emits, so the streamSession
+    // SSE handler pushes { type: 'revoked' } to this user's OTHER tabs.
+    // exceptSessionId is the caller's PRE-rotation session id - it's the id the
+    // caller's already-open streamSession connection captured at stream-open, and the
+    // only value its SSE compare can ever match, so this is what spares the
+    // initiating tab.
+    this.events.emit('identity.sessions.revoked_all', {
+      userId,
+      playerId,
+      actorId: userId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+      exceptSessionId: sessionId,
+    });
+    // better-auth rotates the password hash and deletes sessions in separate,
+    // untransacted statements; a sign-in that verified the OLD password just before
+    // the rotation can still insert its session row right after. Re-sweep shortly
+    // after to delete it, sparing the caller's fresh session by token. Skipped when
+    // the rotated token is unknown - without it the sweep cannot tell the caller's
+    // own new session apart. Residual exposure: RACED_SESSION_SWEEP_DELAY_MS.
+    if (rotatedToken) {
+      const timer = setTimeout(() => {
+        void sweepRacedSessionsAfterPasswordChange(this.drizzle.db, {
+          userId,
+          sparedToken: rotatedToken,
+          deadline: sweepDeadline,
+        })
+          .then((deletedIds) => {
+            // A session the sweep just force-deleted got no push and no audit record
+            // otherwise: it raced in after the primary revoked_all above already
+            // fired, so this is the only notice it gets of either.
+            if (deletedIds.length === 0) {
+              return;
+            }
+            this.events.emit('identity.sessions.revoked_all', {
+              userId,
+              playerId,
+              actorId: userId,
+              ip: ip ?? null,
+              userAgent: userAgent ?? null,
+              ...(rotated ? { exceptSessionId: rotated.id } : {}),
+            });
+          })
+          .catch((err: unknown) => {
+            identityLogger.warn({ err, userId }, 'post-password-change session sweep failed');
+          });
+      }, RACED_SESSION_SWEEP_DELAY_MS);
+      timer.unref?.();
     }
     return SUCCESS;
   }

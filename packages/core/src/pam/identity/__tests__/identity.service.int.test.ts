@@ -16,6 +16,7 @@ import type { PlatformConfig, RateLimiterAdapter, SmsAdapter } from '@openora/co
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
+  sweepRacedSessionsAfterPasswordChange,
   type IdentityServiceDeps,
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
@@ -40,6 +41,7 @@ const {
   checkVerificationOTPMock,
   resetPasswordEmailOTPMock,
   changeEmailMock,
+  changePasswordMock,
   capturedAuthOptions,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
@@ -55,6 +57,7 @@ const {
   checkVerificationOTPMock: vi.fn(),
   resetPasswordEmailOTPMock: vi.fn(),
   changeEmailMock: vi.fn(),
+  changePasswordMock: vi.fn(),
   capturedAuthOptions: {
     current: undefined as
       | {
@@ -91,6 +94,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         checkVerificationOTP: checkVerificationOTPMock,
         resetPasswordEmailOTP: resetPasswordEmailOTPMock,
         changeEmail: changeEmailMock,
+        changePassword: changePasswordMock,
       },
     };
   }),
@@ -172,6 +176,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(null);
   changeEmailMock.mockReset();
+  changePasswordMock.mockReset();
   await db.drizzle.db.execute(
     sql`TRUNCATE ${user}, ${session}, ${player} RESTART IDENTITY CASCADE`,
   );
@@ -941,6 +946,203 @@ describe('IdentityService.resetPassword', () => {
     await expect(
       buildService().resetPassword({ email: EMAIL, otp: '000000', newPassword: 'newpassword1' }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+describe('IdentityService.changePassword revokes other sessions', () => {
+  const seedChangePwSession = (
+    userId: string,
+    overrides: Partial<typeof session.$inferInsert> = {},
+  ) =>
+    db.drizzle.db
+      .insert(session)
+      .values({
+        userId,
+        token: randomUUID(),
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+        ...overrides,
+      })
+      .returning({ id: session.id, token: session.token })
+      .then(([row]) => row!);
+
+  it('delegates the session revoke to better-auth and emits identity.sessions.revoked_all', async () => {
+    const account = await seedUser();
+    const current = await seedChangePwSession(account.id);
+    const otherA = await seedChangePwSession(account.id);
+    const otherB = await seedChangePwSession(account.id);
+
+    // createAuth is mocked in this suite, so better-auth's own revokeOtherSessions
+    // never runs - stand in for it: delete EVERY session (including the caller's,
+    // as better-auth does) and mint a fresh one, returning its token in the body.
+    const rotatedToken = randomUUID();
+    changePasswordMock.mockImplementation(async () => {
+      await db.drizzle.db.delete(session).where(eq(session.userId, account.id));
+      await db.drizzle.db.insert(session).values({
+        userId: account.id,
+        token: rotatedToken,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+      });
+      return jsonResponse({ token: rotatedToken, user: betterAuthUser }, 200);
+    });
+    const events = makeEventBus();
+
+    const result = await buildService({ events }).changePassword(
+      { currentPassword: 'password1234', newPassword: 'brand-new-secret-123' },
+      { 'x-forwarded-for': '203.0.113.7' },
+      new Headers(),
+      { userId: account.id, sessionId: current.id },
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(changePasswordMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ revokeOtherSessions: true }),
+      }),
+    );
+    // Sanity check on the stand-in only: better-auth is mocked here, so this re-reads
+    // what changePasswordMock itself wrote. The real revoke and the streamSession
+    // suppression branch are covered end to end in
+    // packages/testing/src/__tests__/change-password-session-revoke.e2e.test.ts.
+    const remaining = await db.drizzle.db
+      .select({ id: session.id, token: session.token })
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.token).toBe(rotatedToken);
+    expect([current.id, otherA.id, otherB.id]).not.toContain(remaining[0]!.id);
+    // exceptSessionId is the caller's PRE-rotation session id - the value the
+    // already-open streamSession connection still holds, so the handler suppresses
+    // the { type: 'revoked' } push for the initiating tab. NOT the freshly-minted id
+    // (which no open connection knows yet).
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({
+        userId: account.id,
+        actorId: account.id,
+        exceptSessionId: current.id,
+      }),
+    );
+    // A dedicated, accurately named audit record that the credential itself changed.
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.password.changed',
+      expect.objectContaining({ userId: account.id }),
+    );
+    expect((await readUser(account.id)).passwordMeetsPolicy).toBe(true);
+  });
+
+  it('emits a second revoked_all when the deferred sweep force-deletes a raced session', async () => {
+    const account = await seedUser();
+    const current = await seedChangePwSession(account.id);
+    const rotatedToken = randomUUID();
+    changePasswordMock.mockImplementation(async () => {
+      await db.drizzle.db.delete(session).where(eq(session.userId, account.id));
+      await db.drizzle.db.insert(session).values({
+        userId: account.id,
+        token: rotatedToken,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+      });
+      // A sign-in that verified the OLD password lands its row right after
+      // better-auth's own delete-all, just like the race this sweep exists for.
+      await db.drizzle.db.insert(session).values({
+        userId: account.id,
+        token: randomUUID(),
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+      });
+      return jsonResponse({ token: rotatedToken, user: betterAuthUser }, 200);
+    });
+    const events = makeEventBus();
+
+    await buildService({ events }).changePassword(
+      { currentPassword: 'password1234', newPassword: 'brand-new-secret-123' },
+      {},
+      new Headers(),
+      { userId: account.id, sessionId: current.id },
+    );
+    expect(events.emit).toHaveBeenCalledTimes(2);
+
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
+
+    const remaining = await db.drizzle.db
+      .select({ id: session.id, token: session.token })
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.token).toBe(rotatedToken);
+
+    // The sweep's own deletion is no longer silent: it gets the same
+    // identity.sessions.revoked_all push and audit record as the primary revoke,
+    // sparing the still-legitimate rotated session by id.
+    expect(events.emit).toHaveBeenCalledTimes(3);
+    expect(events.emit).toHaveBeenNthCalledWith(
+      3,
+      'identity.sessions.revoked_all',
+      expect.objectContaining({
+        userId: account.id,
+        actorId: account.id,
+        exceptSessionId: remaining[0]!.id,
+      }),
+    );
+  }, 5_000);
+
+  it('does not emit the revoke event or flag the policy when better-auth rejects', async () => {
+    const account = await seedUser();
+    const current = await seedChangePwSession(account.id);
+    changePasswordMock.mockResolvedValue(jsonResponse({ message: 'INVALID_PASSWORD' }, 400));
+    const events = makeEventBus();
+
+    await expect(
+      buildService({ events }).changePassword(
+        { currentPassword: 'wrongpassword', newPassword: 'brand-new-secret-123' },
+        {},
+        new Headers(),
+        { userId: account.id, sessionId: current.id },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.anything(),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith('identity.password.changed', expect.anything());
+    expect((await readUser(account.id)).passwordMeetsPolicy).toBe(false);
+  });
+
+  describe('sweepRacedSessionsAfterPasswordChange', () => {
+    it('deletes a session that raced in on the old password, sparing the rotated one', async () => {
+      const account = await seedUser();
+      // The caller's fresh session better-auth minted during the change.
+      const spared = await seedChangePwSession(account.id);
+      // A sign-in that verified the OLD password just before the rotation, landing its
+      // row a hair before the deadline.
+      const raced = await seedChangePwSession(account.id, {
+        createdAt: new Date(Date.now() - 10),
+      });
+      // A legitimate sign-in AFTER the change completed - must survive the sweep.
+      const later = await seedChangePwSession(account.id, {
+        createdAt: new Date(Date.now() + 60_000),
+      });
+
+      const deletedIds = await sweepRacedSessionsAfterPasswordChange(db.drizzle.db, {
+        userId: account.id,
+        sparedToken: spared.token,
+        deadline: new Date(),
+      });
+      expect(deletedIds).toEqual([raced.id]);
+
+      const remaining = await db.drizzle.db
+        .select({ id: session.id })
+        .from(session)
+        .where(eq(session.userId, account.id));
+      const ids = remaining.map((r) => r.id);
+      expect(ids).toContain(spared.id);
+      expect(ids).toContain(later.id);
+      expect(ids).not.toContain(raced.id);
+    });
   });
 });
 

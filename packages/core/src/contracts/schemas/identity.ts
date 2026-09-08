@@ -92,7 +92,9 @@ export const MemberSchema = z.object({
 });
 
 /**
- * The rule for every password the platform *sets*. Upper-bounded to better-auth's own
+ * The rule for every password the platform *sets* (register, reset, and the new
+ * password on change): minimum 12 characters, the platform password policy.
+ * Upper-bounded to better-auth's own
  * `maxPasswordLength` default (128), which it enforces itself but only after the fact -
  * on sign-up that surfaces as a generic "Registration is unavailable", and on reset it
  * burns a valid one-time code before rejecting. Bounding it here fails the caller with

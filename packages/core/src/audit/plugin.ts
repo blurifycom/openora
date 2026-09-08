@@ -831,6 +831,7 @@ export async function mapEventToRecord(
     topic === 'identity.session.fingerprint_mismatch' ||
     topic === 'identity.trusted_device.added' ||
     topic === 'identity.password.reset' ||
+    topic === 'identity.password.changed' ||
     topic === 'identity.email.verified' ||
     topic === 'identity.profile.updated'
   ) {
@@ -873,6 +874,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.trusted_device.added',
   'identity.trusted_device.revoked',
   'identity.password.reset',
+  'identity.password.changed',
   'identity.email.verified',
   'identity.phone.verified',
   'identity.security.login_withdrawal_alerts.updated',
