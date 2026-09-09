@@ -12,7 +12,7 @@ export const adminRole = ac.newRole({
   transaction: ['view', 'refund'],
   game: ['view', 'enable', 'disable'],
   content: ['create', 'update', 'delete', 'publish'],
-  compliance: ['view', 'override-limit', 'manage-rg'],
+  compliance: ['view', 'override-limit', 'manage-rg', 'manage-geo'],
   report: ['view'],
   withdrawal: ['view', 'approve', 'reject', 'hold', 'auto-rule'],
   bonus: ['view', 'create', 'update', 'pause', 'cancel'],

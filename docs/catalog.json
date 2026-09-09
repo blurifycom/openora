@@ -159,6 +159,7 @@
       "id": "compliance",
       "group": "compliance",
       "tables": [
+        "game_geo_rule",
         "geo_rule",
         "kyc_verification",
         "rg_exclusion",
@@ -172,6 +173,7 @@
         "compliance.bulkApproveKyc",
         "compliance.cancelPendingLimitChange",
         "compliance.confirmPendingLimitChange",
+        "compliance.deleteGameGeoRule",
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
@@ -182,6 +184,7 @@
         "compliance.kycWebhook",
         "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
+        "compliance.listGameGeoRules",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
         "compliance.overrideKycStatus",
@@ -191,6 +194,7 @@
         "compliance.setPlayerLimit",
         "compliance.streamKycStatus",
         "compliance.submitKyc",
+        "compliance.upsertGameGeoRule",
         "compliance.upsertLimit"
       ]
     },
@@ -691,6 +695,16 @@
       ]
     },
     {
+      "category": "game-geo-check",
+      "interface": "GameGeoDenialReason",
+      "token": "GAME_GEO_CHECK",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts"
+      ]
+    },
+    {
       "category": "gaming-commands",
       "interface": "GamingAccumulateExternalRoundArgs",
       "token": "GAMING_COMMANDS",
@@ -987,6 +1001,8 @@
     "cms.page.deleted",
     "cms.page.published",
     "cms.page.updated",
+    "compliance.game-geo-rule.deleted",
+    "compliance.game-geo-rule.upserted",
     "compliance.geo-rule.added",
     "compliance.kyc.high_risk_signal_detected",
     "compliance.kyc.reverify_required",
@@ -1535,6 +1551,10 @@
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
+      "name": "DeleteGameGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "deleteTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1673,6 +1693,22 @@
     {
       "name": "FunnelStageSchema",
       "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "GameGeoCheckInputSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoDecisionSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoDenialReasonSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "GamePerformanceFilterSchema",
@@ -1925,6 +1961,10 @@
     {
       "name": "ListFriendRequestsInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "ListGameGeoRulesInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "ListReconciliationFindingsInputSchema",
@@ -2569,6 +2609,10 @@
     {
       "name": "UpdateWalletAssetInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "UpsertGameGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "UpsertLimitInputSchema",

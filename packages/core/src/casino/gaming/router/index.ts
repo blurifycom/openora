@@ -7,6 +7,7 @@ import {
   GameRoundNotFoundError,
   RgRestrictedError,
   InsufficientBalanceError,
+  GameGeoRestrictedError,
 } from '../service/gaming.service.js';
 import { RgLimitExceededError } from '@openora/core/contracts';
 
@@ -24,10 +25,15 @@ export function createGamingRouter(gaming: GamingService) {
       mapErrors(
         {
           NOT_FOUND: GameNotFoundError,
-          CONFLICT: [RgRestrictedError, RgLimitExceededError],
+          CONFLICT: [RgRestrictedError, RgLimitExceededError, GameGeoRestrictedError],
           BAD_REQUEST: InsufficientBalanceError,
         },
-        () => gaming.startRound(getUserId(context), input.gameId, input.currency, input.betAmount),
+        () =>
+          gaming.startRound({
+            userId: getUserId(context),
+            ...input,
+            ipAddress: context.clientMeta.ip,
+          }),
       ),
     ),
 

@@ -12,6 +12,8 @@ import { eq, and, asc, desc, sql } from 'drizzle-orm';
 import {
   RgLimitExceededError,
   type GameAdapter,
+  type GameGeoCheckPort,
+  type GameGeoDecision,
   type PlayEligibilityPort,
   type RgLimitsPort,
   type WalletCommands,
@@ -28,6 +30,21 @@ export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
   'play is restricted by an active responsible-gambling exclusion',
 );
+
+export type GameGeoRestrictedData = Pick<
+  Extract<GameGeoDecision, { allowed: false }>,
+  'reason' | 'countryCode'
+>;
+
+export class GameGeoRestrictedError extends Error {
+  readonly data: GameGeoRestrictedData;
+
+  constructor(decision: Extract<GameGeoDecision, { allowed: false }>) {
+    super(`Game cannot be started from this location (${decision.reason})`);
+    this.name = 'GameGeoRestrictedError';
+    this.data = { reason: decision.reason, countryCode: decision.countryCode };
+  }
+}
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
@@ -71,6 +88,7 @@ export class GamingService {
     private readonly walletCommands: WalletCommands,
     private readonly identityReader: IdentityReader,
     private readonly rgLimits?: RgLimitsPort,
+    private readonly gameGeoCheck?: GameGeoCheckPort,
   ) {}
 
   async listGames() {
@@ -90,62 +108,88 @@ export class GamingService {
     return toGame(record);
   }
 
-  async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {
-    if (await this.playEligibility.isRestricted(userId)) {
+  async startRound(input: {
+    userId: User['id'];
+    gameId: Game['id'];
+    currency: string;
+    betAmount: string;
+    ipAddress: string | null;
+  }) {
+    const selectedGame = await this.getGame(input.gameId);
+    if (!selectedGame.isActive) {
+      throw new GameNotFoundError(input.gameId);
+    }
+
+    if (await this.playEligibility.isRestricted(input.userId)) {
       throw new RgRestrictedError();
     }
-    const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
+    const decision = await this.rgLimits?.checkWager(
+      this.drizzle.db,
+      input.userId,
+      input.betAmount,
+      input.currency,
+    );
     if (decision && !decision.allowed) {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
-    await this.getGame(gameId);
+    const geoDecision = await this.gameGeoCheck?.checkGame({
+      gameId: input.gameId,
+      ipAddress: input.ipAddress,
+    });
+    if (geoDecision && !geoDecision.allowed) {
+      throw new GameGeoRestrictedError(geoDecision);
+    }
 
     const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the
       // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
-        userId,
-        amount: betAmount,
-        currency,
+        userId: input.userId,
+        amount: input.betAmount,
+        currency: input.currency,
         type: 'bet',
       });
       if (!outcome.ok) {
-        throw new InsufficientBalanceError(outcome.available, betAmount);
+        throw new InsufficientBalanceError(outcome.available, input.betAmount);
       }
       const insertedRound = findOneOrThrow(
         await tx
           .insert(gameRound)
           .values({
-            gameId,
-            userId,
-            currency,
-            betAmount,
+            gameId: input.gameId,
+            userId: input.userId,
+            currency: input.currency,
+            betAmount: input.betAmount,
             status: 'active',
           })
           .returning(),
-        new GameRoundNotFoundError(gameId),
+        new GameRoundNotFoundError(input.gameId),
       );
       return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
 
     for (const credit of completedBonusCredits) {
       this.events.emit('wallet.bonus_rollover.completed', {
-        userId,
+        userId: input.userId,
         creditId: credit.id,
         currency: credit.currency,
         creditedAmount: credit.creditedAmount,
       });
     }
 
-    const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
+    const { launchUrl, token } = await this.provider.launchGame(
+      input.gameId,
+      input.userId,
+      input.currency,
+    );
 
     this.events.emit('gaming.round.started', {
       roundId: round.id,
-      gameId,
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      currency,
+      gameId: input.gameId,
+      userId: input.userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(input.userId),
+      currency: input.currency,
     });
 
     return { roundId: round.id, launchUrl, token };

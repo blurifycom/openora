@@ -61,6 +61,15 @@ const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
 
+const gameGeoRuleEventState = z.object({
+  id: UuidSchema,
+  gameId: UuidSchema,
+  countryCode: CountryCodeSchema,
+  reason: z.string(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
   userId: UuidSchema,
@@ -519,6 +528,26 @@ export const domainEventSchemas = {
     countryCode: CountryCodeSchema,
     action: GeoRuleActionSchema,
     actorId: UuidSchema.optional(),
+  }),
+
+  'compliance.game-geo-rule.upserted': authContextBase.extend({
+    ruleId: UuidSchema,
+    gameId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: z.string().min(1),
+    before: gameGeoRuleEventState.nullable(),
+    after: gameGeoRuleEventState,
+    actorId: UuidSchema,
+  }),
+
+  'compliance.game-geo-rule.deleted': authContextBase.extend({
+    ruleId: UuidSchema,
+    gameId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: z.string().min(1),
+    before: gameGeoRuleEventState,
+    after: z.null(),
+    actorId: UuidSchema,
   }),
 
   'compliance.limit.upserted': authContextBase.extend({

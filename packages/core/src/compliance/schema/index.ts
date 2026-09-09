@@ -89,6 +89,27 @@ export const geoRule = pgTable('geo_rule', {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+export const gameGeoRule = pgTable(
+  'game_geo_rule',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Gaming owns this identifier. Deliberately no cross-module foreign key.
+    gameId: uuid().notNull(),
+    countryCode: text().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('game_geo_rule_game_id_country_code_key').on(t.gameId, t.countryCode),
+    index('game_geo_rule_game_id_idx').on(t.gameId),
+    index('game_geo_rule_country_code_idx').on(t.countryCode),
+  ],
+);
+
 // Append-only history: the player's current verification is the latest row by createdAt.
 export const kycVerification = pgTable(
   'kyc_verification',
@@ -199,6 +220,7 @@ export const rgFlag = pgTable(
 
 export type UserLimit = typeof userLimit.$inferSelect;
 export type GeoRule = typeof geoRule.$inferSelect;
+export type GameGeoRule = typeof gameGeoRule.$inferSelect;
 export type KycVerification = typeof kycVerification.$inferSelect;
 export type RgExclusion = typeof rgExclusion.$inferSelect;
 export type RgFlag = typeof rgFlag.$inferSelect;

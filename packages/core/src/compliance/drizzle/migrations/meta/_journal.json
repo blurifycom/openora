@@ -57,6 +57,13 @@
       "when": 1788278352775,
       "tag": "0007_romantic_toxin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788950228747,
+      "tag": "0008_redundant_maestro",
+      "breakpoints": true
     }
   ]
 }

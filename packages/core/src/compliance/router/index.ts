@@ -19,6 +19,8 @@ import type {
 import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
+  GameGeoRuleNotFoundError,
+  GeoRuleGameNotFoundError,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
@@ -117,6 +119,33 @@ export function createComplianceRouter({
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGeoRules();
+    }),
+
+    upsertGameGeoRule: os.upsertGameGeoRule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ NOT_FOUND: GeoRuleGameNotFoundError }, () =>
+        compliance.upsertGameGeoRule(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    deleteGameGeoRule: os.deleteGameGeoRule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ NOT_FOUND: GameGeoRuleNotFoundError }, () =>
+        compliance.deleteGameGeoRule(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    listGameGeoRules: os.listGameGeoRules.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return compliance.listGameGeoRules(input);
     }),
 
     getPlayerKyc: os.getPlayerKyc.handler(async ({ input, context }) => {

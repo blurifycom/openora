@@ -158,10 +158,33 @@ export const GeoRuleSchema = z.object({
 });
 export type GeoRule = z.infer<typeof GeoRuleSchema>;
 
+export const GameGeoRuleSchema = z.object({
+  id: UuidSchema,
+  gameId: UuidSchema,
+  countryCode: CountryCodeSchema,
+  reason: z.string().trim().min(1),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type GameGeoRule = z.infer<typeof GameGeoRuleSchema>;
+
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
 export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
 export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
+
+export const UpsertGameGeoRuleInputSchema = GameGeoRuleSchema.pick({
+  gameId: true,
+  countryCode: true,
+  reason: true,
+});
+export type UpsertGameGeoRuleInput = z.infer<typeof UpsertGameGeoRuleInputSchema>;
+
+export const DeleteGameGeoRuleInputSchema = GameGeoRuleSchema.pick({ id: true, reason: true });
+export type DeleteGameGeoRuleInput = z.infer<typeof DeleteGameGeoRuleInputSchema>;
+
+export const ListGameGeoRulesInputSchema = z.object({ gameId: UuidSchema.optional() });
+export type ListGameGeoRulesInput = z.infer<typeof ListGameGeoRulesInputSchema>;
 
 const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
@@ -194,6 +217,21 @@ export const complianceContract = {
   listGeoRules: oc
     .route({ method: 'GET', path: '/compliance/geo-rules' })
     .output(z.array(GeoRuleSchema)),
+
+  upsertGameGeoRule: oc
+    .route({ method: 'PUT', path: '/compliance/game-geo-rules' })
+    .input(UpsertGameGeoRuleInputSchema)
+    .output(GameGeoRuleSchema),
+
+  deleteGameGeoRule: oc
+    .route({ method: 'DELETE', path: '/compliance/game-geo-rules/{id}' })
+    .input(DeleteGameGeoRuleInputSchema)
+    .output(GameGeoRuleSchema),
+
+  listGameGeoRules: oc
+    .route({ method: 'GET', path: '/compliance/game-geo-rules' })
+    .input(ListGameGeoRulesInputSchema)
+    .output(z.array(GameGeoRuleSchema)),
 
   getPlayerKyc: oc
     .route({ method: 'GET', path: '/compliance/players/{userId}/kyc' })

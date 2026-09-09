@@ -175,9 +175,22 @@ export type {
 export { SWAP_ADAPTER, SWAP_WEBHOOK_VERIFIER } from './swap.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
-export { GEO_IP_ADAPTER } from './geo-ip.js';
+export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';
 export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
+export type {
+  GameGeoCheckPort,
+  GameGeoCheckInput,
+  GameGeoDecision,
+  GameGeoDenialReason,
+} from './game-geo-check.js';
+export {
+  GAME_GEO_CHECK,
+  GAME_GEO_DENIAL_REASONS,
+  GameGeoCheckInputSchema,
+  GameGeoDecisionSchema,
+  GameGeoDenialReasonSchema,
+} from './game-geo-check.js';
 
 export type { PlayerProvisioning, PlayerRegistrationRecord } from './player-provisioning.js';
 export { PLAYER_PROVISIONING } from './player-provisioning.js';

@@ -24,7 +24,7 @@ export const adminStatement = {
   transaction: ['view', 'refund'] as const,
   game: ['view', 'enable', 'disable'] as const,
   content: ['create', 'update', 'delete', 'publish'] as const,
-  compliance: ['view', 'override-limit', 'manage-rg'] as const,
+  compliance: ['view', 'override-limit', 'manage-rg', 'manage-geo'] as const,
   report: ['view'] as const,
   withdrawal: ['view', 'approve', 'reject', 'hold', 'auto-rule'] as const,
   bonus: ['view', 'create', 'update', 'pause', 'cancel'] as const,
