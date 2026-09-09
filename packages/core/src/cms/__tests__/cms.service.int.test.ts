@@ -1014,3 +1014,117 @@ describe('CmsService.deleteConfiguration blocked-while-scheduled (real PG)', () 
     );
   });
 });
+
+// An uploaded banner image is an object in someone's bucket, and core is not that
+// someone. These events are the only signal an object-storage overlay gets that a
+// file stopped being referenced, so what they carry is the whole contract.
+describe('CmsService banner events carry the image URLs they drop (real PG)', () => {
+  const lastPayload = (events: ReturnType<typeof makeEventBus>) =>
+    events.emit.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+
+  it('names both URLs of a deleted image row', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const image = await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/gone-d.png'),
+        mobileImageUrl: imageUrl('/gone-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    await svc.deleteBannerImage(image.id, ADMIN_ID);
+
+    expect(lastPayload(events)).toMatchObject({
+      bannerImageId: image.id,
+      droppedImageUrls: [imageUrl('/gone-d.png'), imageUrl('/gone-m.png')],
+    });
+  });
+
+  it('names every URL the cascade takes with a deleted configuration', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'carousel' },
+      ADMIN_ID,
+    );
+    for (const slot of [0, 1]) {
+      await svc.setBannerImage(
+        {
+          bannerConfigurationId: config.id,
+          sortOrder: slot,
+          desktopImageUrl: imageUrl(`/cascade-${slot}-d.png`),
+          mobileImageUrl: imageUrl(`/cascade-${slot}-m.png`),
+        },
+        ADMIN_ID,
+      );
+    }
+
+    await svc.deleteConfiguration(config.id, ADMIN_ID);
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual(
+      expect.arrayContaining([
+        imageUrl('/cascade-0-d.png'),
+        imageUrl('/cascade-0-m.png'),
+        imageUrl('/cascade-1-d.png'),
+        imageUrl('/cascade-1-m.png'),
+      ]),
+    );
+    expect(lastPayload(events)?.['droppedImageUrls']).toHaveLength(4);
+  });
+
+  it('drops nothing when an image is set for the first time', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/first-d.png'),
+        mobileImageUrl: imageUrl('/first-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    expect(lastPayload(events)).toMatchObject({ droppedImageUrls: [] });
+  });
+
+  it('drops only the half an overwrite actually replaced', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/old-d.png'),
+        mobileImageUrl: imageUrl('/kept-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    // Same slot, new desktop art, the mobile half untouched - deleting the retained
+    // mobile object here would blank a live banner.
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/new-d.png'),
+        mobileImageUrl: imageUrl('/kept-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    expect(lastPayload(events)).toMatchObject({ droppedImageUrls: [imageUrl('/old-d.png')] });
+  });
+});

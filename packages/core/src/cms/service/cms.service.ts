@@ -486,7 +486,7 @@ export class CmsService {
     actorId: User['id'],
     meta?: ClientMeta,
   ): Promise<{ success: true }> {
-    await this.drizzle.db.transaction(async (tx) => {
+    const droppedImageUrls = await this.drizzle.db.transaction(async (tx) => {
       const existing = findOneOrThrow(
         await tx.select().from(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id)),
         new BannerConfigurationNotFoundError(id),
@@ -503,11 +503,22 @@ export class CmsService {
       if (schedule) {
         throw new BannerConfigurationHasScheduleError();
       }
+      // Read the image rows while they still exist: the delete below cascades them
+      // away and nothing afterwards can recover the URLs they held.
+      const images = await tx
+        .select({
+          desktopImageUrl: bannerImageTable.desktopImageUrl,
+          mobileImageUrl: bannerImageTable.mobileImageUrl,
+        })
+        .from(bannerImageTable)
+        .where(eq(bannerImageTable.bannerConfigurationId, id));
       // Cascades to banner_image rows via the FK's onDelete: 'cascade'.
       await tx.delete(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id));
+      return images.flatMap((image) => [image.desktopImageUrl, image.mobileImageUrl]);
     });
     this.events.emit('cms.banner.configuration.deleted', {
       bannerConfigurationId: id,
+      droppedImageUrls,
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
@@ -626,6 +637,30 @@ export class CmsService {
     );
 
     const locale = input.locale ?? DEFAULT_LOCALE;
+
+    // The upsert below overwrites whatever already sits in this (configuration,
+    // sortOrder, locale) slot, which orphans the objects its URLs pointed at just as
+    // surely as a delete would. Read it first so the event can name them. A URL the
+    // new row keeps is not dropped - editing only the link, or only the desktop half,
+    // must not take the surviving image down with it.
+    const [replaced] = await this.drizzle.db
+      .select({
+        desktopImageUrl: bannerImageTable.desktopImageUrl,
+        mobileImageUrl: bannerImageTable.mobileImageUrl,
+      })
+      .from(bannerImageTable)
+      .where(
+        and(
+          eq(bannerImageTable.bannerConfigurationId, input.bannerConfigurationId),
+          eq(bannerImageTable.sortOrder, input.sortOrder),
+          eq(bannerImageTable.locale, locale),
+        ),
+      );
+    const retained = new Set([input.desktopImageUrl, input.mobileImageUrl]);
+    const droppedImageUrls = replaced
+      ? [replaced.desktopImageUrl, replaced.mobileImageUrl].filter((url) => !retained.has(url))
+      : [];
+
     const record = findOneOrThrow(
       await this.drizzle.db
         .insert(bannerImageTable)
@@ -660,6 +695,7 @@ export class CmsService {
     this.events.emit('cms.banner.image.set', {
       bannerImageId: record.id,
       bannerConfigurationId: input.bannerConfigurationId,
+      droppedImageUrls,
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
@@ -677,6 +713,8 @@ export class CmsService {
         .select({
           id: bannerImageTable.id,
           bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+          desktopImageUrl: bannerImageTable.desktopImageUrl,
+          mobileImageUrl: bannerImageTable.mobileImageUrl,
         })
         .from(bannerImageTable)
         .where(eq(bannerImageTable.id, id)),
@@ -699,6 +737,7 @@ export class CmsService {
     this.events.emit('cms.banner.image.deleted', {
       bannerImageId: id,
       bannerConfigurationId: existing.bannerConfigurationId,
+      droppedImageUrls: [existing.desktopImageUrl, existing.mobileImageUrl],
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,

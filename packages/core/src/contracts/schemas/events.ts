@@ -40,6 +40,13 @@ const cmsBannerConfigurationEventBase = z
 const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+// Image URLs this mutation stopped pointing at, so a consumer that owns the object
+// storage behind them (core does not) can delete the now-unreferenced objects. Reported
+// on every banner mutation that can drop one: deleting an image row, deleting a
+// configuration (which cascades to its image rows), and overwriting an existing image.
+// Empty whenever nothing was dropped. It is a statement about this row only - core does
+// not check whether some other row still uses the same URL.
+const droppedImageUrlsSchema = z.array(z.url());
 const cmsBannerScheduleEventBase = z
   .object({
     bannerScheduleId: UuidSchema,
@@ -660,7 +667,9 @@ export const domainEventSchemas = {
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
   'cms.banner.configuration.created': cmsBannerConfigurationEventBase,
-  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.configuration.set_default': cmsBannerConfigurationEventBase,
   'cms.banner.configuration.unset_default': z
     .object({
@@ -669,8 +678,12 @@ export const domainEventSchemas = {
       actorId: UuidSchema,
     })
     .extend(authContextBase.shape),
-  'cms.banner.image.set': cmsBannerImageEventBase,
-  'cms.banner.image.deleted': cmsBannerImageEventBase,
+  'cms.banner.image.set': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
+  'cms.banner.image.deleted': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
   'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 
