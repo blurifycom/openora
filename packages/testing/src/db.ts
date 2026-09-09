@@ -47,8 +47,27 @@ export async function applyMigrations(url: string): Promise<void> {
   await applyAllMigrations(url);
 }
 
-/** The migrated database `global-setup.ts` builds once; every suite clones it. */
-export const TEMPLATE_DATABASE = 'oss_igaming_test_tpl';
+const TEMPLATE_PREFIX = 'oss_igaming_test_tpl';
+
+/**
+ * A run's databases carry its own id, so two runs against one Postgres server (a second
+ * worktree, a stray `vitest` alongside `pnpm verify`) neither share a template nor sweep
+ * each other's clones in teardown.
+ *
+ * `global-setup.ts` sets this before vitest forks its workers, which inherit it. A worker
+ * that somehow did not would otherwise create databases under a name the teardown never
+ * looks for, so an absent id is an error rather than a default.
+ */
+export function testRunId(): string {
+  const id = process.env['OPENORA_TEST_RUN_ID'];
+  if (!id) {
+    throw new Error('OPENORA_TEST_RUN_ID is not set - this tier requires its global setup');
+  }
+  return id;
+}
+
+/** The migrated database `global-setup.ts` builds once per run; every suite clones it. */
+export const templateDatabase = (): string => `${TEMPLATE_PREFIX}_${testRunId()}`;
 
 const testUrl = () => process.env['TEST_DATABASE_URL'] ?? DEFAULT_TEST_URL;
 
@@ -81,10 +100,11 @@ export type TestDb = {
  * `TEST_DATABASE_URL` selects the server; the database it names is not otherwise used.
  */
 export async function setupTestDb(): Promise<TestDb> {
-  const database = `${TEMPLATE_DATABASE}_${randomUUID().replaceAll('-', '')}`;
+  const template = templateDatabase();
+  const database = `${template}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const admin = new Pool({ connectionString: adminUrl(), connectionTimeoutMillis: 5000 });
   try {
-    await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${TEMPLATE_DATABASE}"`);
+    await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${template}"`);
   } finally {
     await admin.end();
   }

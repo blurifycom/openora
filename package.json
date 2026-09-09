@@ -40,6 +40,7 @@
     "db:seed": "tsx tools/db/seed.ts",
     "db:setup:test": "tsx tools/db/setup-test-db.ts",
     "db:setup:test:fresh": "tsx tools/db/setup-test-db.ts --fresh",
+    "db:clean:test": "tsx tools/db/clean-test-databases.ts",
     "create:app": "tsx tools/create/create-igaming-app.ts",
     "create:service": "tsx tools/create/create-service.ts",
     "setup": "tsx tools/setup/setup-agent.ts",

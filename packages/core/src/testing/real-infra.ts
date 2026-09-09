@@ -70,8 +70,22 @@ function withDatabase(adminUrl: string, database: string): string {
   return url.toString();
 }
 
-/** Every database `createTestDb` creates carries this prefix, so a sweep can find them. */
-export const TEST_DATABASE_PREFIX = 'test_';
+/**
+ * The prefix every database `createTestDb` creates carries, carrying this run's own id so
+ * that a second run against the same Postgres server (a second worktree, a stray `vitest`
+ * alongside `pnpm verify`) is never swept by this one's teardown.
+ *
+ * `global-setup.ts` sets the id before vitest forks its workers, which inherit it. A
+ * worker that somehow did not would otherwise create databases under a name the teardown
+ * never looks for, so an absent id is an error rather than a default.
+ */
+export function testDatabasePrefix(): string {
+  const runId = process.env['OPENORA_TEST_RUN_ID'];
+  if (!runId) {
+    throw new Error('OPENORA_TEST_RUN_ID is not set - this tier requires its global setup');
+  }
+  return `test_${runId}_`;
+}
 
 /** The admin connection string a sweep needs, resolved the same way `createTestDb` does. */
 export const adminDatabaseUrl = (): string => ADMIN_DATABASE_URL;
@@ -87,7 +101,7 @@ export type TestDb = {
 };
 
 /**
- * Create a throwaway `TEST_DATABASE_PREFIX`-prefixed database, apply the given per-module
+ * Create a throwaway `testDatabasePrefix()`-prefixed database, apply the given per-module
  * migrations against it, and return a `DrizzleService` bound to it. `drop()` disposes the
  * pool; the database itself is removed in bulk by `global-setup.ts`.
  *
@@ -103,7 +117,7 @@ export type TestDb = {
  * the ephemeral url just before constructing it - safe because a test file owns one db.
  */
 export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
-  const database = `${TEST_DATABASE_PREFIX}${randomUUID().replaceAll('-', '')}`;
+  const database = `${testDatabasePrefix()}${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: ADMIN_DATABASE_URL, connectionTimeoutMillis: 5000 });
   try {
     await admin.query(`CREATE DATABASE "${database}"`);
