@@ -41,12 +41,13 @@ const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
 // Image URLs this mutation stopped pointing at, so a consumer that owns the object
-// storage behind them (core does not) can delete the now-unreferenced objects. Reported
+// storage behind them (core does not) can evaluate them for cleanup. Reported
 // on every banner mutation that can drop one: deleting an image row, deleting a
 // configuration (which cascades to its image rows), and overwriting an existing image.
 // Empty whenever nothing was dropped. It is a statement about this row only - core does
-// not check whether some other row still uses the same URL.
-const droppedImageUrlsSchema = z.array(z.url());
+// not check whether some other row still uses the same URL. The default keeps queued
+// payloads from older producers readable during a rolling deployment.
+const droppedImageUrlsSchema = z.array(z.url()).default([]);
 const cmsBannerScheduleEventBase = z
   .object({
     bannerScheduleId: UuidSchema,

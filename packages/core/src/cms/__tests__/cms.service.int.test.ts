@@ -1015,9 +1015,6 @@ describe('CmsService.deleteConfiguration blocked-while-scheduled (real PG)', () 
   });
 });
 
-// An uploaded banner image is an object in someone's bucket, and core is not that
-// someone. These events are the only signal an object-storage overlay gets that a
-// file stopped being referenced, so what they carry is the whole contract.
 describe('CmsService banner events carry the image URLs they drop (real PG)', () => {
   const lastPayload = (events: ReturnType<typeof makeEventBus>) =>
     events.emit.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
@@ -1113,8 +1110,6 @@ describe('CmsService banner events carry the image URLs they drop (real PG)', ()
       ADMIN_ID,
     );
 
-    // Same slot, new desktop art, the mobile half untouched - deleting the retained
-    // mobile object here would blank a live banner.
     await svc.setBannerImage(
       {
         bannerConfigurationId: config.id,
@@ -1126,5 +1121,83 @@ describe('CmsService banner events carry the image URLs they drop (real PG)', ()
     );
 
     expect(lastPayload(events)).toMatchObject({ droppedImageUrls: [imageUrl('/old-d.png')] });
+  });
+
+  it('serializes concurrent writes so the overwritten write is reported', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const firstUrls = [imageUrl('/concurrent-a-d.png'), imageUrl('/concurrent-a-m.png')] as const;
+    const secondUrls = [imageUrl('/concurrent-b-d.png'), imageUrl('/concurrent-b-m.png')] as const;
+
+    await Promise.all([
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: config.id,
+          sortOrder: 0,
+          desktopImageUrl: firstUrls[0],
+          mobileImageUrl: firstUrls[1],
+        },
+        ADMIN_ID,
+      ),
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: config.id,
+          sortOrder: 0,
+          desktopImageUrl: secondUrls[0],
+          mobileImageUrl: secondUrls[1],
+        },
+        ADMIN_ID,
+      ),
+    ]);
+
+    const [finalImage] = await db.drizzle.db
+      .select()
+      .from(bannerImageTable)
+      .where(eq(bannerImageTable.bannerConfigurationId, config.id));
+    if (!finalImage) {
+      throw new Error('Expected the concurrent image write to persist a row');
+    }
+    const replacedUrls = finalImage.desktopImageUrl === firstUrls[0] ? secondUrls : firstUrls;
+    const setEvents = events.emit.mock.calls.filter(([topic]) => topic === 'cms.banner.image.set');
+
+    expect(setEvents).toHaveLength(2);
+    expect(setEvents.map(([, payload]) => payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ droppedImageUrls: [] }),
+        expect.objectContaining({ droppedImageUrls: replacedUrls }),
+      ]),
+    );
+  });
+
+  it('emits one deletion event when two deletes race for the same image', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const image = await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/delete-race-d.png'),
+        mobileImageUrl: imageUrl('/delete-race-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    const results = await Promise.allSettled([
+      svc.deleteBannerImage(image.id, ADMIN_ID),
+      svc.deleteBannerImage(image.id, ADMIN_ID),
+    ]);
+    const deletionEvents = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'cms.banner.image.deleted',
+    );
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(deletionEvents).toHaveLength(1);
   });
 });
