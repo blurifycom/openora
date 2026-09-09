@@ -24,6 +24,7 @@ export default async function setup(): Promise<() => Promise<void>> {
     await admin.query(`CREATE DATABASE "${template}"`);
     await applyMigrations(urlForDatabase(template));
   } catch (err) {
+    await dropRunDatabases(admin, template).catch(() => {});
     await admin.end();
     throw err;
   }

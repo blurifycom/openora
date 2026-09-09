@@ -131,8 +131,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
     // A half-booted app still owns a Postgres pool, Redis connections and the claimed
     // logical database. Left behind, the next suite to claim that database inherits its
     // keys, and the run leaks a connection per failed boot.
-    await created?.close();
-    await redisDatabase.release();
+    await Promise.allSettled([created?.close(), redisDatabase.release()]);
     throw err;
   }
 
