@@ -44,6 +44,12 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Verify your email',
     text: `Your email verification code is: ${data.otp}`,
   }),
+  // The second factor itself for an account on the `email` method, so the copy has to
+  // work both as a sign-in code and as the enrolment code that activates the method.
+  twoFactorOtp: (data) => ({
+    subject: 'Your verification code',
+    text: `Your two-factor authentication code is: ${data.otp}`,
+  }),
   resetPasswordOtp: (data) => ({
     subject: 'Reset your password',
     text: `Your password reset code is: ${data.otp}`,

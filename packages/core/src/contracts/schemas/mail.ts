@@ -4,6 +4,7 @@ import { CurrencyCodeSchema } from './igaming-config.js';
 
 export const MAIL_TEMPLATE_KEYS = [
   'verifyEmail',
+  'twoFactorOtp',
   'resetPasswordOtp',
   'adminResetPasswordOtp',
   'existingAccountSignUp',
@@ -32,6 +33,7 @@ const WithdrawalDetailsShape = {
 
 export const EmailTemplateDataSchemas = {
   verifyEmail: z.object({ otp: z.string() }),
+  twoFactorOtp: z.object({ otp: z.string() }),
   resetPasswordOtp: z.object({ otp: z.string(), email: z.email() }),
   adminResetPasswordOtp: z.object({ otp: z.string(), email: z.email() }),
   existingAccountSignUp: z.object({ otp: z.string(), email: z.email() }),
@@ -70,6 +72,7 @@ const templateVariant = <K extends EmailTemplateKey>(key: K) =>
 
 export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('verifyEmail'),
+  templateVariant('twoFactorOtp'),
   templateVariant('resetPasswordOtp'),
   templateVariant('adminResetPasswordOtp'),
   templateVariant('existingAccountSignUp'),
