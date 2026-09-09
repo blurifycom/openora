@@ -43,6 +43,13 @@
       "when": 1788796793631,
       "tag": "0005_natural_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788951490196,
+      "tag": "0006_useful_darkhawk",
+      "breakpoints": true
     }
   ]
 }

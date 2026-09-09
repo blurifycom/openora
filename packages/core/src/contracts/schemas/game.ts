@@ -21,3 +21,37 @@ export const GameCategorySummarySchema = z.object({
   sortOrder: z.number(),
 });
 export type GameCategorySummary = z.infer<typeof GameCategorySummarySchema>;
+
+export const GAME_TAG_TYPES = ['system', 'custom'] as const;
+export const GameTagTypeSchema = z.enum(GAME_TAG_TYPES);
+export type GameTagType = z.infer<typeof GameTagTypeSchema>;
+
+export const GAME_TAG_VISIBILITIES = ['visible', 'invisible'] as const;
+export const GameTagVisibilitySchema = z.enum(GAME_TAG_VISIBILITIES);
+export type GameTagVisibility = z.infer<typeof GameTagVisibilitySchema>;
+
+const HexColorSchema = z
+  .string()
+  .trim()
+  .regex(/^#[0-9A-Fa-f]{6}$/);
+
+export const DEFAULT_GAME_TAG_BADGE_SETTINGS = {
+  badgeColor: '#3377ff',
+  textColor: '#ffffff',
+} as const;
+
+export const GameTagBadgeSettingsSchema = z.object({
+  badgeColor: HexColorSchema.default(DEFAULT_GAME_TAG_BADGE_SETTINGS.badgeColor),
+  textColor: HexColorSchema.default(DEFAULT_GAME_TAG_BADGE_SETTINGS.textColor),
+});
+export type GameTagBadgeSettings = z.infer<typeof GameTagBadgeSettingsSchema>;
+
+export const GameTagSummarySchema = z.object({
+  id: UuidSchema,
+  name: z.string(),
+  type: GameTagTypeSchema,
+  visibility: GameTagVisibilitySchema,
+  badgeSettings: GameTagBadgeSettingsSchema,
+});
+export type GameTagSummary = z.infer<typeof GameTagSummarySchema>;
+export const GameTagSnapshotSchema = GameTagSummarySchema.omit({ id: true });

@@ -13,10 +13,19 @@ import {
   testContext,
 } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+  gameTag,
+  gameTagGame,
+} from '../schema/index.js';
 import { createGamingRouter } from '../router/index.js';
 import { GamingService } from '../service/gaming.service.js';
 import { GameCategoryService } from '../service/game-category.service.js';
+import { GameTagService } from '../service/game-tag.service.js';
 import { GameProviderService } from '../service/game-provider.service.js';
 
 const CTX = testContext();
@@ -49,8 +58,9 @@ function routerWith(adminGuard: AdminGuard) {
   );
   const providers = new GameProviderService(db.drizzle, events);
   const categories = new GameCategoryService(db.drizzle, events);
+  const tags = new GameTagService(db.drizzle, events);
   return {
-    router: createGamingRouter({ gaming, providers, categories, adminGuard }),
+    router: createGamingRouter({ gaming, providers, categories, tags, adminGuard }),
     events,
   };
 }
@@ -96,6 +106,30 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
         { context: CTX },
       ),
   },
+  { name: 'listAdminTags', invoke: (r) => call(r.listAdminTags, {}, { context: CTX }) },
+  {
+    name: 'getAdminTag',
+    invoke: (r) =>
+      call(r.getAdminTag, { id: '00000000-0000-4000-8000-000000000000' }, { context: CTX }),
+  },
+  {
+    name: 'createTag',
+    invoke: (r) => call(r.createTag, { name: 'Featured' }, { context: CTX }),
+  },
+  {
+    name: 'updateTag',
+    invoke: (r) =>
+      call(
+        r.updateTag,
+        { id: '00000000-0000-4000-8000-000000000000', name: 'X' },
+        { context: CTX },
+      ),
+  },
+  {
+    name: 'deleteTag',
+    invoke: (r) =>
+      call(r.deleteTag, { id: '00000000-0000-4000-8000-000000000000' }, { context: CTX }),
+  },
   {
     name: 'updateGame',
     invoke: (r) =>
@@ -121,7 +155,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -218,5 +252,60 @@ describe('gaming catalog router authz', () => {
       'gaming.game.updated',
       expect.objectContaining({ gameId: g!.id }),
     );
+  });
+
+  it('creates, reads, updates, and deletes custom tags through guarded routes', async () => {
+    const { router, events } = routerWith(allowingGuard());
+
+    const created = await call(router.createTag, { name: 'Featured' }, { context: CTX });
+    expect(created).toMatchObject({
+      name: 'Featured',
+      type: 'custom',
+      visibility: 'invisible',
+      badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
+    });
+
+    await expect(call(router.listAdminTags, {}, { context: CTX })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: created.id })],
+    });
+    await expect(
+      call(router.getAdminTag, { id: created.id }, { context: CTX }),
+    ).resolves.toMatchObject({ id: created.id, name: 'Featured' });
+    await expect(
+      call(
+        router.updateTag,
+        {
+          id: created.id,
+          visibility: 'visible',
+          badgeSettings: { badgeColor: '#112233', textColor: '#ffffff' },
+        },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ visibility: 'visible' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.tag.updated',
+      expect.objectContaining({ tagId: created.id }),
+    );
+    await expect(call(router.deleteTag, { id: created.id }, { context: CTX })).resolves.toBe(true);
+  });
+
+  it('refuses deleting a system tag through the guarded route', async () => {
+    const { router } = routerWith(allowingGuard());
+    const [system] = await db.drizzle.db
+      .insert(gameTag)
+      .values({ name: 'System', type: 'system' })
+      .returning();
+    if (!system) {
+      throw new Error('failed to seed a system tag');
+    }
+
+    await expect(
+      call(router.deleteTag, { id: system.id }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+    await expect(
+      call(router.getAdminTag, { id: system.id }, { context: CTX }),
+    ).resolves.toMatchObject({
+      id: system.id,
+    });
   });
 });

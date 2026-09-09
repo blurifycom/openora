@@ -13,7 +13,15 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { mock, makeEventBus, makeIdentityReader, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+  gameTag,
+  gameTagGame,
+} from '../schema/index.js';
 import {
   GamingService,
   GameNotFoundError,
@@ -25,6 +33,7 @@ import {
 } from '../service/gaming.service.js';
 import { GameProviderNotFoundError } from '../service/game-provider.service.js';
 import { GameCategoryNotFoundError } from '../service/game-category.service.js';
+import { GameTagNotFoundError } from '../service/game-tag.service.js';
 
 let db: TestDb;
 
@@ -90,6 +99,14 @@ async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert>
   return row!;
 }
 
+async function seedTag(overrides: Partial<typeof gameTag.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(gameTag)
+    .values({ name: `Tag ${randomUUID()}`, ...overrides })
+    .returning();
+  return row!;
+}
+
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categoryIds?: string[]) {
   const [provider] = await db.drizzle.db
     .insert(gameProvider)
@@ -123,7 +140,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -206,6 +223,27 @@ describe('GamingService lobby (real PG)', () => {
     );
     await expect(svc.getGame(dark.id)).resolves.toMatchObject({ name: 'Dark', isActive: false });
     await expect(svc.getGame(orphaned.id)).resolves.toMatchObject({ name: 'Orphaned' });
+  });
+
+  it('returns visible tags publicly and all tags to admin callers', async () => {
+    const visible = await seedTag({ name: 'Visible', visibility: 'visible' });
+    const invisible = await seedTag({ name: 'Invisible', visibility: 'invisible' });
+    const created = await seedGame();
+    await db.drizzle.db.insert(gameTagGame).values([
+      { gameId: created.id, tagId: visible.id },
+      { gameId: created.id, tagId: invisible.id },
+    ]);
+    const svc = makeService();
+
+    await expect(svc.getGame(created.id)).resolves.toMatchObject({
+      tags: [{ name: 'Visible', visibility: 'visible' }],
+    });
+    await expect(svc.getGame(created.id, { includeInvisibleTags: true })).resolves.toMatchObject({
+      tags: [
+        { name: 'Invisible', visibility: 'invisible' },
+        { name: 'Visible', visibility: 'visible' },
+      ],
+    });
   });
 });
 
@@ -523,6 +561,24 @@ describe('GamingService updateGame (real PG)', () => {
     expect(cleared.categories).toEqual([]);
   });
 
+  it('replaces the tag set, including invisible tags for admin results', async () => {
+    const visible = await seedTag({ name: 'Visible', visibility: 'visible' });
+    const invisible = await seedTag({ name: 'Invisible', visibility: 'invisible' });
+    const created = await seedGame();
+    const svc = makeService();
+
+    const replaced = await svc.updateGame({
+      id: created.id,
+      tagIds: [visible.id, invisible.id],
+      ...NO_CLIENT_META,
+    });
+    expect(replaced.tags.map((tag) => tag.name)).toEqual(['Invisible', 'Visible']);
+    expect((await svc.getGame(created.id)).tags.map((tag) => tag.name)).toEqual(['Visible']);
+
+    const cleared = await svc.updateGame({ id: created.id, tagIds: [], ...NO_CLIENT_META });
+    expect(cleared.tags).toEqual([]);
+  });
+
   it('leaves links untouched when categoryIds is omitted', async () => {
     const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
     const created = await seedGame({}, [table.id]);
@@ -558,6 +614,13 @@ describe('GamingService updateGame (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        tagIds: ['00000000-0000-4000-8000-000000000000'],
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(GameTagNotFoundError);
     await expect(
       svc.updateGame({
         id: '00000000-0000-4000-8000-000000000000',

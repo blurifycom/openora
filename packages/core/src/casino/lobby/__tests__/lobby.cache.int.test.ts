@@ -8,6 +8,8 @@ import {
   gameCategory,
   gameCategoryGame,
   gameProvider,
+  gameTag,
+  gameTagGame,
 } from '@openora/core/casino/schema/gaming';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
@@ -29,7 +31,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${featuredSlot}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${featuredSlot}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
 });
@@ -120,6 +122,30 @@ describe('LobbyService public game gates (real PG)', () => {
 
     const svc = new LobbyService(db.drizzle);
     expect((await svc.search('gate search')).map((r) => r.name)).toEqual(['Gate Search Live']);
+  });
+
+  it('public game summaries omit invisible tags', async () => {
+    const { row } = await seedPlayableGame('Tagged Game');
+    const [visible] = await db.drizzle.db
+      .insert(gameTag)
+      .values({ name: 'Visible', visibility: 'visible' })
+      .returning();
+    const [invisible] = await db.drizzle.db
+      .insert(gameTag)
+      .values({ name: 'Invisible', visibility: 'invisible' })
+      .returning();
+    if (!visible || !invisible) {
+      throw new Error('failed to seed game tags');
+    }
+    await db.drizzle.db.insert(gameTagGame).values([
+      { gameId: row.id, tagId: visible.id },
+      { gameId: row.id, tagId: invisible.id },
+    ]);
+
+    const svc = new LobbyService(db.drizzle);
+    expect((await svc.search('tagged')).at(0)?.tags).toMatchObject([
+      { name: 'Visible', visibility: 'visible' },
+    ]);
   });
 
   it('getCategoryGames hides inactive games and games of deactivated providers', async () => {

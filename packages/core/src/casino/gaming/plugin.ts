@@ -12,6 +12,7 @@ import {
 } from '@openora/core/contracts';
 import { GamingService } from './service/gaming.service.js';
 import { GameCategoryService } from './service/game-category.service.js';
+import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
@@ -44,6 +45,7 @@ export default {
         gaming: gamingService(c),
         providers: new GameProviderService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         categories: new GameCategoryService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        tags: new GameTagService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         adminGuard: c.get(ADMIN_GUARD),
       }),
     );

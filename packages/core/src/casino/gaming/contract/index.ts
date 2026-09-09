@@ -3,6 +3,10 @@ import * as z from 'zod';
 import {
   CurrencyCodeSchema,
   GameCategorySummarySchema,
+  GameTagBadgeSettingsSchema,
+  GameTagSummarySchema,
+  GameTagTypeSchema,
+  GameTagVisibilitySchema,
   GameProviderSummarySchema,
   GameTypeSchema,
   IdInputSchema,
@@ -18,6 +22,12 @@ import {
 export { GameTypeSchema } from '@openora/core/contracts';
 export { GameProviderSummarySchema } from '@openora/core/contracts';
 export { GameCategorySummarySchema } from '@openora/core/contracts';
+export {
+  GameTagBadgeSettingsSchema,
+  GameTagSummarySchema,
+  GameTagTypeSchema,
+  GameTagVisibilitySchema,
+} from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
@@ -31,6 +41,7 @@ export const GameSchema = z.object({
   // Source channel code (eg 'eventmatrix'); 'direct' = directly integrated.
   aggregator: z.string(),
   categories: z.array(GameCategorySummarySchema),
+  tags: z.array(GameTagSummarySchema),
   gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),
@@ -181,6 +192,36 @@ export const UpdateCategoryInputSchema = z.object({
 });
 export type UpdateCategoryInput = z.infer<typeof UpdateCategoryInputSchema>;
 
+export const GameTagDetailSchema = GameTagSummarySchema.extend({
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type GameTagDetail = z.infer<typeof GameTagDetailSchema>;
+export const GameTagSchema = GameTagDetailSchema;
+
+export const CreateGameTagInputSchema = z.object({
+  name: z.string().trim().min(1).max(128),
+  type: GameTagTypeSchema.default('custom'),
+  visibility: GameTagVisibilitySchema.default('invisible'),
+  badgeSettings: GameTagBadgeSettingsSchema.optional(),
+});
+export type CreateGameTagInput = z.infer<typeof CreateGameTagInputSchema>;
+
+export const UpdateGameTagInputSchema = z.object({
+  id: UuidSchema,
+  name: z.string().trim().min(1).max(128).optional(),
+  type: GameTagTypeSchema.optional(),
+  visibility: GameTagVisibilitySchema.optional(),
+  badgeSettings: GameTagBadgeSettingsSchema.optional(),
+});
+export type UpdateGameTagInput = z.infer<typeof UpdateGameTagInputSchema>;
+
+export const ListAdminTagsInputSchema = CatalogQueryBaseSchema.extend({
+  type: GameTagTypeSchema.optional(),
+  visibility: GameTagVisibilitySchema.optional(),
+});
+export type ListAdminTagsInput = z.infer<typeof ListAdminTagsInputSchema>;
+
 export const UpdateGameInputSchema = z.object({
   id: UuidSchema,
   name: z.string().trim().min(1).max(256).optional(),
@@ -191,6 +232,7 @@ export const UpdateGameInputSchema = z.object({
   isActive: z.boolean().optional(),
   metadata: z.unknown().nullable().optional(),
   categoryIds: z.array(UuidSchema).max(50).optional(),
+  tagIds: z.array(UuidSchema).max(50).optional(),
 });
 export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
 
@@ -229,6 +271,31 @@ export const gamingAdminContract = {
     .route({ method: 'PATCH', path: '/backoffice/gaming/categories/{id}' })
     .input(UpdateCategoryInputSchema)
     .output(GameCategoryDetailSchema),
+
+  listAdminTags: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/tags' })
+    .input(ListAdminTagsInputSchema)
+    .output(paginated(GameTagDetailSchema)),
+
+  getAdminTag: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/tags/{id}' })
+    .input(IdInputSchema)
+    .output(GameTagDetailSchema),
+
+  createTag: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/tags' })
+    .input(CreateGameTagInputSchema)
+    .output(GameTagDetailSchema),
+
+  updateTag: oc
+    .route({ method: 'PATCH', path: '/backoffice/gaming/tags/{id}' })
+    .input(UpdateGameTagInputSchema)
+    .output(GameTagDetailSchema),
+
+  deleteTag: oc
+    .route({ method: 'DELETE', path: '/backoffice/gaming/tags/{id}' })
+    .input(IdInputSchema)
+    .output(z.boolean()),
 
   updateGame: oc
     .route({ method: 'PATCH', path: '/backoffice/gaming/games/{id}' })

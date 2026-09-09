@@ -4,9 +4,12 @@ import {
   game,
   gameCategory,
   gameCategoryGame,
+  gameTag,
+  gameTagGame,
   gameProvider,
   type Game,
   type GameCategory,
+  type GameTag,
   type GameProvider,
 } from '@openora/core/casino/schema/gaming';
 
@@ -43,6 +46,37 @@ export async function categoriesByGameIds(db: DrizzleDb, gameIds: Game['id'][]) 
       list.push(r.category);
     } else {
       map.set(r.gameId, [r.category]);
+    }
+  }
+  return map;
+}
+
+export async function tagsByGameIds(
+  db: DrizzleDb,
+  gameIds: Game['id'][],
+  { includeInvisible = false }: { includeInvisible?: boolean } = {},
+) {
+  if (gameIds.length === 0) {
+    return new Map<Game['id'], GameTag[]>();
+  }
+  const rows = await db
+    .select({ gameId: gameTagGame.gameId, tag: gameTag })
+    .from(gameTagGame)
+    .innerJoin(gameTag, eq(gameTagGame.tagId, gameTag.id))
+    .where(
+      and(
+        inArray(gameTagGame.gameId, gameIds),
+        includeInvisible ? undefined : eq(gameTag.visibility, 'visible'),
+      ),
+    )
+    .orderBy(asc(gameTag.name), asc(gameTag.id));
+  const map = new Map<Game['id'], GameTag[]>();
+  for (const r of rows) {
+    const list = map.get(r.gameId);
+    if (list) {
+      list.push(r.tag);
+    } else {
+      map.set(r.gameId, [r.tag]);
     }
   }
   return map;

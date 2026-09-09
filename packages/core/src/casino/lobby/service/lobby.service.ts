@@ -8,8 +8,17 @@ import {
 import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
-import { game, gameProvider, type GameCategory } from '@openora/core/casino/schema/gaming';
-import { categoriesByGameIds, playableGameCondition } from '../../shared/game-catalog.js';
+import {
+  game,
+  gameProvider,
+  type GameCategory,
+  type GameTag,
+} from '@openora/core/casino/schema/gaming';
+import {
+  categoriesByGameIds,
+  playableGameCondition,
+  tagsByGameIds,
+} from '../../shared/game-catalog.js';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
@@ -25,6 +34,7 @@ function toGameSummary(row: {
   game: typeof game.$inferSelect;
   provider: typeof gameProvider.$inferSelect;
   categories: GameCategory[];
+  tags: GameTag[];
 }) {
   return {
     id: row.game.id,
@@ -42,6 +52,13 @@ function toGameSummary(row: {
       name: c.name,
       icon: c.icon,
       sortOrder: c.sortOrder,
+    })),
+    tags: row.tags.map((tag) => ({
+      id: tag.id,
+      name: tag.name,
+      type: tag.type,
+      visibility: tag.visibility,
+      badgeSettings: tag.badgeSettings,
     })),
     thumbnailUrl: row.game.thumbnailUrl,
   };
@@ -101,6 +118,7 @@ export class LobbyService {
             .where(and(inArray(game.id, gameIds), playableGameCondition()))
         : [];
     const categories = await categoriesByGameIds(db, gameIds);
+    const tags = await tagsByGameIds(db, gameIds);
 
     const gameMap = new Map(rows.map((r) => [r.game.id, r]));
 
@@ -118,7 +136,13 @@ export class LobbyService {
             provider: typeof gameProvider.$inferSelect;
           } => g !== undefined,
         )
-        .map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] })),
+        .map((r) =>
+          toGameSummary({
+            ...r,
+            categories: categories.get(r.game.id) ?? [],
+            tags: tags.get(r.game.id) ?? [],
+          }),
+        ),
     };
   }
 
@@ -168,7 +192,17 @@ export class LobbyService {
       db,
       rows.map((r) => r.game.id),
     );
+    const tags = await tagsByGameIds(
+      db,
+      rows.map((r) => r.game.id),
+    );
 
-    return rows.map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] }));
+    return rows.map((r) =>
+      toGameSummary({
+        ...r,
+        categories: categories.get(r.game.id) ?? [],
+        tags: tags.get(r.game.id) ?? [],
+      }),
+    );
   }
 }

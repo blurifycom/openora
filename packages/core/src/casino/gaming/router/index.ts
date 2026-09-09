@@ -15,6 +15,13 @@ import {
   GameCategorySlugTakenError,
 } from '../service/game-category.service.js';
 import {
+  GameTagService,
+  GameTagNameTakenError,
+  GameTagNotFoundError,
+  GameTagSystemDeletionError,
+  GameTagSystemTypeChangeError,
+} from '../service/game-tag.service.js';
+import {
   GameProviderService,
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
@@ -26,11 +33,13 @@ export function createGamingRouter({
   gaming,
   providers,
   categories,
+  tags,
   adminGuard,
 }: {
   gaming: GamingService;
   providers: GameProviderService;
   categories: GameCategoryService;
+  tags: GameTagService;
   adminGuard: AdminGuard;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
@@ -117,11 +126,52 @@ export function createGamingRouter({
       );
     }),
 
+    listAdminTags: os.listAdminTags.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return tags.listTagsAdmin(input);
+    }),
+
+    getAdminTag: os.getAdminTag.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return mapErrors({ NOT_FOUND: GameTagNotFoundError }, () => tags.getTag(input.id));
+    }),
+
+    createTag: os.createTag.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
+      return mapErrors({ CONFLICT: GameTagNameTakenError }, () =>
+        tags.createTag({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    updateTag: os.updateTag.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors(
+        {
+          NOT_FOUND: GameTagNotFoundError,
+          CONFLICT: [GameTagNameTakenError, GameTagSystemTypeChangeError],
+        },
+        () => tags.updateTag({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    deleteTag: os.deleteTag.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'delete');
+      return mapErrors(
+        { NOT_FOUND: GameTagNotFoundError, CONFLICT: GameTagSystemDeletionError },
+        () => tags.deleteTag({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
     updateGame: os.updateGame.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
         {
-          NOT_FOUND: [GameNotFoundError, GameProviderNotFoundError, GameCategoryNotFoundError],
+          NOT_FOUND: [
+            GameNotFoundError,
+            GameProviderNotFoundError,
+            GameCategoryNotFoundError,
+            GameTagNotFoundError,
+          ],
           CONFLICT: GameSlugTakenError,
         },
         () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
@@ -130,7 +180,7 @@ export function createGamingRouter({
 
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return gaming.listGames(input);
+      return gaming.listGames(input, { includeInvisibleTags: true });
     }),
   });
 }

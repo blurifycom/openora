@@ -18,6 +18,7 @@ import { TagKeySchema } from './tag.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
+import { GameTagSnapshotSchema } from './game.js';
 import {
   KycStatusSchema,
   KycStatusSourceSchema,
@@ -60,7 +61,6 @@ const tagPlayerEventBase = actorReasonBase
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
-
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
   userId: UuidSchema,
@@ -407,6 +407,25 @@ export const domainEventSchemas = {
       isActive: z.boolean(),
     }),
   }),
+  'gaming.tag.created': authContextBase
+    .extend({ tagId: UuidSchema })
+    .extend(GameTagSnapshotSchema.shape)
+    .extend({ actorId: UuidSchema.optional() }),
+  'gaming.tag.updated': authContextBase.extend({
+    tagId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: GameTagSnapshotSchema,
+    after: GameTagSnapshotSchema,
+  }),
+  'gaming.tag.deleted': authContextBase.extend({
+    tagId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: GameTagSnapshotSchema,
+    after: z.object({
+      deleted: z.literal(true),
+      affectedGameIds: z.array(UuidSchema),
+    }),
+  }),
   'gaming.game.updated': authContextBase.extend({
     gameId: UuidSchema,
     actorId: UuidSchema.optional(),
@@ -418,6 +437,8 @@ export const domainEventSchemas = {
       thumbnailUrl: z.string().nullable(),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
+      // Older game-update events predate game tags; replay them as an empty tag set.
+      tagIds: z.array(UuidSchema).default([]),
       metadata: z.unknown().nullable(),
     }),
     after: z.object({
@@ -428,6 +449,8 @@ export const domainEventSchemas = {
       thumbnailUrl: z.string().nullable(),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
+      // Older game-update events predate game tags; replay them as an empty tag set.
+      tagIds: z.array(UuidSchema).default([]),
       metadata: z.unknown().nullable(),
     }),
   }),

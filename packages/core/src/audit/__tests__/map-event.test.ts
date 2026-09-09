@@ -58,6 +58,51 @@ describe('mapEventToRecord: cms.banner.schedule.updated', () => {
   });
 });
 
+describe('mapEventToRecord: gaming tag catalog mutations', () => {
+  const tagId = '77777777-7777-4777-8777-777777777777';
+  const snapshot = {
+    name: 'Featured',
+    type: 'custom',
+    visibility: 'visible',
+    badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
+  };
+
+  it('audits tag updates against the game tag resource', async () => {
+    const row = await mapEventToRecord('gaming.tag.updated', {
+      tagId,
+      actorId: adminId,
+      before: { ...snapshot, visibility: 'invisible' },
+      after: snapshot,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_tag',
+      resourceId: tagId,
+      before: { visibility: 'invisible' },
+      after: snapshot,
+    });
+  });
+
+  it('audits affected games when a game tag is deleted', async () => {
+    const affectedGameId = '88888888-8888-4888-8888-888888888888';
+    const row = await mapEventToRecord('gaming.tag.deleted', {
+      tagId,
+      actorId: adminId,
+      before: snapshot,
+      after: { deleted: true, affectedGameIds: [affectedGameId] },
+    });
+
+    expect(row).toMatchObject({
+      resourceType: 'game_tag',
+      resourceId: tagId,
+      before: snapshot,
+      after: { deleted: true, affectedGameIds: [affectedGameId] },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 

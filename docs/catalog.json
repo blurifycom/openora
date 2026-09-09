@@ -213,17 +213,23 @@
         "game_category",
         "game_category_game",
         "game_provider",
-        "game_round"
+        "game_round",
+        "game_tag",
+        "game_tag_game"
       ],
       "routes": [
         "gaming.createCategory",
+        "gaming.createTag",
+        "gaming.deleteTag",
         "gaming.endRound",
         "gaming.getAdminCategory",
         "gaming.getAdminProvider",
+        "gaming.getAdminTag",
         "gaming.getGame",
         "gaming.listAdminCategories",
         "gaming.listAdminGames",
         "gaming.listAdminProviders",
+        "gaming.listAdminTags",
         "gaming.listCategories",
         "gaming.listGames",
         "gaming.listProviders",
@@ -231,7 +237,8 @@
         "gaming.startRound",
         "gaming.updateCategory",
         "gaming.updateGame",
-        "gaming.updateProvider"
+        "gaming.updateProvider",
+        "gaming.updateTag"
       ]
     },
     {
@@ -1012,6 +1019,9 @@
     "gaming.provider.updated",
     "gaming.round.ended",
     "gaming.round.started",
+    "gaming.tag.created",
+    "gaming.tag.deleted",
+    "gaming.tag.updated",
     "iam.invitation.accepted",
     "iam.role.assigned",
     "iam.role.created",
@@ -1513,6 +1523,10 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "CreateGameTagInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "CreateNotificationInputSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
@@ -1753,6 +1767,34 @@
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
+      "name": "GameTagBadgeSettingsSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameTagDetailSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameTagSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameTagSnapshotSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameTagSummarySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameTagTypeSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameTagVisibilitySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GameTypeSchema",
       "file": "packages/core/src/contracts/schemas/game.ts"
     },
@@ -1966,6 +2008,10 @@
     },
     {
       "name": "ListAdminGamesInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "ListAdminTagsInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
@@ -2622,6 +2668,10 @@
     },
     {
       "name": "UpdateGameInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "UpdateGameTagInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
