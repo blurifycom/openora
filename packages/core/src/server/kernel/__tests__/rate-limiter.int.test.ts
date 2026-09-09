@@ -23,6 +23,10 @@ beforeEach(async () => {
 });
 
 describe('assertRateLimit / makeRateLimitError', () => {
+  it('is a no-op when no limiter is bound', async () => {
+    await expect(assertRateLimit(undefined, 'k', OPTS)).resolves.toBeUndefined();
+  });
+
   it('throws a TOO_MANY_REQUESTS ORPCError carrying retryAfterMs once the limit is hit', async () => {
     for (let i = 0; i < OPTS.limit; i++) {
       await assertRateLimit(limiter, 'k', OPTS);

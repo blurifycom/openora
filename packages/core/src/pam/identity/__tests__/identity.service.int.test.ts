@@ -1160,10 +1160,10 @@ describe('IdentityService 2fa step-up teardown', () => {
     );
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
     const [row] = await db.drizzle.db
-      .select({ expiresAt: session.expiresAt })
+      .select({ live: sql<boolean>`${session.expiresAt} > now()` })
       .from(session)
       .where(eq(session.id, liveSession));
-    expect(row && row.expiresAt.getTime() > Date.now()).toBe(false);
+    expect(row?.live).toBe(false);
     expect(events.emit).toHaveBeenCalledWith('identity.2fa.disabled', expect.anything());
   });
 
