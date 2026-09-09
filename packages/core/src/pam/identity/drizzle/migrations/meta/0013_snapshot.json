@@ -1,6 +1,6 @@
 {
-  "id": "957e8441-fe16-4284-9a14-605a24df0932",
-  "prevId": "6a0f4ff4-fa73-47c8-bf36-fc6a3230b731",
+  "id": "6a0f4ff4-fa73-47c8-bf36-fc6a3230b731",
+  "prevId": "e309fc35-0cec-4d3d-90e9-58c3b2f4fcdd",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -111,12 +111,8 @@
           "name": "account_user_id_user_id_fk",
           "tableFrom": "account",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -259,12 +255,8 @@
           "name": "admin_trusted_device_user_id_user_id_fk",
           "tableFrom": "admin_trusted_device",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -374,12 +366,8 @@
           "name": "phone_verification_session_user_id_user_id_fk",
           "tableFrom": "phone_verification_session",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -387,12 +375,8 @@
           "name": "phone_verification_session_session_id_session_id_fk",
           "tableFrom": "phone_verification_session",
           "tableTo": "session",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -402,9 +386,7 @@
         "phone_verification_session_userId_unique": {
           "name": "phone_verification_session_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -494,12 +476,8 @@
           "name": "session_user_id_user_id_fk",
           "tableFrom": "session",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -509,9 +487,7 @@
         "session_token_unique": {
           "name": "session_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -590,12 +566,8 @@
           "name": "sms_otp_session_user_id_user_id_fk",
           "tableFrom": "sms_otp_session",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -605,9 +577,7 @@
         "sms_otp_session_userId_unique": {
           "name": "sms_otp_session_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -701,12 +671,8 @@
           "name": "two_factor_user_id_user_id_fk",
           "tableFrom": "two_factor",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -814,13 +780,6 @@
           "notNull": false,
           "default": false
         },
-        "two_factor_method": {
-          "name": "two_factor_method",
-          "type": "two_factor_method",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
         "phone_number": {
           "name": "phone_number",
           "type": "text",
@@ -862,18 +821,6 @@
         },
         "withdrawal_pin_set_at": {
           "name": "withdrawal_pin_set_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "anti_phishing_code": {
-          "name": "anti_phishing_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "anti_phishing_code_set_at": {
-          "name": "anti_phishing_code_set_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -961,6 +908,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "two_factor_method": {
+          "name": "two_factor_method",
+          "type": "two_factor_method",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1031,16 +985,12 @@
         "user_email_unique": {
           "name": "user_email_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         },
         "user_phoneNumber_unique": {
           "name": "user_phoneNumber_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "phone_number"
-          ]
+          "columns": ["phone_number"]
         }
       },
       "policies": {},
@@ -1116,23 +1066,15 @@
     }
   },
   "enums": {
-    "public.two_factor_method": {
-      "name": "two_factor_method",
-      "schema": "public",
-      "values": [
-        "app",
-        "email",
-        "sms"
-      ]
-    },
     "public.user_theme": {
       "name": "user_theme",
       "schema": "public",
-      "values": [
-        "light",
-        "dark",
-        "system"
-      ]
+      "values": ["light", "dark", "system"]
+    },
+    "public.two_factor_method": {
+      "name": "two_factor_method",
+      "schema": "public",
+      "values": ["app", "email", "sms"]
     }
   },
   "schemas": {},

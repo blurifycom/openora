@@ -1,6 +1,5 @@
 import { createLogger } from '@openora/core/server';
 import type {
-  AdminUserDirectory,
   AuditWritePort,
   EmailTemplateRenderer,
   EmailSenderPort,
@@ -8,6 +7,8 @@ import type {
   MailTemplate,
   MailToAddressInput,
   MailToUserInput,
+  MailRecipientDirectory,
+  RenderedEmail,
 } from '@openora/core/contracts';
 import { MAIL_SEND_QUEUE, type EncryptedMailSendJob, type MailSendJob } from '../contract/index.js';
 import { createMailPayloadCipher, type MailPayloadCipher } from './mail-payload.service.js';
@@ -32,6 +33,24 @@ const MAIL_ENQUEUE_OPTS = {
 
 const ENQUEUE_RETRY_DELAYS_MS = [100, 300, 800];
 
+const escapeHtml = (value: string): string =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function appendAntiPhishingCode(
+  rendered: RenderedEmail,
+  antiPhishingCode: string | null,
+): RenderedEmail {
+  if (antiPhishingCode === null) {
+    return rendered;
+  }
+  const footer = `Your anti-phishing code: ${antiPhishingCode}`;
+  return {
+    ...rendered,
+    text: `${rendered.text}\n\n${footer}`,
+    html: `${rendered.html}\n<p>${escapeHtml(footer)}</p>`,
+  };
+}
+
 async function withEnqueueRetry(enqueue: () => Promise<unknown>): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -49,7 +68,7 @@ async function withEnqueueRetry(enqueue: () => Promise<unknown>): Promise<void> 
 export type MailServiceDeps = {
   sender: EmailSenderPort;
   renderer: EmailTemplateRenderer;
-  directory: AdminUserDirectory;
+  directory: MailRecipientDirectory;
   jobQueue: JobQueueAdapter;
   audit: AuditWritePort | null;
   encryptionSecret: string;
@@ -58,7 +77,7 @@ export type MailServiceDeps = {
 export class MailService {
   private readonly sender: EmailSenderPort;
   private readonly renderer: EmailTemplateRenderer;
-  private readonly directory: AdminUserDirectory;
+  private readonly directory: MailRecipientDirectory;
   private readonly jobQueue: JobQueueAdapter;
   private readonly audit: AuditWritePort | null;
   private readonly payloadCipher: MailPayloadCipher;
@@ -109,10 +128,8 @@ export class MailService {
       });
       return;
     }
-    const rendered = await this.renderer.render(
-      job.template,
-      resolved.locale,
-      resolved.name,
+    const rendered = appendAntiPhishingCode(
+      await this.renderer.render(job.template, resolved.locale, resolved.name),
       resolved.antiPhishingCode,
     );
     await this.sender.send({
@@ -200,7 +217,7 @@ export class MailService {
     if (job.recipient.kind === 'address') {
       return job.recipient.locale ?? DEFAULT_LOCALE;
     }
-    const row = await this.directory.get(job.recipient.userId);
+    const row = await this.directory.getMailRecipient(job.recipient.userId);
     return row?.language ?? DEFAULT_LOCALE;
   }
 
@@ -220,7 +237,7 @@ export class MailService {
         antiPhishingCode: null,
       };
     }
-    const row = await this.directory.get(job.recipient.userId);
+    const row = await this.directory.getMailRecipient(job.recipient.userId);
     if (!row?.email) {
       logger.warn(
         { userId: job.recipient.userId, key: job.template.key },

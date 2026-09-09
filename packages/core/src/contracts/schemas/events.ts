@@ -278,6 +278,7 @@ export const domainEventSchemas = {
   'identity.security.anti_phishing_code.set': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    wasAlreadySet: z.boolean(),
   }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,

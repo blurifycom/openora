@@ -8,7 +8,6 @@ export type EmailTemplateRenderer = {
     template: MailTemplate,
     locale: string,
     recipientName?: string | null,
-    antiPhishingCode?: string | null,
   ): Promise<RenderedEmail> | RenderedEmail;
 };
 

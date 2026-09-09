@@ -144,29 +144,23 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}\n\n` +
       `If this was not you, secure your account immediately.`,
   }),
+  securityAntiPhishingCodeChanged: (data) => ({
+    subject: 'Your anti-phishing code changed',
+    text:
+      data.previousAntiPhishingCode === null
+        ? 'An anti-phishing code was added to your account. If this was not you, secure your account immediately.'
+        : `Your anti-phishing code was changed. Your previous code was: ${data.previousAntiPhishingCode}\n\nIf this was not you, secure your account immediately.`,
+  }),
 };
 
-const renderDefaultEmail = (
-  template: MailTemplate,
-  locale: string,
-  antiPhishingCode?: string | null,
-): RenderedEmail => {
+const renderDefaultEmail = (template: MailTemplate, locale: string): RenderedEmail => {
   const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
   const { subject, text: body } = plain(template.data, locale);
-  // Centralized here (the one wrapper every template already flows through) rather than in
-  // each template function, so every genuine platform email carries the code, stock renderer
-  // included. Appended before textToHtml() runs so its own escapeHtml covers the code too.
-  const text = antiPhishingCode ? `${body}\n\nYour anti-phishing code: ${antiPhishingCode}` : body;
-  return { subject, text, html: textToHtml(text) };
+  return { subject, text: body, html: textToHtml(body) };
 };
 
 export class DefaultEmailTemplateRenderer implements EmailTemplateRenderer {
-  render(
-    template: MailTemplate,
-    locale: string,
-    _recipientName?: string | null,
-    antiPhishingCode?: string | null,
-  ): RenderedEmail {
-    return renderDefaultEmail(template, locale, antiPhishingCode);
+  render(template: MailTemplate, locale: string, _recipientName?: string | null): RenderedEmail {
+    return renderDefaultEmail(template, locale);
   }
 }

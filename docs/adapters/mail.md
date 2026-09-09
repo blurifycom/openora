@@ -10,7 +10,8 @@ Source of truth: the mail contract and adapter ports under `packages/core/src/co
 
 `EMAIL_SENDER.send({ to, subject, html, text })` - HTML and text are separate fields; the
 transport never sniffs one string. `EMAIL_TEMPLATE_RENDERER.render(template, locale)`
-returns `{ subject, html, text }`.
+returns `{ subject, html, text }`. After rendering, core appends the player's anti-phishing
+code (when set) to both bodies; an overlay renderer cannot omit this platform-owned footer.
 
 ## Default bindings
 
@@ -53,7 +54,8 @@ last-wins).
 `verifyEmail`, `resetPasswordOtp`, `adminResetPasswordOtp`, `existingAccountSignUp`, `rgLimitUpdated`,
 `rgCoolingOffActivated`, `rgCoolingOffLifted`, `rgSelfExclusionActivated`,
 `rgSelfExclusionLifted`, `withdrawalApproved`, `withdrawalRejected`,
-`kycResubmissionRequested`, `adminInvitation`.
+`kycResubmissionRequested`, `adminInvitation`, `securityLoginAlert`,
+`securityWithdrawalRequested`, `securityAntiPhishingCodeChanged`.
 
 An overlay renderer receives every built-in template key and owns the rendered result for each key;
 there is no automatic fallback to the platform's English renderer.

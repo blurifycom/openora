@@ -1,6 +1,6 @@
 {
-  "id": "e309fc35-0cec-4d3d-90e9-58c3b2f4fcdd",
-  "prevId": "c54c97b7-443f-4926-a6f3-7ea64065abc9",
+  "id": "ce3d71fa-43ee-49e1-b180-16e9ede959e5",
+  "prevId": "e309fc35-0cec-4d3d-90e9-58c3b2f4fcdd",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -780,6 +780,13 @@
           "notNull": false,
           "default": false
         },
+        "two_factor_method": {
+          "name": "two_factor_method",
+          "type": "two_factor_method",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
         "phone_number": {
           "name": "phone_number",
           "type": "text",
@@ -822,6 +829,12 @@
         "withdrawal_pin_set_at": {
           "name": "withdrawal_pin_set_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anti_phishing_code": {
+          "name": "anti_phishing_code",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -908,13 +921,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "two_factor_method": {
-          "name": "two_factor_method",
-          "type": "two_factor_method",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -1066,15 +1072,15 @@
     }
   },
   "enums": {
-    "public.user_theme": {
-      "name": "user_theme",
-      "schema": "public",
-      "values": ["light", "dark", "system"]
-    },
     "public.two_factor_method": {
       "name": "two_factor_method",
       "schema": "public",
       "values": ["app", "email", "sms"]
+    },
+    "public.user_theme": {
+      "name": "user_theme",
+      "schema": "public",
+      "values": ["light", "dark", "system"]
     }
   },
   "schemas": {},

@@ -234,8 +234,8 @@ export const SecurityControlsSchema = z.object({
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
 
 // Non-empty after trimming incidental leading/trailing whitespace (eg from copy-paste),
-// otherwise fully unrestricted and case-sensitive - no reauth, set/overwrite only.
-export const SetAntiPhishingCodeInputSchema = z.object({ code: z.string().trim().min(1) });
+// case-sensitive, and capped to keep every delivered email bounded - no reauth, set/overwrite only.
+export const SetAntiPhishingCodeInputSchema = z.object({ code: z.string().trim().min(1).max(255) });
 
 export const WithdrawalPinSchema = z.string().regex(/^[0-9]{4}$/);
 

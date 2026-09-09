@@ -21,10 +21,6 @@ export type AdminUserRow = {
   language: string | null;
   failedLoginAttempts?: number;
   lockoutUntil?: Date | null;
-  // The player's anti-phishing code, if set - already returned to its owner via
-  // security.me, so reusing this port to thread it into outgoing mail is fine; it is not
-  // treated as secret. Null for an account that never set one.
-  antiPhishingCode: string | null;
 };
 
 export const ADMIN_USER_SORT_BY_VALUES = [

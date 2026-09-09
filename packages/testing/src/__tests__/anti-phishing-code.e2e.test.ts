@@ -73,6 +73,15 @@ describe('POST /identity/security/anti-phishing-code', () => {
     expect(res.status).toBeLessThan(500);
   });
 
+  it('rejects a code longer than the email-safe 255-character limit', async () => {
+    const res = await player.post('/identity/security/anti-phishing-code', {
+      code: 'a'.repeat(256),
+    });
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
+
   it('refuses the route for a non-player (admin) account', async () => {
     const res = await admin.post('/identity/security/anti-phishing-code', {
       code: 'Admin Attempt',

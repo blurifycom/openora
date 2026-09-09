@@ -318,6 +318,11 @@ const SEND_2FA_OTP_RATE_LIMIT = {
   windowMs: 5 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+const ANTI_PHISHING_CODE_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 5 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FakeLoginShadow = {
@@ -1917,7 +1922,7 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
     const [caller] = await this.drizzle.db
-      .select({ role: user.role })
+      .select({ role: user.role, email: user.email, language: user.language })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
@@ -1938,15 +1943,33 @@ export class IdentityService {
       });
     }
     const before = await this.securityControlsFor(userId);
+    if (before.antiPhishingCode === input.code) {
+      return before;
+    }
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.ANTI_PHISHING_CODE_MUTATION, userId),
+      ANTI_PHISHING_CODE_RATE_LIMIT,
+    );
     await this.drizzle.db
       .update(user)
-      .set({ antiPhishingCode: input.code, antiPhishingCodeSetAt: new Date() })
+      .set({ antiPhishingCode: input.code })
       .where(eq(user.id, userId));
     this.events.emit('identity.security.anti_phishing_code.set', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      wasAlreadySet: before.antiPhishingCode !== null,
       ip,
       userAgent,
+    });
+    await this.mailDispatch?.toAddress({
+      email: caller.email,
+      locale: caller.language,
+      template: {
+        key: 'securityAntiPhishingCodeChanged',
+        data: { previousAntiPhishingCode: before.antiPhishingCode },
+      },
+      idempotencyKey: `anti-phishing-code-changed:${userId}:${randomUUID()}`,
     });
     return { ...before, antiPhishingCode: input.code };
   }

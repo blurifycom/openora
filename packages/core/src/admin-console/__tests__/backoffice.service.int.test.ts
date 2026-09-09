@@ -88,7 +88,6 @@ function userRow(over: Partial<AdminUserRow> = {}): AdminUserRow {
     isActive: true,
     role: 'player',
     language: null,
-    antiPhishingCode: null,
     ...over,
   };
 }

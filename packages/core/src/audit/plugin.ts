@@ -823,6 +823,7 @@ export async function mapEventToRecord(
       resourceType: 'user',
       resourceId: str(p['userId']),
       // The code value never reaches the audit trail, only that it was set.
+      before: { antiPhishingCodeSet: p['wasAlreadySet'] ?? null },
       after: { antiPhishingCodeSet: true },
     };
   }
