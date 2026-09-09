@@ -33,11 +33,15 @@ const COUNTRY_RULE = {
   redirectIp: false,
   kycRequired: true,
   createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: null,
+  updatedAt: '2026-01-01T00:00:00.000Z',
   updatedBy: null,
 };
 
-const GLOBAL_KYC_CONFIG = { enabled: true, updatedAt: null, updatedBy: null };
+const GLOBAL_KYC_CONFIG = {
+  enabled: true,
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  updatedBy: null,
+};
 
 function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
   return mock<AdminGuard>({
@@ -79,7 +83,7 @@ const UPSERT_INPUT = {
   blacklisted: true,
   redirectIp: false,
   kycRequired: true,
-  confirmBlacklist: true,
+  expectedUpdatedAt: COUNTRY_RULE.updatedAt,
 };
 
 describe('regulatory-overview router authz (mocked service)', () => {
@@ -133,7 +137,11 @@ describe('regulatory-overview router authz (mocked service)', () => {
     const { router } = build(fakeGuard(['regulatory-overview:view']));
 
     await expect(
-      call(router.setGlobalKycConfig, { enabled: false, confirm: true }, { context: CTX }),
+      call(
+        router.setGlobalKycConfig,
+        { enabled: false, confirm: true, expectedUpdatedAt: GLOBAL_KYC_CONFIG.updatedAt },
+        { context: CTX },
+      ),
     ).rejects.toBeInstanceOf(ORPCError);
   });
 
@@ -142,13 +150,13 @@ describe('regulatory-overview router authz (mocked service)', () => {
 
     const result = await call(
       router.setGlobalKycConfig,
-      { enabled: false, confirm: true },
+      { enabled: false, confirm: true, expectedUpdatedAt: GLOBAL_KYC_CONFIG.updatedAt },
       { context: CTX },
     );
 
     expect(result).toEqual(GLOBAL_KYC_CONFIG);
     expect(compliance.setGlobalKycConfig).toHaveBeenCalledWith(
-      { enabled: false, confirm: true },
+      { enabled: false, confirm: true, expectedUpdatedAt: GLOBAL_KYC_CONFIG.updatedAt },
       ADMIN,
       expect.anything(),
     );

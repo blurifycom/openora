@@ -90,6 +90,17 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'compliance.geo-rule.added') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'geo-rule',
+      resourceId: str(p['countryCode']),
+      after: { action: p['action'] ?? null },
+    };
+  }
+
   // Player requested a withdrawal (funds held). actorId = the player (resolved
   // playerId); resourceId = the withdrawal transaction.
   if (topic === 'wallet.withdrawal.requested') {
@@ -918,6 +929,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.kyc.submitted',
   'compliance.kyc.reverify_required',
   'compliance.kyc.high_risk_signal_detected',
+  'compliance.geo-rule.added',
   'cms.page.published',
   'cms.page.created',
   'cms.page.updated',

@@ -1,4 +1,4 @@
--- BF-534: rewrites the old binary allow/block geo rule into three independent per-country
+-- Rewrites the old binary allow/block geo rule into three independent per-country
 -- flags (blacklisted, redirectIp, kycRequired), and adds a new global_kyc_config singleton
 -- for the platform-wide KYC toggle. Hand-authored (not drizzle-kit generated) because the
 -- geo_rule -> country_rule rename needs a data backfill from the dropped `action` column

@@ -95,13 +95,14 @@ export const countryRule = pgTable('country_rule', {
   updatedBy: uuid(),
 });
 
+export const GLOBAL_KYC_ENABLED_DEFAULT = true;
+
 // Platform-wide KYC toggle (admin-editable, audited). Does not overwrite a country's own
-// kycRequired exemption - see docs/modules/compliance.md. Singleton row keyed by
-// singletonKey, same pattern as wallet's walletAutoWithdrawalConfig.
+// kycRequired exemption. Singleton row keyed by singletonKey.
 export const globalKycConfig = pgTable('global_kyc_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique('global_kyc_config_singleton_key_unique').default('global'),
-  enabled: boolean().notNull().default(true),
+  enabled: boolean().notNull().default(GLOBAL_KYC_ENABLED_DEFAULT),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true }),
   updatedBy: uuid(),

@@ -1,14 +1,27 @@
 import {
   DrizzleService,
   findOneOrThrow,
+  makeConflictError,
   makeNotFoundError,
   makeOwnershipError,
   serializeRow,
+  type EventBus,
 } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
-import { countryRule, globalKycConfig } from '../schema/index.js';
-import type { UpsertCountryRuleInput, SetGlobalKycConfigInput } from '../contract/index.js';
-import type { AuditWritePort, ClientMeta, GeoIpAdapter, User } from '@openora/core/contracts';
+import { countryRule, globalKycConfig, GLOBAL_KYC_ENABLED_DEFAULT } from '../schema/index.js';
+import type {
+  AddGeoRuleInput,
+  SetGlobalKycConfigInput,
+  UpsertCountryRuleInput,
+} from '../contract/index.js';
+import type {
+  AuditWritePort,
+  ClientMeta,
+  GeoIpAdapter,
+  GeoRuleAction,
+  IgamingConfig,
+  User,
+} from '@openora/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 
@@ -18,23 +31,83 @@ export const CountryRuleNotFoundError = makeNotFoundError('CountryRule');
 
 export const GlobalKycConfigNotFoundError = makeNotFoundError('GlobalKycConfig');
 
-// Mirrors the column defaults in schema/index.ts - used as "previous value" for a
-// field on a brand-new row, where there is no `before` row to read it from.
-const COUNTRY_RULE_FIELD_DEFAULTS = {
-  blacklisted: false,
-  redirectIp: false,
-  kycRequired: true,
-} as const;
-const COUNTRY_RULE_BOOLEAN_FIELDS = Object.keys(
-  COUNTRY_RULE_FIELD_DEFAULTS,
-) as (keyof typeof COUNTRY_RULE_FIELD_DEFAULTS)[];
-const GLOBAL_KYC_ENABLED_DEFAULT = true;
+export const CountryRuleVersionConflictError = makeConflictError(
+  'CountryRuleVersionConflictError',
+  'Country rule has changed. Refresh and try again.',
+  { reason: 'stale_version' },
+);
+
+export const GlobalKycConfigVersionConflictError = makeConflictError(
+  'GlobalKycConfigVersionConflictError',
+  'Global KYC configuration has changed. Refresh and try again.',
+  { reason: 'stale_version' },
+);
+
+export const LicensedJurisdictionBlacklistError = makeConflictError(
+  'LicensedJurisdictionBlacklistError',
+  'A licensed jurisdiction cannot be blacklisted.',
+  { reason: 'licensed_jurisdiction' },
+);
+
+export const CountryRuleConfirmationRequiredError = makeConflictError(
+  'CountryRuleConfirmationRequiredError',
+  'Confirmation is required to weaken a country rule.',
+  { reason: 'confirmation_required' },
+);
+
+const COUNTRY_RULE_FIELDS = ['blacklisted', 'redirectIp', 'kycRequired'] as const;
+
+function hasCountryRuleChanges(
+  before: typeof countryRule.$inferSelect,
+  input: UpsertCountryRuleInput,
+) {
+  return COUNTRY_RULE_FIELDS.some((field) => before[field] !== input[field]);
+}
+
+function weakensCountryRule(
+  before: typeof countryRule.$inferSelect,
+  input: UpsertCountryRuleInput,
+) {
+  return (
+    (before.blacklisted && !input.blacklisted) ||
+    (before.redirectIp && !input.redirectIp) ||
+    (before.kycRequired && !input.kycRequired)
+  );
+}
+
+function hasExpectedVersion(actual: Date | null, expected: string | null) {
+  return (actual ? actual.toISOString() : null) === expected;
+}
+
+function toCountryRuleView(row: typeof countryRule.$inferSelect) {
+  return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
+}
+
+function toGlobalKycConfigView(row: typeof globalKycConfig.$inferSelect) {
+  return {
+    enabled: row.enabled,
+    updatedAt: row.updatedAt?.toISOString() ?? null,
+    updatedBy: row.updatedBy,
+  };
+}
+
+function toGeoRuleView(row: typeof countryRule.$inferSelect) {
+  const action: GeoRuleAction = row.blacklisted ? 'block' : 'allow';
+  return {
+    id: row.id,
+    countryCode: row.countryCode,
+    action,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
+    private readonly events: EventBus,
     private readonly geoIp: GeoIpAdapter | null,
     private readonly audit: AuditWritePort,
+    private readonly igaming: IgamingConfig | null = null,
   ) {}
 
   async geoCheck(ipAddress: string | null) {
@@ -42,14 +115,18 @@ export class ComplianceService {
       this.geoIp && ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null;
 
     if (!countryCode) {
-      // With rules configured, an unresolvable address is a gap in the gate, not a pass.
-      const [anyRule] = await this.drizzle.db
-        .select({ id: countryRule.id })
+      const [blacklistedRule] = await this.drizzle.db
+        .select({ countryCode: countryRule.countryCode })
         .from(countryRule)
+        .where(eq(countryRule.blacklisted, true))
         .limit(1);
-      return anyRule
+      return blacklistedRule || this.igaming?.blockedCountries.length
         ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
         : { allowed: true, countryCode: null, reason: null };
+    }
+
+    if (this.igaming?.blockedCountries.includes(countryCode)) {
+      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
     }
 
     const [rule] = await this.drizzle.db
@@ -71,40 +148,53 @@ export class ComplianceService {
 
   async upsertCountryRule(input: UpsertCountryRuleInput, actorId: User['id'], meta?: ClientMeta) {
     return this.drizzle.db.transaction(async (tx) => {
-      const [before] = await tx
-        .select()
-        .from(countryRule)
-        .where(eq(countryRule.countryCode, input.countryCode));
+      if (input.blacklisted && this.igaming?.jurisdictions.includes(input.countryCode)) {
+        throw new LicensedJurisdictionBlacklistError();
+      }
+
+      const [inserted] = await tx
+        .insert(countryRule)
+        .values({ countryCode: input.countryCode })
+        .onConflictDoNothing()
+        .returning();
+      const before =
+        inserted ??
+        findOneOrThrow(
+          await tx
+            .select()
+            .from(countryRule)
+            .where(eq(countryRule.countryCode, input.countryCode))
+            .for('update'),
+          new CountryRuleNotFoundError(input.countryCode),
+        );
+
+      if (!hasExpectedVersion(before.updatedAt, input.expectedUpdatedAt)) {
+        throw new CountryRuleVersionConflictError();
+      }
+      if (weakensCountryRule(before, input) && !input.confirm) {
+        throw new CountryRuleConfirmationRequiredError();
+      }
+      if (!hasCountryRuleChanges(before, input)) {
+        return toCountryRuleView(before);
+      }
 
       const row = findOneOrThrow(
         await tx
-          .insert(countryRule)
-          .values({
-            countryCode: input.countryCode,
+          .update(countryRule)
+          .set({
             blacklisted: input.blacklisted,
             redirectIp: input.redirectIp,
             kycRequired: input.kycRequired,
             updatedAt: new Date(),
             updatedBy: actorId,
           })
-          .onConflictDoUpdate({
-            target: countryRule.countryCode,
-            set: {
-              blacklisted: input.blacklisted,
-              redirectIp: input.redirectIp,
-              kycRequired: input.kycRequired,
-              updatedAt: new Date(),
-              updatedBy: actorId,
-            },
-          })
+          .where(eq(countryRule.id, before.id))
           .returning(),
         new CountryRuleNotFoundError(input.countryCode),
       );
 
-      for (const field of COUNTRY_RULE_BOOLEAN_FIELDS) {
-        const previousValue = before ? before[field] : COUNTRY_RULE_FIELD_DEFAULTS[field];
-        const newValue = row[field];
-        if (previousValue === newValue) {
+      for (const field of COUNTRY_RULE_FIELDS) {
+        if (before[field] === row[field]) {
           continue;
         }
         await this.audit.recordInTransaction(tx, {
@@ -113,25 +203,19 @@ export class ComplianceService {
           action: 'compliance.country_rule.setting_changed',
           resourceType: 'country-rule',
           resourceId: input.countryCode,
-          before: { setting: field, value: previousValue },
-          after: { setting: field, value: newValue },
+          before: { setting: field, value: before[field] },
+          after: { setting: field, value: row[field] },
           ...meta,
         });
       }
 
-      // Assigned to a local first, not returned inline: TS's inference for serializeRow's
-      // date-field generic widens to `keyof Row` when the call sits directly in a `return`
-      // inside a generic callback (db.transaction<T>) whose result also has to satisfy an
-      // outer contextual type (the router handler's oRPC output schema) - breaking the
-      // expression in two keeps the two inference sites independent.
-      const serialized = serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
-      return serialized;
+      return toCountryRuleView(row);
     });
   }
 
   async listCountryRules() {
     const rows = await this.drizzle.db.select().from(countryRule);
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt', 'updatedAt'] }));
+    return rows.map(toCountryRuleView);
   }
 
   async getGlobalKycConfig() {
@@ -140,51 +224,107 @@ export class ComplianceService {
       .from(globalKycConfig)
       .where(eq(globalKycConfig.singletonKey, 'global'));
     return row
-      ? serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] })
+      ? toGlobalKycConfigView(row)
       : { enabled: GLOBAL_KYC_ENABLED_DEFAULT, updatedAt: null, updatedBy: null };
   }
 
   async setGlobalKycConfig(input: SetGlobalKycConfigInput, actorId: User['id'], meta?: ClientMeta) {
     return this.drizzle.db.transaction(async (tx) => {
-      const [before] = await tx
-        .select()
-        .from(globalKycConfig)
-        .where(eq(globalKycConfig.singletonKey, 'global'));
+      const [inserted] = await tx
+        .insert(globalKycConfig)
+        .values({ singletonKey: 'global' })
+        .onConflictDoNothing()
+        .returning();
+      const before =
+        inserted ??
+        findOneOrThrow(
+          await tx
+            .select()
+            .from(globalKycConfig)
+            .where(eq(globalKycConfig.singletonKey, 'global'))
+            .for('update'),
+          new GlobalKycConfigNotFoundError('global'),
+        );
+
+      if (!hasExpectedVersion(before.updatedAt, input.expectedUpdatedAt)) {
+        throw new GlobalKycConfigVersionConflictError();
+      }
+      if (before.enabled === input.enabled) {
+        return toGlobalKycConfigView(before);
+      }
 
       const row = findOneOrThrow(
         await tx
-          .insert(globalKycConfig)
-          .values({
-            singletonKey: 'global',
-            enabled: input.enabled,
-            updatedAt: new Date(),
-            updatedBy: actorId,
-          })
-          .onConflictDoUpdate({
-            target: globalKycConfig.singletonKey,
-            set: { enabled: input.enabled, updatedAt: new Date(), updatedBy: actorId },
-          })
+          .update(globalKycConfig)
+          .set({ enabled: input.enabled, updatedAt: new Date(), updatedBy: actorId })
+          .where(eq(globalKycConfig.id, before.id))
           .returning(),
         new GlobalKycConfigNotFoundError('global'),
       );
 
-      const previousValue = before ? before.enabled : GLOBAL_KYC_ENABLED_DEFAULT;
-      if (previousValue !== row.enabled) {
-        await this.audit.recordInTransaction(tx, {
-          actorId,
-          actorType: 'admin',
-          action: 'compliance.global_kyc.set',
-          resourceType: 'global-kyc-config',
-          resourceId: 'global',
-          before: { enabled: previousValue },
-          after: { enabled: row.enabled },
-          ...meta,
-        });
-      }
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'admin',
+        action: 'compliance.global_kyc.set',
+        resourceType: 'global-kyc-config',
+        resourceId: 'global',
+        before: { enabled: before.enabled },
+        after: { enabled: row.enabled },
+        ...meta,
+      });
 
-      // See the comment in upsertCountryRule above - same inference-widening reason.
-      const serialized = serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
-      return serialized;
+      return toGlobalKycConfigView(row);
     });
+  }
+
+  async addGeoRule(input: AddGeoRuleInput, actorId?: User['id'], meta?: ClientMeta) {
+    if (input.action === 'block' && this.igaming?.jurisdictions.includes(input.countryCode)) {
+      throw new LicensedJurisdictionBlacklistError();
+    }
+
+    const row = await this.drizzle.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(countryRule)
+        .values({ countryCode: input.countryCode })
+        .onConflictDoNothing()
+        .returning();
+      const before =
+        inserted ??
+        findOneOrThrow(
+          await tx
+            .select()
+            .from(countryRule)
+            .where(eq(countryRule.countryCode, input.countryCode))
+            .for('update'),
+          new CountryRuleNotFoundError(input.countryCode),
+        );
+      const blacklisted = input.action === 'block';
+      const row =
+        before.blacklisted === blacklisted
+          ? before
+          : findOneOrThrow(
+              await tx
+                .update(countryRule)
+                .set({ blacklisted, updatedAt: new Date(), updatedBy: actorId ?? null })
+                .where(eq(countryRule.id, before.id))
+                .returning(),
+              new CountryRuleNotFoundError(input.countryCode),
+            );
+
+      return toGeoRuleView(row);
+    });
+    this.events.emit('compliance.geo-rule.added', {
+      countryCode: input.countryCode,
+      action: input.action,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
+    return row;
+  }
+
+  async listGeoRules() {
+    const rows = await this.drizzle.db.select().from(countryRule);
+    return rows.map(toGeoRuleView);
   }
 }

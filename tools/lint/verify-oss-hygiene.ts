@@ -54,7 +54,7 @@ const VENDOR_EXAMPLE_EXEMPT_FILES = new Set([
 const isVendorExampleExempt = (file: string) =>
   VENDOR_EXAMPLE_EXEMPT_FILES.has(file) || file.startsWith('docs/adapters/');
 
-const scannedExtensions = new Set(['.ts', '.tsx', '.md', '.json']);
+const scannedExtensions = new Set(['.ts', '.tsx', '.md', '.json', '.sql']);
 const extname = (file: string) => file.slice(file.lastIndexOf('.'));
 
 const trackedFiles = execSync('git ls-files -z', { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 })

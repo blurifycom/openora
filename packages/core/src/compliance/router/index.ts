@@ -19,6 +19,10 @@ import type {
 import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
+  CountryRuleConfirmationRequiredError,
+  CountryRuleVersionConflictError,
+  GlobalKycConfigVersionConflictError,
+  LicensedJurisdictionBlacklistError,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
@@ -105,13 +109,36 @@ export function createComplianceRouter({
       return compliance.geoCheck(ip ?? '127.0.0.1');
     }),
 
+    addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'override-limit',
+      );
+      return compliance.addGeoRule(input, userId, { ip, userAgent });
+    }),
+
+    listGeoRules: os.listGeoRules.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return compliance.listGeoRules();
+    }),
+
     upsertCountryRule: os.upsertCountryRule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(
         context,
         'regulatory-overview',
         'manage-country-rules',
       );
-      return compliance.upsertCountryRule(input, userId, { ip, userAgent });
+      return mapErrors(
+        {
+          CONFLICT: [
+            CountryRuleConfirmationRequiredError,
+            CountryRuleVersionConflictError,
+            LicensedJurisdictionBlacklistError,
+          ],
+        },
+        () => compliance.upsertCountryRule(input, userId, { ip, userAgent }),
+      );
     }),
 
     listCountryRules: os.listCountryRules.handler(async ({ context }) => {
@@ -130,7 +157,9 @@ export function createComplianceRouter({
         'regulatory-overview',
         'manage-global-kyc',
       );
-      return compliance.setGlobalKycConfig(input, userId, { ip, userAgent });
+      return mapErrors({ CONFLICT: GlobalKycConfigVersionConflictError }, () =>
+        compliance.setGlobalKycConfig(input, userId, { ip, userAgent }),
+      );
     }),
 
     getPlayerKyc: os.getPlayerKyc.handler(async ({ input, context }) => {

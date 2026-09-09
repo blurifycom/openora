@@ -10,6 +10,10 @@ export const limitPeriods = ['daily', 'weekly', 'monthly', 'session'] as const;
 export const LimitPeriodSchema = z.enum(limitPeriods);
 export type LimitPeriod = z.infer<typeof LimitPeriodSchema>;
 
+export const geoRuleActions = ['allow', 'block'] as const;
+export const GeoRuleActionSchema = z.enum(geoRuleActions);
+export type GeoRuleAction = z.infer<typeof GeoRuleActionSchema>;
+
 export const EXCLUSION_KINDS = ['cooling_off', 'self_exclusion'] as const;
 export const ExclusionKindSchema = z.enum(EXCLUSION_KINDS);
 export type ExclusionKind = z.infer<typeof ExclusionKindSchema>;

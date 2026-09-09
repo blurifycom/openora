@@ -169,6 +169,7 @@
       "routes": [
         "compliance.activateCoolingOff",
         "compliance.activateSelfExclusion",
+        "compliance.addGeoRule",
         "compliance.bulkApproveKyc",
         "compliance.cancelPendingLimitChange",
         "compliance.confirmPendingLimitChange",
@@ -184,6 +185,7 @@
         "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
         "compliance.listCountryRules",
+        "compliance.listGeoRules",
         "compliance.listRgFlags",
         "compliance.overrideKycStatus",
         "compliance.requestCoolingOff",
@@ -992,6 +994,7 @@
     "cms.page.deleted",
     "cms.page.published",
     "cms.page.updated",
+    "compliance.geo-rule.added",
     "compliance.kyc.high_risk_signal_detected",
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
@@ -1097,6 +1100,10 @@
     {
       "name": "ActiveUsersTrendPointSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AddGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "AdminBlockedUserSchema",
@@ -1709,6 +1716,14 @@
     {
       "name": "GameTypeSchema",
       "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GeoRuleActionSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "GeoRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "GetBannerConfigurationInputSchema",

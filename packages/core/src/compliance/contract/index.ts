@@ -7,6 +7,7 @@ import {
   KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
+  GeoRuleActionSchema,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
@@ -161,22 +162,29 @@ export const CountryRuleSchema = z.object({
 });
 export type CountryRule = z.infer<typeof CountryRuleSchema>;
 
+export const GeoRuleSchema = z.object({
+  id: UuidSchema,
+  countryCode: CountryCodeSchema,
+  action: GeoRuleActionSchema,
+  createdAt: TimestampSchema,
+});
+export type GeoRule = z.infer<typeof GeoRuleSchema>;
+
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-// Blacklisting a country requires explicit confirmation before the rule is saved
-// (defense-in-depth server-side check; the real confirmation UX is the Backoffice dialog).
+export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
+export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
+
 export const UpsertCountryRuleInputSchema = z
   .object({
     countryCode: CountryCodeSchema,
     blacklisted: z.boolean(),
     redirectIp: z.boolean(),
     kycRequired: z.boolean(),
-    confirmBlacklist: z.boolean().optional(),
+    expectedUpdatedAt: TimestampSchema.nullable(),
+    confirm: z.boolean().optional(),
   })
-  .refine((input) => !input.blacklisted || input.confirmBlacklist === true, {
-    message: 'confirmBlacklist must be true when blacklisted is true',
-    path: ['confirmBlacklist'],
-  });
+  .strict();
 export type UpsertCountryRuleInput = z.infer<typeof UpsertCountryRuleInputSchema>;
 
 export const GlobalKycConfigSchema = z.object({
@@ -186,12 +194,11 @@ export const GlobalKycConfigSchema = z.object({
 });
 export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
 
-// Enabling or disabling the platform-wide toggle always requires explicit confirmation -
-// same defense-in-depth reasoning as UpsertCountryRuleInputSchema above.
 export const SetGlobalKycConfigInputSchema = z
   .object({
     enabled: z.boolean(),
     confirm: z.boolean(),
+    expectedUpdatedAt: TimestampSchema.nullable(),
   })
   .refine((input) => input.confirm === true, {
     message: 'confirm must be true',
@@ -221,6 +228,15 @@ export const complianceContract = {
     .output(LimitViewSchema),
 
   geoCheck: oc.route({ method: 'GET', path: '/compliance/geo-check' }).output(GeoCheckOutputSchema),
+
+  addGeoRule: oc
+    .route({ method: 'POST', path: '/compliance/geo-rules' })
+    .input(AddGeoRuleInputSchema)
+    .output(GeoRuleSchema),
+
+  listGeoRules: oc
+    .route({ method: 'GET', path: '/compliance/geo-rules' })
+    .output(z.array(GeoRuleSchema)),
 
   upsertCountryRule: oc
     .route({ method: 'PUT', path: '/compliance/country-rules' })

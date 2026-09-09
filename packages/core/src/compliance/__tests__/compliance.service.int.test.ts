@@ -1,24 +1,34 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { GeoIpAdapter } from '@openora/core/contracts';
+import {
+  defineIgamingConfig,
+  type GeoIpAdapter,
+  type IgamingConfig,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { mock, makeAuditWriter } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, countryRule, globalKycConfig } from '../schema/index.js';
-import { ComplianceService } from '../service/compliance.service.js';
+import {
+  ComplianceService,
+  CountryRuleConfirmationRequiredError,
+  CountryRuleVersionConflictError,
+  LicensedJurisdictionBlacklistError,
+} from '../service/compliance.service.js';
 
 let db: TestDb;
 
-function makeService(countryCode?: string | null) {
+function makeService(countryCode?: string | null, igaming: IgamingConfig | null = null) {
   const audit = makeAuditWriter();
+  const events = makeEventBus();
   const geoIp =
     countryCode === undefined
       ? null
       : mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode })) });
-  const svc = new ComplianceService(db.drizzle, geoIp, audit);
-  return { svc, audit };
+  const svc = new ComplianceService(db.drizzle, events, geoIp, audit, igaming);
+  return { svc, audit, events };
 }
 
 beforeAll(async () => {
@@ -52,6 +62,13 @@ describe('ComplianceService.geoCheck (real PG)', () => {
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: null });
   });
 
+  it('allows an unresolvable address when country rules exist but none blacklists', async () => {
+    const { svc } = makeService(null);
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'DE', kycRequired: false });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: null });
+  });
+
   it('allows a resolved country that carries no rule', async () => {
     const { svc } = makeService('DE');
 
@@ -74,6 +91,18 @@ describe('ComplianceService.geoCheck (real PG)', () => {
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: 'DE' });
   });
+
+  it('enforces blocked countries from the runtime igaming configuration', async () => {
+    const igaming = defineIgamingConfig({
+      branding: { name: 'Test' },
+      currencies: ['EUR'],
+      jurisdictions: ['MT'],
+      blockedCountries: ['US'],
+    });
+    const { svc } = makeService('US', igaming);
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, countryCode: 'US' });
+  });
 });
 
 describe('ComplianceService.upsertCountryRule (real PG)', () => {
@@ -87,7 +116,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         blacklisted: true,
         redirectIp: false,
         kycRequired: true,
-        confirmBlacklist: true,
+        expectedUpdatedAt: null,
       },
       actorId,
     );
@@ -115,13 +144,13 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
 
   it('upserts by country code, auditing only the fields that actually changed', async () => {
     const { svc, audit } = makeService();
-    await svc.upsertCountryRule(
+    const created = await svc.upsertCountryRule(
       {
         countryCode: 'FR',
         blacklisted: true,
         redirectIp: false,
         kycRequired: true,
-        confirmBlacklist: true,
+        expectedUpdatedAt: null,
       },
       randomUUID(),
     );
@@ -133,7 +162,8 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         blacklisted: true,
         redirectIp: true,
         kycRequired: false,
-        confirmBlacklist: true,
+        expectedUpdatedAt: created.updatedAt,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -147,13 +177,25 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
   it('writes zero audit rows when a save changes nothing', async () => {
     const { svc, audit } = makeService();
     await svc.upsertCountryRule(
-      { countryCode: 'FR', blacklisted: false, redirectIp: false, kycRequired: true },
+      {
+        countryCode: 'FR',
+        blacklisted: false,
+        redirectIp: false,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
       randomUUID(),
     );
     audit.recordInTransaction.mockClear();
 
     await svc.upsertCountryRule(
-      { countryCode: 'FR', blacklisted: false, redirectIp: false, kycRequired: true },
+      {
+        countryCode: 'FR',
+        blacklisted: false,
+        redirectIp: false,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
       randomUUID(),
     );
 
@@ -168,18 +210,130 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         blacklisted: true,
         redirectIp: false,
         kycRequired: true,
-        confirmBlacklist: true,
+        expectedUpdatedAt: null,
       },
       randomUUID(),
     );
     await svc.upsertCountryRule(
-      { countryCode: 'DE', blacklisted: false, redirectIp: true, kycRequired: true },
+      {
+        countryCode: 'DE',
+        blacklisted: false,
+        redirectIp: true,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
       randomUUID(),
     );
 
     const rules = await svc.listCountryRules();
 
     expect(rules.map((r) => r.countryCode).sort()).toEqual(['DE', 'FR']);
+  });
+
+  it('requires confirmation for every weakening transition', async () => {
+    const { svc } = makeService();
+    const rule = await svc.upsertCountryRule(
+      {
+        countryCode: 'FR',
+        blacklisted: true,
+        redirectIp: true,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
+      randomUUID(),
+    );
+
+    await expect(
+      svc.upsertCountryRule(
+        {
+          countryCode: 'FR',
+          blacklisted: false,
+          redirectIp: true,
+          kycRequired: true,
+          expectedUpdatedAt: rule.updatedAt,
+        },
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(CountryRuleConfirmationRequiredError);
+  });
+
+  it('rejects a full-object write based on a stale version', async () => {
+    const { svc } = makeService();
+    const created = await svc.upsertCountryRule(
+      {
+        countryCode: 'FR',
+        blacklisted: false,
+        redirectIp: false,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
+      randomUUID(),
+    );
+    const updated = await svc.upsertCountryRule(
+      {
+        countryCode: 'FR',
+        blacklisted: true,
+        redirectIp: false,
+        kycRequired: true,
+        expectedUpdatedAt: created.updatedAt,
+      },
+      randomUUID(),
+    );
+
+    await expect(
+      svc.upsertCountryRule(
+        {
+          countryCode: 'FR',
+          blacklisted: false,
+          redirectIp: true,
+          kycRequired: true,
+          expectedUpdatedAt: created.updatedAt,
+        },
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(CountryRuleVersionConflictError);
+    expect((await svc.listCountryRules()).at(0)).toMatchObject(updated);
+  });
+
+  it('refuses to blacklist a configured licensed jurisdiction', async () => {
+    const igaming = defineIgamingConfig({
+      branding: { name: 'Test' },
+      currencies: ['EUR'],
+      jurisdictions: ['MT'],
+    });
+    const { svc } = makeService(undefined, igaming);
+
+    await expect(
+      svc.upsertCountryRule(
+        {
+          countryCode: 'MT',
+          blacklisted: true,
+          redirectIp: false,
+          kycRequired: true,
+          expectedUpdatedAt: null,
+        },
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(LicensedJurisdictionBlacklistError);
+  });
+});
+
+describe('ComplianceService legacy geo rules (real PG)', () => {
+  it('maps the legacy geo-rule API onto country rules and emits its legacy event', async () => {
+    const { svc, events } = makeService();
+    const actorId = randomUUID();
+
+    const rule = await svc.addGeoRule({ countryCode: 'FR', action: 'block' }, actorId);
+
+    expect(rule).toMatchObject({ countryCode: 'FR', action: 'block' });
+    expect((await svc.listCountryRules()).at(0)).toMatchObject({
+      countryCode: 'FR',
+      blacklisted: true,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.geo-rule.added',
+      expect.objectContaining({ countryCode: 'FR', action: 'block', actorId }),
+    );
   });
 });
 
@@ -194,7 +348,10 @@ describe('ComplianceService global KYC config (real PG)', () => {
     const { svc, audit } = makeService();
     const actorId = randomUUID();
 
-    const config = await svc.setGlobalKycConfig({ enabled: false, confirm: true }, actorId);
+    const config = await svc.setGlobalKycConfig(
+      { enabled: false, confirm: true, expectedUpdatedAt: null },
+      actorId,
+    );
 
     expect(config.enabled).toBe(false);
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
@@ -213,10 +370,16 @@ describe('ComplianceService global KYC config (real PG)', () => {
 
   it('writes zero audit rows when re-set to the same value', async () => {
     const { svc, audit } = makeService();
-    await svc.setGlobalKycConfig({ enabled: false, confirm: true }, randomUUID());
+    const config = await svc.setGlobalKycConfig(
+      { enabled: false, confirm: true, expectedUpdatedAt: null },
+      randomUUID(),
+    );
     audit.recordInTransaction.mockClear();
 
-    await svc.setGlobalKycConfig({ enabled: false, confirm: true }, randomUUID());
+    await svc.setGlobalKycConfig(
+      { enabled: false, confirm: true, expectedUpdatedAt: config.updatedAt },
+      randomUUID(),
+    );
 
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
