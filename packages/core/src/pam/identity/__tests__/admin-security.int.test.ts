@@ -49,10 +49,10 @@ const seedSession = (userId: string, userAgent: string) =>
 
 async function isActive(sessionId: string) {
   const [row] = await db.drizzle.db
-    .select({ expiresAt: session.expiresAt })
+    .select({ live: sql<boolean>`${session.expiresAt} > now()` })
     .from(session)
     .where(eq(session.id, sessionId));
-  return row !== undefined && row.expiresAt.getTime() > Date.now();
+  return row?.live ?? false;
 }
 
 beforeAll(async () => {

@@ -934,7 +934,14 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    expect(result.transactionId).toBeDefined();
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      type: 'withdrawal',
+      status: 'pending',
+      amount: '1.000000000000000000',
+      currency: 'BTC',
+    });
+    expect(await balanceOf(w.userId)).toBe(4);
   });
 
   it('refuses a tag the player never whitelisted on an address they did', async () => {
@@ -1048,7 +1055,14 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    expect(result.transactionId).toBeDefined();
+    expect(result.status).toBe('pending');
+    expect(await txById(result.transactionId)).toMatchObject({
+      type: 'withdrawal',
+      status: 'pending',
+      amount: '1.000000000000000000',
+      currency: 'BTC',
+    });
+    expect(await balanceOf(w.userId)).toBe(4);
   });
 });
 
