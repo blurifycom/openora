@@ -31,10 +31,6 @@ describe('DrizzleUserCommands.setUsername', () => {
     expect(row?.username).toBe('after_name');
   });
 
-  // CONFLICT is asserted rather than "it threw": the port narrows on the constraint
-  // name, so a broken narrowing that relabels any 23505 as a username clash has to fail
-  // here. The converse case - some other unique constraint reaching this catch - is not
-  // testable through the port, which writes the username column and nothing else.
   it('rejects a handle already taken, case-insensitively', async () => {
     await seedUser(db, { name: 'taken_name', username: 'taken_name' });
     const account = await seedUser(db, { name: 'free_name', username: 'free_name' });

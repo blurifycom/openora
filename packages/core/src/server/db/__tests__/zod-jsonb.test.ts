@@ -3,8 +3,6 @@ import * as z from 'zod';
 import { pgTable, uuid } from 'drizzle-orm/pg-core';
 import { zodJsonb } from '../zod-jsonb.js';
 
-// The severity split is only observable through the logger: both severities read as
-// null, and it is the error level that reaches the bound error tracker.
 const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
 vi.mock('../../kernel/logger.js', () => ({ createLogger: () => log }));
 

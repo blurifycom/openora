@@ -258,10 +258,6 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
     );
   });
 
-  // The policy is the mandatory-2FA and session-fingerprint gate every admin route
-  // sits behind. It runs last, so a caller who clears role and permission still has
-  // to clear it - these cases are the only thing standing between a passing
-  // permission check and an unenrolled or hijacked session reaching a route.
   describe('admin security policy', () => {
     const policy = (overrides: Partial<AdminSecurityPolicy> = {}) =>
       mock<AdminSecurityPolicy>({
@@ -286,8 +282,6 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
       await expect(guard.assert(requestContext(ADMIN_HEADERS), 'player', 'view')).rejects.toThrow(
         /two-factor enrolment required/,
       );
-      // Fails closed on the first check: the session it would have vouched for is
-      // never inspected, and no caller is returned.
       expect(securityPolicy.assertSessionIntact).not.toHaveBeenCalled();
     });
 

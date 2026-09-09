@@ -50,9 +50,6 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
     expect(transition).toEqual({ playerId, previousStatus: 'pending' });
   });
 
-  // The null is the contract, not an implementation detail: compliance emits its
-  // transition event only when this returns one, so a conditional UPDATE that stopped
-  // being conditional would double-emit on every repeated vendor decision.
   it('returns null and leaves the row alone when the status is unchanged', async () => {
     const writer = makeWriter();
     const { userId } = await seedPlayer({ kycStatus: 'verified' });

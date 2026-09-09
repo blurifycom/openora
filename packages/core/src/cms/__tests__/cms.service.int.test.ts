@@ -720,8 +720,6 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const rejected = results.filter((result) => result.status === 'rejected');
     expect(rejected).toHaveLength(1);
-    // The loser must lose to the overlap check, not to a deadlock or a raw constraint
-    // violation escaping the advisory lock - those reject too, and would look identical.
     expect(rejected[0]?.reason).toBeInstanceOf(BannerScheduleOverlapError);
   });
 

@@ -79,9 +79,6 @@ describe('runMigrations', () => {
     expect(calls).toContain('end');
   });
 
-  // An extension name is the one operator-supplied value interpolated into SQL rather
-  // than bound as a parameter (CREATE EXTENSION takes no parameters), so the allowlist
-  // in front of it is load-bearing, not decoration.
   it('refuses an extension name outside the allowlist, before opening the connection', async () => {
     await expect(
       runMigrations({
@@ -100,8 +97,6 @@ describe('runMigrations', () => {
       databaseUrl: 'postgres://test',
     });
 
-    // Bookkeeping only: the schema and table bootstrap, the pending-migration read, and
-    // the pool close. Nothing may reach the connection on behalf of an absent option.
     expect(calls).toContain('SELECT hash FROM "drizzle"."__drizzle_migrations"');
     expect(calls.some((sql) => sql.startsWith('CREATE EXTENSION'))).toBe(false);
     expect(calls.some((sql) => sql.startsWith('UPDATE'))).toBe(false);

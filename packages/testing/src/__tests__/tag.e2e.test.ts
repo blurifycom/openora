@@ -445,9 +445,6 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
     eventBus.emit('identity.user.login', { userId, playerId: null });
     eventBus.emit('identity.user.login', { userId, playerId: null });
 
-    // The handler is fire-and-forget and tryRemoveTag swallows
-    // TagAssignmentNotFoundError, so a throw here would never surface as a rejection -
-    // the tag set is the only observable this path has. Give the handlers a beat first.
     await new Promise((r) => setTimeout(r, 300));
     expect((await activeTagKeys(admin, playerId)).sort()).toEqual(before);
   });

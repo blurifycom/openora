@@ -167,9 +167,6 @@ async function storedConfigurations() {
 }
 
 describe('cms router authz', () => {
-  // FORBIDDEN specifically, not merely "some ORPCError": most of these are invoked with
-  // ids that do not exist, so a route that lost its guard would still reject - with
-  // NOT_FOUND - and the looser assertion would stay green right through the hole.
   it.each(GUARDED_ROUTES)(
     'rejects $name with FORBIDDEN for a non-privileged caller',
     async ({ invoke }) => {

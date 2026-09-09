@@ -137,7 +137,6 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
   });
 });
 
-/** A promise plus the function that settles it, for coordinating with a blocked publish. */
 function deferred() {
   let resolve = () => {};
   const promise = new Promise<void>((r) => {
@@ -146,10 +145,6 @@ function deferred() {
   return { promise, resolve: () => resolve() };
 }
 
-// The poll loop is what actually delivers events in production; drainOnce is only the
-// unit of work it repeats. An error escaping the interval callback would kill the loop
-// silently, and a stop() that returned while a publish was still in flight would let a
-// shutting-down process tear the connection out from under it.
 describe('OutboxRelay poll loop (real PG)', () => {
   it('publishes on its own, with nobody calling drainOnce', async () => {
     const row = await seedRow();
@@ -178,7 +173,6 @@ describe('OutboxRelay poll loop (real PG)', () => {
 
     relay.start();
     try {
-      // More than one: a loop that died on the first rejection would report exactly once.
       await vi.waitFor(() => expect(errors.length).toBeGreaterThan(1));
     } finally {
       await relay.stop();

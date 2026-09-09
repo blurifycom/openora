@@ -113,9 +113,6 @@ describe('moneyScaleBy', () => {
   });
 });
 
-// These derive one side of a balance change from the other rather than reading the
-// balance back, so a drift here writes a wrong `before` into an append-only audit row.
-// The RG deposit-limit gate sums a player's spend through moneyAdd.
 describe('moneyAdd / moneySubtract', () => {
   it('adds and subtracts exactly, at MONEY_SCALE', () => {
     expect(moneyAdd('10', '2.5')).toBe('12.500000000000000000');

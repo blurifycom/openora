@@ -934,8 +934,6 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    // The whitelist check passing is only half of it - the withdrawal it let through has
-    // to be the one that was asked for, held at pending against a debited balance.
     expect(result.status).toBe('pending');
     expect(await txById(result.transactionId)).toMatchObject({
       type: 'withdrawal',
@@ -1057,7 +1055,6 @@ describe('WalletService.withdraw destination whitelisting (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    // No address book, no whitelist check - and the withdrawal still has to land whole.
     expect(result.status).toBe('pending');
     expect(await txById(result.transactionId)).toMatchObject({
       type: 'withdrawal',
