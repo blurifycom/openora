@@ -7,11 +7,24 @@ const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
  * Logical databases handed to `bootTestApp`, allocated downward from 15. The core
  * harness is pinned to 0-7 (`VITEST_POOL_ID % 8`), so the two tiers stay clear of
  * each other and both integration suites can run concurrently against one Redis.
+ *
+ * This tier's 8 are split per worker, because the counter below is module state: every
+ * worker would otherwise start at 15 and flush a database another worker was using.
+ * `wallet-ledger-auto-withdrawal.e2e.test.ts` keeps three apps alive at once, so a
+ * worker needs at least that many - which, on a default 16-database Redis, is what caps
+ * `maxWorkers` at 2 in vitest.config.ts. Raising one without the other collides.
  */
 const HIGHEST_DATABASE = 15;
 const LOWEST_DATABASE = 8;
+const DATABASES_PER_WORKER = 4;
 
-let nextDatabase = HIGHEST_DATABASE;
+const workerSlice = Math.max(0, Number(process.env['VITEST_POOL_ID'] ?? 1) - 1);
+const sliceTop =
+  HIGHEST_DATABASE -
+  ((workerSlice * DATABASES_PER_WORKER) % (HIGHEST_DATABASE - LOWEST_DATABASE + 1));
+const sliceBottom = sliceTop - DATABASES_PER_WORKER + 1;
+
+let nextDatabase = sliceTop;
 
 function urlFor(database: number): string {
   const url = new URL(BASE_URL);
@@ -33,7 +46,7 @@ export type TestRedisDatabase = {
  */
 export async function acquireTestRedisDatabase(): Promise<TestRedisDatabase> {
   const database = nextDatabase;
-  nextDatabase = nextDatabase > LOWEST_DATABASE ? nextDatabase - 1 : HIGHEST_DATABASE;
+  nextDatabase = nextDatabase > sliceBottom ? nextDatabase - 1 : sliceTop;
 
   const client = createClient({
     url: BASE_URL,

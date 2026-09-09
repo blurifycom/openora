@@ -79,13 +79,27 @@ describe('runMigrations', () => {
     expect(calls).toContain('end');
   });
 
+  it('refuses an extension name outside the allowlist, before opening the connection', async () => {
+    await expect(
+      runMigrations({
+        migrationsFolder: '/tmp/migrations',
+        databaseUrl: 'postgres://test',
+        extensions: ['pg_trgm; DROP TABLE wallet_transaction'],
+      }),
+    ).rejects.toThrow(/Invalid extension name/);
+
+    expect(calls.some((sql) => sql.startsWith('CREATE EXTENSION'))).toBe(false);
+  });
+
   it('is a no-op (beyond bookkeeping) when preSql is omitted', async () => {
     await runMigrations({
       migrationsFolder: '/tmp/migrations',
       databaseUrl: 'postgres://test',
     });
 
-    expect(calls).not.toContain(undefined);
+    expect(calls).toContain('SELECT hash FROM "drizzle"."__drizzle_migrations"');
+    expect(calls.some((sql) => sql.startsWith('CREATE EXTENSION'))).toBe(false);
+    expect(calls.some((sql) => sql.startsWith('UPDATE'))).toBe(false);
     expect(calls).toContain('end');
   });
 

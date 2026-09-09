@@ -21,6 +21,11 @@ import { captureTimezone } from './capture-timezone.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
+import {
+  maskEmail,
+  maskPhone,
+  type TwoFactorDeliveryService,
+} from './two-factor-delivery.service.js';
 import type {
   CacheAdapter,
   RateLimiterAdapter,
@@ -29,7 +34,11 @@ import type {
   LoginInput,
   RegisterInput,
   Enable2faInput,
+  Enable2faResult,
   Verify2faInput,
+  TwoFactorChallengeMethod,
+  TwoFactorDeliveryMethod,
+  TwoFactorStatus,
   Disable2faInput,
   RegenerateBackupCodesInput,
   TrustCurrentDeviceInput,
@@ -65,6 +74,7 @@ import {
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
+import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -191,6 +201,11 @@ type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string; trustDevice?: boolean }>;
   verifyBackupCode: AuthCall<{ code: string; trustDevice?: boolean }>;
+  // The OTP pair backing the `email` and `sms` methods. Both resolve their subject from
+  // a live session first and the pending-challenge cookie second, which is what lets one
+  // endpoint serve enrolment, resend and the login challenge.
+  sendTwoFactorOTP: AuthCall<Record<string, never>>;
+  verifyTwoFactorOTP: AuthCall<{ code: string; trustDevice?: boolean }>;
   generateBackupCodes: AuthCall<{ password: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
   requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
@@ -294,6 +309,14 @@ const VERIFY_EMAIL_RATE_LIMIT = {
 } as const;
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
+// Fails closed: every call spends real money on an `sms` enrolment and fills a mailbox
+// on an `email` one, and better-auth issues a fresh code per send, so an unbounded
+// resend loop is both a toll-fraud channel and an unbounded guess budget.
+const SEND_2FA_OTP_RATE_LIMIT = {
+  limit: 3,
+  windowMs: 5 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FakeLoginShadow = {
@@ -348,6 +371,10 @@ export type IdentityServiceDeps = {
   cache?: CacheAdapter;
   trustedDevices?: TrustedDeviceService;
   twoFactorLockout?: TwoFactorLockoutService;
+  // Routes a generated second-factor code to the transport the account's enrolled
+  // method names. Required: without it better-auth mints `email`/`sms` codes that
+  // are never delivered, which locks the account out of its own second factor.
+  twoFactorDelivery: TwoFactorDeliveryService;
   // Used by the step-up self-service routes (disable 2FA, regenerate backup codes) to
   // tear down live sessions once the account's standing credentials have changed.
   sessions?: SessionService;
@@ -382,6 +409,7 @@ export class IdentityService {
   private readonly existingAccountSignUps = new Set<string>();
   private readonly trustedDevices?: TrustedDeviceService;
   private readonly twoFactorLockout?: TwoFactorLockoutService;
+  private readonly twoFactorDelivery: TwoFactorDeliveryService;
   private readonly sessions?: SessionService;
 
   constructor({
@@ -397,6 +425,7 @@ export class IdentityService {
     cache,
     trustedDevices,
     twoFactorLockout,
+    twoFactorDelivery,
     sessions,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
@@ -411,6 +440,7 @@ export class IdentityService {
     this.cache = cache;
     this.trustedDevices = trustedDevices;
     this.twoFactorLockout = twoFactorLockout;
+    this.twoFactorDelivery = twoFactorDelivery;
     this.sessions = sessions;
     this.auth = createAuth({
       db: drizzle.db,
@@ -428,6 +458,9 @@ export class IdentityService {
             },
           }
         : {}),
+      // Binds the plugin's OTP hook to the transport fan-out. Without it better-auth
+      // still mints codes for the `email`/`sms` methods and drops them on the floor.
+      twoFactor: { sendOtp: (args) => twoFactorDelivery.deliver(args) },
       requireEmailVerification:
         this.platformConfig?.registration?.requireEmailVerification ?? false,
       isExistingAccountSignUp: (lookupEmail) =>
@@ -853,7 +886,15 @@ export class IdentityService {
       };
 
       if (body.twoFactorRedirect || !body.user || !body.token) {
-        return { twoFactorRedirect: true };
+        // The challenge screen has to know whether to ask for an authenticator code or
+        // to push one, and there is no session yet to read the account's method from.
+        // Naming it here reveals nothing the challenge would not show anyway.
+        return {
+          twoFactorRedirect: true,
+          ...(existingUser
+            ? { twoFactorMethod: await this.resolveTwoFactorMethod(existingUser.id) }
+            : {}),
+        };
       }
 
       if (lockoutEnabled && existingUser) {
@@ -1221,7 +1262,25 @@ export class IdentityService {
     return toUser(session.user as BetterAuthUser);
   }
 
-  async enableTwoFactor(input: Enable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  /**
+   * Starts enrolment. All three methods share the one secret better-auth mints here;
+   * `method` only decides how the code that activates it arrives, and is written
+   * before the send so the delivery hook knows where to route. better-auth flips
+   * `twoFactorEnabled` only once the first code clears, so abandoning a first
+   * enrolment leaves the account unprotected exactly as it was.
+   *
+   * A transport failure on the first send throws (see `sendOtpForCurrentMethod`)
+   * after `two_factor_method` is already written, but that write is inert on its
+   * own: `twoFactorStatus` reports it only once `enabled` is true, and the CONFLICT
+   * guard below only fires once it is. The caller recovers by retrying either
+   * `sendTwoFactorOtp` (resend) or this route again - both read the method that was
+   * already persisted, so neither loses the player's choice.
+   */
+  async enableTwoFactor(
+    input: Enable2faInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ): Promise<Enable2faResult> {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
@@ -1229,6 +1288,23 @@ export class IdentityService {
       `enable2fa:${userId ?? 'anonymous'}`,
       TWO_FACTOR_PASSWORD_RATE_LIMIT,
     );
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
+    }
+    await this.assertMethodAvailable(userId, input.method);
+
+    // There is no switch-in-place: a player changes method by disabling and enrolling
+    // again. better-auth's enable leg deletes and recreates the `twoFactor` row with a
+    // fresh secret and fresh backup codes, and marks it verified straight away when one
+    // was already verified - so re-running it on a live account destroys the working
+    // authenticator the moment the call lands, and abandoning the step strands the
+    // player on a secret they never scanned with `two_factor_enabled` still true.
+    if (await this.isTwoFactorEnabled(userId)) {
+      throw new ORPCError('CONFLICT', {
+        message: 'Two-factor authentication is already enabled. Disable it first to change method.',
+      });
+    }
+
     const res = await this.api.enableTwoFactor({
       body: { password: input.password },
       headers,
@@ -1237,7 +1313,173 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { totpURI: string; backupCodes: string[] };
-    return { totpUri: body.totpURI, backupCodes: body.backupCodes };
+
+    await this.setTwoFactorMethod(userId, input.method);
+    if (input.method === 'app') {
+      return { totpUri: body.totpURI, backupCodes: body.backupCodes };
+    }
+
+    // The first code has to reach the player before they can activate the method, so
+    // the send belongs to enrolment rather than a separate call the client must know
+    // to make. "Resend code" then replays it through sendTwoFactorOtp.
+    const masked = await this.sendOtpForCurrentMethod(userId, headers, resHeaders);
+    return { backupCodes: body.backupCodes, maskedDestination: masked };
+  }
+
+  /**
+   * Re-sends the one-time code for an account on the `email` or `sms` method - the
+   * "Resend code" action during enrolment, and the send leg of a login challenge.
+   * Resolves its subject from a live session first and the pending-challenge cookie
+   * second, because at login there is no session yet.
+   */
+  async sendTwoFactorOtp(reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const pendingCookie = twoFactorPendingCookieValue(headers);
+    const userId =
+      (await this.currentUserId(headers)) ??
+      (await this.twoFactorLockout?.resolvePendingUserId(pendingCookie));
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
+    }
+    await assertRateLimit(this.limiter, `send2faOtp:${userId}`, SEND_2FA_OTP_RATE_LIMIT);
+    // An account inside a lockout window cannot spend a code, so minting one only
+    // hands out fresh guesses - and, on `sms`, bills the operator for them.
+    await this.twoFactorLockout?.assertNotLocked(userId);
+    return { maskedDestination: await this.sendOtpForCurrentMethod(userId, headers, resHeaders) };
+  }
+
+  /** Whether a second factor is active, which method it uses, and where a code can go. */
+  async twoFactorStatus(reqHeaders: NodeHeaders): Promise<TwoFactorStatus> {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
+    }
+    const [row] = await this.drizzle.db
+      .select({
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        phoneVerified: user.phoneVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+        twoFactorMethod: user.twoFactorMethod,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!row) {
+      throw new UserNotFoundError(userId);
+    }
+    const enabled = row.twoFactorEnabled ?? false;
+    return {
+      enabled,
+      // The column outlives an abandoned enrolment, so an account that never cleared
+      // its first code must still read as having no active method.
+      method: enabled ? (row.twoFactorMethod ?? null) : null,
+      maskedEmail: maskEmail(row.email),
+      maskedPhone: row.phoneVerified && row.phoneNumber ? maskPhone(row.phoneNumber) : null,
+    };
+  }
+
+  /**
+   * Rejects a method the account cannot actually receive a code on. Enrolling into
+   * `sms` without a verified phone would mint a secret the player can never clear,
+   * locking them out of their own account at the next login.
+   */
+  private async assertMethodAvailable(
+    userId: User['id'],
+    method: TwoFactorDeliveryMethod,
+  ): Promise<void> {
+    if (method === 'app') {
+      return;
+    }
+    const [row] = await this.drizzle.db
+      .select({
+        emailVerified: user.emailVerified,
+        phoneNumber: user.phoneNumber,
+        phoneVerified: user.phoneVerified,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    // A code can only guard the account if the address it goes to is one the account
+    // has proven it holds. `registration.requireEmailVerification` is off by default,
+    // so an unverified or mistyped address would otherwise enrol and lock the player
+    // out at the next login - the same failure the phone check already prevents.
+    if (method === 'email' && !row?.emailVerified) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: 'Verify your email address before using email for two-factor authentication',
+      });
+    }
+    if (method === 'sms' && (!row?.phoneNumber || !row.phoneVerified)) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: 'Add and verify a phone number before using SMS for two-factor authentication',
+      });
+    }
+  }
+
+  /**
+   * The account's delivery method, defaulting to `app`: an enrolment that predates the
+   * column reads as null, and every one of those was an authenticator.
+   */
+  private async resolveTwoFactorMethod(userId: User['id']): Promise<TwoFactorDeliveryMethod> {
+    const [row] = await this.drizzle.db
+      .select({ twoFactorMethod: user.twoFactorMethod })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.twoFactorMethod ?? 'app';
+  }
+
+  private async isTwoFactorEnabled(userId: User['id']): Promise<boolean> {
+    const [row] = await this.drizzle.db
+      .select({ twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.twoFactorEnabled ?? false;
+  }
+
+  private async setTwoFactorMethod(
+    userId: User['id'],
+    method: TwoFactorDeliveryMethod | null,
+  ): Promise<void> {
+    await this.drizzle.db.update(user).set({ twoFactorMethod: method }).where(eq(user.id, userId));
+  }
+
+  private verifyChallengeCode(
+    method: TwoFactorChallengeMethod,
+    body: { code: string; trustDevice: boolean },
+    headers: Headers,
+  ): Promise<globalThis.Response> {
+    return verifyChallengeCode(this.api, method, body, headers);
+  }
+
+  private async sendOtpForCurrentMethod(
+    userId: User['id'],
+    headers: Headers,
+    resHeaders: Headers,
+  ): Promise<string> {
+    const destination = await this.twoFactorDelivery.describeDestination(userId);
+    if (!destination) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: 'This account does not receive two-factor codes by email or SMS',
+      });
+    }
+    const res = await this.api.sendTwoFactorOTP({ body: {}, headers, asResponse: true });
+    await ensureOk(res);
+    // A 200 here means the code was minted, not that it left the building: the send
+    // hook is wrapped in `.catch(logger.error)` upstream. Telling the player a code is
+    // on its way when the transport just failed strands them on a screen waiting for
+    // something that is never coming.
+    const failure = this.twoFactorDelivery.takeFailure(userId);
+    if (failure) {
+      throw new ORPCError('SERVICE_UNAVAILABLE', {
+        message: 'Could not send your verification code. Please try again.',
+        cause: failure,
+      });
+    }
+    this.forwardCookies(res, resHeaders);
+    return destination.masked;
   }
 
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
@@ -1255,14 +1497,12 @@ export class IdentityService {
     }
 
     // A backup code is a single-use recovery credential, not a second factor to bind a
-    // browser to: it clears the challenge but never buys the trust window.
+    // browser to: it clears the challenge but never buys the trust window. A pushed
+    // `otp` is a real factor and does, the same as a live authenticator code.
     const trustDevice =
-      input.trustDevice && input.method === 'totp' && this.trustedDevices !== undefined;
+      input.trustDevice && input.method !== 'backup_code' && this.trustedDevices !== undefined;
     const body = { code: input.code, trustDevice };
-    const res =
-      input.method === 'backup_code'
-        ? await this.api.verifyBackupCode({ body, headers, asResponse: true })
-        : await this.api.verifyTOTP({ body, headers, asResponse: true });
+    const res = await this.verifyChallengeCode(input.method, body, headers);
     if (!res.ok && challengedUserId) {
       await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
     }
@@ -1361,13 +1601,22 @@ export class IdentityService {
 
     await this.twoFactorLockout?.assertNotLocked(userId);
 
-    // Only a live authenticator earns the trust window - a backup code is a recovery
-    // credential and the schema never lets one reach this route.
-    const verified = await this.api.verifyTOTP({
-      body: { code: input.code, trustDevice: true },
-      headers: challengeHeaders,
-      asResponse: true,
-    });
+    // Authenticator accounts only. This route replays a fresh sign-in leg, and
+    // better-auth keys a pushed code by the pending-challenge cookie that leg mints -
+    // so an `email`/`sms` account has no code that can answer this challenge, and
+    // letting the call through would only spend its lockout budget on a credential it
+    // is impossible to present. Refusing says so instead of failing as a wrong code.
+    const challengeMethod = await resolveChallengeMethod(this.drizzle, userId);
+    if (challengeMethod !== 'totp') {
+      throw new ORPCError('CONFLICT', {
+        message: 'Trusting this device requires an authenticator app.',
+      });
+    }
+    const verified = await this.verifyChallengeCode(
+      challengeMethod,
+      { code: input.code, trustDevice: true },
+      challengeHeaders,
+    );
     if (!verified.ok) {
       await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
     }
@@ -1380,7 +1629,7 @@ export class IdentityService {
     this.events.emit('identity.2fa.verified', {
       userId,
       playerId,
-      method: 'totp',
+      method: challengeMethod,
       trustedDevice: true,
       ip,
       userAgent,
@@ -1411,11 +1660,11 @@ export class IdentityService {
     code: string,
   ): Promise<void> {
     await this.twoFactorLockout?.assertNotLocked(userId);
-    const res = await this.api.verifyTOTP({
-      body: { code, trustDevice: false },
+    const res = await this.verifyChallengeCode(
+      await resolveChallengeMethod(this.drizzle, userId),
+      { code, trustDevice: false },
       headers,
-      asResponse: true,
-    });
+    );
     if (!res.ok) {
       await this.twoFactorLockout?.recordFailure(userId, meta);
     }
@@ -1477,6 +1726,10 @@ export class IdentityService {
     }
     await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
 
+    // Read before the teardown clears it, so the audit trail records which method the
+    // account was actually protected by rather than a blank.
+    const disabledMethod = await resolveChallengeMethod(this.drizzle, userId);
+
     const res = await this.api.disableTwoFactor({
       body: { password: input.password },
       headers,
@@ -1484,6 +1737,7 @@ export class IdentityService {
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
+    await this.setTwoFactorMethod(userId, null);
 
     // Dropping the second factor takes every standing bypass with it, the same teardown
     // a Super Admin reset performs - a browser must not keep the access 2FA was guarding.
@@ -1493,7 +1747,7 @@ export class IdentityService {
     this.events.emit('identity.2fa.disabled', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      method: 'totp',
+      method: disabledMethod,
       ip,
       userAgent,
     });

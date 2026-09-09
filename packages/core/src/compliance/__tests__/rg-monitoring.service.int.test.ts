@@ -70,8 +70,8 @@ async function seedPlayer(userId: string, currency: string) {
   await db.drizzle.db.insert(player).values({ userId, currency, kycStatus: 'verified' });
 }
 
-const seedDeposit = (userId: string, amount: string, createdAt = new Date()) =>
-  seedCompletedDeposit(db, userId, amount, { createdAt });
+const seedDeposit = (userId: string, amount: string, backdatedTo?: Date) =>
+  seedCompletedDeposit(db, userId, amount, backdatedTo ? { createdAt: backdatedTo } : {});
 
 async function seedBet(userId: string, betAmount: string, winAmount = '0') {
   const [provider] = await db.drizzle.db

@@ -169,6 +169,14 @@ export function createIdentityRouter(
       ),
     ),
 
+    sendTwoFactorOtp: os.sendTwoFactorOtp.handler(({ context }) =>
+      identity.sendTwoFactorOtp(context.request.headers, context.resHeaders ?? new Headers()),
+    ),
+
+    twoFactorStatus: os.twoFactorStatus.handler(({ context }) =>
+      identity.twoFactorStatus(context.request.headers),
+    ),
+
     regenerateBackupCodes: os.regenerateBackupCodes.handler(({ input, context }) =>
       identity.regenerateBackupCodes(
         input,

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
-import type { GeoCheckCommands, PlayerProvisioning } from '@openora/core/contracts';
+import type { GeoCheckCommands, PlayerProvisioning, SmsAdapter } from '@openora/core/contracts';
 import { definePlatformConfig } from '@openora/core/contracts';
 import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
+import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
 
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
@@ -42,6 +43,10 @@ function makeService(overrides: Partial<IdentityServiceDeps> = {}) {
     platformConfig: registrationConfig,
     playerProvisioning: mock<PlayerProvisioning>({
       createForRegistration: vi.fn().mockResolvedValue({ created: true }),
+    }),
+    twoFactorDelivery: new TwoFactorDeliveryService({
+      drizzle,
+      sms: mock<SmsAdapter>({ sendOtp: vi.fn() }),
     }),
     ...overrides,
   });

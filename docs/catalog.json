@@ -304,6 +304,7 @@
         "identity.security.removeWithdrawalPin",
         "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
+        "identity.sendTwoFactorOtp",
         "identity.sessions.list",
         "identity.sessions.listAll",
         "identity.sessions.listMine",
@@ -311,6 +312,7 @@
         "identity.sessions.revokeAll",
         "identity.sessions.revokeMine",
         "identity.streamSession",
+        "identity.twoFactorStatus",
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.usernameAvailable",
@@ -2445,6 +2447,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "SendTwoFactorOtpResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SessionItemSchema",
       "file": "packages/core/src/pam/identity/contract/index.ts"
     },
@@ -2597,8 +2603,16 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "TwoFactorDeliveryMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TwoFactorMethodSchema",
       "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "TwoFactorStatusSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "UnblockCommandMetadataSchema",

@@ -50,11 +50,17 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
     expect(transition).toEqual({ playerId, previousStatus: 'pending' });
   });
 
-  it('is a silent no-op when the status is unchanged', async () => {
+  it('returns null and leaves the row alone when the status is unchanged', async () => {
     const writer = makeWriter();
     const { userId } = await seedPlayer({ kycStatus: 'verified' });
 
-    await writer.setStatus(userId, 'verified', { actorId: null, source: 'vendor' });
+    const transition = await writer.setStatus(userId, 'verified', {
+      actorId: null,
+      source: 'vendor',
+    });
+
+    expect(transition).toBeNull();
+    expect(await statusOf(userId)).toBe('verified');
   });
 
   it('throws PlayerNotFoundError for a user with no player profile and emits nothing', async () => {
