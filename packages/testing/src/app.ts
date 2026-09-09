@@ -69,61 +69,71 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   const serviceName = `test-${randomUUID()}`;
   let client: ReturnType<typeof createRedisClient> | undefined;
 
-  const created = await createApp(
-    {
-      plugins: [
-        {
-          id: 'testing-registration-config',
-          path: fileURLToPath(new URL('./test-registration-config-plugin.ts', import.meta.url)),
-        },
-        {
-          id: 'testing-email-capture',
-          path: fileURLToPath(new URL('./test-email-capture-plugin.ts', import.meta.url)),
-        },
-        ...config.plugins,
-      ],
-      ...(config.igaming ? { igaming: config.igaming } : {}),
-      databaseUrl: config.databaseUrl,
-      authSchema: { user, session, account, verification, twoFactor },
-    },
-    (container: Container<CoreTokenCatalog>) => {
-      const redis = createRedisClient(redisDatabase.url);
-      client = redis;
-      container.onDispose(() => redis.close());
+  let created;
+  try {
+    created = await createApp(
+      {
+        plugins: [
+          {
+            id: 'testing-registration-config',
+            path: fileURLToPath(new URL('./test-registration-config-plugin.ts', import.meta.url)),
+          },
+          {
+            id: 'testing-email-capture',
+            path: fileURLToPath(new URL('./test-email-capture-plugin.ts', import.meta.url)),
+          },
+          ...config.plugins,
+        ],
+        ...(config.igaming ? { igaming: config.igaming } : {}),
+        databaseUrl: config.databaseUrl,
+        authSchema: { user, session, account, verification, twoFactor },
+      },
+      (container: Container<CoreTokenCatalog>) => {
+        const redis = createRedisClient(redisDatabase.url);
+        client = redis;
+        container.onDispose(() => redis.close());
 
-      container.register(MESSAGE_BROKER, () => {
-        const broker = new RedisStreamsBroker(redis, { serviceName, startId: '0' });
-        container.onDispose(() => broker.close());
-        return broker;
-      });
-      container.register(JOB_QUEUE, () => {
-        const queue = new BullMqJobQueue(redisDatabase.url);
-        container.onDispose(() => queue.close());
-        return queue;
-      });
-      container.register(CACHE, () => new RedisCache(redis));
-      container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
-
-      if (!container.has(REALTIME_TRANSPORT)) {
-        container.register(REALTIME_TRANSPORT, () => {
-          const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
-          container.onDispose(() => transport.close());
-          return transport;
+        container.register(MESSAGE_BROKER, () => {
+          const broker = new RedisStreamsBroker(redis, { serviceName, startId: '0' });
+          container.onDispose(() => broker.close());
+          return broker;
         });
-      }
-      if (!container.has(REALTIME_CLIENT_AUTHORIZER)) {
-        container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
-      }
-    },
-  );
+        container.register(JOB_QUEUE, () => {
+          const queue = new BullMqJobQueue(redisDatabase.url);
+          container.onDispose(() => queue.close());
+          return queue;
+        });
+        container.register(CACHE, () => new RedisCache(redis));
+        container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
 
-  // `createRedisClient` fires connect() without awaiting it - right in production, where
-  // boot must not block on Redis, wrong for a test that issues its first request straight
-  // after this returns. The login limiter is `onUnavailable: 'deny'`, so a request that
-  // beats the handshake is answered with a fail-closed 429 rather than reaching the route.
-  // Only reproducible under load, which is exactly when the handshake is slowest.
-  if (client && !client.isReady) {
-    await once(client, 'ready', { signal: AbortSignal.timeout(REDIS_READY_TIMEOUT_MS) });
+        if (!container.has(REALTIME_TRANSPORT)) {
+          container.register(REALTIME_TRANSPORT, () => {
+            const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
+            container.onDispose(() => transport.close());
+            return transport;
+          });
+        }
+        if (!container.has(REALTIME_CLIENT_AUTHORIZER)) {
+          container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
+        }
+      },
+    );
+
+    // `createRedisClient` fires connect() without awaiting it - right in production, where
+    // boot must not block on Redis, wrong for a test that issues its first request straight
+    // after this returns. The login limiter is `onUnavailable: 'deny'`, so a request that
+    // beats the handshake is answered with a fail-closed 429 rather than reaching the route.
+    // Only reproducible under load, which is exactly when the handshake is slowest.
+    if (client && !client.isReady) {
+      await once(client, 'ready', { signal: AbortSignal.timeout(REDIS_READY_TIMEOUT_MS) });
+    }
+  } catch (err) {
+    // A half-booted app still owns a Postgres pool, Redis connections and the claimed
+    // logical database. Left behind, the next suite to claim that database inherits its
+    // keys, and the run leaks a connection per failed boot.
+    await created?.close();
+    await redisDatabase.release();
+    throw err;
   }
 
   return {
