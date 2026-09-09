@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { PageQuerySchema, paginated } from '../kit.js';
+import { PageQuerySchema, QueryBooleanSchema, createKebabSlugSchema, paginated } from '../kit.js';
 
 describe('PageQuerySchema', () => {
   it('defaults to page 1 / limit 100 when omitted', () => {
@@ -27,5 +27,28 @@ describe('paginated', () => {
   it('rejects a non-integer total', () => {
     const schema = paginated(z.string());
     expect(schema.safeParse({ items: [], total: 1.5, page: 1, limit: 100 }).success).toBe(false);
+  });
+});
+
+describe('QueryBooleanSchema', () => {
+  it("coerces 'true'/'false' query strings to booleans", () => {
+    expect(QueryBooleanSchema.parse('true')).toBe(true);
+    expect(QueryBooleanSchema.parse('false')).toBe(false);
+    expect(QueryBooleanSchema.parse(true)).toBe(true);
+  });
+});
+
+describe('createKebabSlugSchema', () => {
+  it('accepts kebab-case and rejects leading/trailing hyphens', () => {
+    const schema = createKebabSlugSchema(64);
+    expect(schema.parse('pragmatic-play')).toBe('pragmatic-play');
+    expect(schema.safeParse('-bad').success).toBe(false);
+    expect(schema.safeParse('bad-').success).toBe(false);
+    expect(schema.safeParse('Bad_Slug').success).toBe(false);
+  });
+
+  it('enforces the max length', () => {
+    const schema = createKebabSlugSchema(4);
+    expect(schema.safeParse('abcde').success).toBe(false);
   });
 });

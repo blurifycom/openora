@@ -32,6 +32,7 @@
     "copilot": ["rules", "mcp", "subagents", "commands", "skills", "hooks"],
     "codexcli": ["rules", "mcp", "subagents", "skills", "hooks", "permissions"],
     "antigravity-cli": ["rules", "mcp", "hooks", "skills"],
+    "opencode": ["rules", "mcp", "subagents", "commands", "skills", "hooks", "permissions"],
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed, and

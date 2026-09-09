@@ -361,6 +361,76 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  // Backoffice game-catalog management (actorId = acting admin UUID).
+  'gaming.provider.updated': authContextBase.extend({
+    providerId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorVendorId: z.string().nullable(),
+      logoUrl: z.string().nullable(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorVendorId: z.string().nullable(),
+      logoUrl: z.string().nullable(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.category.created': authContextBase.extend({
+    categoryId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    icon: z.string().nullable(),
+    sortOrder: z.number().int(),
+    isActive: z.boolean(),
+    actorId: UuidSchema.optional(),
+  }),
+  'gaming.category.updated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.game.updated': authContextBase.extend({
+    gameId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+  }),
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.
@@ -807,6 +877,12 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
   // v3: durationMonths added - the chosen term, explicit for the regulatory export.
   'rg.self_exclusion.activated': 4,
+  // v2: before/after carry the full config snapshot (isActive + all mutable fields)
+  // so visibility flips and renames are diffable in the audit log.
+  'gaming.provider.updated': 2,
+  'gaming.category.created': 2,
+  'gaming.category.updated': 2,
+  'gaming.game.updated': 2,
 };
 
 export function getEventVersion(event: string): number {

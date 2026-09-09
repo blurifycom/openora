@@ -9,7 +9,13 @@ import {
   walletTransaction,
   walletBonusCredit,
 } from '@openora/core/wallet/schema';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
   chatRoomMember,
@@ -425,7 +431,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(wallet);
   await db.delete(player);
   await db.delete(gameRound);
+  await db.delete(gameCategoryGame);
   await db.delete(game);
+  await db.delete(gameProvider);
+  await db.delete(gameCategory);
 
   const adminUser = await ensureUser(db, auth, {
     email: admin.email,
@@ -452,13 +461,65 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     log(`Chat moderator ready: ${moderator.email} / ${moderator.password}`);
   }
 
-  await db.insert(game).values(
-    GAMES.map(([name, provider, category]) => ({
-      name,
-      provider,
-      category,
-      isActive: true,
-    })),
+  const slugify = (value: string): string =>
+    value
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
+  const providerNames = [...new Set(GAMES.map(([, provider]) => provider))];
+  const providerRows = await db
+    .insert(gameProvider)
+    .values(
+      providerNames.map((name) => ({
+        slug: slugify(name),
+        name,
+        isActive: true,
+      })),
+    )
+    .returning();
+  const providerByName = new Map(providerRows.map((p) => [p.name, p.id]));
+  const categorySlugs = [...new Set(GAMES.map(([, , category]) => category))];
+  const categoryRows = await db
+    .insert(gameCategory)
+    .values(
+      categorySlugs.map((slug, idx) => ({
+        slug,
+        name: slug.charAt(0).toUpperCase() + slug.slice(1),
+        sortOrder: idx,
+        isActive: true,
+      })),
+    )
+    .returning();
+  const categoryBySlug = new Map(categoryRows.map((c) => [c.slug, c.id]));
+  const gameRows = await db
+    .insert(game)
+    .values(
+      GAMES.map(([name, provider, category]) => {
+        const providerId = providerByName.get(provider);
+        const categoryId = categoryBySlug.get(category);
+        if (!providerId || !categoryId) {
+          throw new Error(`seed: missing provider or category for game ${name}`);
+        }
+        return {
+          name,
+          slug: slugify(name),
+          providerId,
+          aggregator: 'everymatrix',
+          isActive: true,
+        };
+      }),
+    )
+    .returning();
+  const gameIdBySlug = new Map(gameRows.map((g) => [g.slug, g.id]));
+  await db.insert(gameCategoryGame).values(
+    GAMES.map(([name, , category]) => {
+      const gameId = gameIdBySlug.get(slugify(name));
+      const categoryId = categoryBySlug.get(category);
+      if (!gameId || !categoryId) {
+        throw new Error(`seed: missing game or category link for ${name}`);
+      }
+      return { gameId, categoryId };
+    }),
   );
   log(`Created ${GAMES.length} games.`);
 
