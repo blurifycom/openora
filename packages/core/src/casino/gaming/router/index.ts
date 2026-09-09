@@ -29,11 +29,13 @@ export function createGamingRouter(gaming: GamingService) {
           BAD_REQUEST: InsufficientBalanceError,
         },
         () =>
-          gaming.startRound({
-            userId: getUserId(context),
-            ...input,
-            ipAddress: context.clientMeta.ip,
-          }),
+          gaming.startRound(
+            getUserId(context),
+            input.gameId,
+            input.currency,
+            input.betAmount,
+            context.clientMeta.ip,
+          ),
       ),
     ),
 

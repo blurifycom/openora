@@ -108,34 +108,29 @@ export class GamingService {
     return toGame(record);
   }
 
-  async startRound(input: {
-    userId: User['id'];
-    gameId: Game['id'];
-    currency: string;
-    betAmount: string;
-    ipAddress: string | null;
-  }) {
-    const selectedGame = await this.getGame(input.gameId);
+  async startRound(
+    userId: User['id'],
+    gameId: Game['id'],
+    currency: string,
+    betAmount: string,
+    ipAddress: string | null = null,
+  ) {
+    const selectedGame = await this.getGame(gameId);
     if (!selectedGame.isActive) {
-      throw new GameNotFoundError(input.gameId);
+      throw new GameNotFoundError(gameId);
     }
 
-    if (await this.playEligibility.isRestricted(input.userId)) {
+    if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
-    const decision = await this.rgLimits?.checkWager(
-      this.drizzle.db,
-      input.userId,
-      input.betAmount,
-      input.currency,
-    );
+    const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
     if (decision && !decision.allowed) {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
     const geoDecision = await this.gameGeoCheck?.checkGame({
-      gameId: input.gameId,
-      ipAddress: input.ipAddress,
+      gameId,
+      ipAddress,
     });
     if (geoDecision && !geoDecision.allowed) {
       throw new GameGeoRestrictedError(geoDecision);
@@ -145,51 +140,47 @@ export class GamingService {
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the
       // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
-        userId: input.userId,
-        amount: input.betAmount,
-        currency: input.currency,
+        userId,
+        amount: betAmount,
+        currency,
         type: 'bet',
       });
       if (!outcome.ok) {
-        throw new InsufficientBalanceError(outcome.available, input.betAmount);
+        throw new InsufficientBalanceError(outcome.available, betAmount);
       }
       const insertedRound = findOneOrThrow(
         await tx
           .insert(gameRound)
           .values({
-            gameId: input.gameId,
-            userId: input.userId,
-            currency: input.currency,
-            betAmount: input.betAmount,
+            gameId,
+            userId,
+            currency,
+            betAmount,
             status: 'active',
           })
           .returning(),
-        new GameRoundNotFoundError(input.gameId),
+        new GameRoundNotFoundError(gameId),
       );
       return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
 
     for (const credit of completedBonusCredits) {
       this.events.emit('wallet.bonus_rollover.completed', {
-        userId: input.userId,
+        userId,
         creditId: credit.id,
         currency: credit.currency,
         creditedAmount: credit.creditedAmount,
       });
     }
 
-    const { launchUrl, token } = await this.provider.launchGame(
-      input.gameId,
-      input.userId,
-      input.currency,
-    );
+    const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
 
     this.events.emit('gaming.round.started', {
       roundId: round.id,
-      gameId: input.gameId,
-      userId: input.userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(input.userId),
-      currency: input.currency,
+      gameId,
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      currency,
     });
 
     return { roundId: round.id, launchUrl, token };

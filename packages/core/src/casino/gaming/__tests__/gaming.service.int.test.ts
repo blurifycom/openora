@@ -77,7 +77,7 @@ function startRound(
   currency: string,
   betAmount: string,
 ) {
-  return svc.startRound({ userId, gameId, currency, betAmount, ipAddress: '1.2.3.4' });
+  return svc.startRound(userId, gameId, currency, betAmount, '1.2.3.4');
 }
 
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
