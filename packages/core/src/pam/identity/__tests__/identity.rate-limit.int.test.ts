@@ -5,21 +5,30 @@ import type {
   IdentityReader,
   PlayerProvisioning,
   RateLimiterAdapter,
+  SmsAdapter,
 } from '@openora/core/contracts';
 import { definePlatformConfig } from '@openora/core/contracts';
 import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
+import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
 
 function withTemplateRenderer(
-  deps: Omit<IdentityServiceDeps, 'identityReader'> & {
+  deps: Omit<IdentityServiceDeps, 'identityReader' | 'twoFactorDelivery'> & {
     identityReader?: IdentityReader;
+    twoFactorDelivery?: IdentityServiceDeps['twoFactorDelivery'];
   },
 ) {
   return new IdentityService({
     playerProvisioning: mock<PlayerProvisioning>({ createForRegistration: vi.fn() }),
     ...deps,
     identityReader: deps.identityReader ?? makeIdentityReader(),
+    twoFactorDelivery:
+      deps.twoFactorDelivery ??
+      new TwoFactorDeliveryService({
+        drizzle: deps.drizzle,
+        sms: mock<SmsAdapter>({ sendOtp: vi.fn() }),
+      }),
   });
 }
 
@@ -195,7 +204,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
-      svc.enableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
+      svc.enableTwoFactor({ password: 'currentpw1', method: 'app' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 

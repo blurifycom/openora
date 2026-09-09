@@ -111,6 +111,9 @@ export const AUTHENTICATION_METHODS = [
   'email_verification',
   'phone',
   'totp',
+  // A delivered second-factor code (email or SMS) completes a sign-in exactly as `totp`
+  // does; the withheld-login challenge is the same flow with a different transport.
+  'otp',
   'backup_code',
 ] as const;
 export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);

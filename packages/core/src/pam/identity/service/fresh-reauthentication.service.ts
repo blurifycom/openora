@@ -4,14 +4,11 @@ import type { Auth, DrizzleService } from '@openora/core/server';
 import type { ClientMeta, User } from '@openora/core/contracts';
 import { account } from '../schema/index.js';
 import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
-
-type VerifyTotpApi = {
-  verifyTOTP(opts: {
-    body: { code: string; trustDevice: false };
-    headers: Headers;
-    asResponse: true;
-  }): Promise<Response>;
-};
+import {
+  resolveChallengeMethod,
+  verifyChallengeCode,
+  type TwoFactorVerifyApi,
+} from './two-factor-challenge.service.js';
 
 /**
  * Requires the account's standing password plus (when 2FA is enrolled) a fresh
@@ -63,22 +60,21 @@ export async function assertFreshReauthentication({
   }
   if (!totpCode) {
     throw new ORPCError('UNPROCESSABLE_CONTENT', {
-      message: 'An authenticator code is required.',
+      message: 'A second-factor code is required.',
     });
   }
 
   await twoFactorLockout?.assertNotLocked(userId);
-  // Library boundary: the base Auth API type omits endpoints contributed by the
-  // twoFactor plugin, but createAuth always installs that plugin for identity.
-  const api = auth.api as unknown as VerifyTotpApi;
-  const verification = await api.verifyTOTP({
-    body: { code: totpCode, trustDevice: false },
+  const api = auth.api as unknown as TwoFactorVerifyApi;
+  const verification = await verifyChallengeCode(
+    api,
+    await resolveChallengeMethod(drizzle, userId),
+    { code: totpCode, trustDevice: false },
     headers,
-    asResponse: true,
-  });
+  );
   if (!verification.ok) {
     await twoFactorLockout?.recordFailure(userId, meta);
-    throw new ORPCError('UNAUTHORIZED', { message: 'Invalid authenticator code.' });
+    throw new ORPCError('UNAUTHORIZED', { message: 'Invalid second-factor code.' });
   }
   await twoFactorLockout?.reset(userId);
 }

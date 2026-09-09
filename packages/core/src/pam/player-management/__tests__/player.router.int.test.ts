@@ -129,7 +129,7 @@ describe('player router update', () => {
 
     await expect(
       call(router.update, { playerId: seeded.id, username: 'new_player' }, { context: CTX }),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(audit.record).not.toHaveBeenCalled();
   });
 

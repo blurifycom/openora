@@ -436,18 +436,17 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
     expect(vipCount).toBe(1);
   });
 
-  it('re-emitting identity.user.login for a player with no dormant_high_roller/inactive tag does not throw', async () => {
+  it('re-emitting identity.user.login for a player with no dormant_high_roller/inactive tag leaves the tag set untouched', async () => {
     const email = `idem-login-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(app, { email: email });
+    const { userId, playerId } = await registerAndMaterializePlayer(app, { email: email });
+    const before = (await activeTagKeys(admin, playerId)).sort();
 
     const eventBus = app.container.get(EVENT_BUS);
     eventBus.emit('identity.user.login', { userId, playerId: null });
     eventBus.emit('identity.user.login', { userId, playerId: null });
 
-    // No assertion beyond "did not crash the process" - tryRemoveTag swallows
-    // TagAssignmentNotFoundError; give the async handlers a beat to run.
     await new Promise((r) => setTimeout(r, 300));
-    expect(true).toBe(true);
+    expect((await activeTagKeys(admin, playerId)).sort()).toEqual(before);
   });
 });
 
