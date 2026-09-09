@@ -2,6 +2,7 @@ CREATE TABLE "game_category" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" text NOT NULL,
 	"name" text NOT NULL,
+	"translations" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"icon" text,
 	"sort_order" integer DEFAULT 0 NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,

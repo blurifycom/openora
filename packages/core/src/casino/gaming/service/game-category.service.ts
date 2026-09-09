@@ -29,6 +29,7 @@ export function toCategorySummary(record: typeof gameCategory.$inferSelect) {
     id: record.id,
     slug: record.slug,
     name: record.name,
+    translations: record.translations ?? {},
     icon: record.icon,
     sortOrder: record.sortOrder,
   };
@@ -56,13 +57,14 @@ export class GameCategoryService {
         id: gameCategory.id,
         slug: gameCategory.slug,
         name: gameCategory.name,
+        translations: gameCategory.translations,
         icon: gameCategory.icon,
         sortOrder: gameCategory.sortOrder,
       })
       .from(gameCategory)
       .where(eq(gameCategory.isActive, true))
       .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
-    return rows;
+    return rows.map((row) => ({ ...row, translations: row.translations ?? {} }));
   }
 
   async listCategoriesAdmin({
@@ -106,6 +108,7 @@ export class GameCategoryService {
   async createCategory({
     slug,
     name,
+    translations,
     icon,
     sortOrder,
     actorId,
@@ -125,7 +128,13 @@ export class GameCategoryService {
         }
         const [created] = await tx
           .insert(gameCategory)
-          .values({ slug, name, icon: icon ?? null, sortOrder: sortOrder ?? 0 })
+          .values({
+            slug,
+            name,
+            translations: translations ?? {},
+            icon: icon ?? null,
+            sortOrder: sortOrder ?? 0,
+          })
           .returning();
         return created;
       });
@@ -139,6 +148,7 @@ export class GameCategoryService {
       categoryId: record.id,
       slug: record.slug,
       name: record.name,
+      translations: record.translations ?? {},
       icon: record.icon,
       sortOrder: record.sortOrder,
       isActive: record.isActive,
@@ -191,6 +201,7 @@ export class GameCategoryService {
       before: {
         slug: existing.slug,
         name: existing.name,
+        translations: existing.translations ?? {},
         icon: existing.icon,
         sortOrder: existing.sortOrder,
         isActive: existing.isActive,
@@ -198,6 +209,7 @@ export class GameCategoryService {
       after: {
         slug: updated.slug,
         name: updated.name,
+        translations: updated.translations ?? {},
         icon: updated.icon,
         sortOrder: updated.sortOrder,
         isActive: updated.isActive,

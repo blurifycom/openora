@@ -1707,11 +1707,27 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "GameCategoryNameSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GameCategorySchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "GameCategorySummarySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategorySummaryWithTranslationsSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategoryTranslationSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategoryTranslationsSchema",
       "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {

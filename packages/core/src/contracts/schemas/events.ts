@@ -6,6 +6,7 @@ import {
   TimestampSchema,
   UuidSchema,
 } from './common.js';
+import { GameCategoryTranslationsSchema } from './game.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -387,6 +388,7 @@ export const domainEventSchemas = {
     categoryId: UuidSchema,
     slug: z.string(),
     name: z.string(),
+    translations: GameCategoryTranslationsSchema.optional(),
     icon: z.string().nullable(),
     sortOrder: z.number().int(),
     isActive: z.boolean(),
@@ -398,6 +400,7 @@ export const domainEventSchemas = {
     before: z.object({
       slug: z.string(),
       name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
       icon: z.string().nullable(),
       sortOrder: z.number().int(),
       isActive: z.boolean(),
@@ -405,6 +408,7 @@ export const domainEventSchemas = {
     after: z.object({
       slug: z.string(),
       name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
       icon: z.string().nullable(),
       sortOrder: z.number().int(),
       isActive: z.boolean(),

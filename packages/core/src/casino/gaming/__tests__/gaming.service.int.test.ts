@@ -175,14 +175,21 @@ describe('GamingService lobby (real PG)', () => {
   });
 
   it('getGame returns the row for a known id and 404s an unknown one', async () => {
-    const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
+    const table = await seedCategory({
+      slug: 'table-games',
+      name: 'Table Games',
+      translations: { DE: { name: 'Tischspiele' } },
+    });
     const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack' });
     const created = await seedGame({ name: 'Roulette' }, [table.id, blackjack.id]);
     const svc = makeService();
 
     expect(await svc.getGame(created.id)).toMatchObject({
       name: 'Roulette',
-      categories: [{ slug: 'blackjack' }, { slug: 'table-games' }],
+      categories: [
+        { slug: 'blackjack', translations: {} },
+        { slug: 'table-games', translations: { DE: { name: 'Tischspiele' } } },
+      ],
     });
     await expect(svc.getGame('00000000-0000-0000-0000-000000000000')).rejects.toBeInstanceOf(
       GameNotFoundError,

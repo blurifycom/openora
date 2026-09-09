@@ -173,6 +173,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "translations": {
+          "name": "translations",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
         "icon": {
           "name": "icon",
           "type": "text",

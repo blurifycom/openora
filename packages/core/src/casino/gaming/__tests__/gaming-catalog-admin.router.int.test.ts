@@ -169,7 +169,7 @@ describe('gaming catalog router authz', () => {
       { slug: 'acme' },
     ]);
     await expect(call(router.listCategories, {}, { context: CTX })).resolves.toMatchObject([
-      { slug: 'slots' },
+      { slug: 'slots', translations: {} },
     ]);
     await expect(call(router.getGame, { id: g!.id }, { context: CTX })).resolves.toMatchObject({
       name: 'Aces',
@@ -186,10 +186,26 @@ describe('gaming catalog router authz', () => {
 
     const created = await call(
       router.createCategory,
-      { slug: 'table-games', name: 'Table Games' },
+      {
+        slug: 'table-games',
+        name: 'Table Games',
+        translations: { DE: { name: 'Tischspiele' } },
+      },
       { context: CTX },
     );
-    expect(created).toMatchObject({ slug: 'table-games', sortOrder: 0 });
+    expect(created).toMatchObject({
+      slug: 'table-games',
+      sortOrder: 0,
+      translations: { DE: { name: 'Tischspiele' } },
+    });
+
+    await expect(
+      call(
+        router.updateCategory,
+        { id: created.id, translations: { FR: { name: 'Jeux de table' } } },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ translations: { FR: { name: 'Jeux de table' } } });
 
     const [provider] = await db.drizzle.db
       .insert(gameProvider)

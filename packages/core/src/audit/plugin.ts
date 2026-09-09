@@ -736,6 +736,7 @@ export async function mapEventToRecord(
       after: {
         slug: p['slug'] ?? null,
         name: p['name'] ?? null,
+        translations: p['translations'] ?? {},
         icon: p['icon'] ?? null,
         sortOrder: p['sortOrder'] ?? null,
         isActive: p['isActive'] ?? null,

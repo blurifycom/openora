@@ -12,7 +12,13 @@ import {
   uniqueIndex,
   jsonb,
 } from 'drizzle-orm/pg-core';
-import { GAME_TYPES, MONEY_PRECISION, MONEY_SCALE } from '@openora/core/contracts';
+import {
+  GameCategoryTranslationsSchema,
+  GAME_TYPES,
+  MONEY_PRECISION,
+  MONEY_SCALE,
+} from '@openora/core/contracts';
+import { zodJsonb } from '@openora/core/server';
 import { GAME_ROUND_STATUSES } from '../contract/index.js';
 
 // Derives from the contract tuple so the Zod schema and DB enum can never drift.
@@ -51,6 +57,9 @@ export const gameCategory = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     slug: text().notNull(),
     name: text().notNull(),
+    translations: zodJsonb(GameCategoryTranslationsSchema, 'game_category.translations')()
+      .notNull()
+      .default({}),
     icon: text(),
     sortOrder: integer().notNull().default(0),
     isActive: boolean().notNull().default(true),

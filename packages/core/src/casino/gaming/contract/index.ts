@@ -2,7 +2,9 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CurrencyCodeSchema,
-  GameCategorySummarySchema,
+  GameCategoryNameSchema,
+  GameCategorySummaryWithTranslationsSchema,
+  GameCategoryTranslationsSchema,
   GameProviderSummarySchema,
   GameTypeSchema,
   IdInputSchema,
@@ -18,6 +20,8 @@ import {
 export { GameTypeSchema } from '@openora/core/contracts';
 export { GameProviderSummarySchema } from '@openora/core/contracts';
 export { GameCategorySummarySchema } from '@openora/core/contracts';
+export { GameCategorySummaryWithTranslationsSchema } from '@openora/core/contracts';
+export { GameCategoryTranslationsSchema } from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
@@ -30,7 +34,7 @@ export const GameSchema = z.object({
   provider: GameProviderSummarySchema,
   // Source channel code (eg 'eventmatrix'); 'direct' = directly integrated.
   aggregator: z.string(),
-  categories: z.array(GameCategorySummarySchema),
+  categories: z.array(GameCategorySummaryWithTranslationsSchema),
   gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),
@@ -117,7 +121,7 @@ export const gamingContract = {
 
   listCategories: oc
     .route({ method: 'GET', path: '/gaming/categories' })
-    .output(z.array(GameCategorySummarySchema)),
+    .output(z.array(GameCategorySummaryWithTranslationsSchema)),
 };
 
 // Backoffice catalog management (game-config guarded in the router).
@@ -135,7 +139,7 @@ export type GameProviderDetail = z.infer<typeof GameProviderDetailSchema>;
 // Alias kept for existing imports; new code uses GameProviderDetailSchema.
 export const GameProviderSchema = GameProviderDetailSchema;
 
-export const GameCategoryDetailSchema = GameCategorySummarySchema.extend({
+export const GameCategoryDetailSchema = GameCategorySummaryWithTranslationsSchema.extend({
   isActive: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -165,7 +169,8 @@ export type UpdateProviderInput = z.infer<typeof UpdateProviderInputSchema>;
 
 export const CreateCategoryInputSchema = z.object({
   slug: CatalogSlugSchema,
-  name: z.string().trim().min(1).max(128),
+  name: GameCategoryNameSchema,
+  translations: GameCategoryTranslationsSchema.optional(),
   icon: z.string().trim().min(1).max(512).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
 });
@@ -174,7 +179,8 @@ export type CreateCategoryInput = z.infer<typeof CreateCategoryInputSchema>;
 export const UpdateCategoryInputSchema = z.object({
   id: UuidSchema,
   slug: CatalogSlugSchema.optional(),
-  name: z.string().trim().min(1).max(128).optional(),
+  name: GameCategoryNameSchema.optional(),
+  translations: GameCategoryTranslationsSchema.optional(),
   icon: z.string().trim().min(1).max(512).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
   isActive: z.boolean().optional(),

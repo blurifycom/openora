@@ -96,6 +96,7 @@ function toGame(row: {
       id: c.id,
       slug: c.slug,
       name: c.name,
+      translations: c.translations ?? {},
       icon: c.icon,
       sortOrder: c.sortOrder,
     })),

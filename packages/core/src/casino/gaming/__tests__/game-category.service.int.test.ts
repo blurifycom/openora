@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -70,6 +70,7 @@ describe('GameCategoryService (real PG)', () => {
       icon: null,
       sortOrder: 0,
       isActive: true,
+      translations: {},
     });
     expect(emittedTopics(events)).toContain('gaming.category.created');
   });
@@ -108,6 +109,42 @@ describe('GameCategoryService (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
+  });
+
+  it('replaces, preserves, and clears the full translations map', async () => {
+    const created = await seedCategory({
+      slug: 'slots',
+      name: 'Slots',
+      translations: { DE: { name: 'Automaten' }, FR: { name: 'Machines à sous' } },
+    });
+    const { svc } = makeService();
+
+    const replaced = await svc.updateCategory({
+      id: created.id,
+      translations: { DE: { name: 'Spielautomaten' } },
+      ...NO_CLIENT_META,
+    });
+    expect(replaced.translations).toEqual({ DE: { name: 'Spielautomaten' } });
+
+    const renamed = await svc.updateCategory({
+      id: created.id,
+      name: 'Slot Machines',
+      ...NO_CLIENT_META,
+    });
+    expect(renamed.translations).toEqual({ DE: { name: 'Spielautomaten' } });
+
+    const cleared = await svc.updateCategory({
+      id: created.id,
+      translations: {},
+      ...NO_CLIENT_META,
+    });
+    expect(cleared.translations).toEqual({});
+
+    const [stored] = await db.drizzle.db
+      .select({ translations: gameCategory.translations })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, created.id));
+    expect(stored?.translations).toEqual({});
   });
 
   it('getCategory 404s an unknown id', async () => {

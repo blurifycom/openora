@@ -58,6 +58,29 @@ describe('mapEventToRecord: cms.banner.schedule.updated', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.category.created', () => {
+  it('includes category translations in the audited snapshot', async () => {
+    const categoryId = '55555555-5555-4555-8555-555555555555';
+    const row = await mapEventToRecord('gaming.category.created', {
+      categoryId,
+      slug: 'table-games',
+      name: 'Table Games',
+      translations: { DE: { name: 'Tischspiele' } },
+      icon: null,
+      sortOrder: 0,
+      isActive: true,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      after: { translations: { DE: { name: 'Tischspiele' } } },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 
