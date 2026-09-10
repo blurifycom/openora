@@ -725,6 +725,22 @@ describe('IdentityService - trusted device login (real PG)', () => {
     expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
   });
 
+  it('challenges a live trusted device while the account requires 2FA every login', async () => {
+    const account = await seedUser({ requireTwoFactorOnLogin: true });
+    const trustedDevices = makeTrustedDevices();
+    await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+    honourTrustCookie(account.id);
+    const svc = buildService({ trustedDevices });
+
+    const result = await svc.login(
+      { email: EMAIL, password: 'rightpass1' },
+      trustedHeaders,
+      new Headers(),
+    );
+
+    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
+  });
+
   it('challenges a device whose cookie was replayed from another browser', async () => {
     const account = await seedUser();
     const trustedDevices = makeTrustedDevices();

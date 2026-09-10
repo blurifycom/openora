@@ -787,6 +787,32 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.auto_logout.updated') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { autoLogoutDuration: p['previousDuration'] ?? null },
+      after: { autoLogoutDuration: p['duration'] ?? null },
+    };
+  }
+
+  if (topic === 'identity.security.require_two_factor.updated') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { requireTwoFactorOnLogin: p['previousEnabled'] ?? null },
+      after: { requireTwoFactorOnLogin: p['enabled'] ?? null },
+    };
+  }
+
   if (topic === 'identity.security.withdrawal_pin.set') {
     const playerId = p['playerId'];
     return {
@@ -876,6 +902,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.email.verified',
   'identity.phone.verified',
   'identity.security.login_withdrawal_alerts.updated',
+  'identity.security.auto_logout.updated',
+  'identity.security.require_two_factor.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
   'identity.profile.updated',

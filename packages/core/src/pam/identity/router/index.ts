@@ -100,6 +100,14 @@ export function createIdentityRouter(
         identity.setLoginWithdrawalAlerts(input, context.request.headers),
       ),
 
+      autoLogout: os.security.autoLogout.handler(({ input, context }) =>
+        identity.setAutoLogoutDuration(input, context.request.headers),
+      ),
+
+      requireTwoFactorOnLogin: os.security.requireTwoFactorOnLogin.handler(({ input, context }) =>
+        identity.setRequireTwoFactorOnLogin(input, context.request.headers),
+      ),
+
       setWithdrawalPin: os.security.setWithdrawalPin.handler(({ input, context }) =>
         withdrawalPin.set(getUserId(context), input, context.request.headers, context.clientMeta),
       ),

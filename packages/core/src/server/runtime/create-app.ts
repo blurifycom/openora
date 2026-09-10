@@ -41,6 +41,7 @@ import {
   type IgamingConfig,
   PLATFORM_CONFIG,
   PLAYER_ACTIVITY_TRACKER,
+  SESSION_IDLE_POLICY,
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
@@ -463,7 +464,18 @@ export async function createApp(
       return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
     }
 
-    const { userId } = resolved;
+    const { userId, sessionId } = resolved;
+
+    // The player's "auto-logout when inactive" window. Checked before the session is
+    // published onto the context, so an idled-out request falls through to the
+    // unauthenticated path above rather than being served and 401ing somewhere deeper.
+    if (sessionId && container.has(SESSION_IDLE_POLICY)) {
+      const state = await container.get(SESSION_IDLE_POLICY).touch(userId, sessionId);
+      if (state === 'expired') {
+        return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
+      }
+    }
+
     context.auth = resolved;
 
     if (container.has(PLAYER_ACTIVITY_TRACKER)) {

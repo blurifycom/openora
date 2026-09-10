@@ -17,7 +17,11 @@ import {
 import { TagKeySchema } from './tag.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
-import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
+import {
+  AutoLogoutDurationSchema,
+  RegistrationFailureReasonSchema,
+  UsernameSchema,
+} from './identity.js';
 import {
   KycStatusSchema,
   KycStatusSourceSchema,
@@ -259,6 +263,18 @@ export const domainEventSchemas = {
     previousPhoneVerified: z.boolean(),
   }),
   'identity.security.login_withdrawal_alerts.updated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    previousEnabled: z.boolean(),
+    enabled: z.boolean(),
+  }),
+  'identity.security.auto_logout.updated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    previousDuration: AutoLogoutDurationSchema,
+    duration: AutoLogoutDurationSchema,
+  }),
+  'identity.security.require_two_factor.updated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     previousEnabled: z.boolean(),

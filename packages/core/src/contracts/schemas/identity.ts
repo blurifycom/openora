@@ -217,6 +217,23 @@ export const Disable2faInputSchema = z.object({
   code: TotpStepUpCodeSchema,
 });
 
+// How long a session may sit idle before it is cut. `never` disables the idle check
+// only - it does not extend a session past better-auth's absolute expiry, which this
+// setting never touches, so `30d` and `never` coincide in practice today.
+export const AUTO_LOGOUT_DURATIONS = ['15m', '1h', '24h', '7d', '30d', 'never'] as const;
+export const AutoLogoutDurationSchema = z.enum(AUTO_LOGOUT_DURATIONS);
+export type AutoLogoutDuration = z.infer<typeof AutoLogoutDurationSchema>;
+
+// The window behind each option, in minutes. `never` has none.
+export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number | null> = {
+  '15m': 15,
+  '1h': 60,
+  '24h': 24 * 60,
+  '7d': 7 * 24 * 60,
+  '30d': 30 * 24 * 60,
+  never: null,
+};
+
 export const SecurityControlsSchema = z.object({
   passwordMeetsPolicy: z.boolean(),
   emailVerified: z.boolean(),
@@ -225,9 +242,17 @@ export const SecurityControlsSchema = z.object({
   twoFactorEnabled: z.boolean(),
   loginWithdrawalAlertsEnabled: z.boolean(),
   withdrawalPinSet: z.boolean(),
+  autoLogoutDuration: AutoLogoutDurationSchema,
+  // When set, a trusted device buys nothing: the second factor is asked for on every
+  // login regardless of how recently this browser cleared one.
+  requireTwoFactorOnLogin: z.boolean(),
 });
 
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
+
+export const SetAutoLogoutInputSchema = z.object({ duration: AutoLogoutDurationSchema });
+
+export const SetRequireTwoFactorOnLoginInputSchema = z.object({ enabled: z.boolean() });
 
 export const WithdrawalPinSchema = z.string().regex(/^[0-9]{4}$/);
 
@@ -344,6 +369,8 @@ export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSche
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
 export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
 export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
+export type SetAutoLogoutInput = z.infer<typeof SetAutoLogoutInputSchema>;
+export type SetRequireTwoFactorOnLoginInput = z.infer<typeof SetRequireTwoFactorOnLoginInputSchema>;
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
