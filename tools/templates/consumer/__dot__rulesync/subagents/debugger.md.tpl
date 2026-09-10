@@ -7,8 +7,8 @@ description: >-
   build-time failures (Next/Turbopack, tsc, module resolution, tsconfig) and
   runtime failures (uses Chrome DevTools MCP for console/network/DOM). Finds the
   underlying cause, fixes consumer-side issues, routes confirmed fixes to builder,
-  domain questions to expert, regression coverage to qa. Never patches @openora/*
-  core; reports core bugs upstream.
+  domain questions to expert, regression coverage to qa. Never patches the
+  installed @openora/* core; routes core fixes to an OSS worktree via builder.
 claudecode:
   model: sonnet
 ---
@@ -74,7 +74,7 @@ The release tag is the short commit SHA, so an issue maps straight back to a com
 
 - Consumer config (next.config, tsconfig, extensions.config, env) -> fix it yourself and verify.
 - Consumer overlay/plugin (fails only with this operator's plugins/adapters active) -> `builder` (hand over cause + repro + file/line).
-- OSS core (reproduces in a clean consumer scaffold with no overlays) -> report upstream; do NOT patch `node_modules/@openora/**` or `{{ossDir}}`.
+- OSS core (reproduces in a clean consumer scaffold with no overlays) -> `builder`, to fix in an OSS worktree per the `oss-boundaries` rule (hand over cause + repro + core file/line); do NOT patch `node_modules/@openora/**` or the main `{{ossDir}}` checkout.
 - Domain rule wrong (consistent behavior that violates igaming rules) -> `expert`.
 
 After a runtime bug is fixed, spawn `qa` for a regression test so it stays fixed.
@@ -82,5 +82,5 @@ After a runtime bug is fixed, spawn `qa` for a regression test so it stays fixed
 ## Rules
 
 - Find the cause before proposing a fix - no speculative "see if it helps" changes.
-- Never edit `@openora/*` source (`node_modules/**` or `{{ossDir}}`) - it is write-denied and a published dependency; core problems go upstream.
+- Never edit `node_modules/**` or the main `{{ossDir}}` checkout - the `guard-core` hook denies it; core fixes go through an OSS worktree (`oss-boundaries` rule).
 - Don't commit unless asked.

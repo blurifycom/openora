@@ -78,6 +78,10 @@ The orchestrator may run the tests of a touched module, never the full gate.
 - A missing hop, an unfiltered query, a write outside the transaction, a caller that no longer holds, or an unsafe migration is a BLOCK.
 - A hop that could not be traced is a finding, not a silent pass.
 
+### Paired consumer change
+
+A consumer that builds on this repo may pair a PR here with a change of its own (same branch name). The consumer-side review covers both diffs and the contract between them. Here, judge the public surface: a changed export, route, event payload, or config field that breaks existing consumers is a BLOCK unless the PR's Risks section states the migration.
+
 ## Evidence gate
 
 - Every BLOCK or WARN cites a concrete `file:line`, trigger path, and rule or ADR.
