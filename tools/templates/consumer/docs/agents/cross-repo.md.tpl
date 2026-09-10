@@ -5,6 +5,9 @@ Some changes need both repos: an OSS core change plus this repo's adaptation to 
 ## Conventions
 
 - **OSS code is changed only in a worktree**: `pnpm oss:worktree <branch>` creates or reuses `{{ossDir}}/.worktrees/<branch, / as +>` and installs its dependencies. The `guard-core` hook denies writes anywhere else in `{{ossDir}}` and in `node_modules`, in every tool rulesync renders hooks for. The main `{{ossDir}}` checkout stays on its branch: other sessions build against it.
+- **Core gets generic changes only**: before touching core, state why it cannot live here and why another operator would want it. Operator-specific behavior stays here; core gets only the seam.
+- **In place means small**: bug fixes, missing exports, contract alignment. New core features go to a session rooted in the OSS repo (`handoff` skill).
+- **Review before push**: `pnpm -C <worktree> verify`, then the OSS repo's own review workflow and its contract checklist on the worktree diff.
 - **Same branch name in both repos** pairs the two requests. Skills find the OSS half from this repo's branch.
 - **No links between the requests**: the shared branch name is the pairing. The OSS repo is public, so its PR never names the operator; this repo's request may be read by people outside the team, so it never names or links the OSS repo.
 - **Run against the change**: `pnpm oss:worktree <branch> --link` points `pnpm link:oss` at the worktree; `pnpm link:oss` alone restores the main checkout.

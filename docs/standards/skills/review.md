@@ -80,7 +80,7 @@ The orchestrator may run the tests of a touched module, never the full gate.
 
 ### Paired consumer change
 
-A consumer that builds on this repo may pair a PR here with a change of its own (same branch name). The consumer-side review covers both diffs and the contract between them. Here, judge the public surface: a changed export, route, event payload, or config field that breaks existing consumers is a BLOCK unless the PR's Risks section states the migration.
+A consumer that builds on this repo may pair a PR here with a change of its own (same branch name). The consumer-side review covers both diffs and the contract between them. Here, judge the public surface: a changed export, route, event payload, or config field that breaks existing consumers is a BLOCK unless the PR's Risks section states the migration. Judge genericity too: core that encodes one operator's behavior (a jurisdiction rule, a vendor, a limit or flow only one operator needs) instead of a seam other operators can bind is a BLOCK.
 
 ## Evidence gate
 

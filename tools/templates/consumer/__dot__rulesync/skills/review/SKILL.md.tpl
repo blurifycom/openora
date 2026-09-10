@@ -67,6 +67,9 @@ No match: write `no paired OSS change` in the report and move on.
 
 - Every export, route, event payload, config field, or table the OSS diff changes: `git grep -w` it in this repo and confirm each use still compiles and still means the same thing. A consumer caller that no longer holds is a `[BLOCK]`.
 - Every consumer change that relies on the OSS change (a new export, a changed signature or behavior) is matched in the OSS diff. Consumer code relying on OSS behavior the diff does not ship is a `[BLOCK]`.
+- Genericity: OSS code that encodes this operator's behavior - a jurisdiction rule, a vendor, a limit or flow only this repo needs - instead of a seam (adapter token, event, config field, hook) is a `[BLOCK]`; the behavior moves here and core keeps the seam. An OSS PR whose Why does not say why the change cannot live in the consumer is a `[WARN]`.
+- Scope: a new core feature or module made in place, rather than in a session rooted in the OSS repo, is a `[WARN]` citing the `oss-boundaries` rule.
+- Public record: operator names, internal URLs, ticket text, or operator-specific domain detail in the OSS commits or PR is a `[BLOCK]`.
 - Release order: a consumer request that needs the OSS change can merge only once the `@openora/*` pin points at a canary that carries it. Say so in the report when the pin is older.
 - When a trace needs runtime proof: `pnpm oss:worktree <branch> --link`, run the touched tests, then `pnpm link:oss` to restore the main checkout link.
 
