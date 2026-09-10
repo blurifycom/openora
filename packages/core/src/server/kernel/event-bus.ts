@@ -67,8 +67,6 @@ export function createEventBus(
   logger: Logger = createLogger('event-bus'),
   outbox?: OutboxWriter,
 ): EventBus {
-  // Parse a payload against its domain-event schema. On failure, logs under `failureMessage`
-  // and returns the payload untouched - a schema lag must not silently drop an event.
   function parseKnownPayload(event: string, payload: unknown, failureMessage: string): unknown {
     if (!isKnownEvent(event)) {
       return payload;
@@ -90,9 +88,6 @@ export function createEventBus(
     );
   }
 
-  // A legacy envelope can sit in the durable broker's backlog when a consumer deploys a
-  // newer schema (ADR-0016 forward-compat). Parsing inbound payloads applies schema
-  // `.default()`s so a field added since reaches handlers as its default, not `undefined`.
   function normalizeInbound(event: string, payload: unknown): unknown {
     return parseKnownPayload(event, payload, 'inbound event payload failed validation');
   }

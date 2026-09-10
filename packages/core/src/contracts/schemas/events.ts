@@ -40,9 +40,6 @@ const cmsBannerConfigurationEventBase = z
 const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
-// URLs this row stopped referencing, for a consumer that owns the object storage behind
-// them; does not account for another row reusing the same URL. Defaulted so a pre-upgrade
-// payload in the broker backlog still parses during a rolling deployment.
 const droppedImageUrlsSchema = z.array(z.url()).default([]);
 const cmsBannerScheduleEventBase = z
   .object({

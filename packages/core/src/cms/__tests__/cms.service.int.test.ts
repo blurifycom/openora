@@ -1074,6 +1074,41 @@ describe('CmsService banner events carry the image URLs they drop (real PG)', ()
     expect(lastPayload(events)?.['droppedImageUrls']).toHaveLength(4);
   });
 
+  it('excludes URLs a different configuration still references after a cascade', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/shared-cascade.png');
+    const deletedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const retainedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: deletedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/unique-cascade.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: retainedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/retained-cascade.png'),
+        mobileImageUrl: sharedUrl,
+      },
+      ADMIN_ID,
+    );
+
+    await svc.deleteConfiguration(deletedConfig.id, ADMIN_ID);
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual([imageUrl('/unique-cascade.png')]);
+  });
+
   it('drops nothing when an image is set for the first time', async () => {
     const { svc, events } = makeService();
     const config = await svc.createConfiguration(
@@ -1121,6 +1156,84 @@ describe('CmsService banner events carry the image URLs they drop (real PG)', ()
     );
 
     expect(lastPayload(events)).toMatchObject({ droppedImageUrls: [imageUrl('/old-d.png')] });
+  });
+
+  it('excludes an overwritten URL another configuration still references', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/shared-overwrite.png');
+    const updatedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const retainedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: updatedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/unique-overwrite.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: retainedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/retained-overwrite.png'),
+      },
+      ADMIN_ID,
+    );
+
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: updatedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/new-overwrite-d.png'),
+        mobileImageUrl: imageUrl('/new-overwrite-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual([imageUrl('/unique-overwrite.png')]);
+  });
+
+  it('excludes a deleted image URL another configuration still references', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/shared-delete.png');
+    const deletedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const retainedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const deletedImage = await svc.setBannerImage(
+      {
+        bannerConfigurationId: deletedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/unique-delete.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: retainedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/retained-delete.png'),
+        mobileImageUrl: sharedUrl,
+      },
+      ADMIN_ID,
+    );
+
+    await svc.deleteBannerImage(deletedImage.id, ADMIN_ID);
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual([imageUrl('/unique-delete.png')]);
   });
 
   it('serializes concurrent writes so the overwritten write is reported', async () => {

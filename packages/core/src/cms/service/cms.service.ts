@@ -11,7 +11,7 @@ import {
   withAdvisoryXactLock,
 } from '@openora/core/server';
 import type { CacheAdapter, ClientMeta, User, Uuid } from '@openora/core/contracts';
-import { eq, ne, and, asc, desc, isNotNull, inArray, sql, gt, lt, gte, lte } from 'drizzle-orm';
+import { eq, ne, and, or, asc, desc, isNotNull, inArray, sql, gt, lt, gte, lte } from 'drizzle-orm';
 import {
   page as pageTable,
   bannerConfiguration as bannerConfigurationTable,
@@ -74,6 +74,29 @@ const publicBannerCacheKey = (placement: string, locale: string) =>
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 const bannerConfigurationMutationLockKey = (bannerConfigurationId: Uuid) =>
   `cms:banner-configuration:${bannerConfigurationId}`;
+
+async function unreferencedBannerImageUrls(tx: DrizzleTx, candidates: string[]) {
+  const uniqueCandidates = [...new Set(candidates)];
+  if (uniqueCandidates.length === 0) {
+    return [];
+  }
+  const references = await tx
+    .select({
+      desktopImageUrl: bannerImageTable.desktopImageUrl,
+      mobileImageUrl: bannerImageTable.mobileImageUrl,
+    })
+    .from(bannerImageTable)
+    .where(
+      or(
+        inArray(bannerImageTable.desktopImageUrl, uniqueCandidates),
+        inArray(bannerImageTable.mobileImageUrl, uniqueCandidates),
+      ),
+    );
+  const referencedUrls = new Set(
+    references.flatMap((reference) => [reference.desktopImageUrl, reference.mobileImageUrl]),
+  );
+  return uniqueCandidates.filter((url) => !referencedUrls.has(url));
+}
 
 function toPage(record: {
   id: string;
@@ -509,8 +532,6 @@ export class CmsService {
         if (schedule) {
           throw new BannerConfigurationHasScheduleError();
         }
-        // Read the image rows while they still exist: the delete below cascades them
-        // away and nothing afterwards can recover the URLs they held.
         const images = await tx
           .select({
             desktopImageUrl: bannerImageTable.desktopImageUrl,
@@ -520,7 +541,10 @@ export class CmsService {
           .where(eq(bannerImageTable.bannerConfigurationId, id));
         // Cascades to banner_image rows via the FK's onDelete: 'cascade'.
         await tx.delete(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id));
-        return images.flatMap((image) => [image.desktopImageUrl, image.mobileImageUrl]);
+        return unreferencedBannerImageUrls(
+          tx,
+          images.flatMap((image) => [image.desktopImageUrl, image.mobileImageUrl]),
+        );
       }),
     );
     this.events.emit('cms.banner.configuration.deleted', {
@@ -649,9 +673,6 @@ export class CmsService {
             new BannerConfigurationNotFoundError(input.bannerConfigurationId),
           );
 
-          // The upsert below overwrites whatever already sits in this (configuration,
-          // sortOrder, locale) slot. Read it under the configuration lock so concurrent
-          // image and configuration mutations cannot make the event name a stale row.
           const [replaced] = await tx
             .select({
               desktopImageUrl: bannerImageTable.desktopImageUrl,
@@ -666,7 +687,7 @@ export class CmsService {
               ),
             );
           const retained = new Set([input.desktopImageUrl, input.mobileImageUrl]);
-          const droppedImageUrls = replaced
+          const droppedImageUrlCandidates = replaced
             ? [replaced.desktopImageUrl, replaced.mobileImageUrl].filter(
                 (url) => !retained.has(url),
               )
@@ -699,6 +720,7 @@ export class CmsService {
             new BannerConfigurationNotFoundError(input.bannerConfigurationId),
           );
 
+          const droppedImageUrls = await unreferencedBannerImageUrls(tx, droppedImageUrlCandidates);
           return { configuration, record, droppedImageUrls };
         },
       ),
@@ -724,39 +746,45 @@ export class CmsService {
     actorId: User['id'],
     meta?: ClientMeta,
   ): Promise<{ success: true }> {
-    const { existing, configuration } = await this.drizzle.db.transaction(async (tx) => {
-      const initial = findOneOrThrow(
-        await tx
-          .select({ bannerConfigurationId: bannerImageTable.bannerConfigurationId })
-          .from(bannerImageTable)
-          .where(eq(bannerImageTable.id, id)),
-        new BannerImageNotFoundError(id),
-      );
+    const { existing, configuration, droppedImageUrls } = await this.drizzle.db.transaction(
+      async (tx) => {
+        const initial = findOneOrThrow(
+          await tx
+            .select({ bannerConfigurationId: bannerImageTable.bannerConfigurationId })
+            .from(bannerImageTable)
+            .where(eq(bannerImageTable.id, id)),
+          new BannerImageNotFoundError(id),
+        );
 
-      return withAdvisoryXactLock(
-        tx,
-        bannerConfigurationMutationLockKey(initial.bannerConfigurationId),
-        async () => {
-          const existing = findOneOrThrow(
-            await tx.delete(bannerImageTable).where(eq(bannerImageTable.id, id)).returning({
-              id: bannerImageTable.id,
-              bannerConfigurationId: bannerImageTable.bannerConfigurationId,
-              desktopImageUrl: bannerImageTable.desktopImageUrl,
-              mobileImageUrl: bannerImageTable.mobileImageUrl,
-            }),
-            new BannerImageNotFoundError(id),
-          );
-          const [configuration] = await tx
-            .select({
-              placement: bannerConfigurationTable.placement,
-              isDefault: bannerConfigurationTable.isDefault,
-            })
-            .from(bannerConfigurationTable)
-            .where(eq(bannerConfigurationTable.id, existing.bannerConfigurationId));
-          return { existing, configuration };
-        },
-      );
-    });
+        return withAdvisoryXactLock(
+          tx,
+          bannerConfigurationMutationLockKey(initial.bannerConfigurationId),
+          async () => {
+            const existing = findOneOrThrow(
+              await tx.delete(bannerImageTable).where(eq(bannerImageTable.id, id)).returning({
+                id: bannerImageTable.id,
+                bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                desktopImageUrl: bannerImageTable.desktopImageUrl,
+                mobileImageUrl: bannerImageTable.mobileImageUrl,
+              }),
+              new BannerImageNotFoundError(id),
+            );
+            const [configuration] = await tx
+              .select({
+                placement: bannerConfigurationTable.placement,
+                isDefault: bannerConfigurationTable.isDefault,
+              })
+              .from(bannerConfigurationTable)
+              .where(eq(bannerConfigurationTable.id, existing.bannerConfigurationId));
+            const droppedImageUrls = await unreferencedBannerImageUrls(tx, [
+              existing.desktopImageUrl,
+              existing.mobileImageUrl,
+            ]);
+            return { existing, configuration, droppedImageUrls };
+          },
+        );
+      },
+    );
     if (configuration?.isDefault) {
       await invalidate(this.cache, publicBannerCacheKey(configuration.placement, DEFAULT_LOCALE));
     }
@@ -764,7 +792,7 @@ export class CmsService {
     this.events.emit('cms.banner.image.deleted', {
       bannerImageId: id,
       bannerConfigurationId: existing.bannerConfigurationId,
-      droppedImageUrls: [existing.desktopImageUrl, existing.mobileImageUrl],
+      droppedImageUrls,
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,

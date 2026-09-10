@@ -194,7 +194,6 @@ describe('createEventBus over Redis Streams', () => {
       group: serviceName,
     });
 
-    // A message an older producer left in the stream: no droppedImageUrls field.
     const legacyPayload = {
       bannerImageId: randomUUID(),
       bannerConfigurationId: randomUUID(),
