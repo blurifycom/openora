@@ -4,7 +4,7 @@
   "jsPlugins": [
     "./tools/lint/oxlint-boundaries-plugin.mjs",
     "./tools/lint/oxlint-module-shape-plugin.mjs",
-    { "name": "anti-slop", "specifier": "./tools/lint/anti-slop/index.ts" }
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }
   ],
   "plugins": ["unicorn", "typescript", "oxc", "import"],
   "rules": {
@@ -58,7 +58,7 @@
     "generated",
     "*.generated.ts",
     "tools/templates",
-    "tools/lint/anti-slop/**",
+    "tools/oxlint/anti-slop/**",
     ".agents/**",
     ".claude/**",
     ".codex/**",

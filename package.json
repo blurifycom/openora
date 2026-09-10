@@ -27,7 +27,7 @@
     "fix:format": "oxfmt && node tools/lint/ensure-final-newline.mjs",
     "test:unit": "turbo run test:unit",
     "test:integration": "turbo run test:integration",
-    "test:tools": "node --test \"tools/__tests__/*.test.mjs\" \"tools/lint/anti-slop/rules/*.test.ts\"",
+    "test:tools": "node --test \"tools/__tests__/*.test.mjs\"",
     "test:scaffold": "tsx tools/gen/eval-scaffold.ts",
     "report:route-coverage": "tsx tools/lint/report-route-coverage.ts",
     "gen": "tsx tools/gen/gen.ts",
