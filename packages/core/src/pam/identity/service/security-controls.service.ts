@@ -15,6 +15,8 @@ export async function getSecurityControls(
       phoneVerified: user.phoneVerified,
       twoFactorEnabled: user.twoFactorEnabled,
       loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+      autoLogoutDuration: user.autoLogoutDuration,
+      requireTwoFactorOnLogin: user.requireTwoFactorOnLogin,
       withdrawalPinHash: user.withdrawalPinHash,
     })
     .from(user)

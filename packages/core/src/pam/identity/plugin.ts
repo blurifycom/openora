@@ -14,6 +14,7 @@ import {
   RATE_LIMITER,
   PLATFORM_CONFIG,
   SESSION_COMMANDS,
+  SESSION_IDLE_POLICY,
   USER_COMMANDS,
   SMS_ADAPTER,
   AdminSecurityConfigSchema,
@@ -35,6 +36,7 @@ import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
 import { AdminSecurityService } from './service/admin-security.service.js';
 import { TrustedDeviceService } from './service/trusted-device.service.js';
+import { SessionIdleService } from './service/session-idle.service.js';
 import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
@@ -122,6 +124,17 @@ export default {
             identityReader: c.get(IDENTITY_READER),
           }),
         ),
+    );
+    // Per-player "auto-logout when inactive". The request middleware resolves this on
+    // every authenticated request; leaving it unbound turns the idle check off entirely.
+    ctx.provide(
+      SESSION_IDLE_POLICY,
+      (c) =>
+        new SessionIdleService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          identityReader: c.get(IDENTITY_READER),
+        }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
     // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every

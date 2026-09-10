@@ -10,10 +10,15 @@ import {
   integer,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { THEMES, TWO_FACTOR_DELIVERY_METHODS } from '@openora/core/contracts';
+import {
+  AUTO_LOGOUT_DURATIONS,
+  THEMES,
+  TWO_FACTOR_DELIVERY_METHODS,
+} from '@openora/core/contracts';
 
 export const userThemeEnum = pgEnum('user_theme', THEMES);
 export const twoFactorMethodEnum = pgEnum('two_factor_method', TWO_FACTOR_DELIVERY_METHODS);
+export const autoLogoutDurationEnum = pgEnum('auto_logout_duration', AUTO_LOGOUT_DURATIONS);
 
 export const user = pgTable(
   'user',
@@ -48,6 +53,13 @@ export const user = pgTable(
     // and each qualifying password write records the policy state explicitly.
     passwordMeetsPolicy: boolean().notNull().default(false),
     loginWithdrawalAlertsEnabled: boolean().notNull().default(false),
+    // How long a session may sit idle before it is cut. Defaults to `never` so existing
+    // accounts keep behaving exactly as they did before this column existed - a stricter
+    // default would log players out on deploy day over a setting they never chose.
+    autoLogoutDuration: autoLogoutDurationEnum().notNull().default('never'),
+    // Off by default: a trusted device may skip the second factor. On, every login is
+    // challenged regardless of which browser it comes from.
+    requireTwoFactorOnLogin: boolean().notNull().default(false),
     // A 4-digit withdrawal PIN, independent of the login credential. HMAC-SHA256'd with
     // a dedicated secret (never the plaintext) - "is a PIN set" is derived as
     // `withdrawalPinHash !== null`, no separate boolean column.

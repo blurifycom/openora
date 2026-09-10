@@ -285,9 +285,11 @@
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
+        "identity.security.autoLogout",
         "identity.security.loginWithdrawalAlerts",
         "identity.security.me",
         "identity.security.removeWithdrawalPin",
+        "identity.security.requireTwoFactorOnLogin",
         "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
         "identity.sendTwoFactorOtp",
@@ -886,6 +888,16 @@
       ]
     },
     {
+      "category": "session-idle-policy",
+      "interface": "SessionIdlePolicy",
+      "token": "SESSION_IDLE_POLICY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
       "category": "sms",
       "interface": "SmsAdapter",
       "token": "SMS_ADAPTER",
@@ -1019,7 +1031,9 @@
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.security.auto_logout.updated",
     "identity.security.login_withdrawal_alerts.updated",
+    "identity.security.require_two_factor.updated",
     "identity.security.withdrawal_pin.removed",
     "identity.security.withdrawal_pin.set",
     "identity.session.fingerprint_mismatch",
@@ -1211,6 +1225,10 @@
     {
       "name": "AuthGuardReasonSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "AutoLogoutDurationSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "AutoWithdrawalConfigSchema",
@@ -2409,6 +2427,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "SetAutoLogoutInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SetAutoWithdrawalRuleInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -2435,6 +2457,10 @@
     {
       "name": "SetPlayerLimitInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SetRequireTwoFactorOnLoginInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "SetWalletAutoWithdrawalConfigInputSchema",
