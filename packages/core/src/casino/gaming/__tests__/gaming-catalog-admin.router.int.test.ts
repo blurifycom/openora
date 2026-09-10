@@ -171,6 +171,18 @@ describe('gaming catalog router authz', () => {
     await expect(call(router.listCategories, {}, { context: CTX })).resolves.toMatchObject([
       { slug: 'slots', translations: {} },
     ]);
+    await expect(
+      call(router.getProviderBySlug, { slug: 'acme' }, { context: CTX }),
+    ).resolves.toMatchObject({ slug: 'acme' });
+    await expect(
+      call(router.getCategoryBySlug, { slug: 'slots' }, { context: CTX }),
+    ).resolves.toMatchObject({ slug: 'slots', translations: {} });
+    await expect(
+      call(router.getProviderBySlug, { slug: 'ghost' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      call(router.getCategoryBySlug, { slug: 'ghost' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(call(router.getGame, { id: g!.id }, { context: CTX })).resolves.toMatchObject({
       name: 'Aces',
       isActive: true,

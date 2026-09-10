@@ -106,6 +106,18 @@ export class GameProviderService {
     return toProviderDetail(record);
   }
 
+  async getActiveProviderBySlug(slug: string) {
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(gameProvider)
+        .where(and(eq(gameProvider.slug, slug), eq(gameProvider.isActive, true)))
+        .limit(1),
+      new GameProviderNotFoundError(slug),
+    );
+    return toProviderSummary(record);
+  }
+
   async updateProvider({ id, actorId, ip, userAgent, ...patchInput }: UpdateProviderInput & Actor) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(gameProvider).where(eq(gameProvider.id, id)).limit(1),

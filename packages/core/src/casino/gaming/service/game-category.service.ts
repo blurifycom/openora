@@ -105,6 +105,18 @@ export class GameCategoryService {
     return toCategoryDetail(record);
   }
 
+  async getActiveCategoryBySlug(slug: string) {
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(gameCategory)
+        .where(and(eq(gameCategory.slug, slug), eq(gameCategory.isActive, true)))
+        .limit(1),
+      new GameCategoryNotFoundError(slug),
+    );
+    return toCategorySummary(record);
+  }
+
   async createCategory({
     slug,
     name,

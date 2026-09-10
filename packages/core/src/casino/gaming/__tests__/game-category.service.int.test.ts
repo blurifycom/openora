@@ -153,4 +153,22 @@ describe('GameCategoryService (real PG)', () => {
       GameCategoryNotFoundError,
     );
   });
+
+  it('getActiveCategoryBySlug resolves only an active category by slug', async () => {
+    await seedCategory({ slug: 'slots', name: 'Slots' });
+    await seedCategory({ slug: 'hidden', name: 'Hidden', isActive: false });
+    const { svc } = makeService();
+
+    await expect(svc.getActiveCategoryBySlug('slots')).resolves.toMatchObject({
+      slug: 'slots',
+      name: 'Slots',
+      translations: {},
+    });
+    await expect(svc.getActiveCategoryBySlug('hidden')).rejects.toBeInstanceOf(
+      GameCategoryNotFoundError,
+    );
+    await expect(svc.getActiveCategoryBySlug('unknown')).rejects.toBeInstanceOf(
+      GameCategoryNotFoundError,
+    );
+  });
 });

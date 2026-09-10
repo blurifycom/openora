@@ -107,6 +107,23 @@ describe('GameProviderService (real PG)', () => {
     );
   });
 
+  it('getActiveProviderBySlug resolves only an active provider by slug', async () => {
+    await seedProvider({ slug: 'acme', name: 'Acme', isActive: true });
+    await seedProvider({ slug: 'retired', name: 'Retired', isActive: false });
+    const { svc } = makeService();
+
+    await expect(svc.getActiveProviderBySlug('acme')).resolves.toMatchObject({
+      slug: 'acme',
+      name: 'Acme',
+    });
+    await expect(svc.getActiveProviderBySlug('retired')).rejects.toBeInstanceOf(
+      GameProviderNotFoundError,
+    );
+    await expect(svc.getActiveProviderBySlug('unknown')).rejects.toBeInstanceOf(
+      GameProviderNotFoundError,
+    );
+  });
+
   it('updateProvider renames, retires, and emits an event', async () => {
     const created = await seedProvider({ slug: 'acme', name: 'Acme' });
     const { svc, events } = makeService();

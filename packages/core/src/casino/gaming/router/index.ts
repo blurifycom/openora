@@ -65,7 +65,19 @@ export function createGamingRouter({
 
     listProviders: os.listProviders.handler(() => providers.listActiveProviders()),
 
+    getProviderBySlug: os.getProviderBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: GameProviderNotFoundError }, () =>
+        providers.getActiveProviderBySlug(input.slug),
+      ),
+    ),
+
     listCategories: os.listCategories.handler(() => categories.listActiveCategories()),
+
+    getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>
+        categories.getActiveCategoryBySlug(input.slug),
+      ),
+    ),
 
     listAdminProviders: os.listAdminProviders.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');

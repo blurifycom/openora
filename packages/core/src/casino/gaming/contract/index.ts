@@ -92,6 +92,8 @@ export const ListGamesInputSchema = CatalogQueryBaseSchema.extend({
 });
 export type ListGamesInput = z.infer<typeof ListGamesInputSchema>;
 
+export const CatalogSlugSchema = createKebabSlugSchema(64);
+
 export const gamingContract = {
   listGames: oc
     .route({ method: 'GET', path: '/gaming/games' })
@@ -119,15 +121,22 @@ export const gamingContract = {
     .route({ method: 'GET', path: '/gaming/providers' })
     .output(z.array(GameProviderSummarySchema)),
 
+  getProviderBySlug: oc
+    .route({ method: 'GET', path: '/gaming/providers/{slug}' })
+    .input(z.object({ slug: CatalogSlugSchema }))
+    .output(GameProviderSummarySchema),
+
   listCategories: oc
     .route({ method: 'GET', path: '/gaming/categories' })
     .output(z.array(GameCategorySummaryWithTranslationsSchema)),
+
+  getCategoryBySlug: oc
+    .route({ method: 'GET', path: '/gaming/categories/{slug}' })
+    .input(z.object({ slug: CatalogSlugSchema }))
+    .output(GameCategorySummaryWithTranslationsSchema),
 };
 
 // Backoffice catalog management (game-config guarded in the router).
-
-// kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
-export const CatalogSlugSchema = createKebabSlugSchema(64);
 
 export const GameProviderDetailSchema = GameProviderSummarySchema.extend({
   aggregatorVendorId: z.string().nullable(),
