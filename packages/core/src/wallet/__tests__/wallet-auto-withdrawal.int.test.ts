@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import { findOneOrThrow } from '@openora/core/server';
+import { findOneOrThrow, moneyScaleBy } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import {
@@ -7,6 +7,7 @@ import {
   type AdminUserDirectory,
   type AuditWritePort,
   type AutoWithdrawalConfig,
+  type ExchangeRateReader,
   type KycStatus,
   type PaymentAdapter,
   type PlatformConfig,
@@ -48,8 +49,25 @@ const MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS: readonly TagKey[] = [
   'multi_account',
 ];
 
+// USD per unit. One BTC at 1000 keeps a one-coin withdrawal under the 5000 large-amount
+// heuristic, so the crypto cases below exercise the threshold rather than the heuristic.
+const USD_PER_UNIT: Partial<Record<string, string>> = { BTC: '1000', USDT: '1' };
+
+function fixedRates(): ExchangeRateReader {
+  return mock<ExchangeRateReader>({
+    convert: vi.fn(async (amount: string, from: string, to: string) => {
+      const perUnit = USD_PER_UNIT[from];
+      if (from === to) {
+        return amount;
+      }
+      return perUnit && to === 'USD' ? moneyScaleBy(amount, perUnit) : null;
+    }),
+  });
+}
+
 type ServiceOptions = {
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
+  rates?: ExchangeRateReader | 'unbound';
   // The global fiat/crypto thresholds are DB-backed, not part of
   // PlatformConfig any more - seeded into wallet_auto_withdrawal_config here
   // whenever `autoWithdrawal` is passed, mirroring the production seed
@@ -70,6 +88,7 @@ type ServiceOptions = {
 
 async function makeService({
   autoWithdrawal,
+  rates = fixedRates(),
   fiatThreshold,
   cryptoThreshold,
   excludeRiskFlags,
@@ -116,6 +135,7 @@ async function makeService({
     identityReader: makeIdentityReader(),
     directory,
     platformConfig,
+    ...(rates === 'unbound' ? {} : { rates }),
     ...(riskTags === 'unbound'
       ? {}
       : {
@@ -714,7 +734,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   });
 
   it('auto-approves once an operator configures a positive cryptoThreshold', async () => {
-    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '2' });
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '2000' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
     const result = await svc.withdraw({
@@ -734,8 +754,68 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   });
 
   it('stays pending when the crypto amount exceeds cryptoThreshold', async () => {
-    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '0.5' });
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '500' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('judges a crypto withdrawal by its pivot value, not its raw amount', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '1000' });
+    const w = await seedWallet({ currency: 'BTC', balance: '10' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '2',
+      currency: 'BTC',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('stays pending when there is no rate to value the withdrawal in the pivot', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      cryptoThreshold: '100000',
+      rates: 'unbound',
+    });
+    const w = await seedWallet({ currency: 'BTC', balance: '10' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('sums the daily amount cap in the pivot, not raw across currencies', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapAmount: '1500' },
+      cryptoThreshold: '2000',
+    });
+    const w = await seedWallet({ currency: 'BTC', balance: '10' });
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      type: 'withdrawal',
+      amount: '1',
+      currency: 'BTC',
+      status: 'completed',
+      reviewReason: 'auto-approved',
+    });
 
     const result = await svc.withdraw({
       userId: w.userId,
@@ -751,7 +831,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   it('applies the same KYC guard as the fiat rail', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
-      cryptoThreshold: '2',
+      cryptoThreshold: '2000',
       kycStatus: 'rejected',
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
@@ -839,11 +919,11 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
   });
 
   it('a per-player rule overrides the crypto threshold too', async () => {
-    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '0.5' });
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '500' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
-      threshold: '5',
+      threshold: '2000',
       reason: 'trusted',
       createdBy: randomUUID(),
     });
