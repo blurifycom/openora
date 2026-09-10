@@ -117,7 +117,8 @@ export async function mapEventToRecord(
 
   // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
   // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
-  // carried on reject.
+  // carried on reject. A failed withdrawal has no adminId when it was auto-approved or
+  // rejected later by a provider webhook - recorded as a system action then.
   if (
     topic === 'wallet.withdrawal.approved' ||
     topic === 'wallet.withdrawal.rejected' ||
@@ -125,7 +126,7 @@ export async function mapEventToRecord(
   ) {
     return {
       ...base,
-      actorType: 'admin',
+      actorType: p['adminId'] ? 'admin' : 'system',
       actorId: str(p['adminId']),
       resourceType: 'withdrawal',
       resourceId: str(p['transactionId']),
@@ -761,6 +762,21 @@ export async function mapEventToRecord(
     };
   }
 
+  // Player (or admin, when no player row backs the account) replaced their login email.
+  // before/after carry the two addresses so the regulatory trail is diffable.
+  if (topic === 'identity.email.changed') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { email: str(p['previousEmail']) },
+      after: { email: str(p['newEmail']) },
+    };
+  }
+
   if (topic === 'identity.phone.verified') {
     const playerId = p['playerId'];
     return {
@@ -874,6 +890,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.trusted_device.revoked',
   'identity.password.reset',
   'identity.email.verified',
+  'identity.email.changed',
   'identity.phone.verified',
   'identity.security.login_withdrawal_alerts.updated',
   'identity.security.withdrawal_pin.set',

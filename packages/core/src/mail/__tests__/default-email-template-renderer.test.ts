@@ -86,6 +86,27 @@ describe('DefaultEmailTemplateRenderer', () => {
       },
       { key: 'kycResubmissionRequested', data: { reason: null } },
       { key: 'adminInvitation', data: { token: 'tok', expiresAt: '2026-01-01T00:00:00.000Z' } },
+      { key: 'welcome', data: {} },
+      { key: 'emailChangeConfirmation', data: { otp: '111111' } },
+      { key: 'emailChanged', data: { newEmail: 'new@b.com' } },
+      {
+        key: 'withdrawalCompleted',
+        data: {
+          amount: '100.00',
+          currency: 'USDT',
+          transactionId: '00000000-0000-0000-0000-000000000000',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        key: 'withdrawalFailed',
+        data: {
+          amount: '100.00',
+          currency: 'USDT',
+          transactionId: '00000000-0000-0000-0000-000000000000',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
     ];
 
     for (const template of samples) {
@@ -95,6 +116,18 @@ describe('DefaultEmailTemplateRenderer', () => {
       expect(result.text).not.toMatch(/<[a-z/]/i);
       expect(result.html).toContain('<p>');
     }
+  });
+
+  it('renders the email-change confirmation code and the change notice', () => {
+    expect(
+      renderer.render({ key: 'emailChangeConfirmation', data: { otp: '424242' } }, 'en').text,
+    ).toContain('424242');
+    const notice = renderer.render(
+      { key: 'emailChanged', data: { newEmail: 'new@example.com' } },
+      'en',
+    );
+    expect(notice.text).toContain('new@example.com');
+    expect(notice.text).toContain('support');
   });
 
   it('groups the withdrawal amount in thousands, matching the in-app notification', () => {

@@ -50,10 +50,19 @@ last-wins).
 
 ## Template keys
 
-`verifyEmail`, `resetPasswordOtp`, `adminResetPasswordOtp`, `existingAccountSignUp`, `rgLimitUpdated`,
-`rgCoolingOffActivated`, `rgCoolingOffLifted`, `rgSelfExclusionActivated`,
-`rgSelfExclusionLifted`, `withdrawalApproved`, `withdrawalRejected`,
-`kycResubmissionRequested`, `adminInvitation`.
+Auth and account: `verifyEmail`, `twoFactorOtp`, `resetPasswordOtp`, `adminResetPasswordOtp`,
+`existingAccountSignUp`, `adminInvitation`, `welcome`, `emailChangeConfirmation`, `emailChanged`.
+
+Responsible gambling: `rgLimitUpdated`, `rgCoolingOffActivated`, `rgCoolingOffLifted`,
+`rgSelfExclusionActivated`, `rgSelfExclusionLifted`.
+
+Wallet: `depositCompleted`, `withdrawalApproved`, `withdrawalRejected`, `withdrawalCompleted`,
+`withdrawalFailed`.
+
+Compliance and security: `kycResubmissionRequested`, `securityLoginAlert`,
+`securityWithdrawalRequested`.
+
+`MAIL_TEMPLATE_KEYS` in `packages/core/src/contracts/schemas/mail.ts` is the canonical list.
 
 An overlay renderer receives every built-in template key and owns the rendered result for each key;
 there is no automatic fallback to the platform's English renderer.

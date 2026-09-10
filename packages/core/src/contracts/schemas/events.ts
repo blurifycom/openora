@@ -251,6 +251,15 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The account's login email was replaced after the new address was confirmed by OTP.
+  // Carries both addresses for the audit trail; the old one is where the "it changed"
+  // notice is sent, since no user row holds it anymore.
+  'identity.email.changed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    previousEmail: z.email(),
+    newEmail: z.email(),
+  }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -326,8 +335,10 @@ export const domainEventSchemas = {
     .extend({ adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
   // An approved withdrawal failed at the PSP/custody rail; the held funds were
-  // returned to the player balance and the transaction moved to `failed`.
-  'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
+  // returned to the player balance and the transaction moved to `failed`. `adminId` is
+  // null when no reviewer was involved: an auto-approved payout that failed, or a later
+  // provider-webhook rejection (common on crypto rails).
+  'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema.nullable() }),
   // A super admin credited or debited a balance directly, outside the deposit and
   // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
   // a correction is not a deposit, and reporting it as one would overstate deposits and
@@ -801,7 +812,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'wallet.withdrawal.requested': 2,
   'wallet.withdrawal.approved': 2,
   'wallet.withdrawal.rejected': 2,
-  'wallet.withdrawal.failed': 2,
+  // v3: adminId is nullable - null marks a system-driven failure (auto-approved payout
+  // or provider-webhook rejection), which the audit writer records as actorType 'system'.
+  'wallet.withdrawal.failed': 3,
   'wallet.manual_adjustment.created': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.

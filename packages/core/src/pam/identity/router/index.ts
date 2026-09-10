@@ -207,8 +207,20 @@ export function createIdentityRouter(
       identity.verifyEmail(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
 
-    changeEmail: os.changeEmail.handler(({ input, context }) =>
-      identity.changeEmail(input, context.request.headers, context.resHeaders ?? new Headers()),
+    requestEmailChange: os.requestEmailChange.handler(({ input, context }) =>
+      identity.requestEmailChange(
+        input,
+        context.request.headers,
+        context.resHeaders ?? new Headers(),
+      ),
+    ),
+
+    confirmEmailChange: os.confirmEmailChange.handler(({ input, context }) =>
+      identity.confirmEmailChange(
+        input,
+        context.request.headers,
+        context.resHeaders ?? new Headers(),
+      ),
     ),
 
     updateProfile: os.updateProfile.handler(({ input, context }) =>

@@ -270,8 +270,8 @@
         "identity.adminSecurity.status",
         "identity.adminSecurity.trustCurrentDevice",
         "identity.adminSecurity.trustedDevices",
-        "identity.changeEmail",
         "identity.changePassword",
+        "identity.confirmEmailChange",
         "identity.disable2fa",
         "identity.enable2fa",
         "identity.login",
@@ -283,6 +283,7 @@
         "identity.phoneVerification.request",
         "identity.regenerateBackupCodes",
         "identity.register",
+        "identity.requestEmailChange",
         "identity.requestPasswordReset",
         "identity.resetPassword",
         "identity.security.loginWithdrawalAlerts",
@@ -1012,6 +1013,7 @@
     "identity.2fa.reset",
     "identity.2fa.verified",
     "identity.authentication.succeeded",
+    "identity.email.changed",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
     "identity.password.reset",
@@ -1325,10 +1327,6 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
-      "name": "ChangeEmailInputSchema",
-      "file": "packages/core/src/contracts/schemas/identity.ts"
-    },
-    {
       "name": "ChangePasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1471,6 +1469,10 @@
     {
       "name": "CommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "ConfirmEmailChangeInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "ConversionFunnelSchema",
@@ -2291,6 +2293,10 @@
     {
       "name": "RequestCoolingOffInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RequestEmailChangeInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "RequestKycResubmissionInputSchema",

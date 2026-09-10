@@ -52,7 +52,8 @@ import type {
   User,
   IdentityReader,
   ChangePasswordInput,
-  ChangeEmailInput,
+  RequestEmailChangeInput,
+  ConfirmEmailChangeInput,
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
@@ -214,7 +215,8 @@ type ExtendedAuthApi = {
   sendVerificationOTP: AuthCall<{ email: string; type: 'email-verification' }>;
   verifyEmailOTP: AuthCall<{ email: string; otp: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
-  changeEmail: AuthCall<{ newEmail: string }>;
+  requestEmailChangeEmailOTP: AuthCall<{ newEmail: string }>;
+  changeEmailEmailOTP: AuthCall<{ newEmail: string; otp: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
 };
 
@@ -2023,46 +2025,109 @@ export class IdentityService {
     };
   }
 
-  async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  /**
+   * Step 1 of the email change: better-auth mails a code to `newEmail` (type
+   * `change-email`). It answers success even when the address is already taken, so this
+   * never reveals whether an account exists. The current address is not re-verified - the
+   * live session is proof enough - and the row is untouched until `confirmEmailChange`.
+   */
+  async requestEmailChange(
+    input: RequestEmailChangeInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const userId = await this.currentUserId(headers);
+    const { ip } = extractClientMeta(reqHeaders);
     const newEmail = input.newEmail.toLowerCase();
-    const res = await this.api.changeEmail({
+    await assertRateLimit(this.limiter, `change-email:${newEmail}`, VERIFY_EMAIL_RATE_LIMIT);
+    if (ip) {
+      await assertRateLimit(this.limiter, `change-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
+    }
+    const res = await this.api.requestEmailChangeEmailOTP({
       body: { newEmail: input.newEmail },
       headers,
       asResponse: true,
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    if (userId) {
-      // better-auth's `/change-email` returns the same `{ status: true }` shape for the
-      // anti-enumeration no-op (target already owned by someone else) and for a deferred
-      // confirmation-email flow, where the address only actually changes once the
-      // confirmation link is clicked - neither of which touched this row yet. Requiring
-      // `user.email` to already equal the requested address scopes the disable to the
-      // one branch (`updateEmailWithoutVerification`) that updates it synchronously.
-      const [disabled] = await this.drizzle.db
-        .update(user)
-        .set({ loginWithdrawalAlertsEnabled: false })
-        .where(
-          and(
-            eq(user.id, userId),
-            eq(user.loginWithdrawalAlertsEnabled, true),
-            eq(user.email, newEmail),
-          ),
-        )
-        .returning({ id: user.id });
-      if (disabled) {
-        const { ip, userAgent } = extractClientMeta(reqHeaders);
+    return SUCCESS;
+  }
+
+  /**
+   * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email
+   * and marks it verified. The old address is read first - no row carries it afterwards -
+   * so the "your email was changed" notice can still reach it. The verified-email alert
+   * opt-in was made on the old inbox and does not carry over, so it is reset here (same
+   * as the previous synchronous flow did).
+   */
+  async confirmEmailChange(
+    input: ConfirmEmailChangeInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const newEmail = input.newEmail.toLowerCase();
+    await assertRateLimit(
+      this.limiter,
+      `confirm-email-change:${newEmail}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
+    if (ip) {
+      await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
+    }
+    const userId = await this.currentUserId(headers);
+    const [before] = userId
+      ? await this.drizzle.db
+          .select({
+            email: user.email,
+            language: user.language,
+            loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+          })
+          .from(user)
+          .where(eq(user.id, userId))
+          .limit(1)
+      : [];
+    const res = await this.api.changeEmailEmailOTP({
+      body: { newEmail: input.newEmail, otp: input.otp },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    this.forwardCookies(res, resHeaders);
+
+    if (userId && before) {
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+      this.events.emit('identity.email.changed', {
+        userId,
+        playerId,
+        previousEmail: before.email,
+        newEmail,
+        ip,
+        userAgent,
+      });
+      if (before.loginWithdrawalAlertsEnabled) {
+        await this.drizzle.db
+          .update(user)
+          .set({ loginWithdrawalAlertsEnabled: false })
+          .where(eq(user.id, userId));
         this.events.emit('identity.security.login_withdrawal_alerts.updated', {
           userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+          playerId,
           previousEnabled: true,
           enabled: false,
           ip,
           userAgent,
         });
       }
+      // To the OLD address - the row now holds the new one, so send by address with the
+      // locale read from the profile above (same as the OTP hook does for unknown addresses).
+      await this.mailDispatch?.toAddress({
+        email: before.email,
+        locale: before.language,
+        template: { key: 'emailChanged', data: { newEmail } },
+        idempotencyKey: `email-change-notice:${userId}:${newEmail}`,
+      });
     }
     return SUCCESS;
   }

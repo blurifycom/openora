@@ -1741,7 +1741,10 @@ export class WalletService {
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
       return true;
     });
-    if (transitioned && adminId) {
+    // Emitted on every path that returns held funds, not just the admin-reviewed one:
+    // an auto-approved payout that failed and a provider-webhook rejection (adminId null)
+    // both land here and both owe the player a notification.
+    if (transitioned) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,
         amount,
