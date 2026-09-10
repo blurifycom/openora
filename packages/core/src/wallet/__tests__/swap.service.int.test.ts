@@ -4,11 +4,19 @@ import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import type { SwapAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletBonusCredit, walletTransaction } from '../schema/index.js';
-import { BonusRolloverLockedError, InsufficientBalanceError } from '../service/wallet.service.js';
-import { SwapPairUnsupportedError, SwapService } from '../service/swap.service.js';
+import {
+  BonusRolloverLockedError,
+  IdempotencyKeyReuseError,
+  InsufficientBalanceError,
+} from '../service/wallet.service.js';
+import {
+  SwapFillAmountMissingError,
+  SwapPairUnsupportedError,
+  SwapService,
+} from '../service/swap.service.js';
 
 let db: TestDb;
 
@@ -35,8 +43,12 @@ function makeAdapter(overrides: Partial<SwapAdapter> = {}) {
   });
 }
 
-function makeService(adapter: SwapAdapter = makeAdapter(), events = makeEventBus()) {
-  return new SwapService({ drizzle: db.drizzle, events, adapter });
+function makeService(
+  adapter: SwapAdapter = makeAdapter(),
+  events = makeEventBus(),
+  audit = makeAuditWriter(),
+) {
+  return new SwapService({ drizzle: db.drizzle, events, adapter, audit });
 }
 
 async function seedWallet(balances: Record<string, string> = { USD: '100' }) {
@@ -266,6 +278,96 @@ describe('SwapService (real PG)', () => {
     expect(replay.status).toBe('completed');
     expect(adapter.execute).toHaveBeenCalledOnce();
     expect(await balancesOf(w.id)).toEqual({ USD: 0, BTC: 0.00152 });
+  });
+
+  it('refuses a replayed key whose amount differs past float precision', async () => {
+    const w = await seedWallet({ USD: '200' });
+    const svc = makeService();
+    const idempotencyKey = randomUUID();
+    const args = { userId: w.userId, fromCurrency: 'USD', toCurrency: 'BTC', idempotencyKey };
+
+    await svc.swap({ ...args, fromAmount: '100' });
+
+    await expect(
+      svc.swap({ ...args, fromAmount: '100.000000000000000001' }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+  });
+
+  it('hands the desk the player on quote and execute, so a quote can be bound to them', async () => {
+    const w = await seedWallet();
+    const adapter = makeAdapter();
+    const svc = makeService(adapter);
+    const input = { userId: w.userId, fromCurrency: 'USD', toCurrency: 'BTC', fromAmount: '100' };
+
+    await svc.quote(input);
+    await svc.swap({ ...input, idempotencyKey: randomUUID() });
+
+    expect(adapter.getQuote).toHaveBeenCalledWith(expect.objectContaining({ userId: w.userId }));
+    expect(adapter.execute).toHaveBeenCalledWith(expect.objectContaining({ userId: w.userId }));
+  });
+
+  it('writes the settled swap to the audit trail with the ledger rows', async () => {
+    const w = await seedWallet();
+    const audit = makeAuditWriter();
+
+    const result = await makeService(makeAdapter(), makeEventBus(), audit).swap({
+      userId: w.userId,
+      fromCurrency: 'USD',
+      toCurrency: 'BTC',
+      fromAmount: '100',
+      idempotencyKey: randomUUID(),
+    });
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.swap.completed',
+        resourceId: result.transactionId,
+        after: expect.objectContaining({ userId: w.userId, toAmount: '0.00152' }),
+      }),
+    );
+  });
+
+  it('writes a refund to the audit trail when the desk refuses', async () => {
+    const w = await seedWallet();
+    const audit = makeAuditWriter();
+    const adapter = makeAdapter({ execute: vi.fn().mockRejectedValue(new Error('desk down')) });
+
+    await expect(
+      makeService(adapter, makeEventBus(), audit).swap({
+        userId: w.userId,
+        fromCurrency: 'USD',
+        toCurrency: 'BTC',
+        fromAmount: '100',
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toThrow('desk down');
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'wallet.swap.refunded' }),
+    );
+    expect(await balancesOf(w.id)).toEqual({ USD: 100 });
+  });
+
+  it('never credits a fill amount that is not a money value', async () => {
+    const w = await seedWallet();
+    const adapter = makeAdapter({
+      execute: vi
+        .fn()
+        .mockResolvedValue({ externalId: 'ext-bad', status: 'completed', toAmount: 'NaN' }),
+    });
+
+    await expect(
+      makeService(adapter).swap({
+        userId: w.userId,
+        fromCurrency: 'USD',
+        toCurrency: 'BTC',
+        fromAmount: '100',
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toBeInstanceOf(SwapFillAmountMissingError);
+    expect(await balancesOf(w.id)).toEqual({ USD: 0 });
   });
 
   it('leaves an async fill processing until the vendor webhook settles it', async () => {

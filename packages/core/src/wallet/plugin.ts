@@ -297,6 +297,7 @@ export default {
             drizzle: c.get(DRIZZLE),
             events: c.get(EVENT_BUS),
             adapter: swapAdapter,
+            audit: c.get(AUDIT_WRITER),
             platformConfig,
             limiter: c.get(RATE_LIMITER),
           })
