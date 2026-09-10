@@ -213,10 +213,12 @@
         "game_category",
         "game_category_game",
         "game_provider",
+        "game_provider_aggregator_mapping",
         "game_round"
       ],
       "routes": [
         "gaming.createCategory",
+        "gaming.createProvider",
         "gaming.endRound",
         "gaming.getAdminCategory",
         "gaming.getAdminProvider",
@@ -1013,6 +1015,7 @@
     "gaming.category.created",
     "gaming.category.updated",
     "gaming.game.updated",
+    "gaming.provider.created",
     "gaming.provider.updated",
     "gaming.round.ended",
     "gaming.round.started",
@@ -1525,6 +1528,10 @@
       "file": "packages/core/src/pam/player-note/contract/index.ts"
     },
     {
+      "name": "CreateProviderInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "createTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1743,6 +1750,10 @@
     {
       "name": "GamePerformanceSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameProviderAggregatorMappingSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {
       "name": "GameProviderDetailSchema",

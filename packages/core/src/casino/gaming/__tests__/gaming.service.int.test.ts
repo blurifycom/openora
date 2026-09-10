@@ -174,13 +174,36 @@ describe('GamingService lobby (real PG)', () => {
     ).toBe(3);
   });
 
+  it('hides an inactive category from public filtering while retaining admin filtering', async () => {
+    const inactive = await seedCategory({ name: 'Hidden', isActive: false });
+    const linked = await seedGame({ name: 'Linked Game' }, [inactive.id]);
+    const svc = makeService();
+
+    const publicResult = await svc.listGames({
+      page: 1,
+      limit: 10,
+      categoryId: inactive.id,
+      playableOnly: true,
+    });
+    expect(publicResult).toMatchObject({ items: [], total: 0 });
+
+    const adminResult = await svc.listGames({
+      page: 1,
+      limit: 10,
+      categoryId: inactive.id,
+      isActive: true,
+    });
+    expect(adminResult.items.map((item) => item.id)).toEqual([linked.id]);
+    expect(adminResult.total).toBe(1);
+  });
+
   it('getGame returns the row for a known id and 404s an unknown one', async () => {
     const table = await seedCategory({
       slug: 'table-games',
       name: 'Table Games',
       translations: { DE: { name: 'Tischspiele' } },
     });
-    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack' });
+    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack', isActive: false });
     const created = await seedGame({ name: 'Roulette' }, [table.id, blackjack.id]);
     const svc = makeService();
 
@@ -190,6 +213,9 @@ describe('GamingService lobby (real PG)', () => {
         { slug: 'blackjack', translations: {} },
         { slug: 'table-games', translations: { DE: { name: 'Tischspiele' } } },
       ],
+    });
+    await expect(svc.getGame(created.id, { activeOnly: true })).resolves.toMatchObject({
+      categories: [{ slug: 'table-games' }],
     });
     await expect(svc.getGame('00000000-0000-0000-0000-000000000000')).rejects.toBeInstanceOf(
       GameNotFoundError,
@@ -372,7 +398,7 @@ describe('GamingService.startRound (real PG)', () => {
 });
 
 describe('GamingService listGames provider gate (real PG)', () => {
-  it('hides games of deactivated providers from the active listing only', async () => {
+  it('separates the public playable gate from the admin game-active filter', async () => {
     const live = await seedGame({ name: 'Live Game' });
     const hidden = await seedGame({ name: 'Hidden Game' });
     await db.drizzle.db
@@ -381,11 +407,11 @@ describe('GamingService listGames provider gate (real PG)', () => {
       .where(eq(gameProvider.id, hidden.providerId));
     const svc = makeService();
 
-    const pub = await svc.listGames({ page: 1, limit: 10, isActive: true });
+    const pub = await svc.listGames({ page: 1, limit: 10, playableOnly: true });
     expect(pub.items.map((g) => g.id)).toEqual([live.id]);
     expect(pub.total).toBe(1);
 
-    const admin = await svc.listGames({ page: 1, limit: 10 });
+    const admin = await svc.listGames({ page: 1, limit: 10, isActive: true });
     expect(admin.total).toBe(2);
   });
 });

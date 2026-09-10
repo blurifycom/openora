@@ -34,9 +34,6 @@ export const gameProvider = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     slug: text().notNull(),
     name: text().notNull(),
-    // The aggregator's studio id (eg EventMatrix's id for Pragmatic Play).
-    // NULL = direct-only integration with no aggregator mapping.
-    aggregatorVendorId: text(),
     logoUrl: text(),
     isActive: boolean().notNull().default(false),
     metadata: jsonb(),
@@ -45,9 +42,28 @@ export const gameProvider = pgTable(
       .$onUpdateFn(() => new Date()),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
+  (t) => [uniqueIndex('game_provider_slug_key').on(t.slug)],
+);
+
+export const gameProviderAggregatorMapping = pgTable(
+  'game_provider_aggregator_mapping',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    providerId: uuid()
+      .notNull()
+      .references(() => gameProvider.id, { onDelete: 'cascade' }),
+    aggregator: text().notNull(),
+    vendorId: text().notNull(),
+  },
   (t) => [
-    uniqueIndex('game_provider_slug_key').on(t.slug),
-    uniqueIndex('game_provider_aggregator_vendor_id_key').on(t.aggregatorVendorId),
+    uniqueIndex('game_provider_aggregator_mapping_provider_aggregator_key').on(
+      t.providerId,
+      t.aggregator,
+    ),
+    uniqueIndex('game_provider_aggregator_mapping_aggregator_vendor_id_key').on(
+      t.aggregator,
+      t.vendorId,
+    ),
   ],
 );
 
@@ -146,5 +162,6 @@ export const gameRound = pgTable(
 export type Game = typeof game.$inferSelect;
 export type GameRound = typeof gameRound.$inferSelect;
 export type GameProvider = typeof gameProvider.$inferSelect;
+export type GameProviderAggregatorMapping = typeof gameProviderAggregatorMapping.$inferSelect;
 export type GameCategory = typeof gameCategory.$inferSelect;
 export type GameCategoryGame = typeof gameCategoryGame.$inferSelect;

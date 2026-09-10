@@ -28,10 +28,16 @@ export function isUniqueConstraintViolation(e: unknown): boolean {
 // table with several unique indexes can map each to its own typed error instead
 // of blaming the first one. Null when the cause carries no constraint name.
 export function uniqueConstraintName(e: unknown): string | null {
-  if (typeof e !== 'object' || e === null || !('constraint' in e)) {
-    return null;
+  let current = e;
+  const seen = new Set<unknown>();
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if ('constraint' in current && typeof current.constraint === 'string') {
+      return current.constraint;
+    }
+    current = 'cause' in current ? current.cause : null;
   }
-  return typeof e.constraint === 'string' ? e.constraint : null;
+  return null;
 }
 
 // The single sanctioned JS-side conversion point for a decimal-string money amount.

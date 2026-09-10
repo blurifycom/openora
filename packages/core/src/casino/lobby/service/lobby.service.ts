@@ -100,7 +100,7 @@ export class LobbyService {
             .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
             .where(and(inArray(game.id, gameIds), playableGameCondition()))
         : [];
-    const categories = await categoriesByGameIds(db, gameIds);
+    const categories = await categoriesByGameIds(db, gameIds, true);
 
     const gameMap = new Map(rows.map((r) => [r.game.id, r]));
 
@@ -134,21 +134,31 @@ export class LobbyService {
 
       const gameIds = [...new Set(slots.map((s) => s.gameId))];
       const games =
-        gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
+        gameIds.length > 0
+          ? await db
+              .select({ game })
+              .from(game)
+              .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+              .where(and(inArray(game.id, gameIds), playableGameCondition()))
+          : [];
 
-      const gameMap = new Map(games.map((g) => [g.id, g]));
+      const gameMap = new Map(games.map(({ game: row }) => [row.id, row]));
 
-      return slots.map((slot) => {
+      return slots.flatMap((slot) => {
         const g = gameMap.get(slot.gameId);
-        return {
-          id: slot.id,
-          title: slot.title,
-          gameId: slot.gameId,
-          gameName: g?.name ?? '',
-          thumbnailUrl: g?.thumbnailUrl ?? null,
-          placement: slot.placement,
-          sortOrder: slot.sortOrder,
-        };
+        return g
+          ? [
+              {
+                id: slot.id,
+                title: slot.title,
+                gameId: slot.gameId,
+                gameName: g.name,
+                thumbnailUrl: g.thumbnailUrl,
+                placement: slot.placement,
+                sortOrder: slot.sortOrder,
+              },
+            ]
+          : [];
       });
     });
   }
@@ -167,6 +177,7 @@ export class LobbyService {
     const categories = await categoriesByGameIds(
       db,
       rows.map((r) => r.game.id),
+      true,
     );
 
     return rows.map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] }));

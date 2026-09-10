@@ -81,6 +81,33 @@ describe('mapEventToRecord: gaming.category.created', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.provider.created', () => {
+  it('includes every aggregator mapping in the audited snapshot', async () => {
+    const providerId = '55555555-5555-4555-8555-555555555556';
+    const aggregatorMappings = [
+      { aggregator: 'aggregation-a', vendorId: 'studio-7' },
+      { aggregator: 'aggregation-b', vendorId: 'vendor-19' },
+    ];
+    const row = await mapEventToRecord('gaming.provider.created', {
+      providerId,
+      slug: 'multi-rail-studio',
+      name: 'Multi Rail Studio',
+      aggregatorMappings,
+      logoUrl: null,
+      isActive: false,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_provider',
+      resourceId: providerId,
+      after: { aggregatorMappings, isActive: false },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 

@@ -714,6 +714,23 @@ export async function mapEventToRecord(
 
   // Backoffice game-catalog mutations. actorId = the acting admin; resource = the
   // catalog row; before/after carry the config snapshot so visibility flips are diffable.
+  if (topic === 'gaming.provider.created') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_provider',
+      resourceId: str(p['providerId']),
+      after: {
+        slug: p['slug'] ?? null,
+        name: p['name'] ?? null,
+        aggregatorMappings: p['aggregatorMappings'] ?? [],
+        logoUrl: p['logoUrl'] ?? null,
+        isActive: p['isActive'] ?? null,
+      },
+    };
+  }
+
   if (topic === 'gaming.provider.updated') {
     return {
       ...base,
@@ -949,6 +966,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',
+  'gaming.provider.created',
   'gaming.provider.updated',
   'gaming.category.created',
   'gaming.category.updated',

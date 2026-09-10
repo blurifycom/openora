@@ -77,6 +77,10 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
         { context: CTX },
       ),
   },
+  {
+    name: 'createProvider',
+    invoke: (r) => call(r.createProvider, { slug: 'studio', name: 'Studio' }, { context: CTX }),
+  },
   { name: 'listAdminCategories', invoke: (r) => call(r.listAdminCategories, {}, { context: CTX }) },
   {
     name: 'getAdminCategory',
@@ -219,16 +223,21 @@ describe('gaming catalog router authz', () => {
       ),
     ).resolves.toMatchObject({ translations: { FR: { name: 'Jeux de table' } } });
 
-    const [provider] = await db.drizzle.db
-      .insert(gameProvider)
-      .values({ slug: 'acme', name: 'Acme' })
-      .returning();
+    const provider = await call(
+      router.createProvider,
+      {
+        slug: 'acme',
+        name: 'Acme',
+        aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'studio-1' }],
+      },
+      { context: CTX },
+    );
     const [g] = await db.drizzle.db
       .insert(game)
       .values({
         name: 'Roulette',
         slug: `roulette-${randomUUID()}`,
-        providerId: provider!.id,
+        providerId: provider.id,
         aggregator: 'direct',
       })
       .returning();
@@ -245,6 +254,10 @@ describe('gaming catalog router authz', () => {
     expect(events.emit).toHaveBeenCalledWith(
       'gaming.game.updated',
       expect.objectContaining({ gameId: g!.id }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.created',
+      expect.objectContaining({ providerId: provider.id }),
     );
   });
 });

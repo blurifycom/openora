@@ -5,6 +5,7 @@ import {
   GameCategoryNameSchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
+  GameProviderAggregatorMappingSchema,
   GameProviderSummarySchema,
   GameTypeSchema,
   IdInputSchema,
@@ -19,6 +20,7 @@ import {
 
 export { GameTypeSchema } from '@openora/core/contracts';
 export { GameProviderSummarySchema } from '@openora/core/contracts';
+export { GameProviderAggregatorMappingSchema } from '@openora/core/contracts';
 export { GameCategorySummarySchema } from '@openora/core/contracts';
 export { GameCategorySummaryWithTranslationsSchema } from '@openora/core/contracts';
 export { GameCategoryTranslationsSchema } from '@openora/core/contracts';
@@ -139,7 +141,7 @@ export const gamingContract = {
 // Backoffice catalog management (game-config guarded in the router).
 
 export const GameProviderDetailSchema = GameProviderSummarySchema.extend({
-  aggregatorVendorId: z.string().nullable(),
+  aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
   isActive: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -166,12 +168,41 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
 });
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
-export const UpdateProviderInputSchema = z.object({
+const ProviderAggregatorMappingsInputSchema = z
+  .array(GameProviderAggregatorMappingSchema)
+  .max(50)
+  .superRefine((mappings, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, mapping] of mappings.entries()) {
+      if (seen.has(mapping.aggregator)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Each aggregator can be mapped only once',
+          path: [index, 'aggregator'],
+        });
+      }
+      seen.add(mapping.aggregator);
+    }
+  });
+
+const ProviderWriteFieldsSchema = z.object({
+  slug: CatalogSlugSchema,
+  name: z.string().trim().min(1).max(128),
+  aggregatorMappings: ProviderAggregatorMappingsInputSchema,
+  logoUrl: z.string().trim().min(1).max(512).nullable(),
+});
+
+export const CreateProviderInputSchema = ProviderWriteFieldsSchema.pick({
+  slug: true,
+  name: true,
+}).extend({
+  aggregatorMappings: ProviderAggregatorMappingsInputSchema.optional(),
+  logoUrl: ProviderWriteFieldsSchema.shape.logoUrl.optional(),
+});
+export type CreateProviderInput = z.infer<typeof CreateProviderInputSchema>;
+
+export const UpdateProviderInputSchema = ProviderWriteFieldsSchema.partial().extend({
   id: UuidSchema,
-  slug: CatalogSlugSchema.optional(),
-  name: z.string().trim().min(1).max(128).optional(),
-  aggregatorVendorId: z.string().trim().min(1).max(128).nullable().optional(),
-  logoUrl: z.string().trim().min(1).max(512).nullable().optional(),
   isActive: z.boolean().optional(),
 });
 export type UpdateProviderInput = z.infer<typeof UpdateProviderInputSchema>;
@@ -218,6 +249,11 @@ export const gamingAdminContract = {
   getAdminProvider: oc
     .route({ method: 'GET', path: '/backoffice/gaming/providers/{id}' })
     .input(IdInputSchema)
+    .output(GameProviderDetailSchema),
+
+  createProvider: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/providers' })
+    .input(CreateProviderInputSchema)
     .output(GameProviderDetailSchema),
 
   updateProvider: oc

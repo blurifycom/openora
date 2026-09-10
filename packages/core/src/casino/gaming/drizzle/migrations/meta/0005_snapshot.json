@@ -1,5 +1,5 @@
 {
-  "id": "ccedf03b-a79c-4e44-b7c6-64a2225a6c06",
+  "id": "9ec91909-22ed-46ac-8e01-713518e1f259",
   "prevId": "209f0c47-1565-4529-9ae8-e7818c40b87a",
   "version": "7",
   "dialect": "postgresql",
@@ -349,12 +349,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "aggregator_vendor_id": {
-          "name": "aggregator_vendor_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "logo_url": {
           "name": "logo_url",
           "type": "text",
@@ -403,12 +397,78 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.game_provider_aggregator_mapping": {
+      "name": "game_provider_aggregator_mapping",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
-        "game_provider_aggregator_vendor_id_key": {
-          "name": "game_provider_aggregator_vendor_id_key",
+        "provider_id": {
+          "name": "provider_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aggregator": {
+          "name": "aggregator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vendor_id": {
+          "name": "vendor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "game_provider_aggregator_mapping_provider_aggregator_key": {
+          "name": "game_provider_aggregator_mapping_provider_aggregator_key",
           "columns": [
             {
-              "expression": "aggregator_vendor_id",
+              "expression": "provider_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "aggregator",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "game_provider_aggregator_mapping_aggregator_vendor_id_key": {
+          "name": "game_provider_aggregator_mapping_aggregator_vendor_id_key",
+          "columns": [
+            {
+              "expression": "aggregator",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "vendor_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -420,7 +480,17 @@
           "with": {}
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "game_provider_aggregator_mapping_provider_id_game_provider_id_fk": {
+          "name": "game_provider_aggregator_mapping_provider_id_game_provider_id_fk",
+          "tableFrom": "game_provider_aggregator_mapping",
+          "tableTo": "game_provider",
+          "columnsFrom": ["provider_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},

@@ -36,7 +36,9 @@ export function createGamingRouter({
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
   return os.router({
-    listGames: os.listGames.handler(({ input }) => gaming.listGames({ ...input, isActive: true })),
+    listGames: os.listGames.handler(({ input }) =>
+      gaming.listGames({ ...input, playableOnly: true }),
+    ),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
@@ -88,6 +90,14 @@ export function createGamingRouter({
       await adminGuard.assert(context, 'game-config', 'view');
       return mapErrors({ NOT_FOUND: GameProviderNotFoundError }, () =>
         providers.getProvider(input.id),
+      );
+    }),
+
+    createProvider: os.createProvider.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
+      return mapErrors(
+        { CONFLICT: [GameProviderSlugTakenError, GameProviderVendorIdTakenError] },
+        () => providers.createProvider({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 

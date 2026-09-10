@@ -6,7 +6,7 @@ import {
   TimestampSchema,
   UuidSchema,
 } from './common.js';
-import { GameCategoryTranslationsSchema } from './game.js';
+import { GameCategoryTranslationsSchema, GameProviderAggregatorMappingSchema } from './game.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -366,20 +366,29 @@ export const domainEventSchemas = {
   }),
 
   // Backoffice game-catalog management (actorId = acting admin UUID).
+  'gaming.provider.created': authContextBase.extend({
+    providerId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+    logoUrl: z.string().nullable(),
+    isActive: z.boolean(),
+    actorId: UuidSchema.optional(),
+  }),
   'gaming.provider.updated': authContextBase.extend({
     providerId: UuidSchema,
     actorId: UuidSchema.optional(),
     before: z.object({
       slug: z.string(),
       name: z.string(),
-      aggregatorVendorId: z.string().nullable(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
       logoUrl: z.string().nullable(),
       isActive: z.boolean(),
     }),
     after: z.object({
       slug: z.string(),
       name: z.string(),
-      aggregatorVendorId: z.string().nullable(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
       logoUrl: z.string().nullable(),
       isActive: z.boolean(),
     }),
@@ -884,12 +893,6 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
   // v3: durationMonths added - the chosen term, explicit for the regulatory export.
   'rg.self_exclusion.activated': 4,
-  // v2: before/after carry the full config snapshot (isActive + all mutable fields)
-  // so visibility flips and renames are diffable in the audit log.
-  'gaming.provider.updated': 2,
-  'gaming.category.created': 2,
-  'gaming.category.updated': 2,
-  'gaming.game.updated': 2,
 };
 
 export function getEventVersion(event: string): number {

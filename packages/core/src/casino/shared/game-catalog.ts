@@ -1,10 +1,12 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import type { DrizzleDb } from '@openora/core/server';
+import type { GameProviderAggregatorMapping } from '@openora/core/contracts';
+import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import {
   game,
   gameCategory,
   gameCategoryGame,
   gameProvider,
+  gameProviderAggregatorMapping,
   type Game,
   type GameCategory,
   type GameProvider,
@@ -26,7 +28,11 @@ export function isGamePlayable(
 
 // One batched query for many games - never per-game lookups (no N+1).
 // Shared by gaming and lobby so the join + ordering has a single owner.
-export async function categoriesByGameIds(db: DrizzleDb, gameIds: Game['id'][]) {
+export async function categoriesByGameIds(
+  db: DrizzleDb,
+  gameIds: Game['id'][],
+  activeOnly = false,
+) {
   if (gameIds.length === 0) {
     return new Map<Game['id'], GameCategory[]>();
   }
@@ -34,7 +40,12 @@ export async function categoriesByGameIds(db: DrizzleDb, gameIds: Game['id'][]) 
     .select({ gameId: gameCategoryGame.gameId, category: gameCategory })
     .from(gameCategoryGame)
     .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
-    .where(inArray(gameCategoryGame.gameId, gameIds))
+    .where(
+      and(
+        inArray(gameCategoryGame.gameId, gameIds),
+        activeOnly ? eq(gameCategory.isActive, true) : undefined,
+      ),
+    )
     .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
   const map = new Map<Game['id'], GameCategory[]>();
   for (const r of rows) {
@@ -46,4 +57,33 @@ export async function categoriesByGameIds(db: DrizzleDb, gameIds: Game['id'][]) 
     }
   }
   return map;
+}
+
+export async function mappingsByProviderIds(
+  db: DrizzleDb | DrizzleTx,
+  providerIds: GameProvider['id'][],
+) {
+  const grouped = new Map<GameProvider['id'], GameProviderAggregatorMapping[]>();
+  if (providerIds.length === 0) {
+    return grouped;
+  }
+  const rows = await db
+    .select({
+      providerId: gameProviderAggregatorMapping.providerId,
+      aggregator: gameProviderAggregatorMapping.aggregator,
+      vendorId: gameProviderAggregatorMapping.vendorId,
+    })
+    .from(gameProviderAggregatorMapping)
+    .where(inArray(gameProviderAggregatorMapping.providerId, providerIds))
+    .orderBy(
+      asc(gameProviderAggregatorMapping.providerId),
+      asc(gameProviderAggregatorMapping.aggregator),
+      asc(gameProviderAggregatorMapping.vendorId),
+    );
+  for (const { providerId, ...mapping } of rows) {
+    const mappings = grouped.get(providerId) ?? [];
+    mappings.push(mapping);
+    grouped.set(providerId, mappings);
+  }
+  return grouped;
 }

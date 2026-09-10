@@ -129,6 +129,7 @@ export class GamingService {
     providerId,
     categoryId,
     isActive,
+    playableOnly = false,
   }: {
     page: number;
     limit: number;
@@ -136,11 +137,12 @@ export class GamingService {
     providerId?: GameProvider['id'];
     categoryId?: GameCategory['id'];
     isActive?: boolean;
+    playableOnly?: boolean;
   }) {
     const where = and(
       q ? or(ilike(game.name, likeContains(q)), ilike(game.slug, likeContains(q))) : undefined,
       providerId ? eq(game.providerId, providerId) : undefined,
-      isActive === true
+      playableOnly
         ? playableGameCondition()
         : isActive === undefined
           ? undefined
@@ -150,10 +152,12 @@ export class GamingService {
             this.drizzle.db
               .select({ gameId: gameCategoryGame.gameId })
               .from(gameCategoryGame)
+              .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
               .where(
                 and(
                   eq(gameCategoryGame.gameId, game.id),
                   eq(gameCategoryGame.categoryId, categoryId),
+                  playableOnly ? eq(gameCategory.isActive, true) : undefined,
                 ),
               ),
           )
@@ -177,6 +181,7 @@ export class GamingService {
     const categories = await categoriesByGameIds(
       this.drizzle.db,
       rows.map((r) => r.game.id),
+      playableOnly,
     );
     return {
       items: rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] })),
@@ -200,7 +205,7 @@ export class GamingService {
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
       throw new GameNotFoundError(id);
     }
-    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id]);
+    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly);
     return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
   }
 

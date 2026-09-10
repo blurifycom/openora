@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
+import { Pool } from 'pg';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { gameProvider } from '../schema/index.js';
+import { gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
 import {
   GameProviderService,
   GameProviderNotFoundError,
@@ -21,16 +22,41 @@ function makeService() {
   return { svc: new GameProviderService(db.drizzle, events), events };
 }
 
-async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert> = {}) {
+async function seedProvider(
+  overrides: Partial<typeof gameProvider.$inferInsert> = {},
+  mappings: Array<{ aggregator: string; vendorId: string }> = [],
+) {
   const [row] = await db.drizzle.db
     .insert(gameProvider)
     .values({ slug: `studio-${randomUUID()}`, name: 'Studio', ...overrides })
     .returning();
+  if (mappings.length > 0) {
+    await db.drizzle.db
+      .insert(gameProviderAggregatorMapping)
+      .values(mappings.map((mapping) => ({ providerId: row!.id, ...mapping })));
+  }
   return row!;
 }
 
 const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
   events.emit.mock.calls.map(([topic]) => topic);
+
+async function waitForLockWaiters(pool: Pool, expected: number) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const { rows } = await pool.query<{ waiting: number }>(
+      `SELECT count(*)::int AS waiting
+       FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND wait_event_type = 'Lock'`,
+    );
+    if ((rows[0]?.waiting ?? 0) >= expected) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${expected} blocked database sessions`);
+}
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
@@ -88,16 +114,14 @@ describe('GameProviderService (real PG)', () => {
   });
 
   it('getProvider returns the detail row and 404s an unknown id', async () => {
-    const created = await seedProvider({
-      slug: 'acme',
-      aggregatorVendorId: 'vendor-7',
-      isActive: true,
-    });
+    const created = await seedProvider({ slug: 'acme', isActive: true }, [
+      { aggregator: 'aggregation-a', vendorId: 'vendor-7' },
+    ]);
     const { svc } = makeService();
 
     expect(await svc.getProvider(created.id)).toMatchObject({
       slug: 'acme',
-      aggregatorVendorId: 'vendor-7',
+      aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'vendor-7' }],
       isActive: true,
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
@@ -140,6 +164,56 @@ describe('GameProviderService (real PG)', () => {
     expect(emittedTopics(events)).toContain('gaming.provider.updated');
   });
 
+  it('createProvider persists multiple aggregator mappings and emits the audited snapshot', async () => {
+    const { svc, events } = makeService();
+
+    const created = await svc.createProvider({
+      slug: 'multi-rail-studio',
+      name: 'Multi Rail Studio',
+      aggregatorMappings: [
+        { aggregator: 'aggregation-b', vendorId: '42' },
+        { aggregator: 'aggregation-a', vendorId: '42' },
+      ],
+      ...ACTOR,
+    });
+
+    expect(created).toMatchObject({
+      slug: 'multi-rail-studio',
+      isActive: false,
+      aggregatorMappings: [
+        { aggregator: 'aggregation-a', vendorId: '42' },
+        { aggregator: 'aggregation-b', vendorId: '42' },
+      ],
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.created',
+      expect.objectContaining({
+        providerId: created.id,
+        aggregatorMappings: created.aggregatorMappings,
+        isActive: false,
+      }),
+    );
+  });
+
+  it('createProvider maps slug and aggregator-scoped vendor collisions to distinct errors', async () => {
+    await seedProvider({ slug: 'existing-studio' }, [
+      { aggregator: 'aggregation-a', vendorId: 'vendor-1' },
+    ]);
+    const { svc } = makeService();
+
+    await expect(
+      svc.createProvider({ slug: 'existing-studio', name: 'Duplicate', ...ACTOR }),
+    ).rejects.toBeInstanceOf(GameProviderSlugTakenError);
+    await expect(
+      svc.createProvider({
+        slug: 'new-studio',
+        name: 'New Studio',
+        aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'vendor-1' }],
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameProviderVendorIdTakenError);
+  });
+
   it('updateProvider accepts a slug change but rejects a taken one', async () => {
     const a = await seedProvider({ slug: 'studio-a' });
     await seedProvider({ slug: 'studio-b' });
@@ -162,17 +236,146 @@ describe('GameProviderService (real PG)', () => {
     ).rejects.toBeInstanceOf(GameProviderNotFoundError);
   });
 
-  it('updateProvider rejects a taken aggregatorVendorId with its own error, not a slug one', async () => {
-    await seedProvider({ slug: 'studio-a', aggregatorVendorId: 'vendor-1' });
+  it('updateProvider replaces mappings and rejects a vendor ID taken within the same aggregator', async () => {
+    await seedProvider({ slug: 'studio-a' }, [
+      { aggregator: 'aggregation-a', vendorId: 'vendor-1' },
+    ]);
     const b = await seedProvider({ slug: 'studio-b' });
-    const { svc } = makeService();
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.updateProvider({
+        id: b.id,
+        aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-1' }],
+        ...ACTOR,
+      }),
+    ).resolves.toMatchObject({
+      aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-1' }],
+    });
 
     const attempt = svc.updateProvider({
       id: b.id,
-      aggregatorVendorId: 'vendor-1',
-      ...NO_CLIENT_META,
+      aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'vendor-1' }],
+      ...ACTOR,
     });
     await expect(attempt).rejects.toBeInstanceOf(GameProviderVendorIdTakenError);
     await expect(attempt).rejects.not.toBeInstanceOf(GameProviderSlugTakenError);
+
+    await expect(
+      svc.updateProvider({ id: b.id, aggregatorMappings: [], ...ACTOR }),
+    ).resolves.toMatchObject({ aggregatorMappings: [] });
+    expect(events.emit).toHaveBeenLastCalledWith(
+      'gaming.provider.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({
+          aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-1' }],
+        }),
+        after: expect.objectContaining({ aggregatorMappings: [] }),
+      }),
+    );
+  });
+
+  it('treats a supplied mapping collection as a replacement command', async () => {
+    const created = await seedProvider({ slug: 'replace-studio' }, [
+      { aggregator: 'aggregation-a', vendorId: 'vendor-1' },
+    ]);
+    const { svc, events } = makeService();
+    const [before] = await db.drizzle.db
+      .select({ id: gameProviderAggregatorMapping.id })
+      .from(gameProviderAggregatorMapping)
+      .where(eq(gameProviderAggregatorMapping.providerId, created.id));
+
+    const result = await svc.updateProvider({
+      id: created.id,
+      aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'vendor-1' }],
+      ...ACTOR,
+    });
+    const [after] = await db.drizzle.db
+      .select({ id: gameProviderAggregatorMapping.id })
+      .from(gameProviderAggregatorMapping)
+      .where(eq(gameProviderAggregatorMapping.providerId, created.id));
+
+    expect(result.aggregatorMappings).toEqual([
+      { aggregator: 'aggregation-a', vendorId: 'vendor-1' },
+    ]);
+    expect(after?.id).not.toBe(before?.id);
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({ aggregatorMappings: result.aggregatorMappings }),
+        after: expect.objectContaining({ aggregatorMappings: result.aggregatorMappings }),
+      }),
+    );
+  });
+
+  it('serializes concurrent updates into truthful returned states and audit transitions', async () => {
+    const created = await seedProvider({ slug: 'serialized-studio', name: 'Initial Studio' }, [
+      { aggregator: 'aggregation-a', vendorId: 'vendor-1' },
+    ]);
+    const { svc, events } = makeService();
+    const controlPool = new Pool({ connectionString: db.url });
+    const lockClient = await controlPool.connect();
+
+    await lockClient.query('BEGIN');
+    await lockClient.query('SELECT id FROM game_provider WHERE id = $1 FOR UPDATE', [created.id]);
+
+    const firstUpdate = svc.updateProvider({
+      id: created.id,
+      name: 'First Studio',
+      aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-2' }],
+      ...ACTOR,
+    });
+    await waitForLockWaiters(controlPool, 1);
+    const secondUpdate = svc.updateProvider({
+      id: created.id,
+      logoUrl: 'https://img.test/final.png',
+      aggregatorMappings: [{ aggregator: 'aggregation-c', vendorId: 'vendor-3' }],
+      ...ACTOR,
+    });
+    await waitForLockWaiters(controlPool, 2);
+    await lockClient.query('COMMIT');
+    lockClient.release();
+
+    const [first, second] = await Promise.all([firstUpdate, secondUpdate]);
+    await controlPool.end();
+
+    expect(first).toMatchObject({
+      name: 'First Studio',
+      logoUrl: null,
+      aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-2' }],
+    });
+    expect(second).toMatchObject({
+      name: 'First Studio',
+      logoUrl: 'https://img.test/final.png',
+      aggregatorMappings: [{ aggregator: 'aggregation-c', vendorId: 'vendor-3' }],
+    });
+    expect(events.emit).toHaveBeenNthCalledWith(
+      1,
+      'gaming.provider.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({
+          name: 'Initial Studio',
+          aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'vendor-1' }],
+        }),
+        after: expect.objectContaining({
+          name: 'First Studio',
+          aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-2' }],
+        }),
+      }),
+    );
+    expect(events.emit).toHaveBeenNthCalledWith(
+      2,
+      'gaming.provider.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({
+          name: 'First Studio',
+          aggregatorMappings: [{ aggregator: 'aggregation-b', vendorId: 'vendor-2' }],
+        }),
+        after: expect.objectContaining({
+          logoUrl: 'https://img.test/final.png',
+          aggregatorMappings: [{ aggregator: 'aggregation-c', vendorId: 'vendor-3' }],
+        }),
+      }),
+    );
   });
 });
