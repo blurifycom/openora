@@ -67,23 +67,34 @@ export function createEventBus(
   logger: Logger = createLogger('event-bus'),
   outbox?: OutboxWriter,
 ): EventBus {
-  function validate(event: string, payload: unknown): void {
-    if (isKnownEvent(event)) {
-      const schema = domainEventSchemas[event] as ZodType<unknown>;
-      const result = schema.safeParse(payload);
-      if (!result.success) {
-        // Log loudly but still deliver - a schema lag must not silently drop events.
-        logger.error({ event, issues: result.error.issues }, 'event payload failed validation');
-      }
+  // Parse a payload against its domain-event schema. On failure, logs under `failureMessage`
+  // and returns the payload untouched - a schema lag must not silently drop an event.
+  function parseKnownPayload(event: string, payload: unknown, failureMessage: string): unknown {
+    if (!isKnownEvent(event)) {
+      return payload;
     }
+    const schema = domainEventSchemas[event] as ZodType<unknown>;
+    const result = schema.safeParse(payload);
+    if (result.success) {
+      return result.data;
+    }
+    logger.error({ event, issues: result.error.issues }, failureMessage);
+    return payload;
   }
 
   function publishEvent(event: string, payload: unknown): void {
-    validate(event, payload);
+    parseKnownPayload(event, payload, 'event payload failed validation');
     const envelope = buildEnvelope(event, payload);
     void Promise.resolve(broker.publish(envelope)).catch((err) =>
       logger.error({ event, err }, 'event publish failed'),
     );
+  }
+
+  // A legacy envelope can sit in the durable broker's backlog when a consumer deploys a
+  // newer schema (ADR-0016 forward-compat). Parsing inbound payloads applies schema
+  // `.default()`s so a field added since reaches handlers as its default, not `undefined`.
+  function normalizeInbound(event: string, payload: unknown): unknown {
+    return parseKnownPayload(event, payload, 'inbound event payload failed validation');
   }
 
   return {
@@ -103,14 +114,16 @@ export function createEventBus(
             `for best-effort post-commit delivery.`,
         );
       }
-      validate(event, payload);
+      parseKnownPayload(event, payload, 'event payload failed validation');
       await outbox.write(tx, buildEnvelope(event, payload));
     },
 
     on(event: string, handler: EventHandler): () => void {
       return broker.subscribe(event, async (envelope: EventEnvelope) => {
+        const payload = normalizeInbound(event, envelope.payload);
+        const delivered = payload === envelope.payload ? envelope : { ...envelope, payload };
         try {
-          await handler(envelope.payload, envelope);
+          await handler(payload, delivered);
         } catch (err) {
           logger.error({ event, err }, 'event subscriber threw');
         }
