@@ -9,9 +9,9 @@ the worker resolves the address and locale, renders once, and sends. See ADR-003
 Source of truth: the mail contract and adapter ports under `packages/core/src/contracts/`.
 
 `EMAIL_SENDER.send({ to, subject, html, text })` - HTML and text are separate fields; the
-transport never sniffs one string. `EMAIL_TEMPLATE_RENDERER.render(template, locale)`
-returns `{ subject, html, text }`. After rendering, core appends the player's anti-phishing
-code (when set) to both bodies; an overlay renderer cannot omit this platform-owned footer.
+transport never sniffs one string. `EMAIL_TEMPLATE_RENDERER.render(template, locale, name, code)`
+receives the player's optional anti-phishing code and returns `{ subject, html, text }`.
+The renderer owns localized, in-document placement of that code.
 
 ## Default bindings
 

@@ -1962,6 +1962,9 @@ export class IdentityService {
       ip,
       userAgent,
     });
+    // Deliberately address-only: resolving a user recipient later would stamp the email with
+    // the replacement code. This notice instead carries the prior code, which lets the owner
+    // recognise it even if a stolen session changed the current value.
     await this.mailDispatch?.toAddress({
       email: caller.email,
       locale: caller.language,

@@ -105,7 +105,7 @@ describe('MailService', () => {
     }
     await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'de@b.com' }));
   });
 
@@ -117,7 +117,7 @@ describe('MailService', () => {
       template: verify,
     });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
     expect(sender.send).toHaveBeenCalledWith({
       to: 'de@b.com',
       subject: 's',
@@ -144,7 +144,7 @@ describe('MailService', () => {
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada', null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'user@b.com' }));
   });
 
@@ -166,10 +166,10 @@ describe('MailService', () => {
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null, null);
   });
 
-  it('appends the user anti-phishing code after any renderer completes', async () => {
+  it('passes the user anti-phishing code to the renderer for localized, in-document placement', async () => {
     const {
       svc,
       renderer: userRenderer,
@@ -191,12 +191,12 @@ describe('MailService', () => {
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(userRenderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada');
+    expect(userRenderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada', 'Sunny Meadow');
     expect(userRenderer.render).toHaveBeenCalledTimes(1);
     expect(sender.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 't\n\nYour anti-phishing code: Sunny Meadow',
-        html: '<p>h</p>\n<p>Your anti-phishing code: Sunny Meadow</p>',
+        text: 't',
+        html: '<p>h</p>',
       }),
     );
 
@@ -206,7 +206,7 @@ describe('MailService', () => {
       template: verify,
     });
 
-    expect(addressRenderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(addressRenderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
   });
 
   it('skips - without throwing - when the user has no address (nothing to retry)', async () => {

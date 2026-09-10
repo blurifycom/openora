@@ -153,14 +153,24 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   }),
 };
 
-const renderDefaultEmail = (template: MailTemplate, locale: string): RenderedEmail => {
+const renderDefaultEmail = (
+  template: MailTemplate,
+  locale: string,
+  antiPhishingCode?: string | null,
+): RenderedEmail => {
   const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
   const { subject, text: body } = plain(template.data, locale);
-  return { subject, text: body, html: textToHtml(body) };
+  const text = antiPhishingCode ? `${body}\n\nYour anti-phishing code: ${antiPhishingCode}` : body;
+  return { subject, text, html: textToHtml(text) };
 };
 
 export class DefaultEmailTemplateRenderer implements EmailTemplateRenderer {
-  render(template: MailTemplate, locale: string, _recipientName?: string | null): RenderedEmail {
-    return renderDefaultEmail(template, locale);
+  render(
+    template: MailTemplate,
+    locale: string,
+    _recipientName?: string | null,
+    antiPhishingCode?: string | null,
+  ): RenderedEmail {
+    return renderDefaultEmail(template, locale, antiPhishingCode);
   }
 }

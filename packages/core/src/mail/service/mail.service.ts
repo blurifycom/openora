@@ -8,7 +8,6 @@ import type {
   MailToAddressInput,
   MailToUserInput,
   MailRecipientDirectory,
-  RenderedEmail,
 } from '@openora/core/contracts';
 import { MAIL_SEND_QUEUE, type EncryptedMailSendJob, type MailSendJob } from '../contract/index.js';
 import { createMailPayloadCipher, type MailPayloadCipher } from './mail-payload.service.js';
@@ -32,24 +31,6 @@ const MAIL_ENQUEUE_OPTS = {
 } as const;
 
 const ENQUEUE_RETRY_DELAYS_MS = [100, 300, 800];
-
-const escapeHtml = (value: string): string =>
-  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-function appendAntiPhishingCode(
-  rendered: RenderedEmail,
-  antiPhishingCode: string | null,
-): RenderedEmail {
-  if (antiPhishingCode === null) {
-    return rendered;
-  }
-  const footer = `Your anti-phishing code: ${antiPhishingCode}`;
-  return {
-    ...rendered,
-    text: `${rendered.text}\n\n${footer}`,
-    html: `${rendered.html}\n<p>${escapeHtml(footer)}</p>`,
-  };
-}
 
 async function withEnqueueRetry(enqueue: () => Promise<unknown>): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
@@ -128,8 +109,10 @@ export class MailService {
       });
       return;
     }
-    const rendered = appendAntiPhishingCode(
-      await this.renderer.render(job.template, resolved.locale, resolved.name),
+    const rendered = await this.renderer.render(
+      job.template,
+      resolved.locale,
+      resolved.name,
       resolved.antiPhishingCode,
     );
     await this.sender.send({
