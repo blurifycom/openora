@@ -71,6 +71,7 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
   'unconfigured_asset',
   'stuck_sweep',
   'rg_limit_breach',
+  'stuck_swap',
 ] as const;
 
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;

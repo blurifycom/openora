@@ -148,6 +148,13 @@
       "when": 1789038279787,
       "tag": "0020_shocking_warhawk",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789038703089,
+      "tag": "0021_clear_cammi",
+      "breakpoints": true
     }
   ]
 }
