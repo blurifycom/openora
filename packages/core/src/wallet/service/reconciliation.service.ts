@@ -96,6 +96,9 @@ const DEFAULT_STALE_RUN_AFTER_MINUTES = 30;
 /** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 
+// A swap leg carries no payment provider name, but a finding needs one to be filed under.
+const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
+
 const JOB_NAME = 'wallet-reconciliation';
 
 /**
@@ -330,6 +333,7 @@ export class ReconciliationService {
       withdrawalsReconciled: 0,
       unknownAtProvider: 0,
       stuckSweeps: 0,
+      stuckSwaps: 0,
       unreconciledHours: 0,
     };
 
@@ -351,6 +355,7 @@ export class ReconciliationService {
         }
 
         await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
+        await this.reconcileStuckSwaps(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
 
         // Deliberately not gated on `wallet.sweep` being configured. An operator can
         // adopt reconciliation without sweeping, and a stuck sweep is real player money
@@ -625,6 +630,56 @@ export class ReconciliationService {
           transactionId: tx.id,
           externalId: tx.providerRefId,
           detail: 'vendor has no record of this withdrawal',
+        },
+        this.audit,
+      );
+    }
+  }
+
+  // Human resolution only, like a stuck sweep. A swap_out held `processing` past the cutoff
+  // is money debited from the player with nothing credited back, and the desk may or may not
+  // have filled it - so neither a refund nor a credit is safe without someone looking.
+  // Covered by wallet_transaction_status_type_created_at_idx, same as stuck withdrawals.
+  private async reconcileStuckSwaps(
+    runId: WalletJobRun['runId'],
+    stuckAfterMinutes: number,
+    batchSize: number,
+    counts: { stuckSwaps: number },
+  ): Promise<void> {
+    const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
+    const alreadyReported = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'stuck_swap'
+        AND ${walletReconciliationFinding.externalId} = ${walletTransaction.id}::text
+    )`;
+    const stuck = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.status, 'processing'),
+          eq(walletTransaction.type, 'swap_out'),
+          lt(walletTransaction.createdAt, cutoff),
+        ),
+      )
+      .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
+      .limit(batchSize);
+
+    for (const tx of stuck) {
+      counts.stuckSwaps += 1;
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: tx.providerName ?? SWAP_DESK_PROVIDER_LABEL,
+          kind: 'stuck_swap',
+          currency: tx.currency,
+          amount: tx.amount,
+          transactionId: tx.id,
+          externalId: tx.id,
+          detail: `swap_out ${tx.id} has been processing since ${tx.createdAt.toISOString()}${
+            tx.providerRefId ? ` (desk reference ${tx.providerRefId})` : ''
+          }`,
         },
         this.audit,
       );

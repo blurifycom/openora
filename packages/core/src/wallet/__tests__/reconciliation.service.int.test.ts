@@ -346,6 +346,72 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
   });
 });
 
+describe('ReconciliationService.runCycle - stuck swaps', () => {
+  const TWO_HOURS_AGO = () => new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+  async function seedSwapOut(createdAt: Date) {
+    const w = await seedWallet('BTC', '4');
+    const tx = findOneOrThrow(
+      await db.drizzle.db
+        .insert(walletTransaction)
+        .values({
+          walletId: w.id,
+          type: 'swap_out',
+          amount: '1',
+          currency: 'BTC',
+          status: 'processing',
+          direction: 'debit',
+          rail: 'crypto',
+          createdAt,
+        })
+        .returning(),
+      new Error('seedSwapOut: query returned no row'),
+    );
+    return { w, tx };
+  }
+
+  it('files a stuck_swap finding for a held swap past the cutoff and moves no money', async () => {
+    const { w, tx } = await seedSwapOut(TWO_HOURS_AGO());
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
+    await reconciliation.runCycle();
+
+    const findings = await findingRows();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'stuck_swap',
+      externalId: tx.id,
+      transactionId: tx.id,
+      status: 'open',
+    });
+    expect(await balanceOf(w.id)).toBe('4.000000000000000000');
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row?.status).toBe('processing');
+  });
+
+  it('leaves a swap still inside the cutoff alone', async () => {
+    await seedSwapOut(new Date());
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
+    await reconciliation.runCycle();
+
+    expect(await findingRows()).toHaveLength(0);
+  });
+
+  it('reports a stuck swap once however many cycles see it', async () => {
+    await seedSwapOut(TWO_HOURS_AGO());
+    const { reconciliation } = makeServices(listTransactionsReturning([]));
+
+    await reconciliation.runCycle();
+    await reconciliation.runCycle();
+
+    expect(await findingRows()).toHaveLength(1);
+  });
+});
+
 describe('ReconciliationService.runCycle - claim concurrency', () => {
   it('the second of two concurrent cycles returns immediately', async () => {
     // A cycle that finishes (clearing the claim) before the sibling's own claim
