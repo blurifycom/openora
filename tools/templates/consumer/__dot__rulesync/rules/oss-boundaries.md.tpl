@@ -66,7 +66,7 @@ Enforced by `pnpm check:lint` (oxlint, per-edit), the pre-commit hook, CI, and t
 
 Runs the checks a dependency graph cannot make, because they are about files that do not exist or edges that do not exist:
 
-- Every module has `index.ts`. An `AGENTS.md` is optional - only for knowledge local to the module that the rules and the code do not show.
+- Every module has `index.ts`. An `AGENTS.md` is optional - only for knowledge local to the module that the rules and the code do not show. A `check:shape` that still requires one drops that assertion with this rule, or the gate contradicts it.
 - The barrel re-exports only; the single side effect it may carry is `import './locales'`.
 - Every file under a module's `pages|components|hooks|utils` is reachable from the barrel, and every `packages/ui/src` file from the `{{scope}}/ui` barrel - otherwise it is dead code.
 
