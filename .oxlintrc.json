@@ -3,7 +3,8 @@
   "extends": ["./packages/core/oxlint/oxlintrc.json"],
   "jsPlugins": [
     "./tools/lint/oxlint-boundaries-plugin.mjs",
-    "./tools/lint/oxlint-module-shape-plugin.mjs"
+    "./tools/lint/oxlint-module-shape-plugin.mjs",
+    { "name": "anti-slop", "specifier": "./tools/lint/anti-slop/index.ts" }
   ],
   "plugins": ["unicorn", "typescript", "oxc", "import"],
   "rules": {
@@ -27,7 +28,26 @@
     "oss-module-shape/no-float-money": "error",
     "oss-module-shape/drizzle-snake-case": "error",
     "oss-module-shape/no-raw-z-uuid": "error",
-    "oss-module-shape/no-inline-z-enum-outside-contract": "error"
+    "oss-module-shape/no-inline-z-enum-outside-contract": "error",
+    "oxc/no-accumulating-spread": "error",
+    "anti-slop/no-array-filter-map": "warn",
+    "anti-slop/no-reduce-accumulator-copy": "error",
+    "anti-slop/no-chained-type-assertions": "warn",
+    "anti-slop/no-conditional-empty-object-spread": "warn",
+    "anti-slop/no-known-value-widening": "warn",
+    "anti-slop/no-module-mocking": "warn",
+    "anti-slop/no-object-parameters": "warn",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "warn",
+    "anti-slop/no-shape-in-symbol-names": "warn",
+    "anti-slop/no-unknown-parameters": "warn",
+    "anti-slop/no-unknown-returns": "warn",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "warn",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-readable-spacing": "warn",
+    "anti-slop/require-safety-comment-for-type-assertion": "warn"
   },
   "ignorePatterns": [
     "**/node_modules*/**",
@@ -37,7 +57,14 @@
     "coverage",
     "generated",
     "*.generated.ts",
-    "tools/templates"
+    "tools/templates",
+    "tools/lint/anti-slop/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".github/agents/**",
+    ".github/hooks/**",
+    ".github/skills/**"
   ],
   "overrides": [
     {

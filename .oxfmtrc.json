@@ -15,6 +15,7 @@
     "**/catalog.json",
     "docs/openapi.json",
     "packages/core/tsconfig.json",
+    "tools/lint/anti-slop/**",
     "pnpm-lock.yaml"
   ]
 }
