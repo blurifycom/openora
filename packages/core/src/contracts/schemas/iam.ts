@@ -25,11 +25,6 @@ export const adminStatement = {
   game: ['view', 'enable', 'disable'] as const,
   content: ['create', 'update', 'delete', 'publish'] as const,
   compliance: ['view', 'override-limit', 'manage-rg'] as const,
-  // Separate from `compliance` on purpose: risk-fraud-manager and kyc-aml-officer already
-  // hold compliance:read_write for override-limit/manage-rg, and a read_write grant unlocks
-  // every action on a resource - reusing `compliance` here would leak country-rule access to
-  // those two roles. Only super-admin (all-resources RW) and compliance-manager (granted
-  // explicitly in default-admin-roles.ts) hold this resource.
   'regulatory-overview': ['view', 'manage-country-rules', 'manage-global-kyc'] as const,
   report: ['view'] as const,
   withdrawal: ['view', 'approve', 'reject', 'hold', 'auto-rule'] as const,

@@ -172,15 +172,18 @@ export type GeoRule = z.infer<typeof GeoRuleSchema>;
 
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
+export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true })
+  .extend({ confirm: z.literal(true).optional() })
+  .strict();
 export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
 
-export const UpsertCountryRuleInputSchema = z
-  .object({
-    countryCode: CountryCodeSchema,
-    blacklisted: z.boolean(),
-    redirectIp: z.boolean(),
-    kycRequired: z.boolean(),
+export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
+  countryCode: true,
+  blacklisted: true,
+  redirectIp: true,
+  kycRequired: true,
+})
+  .extend({
     expectedUpdatedAt: TimestampSchema.nullable(),
     confirm: z.boolean().optional(),
   })
@@ -197,13 +200,10 @@ export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
 export const SetGlobalKycConfigInputSchema = z
   .object({
     enabled: z.boolean(),
-    confirm: z.boolean(),
+    confirm: z.literal(true),
     expectedUpdatedAt: TimestampSchema.nullable(),
   })
-  .refine((input) => input.confirm === true, {
-    message: 'confirm must be true',
-    path: ['confirm'],
-  });
+  .strict();
 export type SetGlobalKycConfigInput = z.infer<typeof SetGlobalKycConfigInputSchema>;
 
 const GeoCheckOutputSchema = z.object({

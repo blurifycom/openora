@@ -1,11 +1,11 @@
 {
-  "id": "0b4e4e36-4ee5-4f5d-85ce-b570b3c766df",
+  "id": "cb111cb0-3745-47e1-bce9-48640f303fe0",
   "prevId": "00265653-31b5-4c1c-b5b8-d3b764ed4c63",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.country_rule": {
-      "name": "country_rule",
+    "public.geo_rule": {
+      "name": "geo_rule",
       "schema": "",
       "columns": {
         "id": {
@@ -21,12 +21,11 @@
           "primaryKey": false,
           "notNull": true
         },
-        "blacklisted": {
-          "name": "blacklisted",
-          "type": "boolean",
+        "action": {
+          "name": "action",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": true
         },
         "redirect_ip": {
           "name": "redirect_ip",
@@ -66,8 +65,8 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "country_rule_country_code_unique": {
-          "name": "country_rule_country_code_unique",
+        "geo_rule_country_code_unique": {
+          "name": "geo_rule_country_code_unique",
           "nullsNotDistinct": false,
           "columns": ["country_code"]
         }

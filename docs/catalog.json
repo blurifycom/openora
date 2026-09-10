@@ -159,7 +159,7 @@
       "id": "compliance",
       "group": "compliance",
       "tables": [
-        "country_rule",
+        "geo_rule",
         "global_kyc_config",
         "kyc_verification",
         "rg_exclusion",

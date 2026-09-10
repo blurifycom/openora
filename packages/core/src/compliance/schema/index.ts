@@ -19,6 +19,7 @@ import {
   EXCLUSION_STATUSES,
   RG_FLAG_TYPES,
   RG_FLAG_STATUSES,
+  geoRuleActions,
   limitTypes,
   limitPeriods,
   LIMIT_CHANGE_KINDS,
@@ -81,13 +82,10 @@ export const userLimit = pgTable(
   ],
 );
 
-// Rewrite of the old binary allow/block geo rule: three independent per-country flags.
-// Row presence = "country has a rule"; a country with no row reads as blacklisted=false,
-// redirectIp=false, kycRequired=true (the defaults below) per the Regulatory Overview spec.
-export const countryRule = pgTable('country_rule', {
+export const countryRule = pgTable('geo_rule', {
   id: uuid().primaryKey().defaultRandom(),
-  countryCode: text().notNull().unique('country_rule_country_code_unique'),
-  blacklisted: boolean().notNull().default(false),
+  countryCode: text().notNull().unique('geo_rule_country_code_unique'),
+  action: text({ enum: geoRuleActions }).notNull(),
   redirectIp: boolean().notNull().default(false),
   kycRequired: boolean().notNull().default(true),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

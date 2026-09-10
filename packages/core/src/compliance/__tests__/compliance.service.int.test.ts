@@ -46,8 +46,9 @@ beforeEach(async () => {
 });
 
 describe('ComplianceService.geoCheck (real PG)', () => {
-  it('allows the request when no geo-ip port is bound', async () => {
+  it('allows the request when no geo-ip port is bound, even with a blacklist', async () => {
     const { svc } = makeService();
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
 
     expect(await svc.geoCheck('1.2.3.4')).toEqual({
       allowed: true,
@@ -64,7 +65,9 @@ describe('ComplianceService.geoCheck (real PG)', () => {
 
   it('allows an unresolvable address when country rules exist but none blacklists', async () => {
     const { svc } = makeService(null);
-    await db.drizzle.db.insert(countryRule).values({ countryCode: 'DE', kycRequired: false });
+    await db.drizzle.db
+      .insert(countryRule)
+      .values({ countryCode: 'DE', action: 'allow', kycRequired: false });
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: null });
   });
@@ -77,7 +80,7 @@ describe('ComplianceService.geoCheck (real PG)', () => {
 
   it('blocks a country whose rule blacklists it, with a reason', async () => {
     const { svc } = makeService('US');
-    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', blacklisted: true });
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
 
     const result = await svc.geoCheck('1.2.3.4');
 
@@ -87,7 +90,7 @@ describe('ComplianceService.geoCheck (real PG)', () => {
 
   it('allows a country whose rule exists but does not blacklist it', async () => {
     const { svc } = makeService('DE');
-    await db.drizzle.db.insert(countryRule).values({ countryCode: 'DE', blacklisted: false });
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'DE', action: 'allow' });
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: 'DE' });
   });
@@ -117,6 +120,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: false,
         kycRequired: true,
         expectedUpdatedAt: null,
+        confirm: true,
       },
       actorId,
     );
@@ -127,7 +131,6 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
       redirectIp: false,
       kycRequired: true,
     });
-    // Only `blacklisted` differs from the column defaults (false, false, true) - one audit row.
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
@@ -151,6 +154,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: false,
         kycRequired: true,
         expectedUpdatedAt: null,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -170,7 +174,6 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
 
     expect(updated).toMatchObject({ blacklisted: true, redirectIp: true, kycRequired: false });
     expect(await db.drizzle.db.select().from(countryRule)).toHaveLength(1);
-    // blacklisted stayed true (unchanged) - only redirectIp and kycRequired changed.
     expect(audit.recordInTransaction).toHaveBeenCalledTimes(2);
   });
 
@@ -183,6 +186,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: false,
         kycRequired: true,
         expectedUpdatedAt: null,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -195,6 +199,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: false,
         kycRequired: true,
         expectedUpdatedAt: null,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -211,6 +216,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: false,
         kycRequired: true,
         expectedUpdatedAt: null,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -239,6 +245,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: true,
         kycRequired: true,
         expectedUpdatedAt: null,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -251,6 +258,23 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
           redirectIp: true,
           kycRequired: true,
           expectedUpdatedAt: rule.updatedAt,
+        },
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(CountryRuleConfirmationRequiredError);
+  });
+
+  it('requires confirmation before blacklisting a country', async () => {
+    const { svc } = makeService();
+
+    await expect(
+      svc.upsertCountryRule(
+        {
+          countryCode: 'FR',
+          blacklisted: true,
+          redirectIp: false,
+          kycRequired: true,
+          expectedUpdatedAt: null,
         },
         randomUUID(),
       ),
@@ -276,6 +300,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         redirectIp: false,
         kycRequired: true,
         expectedUpdatedAt: created.updatedAt,
+        confirm: true,
       },
       randomUUID(),
     );
@@ -311,6 +336,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
           redirectIp: false,
           kycRequired: true,
           expectedUpdatedAt: null,
+          confirm: true,
         },
         randomUUID(),
       ),
@@ -323,7 +349,10 @@ describe('ComplianceService legacy geo rules (real PG)', () => {
     const { svc, events } = makeService();
     const actorId = randomUUID();
 
-    const rule = await svc.addGeoRule({ countryCode: 'FR', action: 'block' }, actorId);
+    const rule = await svc.addGeoRule(
+      { countryCode: 'FR', action: 'block', confirm: true },
+      actorId,
+    );
 
     expect(rule).toMatchObject({ countryCode: 'FR', action: 'block' });
     expect((await svc.listCountryRules()).at(0)).toMatchObject({

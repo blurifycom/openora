@@ -112,14 +112,23 @@ export function createComplianceRouter({
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(
         context,
-        'compliance',
-        'override-limit',
+        'regulatory-overview',
+        'manage-country-rules',
       );
-      return compliance.addGeoRule(input, userId, { ip, userAgent });
+      return mapErrors(
+        {
+          CONFLICT: [
+            CountryRuleConfirmationRequiredError,
+            CountryRuleVersionConflictError,
+            LicensedJurisdictionBlacklistError,
+          ],
+        },
+        () => compliance.addGeoRule(input, userId, { ip, userAgent }),
+      );
     }),
 
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
-      await adminGuard.assert(context, 'compliance', 'view');
+      await adminGuard.assert(context, 'regulatory-overview', 'view');
       return compliance.listGeoRules();
     }),
 

@@ -4,7 +4,6 @@ import {
   makeConflictError,
   makeNotFoundError,
   makeOwnershipError,
-  serializeRow,
   type EventBus,
 } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
@@ -51,7 +50,7 @@ export const LicensedJurisdictionBlacklistError = makeConflictError(
 
 export const CountryRuleConfirmationRequiredError = makeConflictError(
   'CountryRuleConfirmationRequiredError',
-  'Confirmation is required to weaken a country rule.',
+  'Confirmation is required to change a country rule.',
   { reason: 'confirmation_required' },
 );
 
@@ -61,7 +60,7 @@ function hasCountryRuleChanges(
   before: typeof countryRule.$inferSelect,
   input: UpsertCountryRuleInput,
 ) {
-  return COUNTRY_RULE_FIELDS.some((field) => before[field] !== input[field]);
+  return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== input[field]);
 }
 
 function weakensCountryRule(
@@ -69,10 +68,17 @@ function weakensCountryRule(
   input: UpsertCountryRuleInput,
 ) {
   return (
-    (before.blacklisted && !input.blacklisted) ||
+    (before.action === 'block' && !input.blacklisted) ||
     (before.redirectIp && !input.redirectIp) ||
     (before.kycRequired && !input.kycRequired)
   );
+}
+
+function countryRuleFieldValue(
+  row: typeof countryRule.$inferSelect,
+  field: (typeof COUNTRY_RULE_FIELDS)[number],
+) {
+  return field === 'blacklisted' ? row.action === 'block' : row[field];
 }
 
 function hasExpectedVersion(actual: Date | null, expected: string | null) {
@@ -80,7 +86,16 @@ function hasExpectedVersion(actual: Date | null, expected: string | null) {
 }
 
 function toCountryRuleView(row: typeof countryRule.$inferSelect) {
-  return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
+  return {
+    id: row.id,
+    countryCode: row.countryCode,
+    blacklisted: row.action === 'block',
+    redirectIp: row.redirectIp,
+    kycRequired: row.kycRequired,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt?.toISOString() ?? null,
+    updatedBy: row.updatedBy,
+  };
 }
 
 function toGlobalKycConfigView(row: typeof globalKycConfig.$inferSelect) {
@@ -92,11 +107,10 @@ function toGlobalKycConfigView(row: typeof globalKycConfig.$inferSelect) {
 }
 
 function toGeoRuleView(row: typeof countryRule.$inferSelect) {
-  const action: GeoRuleAction = row.blacklisted ? 'block' : 'allow';
   return {
     id: row.id,
     countryCode: row.countryCode,
-    action,
+    action: row.action as GeoRuleAction,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -111,14 +125,17 @@ export class ComplianceService {
   ) {}
 
   async geoCheck(ipAddress: string | null) {
-    const countryCode =
-      this.geoIp && ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null;
+    if (!this.geoIp) {
+      return { allowed: true, countryCode: null, reason: null };
+    }
+
+    const countryCode = ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null;
 
     if (!countryCode) {
       const [blacklistedRule] = await this.drizzle.db
         .select({ countryCode: countryRule.countryCode })
         .from(countryRule)
-        .where(eq(countryRule.blacklisted, true))
+        .where(eq(countryRule.action, 'block'))
         .limit(1);
       return blacklistedRule || this.igaming?.blockedCountries.length
         ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
@@ -130,11 +147,11 @@ export class ComplianceService {
     }
 
     const [rule] = await this.drizzle.db
-      .select({ blacklisted: countryRule.blacklisted })
+      .select({ action: countryRule.action })
       .from(countryRule)
       .where(eq(countryRule.countryCode, countryCode));
 
-    if (rule?.blacklisted) {
+    if (rule?.action === 'block') {
       return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
     }
 
@@ -154,7 +171,7 @@ export class ComplianceService {
 
       const [inserted] = await tx
         .insert(countryRule)
-        .values({ countryCode: input.countryCode })
+        .values({ countryCode: input.countryCode, action: 'allow' })
         .onConflictDoNothing()
         .returning();
       const before =
@@ -171,7 +188,10 @@ export class ComplianceService {
       if (!hasExpectedVersion(before.updatedAt, input.expectedUpdatedAt)) {
         throw new CountryRuleVersionConflictError();
       }
-      if (weakensCountryRule(before, input) && !input.confirm) {
+      if (
+        ((before.action !== 'block' && input.blacklisted) || weakensCountryRule(before, input)) &&
+        !input.confirm
+      ) {
         throw new CountryRuleConfirmationRequiredError();
       }
       if (!hasCountryRuleChanges(before, input)) {
@@ -182,7 +202,7 @@ export class ComplianceService {
         await tx
           .update(countryRule)
           .set({
-            blacklisted: input.blacklisted,
+            action: input.blacklisted ? 'block' : 'allow',
             redirectIp: input.redirectIp,
             kycRequired: input.kycRequired,
             updatedAt: new Date(),
@@ -194,7 +214,7 @@ export class ComplianceService {
       );
 
       for (const field of COUNTRY_RULE_FIELDS) {
-        if (before[field] === row[field]) {
+        if (countryRuleFieldValue(before, field) === countryRuleFieldValue(row, field)) {
           continue;
         }
         await this.audit.recordInTransaction(tx, {
@@ -203,8 +223,8 @@ export class ComplianceService {
           action: 'compliance.country_rule.setting_changed',
           resourceType: 'country-rule',
           resourceId: input.countryCode,
-          before: { setting: field, value: before[field] },
-          after: { setting: field, value: row[field] },
+          before: { setting: field, value: countryRuleFieldValue(before, field) },
+          after: { setting: field, value: countryRuleFieldValue(row, field) },
           ...meta,
         });
       }
@@ -277,50 +297,40 @@ export class ComplianceService {
     });
   }
 
-  async addGeoRule(input: AddGeoRuleInput, actorId?: User['id'], meta?: ClientMeta) {
-    if (input.action === 'block' && this.igaming?.jurisdictions.includes(input.countryCode)) {
-      throw new LicensedJurisdictionBlacklistError();
-    }
-
-    const row = await this.drizzle.db.transaction(async (tx) => {
-      const [inserted] = await tx
-        .insert(countryRule)
-        .values({ countryCode: input.countryCode })
-        .onConflictDoNothing()
-        .returning();
-      const before =
-        inserted ??
-        findOneOrThrow(
-          await tx
-            .select()
-            .from(countryRule)
-            .where(eq(countryRule.countryCode, input.countryCode))
-            .for('update'),
-          new CountryRuleNotFoundError(input.countryCode),
-        );
-      const blacklisted = input.action === 'block';
-      const row =
-        before.blacklisted === blacklisted
-          ? before
-          : findOneOrThrow(
-              await tx
-                .update(countryRule)
-                .set({ blacklisted, updatedAt: new Date(), updatedBy: actorId ?? null })
-                .where(eq(countryRule.id, before.id))
-                .returning(),
-              new CountryRuleNotFoundError(input.countryCode),
-            );
-
-      return toGeoRuleView(row);
-    });
-    this.events.emit('compliance.geo-rule.added', {
-      countryCode: input.countryCode,
-      action: input.action,
+  async addGeoRule(input: AddGeoRuleInput, actorId: User['id'], meta?: ClientMeta) {
+    const [existing] = await this.drizzle.db
+      .select()
+      .from(countryRule)
+      .where(eq(countryRule.countryCode, input.countryCode));
+    const blacklisted = input.action === 'block';
+    const rule = await this.upsertCountryRule(
+      {
+        countryCode: input.countryCode,
+        blacklisted,
+        redirectIp: existing?.redirectIp ?? false,
+        kycRequired: existing?.kycRequired ?? true,
+        expectedUpdatedAt: existing?.updatedAt?.toISOString() ?? null,
+        confirm: input.confirm,
+      },
       actorId,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
-    return row;
+      meta,
+    );
+
+    if ((existing?.action === 'block') !== blacklisted) {
+      this.events.emit('compliance.geo-rule.added', {
+        countryCode: input.countryCode,
+        action: input.action,
+        actorId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return {
+      id: rule.id,
+      countryCode: rule.countryCode,
+      action: (rule.blacklisted ? 'block' : 'allow') as GeoRuleAction,
+      createdAt: rule.createdAt,
+    };
   }
 
   async listGeoRules() {
