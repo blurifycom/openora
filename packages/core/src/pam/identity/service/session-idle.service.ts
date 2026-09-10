@@ -49,13 +49,13 @@ export class SessionIdleService implements SessionIdlePolicy {
       return 'active';
     }
 
-    const windowMinutes = AUTO_LOGOUT_MINUTES[row.autoLogoutDuration];
+    const windowMs = AUTO_LOGOUT_MINUTES[row.autoLogoutDuration] * 60_000;
     const idleForMs = row.lastSeenAt ? Date.now() - row.lastSeenAt.getTime() : null;
 
     // `idleForMs === null` means the session predates this column and has no activity on
     // record yet. It falls through to the stamp below on purpose: reading that null as
     // "idle since the beginning of time" would cut every standing session on deploy.
-    if (windowMinutes !== null && idleForMs !== null && idleForMs > windowMinutes * 60 * 1000) {
+    if (idleForMs !== null && idleForMs > windowMs) {
       await this.expire(userId, sessionId);
       return 'expired';
     }

@@ -53,10 +53,10 @@ export const user = pgTable(
     // and each qualifying password write records the policy state explicitly.
     passwordMeetsPolicy: boolean().notNull().default(false),
     loginWithdrawalAlertsEnabled: boolean().notNull().default(false),
-    // How long a session may sit idle before it is cut. Defaults to `never` so existing
-    // accounts keep behaving exactly as they did before this column existed - a stricter
-    // default would log players out on deploy day over a setting they never chose.
-    autoLogoutDuration: autoLogoutDurationEnum().notNull().default('never'),
+    // How long a session may sit idle before it is cut. Existing rows adopt the 7-day
+    // default; they are not cut on deploy day, because a session with no activity on
+    // record yet is stamped rather than judged (see SessionIdleService).
+    autoLogoutDuration: autoLogoutDurationEnum().notNull().default('7d'),
     // Off by default: a trusted device may skip the second factor. On, every login is
     // challenged regardless of which browser it comes from.
     requireTwoFactorOnLogin: boolean().notNull().default(false),

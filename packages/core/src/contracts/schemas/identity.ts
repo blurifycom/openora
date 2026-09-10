@@ -217,21 +217,20 @@ export const Disable2faInputSchema = z.object({
   code: TotpStepUpCodeSchema,
 });
 
-// How long a session may sit idle before it is cut. `never` disables the idle check
-// only - it does not extend a session past better-auth's absolute expiry, which this
-// setting never touches, so `30d` and `never` coincide in practice today.
-export const AUTO_LOGOUT_DURATIONS = ['15m', '1h', '24h', '7d', '30d', 'never'] as const;
+// How long a session may sit idle before it is cut. Every account has a window - there
+// is deliberately no "off": the longest option already coincides with better-auth's
+// absolute 30-day expiry, which this setting does not touch.
+export const AUTO_LOGOUT_DURATIONS = ['15m', '1h', '24h', '7d', '30d'] as const;
 export const AutoLogoutDurationSchema = z.enum(AUTO_LOGOUT_DURATIONS);
 export type AutoLogoutDuration = z.infer<typeof AutoLogoutDurationSchema>;
 
-// The window behind each option, in minutes. `never` has none.
-export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number | null> = {
+// The window behind each option, in minutes.
+export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
   '15m': 15,
   '1h': 60,
   '24h': 24 * 60,
   '7d': 7 * 24 * 60,
   '30d': 30 * 24 * 60,
-  never: null,
 };
 
 export const SecurityControlsSchema = z.object({

@@ -1,5 +1,5 @@
 {
-  "id": "6c9989a7-c1a6-4ea0-9fee-34a8e440f60e",
+  "id": "df85acae-ed2c-41a1-bf05-7b22e0e08dda",
   "prevId": "6a0f4ff4-fa73-47c8-bf36-fc6a3230b731",
   "version": "7",
   "dialect": "postgresql",
@@ -826,7 +826,7 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'never'"
+          "default": "'7d'"
         },
         "require_two_factor_on_login": {
           "name": "require_two_factor_on_login",
@@ -1084,7 +1084,7 @@
     "public.auto_logout_duration": {
       "name": "auto_logout_duration",
       "schema": "public",
-      "values": ["15m", "1h", "24h", "7d", "30d", "never"]
+      "values": ["15m", "1h", "24h", "7d", "30d"]
     },
     "public.two_factor_method": {
       "name": "two_factor_method",

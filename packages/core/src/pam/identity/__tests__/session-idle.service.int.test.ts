@@ -55,13 +55,19 @@ beforeEach(async () => {
 });
 
 describe('SessionIdleService', () => {
-  it('leaves a session alone while the account has no idle window', async () => {
+  it('applies the seven-day default to an account that never chose a window', async () => {
     const account = await seedUser(db);
-    const target = await seedSession(account.id, minutesAgo(60 * 24 * 365));
+    const target = await seedSession(account.id, minutesAgo(60 * 24 * 8));
+
+    expect(await service().touch(account.id, target.id)).toBe('expired');
+  });
+
+  it('leaves a session inside the default window alone', async () => {
+    const account = await seedUser(db);
+    const target = await seedSession(account.id, minutesAgo(60 * 24 * 6));
 
     expect(await service().touch(account.id, target.id)).toBe('active');
-    const row = await readSession(target.id);
-    expect(row.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect((await readSession(target.id)).expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('expires a session idle past the chosen window', async () => {
