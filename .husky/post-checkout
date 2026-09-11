@@ -1,6 +1,7 @@
-# Regenerate the per-tool agent mirrors after a branch switch, so AGENTS.md /
-# CLAUDE.md always match the .rulesync sources of the branch you landed on.
+# Regenerate the per-tool agent mirrors and the gitignored catalog after a branch switch, so
+# AGENTS.md / CLAUDE.md and docs/catalog.json always match the branch you landed on.
 # $3 = 1 for a branch checkout, 0 for a file checkout.
 [ "$3" = "1" ] || exit 0
 
 pnpm gen:agents
+pnpm gen:catalog
