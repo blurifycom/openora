@@ -39,8 +39,8 @@ While linked:
 - Core source is not what you import - `dist` is. A core edit is invisible here until core is
   rebuilt: `pnpm -F @openora/core build` in the checkout. For hot reload, run
   `pnpm -F @openora/core watch` there once and leave it running.
-- Linking lets you CONSUME an unreleased core. It does not let you patch one: the write-deny
-  on the checkout under Rules below still stands.
+- Linking lets you CONSUME an unreleased core. To change core, link an OSS worktree instead
+  of the main checkout: `pnpm oss:worktree <branch> --link` (see Rules below).
 
 ## Consumer repo structure
 
@@ -91,7 +91,7 @@ The platform is headless - the frontends are this operator's own, consuming the 
 ## Escalate
 
 - Domain question (wagering calc, KYC threshold) -> spawn `expert`.
-- Bug in OSS core -> report upstream; never patch core or copy core source into this repo.
+- Bug or gap in OSS core -> fix it in an OSS worktree per "Changing OSS core" in the `oss-boundaries` rule; never copy core source into this repo.
 - E2E coverage -> spawn `qa`.
 
 ## Tests
@@ -104,7 +104,7 @@ A UI change or a bug fix is not done until a human can see it: save a screenshot
 
 ## Rules
 
-- Never write to `@openora/*` (`node_modules/**` or the linked `{{ossDir}}` checkout) - the paths are write-denied in `.claude/settings.json`; don't route around it with `sed` or shell redirection. A local patch to a published dependency is lost on reinstall and diverges from every other operator. If a change is only possible in core, STOP and report upstream (problem + expected behavior + suspected location).
+- Never write to `node_modules/**` or the main linked `{{ossDir}}` checkout - the `guard-core` hook denies it; don't route around it with `sed` or shell redirection. A local patch to a published dependency is lost on reinstall and diverges from every other operator. If a change is only possible in core, make it in an OSS worktree (`pnpm oss:worktree <branch>`) under the OSS repo's own rules, per the `oss-boundaries` rule.
 - Never copy core module source into this repo - depend on the package.
 - `extensions.config.ts` is the single registry - no auto-discovery.
 - Don't commit unless asked. Never push without confirmation.
