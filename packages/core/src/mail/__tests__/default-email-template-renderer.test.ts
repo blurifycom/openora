@@ -160,6 +160,26 @@ describe('DefaultEmailTemplateRenderer', () => {
     expect(result.text).toContain('Your previous code was: Old Code');
   });
 
+  it('renders an anti-phishing footer only when a code is set and escapes it in HTML', () => {
+    const withCode = renderer.render(
+      { key: 'verifyEmail', data: { otp: '123456' } },
+      'en',
+      null,
+      '<code>&"',
+    );
+    const withoutCode = renderer.render(
+      { key: 'verifyEmail', data: { otp: '123456' } },
+      'en',
+      null,
+      null,
+    );
+
+    expect(withCode.text).toContain('Your anti-phishing code: <code>&"');
+    expect(withCode.html).toContain('Your anti-phishing code: &lt;code&gt;&amp;&quot;');
+    expect(withoutCode.text).not.toContain('Your anti-phishing code:');
+    expect(withoutCode.html).not.toContain('Your anti-phishing code:');
+  });
+
   it('formats the cooling-off date against the recipient locale', () => {
     const en = renderer.render(
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },

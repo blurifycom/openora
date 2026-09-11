@@ -10,8 +10,8 @@ Source of truth: the mail contract and adapter ports under `packages/core/src/co
 
 `EMAIL_SENDER.send({ to, subject, html, text })` - HTML and text are separate fields; the
 transport never sniffs one string. `EMAIL_TEMPLATE_RENDERER.render(template, locale, name, code)`
-receives the player's optional anti-phishing code and returns `{ subject, html, text }`.
-The renderer owns localized, in-document placement of that code.
+receives the player's optional anti-phishing code and returns `{ subject, html, text }`. When the
+code is non-null, a renderer must place it in its localized in-document layout.
 
 ## Default bindings
 
