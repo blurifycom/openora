@@ -233,6 +233,15 @@ describe('gaming catalog administration API', () => {
       total: 1,
     });
 
+    const publicGamesWhileProviderInactive = await testApp.app.request(
+      `/gaming/games?page=1&limit=100&providerId=${providerId}`,
+    );
+    expect(publicGamesWhileProviderInactive.status).toBe(200);
+    expect(await publicGamesWhileProviderInactive.json()).toMatchObject({
+      items: [],
+      total: 0,
+    });
+
     const publicGameWhileProviderInactive = await testApp.app.request(`/gaming/games/${gameId}`);
     expect(publicGameWhileProviderInactive.status).toBe(404);
 
@@ -256,6 +265,14 @@ describe('gaming catalog administration API', () => {
       id: gameId,
       provider: { id: providerId, name: 'E2E Studio Updated' },
       isActive: true,
+    });
+    const publicGames = await testApp.app.request(
+      `/gaming/games?page=1&limit=100&providerId=${providerId}`,
+    );
+    expect(publicGames.status).toBe(200);
+    expect(await publicGames.json()).toMatchObject({
+      items: [expect.objectContaining({ id: gameId, isActive: true })],
+      total: 1,
     });
 
     const deactivateGame = await admin.patch(`/backoffice/gaming/games/${gameId}`, {

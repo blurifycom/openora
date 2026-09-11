@@ -29,8 +29,6 @@ import {
   gameProvider,
   gameRound,
   type Game,
-  type GameCategory,
-  type GameProvider,
   type GameRound,
 } from '../schema/index.js';
 import { GameProviderNotFoundError } from './game-provider.service.js';
@@ -40,7 +38,7 @@ import {
   isGamePlayable,
   playableGameCondition,
 } from '../../shared/game-catalog.js';
-import type { UpdateGameInput } from '../contract/index.js';
+import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -122,25 +120,36 @@ export class GamingService {
     private readonly rgLimits?: RgLimitsPort,
   ) {}
 
-  async listGames({
+  async listGamesPublic(input: ListGamesInput) {
+    return this.listGames({ ...input, playableOnly: true, sort: 'public' });
+  }
+
+  async listGamesAdmin(input: ListAdminGamesInput) {
+    return this.listGames({ ...input, playableOnly: false, sort: 'admin' });
+  }
+
+  private async listGames({
     page,
     limit,
     q,
     providerId,
     categoryId,
     isActive,
-    playableOnly = false,
-  }: {
-    page: number;
-    limit: number;
-    q?: string;
-    providerId?: GameProvider['id'];
-    categoryId?: GameCategory['id'];
+    playableOnly,
+    sort,
+  }: ListGamesInput & {
     isActive?: boolean;
-    playableOnly?: boolean;
+    playableOnly: boolean;
+    sort: 'admin' | 'public';
   }) {
     const where = and(
-      q ? or(ilike(game.name, likeContains(q)), ilike(game.slug, likeContains(q))) : undefined,
+      q
+        ? or(
+            ilike(game.name, likeContains(q)),
+            ilike(game.slug, likeContains(q)),
+            ilike(gameProvider.name, likeContains(q)),
+          )
+        : undefined,
       providerId ? eq(game.providerId, providerId) : undefined,
       playableOnly
         ? playableGameCondition()
@@ -169,7 +178,11 @@ export class GamingService {
         .from(game)
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
         .where(where)
-        .orderBy(asc(game.name))
+        .orderBy(
+          ...(sort === 'admin'
+            ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
+            : [asc(game.name)]),
+        )
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       this.drizzle.db

@@ -36,9 +36,7 @@ export function createGamingRouter({
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
   return os.router({
-    listGames: os.listGames.handler(({ input }) =>
-      gaming.listGames({ ...input, playableOnly: true }),
-    ),
+    listGames: os.listGames.handler(({ input }) => gaming.listGamesPublic(input)),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
@@ -152,7 +150,7 @@ export function createGamingRouter({
 
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return gaming.listGames(input);
+      return gaming.listGamesAdmin(input);
     }),
   });
 }

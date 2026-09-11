@@ -128,18 +128,18 @@ beforeEach(async () => {
 });
 
 describe('GamingService lobby (real PG)', () => {
-  it('listGames paginates active games ordered by name', async () => {
+  it('listGamesPublic paginates playable games ordered by name', async () => {
     await seedGame({ name: 'Baccarat', isActive: true });
     await seedGame({ name: 'Aces', isActive: true });
     await seedGame({ name: 'Retired', isActive: false });
 
-    const page = await makeService().listGames({ page: 1, limit: 10, isActive: true });
+    const page = await makeService().listGamesPublic({ page: 1, limit: 10 });
 
     expect(page.total).toBe(2);
     expect(page.items.map((g) => g.name)).toEqual(['Aces', 'Baccarat']);
   });
 
-  it('listGames searches and filters by provider and category', async () => {
+  it('listGamesPublic searches and filters by provider and category', async () => {
     const p1 = await seedProvider({ slug: 'studio-one', name: 'One' });
     const p2 = await seedProvider({ slug: 'studio-two', name: 'Two' });
     const slots = await seedCategory({ slug: 'slots', name: 'Slots' });
@@ -158,20 +158,14 @@ describe('GamingService lobby (real PG)', () => {
     ]);
     const svc = makeService();
 
-    expect((await svc.listGames({ page: 1, limit: 10, q: 'bonanza', isActive: true })).total).toBe(
-      1,
-    );
+    expect((await svc.listGamesPublic({ page: 1, limit: 10, q: 'bonanza' })).total).toBe(1);
     expect(
-      (await svc.listGames({ page: 1, limit: 10, providerId: p1.id, isActive: true })).items.map(
+      (await svc.listGamesPublic({ page: 1, limit: 10, providerId: p1.id })).items.map(
         (g) => g.slug,
       ),
     ).toEqual(['gates-of-olympus', 'sweet-bonanza']);
-    expect(
-      (await svc.listGames({ page: 1, limit: 10, categoryId: live.id, isActive: true })).total,
-    ).toBe(1);
-    expect(
-      (await svc.listGames({ page: 1, limit: 10, categoryId: slots.id, isActive: true })).total,
-    ).toBe(3);
+    expect((await svc.listGamesPublic({ page: 1, limit: 10, categoryId: live.id })).total).toBe(1);
+    expect((await svc.listGamesPublic({ page: 1, limit: 10, categoryId: slots.id })).total).toBe(3);
   });
 
   it('hides an inactive category from public filtering while retaining admin filtering', async () => {
@@ -179,15 +173,14 @@ describe('GamingService lobby (real PG)', () => {
     const linked = await seedGame({ name: 'Linked Game' }, [inactive.id]);
     const svc = makeService();
 
-    const publicResult = await svc.listGames({
+    const publicResult = await svc.listGamesPublic({
       page: 1,
       limit: 10,
       categoryId: inactive.id,
-      playableOnly: true,
     });
     expect(publicResult).toMatchObject({ items: [], total: 0 });
 
-    const adminResult = await svc.listGames({
+    const adminResult = await svc.listGamesAdmin({
       page: 1,
       limit: 10,
       categoryId: inactive.id,
@@ -407,12 +400,42 @@ describe('GamingService listGames provider gate (real PG)', () => {
       .where(eq(gameProvider.id, hidden.providerId));
     const svc = makeService();
 
-    const pub = await svc.listGames({ page: 1, limit: 10, playableOnly: true });
+    const pub = await svc.listGamesPublic({ page: 1, limit: 10 });
     expect(pub.items.map((g) => g.id)).toEqual([live.id]);
     expect(pub.total).toBe(1);
 
-    const admin = await svc.listGames({ page: 1, limit: 10, isActive: true });
+    const admin = await svc.listGamesAdmin({ page: 1, limit: 10, isActive: true });
     expect(admin.total).toBe(2);
+  });
+
+  it('listGamesAdmin includes non-playable games and sorts by provider and game fields', async () => {
+    const alphaZulu = await seedProvider({ name: 'Alpha', slug: 'zulu' });
+    const alphaAlpha = await seedProvider({ name: 'Alpha', slug: 'alpha' });
+    const betaAlpha = await seedProvider({ name: 'Beta', slug: 'beta-alpha', isActive: false });
+    await seedGame({
+      id: '00000000-0000-4000-8000-000000000002',
+      name: 'Same',
+      providerId: alphaZulu.id,
+    });
+    await seedGame({
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'Same',
+      providerId: alphaZulu.id,
+    });
+    await seedGame({ name: 'Zulu', providerId: alphaAlpha.id });
+    await seedGame({ name: 'Aardvark', providerId: betaAlpha.id });
+
+    const result = await makeService().listGamesAdmin({ page: 1, limit: 10 });
+
+    expect(
+      result.items.map((item) => [item.provider.name, item.provider.slug, item.name, item.id]),
+    ).toEqual([
+      ['Alpha', 'alpha', 'Zulu', expect.any(String)],
+      ['Alpha', 'zulu', 'Same', '00000000-0000-4000-8000-000000000001'],
+      ['Alpha', 'zulu', 'Same', '00000000-0000-4000-8000-000000000002'],
+      ['Beta', 'beta-alpha', 'Aardvark', expect.any(String)],
+    ]);
+    expect(result.total).toBe(4);
   });
 });
 
