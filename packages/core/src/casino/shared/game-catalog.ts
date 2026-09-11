@@ -19,6 +19,17 @@ export function playableGameCondition() {
   return and(eq(game.isActive, true), eq(gameProvider.isActive, true));
 }
 
+export function toCategorySummary(record: GameCategory) {
+  return {
+    id: record.id,
+    slug: record.slug,
+    name: record.name,
+    translations: record.translations ?? {},
+    icon: record.icon,
+    sortOrder: record.sortOrder,
+  };
+}
+
 export function isGamePlayable(
   target: Pick<Game, 'isActive'>,
   provider: Pick<GameProvider, 'isActive'>,

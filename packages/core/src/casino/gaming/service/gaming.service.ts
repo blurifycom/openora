@@ -27,6 +27,7 @@ import {
   gameCategory,
   gameCategoryGame,
   gameProvider,
+  gameProviderAggregatorMapping,
   gameRound,
   type Game,
   type GameRound,
@@ -37,6 +38,7 @@ import {
   categoriesByGameIds,
   isGamePlayable,
   playableGameCondition,
+  toCategorySummary,
 } from '../../shared/game-catalog.js';
 import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
@@ -47,6 +49,13 @@ export const GameRoundNotFoundError = makeNotFoundError('GameRound');
 export const GameSlugTakenError = makeConflictError(
   'GameSlugTakenError',
   'A game with this slug already exists',
+);
+
+export const GameAggregatorNotMappedError = createDomainError<
+  [providerId: string, aggregator: string]
+>(
+  'GameAggregatorNotMappedError',
+  (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
 );
 
 type Actor = {
@@ -90,14 +99,7 @@ function toGame(row: {
       logoUrl: row.provider.logoUrl,
     },
     aggregator: row.game.aggregator,
-    categories: row.categories.map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      name: c.name,
-      translations: c.translations ?? {},
-      icon: c.icon,
-      sortOrder: c.sortOrder,
-    })),
+    categories: row.categories.map(toCategorySummary),
     gameType: row.game.gameType,
     thumbnailUrl: row.game.thumbnailUrl,
     isActive: row.game.isActive,
@@ -448,6 +450,23 @@ export class GamingService {
           .limit(1),
         new GameProviderNotFoundError(patchInput.providerId),
       );
+    }
+    if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
+      const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
+      const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
+      const [mapping] = await this.drizzle.db
+        .select({ id: gameProviderAggregatorMapping.id })
+        .from(gameProviderAggregatorMapping)
+        .where(
+          and(
+            eq(gameProviderAggregatorMapping.providerId, nextProviderId),
+            eq(gameProviderAggregatorMapping.aggregator, nextAggregator),
+          ),
+        )
+        .limit(1);
+      if (!mapping) {
+        throw new GameAggregatorNotMappedError(nextProviderId, nextAggregator);
+      }
     }
     if (patchInput.slug !== undefined) {
       const [clash] = await this.drizzle.db

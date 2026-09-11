@@ -179,6 +179,15 @@ describe('gaming catalog administration API', () => {
       isActive: false,
     });
 
+    const hiddenProviders = await testApp.app.request('/gaming/providers');
+    expect(hiddenProviders.status).toBe(200);
+    expect(await hiddenProviders.json()).not.toContainEqual(
+      expect.objectContaining({ id: providerId }),
+    );
+
+    const hiddenProviderBySlug = await testApp.app.request(`/gaming/providers/${providerSlug}`);
+    expect(hiddenProviderBySlug.status).toBe(404);
+
     const categorySlug = `e2e-category-${suffix}`;
     const createCategory = await admin.post('/backoffice/gaming/categories', {
       slug: categorySlug,
@@ -190,6 +199,15 @@ describe('gaming catalog administration API', () => {
     if (typeof categoryId !== 'string') {
       throw new Error('category response has no id');
     }
+
+    const categoryBySlug = await testApp.app.request(`/gaming/categories/${categorySlug}`);
+    expect(categoryBySlug.status).toBe(200);
+    expect(await categoryBySlug.json()).toMatchObject({
+      id: categoryId,
+      slug: categorySlug,
+      name: 'E2E Category',
+      translations: {},
+    });
 
     const initialGames = await admin.get('/backoffice/gaming/games?page=1&limit=100');
     expect(initialGames.status).toBe(200);
@@ -204,11 +222,18 @@ describe('gaming catalog administration API', () => {
     }
 
     const gameName = `E2E Inactive Game ${suffix}`;
+    const unmappedAggregator = await admin.patch(`/backoffice/gaming/games/${gameId}`, {
+      id: gameId,
+      providerId,
+      aggregator: 'direct',
+    });
+    expect(unmappedAggregator.status).toBe(409);
+
     const updateGame = await admin.patch(`/backoffice/gaming/games/${gameId}`, {
       id: gameId,
       name: gameName,
       providerId,
-      aggregator: 'direct',
+      aggregator: 'everymatrix',
       isActive: true,
       metadata: { source: 'e2e' },
       categoryIds: [categoryId],
@@ -218,7 +243,7 @@ describe('gaming catalog administration API', () => {
       id: gameId,
       name: gameName,
       provider: { id: providerId, slug: providerSlug, name: 'E2E Studio' },
-      aggregator: 'direct',
+      aggregator: 'everymatrix',
       isActive: true,
       metadata: { source: 'e2e' },
       categories: [expect.objectContaining({ id: categoryId, slug: categorySlug })],
@@ -257,6 +282,20 @@ describe('gaming catalog administration API', () => {
       name: 'E2E Studio Updated',
       aggregatorMappings: [{ aggregator: 'everymatrix', vendorId: `updated-${suffix}` }],
       isActive: true,
+    });
+
+    const visibleProviders = await testApp.app.request('/gaming/providers');
+    expect(visibleProviders.status).toBe(200);
+    expect(await visibleProviders.json()).toContainEqual(
+      expect.objectContaining({ id: providerId, slug: providerSlug, name: 'E2E Studio Updated' }),
+    );
+
+    const visibleProviderBySlug = await testApp.app.request(`/gaming/providers/${providerSlug}`);
+    expect(visibleProviderBySlug.status).toBe(200);
+    expect(await visibleProviderBySlug.json()).toMatchObject({
+      id: providerId,
+      slug: providerSlug,
+      name: 'E2E Studio Updated',
     });
 
     const publicGame = await testApp.app.request(`/gaming/games/${gameId}`);

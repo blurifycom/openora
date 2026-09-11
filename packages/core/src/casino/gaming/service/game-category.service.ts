@@ -13,6 +13,7 @@ import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
 import type { ClientMeta, User } from '@openora/core/contracts';
 import { gameCategory } from '../schema/index.js';
 import type { CreateCategoryInput, UpdateCategoryInput } from '../contract/index.js';
+import { toCategorySummary } from '../../shared/game-catalog.js';
 
 export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
 export const GameCategorySlugTakenError = makeConflictError(
@@ -23,17 +24,6 @@ export const GameCategorySlugTakenError = makeConflictError(
 type Actor = {
   actorId?: User['id'];
 } & ClientMeta;
-
-export function toCategorySummary(record: typeof gameCategory.$inferSelect) {
-  return {
-    id: record.id,
-    slug: record.slug,
-    name: record.name,
-    translations: record.translations ?? {},
-    icon: record.icon,
-    sortOrder: record.sortOrder,
-  };
-}
 
 function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
   const dates = serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });

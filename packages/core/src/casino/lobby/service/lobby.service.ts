@@ -9,7 +9,11 @@ import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
 import { game, gameProvider, type GameCategory } from '@openora/core/casino/schema/gaming';
-import { categoriesByGameIds, playableGameCondition } from '../../shared/game-catalog.js';
+import {
+  categoriesByGameIds,
+  playableGameCondition,
+  toCategorySummary,
+} from '../../shared/game-catalog.js';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
@@ -36,13 +40,7 @@ function toGameSummary(row: {
       name: row.provider.name,
       logoUrl: row.provider.logoUrl,
     },
-    categories: row.categories.map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      name: c.name,
-      icon: c.icon,
-      sortOrder: c.sortOrder,
-    })),
+    categories: row.categories.map(toCategorySummary),
     thumbnailUrl: row.game.thumbnailUrl,
   };
 }
@@ -61,6 +59,9 @@ export class LobbyService {
         db
           .select({ categoryId: lobbyCategoryGame.categoryId, n: count() })
           .from(lobbyCategoryGame)
+          .innerJoin(game, eq(lobbyCategoryGame.gameId, game.id))
+          .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+          .where(playableGameCondition())
           .groupBy(lobbyCategoryGame.categoryId),
       ]);
 

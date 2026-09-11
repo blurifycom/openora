@@ -142,6 +142,7 @@ export const gamingContract = {
 
 export const GameProviderDetailSchema = GameProviderSummarySchema.extend({
   aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+  metadata: z.unknown().nullable(),
   isActive: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -190,6 +191,7 @@ const ProviderWriteFieldsSchema = z.object({
   name: z.string().trim().min(1).max(128),
   aggregatorMappings: ProviderAggregatorMappingsInputSchema,
   logoUrl: z.string().trim().min(1).max(512).nullable(),
+  metadata: z.unknown().nullable(),
 });
 
 export const CreateProviderInputSchema = ProviderWriteFieldsSchema.pick({
@@ -198,6 +200,7 @@ export const CreateProviderInputSchema = ProviderWriteFieldsSchema.pick({
 }).extend({
   aggregatorMappings: ProviderAggregatorMappingsInputSchema.optional(),
   logoUrl: ProviderWriteFieldsSchema.shape.logoUrl.optional(),
+  metadata: ProviderWriteFieldsSchema.shape.metadata.optional(),
 });
 export type CreateProviderInput = z.infer<typeof CreateProviderInputSchema>;
 

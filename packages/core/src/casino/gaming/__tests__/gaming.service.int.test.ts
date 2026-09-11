@@ -13,9 +13,17 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { mock, makeEventBus, makeIdentityReader, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { game, gameCategory, gameCategoryGame, gameProvider, gameRound } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameProviderAggregatorMapping,
+  gameRound,
+} from '../schema/index.js';
 import {
   GamingService,
+  GameAggregatorNotMappedError,
   GameNotFoundError,
   GameSlugTakenError,
   RgRestrictedError,
@@ -79,6 +87,9 @@ async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert>
     .insert(gameProvider)
     .values({ slug: `studio-${randomUUID()}`, name: 'Studio', isActive: true, ...overrides })
     .returning();
+  await db.drizzle.db
+    .insert(gameProviderAggregatorMapping)
+    .values({ providerId: row!.id, aggregator: 'direct', vendorId: row!.slug });
   return row!;
 }
 
@@ -91,17 +102,14 @@ async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert>
 }
 
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categoryIds?: string[]) {
-  const [provider] = await db.drizzle.db
-    .insert(gameProvider)
-    .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio', isActive: true })
-    .returning();
+  const provider = await seedProvider({ name: 'Mock Studio' });
   const ids = categoryIds ?? [(await seedCategory()).id];
   const [row] = await db.drizzle.db
     .insert(game)
     .values({
       name: 'Game',
       slug: `game-${randomUUID()}`,
-      providerId: provider!.id,
+      providerId: provider.id,
       aggregator: 'direct',
       isActive: true,
       ...overrides,
@@ -621,6 +629,37 @@ describe('GamingService updateGame (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).rejects.toBeInstanceOf(GameNotFoundError);
+  });
+
+  it('rejects an aggregator the target provider is not mapped on', async () => {
+    const created = await seedGame();
+    const unmapped = await seedProvider({ slug: 'unmapped-studio', name: 'Unmapped' });
+    await db.drizzle.db
+      .delete(gameProviderAggregatorMapping)
+      .where(eq(gameProviderAggregatorMapping.providerId, unmapped.id));
+    const svc = makeService();
+
+    await expect(
+      svc.updateGame({ id: created.id, providerId: unmapped.id, ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(GameAggregatorNotMappedError);
+
+    await expect(
+      svc.updateGame({ id: created.id, aggregator: 'everymatrix', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(GameAggregatorNotMappedError);
+
+    await db.drizzle.db
+      .insert(gameProviderAggregatorMapping)
+      .values({ providerId: unmapped.id, aggregator: 'everymatrix', vendorId: 'vendor-unmapped' });
+    const moved = await svc.updateGame({
+      id: created.id,
+      providerId: unmapped.id,
+      aggregator: 'everymatrix',
+      ...NO_CLIENT_META,
+    });
+    expect(moved).toMatchObject({
+      provider: { slug: 'unmapped-studio' },
+      aggregator: 'everymatrix',
+    });
   });
 
   it('rejects a taken game slug', async () => {

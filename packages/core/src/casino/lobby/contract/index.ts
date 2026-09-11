@@ -1,7 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
-  GameCategorySummarySchema,
+  GameCategorySummaryWithTranslationsSchema,
   GameProviderSummarySchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -11,7 +11,7 @@ export const GameSummarySchema = z.object({
   name: z.string(),
   slug: z.string(),
   provider: GameProviderSummarySchema,
-  categories: z.array(GameCategorySummarySchema),
+  categories: z.array(GameCategorySummaryWithTranslationsSchema),
   thumbnailUrl: z.string().nullable(),
 });
 

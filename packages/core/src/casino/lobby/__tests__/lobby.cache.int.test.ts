@@ -158,6 +158,38 @@ describe('LobbyService public game gates (real PG)', () => {
     const feed = await svc.getCategoryGames(category!.slug);
     expect(feed.games.map((g) => g.name)).toEqual(['Gate Feed Live']);
     expect(feed.games[0]?.categories.map((entry) => entry.name)).toEqual(['Visible']);
+
+    const listed = await svc.listCategories();
+    expect(listed.find((entry) => entry.slug === `gate-${tag}`)?.gameCount).toBe(feed.games.length);
+  });
+
+  it('carries category translations into the game feed', async () => {
+    const tag = randomUUID();
+    const [category] = await db.drizzle.db
+      .insert(lobbyCategory)
+      .values({ slug: `translated-${tag}`, name: 'Translated' })
+      .returning();
+    const live = await seedPlayableGame('Translated Feed Live');
+    await db.drizzle.db
+      .insert(lobbyCategoryGame)
+      .values({ gameId: live.row.id, categoryId: category!.id, sortOrder: 0 });
+    const [tagged] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({
+        slug: `tagged-${tag}`,
+        name: 'Slots',
+        isActive: true,
+        translations: { DE: { name: 'Spielautomaten' } },
+      })
+      .returning();
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values({ gameId: live.row.id, categoryId: tagged!.id });
+
+    const feed = await new LobbyService(db.drizzle).getCategoryGames(category!.slug);
+    expect(feed.games[0]?.categories).toEqual([
+      expect.objectContaining({ name: 'Slots', translations: { DE: { name: 'Spielautomaten' } } }),
+    ]);
   });
 
   it('getFeatured drops slots for inactive games and deactivated providers', async () => {

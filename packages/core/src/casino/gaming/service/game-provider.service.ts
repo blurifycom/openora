@@ -47,6 +47,7 @@ function providerSnapshot(
     name: record.name,
     aggregatorMappings: [...aggregatorMappings],
     logoUrl: record.logoUrl,
+    metadata: record.metadata ?? null,
     isActive: record.isActive,
   };
 }
@@ -59,6 +60,7 @@ function toProviderDetail(
   return {
     ...toProviderSummary(record),
     aggregatorMappings: [...aggregatorMappings],
+    metadata: record.metadata ?? null,
     isActive: record.isActive,
     createdAt: dates.createdAt,
     updatedAt: dates.updatedAt,
@@ -157,6 +159,7 @@ export class GameProviderService {
     name,
     aggregatorMappings = [],
     logoUrl,
+    metadata,
     actorId,
     ip,
     userAgent,
@@ -178,7 +181,7 @@ export class GameProviderService {
         const created = findOneOrThrow(
           await tx
             .insert(gameProvider)
-            .values({ slug, name, logoUrl: logoUrl ?? null })
+            .values({ slug, name, logoUrl: logoUrl ?? null, metadata: metadata ?? null })
             .returning(),
           new GameProviderNotFoundError(slug),
         );

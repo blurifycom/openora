@@ -6,6 +6,7 @@ import {
   GameNotFoundError,
   GameRoundNotFoundError,
   GameSlugTakenError,
+  GameAggregatorNotMappedError,
   RgRestrictedError,
   InsufficientBalanceError,
 } from '../service/gaming.service.js';
@@ -142,7 +143,7 @@ export function createGamingRouter({
       return mapErrors(
         {
           NOT_FOUND: [GameNotFoundError, GameProviderNotFoundError, GameCategoryNotFoundError],
-          CONFLICT: GameSlugTakenError,
+          CONFLICT: [GameSlugTakenError, GameAggregatorNotMappedError],
         },
         () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
       );

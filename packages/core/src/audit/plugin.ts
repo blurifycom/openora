@@ -726,6 +726,7 @@ export async function mapEventToRecord(
         name: p['name'] ?? null,
         aggregatorMappings: p['aggregatorMappings'] ?? [],
         logoUrl: p['logoUrl'] ?? null,
+        metadata: p['metadata'] ?? null,
         isActive: p['isActive'] ?? null,
       },
     };

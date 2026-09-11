@@ -164,6 +164,36 @@ describe('GameProviderService (real PG)', () => {
     expect(emittedTopics(events)).toContain('gaming.provider.updated');
   });
 
+  it('round-trips the operator metadata blob through create, update, and read', async () => {
+    const { svc, events } = makeService();
+
+    const created = await svc.createProvider({
+      slug: 'metadata-studio',
+      name: 'Metadata Studio',
+      metadata: { launchHost: 'https://games.example.test' },
+      ...ACTOR,
+    });
+    expect(created).toMatchObject({ metadata: { launchHost: 'https://games.example.test' } });
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.created',
+      expect.objectContaining({ metadata: { launchHost: 'https://games.example.test' } }),
+    );
+
+    const replaced = await svc.updateProvider({
+      id: created.id,
+      metadata: { launchHost: 'https://cdn.example.test' },
+      ...ACTOR,
+    });
+    expect(replaced).toMatchObject({ metadata: { launchHost: 'https://cdn.example.test' } });
+
+    const untouched = await svc.updateProvider({ id: created.id, name: 'Renamed', ...ACTOR });
+    expect(untouched).toMatchObject({ metadata: { launchHost: 'https://cdn.example.test' } });
+
+    const cleared = await svc.updateProvider({ id: created.id, metadata: null, ...ACTOR });
+    expect(cleared.metadata).toBeNull();
+    expect((await svc.getProvider(created.id)).metadata).toBeNull();
+  });
+
   it('createProvider persists multiple aggregator mappings and emits the audited snapshot', async () => {
     const { svc, events } = makeService();
 

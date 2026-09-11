@@ -60,78 +60,112 @@ CREATE INDEX "game_aggregator_idx" ON "game" USING btree ("aggregator");
 -- releases keep working). The statements below resolve every pre-existing row
 -- into the new shape; the trailing ALTERs enforce NOT NULL once no NULL
 -- remains (see schema/index.ts).
-INSERT INTO "game_provider" ("slug", "name", "is_active", "updated_at")
-SELECT
-	CASE WHEN "s"."rn" = 1 THEN "s"."base" ELSE "s"."base" || '-' || "s"."rn" END,
-	"s"."provider",
-	true,
-	now()
-FROM (
-	SELECT
-		"b"."provider" AS "provider",
-		"b"."base" AS "base",
-		ROW_NUMBER() OVER (PARTITION BY "b"."base" ORDER BY "b"."provider") AS "rn"
-	FROM (
-		SELECT DISTINCT
-			COALESCE("legacy"."provider", 'Unknown') AS "provider",
-			COALESCE(
-				NULLIF(left(lower(regexp_replace(regexp_replace(COALESCE("legacy"."provider", 'Unknown'), '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
-				'provider-' || left(md5(COALESCE("legacy"."provider", 'Unknown')), 8)
-			) AS "base"
-		FROM "game" "legacy"
-	) "b"
-) "s";--> statement-breakpoint
-INSERT INTO "game_category" ("slug", "name", "updated_at")
-SELECT
-	CASE WHEN "s"."rn" = 1 THEN "s"."base" ELSE "s"."base" || '-' || "s"."rn" END,
-	"s"."category",
-	now()
-FROM (
-	SELECT
-		"b"."category" AS "category",
-		"b"."base" AS "base",
-		ROW_NUMBER() OVER (PARTITION BY "b"."base" ORDER BY "b"."category") AS "rn"
-	FROM (
-		SELECT DISTINCT
-			COALESCE("legacy"."category", 'Uncategorized') AS "category",
-			COALESCE(
-				NULLIF(left(lower(regexp_replace(regexp_replace(COALESCE("legacy"."category", 'Uncategorized'), '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
-				'category-' || left(md5(COALESCE("legacy"."category", 'Uncategorized')), 8)
-			) AS "base"
-		FROM "game" "legacy"
-	) "b"
-) "s";--> statement-breakpoint
+--
+-- Truncating after the trim would let a name longer than max_length end the
+-- slug on a '-', which CatalogSlugSchema rejects. Returns NULL when the source
+-- has no alphanumerics; every caller supplies its own fallback.
+CREATE OR REPLACE FUNCTION pg_temp.openora_slugify(source text, max_length int)
+RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
+	SELECT NULLIF(
+		regexp_replace(
+			left(lower(regexp_replace(source, '[^a-zA-Z0-9]+', '-', 'g')), max_length),
+			'(^-+|-+$)', '', 'g'
+		),
+		''
+	)
+$fn$;--> statement-breakpoint
+-- The dedupe suffix is probed rather than taken from a window function:
+-- 'book-of-ra-2' is itself the natural slug of "Book of Ra 2", so a blind
+-- suffix collides with the already-live unique index and aborts the migration.
+DO $do$
+DECLARE
+	source record;
+	base text;
+	candidate text;
+	attempt int;
+BEGIN
+	FOR source IN
+		SELECT DISTINCT COALESCE("provider", 'Unknown') AS "name" FROM "game" ORDER BY 1
+	LOOP
+		base := COALESCE(
+			pg_temp.openora_slugify(source."name", 60),
+			'provider-' || left(md5(source."name"), 8)
+		);
+		candidate := base;
+		attempt := 1;
+		WHILE EXISTS (SELECT 1 FROM "game_provider" WHERE "slug" = candidate) LOOP
+			attempt := attempt + 1;
+			candidate := pg_temp.openora_slugify(base, greatest(1, 63 - length(attempt::text)))
+				|| '-' || attempt;
+		END LOOP;
+		INSERT INTO "game_provider" ("slug", "name", "is_active", "updated_at")
+		VALUES (candidate, source."name", true, now());
+	END LOOP;
+END
+$do$;--> statement-breakpoint
+DO $do$
+DECLARE
+	source record;
+	base text;
+	candidate text;
+	attempt int;
+BEGIN
+	FOR source IN
+		SELECT DISTINCT COALESCE("category", 'Uncategorized') AS "name" FROM "game" ORDER BY 1
+	LOOP
+		base := COALESCE(
+			pg_temp.openora_slugify(source."name", 60),
+			'category-' || left(md5(source."name"), 8)
+		);
+		candidate := base;
+		attempt := 1;
+		WHILE EXISTS (SELECT 1 FROM "game_category" WHERE "slug" = candidate) LOOP
+			attempt := attempt + 1;
+			candidate := pg_temp.openora_slugify(base, greatest(1, 63 - length(attempt::text)))
+				|| '-' || attempt;
+		END LOOP;
+		INSERT INTO "game_category" ("slug", "name", "updated_at")
+		VALUES (candidate, source."name", now());
+	END LOOP;
+END
+$do$;--> statement-breakpoint
 INSERT INTO "game_category_game" ("game_id", "category_id")
 SELECT "g"."id", "c"."id" FROM "game" "g"
 JOIN "game_category" "c" ON "c"."name" = COALESCE("g"."category", 'Uncategorized');--> statement-breakpoint
-UPDATE "game" "g"
-SET "slug" = "s"."slug", "provider_id" = "p"."id", "aggregator" = 'direct'
-FROM (
-	SELECT
-		"b"."id" AS "id",
-		"b"."provider" AS "provider",
-		CASE WHEN "b"."rn" = 1 THEN "b"."base" ELSE "b"."base" || '-' || "b"."rn" END AS "slug"
-	FROM (
-		SELECT
-			"row"."id" AS "id",
-			COALESCE("row"."provider", 'Unknown') AS "provider",
-			COALESCE(
-				NULLIF(left(lower(regexp_replace(regexp_replace("row"."name", '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
-				'game-' || left("row"."id"::text, 8)
-			) AS "base",
-			ROW_NUMBER() OVER (
-				PARTITION BY COALESCE(
-					NULLIF(left(lower(regexp_replace(regexp_replace("row"."name", '[^a-zA-Z0-9]+', '-', 'g'), '(^-+|-+$)', '', 'g')), 60), ''),
-					'game-' || left("row"."id"::text, 8)
-				)
-				ORDER BY "row"."id"
-			) AS "rn"
-		FROM "game" "row"
-	) "b"
-) "s"
-JOIN "game_provider" "p" ON "p"."name" = "s"."provider"
-WHERE "g"."id" = "s"."id";
---> statement-breakpoint
+DO $do$
+DECLARE
+	source record;
+	base text;
+	candidate text;
+	attempt int;
+BEGIN
+	FOR source IN
+		SELECT "id", "name", COALESCE("provider", 'Unknown') AS "provider_name"
+		FROM "game" ORDER BY "id"
+	LOOP
+		base := COALESCE(
+			pg_temp.openora_slugify(source."name", 60),
+			'game-' || left(source."id"::text, 8)
+		);
+		candidate := base;
+		attempt := 1;
+		WHILE EXISTS (SELECT 1 FROM "game" WHERE "slug" = candidate) LOOP
+			attempt := attempt + 1;
+			candidate := pg_temp.openora_slugify(base, greatest(1, 63 - length(attempt::text)))
+				|| '-' || attempt;
+		END LOOP;
+		UPDATE "game" SET
+			"slug" = candidate,
+			"provider_id" = (SELECT "id" FROM "game_provider" WHERE "name" = source."provider_name"),
+			"aggregator" = 'direct'
+		WHERE "id" = source."id";
+	END LOOP;
+END
+$do$;--> statement-breakpoint
+INSERT INTO "game_provider_aggregator_mapping" ("provider_id", "aggregator", "vendor_id")
+SELECT "p"."id", 'direct', "p"."slug" FROM "game_provider" "p"
+ON CONFLICT DO NOTHING;--> statement-breakpoint
+DROP FUNCTION pg_temp.openora_slugify(text, int);--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "slug" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "provider_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "aggregator" SET NOT NULL;

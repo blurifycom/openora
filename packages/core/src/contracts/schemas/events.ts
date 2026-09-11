@@ -372,6 +372,7 @@ export const domainEventSchemas = {
     name: z.string(),
     aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
     logoUrl: z.string().nullable(),
+    metadata: z.unknown().nullable(),
     isActive: z.boolean(),
     actorId: UuidSchema.optional(),
   }),
@@ -383,6 +384,7 @@ export const domainEventSchemas = {
       name: z.string(),
       aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
       logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
       isActive: z.boolean(),
     }),
     after: z.object({
@@ -390,6 +392,7 @@ export const domainEventSchemas = {
       name: z.string(),
       aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
       logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
       isActive: z.boolean(),
     }),
   }),
