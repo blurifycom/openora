@@ -127,6 +127,10 @@ export const walletTransaction = pgTable(
     reviewedBy: uuid(),
     reviewedAt: timestamp({ withTimezone: true }),
     reviewReason: text(),
+    // What an auto-approved payout was worth in the fx pivot at approval. The daily amount cap
+    // sums these, so a rate move after approval cannot shrink what the player already took.
+    // NULL on every other row, and on auto-approvals written before this column existed.
+    autoApprovalPivotAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // The concrete settlement provider (eg a PSP name) and its reference id (eg the
     // PSP charge id), as first-class typed columns so they are filterable for
     // reconciliation rather than buried in free-form JSON.

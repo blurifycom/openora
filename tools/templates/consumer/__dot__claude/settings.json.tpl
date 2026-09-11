@@ -5,7 +5,8 @@
     "deny": [
       "Edit(./node_modules/**)",
       "Write(./node_modules/**)"
-    ]
+    ],
+    "additionalDirectories": ["{{ossFromRoot}}"]
   },
   "hooks": {
     "PreToolUse": [
