@@ -14,8 +14,8 @@ import {
   RgInitiatorSchema,
   ExclusionKindSchema,
 } from './compliance.js';
-import { TagKeySchema } from './tag.js';
 import { CountryCodeSchema } from './igaming-config.js';
+import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
 import {
@@ -516,8 +516,6 @@ export const domainEventSchemas = {
     messageCount: z.number().int(),
   }),
 
-  // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
-  // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': authContextBase.extend({
     countryCode: CountryCodeSchema,
     action: GeoRuleActionSchema,

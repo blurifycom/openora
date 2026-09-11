@@ -57,6 +57,13 @@
       "when": 1788278352775,
       "tag": "0007_romantic_toxin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789029671622,
+      "tag": "0008_omniscient_northstar",
+      "breakpoints": true
     }
   ]
 }

@@ -90,7 +90,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin added/changed a geo (country) rule. resourceId = the country code.
   if (topic === 'compliance.geo-rule.added') {
     return {
       ...base,
