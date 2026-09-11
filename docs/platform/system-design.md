@@ -289,7 +289,7 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 20 modules, 261 routes, 45 adapter ports, 117 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 20 modules, 261 routes, 45 adapter ports, 118 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                    | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |

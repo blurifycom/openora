@@ -147,8 +147,9 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
 describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 finding #6)', () => {
   it('rejects changePassword with a 429 once the per-caller limit is exhausted', async () => {
     const limiter = makeLimiter();
+    const userId = 'rate-limited-user';
     for (let i = 0; i < 5; i++) {
-      await limiter.consume('change-password:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
+      await limiter.consume(`change-password:${userId}`, { limit: 5, windowMs: 15 * 60 * 1000 });
     }
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
@@ -157,6 +158,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
         { currentPassword: 'currentpw1', newPassword: 'newpassword1' },
         {},
         new Headers(),
+        { userId, sessionId: 'rate-limited-session' },
       ),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });

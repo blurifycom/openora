@@ -132,12 +132,19 @@ export function createIdentityRouter(
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
       const userId = getUserId(context);
+      const connectionSessionId = getSessionId(context);
       return createEventStreamGenerator(
         (push) => {
           const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
-            if (event.userId === userId) {
-              push({ type: 'revoked' });
+            if (event.userId !== userId) {
+              return;
             }
+            // Self-service password change spares the acting session via
+            // exceptSessionId; the admin revoke-all path leaves it unset and kicks all.
+            if (event.exceptSessionId && event.exceptSessionId === connectionSessionId) {
+              return;
+            }
+            push({ type: 'revoked' });
           });
           const unsubscribeUnlocked = eventBus.on('identity.user.unlocked', (event) => {
             if (event.userId === userId) {
@@ -196,7 +203,10 @@ export function createIdentityRouter(
     resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
 
     changePassword: os.changePassword.handler(({ input, context }) =>
-      identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers()),
+      identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers(), {
+        userId: getUserId(context),
+        sessionId: requireSessionId(context),
+      }),
     ),
 
     sendEmailVerification: os.sendEmailVerification.handler(({ input, context }) =>

@@ -247,6 +247,14 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The player changed their own login password from Security settings (current
+  // password verified first). Distinct from `identity.password.reset` (the
+  // forgot-password OTP flow) and from `identity.sessions.revoked_all`, which the
+  // same action also emits.
+  'identity.password.changed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'identity.email.verified': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -292,6 +300,10 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     actorId: UuidSchema.optional(),
+    // Set when the acting session must survive (self-service password change): the
+    // streamSession handler skips the `revoked` push for this session id. The admin
+    // revoke-all path leaves it unset, so every session is kicked.
+    exceptSessionId: UuidSchema.optional(),
   }),
   'identity.user.unauthorized_access': authContextBase.extend({
     userId: UuidSchema,
@@ -792,6 +804,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
+  // v2: optional exceptSessionId added - the self-service password-change path sets it
+  // so the acting session survives; the admin revoke-all path leaves it unset.
+  'identity.sessions.revoked_all': 2,
   // v2: `method` records which factor was used, required by the audit trail.
   'identity.2fa.enabled': 2,
   'identity.2fa.disabled': 2,
