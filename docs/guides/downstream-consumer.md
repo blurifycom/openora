@@ -4,7 +4,7 @@ How a downstream operator builds their own igaming on top of `@openora/*` withou
 forking core. The root `AGENTS.md` links here; this is the detail an agent loads only when
 actually wiring a consumer.
 
-See [`catalog.json`](../catalog.json) for the machine-readable surface (routes, schemas, adapter
+See the generated `docs/catalog.json` (`pnpm gen:catalog`, also served by `@openora/mcp`) for the machine-readable surface (routes, schemas, adapter
 tokens, events, config schema) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
