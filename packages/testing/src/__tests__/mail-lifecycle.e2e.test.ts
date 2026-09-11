@@ -128,8 +128,7 @@ describe('email change flow', () => {
     const confirmed = await client.post('/identity/email/change/confirm', { newEmail, otp });
     expect(confirmed.status).toBe(200);
 
-    // A session hijacked before the change must not keep riding the account once its
-    // recovery address has moved - not even the one that made the change itself.
+    // Not even the session that made the change itself survives.
     const afterChange = await client.get('/identity/2fa/status');
     expect(afterChange.status).toBe(401);
   });

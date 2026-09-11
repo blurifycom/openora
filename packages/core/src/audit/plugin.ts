@@ -117,8 +117,7 @@ export async function mapEventToRecord(
 
   // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
   // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
-  // carried on reject. A failed withdrawal has no adminId when it was auto-approved or
-  // rejected later by a provider webhook - recorded as a system action then.
+  // carried on reject. `failed` has no adminId when auto-approved or webhook-rejected.
   if (
     topic === 'wallet.withdrawal.approved' ||
     topic === 'wallet.withdrawal.rejected' ||

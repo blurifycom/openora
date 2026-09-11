@@ -1346,8 +1346,7 @@ describe('IdentityService security controls', () => {
       loginWithdrawalAlertsEnabled: true,
     });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    // better-auth swaps the row synchronously once the OTP verifies; mirror that before
-    // the mock resolves so the service reads the pre-swap address for the notice.
+    // Mirror better-auth's row swap before the mock resolves.
     confirmEmailChangeMock.mockImplementation(async () => {
       await db.drizzle.db
         .update(user)

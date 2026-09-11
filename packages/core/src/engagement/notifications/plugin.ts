@@ -421,12 +421,8 @@ export default {
       });
     }
 
-    // Welcome mail, sent once the registration code is verified. Mail-only, no in-app
-    // notification (same shape as the security login alert below). Only registration drives
-    // this event today (email *changes* emit `identity.email.changed`), but the idempotency
-    // key is still the user, not the event, so a re-verification or resend can never send a
-    // second welcome. The mail outbox dedupes on that key - it is the durable guard, no
-    // extra column needed.
+    // Welcome mail, mail-only like the security login alert below. Keyed on the user, not
+    // the event, so a re-verification or resend can never send a second one.
     ctx.events.on('identity.email.verified', (payload) => {
       if (!mailDispatchRef) {
         return;

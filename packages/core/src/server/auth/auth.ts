@@ -157,9 +157,8 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       emailOTP({
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,
-        // OTP to the NEW address confirms the change; the current address is not
-        // re-verified (the caller already holds a live session). IdentityService wraps
-        // the two endpoints this unlocks (`/email-otp/request-email-change`, `/change-email`).
+        // OTP goes to the NEW address; the current one is not re-verified (the caller
+        // already holds a live session). IdentityService wraps the endpoints this unlocks.
         changeEmail: { enabled: true },
         async sendVerificationOTP({ email, otp, type }) {
           // Allow-list, not a fallback: an OTP type this app never issues (sign-in)

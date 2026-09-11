@@ -2028,13 +2028,10 @@ export class IdentityService {
 
   /**
    * Step 1 of the email change: better-auth mails a code to `newEmail` (type
-   * `change-email`). It answers success even when the address is already taken, so this
-   * never reveals whether an account exists.
-   *
-   * A live session is NOT proof enough on its own - this moves the account's login
-   * (and password-reset) address, so it demands the same fresh password/2FA proof as a
-   * withdrawal PIN or phone rebind (`assertFreshReauthentication`). Without it, a bare
-   * stolen session cookie would be a full account-takeover primitive.
+   * `change-email`), answering success even when the address is already taken so this
+   * never reveals whether an account exists. A live session is not proof enough on its
+   * own for a change this sensitive, so it demands the same fresh password/2FA proof as
+   * a withdrawal PIN or phone rebind (`assertFreshReauthentication`).
    */
   async requestEmailChange(
     input: RequestEmailChangeInput,
@@ -2044,10 +2041,8 @@ export class IdentityService {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const meta = extractClientMeta(reqHeaders);
     const { ip } = meta;
-    // Session resolved before spending any budget, and keyed into the per-caller limit
-    // below - otherwise an unauthenticated caller (better-auth's own session middleware
-    // rejects them anyway) still burns the rate limit meant for the real player, same
-    // fix as `changePassword`'s `${userId ?? 'anonymous'}` key.
+    // Session resolved first so the rate limit keys on the caller, not the target
+    // address - same as `changePassword`'s `${userId ?? 'anonymous'}` key.
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
       this.limiter,
@@ -2055,8 +2050,7 @@ export class IdentityService {
       VERIFY_EMAIL_RATE_LIMIT,
     );
     const newEmail = input.newEmail.toLowerCase();
-    // Separate, target-address budget: caps how many codes any caller can direct at one
-    // inbox, regardless of who they're signed in as.
+    // Separate budget caps codes per target inbox, regardless of caller.
     await assertRateLimit(this.limiter, `change-email-target:${newEmail}`, VERIFY_EMAIL_RATE_LIMIT);
     if (ip) {
       await assertRateLimit(this.limiter, `change-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
@@ -2094,15 +2088,10 @@ export class IdentityService {
   }
 
   /**
-   * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email
-   * and marks it verified. The old address is read first - no row carries it afterwards -
-   * so the "your email was changed" notice can still reach it. The verified-email alert
-   * opt-in was made on the old inbox and does not carry over, so it is reset here (same
-   * as the previous synchronous flow did).
-   *
-   * Every other session and trusted device is torn down once the swap lands - the same
-   * teardown `disableTwoFactor` performs - so a session hijacked before this call cannot
-   * keep riding the account once its recovery address has moved.
+   * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email.
+   * The old address is read first, since no row carries it afterwards, for the "changed"
+   * notice and to reset the verified-email alert opt-in (made on the old inbox). Every
+   * other session and trusted device is torn down too, the same as `disableTwoFactor`.
    */
   async confirmEmailChange(
     input: ConfirmEmailChangeInput,
@@ -2172,14 +2161,10 @@ export class IdentityService {
           userAgent,
         });
       }
-      // To the OLD address - the row now holds the new one, so send by address with the
-      // locale read from the profile above (same as the OTP hook does for unknown addresses).
-      // Fire-and-forget, like every other notification dispatch (see
-      // `notifications/plugin.ts`'s `dispatchMail`): the swap and the session teardown
-      // above already committed, so a mail-enqueue hiccup must not turn a completed
-      // change into a reported failure. `randomUUID()` keeps every send distinct - the
-      // account being pointed at the same address twice inside the queue's 24h dedupe
-      // window must never suppress the one warning the previous owner gets.
+      // To the OLD address - the row now holds the new one. Fire-and-forget like
+      // `dispatchMail` in notifications/plugin.ts: the swap already committed, so a
+      // mail-enqueue hiccup must not turn it into a reported failure. `randomUUID()`
+      // keeps the key unique so the queue's dedupe window can't swallow a repeat notice.
       this.mailDispatch
         ?.toAddress({
           email: before.email,

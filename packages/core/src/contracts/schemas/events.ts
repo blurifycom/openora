@@ -252,8 +252,7 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
   // The account's login email was replaced after the new address was confirmed by OTP.
-  // Carries both addresses for the audit trail; the old one is where the "it changed"
-  // notice is sent, since no user row holds it anymore.
+  // Carries both addresses for the audit trail.
   'identity.email.changed': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -336,8 +335,7 @@ export const domainEventSchemas = {
     .extend(authContextBase.shape),
   // An approved withdrawal failed at the PSP/custody rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`. `adminId` is
-  // null when no reviewer was involved: an auto-approved payout that failed, or a later
-  // provider-webhook rejection (common on crypto rails).
+  // null when no reviewer was involved: an auto-approved payout, or a later webhook rejection.
   'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema.nullable() }),
   // A super admin credited or debited a balance directly, outside the deposit and
   // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
