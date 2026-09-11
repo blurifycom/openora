@@ -304,8 +304,18 @@ export const ChangePasswordInputSchema = z.object({
   newPassword: PasswordSchema,
 });
 
-export const ChangeEmailInputSchema = z.object({
+// Step 1: request a change. The OTP is mailed to `newEmail`; `currentPassword`/`totpCode`
+// feed `assertFreshReauthentication` - a live session alone must not be enough.
+export const RequestEmailChangeInputSchema = z.object({
   newEmail: z.email(),
+  currentPassword: z.string().min(8),
+  totpCode: TotpStepUpCodeSchema.optional(),
+});
+
+// Step 2: confirm with the code that was mailed to `newEmail`.
+export const ConfirmEmailChangeInputSchema = z.object({
+  newEmail: z.email(),
+  otp: z.string().length(OTP_CODE_LENGTH),
 });
 
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
@@ -337,7 +347,8 @@ export type ResendEmailVerificationInput = z.infer<typeof ResendEmailVerificatio
 export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
-export type ChangeEmailInput = z.infer<typeof ChangeEmailInputSchema>;
+export type RequestEmailChangeInput = z.infer<typeof RequestEmailChangeInputSchema>;
+export type ConfirmEmailChangeInput = z.infer<typeof ConfirmEmailChangeInputSchema>;
 export type E164Phone = z.infer<typeof E164PhoneSchema>;
 export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
 export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;

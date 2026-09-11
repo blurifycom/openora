@@ -1666,8 +1666,8 @@ export class WalletService {
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const amount = tx.amount;
-    // approved/failed are admin-attributed events (schema requires a uuid adminId); the system auto path
-    // skips them - its trail is the AUDIT_WRITER entry plus the shared `completed` event below.
+    // `approved` is admin-attributed; the system auto path skips it - its trail is the
+    // AUDIT_WRITER entry plus the shared `completed` event below.
     if (adminId) {
       this.events.emit('wallet.withdrawal.approved', {
         userId,
@@ -1763,7 +1763,8 @@ export class WalletService {
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
       return true;
     });
-    if (transitioned && adminId) {
+    // Emitted on every path that returns held funds, not just the admin-reviewed one.
+    if (transitioned) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,
         amount,

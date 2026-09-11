@@ -118,6 +118,18 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}` +
       (data.reason ? `\nReason: ${data.reason}` : ''),
   }),
+  withdrawalCompleted: (data, locale) => ({
+    subject: 'Your withdrawal is on its way',
+    text:
+      `Your withdrawal of ${formatMoney(data.amount, data.currency)} has been sent.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
+  }),
+  withdrawalFailed: (data, locale) => ({
+    subject: 'Your withdrawal could not be completed',
+    text:
+      `Your withdrawal of ${formatMoney(data.amount, data.currency)} failed and the funds were returned to your balance.\n\n` +
+      `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
+  }),
   kycResubmissionRequested: (data) => ({
     subject: 'Document resubmission required',
     text:
@@ -143,6 +155,20 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `A withdrawal of ${formatMoney(data.amount, data.currency)} was requested on your account and is pending review.\n\n` +
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}\n\n` +
       `If this was not you, secure your account immediately.`,
+  }),
+  welcome: () => ({
+    subject: 'Welcome',
+    text: 'Your email address is verified and your account is ready. Complete identity verification to unlock deposits and withdrawals.',
+  }),
+  emailChangeConfirmation: (data) => ({
+    subject: 'Confirm your new email address',
+    text: `Enter this code to confirm your new email address: ${data.otp}`,
+  }),
+  emailChanged: (data) => ({
+    subject: 'Your email address was changed',
+    text:
+      `The email address on your account was changed to ${data.newEmail}.\n\n` +
+      `If this was not you, contact support immediately - your account may be compromised.`,
   }),
 };
 

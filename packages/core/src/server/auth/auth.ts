@@ -157,20 +157,29 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       emailOTP({
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,
+        // OTP goes to the NEW address; the current one is not re-verified (the caller
+        // already holds a live session). IdentityService wraps the endpoints this unlocks.
+        changeEmail: { enabled: true },
         async sendVerificationOTP({ email, otp, type }) {
-          // Allow-list, not a fallback: an OTP type this app never issues (sign-in,
-          // change-email) must send nothing rather than borrow another template's copy.
-          if (type !== 'email-verification' && type !== 'forget-password') {
+          // Allow-list, not a fallback: an OTP type this app never issues (sign-in)
+          // must send nothing rather than borrow another template's copy.
+          if (
+            type !== 'email-verification' &&
+            type !== 'forget-password' &&
+            type !== 'change-email'
+          ) {
             return;
           }
           const template: MailTemplate =
             type === 'email-verification'
               ? { key: 'verifyEmail', data: { otp } }
-              : options.isExistingAccountSignUp?.(email)
-                ? { key: 'existingAccountSignUp', data: { otp, email } }
-                : (await options.isAdminPasswordReset?.(email))
-                  ? { key: 'adminResetPasswordOtp', data: { otp, email } }
-                  : { key: 'resetPasswordOtp', data: { otp, email } };
+              : type === 'change-email'
+                ? { key: 'emailChangeConfirmation', data: { otp } }
+                : options.isExistingAccountSignUp?.(email)
+                  ? { key: 'existingAccountSignUp', data: { otp, email } }
+                  : (await options.isAdminPasswordReset?.(email))
+                    ? { key: 'adminResetPasswordOtp', data: { otp, email } }
+                    : { key: 'resetPasswordOtp', data: { otp, email } };
           await dispatchOtpMail({ to: email, template });
         },
       }),

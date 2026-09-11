@@ -195,6 +195,66 @@ describe('mapEventToRecord: chat room lifecycle after an owner account closes', 
   });
 });
 
+describe('mapEventToRecord: wallet.withdrawal.failed', () => {
+  const transactionId = '88888888-8888-4888-8888-888888888888';
+
+  it('attributes an admin-reviewed failure to that admin', async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.failed', {
+      userId,
+      amount: '10.00',
+      currency: 'USDT',
+      transactionId,
+      adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'withdrawal',
+      resourceId: transactionId,
+      result: 'failure',
+    });
+  });
+
+  it('attributes an auto-approved or webhook failure (null adminId) to the system', async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.failed', {
+      userId,
+      amount: '10.00',
+      currency: 'USDT',
+      transactionId,
+      adminId: null,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      actorId: null,
+      resourceType: 'withdrawal',
+      resourceId: transactionId,
+      result: 'failure',
+    });
+  });
+});
+
+describe('mapEventToRecord: identity.email.changed', () => {
+  it('records the address transition as a player self-action', async () => {
+    const row = await mapEventToRecord('identity.email.changed', {
+      userId,
+      playerId,
+      previousEmail: 'old@example.com',
+      newEmail: 'new@example.com',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'user',
+      resourceId: userId,
+      before: { email: 'old@example.com' },
+      after: { email: 'new@example.com' },
+    });
+  });
+});
+
 describe('mapEventToRecord: player account closed and reopened', () => {
   const payload = {
     playerId: '55555555-5555-4555-8555-555555555555',

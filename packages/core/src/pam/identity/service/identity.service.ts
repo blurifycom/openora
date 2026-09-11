@@ -52,7 +52,8 @@ import type {
   User,
   IdentityReader,
   ChangePasswordInput,
-  ChangeEmailInput,
+  RequestEmailChangeInput,
+  ConfirmEmailChangeInput,
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
@@ -75,6 +76,7 @@ import {
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
 import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
+import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -214,7 +216,8 @@ type ExtendedAuthApi = {
   sendVerificationOTP: AuthCall<{ email: string; type: 'email-verification' }>;
   verifyEmailOTP: AuthCall<{ email: string; otp: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
-  changeEmail: AuthCall<{ newEmail: string }>;
+  requestEmailChangeEmailOTP: AuthCall<{ newEmail: string }>;
+  changeEmailEmailOTP: AuthCall<{ newEmail: string; otp: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
 };
 
@@ -2023,46 +2026,155 @@ export class IdentityService {
     };
   }
 
-  async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  /**
+   * Step 1 of the email change: better-auth mails a code to `newEmail` (type
+   * `change-email`), answering success even when the address is already taken so this
+   * never reveals whether an account exists. A live session is not proof enough on its
+   * own for a change this sensitive, so it demands the same fresh password/2FA proof as
+   * a withdrawal PIN or phone rebind (`assertFreshReauthentication`).
+   */
+  async requestEmailChange(
+    input: RequestEmailChangeInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const meta = extractClientMeta(reqHeaders);
+    const { ip } = meta;
+    // Session resolved first so the rate limit keys on the caller, not the target
+    // address - same as `changePassword`'s `${userId ?? 'anonymous'}` key.
     const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `change-email:${userId ?? 'anonymous'}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
     const newEmail = input.newEmail.toLowerCase();
-    const res = await this.api.changeEmail({
+    // Separate budget caps codes per target inbox, regardless of caller.
+    await assertRateLimit(this.limiter, `change-email-target:${newEmail}`, VERIFY_EMAIL_RATE_LIMIT);
+    if (ip) {
+      await assertRateLimit(this.limiter, `change-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
+    }
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const [caller] = await this.drizzle.db
+      .select({ twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!caller) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    await assertFreshReauthentication({
+      drizzle: this.drizzle,
+      auth: this.auth,
+      twoFactorLockout: this.twoFactorLockout,
+      userId,
+      headers,
+      currentPassword: input.currentPassword,
+      totpCode: input.totpCode,
+      twoFactorEnabled: caller.twoFactorEnabled ?? false,
+      meta,
+    });
+    const res = await this.api.requestEmailChangeEmailOTP({
       body: { newEmail: input.newEmail },
       headers,
       asResponse: true,
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    if (userId) {
-      // better-auth's `/change-email` returns the same `{ status: true }` shape for the
-      // anti-enumeration no-op (target already owned by someone else) and for a deferred
-      // confirmation-email flow, where the address only actually changes once the
-      // confirmation link is clicked - neither of which touched this row yet. Requiring
-      // `user.email` to already equal the requested address scopes the disable to the
-      // one branch (`updateEmailWithoutVerification`) that updates it synchronously.
-      const [disabled] = await this.drizzle.db
-        .update(user)
-        .set({ loginWithdrawalAlertsEnabled: false })
-        .where(
-          and(
-            eq(user.id, userId),
-            eq(user.loginWithdrawalAlertsEnabled, true),
-            eq(user.email, newEmail),
-          ),
-        )
-        .returning({ id: user.id });
-      if (disabled) {
-        const { ip, userAgent } = extractClientMeta(reqHeaders);
+    return SUCCESS;
+  }
+
+  /**
+   * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email.
+   * The old address is read first, since no row carries it afterwards, for the "changed"
+   * notice and to reset the verified-email alert opt-in (made on the old inbox). Every
+   * other session and trusted device is torn down too, the same as `disableTwoFactor`.
+   */
+  async confirmEmailChange(
+    input: ConfirmEmailChangeInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const meta = extractClientMeta(reqHeaders);
+    const { ip, userAgent } = meta;
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `confirm-email-change:${userId ?? 'anonymous'}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
+    const newEmail = input.newEmail.toLowerCase();
+    await assertRateLimit(
+      this.limiter,
+      `confirm-email-change-target:${newEmail}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
+    if (ip) {
+      await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
+    }
+    const [before] = userId
+      ? await this.drizzle.db
+          .select({
+            email: user.email,
+            language: user.language,
+            loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+          })
+          .from(user)
+          .where(eq(user.id, userId))
+          .limit(1)
+      : [];
+    const res = await this.api.changeEmailEmailOTP({
+      body: { newEmail: input.newEmail, otp: input.otp },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    this.forwardCookies(res, resHeaders);
+
+    if (userId && before) {
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+      this.events.emit('identity.email.changed', {
+        userId,
+        playerId,
+        previousEmail: before.email,
+        newEmail,
+        ip,
+        userAgent,
+      });
+      await this.trustedDevices?.revokeAllForUser(userId, userId);
+      await this.sessions?.revokeAllSessions(userId, userId, meta);
+      if (before.loginWithdrawalAlertsEnabled) {
+        await this.drizzle.db
+          .update(user)
+          .set({ loginWithdrawalAlertsEnabled: false })
+          .where(eq(user.id, userId));
         this.events.emit('identity.security.login_withdrawal_alerts.updated', {
           userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+          playerId,
           previousEnabled: true,
           enabled: false,
           ip,
           userAgent,
         });
       }
+      // To the OLD address - the row now holds the new one. Fire-and-forget like
+      // `dispatchMail` in notifications/plugin.ts: the swap already committed, so a
+      // mail-enqueue hiccup must not turn it into a reported failure. `randomUUID()`
+      // keeps the key unique so the queue's dedupe window can't swallow a repeat notice.
+      this.mailDispatch
+        ?.toAddress({
+          email: before.email,
+          locale: before.language,
+          template: { key: 'emailChanged', data: { newEmail } },
+          idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
+        })
+        .catch((err: unknown) =>
+          identityLogger.error({ err, userId }, 'email-change notice enqueue failed'),
+        );
     }
     return SUCCESS;
   }

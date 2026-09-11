@@ -24,7 +24,8 @@ import {
   VerifyEmailInputSchema,
   UpdateProfileInputSchema,
   ChangePasswordInputSchema,
-  ChangeEmailInputSchema,
+  RequestEmailChangeInputSchema,
+  ConfirmEmailChangeInputSchema,
   IdentitySuccessSchema,
   TimestampSchema,
   PhoneLoginRequestInputSchema,
@@ -266,9 +267,16 @@ export const identityContract = {
       }),
     ),
 
-  changeEmail: oc
-    .route({ method: 'POST', path: '/identity/email/change' })
-    .input(ChangeEmailInputSchema)
+  // Two-step change: `requestEmailChange` mails an OTP to the new address,
+  // `confirmEmailChange` verifies it and swaps the login email.
+  requestEmailChange: oc
+    .route({ method: 'POST', path: '/identity/email/change/request' })
+    .input(RequestEmailChangeInputSchema)
+    .output(IdentitySuccessSchema),
+
+  confirmEmailChange: oc
+    .route({ method: 'POST', path: '/identity/email/change/confirm' })
+    .input(ConfirmEmailChangeInputSchema)
     .output(IdentitySuccessSchema),
 
   updateProfile: oc

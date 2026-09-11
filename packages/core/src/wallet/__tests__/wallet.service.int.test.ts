@@ -1555,7 +1555,7 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.withdrawal.completed']);
   });
 
-  it('refunds and marks failed without an admin-attributed event', async () => {
+  it('refunds, marks failed, and emits a failed event with no admin attribution', async () => {
     const { svc, events } = makeService();
     const w = await seedWallet({ balance: '0' });
     const externalId = randomUUID();
@@ -1570,7 +1570,10 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
 
     expect(await txById(tx.id)).toMatchObject({ status: 'failed' });
     expect(await balanceOf(w.userId)).toBe(40);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.withdrawal.failed',
+      expect.objectContaining({ userId: w.userId, transactionId: tx.id, adminId: null }),
+    );
   });
 
   it('no-ops on a replay of an already terminal transaction', async () => {

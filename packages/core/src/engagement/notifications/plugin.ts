@@ -173,21 +173,49 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
-  mapEvent('wallet.withdrawal.completed', (p) => ({
-    userId: p.userId,
-    type: 'withdrawal.completed',
-    title: 'Withdrawal completed',
-    body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
-    data: { transactionId: p.transactionId },
-  })),
+  mapEvent(
+    'wallet.withdrawal.completed',
+    (p) => ({
+      userId: p.userId,
+      type: 'withdrawal.completed',
+      title: 'Withdrawal completed',
+      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} has been completed.`,
+      data: { transactionId: p.transactionId },
+    }),
+    {
+      email: (p, occurredAt) => ({
+        key: 'withdrawalCompleted',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+    },
+  ),
 
-  mapEvent('wallet.withdrawal.failed', (p) => ({
-    userId: p.userId,
-    type: 'withdrawal.failed',
-    title: 'Withdrawal failed',
-    body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
-    data: { transactionId: p.transactionId },
-  })),
+  mapEvent(
+    'wallet.withdrawal.failed',
+    (p) => ({
+      userId: p.userId,
+      type: 'withdrawal.failed',
+      title: 'Withdrawal failed',
+      body: `Your withdrawal of ${formatMoneyAmount(p.amount)} ${p.currency} failed and the funds were returned to your balance.`,
+      data: { transactionId: p.transactionId },
+    }),
+    {
+      email: (p, occurredAt) => ({
+        key: 'withdrawalFailed',
+        data: {
+          amount: p.amount,
+          currency: p.currency,
+          transactionId: p.transactionId,
+          occurredAt,
+        },
+      }),
+    },
+  ),
 
   mapEvent(
     'wallet.deposit.completed',
@@ -392,6 +420,25 @@ export default {
           );
       });
     }
+
+    // Welcome mail, mail-only like the security login alert below. Keyed on the user, not
+    // the event, so a re-verification or resend can never send a second one.
+    ctx.events.on('identity.email.verified', (payload) => {
+      if (!mailDispatchRef) {
+        return;
+      }
+      const parsed = domainEventSchemas['identity.email.verified'].safeParse(payload);
+      if (!parsed.success) {
+        return;
+      }
+      void mailDispatchRef
+        .toUser({
+          userId: parsed.data.userId,
+          template: { key: 'welcome', data: {} },
+          idempotencyKey: `welcome-mail:${parsed.data.userId}`,
+        })
+        .catch((err) => logger.error({ err }, 'welcome mail enqueue failed'));
+    });
 
     ctx.events.on('identity.authentication.succeeded', async (payload, envelope) => {
       const parsed = domainEventSchemas['identity.authentication.succeeded'].safeParse(payload);
