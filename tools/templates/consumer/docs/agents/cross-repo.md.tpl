@@ -10,7 +10,7 @@ Some changes need both repos: an OSS core change plus this repo's adaptation to 
 - **Review before push**: `pnpm -C <worktree> verify`, then the OSS repo's own review workflow and its contract checklist on the worktree diff.
 - **Same branch name in both repos** pairs the two requests. Skills find the OSS half from this repo's branch.
 - **No links between the requests**: the shared branch name is the pairing. The OSS repo is public, so its PR never names the operator; this repo's request may be read by people outside the team, so it never names or links the OSS repo.
-- **Run against the change**: `pnpm oss:worktree <branch> --link` points `pnpm link:oss` at the worktree; `pnpm link:oss` alone restores the main checkout.
+- **Run against the change**: `pnpm oss:worktree <branch> --link` builds the worktree and points `pnpm link:oss` at it; `pnpm link:oss` alone restores the main checkout. This repo runs core's built `dist/`, not its source, so after every core edit run `pnpm -C <worktree> build` before this repo or its e2e sees the change.
 - **Review covers both halves**: the `review` skill finds the pair, reviews the OSS diff by the OSS repo's own rules, and cross-checks the contract between them.
 - **Clean up** after both requests merge: `pnpm oss:worktree <branch> --remove`.
 

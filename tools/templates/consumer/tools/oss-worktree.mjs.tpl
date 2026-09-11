@@ -5,7 +5,7 @@
 // on every machine.
 //
 //   pnpm oss:worktree <branch>            create or reuse the worktree, install its deps
-//   pnpm oss:worktree <branch> --link     ...then point `pnpm link:oss` at it
+//   pnpm oss:worktree <branch> --link     ...then build it and point `pnpm link:oss` at it
 //   pnpm oss:worktree <branch> --remove   remove it; relinks the main checkout if it was linked
 //
 // Use the same branch name as this repo's branch: that is how skills pair the two requests.
@@ -50,8 +50,12 @@ const isLinkedTo = (dir) =>
 
 if (flag === '--remove') {
   const wasLinked = isLinkedTo(worktree);
-  if (existsSync(worktree) && gitOrEmpty('worktree', 'remove', worktree) === '' && existsSync(worktree)) {
-    die(`${worktreeFromHere} has uncommitted changes - commit or discard them, then rerun.`);
+  if (existsSync(worktree)) {
+    try {
+      git('worktree', 'remove', worktree);
+    } catch {
+      die(`${worktreeFromHere} has uncommitted changes - commit or discard them, then rerun.`);
+    }
   }
   if (wasLinked && hasLinkScript()) {
     run('pnpm', ['link:oss']);
@@ -77,6 +81,8 @@ if (flag === '--link') {
   if (!hasLinkScript()) {
     die('this repo has no `link:oss` script - link the worktree through pnpm overrides by hand.');
   }
+  // @openora/* resolve from dist/, so a linked worktree works only once it is built.
+  run('pnpm', ['-C', worktree, 'build']);
   run('pnpm', ['link:oss', worktreeFromHere]);
 }
 

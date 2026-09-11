@@ -10,6 +10,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -81,6 +82,39 @@ test('shell writes are judged per path: worktree allowed, main checkout denied',
     exitCode({ command: 'echo x > ../oss/.worktrees/feat+x/a.ts; rm ../oss/a.ts' }),
     DENIED,
   );
+});
+
+test('copies, links, patches, and git writes into the main checkout are denied', () => {
+  for (const command of [
+    'cp overlay/a.ts ../oss/packages/core/src/a.ts',
+    `cp -r overlay ${join(oss, 'packages')} 2>&1`,
+    'install -m 644 a.ts ../oss/packages/a.ts',
+    'ln -s ../oss/packages/core/src core-src',
+    'patch ../oss/packages/a.ts fix.diff',
+    'git -C ../oss apply fix.diff',
+    'git -C ../oss checkout .',
+  ]) {
+    assert.equal(exitCode({ command }), DENIED, command);
+  }
+});
+
+test('copies out of the checkout or into a worktree, and git reads, pass', () => {
+  for (const command of [
+    'cp ../oss/packages/core/src/a.ts overlay/a.ts',
+    'cp overlay/a.ts ../oss/.worktrees/feat+x/a.ts',
+    'git -C ../oss log --oneline',
+    'git -C ../oss/.worktrees/feat+x checkout .',
+    'grep -ln x ../oss/packages',
+  ]) {
+    assert.equal(exitCode({ command }), ALLOWED, command);
+  }
+});
+
+test('a symlink into the checkout does not make a core path look local', () => {
+  mkdirSync(join(oss, 'packages'));
+  symlinkSync(join(oss, 'packages'), join(consumer, 'core-src'));
+  assert.equal(exitCode({ file_path: join(consumer, 'core-src/core/src/a.ts') }), DENIED);
+  assert.equal(exitCode({ file_path: 'core-src/a.ts' }), DENIED);
 });
 
 test('reads and consumer-local writes pass', () => {
