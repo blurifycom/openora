@@ -210,6 +210,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       reviewedBy: null,
       reviewReason: 'auto-approved',
       providerName: DEFAULT_PAYMENT_PROVIDER,
+      autoApprovalPivotAmount: '40.000000000000000000',
     });
     expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual([
       'wallet.withdrawal.requested',
@@ -225,6 +226,8 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
           threshold: '1000.000000000000000000',
           thresholdSource: 'global',
           kycStatus: 'verified',
+          pivotAmount: '40',
+          pivotCurrency: 'USD',
           cumulativeCountUsed: 0,
         }),
       }),
@@ -625,6 +628,24 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('auto-approves a withdrawal already in the pivot without the fx module', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      rates: 'unbound',
+    });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+  });
+
   it('stays pending when a configured daily count cap would be exceeded', async () => {
     const { svc } = await makeService({
       autoWithdrawal: { dailyCapCount: 1 },
@@ -660,6 +681,32 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       walletId: w.id,
       type: 'withdrawal',
       amount: '20',
+      currency: 'USD',
+      status: 'completed',
+      reviewReason: 'auto-approved',
+      autoApprovalPivotAmount: '20',
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('stays pending when a trailing auto-approval has no stored pivot value to sum', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapAmount: '1000' },
+      fiatThreshold: '1000',
+    });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      type: 'withdrawal',
+      amount: '1',
       currency: 'USD',
       status: 'completed',
       reviewReason: 'auto-approved',
@@ -802,12 +849,32 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
-  it('sums the daily amount cap in the pivot, not raw across currencies', async () => {
+  it('stays pending when the bound reader has no rate for the currency', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '100000',
+      cryptoThreshold: '100000',
+    });
+    const w = await seedWallet({ currency: 'ETH', balance: '10' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'ETH',
+      destinationAddress: '0xexample',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('caps on the pivot value a past payout was approved at, not its value at the current rate', async () => {
     const { svc } = await makeService({
       autoWithdrawal: { dailyCapAmount: '1500' },
       cryptoThreshold: '2000',
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
+    // Approved when BTC was 1400; at today's 1000 the same payout would leave room for 0.2 BTC.
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
       type: 'withdrawal',
@@ -815,11 +882,12 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       currency: 'BTC',
       status: 'completed',
       reviewReason: 'auto-approved',
+      autoApprovalPivotAmount: '1400',
     });
 
     const result = await svc.withdraw({
       userId: w.userId,
-      amount: '1',
+      amount: '0.2',
       currency: 'BTC',
       destinationAddress: 'bc1qexample',
       ...NO_CLIENT_META,

@@ -32,6 +32,7 @@ import {
   type RateLimitKey,
   type WalletRail,
   railFor as sharedRailFor,
+  resolveExchangeRatePivot,
   type PlayerTags,
   type RgLimitsPort,
   type ExchangeRateReader,
@@ -567,9 +568,6 @@ function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
 // a display hint there. Revisit with a real risk service if/when one exists.
 const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
-// The fx module's own fallback when `exchangeRate.pivot` is unset.
-const DEFAULT_FX_PIVOT = 'USD';
-
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
@@ -585,16 +583,27 @@ type AutoApprovalDecision = {
   kycStatus: KycStatus;
   riskTagsEvaluated: TagKey[];
   effectiveExcludeTags: TagKey[];
+  // The withdrawal's value in `pivotCurrency`, the unit of `threshold`, the daily amount cap
+  // and `cumulativeAmountUsed`. `amount` and `currency` in the audit row stay the raw request.
+  pivotAmount: string;
+  pivotCurrency: string;
   dailyCapAmount: string | null;
   dailyCapCount: number | null;
-  cumulativeAmountUsed: string;
+  // null when a trailing payout has no stored pivot value, so the total is unknown.
+  cumulativeAmountUsed: string | null;
   cumulativeCountUsed: number;
 };
 
 // The pre-lock portion of the decision, resolvable without the advisory-locked cap read.
 type AutoApprovalGates = Pick<
   AutoApprovalDecision,
-  'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated' | 'effectiveExcludeTags'
+  | 'threshold'
+  | 'thresholdSource'
+  | 'kycStatus'
+  | 'riskTagsEvaluated'
+  | 'effectiveExcludeTags'
+  | 'pivotAmount'
+  | 'pivotCurrency'
 >;
 
 type DepositAddressResult = {
@@ -1612,11 +1621,13 @@ export class WalletService {
     withdrawalId,
     adminId,
     reviewReason,
+    autoApprovalPivotAmount,
   }: {
     txn: DrizzleTx;
     withdrawalId: WalletTransaction['id'];
     adminId: User['id'] | null;
     reviewReason?: string;
+    autoApprovalPivotAmount?: string;
   }): Promise<WalletTransaction> {
     const current = findOneOrThrow(
       await txn
@@ -1638,6 +1649,7 @@ export class WalletService {
           reviewedBy: adminId,
           reviewedAt: new Date(),
           ...(reviewReason !== undefined ? { reviewReason } : {}),
+          ...(autoApprovalPivotAmount !== undefined ? { autoApprovalPivotAmount } : {}),
         })
         .where(eq(walletTransaction.id, withdrawalId))
         .returning(),
@@ -1830,7 +1842,8 @@ export class WalletService {
     try {
       const cfg = this.platformConfig.autoWithdrawal;
 
-      // Threshold/KYC/risk/velocity gates run outside any lock; only the cap check below needs serializing.
+      // Threshold/KYC/risk/velocity gates and the fx conversion run outside any lock; only the cap check
+      // below needs serializing, and it reads stored pivot values, never the rate reader.
       const gates = await this.evaluateAutoApproval(args);
       if (!gates) {
         return undefined;
@@ -1843,7 +1856,7 @@ export class WalletService {
       const decided = await this.drizzle.db.transaction((txn) =>
         withAdvisoryXactLock(txn, args.userId, async () => {
           const caps = await this.autoApprovalCaps(
-            { walletId: args.walletId, amount: args.amount, currency: args.currency, cfg },
+            { walletId: args.walletId, pivotAmount: gates.pivotAmount, cfg },
             txn,
           );
           if (caps.exceeded) {
@@ -1854,6 +1867,7 @@ export class WalletService {
             withdrawalId: args.transactionId,
             adminId: null,
             reviewReason: AUTO_APPROVED_REASON,
+            autoApprovalPivotAmount: gates.pivotAmount,
           });
           return { tx, caps };
         }),
@@ -1889,7 +1903,13 @@ export class WalletService {
         // with no PSP attempt, so revert to `pending` before rethrowing (held funds are unaffected).
         await this.drizzle.db
           .update(walletTransaction)
-          .set({ status: 'pending', reviewedBy: null, reviewedAt: null, reviewReason: null })
+          .set({
+            status: 'pending',
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewReason: null,
+            autoApprovalPivotAmount: null,
+          })
           .where(eq(walletTransaction.id, args.transactionId));
         throw err;
       }
@@ -1927,7 +1947,8 @@ export class WalletService {
     }
     // One threshold serves every currency on the rail, so it is read in the fx pivot. A raw
     // comparison let 0.4 BTC clear a threshold of 1 that was written with a stablecoin in mind.
-    const pivotAmount = await this.toPivotAmount(amount, currency);
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
+    const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
     if (pivotAmount === null || moneyCompare(pivotAmount, threshold.value) > 0) {
       return null;
     }
@@ -1960,6 +1981,8 @@ export class WalletService {
       kycStatus,
       riskTagsEvaluated: riskTags,
       effectiveExcludeTags,
+      pivotAmount,
+      pivotCurrency,
     };
   }
 
@@ -2394,28 +2417,28 @@ export class WalletService {
 
   // Sum + count of this wallet's auto-approved payouts in the trailing 24h; `exceeded` when this withdrawal
   // would breach a configured amount or count cap (an unconfigured cap never blocks).
-  // The amount cap is in the fx pivot: the trailing payouts are summed per currency and each
-  // converted, never added raw across currencies. A currency with no rate exceeds the cap.
+  // The amount cap is in the fx pivot and sums the value each payout was approved at, so a rate
+  // move since cannot shrink it and no rate is read under the lock. A trailing payout with no
+  // stored value (approved before the column existed) leaves the total unknown: `amountUsed` is
+  // null and a configured amount cap counts as exceeded.
   private async autoApprovalCaps(
     {
       walletId,
-      amount,
-      currency,
+      pivotAmount,
       cfg,
     }: {
       walletId: Wallet['id'];
-      amount: string;
-      currency: string;
+      pivotAmount: string;
       cfg: NonNullable<PlatformConfig['autoWithdrawal']>;
     },
     db: DrizzleTx,
-  ): Promise<{ exceeded: boolean; amountUsed: string; countUsed: number }> {
+  ): Promise<{ exceeded: boolean; amountUsed: string | null; countUsed: number }> {
     const since = new Date(Date.now() - DAILY_CAP_WINDOW_MS);
-    const rows = await db
+    const [row] = await db
       .select({
-        currency: walletTransaction.currency,
-        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+        total: sql<string>`coalesce(sum(${walletTransaction.autoApprovalPivotAmount}), 0)`,
         n: count(),
+        priced: count(walletTransaction.autoApprovalPivotAmount),
       })
       .from(walletTransaction)
       .where(
@@ -2425,32 +2448,27 @@ export class WalletService {
           eq(walletTransaction.reviewReason, AUTO_APPROVED_REASON),
           gte(walletTransaction.createdAt, since),
         ),
-      )
-      .groupBy(walletTransaction.currency);
-    const countUsed = rows.reduce((total, row) => total + Number(row.n), 0);
-    const [pivotAttempt, ...pivotUsed] = await Promise.all([
-      this.toPivotAmount(amount, currency),
-      ...rows.map((row) => this.toPivotAmount(row.total, row.currency)),
-    ]);
-    const isUnpriced = pivotAttempt === null || pivotUsed.some((value) => value === null);
-    const amountUsed = pivotUsed.reduce<string>(
-      (total, value) => moneyAdd(total, value ?? '0'),
-      '0',
-    );
+      );
+    const countUsed = row?.n ?? 0;
+    const amountUsed = (row?.priced ?? 0) < countUsed ? null : (row?.total ?? '0');
     const amountExceeded =
       cfg.dailyCapAmount !== undefined &&
-      (isUnpriced ||
-        moneyCompare(moneyAdd(amountUsed, pivotAttempt ?? '0'), cfg.dailyCapAmount) > 0);
+      (amountUsed === null ||
+        moneyCompare(moneyAdd(amountUsed, pivotAmount), cfg.dailyCapAmount) > 0);
     const countExceeded = cfg.dailyCapCount !== undefined && countUsed + 1 > cfg.dailyCapCount;
     return { exceeded: amountExceeded || countExceeded, amountUsed, countUsed };
   }
 
-  private async toPivotAmount(amount: string, currency: string): Promise<string | null> {
-    const pivot = this.platformConfig?.exchangeRate?.pivot ?? DEFAULT_FX_PIVOT;
-    if (currency.toUpperCase() === pivot.toUpperCase()) {
+  // A withdrawal already in the pivot needs no rate, so it is valued even without the fx module.
+  private async toPivotAmount(
+    amount: string,
+    currency: string,
+    pivotCurrency: string,
+  ): Promise<string | null> {
+    if (currency.toUpperCase() === pivotCurrency) {
       return amount;
     }
-    return this.rates ? this.rates.convert(amount, currency, pivot) : null;
+    return this.rates ? this.rates.convert(amount, currency, pivotCurrency) : null;
   }
 
   async setAutoWithdrawalRule({
