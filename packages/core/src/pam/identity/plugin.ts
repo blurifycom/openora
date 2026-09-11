@@ -8,6 +8,7 @@ import {
   LOGIN_ENFORCEMENT,
   PLAY_ELIGIBILITY,
   MAIL_DISPATCH,
+  MAIL_RECIPIENT_DIRECTORY,
   GEO_CHECK_COMMANDS,
   PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
@@ -28,7 +29,10 @@ import { PhoneLoginService } from './service/phone-login.service.js';
 import { PhoneVerificationService } from './service/phone-verification.service.js';
 import { WithdrawalPinService } from './service/withdrawal-pin.service.js';
 import { MIN_WITHDRAWAL_PIN_SECRET_LENGTH } from './service/withdrawal-pin-hash.service.js';
-import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
+import {
+  DrizzleAdminUserDirectory,
+  DrizzleMailRecipientDirectory,
+} from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
@@ -108,6 +112,7 @@ export default {
       ADMIN_USER_DIRECTORY,
       (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS)),
     );
+    ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
     // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
     ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
     // RG login-block writer. compliance drives it through the port, never the schema.

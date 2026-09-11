@@ -61,6 +61,7 @@ import type {
   PlayerProvisioning,
   SecurityControls,
   SetLoginWithdrawalAlertsInput,
+  SetAntiPhishingCodeInput,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -314,6 +315,11 @@ const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 // resend loop is both a toll-fraud channel and an unbounded guess budget.
 const SEND_2FA_OTP_RATE_LIMIT = {
   limit: 3,
+  windowMs: 5 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
+const ANTI_PHISHING_CODE_RATE_LIMIT = {
+  limit: 5,
   windowMs: 5 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
@@ -1897,6 +1903,78 @@ export class IdentityService {
       userAgent,
     });
     return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
+  }
+
+  /**
+   * Sets (or overwrites) the player's anti-phishing code: a free-text, case-sensitive
+   * recognition phrase stamped into every outgoing platform email so the player can tell a
+   * genuine email from a phishing attempt. Unlike the withdrawal PIN this authorizes nothing,
+   * so - like `setLoginWithdrawalAlerts` - it takes no reauth and there is no remove route;
+   * calling it again with a new value just changes the code.
+   */
+  async setAntiPhishingCode(
+    input: SetAntiPhishingCodeInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const [caller] = await this.drizzle.db
+      .select({ role: user.role, email: user.email, language: user.language })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (caller?.role !== 'player') {
+      // A service-level denial still owes the audit log the same signal AdminGuard emits,
+      // since this check rejects before any shared guard runs (docs/standards/audit.md).
+      this.events.emit('identity.user.unauthorized_access', {
+        userId,
+        playerId: null,
+        resource: 'identity.security.anti_phishing_code',
+        action: 'set',
+        ...(caller?.role ? { role: caller.role } : {}),
+        ip,
+        userAgent,
+      });
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Only players can set this preference.',
+      });
+    }
+    const before = await this.securityControlsFor(userId);
+    if (before.antiPhishingCode === input.code) {
+      return before;
+    }
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.ANTI_PHISHING_CODE_MUTATION, userId),
+      ANTI_PHISHING_CODE_RATE_LIMIT,
+    );
+    await this.drizzle.db
+      .update(user)
+      .set({ antiPhishingCode: input.code })
+      .where(eq(user.id, userId));
+    this.events.emit('identity.security.anti_phishing_code.set', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      wasAlreadySet: before.antiPhishingCode !== null,
+      ip,
+      userAgent,
+    });
+    // Deliberately address-only: resolving a user recipient later would stamp the email with
+    // the replacement code. This notice instead carries the prior code, which lets the owner
+    // recognise it even if a stolen session changed the current value.
+    await this.mailDispatch?.toAddress({
+      email: caller.email,
+      locale: caller.language,
+      template: {
+        key: 'securityAntiPhishingCodeChanged',
+        data: { previousAntiPhishingCode: before.antiPhishingCode },
+      },
+      idempotencyKey: `anti-phishing-code-changed:${userId}:${randomUUID()}`,
+    });
+    return { ...before, antiPhishingCode: input.code };
   }
 
   /**

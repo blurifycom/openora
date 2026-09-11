@@ -107,6 +107,10 @@ export function createIdentityRouter(
       removeWithdrawalPin: os.security.removeWithdrawalPin.handler(({ context }) =>
         withdrawalPin.remove(getUserId(context), context.clientMeta),
       ),
+
+      setAntiPhishingCode: os.security.setAntiPhishingCode.handler(({ input, context }) =>
+        identity.setAntiPhishingCode(input, context.request.headers),
+      ),
     },
 
     phoneVerification: {

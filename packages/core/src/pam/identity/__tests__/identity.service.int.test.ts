@@ -12,7 +12,12 @@ import {
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import type { PlatformConfig, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
+import type {
+  MailDispatchPort,
+  PlatformConfig,
+  RateLimiterAdapter,
+  SmsAdapter,
+} from '@openora/core/contracts';
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
@@ -1388,5 +1393,110 @@ describe('IdentityService security controls', () => {
       'identity.security.login_withdrawal_alerts.updated',
       expect.anything(),
     );
+  });
+});
+
+describe('IdentityService.setAntiPhishingCode', () => {
+  it('refuses to set the code for a non-player (admin) account', async () => {
+    const account = await seedUser({ role: 'admin', emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+
+    await expect(
+      buildService().setAntiPhishingCode({ code: 'Sunny Meadow' }, {}),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect((await readUser(account.id))?.antiPhishingCode).toBeNull();
+  });
+
+  it('sets the code with no reauth and round-trips it exactly (case, punctuation, spacing) through security.me', async () => {
+    const account = await seedUser({ emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    const events = makeEventBus();
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ events, mailDispatch });
+
+    const result = await svc.setAntiPhishingCode({ code: 'Sunny Meadow-42!' }, {});
+
+    expect(result.antiPhishingCode).toBe('Sunny Meadow-42!');
+    expect((await readUser(account.id))?.antiPhishingCode).toBe('Sunny Meadow-42!');
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.security.anti_phishing_code.set',
+      expect.objectContaining({ userId: account.id, wasAlreadySet: false }),
+    );
+    // The code value itself never reaches the audit/event stream.
+    const [, payload] = vi
+      .mocked(events.emit)
+      .mock.calls.find(([topic]) => topic === 'identity.security.anti_phishing_code.set') as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(payload).not.toHaveProperty('code');
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: account.email,
+        template: {
+          key: 'securityAntiPhishingCodeChanged',
+          data: { previousAntiPhishingCode: null },
+        },
+      }),
+    );
+
+    const controls = await svc.getSecurityControls({});
+    expect(controls.antiPhishingCode).toBe('Sunny Meadow-42!');
+  });
+
+  it('overwrites an existing code on a second call - set/overwrite only, no remove route', async () => {
+    const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Old Code' });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+
+    const events = makeEventBus();
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const result = await buildService({ events, mailDispatch }).setAntiPhishingCode(
+      { code: 'New Code' },
+      {},
+    );
+
+    expect(result.antiPhishingCode).toBe('New Code');
+    expect((await readUser(account.id))?.antiPhishingCode).toBe('New Code');
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.security.anti_phishing_code.set',
+      expect.objectContaining({ wasAlreadySet: true }),
+    );
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: {
+          key: 'securityAntiPhishingCodeChanged',
+          data: { previousAntiPhishingCode: 'Old Code' },
+        },
+      }),
+    );
+  });
+
+  it('does not write, audit, or notify when the submitted code is unchanged', async () => {
+    const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Same Code' });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    const events = makeEventBus();
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+
+    const result = await buildService({ events, mailDispatch }).setAntiPhishingCode(
+      { code: 'Same Code' },
+      {},
+    );
+
+    expect(result.antiPhishingCode).toBe('Same Code');
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.security.anti_phishing_code.set',
+      expect.anything(),
+    );
+    expect(mailDispatch.toAddress).not.toHaveBeenCalled();
   });
 });

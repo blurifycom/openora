@@ -273,6 +273,13 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The code itself never travels here - audit/event streams are broader-read than
+  // security.me, which is the only place the raw value is returned.
+  'identity.security.anti_phishing_code.set': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    wasAlreadySet: z.boolean(),
+  }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
