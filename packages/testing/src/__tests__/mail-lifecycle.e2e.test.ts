@@ -77,12 +77,30 @@ describe('welcome mail', () => {
 });
 
 describe('email change flow', () => {
+  it('refuses to request a change without the current password', async () => {
+    const { userId, email: oldEmail, client } = await newPlayer();
+    const newEmail = `mail-lc-nopw-${randomUUID()}@e2e.test`;
+    clearCapturedEmails();
+
+    const wrongPassword = await client.post('/identity/email/change/request', {
+      newEmail,
+      currentPassword: 'not-the-real-password',
+    });
+
+    expect(wrongPassword.status).toBe(401);
+    expect(capturedEmailsFor(newEmail).some((m) => m.subject === CONFIRM_SUBJECT)).toBe(false);
+    expect(await emailOf(userId)).toBe(oldEmail);
+  });
+
   it('confirms the new address with an OTP and notifies the old one', async () => {
     const { userId, email: oldEmail, client } = await newPlayer();
     const newEmail = `mail-lc-new-${randomUUID()}@e2e.test`;
     clearCapturedEmails();
 
-    const requested = await client.post('/identity/email/change/request', { newEmail });
+    const requested = await client.post('/identity/email/change/request', {
+      newEmail,
+      currentPassword: PASSWORD,
+    });
     expect(requested.status).toBe(200);
 
     const otp = await codeFrom(newEmail, CONFIRM_SUBJECT);
@@ -100,11 +118,27 @@ describe('email change flow', () => {
     expect(capturedEmailsFor(newEmail).some((m) => m.subject === WELCOME_SUBJECT)).toBe(false);
   });
 
+  it('revokes every other session once the change is confirmed', async () => {
+    const { client } = await newPlayer();
+    const newEmail = `mail-lc-revoke-${randomUUID()}@e2e.test`;
+    clearCapturedEmails();
+
+    await client.post('/identity/email/change/request', { newEmail, currentPassword: PASSWORD });
+    const otp = await codeFrom(newEmail, CONFIRM_SUBJECT);
+    const confirmed = await client.post('/identity/email/change/confirm', { newEmail, otp });
+    expect(confirmed.status).toBe(200);
+
+    // A session hijacked before the change must not keep riding the account once its
+    // recovery address has moved - not even the one that made the change itself.
+    const afterChange = await client.get('/identity/2fa/status');
+    expect(afterChange.status).toBe(401);
+  });
+
   it('rejects a wrong confirmation code and leaves the address untouched', async () => {
     const { userId, email: oldEmail, client } = await newPlayer();
     const newEmail = `mail-lc-wrong-${randomUUID()}@e2e.test`;
 
-    await client.post('/identity/email/change/request', { newEmail });
+    await client.post('/identity/email/change/request', { newEmail, currentPassword: PASSWORD });
     const bad = await client.post('/identity/email/change/confirm', { newEmail, otp: '000000' });
 
     expect(bad.status).toBe(400);
@@ -116,7 +150,7 @@ describe('email change flow', () => {
     const newEmail = `mail-lc-replay-${randomUUID()}@e2e.test`;
     clearCapturedEmails();
 
-    await client.post('/identity/email/change/request', { newEmail });
+    await client.post('/identity/email/change/request', { newEmail, currentPassword: PASSWORD });
     const otp = await codeFrom(newEmail, CONFIRM_SUBJECT);
 
     expect((await client.post('/identity/email/change/confirm', { newEmail, otp })).status).toBe(
@@ -135,6 +169,7 @@ describe('email change flow', () => {
     // confirm step has nothing to verify against.
     const requested = await client.post('/identity/email/change/request', {
       newEmail: takenEmail,
+      currentPassword: PASSWORD,
     });
     expect(requested.status).toBe(200);
     expect(capturedEmailsFor(takenEmail).some((m) => m.subject === CONFIRM_SUBJECT)).toBe(false);

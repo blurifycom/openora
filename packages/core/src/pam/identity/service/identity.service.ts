@@ -76,6 +76,7 @@ import {
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
 import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
+import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -2028,8 +2029,12 @@ export class IdentityService {
   /**
    * Step 1 of the email change: better-auth mails a code to `newEmail` (type
    * `change-email`). It answers success even when the address is already taken, so this
-   * never reveals whether an account exists. The current address is not re-verified - the
-   * live session is proof enough - and the row is untouched until `confirmEmailChange`.
+   * never reveals whether an account exists.
+   *
+   * A live session is NOT proof enough on its own - this moves the account's login
+   * (and password-reset) address, so it demands the same fresh password/2FA proof as a
+   * withdrawal PIN or phone rebind (`assertFreshReauthentication`). Without it, a bare
+   * stolen session cookie would be a full account-takeover primitive.
    */
   async requestEmailChange(
     input: RequestEmailChangeInput,
@@ -2037,12 +2042,47 @@ export class IdentityService {
     resHeaders: Headers,
   ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const { ip } = extractClientMeta(reqHeaders);
+    const meta = extractClientMeta(reqHeaders);
+    const { ip } = meta;
+    // Session resolved before spending any budget, and keyed into the per-caller limit
+    // below - otherwise an unauthenticated caller (better-auth's own session middleware
+    // rejects them anyway) still burns the rate limit meant for the real player, same
+    // fix as `changePassword`'s `${userId ?? 'anonymous'}` key.
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `change-email:${userId ?? 'anonymous'}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
     const newEmail = input.newEmail.toLowerCase();
-    await assertRateLimit(this.limiter, `change-email:${newEmail}`, VERIFY_EMAIL_RATE_LIMIT);
+    // Separate, target-address budget: caps how many codes any caller can direct at one
+    // inbox, regardless of who they're signed in as.
+    await assertRateLimit(this.limiter, `change-email-target:${newEmail}`, VERIFY_EMAIL_RATE_LIMIT);
     if (ip) {
       await assertRateLimit(this.limiter, `change-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const [caller] = await this.drizzle.db
+      .select({ twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!caller) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    await assertFreshReauthentication({
+      drizzle: this.drizzle,
+      auth: this.auth,
+      twoFactorLockout: this.twoFactorLockout,
+      userId,
+      headers,
+      currentPassword: input.currentPassword,
+      totpCode: input.totpCode,
+      twoFactorEnabled: caller.twoFactorEnabled ?? false,
+      meta,
+    });
     const res = await this.api.requestEmailChangeEmailOTP({
       body: { newEmail: input.newEmail },
       headers,
@@ -2059,6 +2099,10 @@ export class IdentityService {
    * so the "your email was changed" notice can still reach it. The verified-email alert
    * opt-in was made on the old inbox and does not carry over, so it is reset here (same
    * as the previous synchronous flow did).
+   *
+   * Every other session and trusted device is torn down once the swap lands - the same
+   * teardown `disableTwoFactor` performs - so a session hijacked before this call cannot
+   * keep riding the account once its recovery address has moved.
    */
   async confirmEmailChange(
     input: ConfirmEmailChangeInput,
@@ -2066,17 +2110,23 @@ export class IdentityService {
     resHeaders: Headers,
   ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    const meta = extractClientMeta(reqHeaders);
+    const { ip, userAgent } = meta;
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `confirm-email-change:${userId ?? 'anonymous'}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
     const newEmail = input.newEmail.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      `confirm-email-change:${newEmail}`,
+      `confirm-email-change-target:${newEmail}`,
       VERIFY_EMAIL_RATE_LIMIT,
     );
     if (ip) {
       await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
-    const userId = await this.currentUserId(headers);
     const [before] = userId
       ? await this.drizzle.db
           .select({
@@ -2106,6 +2156,8 @@ export class IdentityService {
         ip,
         userAgent,
       });
+      await this.trustedDevices?.revokeAllForUser(userId, userId);
+      await this.sessions?.revokeAllSessions(userId, userId, meta);
       if (before.loginWithdrawalAlertsEnabled) {
         await this.drizzle.db
           .update(user)
@@ -2122,12 +2174,22 @@ export class IdentityService {
       }
       // To the OLD address - the row now holds the new one, so send by address with the
       // locale read from the profile above (same as the OTP hook does for unknown addresses).
-      await this.mailDispatch?.toAddress({
-        email: before.email,
-        locale: before.language,
-        template: { key: 'emailChanged', data: { newEmail } },
-        idempotencyKey: `email-change-notice:${userId}:${newEmail}`,
-      });
+      // Fire-and-forget, like every other notification dispatch (see
+      // `notifications/plugin.ts`'s `dispatchMail`): the swap and the session teardown
+      // above already committed, so a mail-enqueue hiccup must not turn a completed
+      // change into a reported failure. `randomUUID()` keeps every send distinct - the
+      // account being pointed at the same address twice inside the queue's 24h dedupe
+      // window must never suppress the one warning the previous owner gets.
+      this.mailDispatch
+        ?.toAddress({
+          email: before.email,
+          locale: before.language,
+          template: { key: 'emailChanged', data: { newEmail } },
+          idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
+        })
+        .catch((err: unknown) =>
+          identityLogger.error({ err, userId }, 'email-change notice enqueue failed'),
+        );
     }
     return SUCCESS;
   }

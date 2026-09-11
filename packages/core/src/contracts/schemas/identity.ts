@@ -305,9 +305,13 @@ export const ChangePasswordInputSchema = z.object({
 });
 
 // Step 1: request a change. The OTP is mailed to `newEmail`; the current address is not
-// re-verified because the caller already holds a live session.
+// re-verified by a code, but moving the account's login email is security-sensitive enough
+// to demand the same fresh proof-of-identity as a withdrawal PIN or phone rebind
+// (see fresh-reauthentication.service.ts) - a live session alone must never be enough.
 export const RequestEmailChangeInputSchema = z.object({
   newEmail: z.email(),
+  currentPassword: z.string().min(8),
+  totpCode: TotpStepUpCodeSchema.optional(),
 });
 
 // Step 2: confirm with the code that was mailed to `newEmail`.
