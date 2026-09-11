@@ -245,6 +245,11 @@ export const SecurityControlsSchema = z.object({
   // When set, a trusted device buys nothing: the second factor is asked for on every
   // login regardless of how recently this browser cleared one.
   requireTwoFactorOnLogin: z.boolean(),
+  // The operator-configured trust window (`adminSecurityConfig.trustedDeviceDays`), so a
+  // client's "trust this device for N days" copy names the real value instead of a
+  // hardcoded guess that goes stale the moment an operator changes it. Zero means
+  // trusting a device is disabled platform-wide.
+  trustedDeviceDays: z.number().int().nonnegative(),
 });
 
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
@@ -334,7 +339,16 @@ export const ChangeEmailInputSchema = z.object({
 
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
 
+// The caller may have asked to trust this device and not gotten it: a backup code, an
+// account requiring 2FA on every login, or a challenge that never resolved to a session
+// all suppress the grant while the challenge itself still succeeds. `trustGranted` is
+// the one field client copy promising "you won't be asked again" can trust.
+export const Verify2faOutputSchema = IdentitySuccessSchema.extend({
+  trustGranted: z.boolean(),
+});
+
 export type IdentitySuccess = z.infer<typeof IdentitySuccessSchema>;
+export type Verify2faOutput = z.infer<typeof Verify2faOutputSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Organization = z.infer<typeof OrganizationSchema>;
 export type Member = z.infer<typeof MemberSchema>;

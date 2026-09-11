@@ -3,9 +3,13 @@ import { E164PhoneSchema, type SecurityControls, type User } from '@openora/core
 import { eq } from 'drizzle-orm';
 import { user } from '../schema/index.js';
 
+// `trustedDeviceDays` is platform config, not a row on `user` - every caller passes in
+// its own copy (each already has one, for the same reason `TrustedDeviceService` does)
+// rather than this function reaching for config on its own.
 export async function getSecurityControls(
   drizzle: DrizzleService,
   userId: User['id'],
+  trustedDeviceDays: number,
 ): Promise<SecurityControls | null> {
   const [row] = await drizzle.db
     .select({
@@ -33,5 +37,6 @@ export async function getSecurityControls(
     phoneVerified: phone.success && row.phoneVerified,
     twoFactorEnabled: row.twoFactorEnabled ?? false,
     withdrawalPinSet: withdrawalPinHash !== null,
+    trustedDeviceDays,
   };
 }

@@ -525,7 +525,14 @@ export class IdentityService {
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
-    const controls = await getSecurityControls(this.drizzle, userId);
+    // 0 when trusted devices are not wired at all (some deployments), matching what
+    // `trust()` itself does with a non-positive `trustedDeviceDays`: a client reading 0
+    // knows the offer is not real anywhere it might otherwise render one.
+    const controls = await getSecurityControls(
+      this.drizzle,
+      userId,
+      this.trustedDevices?.getTrustedDeviceDays() ?? 0,
+    );
     if (!controls) {
       throw new UserNotFoundError(userId);
     }
@@ -896,9 +903,11 @@ export class IdentityService {
       if (body.twoFactorRedirect || !body.user || !body.token) {
         // The challenge screen has to know whether to ask for an authenticator code or
         // to push one, and there is no session yet to read the account's method from.
-        // Naming it here reveals nothing the challenge would not show anyway.
+        // Naming it here reveals nothing the challenge would not show anyway. Same for
+        // the trust window: an operator's configured length is not account-specific.
         return {
           twoFactorRedirect: true,
+          trustedDeviceDays: this.trustedDevices?.getTrustedDeviceDays() ?? 0,
           ...(existingUser
             ? { twoFactorMethod: await this.resolveTwoFactorMethod(existingUser.id) }
             : {}),
@@ -1544,6 +1553,11 @@ export class IdentityService {
     // better-auth rotates the session on a successful challenge, so the request cookie is
     // already dead here - the actor is the identity resolved before the call.
     const userId = challengedUserId ?? (await this.currentUserId(headers));
+    // Ground truth for the caller: `trustDevice` already reflects backup-code and
+    // require-2fa-every-login refusals, but only actually buys the cookie below, and
+    // only when `userId` resolved. The client asked to trust this device and deserves to
+    // know whether that request was honoured rather than silently dropped.
+    let trustGranted = false;
     if (userId) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
       // A challenge answered from a live session is the enrolment step: better-auth only
@@ -1577,10 +1591,11 @@ export class IdentityService {
       }
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
+        trustGranted = true;
       }
       await captureTimezone(this.playerProvisioning, userId, input.timezone);
     }
-    return SUCCESS;
+    return { ...SUCCESS, trustGranted };
   }
 
   /**
@@ -1780,6 +1795,14 @@ export class IdentityService {
     // a Super Admin reset performs - a browser must not keep the access 2FA was guarding.
     await this.trustedDevices?.revokeAllForUser(userId, userId);
     await this.sessions?.revokeAllSessions(userId, userId, { ip, userAgent });
+    // Must clear alongside the method: leaving it set strands the account with
+    // `twoFactorEnabled: false, requireTwoFactorOnLogin: true` - a state `trustCurrentDevice`
+    // reads as "still enforced" while `setRequireTwoFactorOnLogin` itself refuses to turn it
+    // off without `twoFactorEnabled`, so nothing in the product could ever escape it again.
+    await this.drizzle.db
+      .update(user)
+      .set({ requireTwoFactorOnLogin: false })
+      .where(eq(user.id, userId));
 
     this.events.emit('identity.2fa.disabled', {
       userId,

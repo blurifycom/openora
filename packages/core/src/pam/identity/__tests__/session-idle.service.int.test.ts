@@ -143,4 +143,41 @@ describe('SessionIdleService', () => {
 
     expect((await readSession(target.id)).lastSeenAt?.getTime()).toBe(justNow.getTime());
   });
+
+  it('never idles out an admin session, even one that has sat far past the default window', async () => {
+    const admin = await seedUser(db, { role: 'admin' });
+    const staleLastSeen = minutesAgo(60 * 24 * 30);
+    const target = await seedSession(admin.id, staleLastSeen);
+
+    expect(await service().touch(admin.id, target.id)).toBe('active');
+    // Admins have their own idle tracking through AdminGuard; this service must not
+    // touch their `lastSeenAt` at all, or the two mechanisms would fight over it.
+    expect((await readSession(target.id)).lastSeenAt?.getTime()).toBe(staleLastSeen.getTime());
+  });
+
+  it('fails closed when the session cannot be found', async () => {
+    const account = await seedUser(db);
+
+    expect(await service().touch(account.id, crypto.randomUUID())).toBe('expired');
+  });
+
+  it('expires an idle session exactly once under concurrent requests', async () => {
+    const account = await seedUser(db);
+    await setWindow(account.id, '15m');
+    const target = await seedSession(account.id, minutesAgo(20));
+    const events = makeEventBus();
+    const svc = service(events);
+
+    const results = await Promise.all([
+      svc.touch(account.id, target.id),
+      svc.touch(account.id, target.id),
+      svc.touch(account.id, target.id),
+    ]);
+
+    expect(results).toEqual(['expired', 'expired', 'expired']);
+    // Each concurrent call reads the same stale `lastSeenAt` and passes the idle test, but
+    // only the write that actually flips `expiresAt` may announce a revocation - otherwise
+    // one logout writes several rows into the append-only audit chain.
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
 });

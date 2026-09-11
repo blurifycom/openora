@@ -198,6 +198,7 @@ export default {
           auth: c.get(AUTH_SESSION).auth,
           identityReader: c.get(IDENTITY_READER),
           twoFactorLockout: makeTwoFactorLockout(c),
+          trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
@@ -210,6 +211,7 @@ export default {
           identityReader: c.get(IDENTITY_READER),
           twoFactorLockout: makeTwoFactorLockout(c),
           hmacSecret: withdrawalPinHmacSecret,
+          trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
         }),
       );
     });

@@ -26,6 +26,7 @@ import {
   ChangePasswordInputSchema,
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
+  Verify2faOutputSchema,
   TimestampSchema,
   PhoneLoginRequestInputSchema,
   PhoneLoginRequestOutputSchema,
@@ -131,6 +132,11 @@ export const identityContract = {
         // never resolved to an account, so the client falls back to an authenticator.
         twoFactorMethod: TwoFactorDeliveryMethodSchema.optional(),
         security: LoginSecurityStateSchema.optional(),
+        // So the challenge screen's "trust this device" copy can name the operator's
+        // actual configured window - there is no session yet to read it from
+        // `security.me`. Same value `SecurityControlsSchema.trustedDeviceDays` carries
+        // post-login; present only alongside `twoFactorRedirect`.
+        trustedDeviceDays: z.number().int().nonnegative().optional(),
       }),
     ),
 
@@ -214,7 +220,7 @@ export const identityContract = {
   verify2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/verify' })
     .input(Verify2faInputSchema)
-    .output(IdentitySuccessSchema),
+    .output(Verify2faOutputSchema),
 
   disable2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/disable' })
