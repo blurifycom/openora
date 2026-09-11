@@ -77,9 +77,18 @@ export class ComplianceService {
   }
 
   async checkGame(input: GameGeoCheckInput) {
-    const rawCountryCode =
-      this.geoIp && input.ipAddress ? (await this.geoIp.lookup(input.ipAddress)).countryCode : null;
-    const countryCode = normalizeCountryCode(rawCountryCode);
+    const globalDecision = await this.geoCheck(input.ipAddress);
+    if (!globalDecision.allowed) {
+      return {
+        allowed: false as const,
+        countryCode: globalDecision.countryCode,
+        reason: globalDecision.countryCode
+          ? ('global_block' as const)
+          : ('geo_unresolved' as const),
+      };
+    }
+
+    const { countryCode } = globalDecision;
 
     if (!countryCode) {
       const [gameRule] = await this.drizzle.db
@@ -91,15 +100,6 @@ export class ComplianceService {
         return { allowed: false as const, countryCode: null, reason: 'geo_unresolved' as const };
       }
       return { allowed: true as const, countryCode: null, reason: null };
-    }
-
-    const [globalBlock] = await this.drizzle.db
-      .select({ id: geoRule.id })
-      .from(geoRule)
-      .where(and(eq(geoRule.countryCode, countryCode), eq(geoRule.action, 'block')))
-      .limit(1);
-    if (globalBlock) {
-      return { allowed: false as const, countryCode, reason: 'global_block' as const };
     }
 
     const [gameBlock] = await this.drizzle.db

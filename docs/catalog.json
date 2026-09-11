@@ -2057,6 +2057,10 @@
       "file": "packages/core/src/audit/contract/index.ts"
     },
     {
+      "name": "NonEmptyReasonSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
       "name": "NotificationCountSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },

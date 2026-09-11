@@ -8,6 +8,7 @@ import {
   TimestampSchema,
   CountryCodeSchema,
   GeoRuleActionSchema,
+  NonEmptyReasonSchema,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
@@ -105,8 +106,6 @@ export const KycStatusUpdateSchema = z.object({
 });
 export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;
 
-const NonEmptyReasonSchema = z.string().trim().min(1);
-
 export const RequestKycResubmissionInputSchema = z.object({
   userId: UuidSchema,
   tier: KycTierSchema,
@@ -162,7 +161,7 @@ export const GameGeoRuleSchema = z.object({
   id: UuidSchema,
   gameId: UuidSchema,
   countryCode: CountryCodeSchema,
-  reason: z.string().trim().min(1),
+  reason: NonEmptyReasonSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });

@@ -54,6 +54,17 @@ describe('ComplianceService.geoCheck (real PG)', () => {
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: null });
   });
 
+  it('fails closed when the lookup resolves no country and a global rule exists', async () => {
+    const { svc } = makeService(null);
+    await db.drizzle.db.insert(geoRule).values({ countryCode: 'US', action: 'block' });
+
+    expect(await svc.geoCheck('1.2.3.4')).toEqual({
+      allowed: false,
+      countryCode: null,
+      reason: 'Geolocation could not be determined',
+    });
+  });
+
   it('allows a resolved country that carries no rule', async () => {
     const { svc } = makeService('DE');
 
@@ -162,15 +173,15 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     });
   });
 
-  it('allows unresolved geo when only a global rule exists', async () => {
+  it('fails closed on unresolved geo when a global rule exists', async () => {
     const gameId = '00000000-0000-0000-0000-000000000119';
     const { svc } = makeService(null);
     await db.drizzle.db.insert(geoRule).values({ countryCode: 'US', action: 'block' });
 
     await expect(svc.checkGame({ gameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
-      allowed: true,
+      allowed: false,
       countryCode: null,
-      reason: null,
+      reason: 'geo_unresolved',
     });
   });
 

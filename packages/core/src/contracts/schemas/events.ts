@@ -13,6 +13,7 @@ import {
   LimitChangeKindSchema,
   RgInitiatorSchema,
   ExclusionKindSchema,
+  NonEmptyReasonSchema,
 } from './compliance.js';
 import { TagKeySchema } from './tag.js';
 import { CountryCodeSchema } from './igaming-config.js';
@@ -65,7 +66,7 @@ const gameGeoRuleEventState = z.object({
   id: UuidSchema,
   gameId: UuidSchema,
   countryCode: CountryCodeSchema,
-  reason: z.string(),
+  reason: NonEmptyReasonSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -537,7 +538,7 @@ export const domainEventSchemas = {
     ruleId: UuidSchema,
     gameId: UuidSchema,
     countryCode: CountryCodeSchema,
-    reason: z.string().min(1),
+    reason: NonEmptyReasonSchema,
     before: gameGeoRuleEventState.nullable(),
     after: gameGeoRuleEventState,
     actorId: UuidSchema,
@@ -547,7 +548,7 @@ export const domainEventSchemas = {
     ruleId: UuidSchema,
     gameId: UuidSchema,
     countryCode: CountryCodeSchema,
-    reason: z.string().min(1),
+    reason: NonEmptyReasonSchema,
     before: gameGeoRuleEventState,
     after: z.null(),
     actorId: UuidSchema,
