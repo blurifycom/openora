@@ -33,6 +33,7 @@ import {
   type WalletRail,
   railFor as sharedRailFor,
   type PlayerTags,
+  type RgLimitDecision,
   type RgLimitsPort,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -2686,6 +2687,15 @@ export class WalletService {
       return;
     }
 
+    // The funds are already on chain, so the player's deposit limit cannot refuse this credit
+    // the way it refuses a PSP charge. It is still asked, with this deposit as the attempted
+    // move, and a refusal becomes a finding so a human can act on the excess.
+    const rgDecision = await this.rgDecisionForLandedDeposit(
+      depositAddress.userId,
+      event.amount,
+      event.currency,
+    );
+
     const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn
         .select()
@@ -2745,6 +2755,26 @@ export class WalletService {
     });
 
     if (!replayed) {
+      if (rgDecision && !rgDecision.allowed) {
+        await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId: LIVE_WEBHOOK_RUN_ID,
+            providerName: depositAddress.providerName,
+            kind: 'rg_limit_breach',
+            currency: event.currency,
+            network: event.network ?? depositAddress.network,
+            amount: event.amount,
+            address: event.address,
+            tag: event.tag ?? null,
+            txHash: event.txHash,
+            externalId: event.externalId,
+            transactionId,
+            detail: `credited over the player's ${rgDecision.period} ${rgDecision.limitType} limit of ${rgDecision.limit} (${rgDecision.used} already used) - the funds were already on chain`,
+          },
+          this.audit,
+        );
+      }
       this.events.emit('wallet.deposit.completed', {
         userId: depositAddress.userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId),
@@ -2752,6 +2782,27 @@ export class WalletService {
         currency: event.currency,
         transactionId,
       });
+    }
+  }
+
+  // Outside the credit transaction on purpose: a gate failure must never roll back a credit
+  // for funds that already arrived, and a finding is a report, so it needs no lock.
+  private async rgDecisionForLandedDeposit(
+    userId: User['id'],
+    amount: string,
+    currency: string,
+  ): Promise<RgLimitDecision | null> {
+    if (!this.rgLimits) {
+      return null;
+    }
+    try {
+      return await this.rgLimits.checkDeposit(this.drizzle.db, userId, amount, currency);
+    } catch (err) {
+      logger.error(
+        { err, userId, currency },
+        'payment webhook: RG limit check failed for a deposit already on chain - crediting it unchecked',
+      );
+      return null;
     }
   }
 

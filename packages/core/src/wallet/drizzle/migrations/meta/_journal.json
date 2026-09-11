@@ -141,6 +141,13 @@
       "when": 1788775636543,
       "tag": "0019_awesome_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789038279787,
+      "tag": "0020_shocking_warhawk",
+      "breakpoints": true
     }
   ]
 }
