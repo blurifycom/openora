@@ -82,6 +82,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly hardMaxAgeMs: number;
   private readonly providerTimeoutMs: number;
   private readonly inFlight = new Map<string, Promise<ExchangeRateQuote>>();
+  private readonly legResolution = new Map<string, Promise<ExchangeRateQuote | null>>();
   private readonly failedUntil = new Map<string, number>();
 
   constructor(deps: ExchangeRateReaderServiceDeps) {
@@ -123,11 +124,32 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return moneyScaleBy(amount, quote.rate);
   }
 
-  private async resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
+  // Single-flighted like `fetchLeg` below, but one level up: without this, concurrent
+  // callers for the same leg each run their own `readRow` before any of them reaches the
+  // `fetchLeg` guard, and a slow reader can still miss an already-finished, already-cleaned-up
+  // fetch and start a redundant one. Joining here happens synchronously, before any of them
+  // touch the database, so the collapse to one caller never depends on read timing.
+  private resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
     if (currency === this.pivot) {
-      return { rate: '1.000000000000000000', asOf: new Date().toISOString() };
+      return Promise.resolve({ rate: '1.000000000000000000', asOf: new Date().toISOString() });
     }
 
+    const key = `${currency}:${this.pivot}`;
+    const existing = this.legResolution.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const attempt = this.resolveLegUncached(currency).finally(() => {
+      if (this.legResolution.get(key) === attempt) {
+        this.legResolution.delete(key);
+      }
+    });
+    this.legResolution.set(key, attempt);
+    return attempt;
+  }
+
+  private async resolveLegUncached(currency: string): Promise<ExchangeRateQuote | null> {
     const row = await this.readRow(currency);
     // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
     const ageMs = row
