@@ -1285,6 +1285,117 @@ describe('CmsService banner events carry the image URLs they drop (real PG)', ()
     );
   });
 
+  it('serializes concurrent cross-configuration mutations that affect the same URL', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/cross-configuration-race.png');
+    const removedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const introducedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: removedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/cross-configuration-removed-mobile.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: introducedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/cross-configuration-original.png'),
+        mobileImageUrl: imageUrl('/cross-configuration-introduced-mobile.png'),
+      },
+      ADMIN_ID,
+    );
+    events.emit.mockClear();
+
+    let reportLockHeld!: () => void;
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      reportLockHeld = resolve;
+    });
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const blocker = db.drizzle.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${`cms:banner-image-url:${sharedUrl}`}))`,
+      );
+      reportLockHeld();
+      await lockReleased;
+    });
+    await lockHeld;
+
+    const mutations = Promise.all([
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: removedConfig.id,
+          sortOrder: 0,
+          desktopImageUrl: imageUrl('/cross-configuration-replacement.png'),
+          mobileImageUrl: imageUrl('/cross-configuration-removed-mobile.png'),
+        },
+        ADMIN_ID,
+      ),
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: introducedConfig.id,
+          sortOrder: 0,
+          desktopImageUrl: sharedUrl,
+          mobileImageUrl: imageUrl('/cross-configuration-introduced-mobile.png'),
+        },
+        ADMIN_ID,
+      ),
+    ]);
+    let lockWaitError: unknown;
+    try {
+      await expect
+        .poll(
+          async () => {
+            const result = await db.drizzle.db.execute<{ waiting: number }>(sql`
+              select count(*)::int as waiting
+              from pg_locks
+              where locktype = 'advisory'
+                and database = (select oid from pg_database where datname = current_database())
+                and not granted
+            `);
+            return result.rows[0]?.waiting ?? 0;
+          },
+          { timeout: 2_000 },
+        )
+        .toBe(2);
+    } catch (err) {
+      lockWaitError = err;
+    } finally {
+      releaseLock();
+      await blocker;
+      await mutations;
+    }
+    if (lockWaitError) {
+      throw lockWaitError;
+    }
+
+    const images = await db.drizzle.db.select().from(bannerImageTable);
+    expect(images).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bannerConfigurationId: removedConfig.id,
+          desktopImageUrl: imageUrl('/cross-configuration-replacement.png'),
+        }),
+        expect.objectContaining({
+          bannerConfigurationId: introducedConfig.id,
+          desktopImageUrl: sharedUrl,
+        }),
+      ]),
+    );
+  });
+
   it('emits one deletion event when two deletes race for the same image', async () => {
     const { svc, events } = makeService();
     const config = await svc.createConfiguration(

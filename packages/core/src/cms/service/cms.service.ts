@@ -74,6 +74,20 @@ const publicBannerCacheKey = (placement: string, locale: string) =>
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 const bannerConfigurationMutationLockKey = (bannerConfigurationId: Uuid) =>
   `cms:banner-configuration:${bannerConfigurationId}`;
+const bannerImageUrlLockKey = (url: string) => `cms:banner-image-url:${url}`;
+
+async function withBannerImageUrlLocks<T>(
+  tx: DrizzleTx,
+  urls: readonly string[],
+  fn: () => Promise<T>,
+) {
+  const lockKeys = [...new Set(urls)].sort().map(bannerImageUrlLockKey);
+  const locked = lockKeys.reduceRight<() => Promise<T>>(
+    (next, key) => () => withAdvisoryXactLock(tx, key, next),
+    fn,
+  );
+  return locked();
+}
 
 async function unreferencedBannerImageUrls(tx: DrizzleTx, candidates: string[]) {
   const uniqueCandidates = [...new Set(candidates)];
@@ -539,12 +553,12 @@ export class CmsService {
           })
           .from(bannerImageTable)
           .where(eq(bannerImageTable.bannerConfigurationId, id));
-        // Cascades to banner_image rows via the FK's onDelete: 'cascade'.
-        await tx.delete(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id));
-        return unreferencedBannerImageUrls(
-          tx,
-          images.flatMap((image) => [image.desktopImageUrl, image.mobileImageUrl]),
-        );
+        const imageUrls = images.flatMap((image) => [image.desktopImageUrl, image.mobileImageUrl]);
+        return withBannerImageUrlLocks(tx, imageUrls, async () => {
+          // Cascades to banner_image rows via the FK's onDelete: 'cascade'.
+          await tx.delete(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id));
+          return unreferencedBannerImageUrls(tx, imageUrls);
+        });
       }),
     );
     this.events.emit('cms.banner.configuration.deleted', {
@@ -693,35 +707,48 @@ export class CmsService {
               )
             : [];
 
-          const record = findOneOrThrow(
-            await tx
-              .insert(bannerImageTable)
-              .values({
-                bannerConfigurationId: input.bannerConfigurationId,
-                sortOrder: input.sortOrder,
-                locale,
-                desktopImageUrl: input.desktopImageUrl,
-                mobileImageUrl: input.mobileImageUrl,
-                linkUrl: input.linkUrl ?? null,
-              })
-              .onConflictDoUpdate({
-                target: [
-                  bannerImageTable.bannerConfigurationId,
-                  bannerImageTable.sortOrder,
-                  bannerImageTable.locale,
-                ],
-                set: {
-                  desktopImageUrl: input.desktopImageUrl,
-                  mobileImageUrl: input.mobileImageUrl,
-                  linkUrl: input.linkUrl ?? null,
-                },
-              })
-              .returning(),
-            new BannerConfigurationNotFoundError(input.bannerConfigurationId),
-          );
+          return withBannerImageUrlLocks(
+            tx,
+            [
+              input.desktopImageUrl,
+              input.mobileImageUrl,
+              ...(replaced ? [replaced.desktopImageUrl, replaced.mobileImageUrl] : []),
+            ],
+            async () => {
+              const record = findOneOrThrow(
+                await tx
+                  .insert(bannerImageTable)
+                  .values({
+                    bannerConfigurationId: input.bannerConfigurationId,
+                    sortOrder: input.sortOrder,
+                    locale,
+                    desktopImageUrl: input.desktopImageUrl,
+                    mobileImageUrl: input.mobileImageUrl,
+                    linkUrl: input.linkUrl ?? null,
+                  })
+                  .onConflictDoUpdate({
+                    target: [
+                      bannerImageTable.bannerConfigurationId,
+                      bannerImageTable.sortOrder,
+                      bannerImageTable.locale,
+                    ],
+                    set: {
+                      desktopImageUrl: input.desktopImageUrl,
+                      mobileImageUrl: input.mobileImageUrl,
+                      linkUrl: input.linkUrl ?? null,
+                    },
+                  })
+                  .returning(),
+                new BannerConfigurationNotFoundError(input.bannerConfigurationId),
+              );
 
-          const droppedImageUrls = await unreferencedBannerImageUrls(tx, droppedImageUrlCandidates);
-          return { configuration, record, droppedImageUrls };
+              const droppedImageUrls = await unreferencedBannerImageUrls(
+                tx,
+                droppedImageUrlCandidates,
+              );
+              return { configuration, record, droppedImageUrls };
+            },
+          );
         },
       ),
     );
@@ -761,26 +788,47 @@ export class CmsService {
           bannerConfigurationMutationLockKey(initial.bannerConfigurationId),
           async () => {
             const existing = findOneOrThrow(
-              await tx.delete(bannerImageTable).where(eq(bannerImageTable.id, id)).returning({
-                id: bannerImageTable.id,
-                bannerConfigurationId: bannerImageTable.bannerConfigurationId,
-                desktopImageUrl: bannerImageTable.desktopImageUrl,
-                mobileImageUrl: bannerImageTable.mobileImageUrl,
-              }),
+              await tx
+                .select({
+                  id: bannerImageTable.id,
+                  bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                  desktopImageUrl: bannerImageTable.desktopImageUrl,
+                  mobileImageUrl: bannerImageTable.mobileImageUrl,
+                })
+                .from(bannerImageTable)
+                .where(eq(bannerImageTable.id, id)),
               new BannerImageNotFoundError(id),
             );
-            const [configuration] = await tx
-              .select({
-                placement: bannerConfigurationTable.placement,
-                isDefault: bannerConfigurationTable.isDefault,
-              })
-              .from(bannerConfigurationTable)
-              .where(eq(bannerConfigurationTable.id, existing.bannerConfigurationId));
-            const droppedImageUrls = await unreferencedBannerImageUrls(tx, [
-              existing.desktopImageUrl,
-              existing.mobileImageUrl,
-            ]);
-            return { existing, configuration, droppedImageUrls };
+            return withBannerImageUrlLocks(
+              tx,
+              [existing.desktopImageUrl, existing.mobileImageUrl],
+              async () => {
+                const [deleted] = await tx
+                  .delete(bannerImageTable)
+                  .where(eq(bannerImageTable.id, id))
+                  .returning({
+                    id: bannerImageTable.id,
+                    bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                    desktopImageUrl: bannerImageTable.desktopImageUrl,
+                    mobileImageUrl: bannerImageTable.mobileImageUrl,
+                  });
+                if (!deleted) {
+                  throw new BannerImageNotFoundError(id);
+                }
+                const [configuration] = await tx
+                  .select({
+                    placement: bannerConfigurationTable.placement,
+                    isDefault: bannerConfigurationTable.isDefault,
+                  })
+                  .from(bannerConfigurationTable)
+                  .where(eq(bannerConfigurationTable.id, deleted.bannerConfigurationId));
+                const droppedImageUrls = await unreferencedBannerImageUrls(tx, [
+                  deleted.desktopImageUrl,
+                  deleted.mobileImageUrl,
+                ]);
+                return { existing: deleted, configuration, droppedImageUrls };
+              },
+            );
           },
         );
       },
