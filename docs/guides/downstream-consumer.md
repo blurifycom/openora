@@ -4,7 +4,7 @@ How a downstream operator builds their own igaming on top of `@openora/*` withou
 forking core. The root `AGENTS.md` links here; this is the detail an agent loads only when
 actually wiring a consumer.
 
-See [`catalog.json`](../catalog.json) for the machine-readable surface (routes, schemas, adapter
+See the generated `docs/catalog.json` (`pnpm gen:catalog`, also served by `@openora/mcp`) for the machine-readable surface (routes, schemas, adapter
 tokens, events, config schema) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
@@ -222,6 +222,16 @@ The scaffold's `.rulesync/` (skills, subagents, commands, hooks, shared rules) a
 - The consumer tracks only what it owns: the rules and skills the template does not ship, plus those overrides. Operator-specific facts belong there or in `sync.json` vars, never in a generated file.
 - An improvement to a generated file is made upstream in `tools/templates/consumer/`, lands with the next canary, and reaches the consumer on its next `@openora/*` bump and install.
 - Under `pnpm link:oss` the script reads the checkout's `tools/templates/consumer` directly, so a template edit can be tried in the consumer before it is published.
+
+## Paired changes across both repos
+
+When a consumer change needs a core change, agents in the consumer repo make both, from any agent tool:
+
+- `pnpm oss:worktree <branch>` in the consumer creates a git worktree of this repo under `.worktrees/` (gitignored here). The consumer's `guard-core` hook allows writes there and nowhere else in the checkout.
+- Both repos use the same branch name, which is what pairs them. Neither request links to the other.
+- The consumer's `review` skill reviews the diff here by this repo's own rules and cross-checks the contract between the two.
+
+The consumer's `docs/agents/cross-repo.md` has the full conventions and how each agent tool is granted access to the checkout.
 
 ## Tooling notes
 

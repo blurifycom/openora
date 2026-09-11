@@ -12,7 +12,7 @@ This runs in order (see root `package.json`):
 2. `pnpm gen:drizzle` (`scripts/generate-all.mjs`) - discovers every module's
    `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module, against that module's own
    co-located `drizzle/migrations/` history (ADR-0027).
-3. `pnpm run gen:catalog` (`tsx tools/gen/gen-catalog.ts`) - emits `docs/catalog.json`: the
+3. `pnpm run gen:catalog` (`tsx tools/gen/gen-catalog.ts`) - emits the gitignored `docs/catalog.json` (plus the copy `@openora/mcp` ships): the
    machine-readable surface listing routes / schemas / adapters / events. The MCP
    dev server and AI catalogs read from this file.
 

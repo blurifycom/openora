@@ -32,6 +32,7 @@ export const adminRole = ac.newRole({
   'wallet-asset': ['view', 'create', 'update', 'delete'],
   'wallet-custody': ['view', 'run'],
   'wallet-reconciliation': ['view', 'resolve', 'run'],
+  'swap-config': ['view', 'update'],
   'chat-command': ['view', 'update'],
   'chat-moderation': ['view', 'moderate'],
 });

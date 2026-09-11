@@ -52,6 +52,7 @@ Promotion follows `feature -> dev -> stage -> tag`.
 
 - Do not put internal URLs, secrets, tokens, customer or operator names, PII, internal hosts, or paths in commit messages, PR titles, or PR descriptions.
 - Refer to tickets by bare key only.
+- A PR paired with a downstream consumer change uses the consumer's branch name, which is what pairs them. Neither request links to the other, and this PR never names the consumer, because this repo is public.
 
 ## Fix pipeline
 

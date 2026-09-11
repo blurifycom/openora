@@ -14,6 +14,7 @@ Checklist - tick as you go:
 - [ ] 1. Parse args (--agents / --base / MR# / paths / --fix / --post / --yes / --ci)
 - [ ] 2. Scope the diff; if empty, ask (or APPROVED under --ci)
 - [ ] 3. Collect task context (ticket AC + MR discussion)
+- [ ] 3a. Paired OSS change? Review the OSS diff by the OSS rules + cross-check the contract (§2c)
 - [ ] 3c. Trace each changed entry point end to end + check the blast radius
 - [ ] 4. Pick applicable dimensions; small diff -> review inline, else spawn reviewers in ONE message
 - [ ] 5. Dedup + apply the evidence gate
@@ -46,6 +47,33 @@ Distill everything here into ONE context block of at most ~40 lines; it is the o
 - **No key** -> write `no ticket` in the report and judge against the MR description only. **Fetch failed** -> write `no access`. Never skip silently, never invent AC.
 - A UI change whose ticket carries design screenshots is judged against them: compare the rendered UI (`playwright-cli` screenshot when the stack is up) with the reference; when you cannot, the CRITERION is `not verifiable`, never `met`.
 - The MR description is the author's claim, not the spec. Where it contradicts the ticket or the diff, that contradiction is a finding.
+
+## 2c. Paired OSS change - review the platform whole (mandatory)
+
+A consumer change is often half of a pair. The OSS half is reviewed here too, so the verdict covers the platform, not one repo.
+
+**Find the pair** - first match wins:
+
+1. The same branch name in `{{ossDir}}`: a worktree under `{{ossDir}}/.worktrees/`, a local branch (`git -C {{ossDir}} branch --list <branch>`), or an open OSS PR (`gh pr list --head <branch>` run in `{{ossDir}}`).
+2. A changed `@openora/*` version in `package.json`. The OSS diff is the range between the two canaries: `X.Y.Z-canary.N` was built by OSS pipeline run `N`, so resolve each side with `gh run list -R blurifycom/openora -w pipeline.yml -L 500 --json number,headSha --jq '.[] | select(.number==N) | .headSha'`, then `git -C {{ossDir}} fetch origin` and `git -C {{ossDir}} diff <old-sha>...<new-sha>`.
+
+No match: write `no paired OSS change` in the report and move on.
+
+**Read the OSS code without touching the main checkout.** Case 1: `pnpm oss:worktree <branch>` (idempotent) and read from that worktree. Case 2: `git -C {{ossDir}} show <sha>:<path>`. Never `git checkout` in `{{ossDir}}` - other sessions build against it.
+
+**Review the OSS diff by the OSS rules.** Read `<worktree>/docs/standards/skills/review.md` and every `<worktree>/.rulesync/rules/*.md`. Run their request trace and dimensions on `git -C <worktree> diff origin/dev...HEAD`. OSS files join §4 as their own file group, handed to `quality-reviewer` (plus `security-reviewer` for money, wallet, auth, KYC, or RG paths) with the worktree path. Their findings are prefixed `[oss]`, cite the OSS rule or ADR, and pass the same evidence gate (§6).
+
+**Cross-check the contract** - what neither repo's review sees alone:
+
+- Every export, route, event payload, config field, or table the OSS diff changes: `git grep -w` it in this repo and confirm each use still compiles and still means the same thing. A consumer caller that no longer holds is a `[BLOCK]`.
+- Every consumer change that relies on the OSS change (a new export, a changed signature or behavior) is matched in the OSS diff. Consumer code relying on OSS behavior the diff does not ship is a `[BLOCK]`.
+- Genericity: OSS code that encodes this operator's behavior - a jurisdiction rule, a vendor, a limit or flow only this repo needs - instead of a seam (adapter token, event, config field, hook) is a `[BLOCK]`; the behavior moves here and core keeps the seam. An OSS PR whose Why does not say why the change cannot live in the consumer is a `[WARN]`.
+- Scope: a new core feature or module made in place, rather than in a session rooted in the OSS repo, is a `[WARN]` citing the `oss-boundaries` rule.
+- Public record: operator names, internal URLs, ticket text, or operator-specific domain detail in the OSS commits or PR is a `[BLOCK]`.
+- Release order: a consumer request that needs the OSS change can merge only once the `@openora/*` pin points at a canary that carries it. Say so in the report when the pin is older.
+- When a trace needs runtime proof: `pnpm oss:worktree <branch> --link`, run the touched tests, then `pnpm link:oss` to restore the main checkout link.
+
+Report `[oss]` findings and one `TRACE:` line per OSS entry point alongside the consumer ones. The verdict covers both.
 
 ## 3. Ground every reviewer (mandatory)
 
@@ -155,11 +183,12 @@ Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete 
 3. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
 4. **Post the summary** as one general comment on the pull request, per the same file.
 5. Report back the count posted + the summary verdict. Never resolve threads; never push.
+6. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
 
 ## Constraints
 
 - Reviewers report; only the orchestrator edits, and only under `--fix` (working tree only - no commit, no push).
 - Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
-- NEVER edit `@openora/*` core or `node_modules`.
+- NEVER edit `node_modules` or the main `{{ossDir}}` checkout. Under `--fix`, an `[oss]` finding is fixed in the OSS worktree only.
 - Every finding cites a rule doc - no ungrounded opinions.
 - Cap at 5 parallel reviewers.

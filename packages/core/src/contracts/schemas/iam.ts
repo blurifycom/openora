@@ -44,6 +44,7 @@ export const adminStatement = {
   'wallet-asset': ['view', 'create', 'update', 'delete'] as const,
   'wallet-custody': ['view', 'run'] as const,
   'wallet-reconciliation': ['view', 'resolve', 'run'] as const,
+  'swap-config': ['view', 'update'] as const,
   'chat-command': ['view', 'update'] as const,
   'chat-moderation': ['view', 'moderate'] as const,
 } as const;

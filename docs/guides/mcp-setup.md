@@ -90,7 +90,8 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 read-only server - `@openora/mcp` (`packages/mcp`) - that ships to downstream
 consumers for inspecting the platform surface (catalog-overview, list-adapters, etc.).
 It reads `docs/catalog.json`, resolving it by walking up from `cwd`, then falling back to
-`node_modules/@openora/mcp/docs/catalog.json`.
+`node_modules/@openora/mcp/docs/catalog.json`. The catalog is gitignored and generated on
+install and by the husky hooks; `pnpm gen:catalog` regenerates it by hand.
 
 Until it's published to npm, run it locally from the built `dist/`:
 

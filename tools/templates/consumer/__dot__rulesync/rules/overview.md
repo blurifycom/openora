@@ -21,7 +21,7 @@ This repo is a downstream igaming operator built on the OSS platform (`@openora/
 Sibling rules (load on demand; don't reopen settled questions):
 
 - `conventions` - the always-on code standard (naming, types, functions, package structure, errors, testing, git, frontend, DB), with a table routing each kind of change to its deep-dive file in `docs/standards/`.
-- `oss-boundaries` - OSS core is read-only; enforced import/module boundaries.
+- `oss-boundaries` - OSS core is read-only except in an OSS worktree (paired changes); enforced import/module boundaries.
 - `e2e-conventions` - dual-mode Playwright specs, fixtures, mocks, page objects.
 - `db-conventions` - SQL / Drizzle rules for the tables an overlay owns.
 - `frontend-conventions` - React/UI rules for the operator's apps and shared UI package.
@@ -36,14 +36,14 @@ Most of `.rulesync/` (skills, subagents, commands, hooks, the shared rules) and 
 
 `docs/agents/issue-tracker.md` is the read protocol (fill in its placeholders once). Any task that names a ticket key - review, plan, build, fix - starts by reading the whole ticket: description, AC, every comment, every image viewed as pixels, parent, linked issues, and every linked wiki page with its own images and comments. Text-only reads are incomplete when attachments exist. No key: say "no ticket". Fetch failed: say "no access". Never write to the tracker unless the user asks for that exact write.
 
-## HARD RULE: never modify OSS core
+## HARD RULE: never patch OSS core in place
 
-`@openora/*` is a third-party dependency - treat it like any published npm package. You may READ it for reference, never write to it.
+`@openora/*` is a dependency - treat it like any published npm package. READ it freely; never patch it where it is installed.
 
-- Do NOT edit anything in `node_modules/**` or in the linked OSS checkout. Edit/Write to those paths is denied in `.claude/settings.json`; do not try to work around it with `sed`, shell redirection, or a script.
+- Do NOT edit anything in `node_modules/**` or in the main linked OSS checkout. The `guard-core` hook denies those writes in every agent tool; do not work around it with `sed`, shell redirection, or a script.
 - Locally patching a dependency is an anti-pattern: it is lost on reinstall and diverges from the published package every other operator uses.
-- You extend the platform from the OUTSIDE only - overlay plugins, adapter rebindings, UI plugins, config. Never fork or hand-edit core.
-- If something can only be fixed in core, STOP and report it as an upstream bug/feature request for the OSS repo (describe the problem, expected behavior, where you think it lives). Do not patch it here.
+- Extend the platform from the OUTSIDE first - overlay plugins, adapter rebindings, UI plugins, config. Never fork core or copy its source here.
+- If something can only be fixed in core, fix it in core through an OSS worktree (`pnpm oss:worktree <branch>`) and follow "Changing OSS core" in the `oss-boundaries` rule.
 
 ## Getting started
 
@@ -93,7 +93,7 @@ Delegate work to these scoped agents - the `start` / `enhance-intent` playbooks 
 - `quality-reviewer` - reviews a diff: boundaries, conventions, frontend rules, perf, duplication. Findings only.
 - `security-reviewer` - reviews a diff: authz, secrets/PII, money paths, input validation. Findings only.
 
-This repo consumes OSS core as linked packages - never edit `@openora/*` source. If a bug is in core, report it upstream; extend from the outside via plugins.
+This repo consumes OSS core as packages - never patch `@openora/*` in place. A core change goes through an OSS worktree (`oss-boundaries` rule); everything else extends from the outside via plugins.
 
 ## MCP tools available (server: `oss`)
 
