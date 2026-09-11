@@ -25,6 +25,7 @@ export type DirectAuditAction =
   | 'chat.platform_ban.expired'
   | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
+  | 'compliance.country_rule.created'
   | 'compliance.country_rule.setting_changed'
   | 'compliance.global_kyc.set'
   | 'wallet.withdrawal.auto_approved'

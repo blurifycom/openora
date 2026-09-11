@@ -95,8 +95,6 @@ export const countryRule = pgTable('geo_rule', {
 
 export const GLOBAL_KYC_ENABLED_DEFAULT = true;
 
-// Platform-wide KYC toggle (admin-editable, audited). Does not overwrite a country's own
-// kycRequired exemption. Singleton row keyed by singletonKey.
 export const globalKycConfig = pgTable('global_kyc_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique('global_kyc_config_singleton_key_unique').default('global'),

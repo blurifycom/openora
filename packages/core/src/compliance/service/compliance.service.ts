@@ -195,6 +195,31 @@ export class ComplianceService {
         throw new CountryRuleConfirmationRequiredError();
       }
       if (!hasCountryRuleChanges(before, input)) {
+        if (inserted) {
+          const row = findOneOrThrow(
+            await tx
+              .update(countryRule)
+              .set({ updatedAt: new Date(), updatedBy: actorId })
+              .where(eq(countryRule.id, before.id))
+              .returning(),
+            new CountryRuleNotFoundError(input.countryCode),
+          );
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'admin',
+            action: 'compliance.country_rule.created',
+            resourceType: 'country-rule',
+            resourceId: input.countryCode,
+            before: null,
+            after: {
+              blacklisted: false,
+              redirectIp: false,
+              kycRequired: true,
+            },
+            ...meta,
+          });
+          return toCountryRuleView(row);
+        }
         return toCountryRuleView(before);
       }
 
@@ -310,7 +335,7 @@ export class ComplianceService {
         redirectIp: existing?.redirectIp ?? false,
         kycRequired: existing?.kycRequired ?? true,
         expectedUpdatedAt: existing?.updatedAt?.toISOString() ?? null,
-        confirm: input.confirm,
+        confirm: input.confirm ?? true,
       },
       actorId,
       meta,

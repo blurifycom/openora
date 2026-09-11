@@ -21,16 +21,17 @@ let app: TestApp;
 let complianceManager: TestClient;
 let complianceManagerId: string;
 let player: TestClient;
+let kycAmlOfficer: TestClient;
 
-async function assignComplianceManager(userId: string) {
+async function assignRole(userId: string, roleKey: string) {
   const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle
     .select({ id: adminRole.id })
     .from(adminRole)
-    .where(eq(adminRole.key, 'compliance-manager'));
+    .where(eq(adminRole.key, roleKey));
   if (!role) {
-    throw new Error('The seeded compliance-manager role is unavailable');
+    throw new Error(`The seeded ${roleKey} role is unavailable`);
   }
   await drizzle
     .insert(adminRoleAssignment)
@@ -51,7 +52,7 @@ beforeAll(async () => {
   const manager = await registerAndMaterializePlayer(app, {
     email: `regulatory-manager-${randomUUID()}@e2e.test`,
   });
-  await assignComplianceManager(manager.userId);
+  await assignRole(manager.userId, 'compliance-manager');
   complianceManager = manager.client;
   complianceManagerId = manager.userId;
 
@@ -59,6 +60,12 @@ beforeAll(async () => {
     email: `regulatory-player-${randomUUID()}@e2e.test`,
   });
   player = ordinaryPlayer.client;
+
+  const officer = await registerAndMaterializePlayer(app, {
+    email: `regulatory-kyc-officer-${randomUUID()}@e2e.test`,
+  });
+  await assignRole(officer.userId, 'kyc-aml-officer');
+  kycAmlOfficer = officer.client;
 }, 60_000);
 
 afterAll(async () => {
@@ -173,6 +180,31 @@ describe('regulatory overview routes', () => {
     expect(
       (
         await player.put('/compliance/global-kyc', {
+          enabled: true,
+          confirm: true,
+          expectedUpdatedAt: null,
+        })
+      ).status,
+    ).toBe(403);
+  });
+
+  it('rejects the KYC and AML officer from every regulatory overview route', async () => {
+    expect((await kycAmlOfficer.get('/compliance/country-rules')).status).toBe(403);
+    expect(
+      (
+        await kycAmlOfficer.put('/compliance/country-rules', {
+          countryCode: 'DE',
+          blacklisted: false,
+          redirectIp: false,
+          kycRequired: true,
+          expectedUpdatedAt: null,
+        })
+      ).status,
+    ).toBe(403);
+    expect((await kycAmlOfficer.get('/compliance/global-kyc')).status).toBe(403);
+    expect(
+      (
+        await kycAmlOfficer.put('/compliance/global-kyc', {
           enabled: true,
           confirm: true,
           expectedUpdatedAt: null,

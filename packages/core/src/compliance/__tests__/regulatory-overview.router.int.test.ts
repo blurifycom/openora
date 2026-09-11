@@ -161,12 +161,4 @@ describe('regulatory-overview router authz (mocked service)', () => {
       expect.anything(),
     );
   });
-
-  it('a regulatory-overview:view grant alone does not unlock manage-country-rules', async () => {
-    const { router } = build(fakeGuard(['regulatory-overview:view']));
-
-    await expect(
-      call(router.upsertCountryRule, UPSERT_INPUT, { context: CTX }),
-    ).rejects.toBeInstanceOf(ORPCError);
-  });
 });

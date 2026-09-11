@@ -179,7 +179,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
 
   it('writes zero audit rows when a save changes nothing', async () => {
     const { svc, audit } = makeService();
-    await svc.upsertCountryRule(
+    const created = await svc.upsertCountryRule(
       {
         countryCode: 'FR',
         blacklisted: false,
@@ -198,13 +198,44 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         blacklisted: false,
         redirectIp: false,
         kycRequired: true,
-        expectedUpdatedAt: null,
+        expectedUpdatedAt: created.updatedAt,
         confirm: true,
       },
       randomUUID(),
     );
 
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('audits creation when a new rule uses every default value', async () => {
+    const { svc, audit } = makeService();
+    const actorId = randomUUID();
+
+    const rule = await svc.upsertCountryRule(
+      {
+        countryCode: 'FR',
+        blacklisted: false,
+        redirectIp: false,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+        confirm: true,
+      },
+      actorId,
+    );
+
+    expect(rule).toMatchObject({ updatedBy: actorId });
+    expect(rule.updatedAt).not.toBeNull();
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId,
+        action: 'compliance.country_rule.created',
+        resourceType: 'country-rule',
+        resourceId: 'FR',
+        before: null,
+        after: { blacklisted: false, redirectIp: false, kycRequired: true },
+      }),
+    );
   });
 
   it('lists every country that has a rule', async () => {
@@ -345,14 +376,11 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
 });
 
 describe('ComplianceService legacy geo rules (real PG)', () => {
-  it('maps the legacy geo-rule API onto country rules and emits its legacy event', async () => {
+  it('maps the legacy geo-rule API onto country rules without requiring confirm', async () => {
     const { svc, events } = makeService();
     const actorId = randomUUID();
 
-    const rule = await svc.addGeoRule(
-      { countryCode: 'FR', action: 'block', confirm: true },
-      actorId,
-    );
+    const rule = await svc.addGeoRule({ countryCode: 'FR', action: 'block' }, actorId);
 
     expect(rule).toMatchObject({ countryCode: 'FR', action: 'block' });
     expect((await svc.listCountryRules()).at(0)).toMatchObject({
