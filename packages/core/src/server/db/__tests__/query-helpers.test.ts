@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   findOneOrThrow,
   pageToOffset,
+  isUniqueConstraintViolation,
+  uniqueConstraintName,
+  escapeLike,
+  likeContains,
+  likePrefix,
   moneyToNumber,
   moneyEquals,
   moneyCompare,
@@ -29,6 +34,65 @@ describe('pageToOffset', () => {
   it('converts a 1-based page + limit to an offset', () => {
     expect(pageToOffset(1, 20)).toBe(0);
     expect(pageToOffset(3, 20)).toBe(40);
+  });
+});
+
+describe('isUniqueConstraintViolation', () => {
+  it('matches a Postgres unique violation by code', () => {
+    expect(isUniqueConstraintViolation({ code: '23505' })).toBe(true);
+  });
+
+  it('rejects other pg codes and non-errors', () => {
+    expect(isUniqueConstraintViolation({ code: '23503' })).toBe(false);
+    expect(isUniqueConstraintViolation({})).toBe(false);
+    expect(isUniqueConstraintViolation(null)).toBe(false);
+    expect(isUniqueConstraintViolation('23505')).toBe(false);
+  });
+});
+
+describe('uniqueConstraintName', () => {
+  it('reads the violated index off a 23505', () => {
+    expect(uniqueConstraintName({ code: '23505', constraint: 'game_provider_slug_key' })).toBe(
+      'game_provider_slug_key',
+    );
+  });
+
+  it('reads the constraint from a database error wrapped by the query driver', () => {
+    expect(
+      uniqueConstraintName({
+        cause: { code: '23505', constraint: 'game_provider_aggregator_mapping_key' },
+      }),
+    ).toBe('game_provider_aggregator_mapping_key');
+  });
+
+  it('returns null when no constraint travelled with the error', () => {
+    expect(uniqueConstraintName({ code: '23505' })).toBeNull();
+    expect(uniqueConstraintName({ code: '23505', constraint: 42 })).toBeNull();
+    expect(uniqueConstraintName(null)).toBeNull();
+    expect(uniqueConstraintName('game_provider_slug_key')).toBeNull();
+  });
+});
+
+describe('escapeLike', () => {
+  it('escapes % _ and backslash so caller input matches literally', () => {
+    expect(escapeLike('100%_\\')).toBe('100\\%\\_\\\\');
+  });
+
+  it('leaves plain text unchanged', () => {
+    expect(escapeLike('pragmatic')).toBe('pragmatic');
+  });
+});
+
+describe('likeContains', () => {
+  it('wraps escaped input in % for a contains match', () => {
+    expect(likeContains('a%b')).toBe('%a\\%b%');
+  });
+});
+
+describe('likePrefix', () => {
+  it('appends % for a prefix match with escaped input', () => {
+    expect(likePrefix('rg.')).toBe('rg.%');
+    expect(likePrefix('a_b')).toBe('a\\_b%');
   });
 });
 

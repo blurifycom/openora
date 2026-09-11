@@ -8,7 +8,13 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -121,7 +127,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${userLimit}, ${rgExclusion}, ${rgFlag}, ${walletTransaction}, ${wallet}, ${gameRound}, ${game}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${userLimit}, ${rgExclusion}, ${rgFlag}, ${walletTransaction}, ${wallet}, ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 

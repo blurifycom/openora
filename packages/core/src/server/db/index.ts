@@ -4,6 +4,11 @@ export { zodJsonb } from './zod-jsonb.js';
 export {
   findOneOrThrow,
   pageToOffset,
+  isUniqueConstraintViolation,
+  escapeLike,
+  likeContains,
+  likePrefix,
+  uniqueConstraintName,
   withAdvisoryXactLock,
   moneyToNumber,
   moneyEquals,

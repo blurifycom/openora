@@ -7,7 +7,13 @@ import {
   type Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
@@ -58,11 +64,31 @@ beforeAll(async () => {
   const plugins = await loadExtensions();
   app = await bootTestApp({ plugins, databaseUrl: db.url });
 
+  const [providerRow] = await app.container
+    .get(DRIZZLE)
+    .db.insert(gameProvider)
+    .values({ slug: `e2e-studio-${randomUUID()}`, name: 'E2E Studio', isActive: true })
+    .returning();
+  const [categoryRow] = await app.container
+    .get(DRIZZLE)
+    .db.insert(gameCategory)
+    .values({ slug: `e2e-category-${randomUUID()}`, name: 'E2E Category' })
+    .returning();
   const [row] = await app.container
     .get(DRIZZLE)
     .db.insert(game)
-    .values({ name: 'Stake Debit E2E Game', provider: 'mock', category: 'slots' })
+    .values({
+      name: 'Stake Debit E2E Game',
+      slug: `stake-debit-e2e-${randomUUID()}`,
+      providerId: providerRow!.id,
+      aggregator: 'direct',
+      isActive: true,
+    })
     .returning();
+  await app.container
+    .get(DRIZZLE)
+    .db.insert(gameCategoryGame)
+    .values({ gameId: row!.id, categoryId: categoryRow!.id });
   if (!row) {
     throw new Error('failed to seed a game row');
   }

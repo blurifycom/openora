@@ -6,6 +6,7 @@ import {
   TimestampSchema,
   UuidSchema,
 } from './common.js';
+import { GameCategoryTranslationsSchema, GameProviderAggregatorMappingSchema } from './game.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -364,6 +365,91 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  // Backoffice game-catalog management (actorId = acting admin UUID).
+  'gaming.provider.created': authContextBase.extend({
+    providerId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+    logoUrl: z.string().nullable(),
+    metadata: z.unknown().nullable(),
+    isActive: z.boolean(),
+    actorId: UuidSchema.optional(),
+  }),
+  'gaming.provider.updated': authContextBase.extend({
+    providerId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+      logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+      logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.category.created': authContextBase.extend({
+    categoryId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    translations: GameCategoryTranslationsSchema.optional(),
+    icon: z.string().nullable(),
+    sortOrder: z.number().int(),
+    isActive: z.boolean(),
+    actorId: UuidSchema.optional(),
+  }),
+  'gaming.category.updated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.game.updated': authContextBase.extend({
+    gameId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+  }),
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.

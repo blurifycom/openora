@@ -15,7 +15,8 @@
  *
  * const contract = composeContract({ gaming: gamingContract });
  * const client = createClient(contract, { baseUrl: 'http://localhost:3001' });
- * const games = await client.gaming.listGames();
+ * const page = await client.gaming.listGames({ page: 1, limit: 10 });
+ * const games = page.items;
  * ```
  *
  * Cookies are forwarded by default (`credentials: 'include'`), matching the

@@ -9,6 +9,19 @@ export type PageQuery = z.infer<typeof PageQuerySchema>;
 export const SortOrderSchema = z.enum(['asc', 'desc']);
 export type SortOrder = z.infer<typeof SortOrderSchema>;
 
+// Coerces query-string booleans: '?isActive=true' -> true. Shared by module
+// contracts so every admin list parses the same way.
+export const QueryBooleanSchema = z.preprocess(
+  (value) => (value === 'true' ? true : value === 'false' ? false : value),
+  z.boolean(),
+);
+
+// kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
+export const KEBAB_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export function createKebabSlugSchema(maxLength: number) {
+  return z.string().trim().min(1).max(maxLength).regex(KEBAB_SLUG_PATTERN);
+}
+
 export type PaginationOptions<
   TFilter extends object = object,
   TSortBy extends string = string,

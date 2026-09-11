@@ -4,7 +4,13 @@ import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
 import { walletBonusRolloverConfig, walletBonusCredit } from '@openora/core/wallet/schema';
 import { WALLET_COMMANDS } from '@openora/core/contracts';
 import {
@@ -123,11 +129,31 @@ beforeAll(async () => {
   const created = await makeSuperAdmin(appMain, superAdminEmail);
   superAdmin = created.client;
 
+  const [providerRow] = await appMain.container
+    .get(DRIZZLE)
+    .db.insert(gameProvider)
+    .values({ slug: `qa-studio-${randomUUID()}`, name: 'QA Studio', isActive: true })
+    .returning();
+  const [categoryRow] = await appMain.container
+    .get(DRIZZLE)
+    .db.insert(gameCategory)
+    .values({ slug: `qa-category-${randomUUID()}`, name: 'QA Category' })
+    .returning();
   const [gameRow] = await appMain.container
     .get(DRIZZLE)
     .db.insert(game)
-    .values({ name: 'Bonus Rollover QA Game', provider: 'mock', category: 'slots' })
+    .values({
+      name: 'Bonus Rollover QA Game',
+      slug: `bonus-rollover-qa-${randomUUID()}`,
+      providerId: providerRow!.id,
+      aggregator: 'direct',
+      isActive: true,
+    })
     .returning();
+  await appMain.container
+    .get(DRIZZLE)
+    .db.insert(gameCategoryGame)
+    .values({ gameId: gameRow!.id, categoryId: categoryRow!.id });
   if (!gameRow) {
     throw new Error('failed to seed a game row');
   }

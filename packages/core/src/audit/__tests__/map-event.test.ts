@@ -58,6 +58,56 @@ describe('mapEventToRecord: cms.banner.schedule.updated', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.category.created', () => {
+  it('includes category translations in the audited snapshot', async () => {
+    const categoryId = '55555555-5555-4555-8555-555555555555';
+    const row = await mapEventToRecord('gaming.category.created', {
+      categoryId,
+      slug: 'table-games',
+      name: 'Table Games',
+      translations: { DE: { name: 'Tischspiele' } },
+      icon: null,
+      sortOrder: 0,
+      isActive: true,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      after: { translations: { DE: { name: 'Tischspiele' } } },
+    });
+  });
+});
+
+describe('mapEventToRecord: gaming.provider.created', () => {
+  it('includes every aggregator mapping in the audited snapshot', async () => {
+    const providerId = '55555555-5555-4555-8555-555555555556';
+    const aggregatorMappings = [
+      { aggregator: 'aggregation-a', vendorId: 'studio-7' },
+      { aggregator: 'aggregation-b', vendorId: 'vendor-19' },
+    ];
+    const row = await mapEventToRecord('gaming.provider.created', {
+      providerId,
+      slug: 'multi-rail-studio',
+      name: 'Multi Rail Studio',
+      aggregatorMappings,
+      logoUrl: null,
+      isActive: false,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_provider',
+      resourceId: providerId,
+      after: { aggregatorMappings, isActive: false },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 
