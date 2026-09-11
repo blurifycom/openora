@@ -40,6 +40,7 @@ const cmsBannerConfigurationEventBase = z
 const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+const droppedImageUrlsSchema = z.array(z.url()).default([]);
 const cmsBannerScheduleEventBase = z
   .object({
     bannerScheduleId: UuidSchema,
@@ -660,7 +661,9 @@ export const domainEventSchemas = {
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
   'cms.banner.configuration.created': cmsBannerConfigurationEventBase,
-  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.configuration.set_default': cmsBannerConfigurationEventBase,
   'cms.banner.configuration.unset_default': z
     .object({
@@ -669,8 +672,12 @@ export const domainEventSchemas = {
       actorId: UuidSchema,
     })
     .extend(authContextBase.shape),
-  'cms.banner.image.set': cmsBannerImageEventBase,
-  'cms.banner.image.deleted': cmsBannerImageEventBase,
+  'cms.banner.image.set': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
+  'cms.banner.image.deleted': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
   'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 

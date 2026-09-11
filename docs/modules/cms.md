@@ -105,3 +105,7 @@ This module is intentionally silent about where images come from. A downstream o
   backoffice, to manage configurations, images, and schedules per placement.
 - **The public route** (`getPublicBanner`) from its player-facing app, to render the live
   configuration for a placement - `{ placement, layout, slots }`, `null` when nothing is live yet.
+- **A storage cleanup subscriber** for the banner mutation events. Their `droppedImageUrls`
+  payload field contains URLs that no remaining banner image row referenced when the mutation
+  committed. Treat them as cleanup candidates and check current CMS references again immediately
+  before deleting an object, because a later mutation can reuse a URL.

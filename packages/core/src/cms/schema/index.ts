@@ -74,6 +74,8 @@ export const bannerImage = pgTable(
       t.locale,
     ),
     index('banner_image_configuration_id_idx').on(t.bannerConfigurationId),
+    index('banner_image_desktop_image_url_idx').on(t.desktopImageUrl),
+    index('banner_image_mobile_image_url_idx').on(t.mobileImageUrl),
   ],
 );
 
