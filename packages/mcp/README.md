@@ -34,7 +34,7 @@ order:
 1. `OSS_CATALOG` env var (absolute path), if set.
 2. `<cwd>/docs/catalog.json`, then `<cwd>/node_modules/@openora/mcp/docs/catalog.json`,
    then walking up from `cwd` for a `docs/catalog.json`.
-3. The package's own bundled snapshot (shipped in `docs/catalog.json`).
+3. The package's own snapshot (`docs/catalog.json`, generated when the platform repo installs and shipped with every release).
 
 ## Registering in a consumer's `.mcp.json`
 
@@ -55,6 +55,7 @@ order:
 
 ## Keeping the catalog current
 
-The catalog is regenerated upstream in the platform repo via `pnpm regen`
-(which runs `tools/gen/gen-catalog.ts`). A new `@openora/mcp` release ships the updated
-snapshot; pin `OSS_CATALOG` to a freshly generated file to override it locally.
+The platform repo never commits the catalog: `tools/gen/gen-catalog.ts` regenerates it on
+every install (`prepare`), after every pull or branch switch (husky), and on `pnpm regen`. A
+checkout and every `@openora/mcp` release therefore carry a snapshot of the current source; pin
+`OSS_CATALOG` to another generated file to override it locally.
