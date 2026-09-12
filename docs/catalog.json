@@ -1,0 +1,2820 @@
+{
+  "modules": [
+    {
+      "id": "admin-console",
+      "group": "admin-console",
+      "tables": [],
+      "routes": [
+        "admin-console.getGamePerformance",
+        "admin-console.getPlayerActivity",
+        "admin-console.getStats",
+        "admin-console.getTransaction",
+        "admin-console.getUser",
+        "admin-console.listTransactions",
+        "admin-console.listUsers",
+        "admin-console.updateUser"
+      ]
+    },
+    {
+      "id": "analytics",
+      "group": "analytics",
+      "tables": [],
+      "routes": [
+        "analytics.financial.ggr",
+        "analytics.financial.summary",
+        "analytics.funnel.conversion"
+      ]
+    },
+    {
+      "id": "audit",
+      "group": "audit",
+      "tables": [
+        "audit_log"
+      ],
+      "routes": [
+        "audit.exportCsv",
+        "audit.list",
+        "audit.listMyRgHistory"
+      ]
+    },
+    {
+      "id": "chat",
+      "group": "engagement",
+      "tables": [
+        "chat_message",
+        "chat_mute",
+        "chat_platform_ban",
+        "chat_room",
+        "chat_room_ban",
+        "chat_room_configuration",
+        "chat_room_member",
+        "chat_room_mute",
+        "chat_room_remove",
+        "chat_room_rule",
+        "chat_user_block",
+        "chat_user_ignore"
+      ],
+      "routes": [
+        "chat.adminBan",
+        "chat.adminDeleteMessage",
+        "chat.adminJoinRoom",
+        "chat.adminListBans",
+        "chat.adminListBlockedUsers",
+        "chat.adminListIgnoredUsers",
+        "chat.adminListMessages",
+        "chat.adminListMutes",
+        "chat.adminListRoomMessages",
+        "chat.adminMute",
+        "chat.adminUnban",
+        "chat.adminUnmute",
+        "chat.banRoomMember",
+        "chat.blockUser",
+        "chat.createPrivateRoom",
+        "chat.createRoom",
+        "chat.createRoomRule",
+        "chat.deleteMessage",
+        "chat.deletePrivateRoom",
+        "chat.deleteRoom",
+        "chat.deleteRoomRule",
+        "chat.getConnection",
+        "chat.getGlobalMessages",
+        "chat.getOnlineCount",
+        "chat.getRoom",
+        "chat.getRoomConfiguration",
+        "chat.getRoomMessages",
+        "chat.getRoomRules",
+        "chat.ignoreUser",
+        "chat.joinPublicRoom",
+        "chat.joinRoom",
+        "chat.leaveRoom",
+        "chat.listAdminRooms",
+        "chat.listBlockedUsers",
+        "chat.listIgnoredUsers",
+        "chat.listModeratedRooms",
+        "chat.listRoomBlockedUsers",
+        "chat.listRoomMembers",
+        "chat.listRoomUsers",
+        "chat.listRooms",
+        "chat.muteRoomMember",
+        "chat.removeMember",
+        "chat.sendGlobalMessage",
+        "chat.sendRoomMessage",
+        "chat.setMemberRole",
+        "chat.streamMessages",
+        "chat.streamSignals",
+        "chat.unbanRoomMember",
+        "chat.unblockUser",
+        "chat.unignoreUser",
+        "chat.unmuteRoomMember",
+        "chat.updatePrivateRoom",
+        "chat.updateRoom",
+        "chat.updateRoomConfiguration",
+        "chat.updateRoomRule"
+      ]
+    },
+    {
+      "id": "chat-commands",
+      "group": "engagement",
+      "tables": [
+        "chat_command_config"
+      ],
+      "routes": [
+        "chat-commands.adminListCommands",
+        "chat-commands.adminUpdateCommand",
+        "chat-commands.listCommands",
+        "chat-commands.mentionSearch"
+      ]
+    },
+    {
+      "id": "cms",
+      "group": "cms",
+      "tables": [
+        "banner_configuration",
+        "banner_image",
+        "banner_schedule",
+        "page"
+      ],
+      "routes": [
+        "cms.createBannerConfiguration",
+        "cms.createBannerSchedule",
+        "cms.createPage",
+        "cms.deleteBannerConfiguration",
+        "cms.deleteBannerImage",
+        "cms.deletePage",
+        "cms.getBannerConfiguration",
+        "cms.getPage",
+        "cms.getPublicBanner",
+        "cms.listBannerConfigurationsByPlacement",
+        "cms.listBannerPlacements",
+        "cms.listBannerSchedulesByPlacement",
+        "cms.listPages",
+        "cms.setBannerImage",
+        "cms.setDefaultBannerConfiguration",
+        "cms.unsetDefaultBannerConfiguration",
+        "cms.updateBannerScheduleEnd",
+        "cms.updatePage"
+      ]
+    },
+    {
+      "id": "compliance",
+      "group": "compliance",
+      "tables": [
+        "game_geo_rule",
+        "geo_rule",
+        "kyc_verification",
+        "rg_exclusion",
+        "rg_flag",
+        "user_limit"
+      ],
+      "routes": [
+        "compliance.activateCoolingOff",
+        "compliance.activateSelfExclusion",
+        "compliance.addGeoRule",
+        "compliance.bulkApproveKyc",
+        "compliance.cancelPendingLimitChange",
+        "compliance.confirmPendingLimitChange",
+        "compliance.deleteGameGeoRule",
+        "compliance.deleteLimit",
+        "compliance.geoCheck",
+        "compliance.getLimits",
+        "compliance.getMyKyc",
+        "compliance.getMyRgSection",
+        "compliance.getPlayerKyc",
+        "compliance.getRgSection",
+        "compliance.kycWebhook",
+        "compliance.liftCoolingOff",
+        "compliance.liftSelfExclusion",
+        "compliance.listGameGeoRules",
+        "compliance.listGeoRules",
+        "compliance.listRgFlags",
+        "compliance.overrideKycStatus",
+        "compliance.requestCoolingOff",
+        "compliance.requestKycResubmission",
+        "compliance.requestSelfExclusion",
+        "compliance.setPlayerLimit",
+        "compliance.streamKycStatus",
+        "compliance.submitKyc",
+        "compliance.upsertGameGeoRule",
+        "compliance.upsertLimit"
+      ]
+    },
+    {
+      "id": "exchange-rate",
+      "group": "fx",
+      "tables": [
+        "exchange_rate_quote"
+      ],
+      "routes": [
+        "exchange-rate.getRate",
+        "exchange-rate.getRates"
+      ]
+    },
+    {
+      "id": "gaming",
+      "group": "casino",
+      "tables": [
+        "game",
+        "game_round"
+      ],
+      "routes": [
+        "gaming.endRound",
+        "gaming.getGame",
+        "gaming.listGames",
+        "gaming.listRounds",
+        "gaming.startRound"
+      ]
+    },
+    {
+      "id": "iam",
+      "group": "iam",
+      "tables": [
+        "admin_invitation",
+        "admin_role",
+        "admin_role_assignment",
+        "admin_role_permission"
+      ],
+      "routes": [
+        "iam.acceptInvitation",
+        "iam.assignRole",
+        "iam.createRole",
+        "iam.deleteRole",
+        "iam.forceLogout",
+        "iam.getMyPermissions",
+        "iam.getRole",
+        "iam.inviteAdmin",
+        "iam.listAssignments",
+        "iam.listCatalog",
+        "iam.listInvitations",
+        "iam.listRoles",
+        "iam.previewEffectivePermissions",
+        "iam.reportAccessDenied",
+        "iam.setRolePermissions",
+        "iam.unassignRole",
+        "iam.updateRole"
+      ]
+    },
+    {
+      "id": "identity",
+      "group": "pam",
+      "tables": [
+        "account",
+        "admin_trusted_device",
+        "phone_verification_session",
+        "session",
+        "sms_otp_session",
+        "two_factor",
+        "user",
+        "verification"
+      ],
+      "routes": [
+        "identity.adminRequestPasswordReset",
+        "identity.adminSecurity.resetUserTwoFactor",
+        "identity.adminSecurity.revokeTrustedDevice",
+        "identity.adminSecurity.revokeUserTrustedDevice",
+        "identity.adminSecurity.status",
+        "identity.adminSecurity.trustCurrentDevice",
+        "identity.adminSecurity.trustedDevices",
+        "identity.changeEmail",
+        "identity.changePassword",
+        "identity.disable2fa",
+        "identity.enable2fa",
+        "identity.login",
+        "identity.logout",
+        "identity.me",
+        "identity.phoneLoginRequest",
+        "identity.phoneLoginVerify",
+        "identity.phoneVerification.confirm",
+        "identity.phoneVerification.request",
+        "identity.regenerateBackupCodes",
+        "identity.register",
+        "identity.requestPasswordReset",
+        "identity.resetPassword",
+        "identity.security.loginWithdrawalAlerts",
+        "identity.security.me",
+        "identity.security.removeWithdrawalPin",
+        "identity.security.setWithdrawalPin",
+        "identity.sendEmailVerification",
+        "identity.sendTwoFactorOtp",
+        "identity.sessions.list",
+        "identity.sessions.listAll",
+        "identity.sessions.listMine",
+        "identity.sessions.revoke",
+        "identity.sessions.revokeAll",
+        "identity.sessions.revokeMine",
+        "identity.streamSession",
+        "identity.twoFactorStatus",
+        "identity.unlockUser",
+        "identity.updateProfile",
+        "identity.usernameAvailable",
+        "identity.verify2fa",
+        "identity.verifyEmail",
+        "identity.verifyPasswordResetOtp"
+      ]
+    },
+    {
+      "id": "lobby",
+      "group": "casino",
+      "tables": [
+        "featured_slot",
+        "lobby_category",
+        "lobby_category_game"
+      ],
+      "routes": [
+        "lobby.getCategoryBySlug",
+        "lobby.getFeatured",
+        "lobby.listCategories",
+        "lobby.search"
+      ]
+    },
+    {
+      "id": "mail",
+      "group": "mail",
+      "tables": [],
+      "routes": []
+    },
+    {
+      "id": "notifications",
+      "group": "engagement",
+      "tables": [
+        "notification"
+      ],
+      "routes": [
+        "notifications.list",
+        "notifications.markAllRead",
+        "notifications.markRead",
+        "notifications.stream",
+        "notifications.unreadCount"
+      ]
+    },
+    {
+      "id": "player-management",
+      "group": "pam",
+      "tables": [],
+      "routes": [
+        "player-management.get",
+        "player-management.getByUserId",
+        "player-management.list",
+        "player-management.playerProfile",
+        "player-management.playerSearch",
+        "player-management.registrationsOverTime",
+        "player-management.remove",
+        "player-management.summary",
+        "player-management.update"
+      ]
+    },
+    {
+      "id": "player-note",
+      "group": "pam",
+      "tables": [
+        "player_note"
+      ],
+      "routes": [
+        "player-note.create",
+        "player-note.list"
+      ]
+    },
+    {
+      "id": "profile",
+      "group": "pam",
+      "tables": [
+        "player"
+      ],
+      "routes": [
+        "profile.get",
+        "profile.getDisplayCurrency",
+        "profile.setDisplayCurrency",
+        "profile.update"
+      ]
+    },
+    {
+      "id": "social",
+      "group": "engagement",
+      "tables": [
+        "friendship"
+      ],
+      "routes": [
+        "social.acceptFriendRequest",
+        "social.cancelFriendRequest",
+        "social.declineFriendRequest",
+        "social.getRelationships",
+        "social.listFriendRequests",
+        "social.listFriends",
+        "social.removeFriend",
+        "social.sendFriendRequest"
+      ]
+    },
+    {
+      "id": "tag",
+      "group": "pam",
+      "tables": [
+        "player_tag",
+        "tag",
+        "tag_rule"
+      ],
+      "routes": [
+        "tag.assignPlayerTag",
+        "tag.createTag",
+        "tag.deleteTag",
+        "tag.listAssignableTags",
+        "tag.listPlayerTags",
+        "tag.listTagRules",
+        "tag.removePlayerTag",
+        "tag.upsertTagRule"
+      ]
+    },
+    {
+      "id": "wallet",
+      "group": "wallet",
+      "tables": [
+        "auto_withdrawal_rule",
+        "wallet",
+        "wallet_asset",
+        "wallet_auto_withdrawal_config",
+        "wallet_balance",
+        "wallet_bonus_credit",
+        "wallet_bonus_rollover_config",
+        "wallet_custody_sweep",
+        "wallet_deposit_address",
+        "wallet_job_run",
+        "wallet_provider_vault",
+        "wallet_reconciliation_finding",
+        "wallet_transaction",
+        "wallet_withdrawal_address"
+      ],
+      "routes": [
+        "wallet.assets.create",
+        "wallet.assets.delete",
+        "wallet.assets.list",
+        "wallet.assets.update",
+        "wallet.autoWithdrawalConfig.get",
+        "wallet.autoWithdrawalConfig.set",
+        "wallet.autoWithdrawalRules.delete",
+        "wallet.autoWithdrawalRules.get",
+        "wallet.autoWithdrawalRules.set",
+        "wallet.bonusRolloverConfig.get",
+        "wallet.bonusRolloverConfig.set",
+        "wallet.bonusRolloverStatus",
+        "wallet.custody.sweep.run",
+        "wallet.deposit",
+        "wallet.deposits.getAddress",
+        "wallet.getBalance",
+        "wallet.getBalances",
+        "wallet.listAssets",
+        "wallet.listPlayerTransactions",
+        "wallet.listTransactions",
+        "wallet.manualAdjustment",
+        "wallet.reconciliation.list",
+        "wallet.reconciliation.resolve",
+        "wallet.reconciliation.run",
+        "wallet.setActiveCurrency",
+        "wallet.streamBalance",
+        "wallet.swap.execute",
+        "wallet.swap.quote",
+        "wallet.swap.webhook",
+        "wallet.webhook",
+        "wallet.webhookForProvider",
+        "wallet.withdraw",
+        "wallet.withdrawalAddresses.create",
+        "wallet.withdrawalAddresses.delete",
+        "wallet.withdrawalAddresses.list",
+        "wallet.withdrawals.approve",
+        "wallet.withdrawals.list",
+        "wallet.withdrawals.reject"
+      ]
+    }
+  ],
+  "adapters": [
+    {
+      "category": "admin-game-reporting",
+      "interface": "GamePerformanceSortBy",
+      "token": "ADMIN_GAME_REPORTING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts"
+      ]
+    },
+    {
+      "category": "admin-permission",
+      "interface": "AdminGrant",
+      "token": "ADMIN_PERMISSION_RESOLVER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/iam/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "admin-player-activity",
+      "interface": "PlayerActivityFilter",
+      "token": "ADMIN_PLAYER_ACTIVITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
+      ]
+    },
+    {
+      "category": "admin-role-assignment-directory",
+      "interface": "AdminRoleAssignmentSummary",
+      "token": "ADMIN_ROLE_ASSIGNMENT_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
+      ]
+    },
+    {
+      "category": "admin-security",
+      "interface": "AdminSessionContext",
+      "token": "ADMIN_SECURITY_POLICY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "admin-user-directory",
+      "interface": "AdminUserRow",
+      "token": "ADMIN_USER_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/mail/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "admin-wallet-reporting",
+      "interface": "AdminTxRow",
+      "token": "ADMIN_WALLET_REPORTING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "aggregator",
+      "interface": "AggregatorAdapter",
+      "token": "AGGREGATOR_ADAPTER",
+      "status": "stub",
+      "boundIn": []
+    },
+    {
+      "category": "audit",
+      "interface": "DirectAuditAction",
+      "token": "AUDIT_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/audit/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/mail/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts",
+        "packages/core/src/pam/player-note/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "broker",
+      "interface": "MessageBrokerAdapter",
+      "token": "MESSAGE_BROKER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/server/runtime/assert-durable-seams.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "cache",
+      "interface": "CacheAdapter",
+      "token": "CACHE",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/analytics/plugin.ts",
+        "packages/core/src/casino/lobby/plugin.ts",
+        "packages/core/src/cms/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/iam/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-block-writer",
+      "interface": "ChatBlockWriter",
+      "token": "CHAT_BLOCK_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-moderation",
+      "interface": "ChatModerationEntry",
+      "token": "CHAT_MODERATION",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-room-access",
+      "interface": "ChatRoomAccess",
+      "token": "CHAT_ROOM_ACCESS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-system-writer",
+      "interface": "ChatSystemWriter",
+      "token": "CHAT_SYSTEM_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts"
+      ]
+    },
+    {
+      "category": "email-template",
+      "interface": "RenderedEmail",
+      "token": "EMAIL_TEMPLATE_RENDERER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/mail/plugin.ts"
+      ]
+    },
+    {
+      "category": "error-tracking",
+      "interface": "ErrorTrackingAdapter",
+      "token": "ERROR_TRACKING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "exchange-rate-provider",
+      "interface": "ExchangeRateQuote",
+      "token": "CRYPTO_EXCHANGE_RATE_PROVIDER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/fx/exchange-rate/plugin.ts"
+      ]
+    },
+    {
+      "category": "exchange-rate-reader",
+      "interface": "ExchangeRateReader",
+      "token": "EXCHANGE_RATE_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/fx/exchange-rate/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts"
+      ]
+    },
+    {
+      "category": "game",
+      "interface": "GameAdapter",
+      "token": "GAME_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
+      "category": "game-geo-check",
+      "interface": "GameGeoDenialReason",
+      "token": "GAME_GEO_CHECK",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts"
+      ]
+    },
+    {
+      "category": "gaming-commands",
+      "interface": "GamingAccumulateExternalRoundArgs",
+      "token": "GAMING_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
+      "category": "geo-check-commands",
+      "interface": "GeoCheckCommands",
+      "token": "GEO_CHECK_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "geo-ip",
+      "interface": "GeoIpAdapter",
+      "token": "GEO_IP_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "identity",
+      "interface": "IdentityLockoutOptions",
+      "token": "IDENTITY_OPTIONS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "identity-reader",
+      "interface": "IdentityReader",
+      "token": "IDENTITY_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/audit/plugin.ts",
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/engagement/social/plugin.ts",
+        "packages/core/src/iam/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "job-queue",
+      "interface": "JobQueueAdapter",
+      "token": "JOB_QUEUE",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/mail/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "kyc",
+      "interface": "KycAdapter",
+      "token": "KYC_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/adapters/mock/mock-kyc-adapter.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "login-enforcement",
+      "interface": "LoginEnforcementPort",
+      "token": "LOGIN_ENFORCEMENT",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "mail",
+      "interface": "EmailMessage",
+      "token": "EMAIL_SENDER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/mail/plugin.ts"
+      ]
+    },
+    {
+      "category": "outbox",
+      "interface": "OutboxWriter",
+      "token": "OUTBOX",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "payment",
+      "interface": "PaymentAdapter",
+      "token": "PAYMENT_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "play-eligibility",
+      "interface": "PlayEligibilityPort",
+      "token": "PLAY_ELIGIBILITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "player-activity",
+      "interface": "PlayerActivityTracker",
+      "token": "PLAYER_ACTIVITY_TRACKER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/player-management/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "player-provisioning",
+      "interface": "PlayerProvisioning",
+      "token": "PLAYER_PROVISIONING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts"
+      ]
+    },
+    {
+      "category": "player-tags",
+      "interface": "PlayerTags",
+      "token": "PLAYER_TAGS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "realtime",
+      "interface": "RealtimePresence",
+      "token": "REALTIME_TRANSPORT",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "rg-limits",
+      "interface": "RgLimitDecision",
+      "token": "RG_LIMITS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "rng",
+      "interface": "RngAdapter",
+      "token": "RNG_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
+      "category": "sms",
+      "interface": "SmsAdapter",
+      "token": "SMS_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/adapters/mock/mock-sms-adapter.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "social-commands",
+      "interface": "SocialCommands",
+      "token": "SOCIAL_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social/__tests__/social.plugin.int.test.ts",
+        "packages/core/src/engagement/social/plugin.ts"
+      ]
+    },
+    {
+      "category": "swap",
+      "interface": "SwapAdapter",
+      "token": "SWAP_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "tag-evaluation-commands",
+      "interface": "TagEvaluationWithdrawalRequestedArgs",
+      "token": "TAG_EVALUATION_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "wallet-asset-catalog",
+      "interface": "WalletAsset",
+      "token": "WALLET_ASSET_CATALOG",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "wallet-commands",
+      "interface": "WalletProviderRef",
+      "token": "WALLET_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "wallet-reader",
+      "interface": "WalletProviderTransaction",
+      "token": "WALLET_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/profile/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    }
+  ],
+  "events": [
+    "chat.message.sent",
+    "chat.private_room.created",
+    "chat.private_room.deleted",
+    "chat.private_room.purged",
+    "chat.room.created",
+    "chat.room.deleted",
+    "chat.room.deletion.cancelled",
+    "chat.room.member.banned",
+    "chat.room.member.joined",
+    "chat.room.member.left",
+    "chat.room.member.removed",
+    "chat.room.member.role-changed",
+    "chat.room.ownership.transferred",
+    "chat.room.scheduled_for_deletion",
+    "chat.room.updated",
+    "chat.user.blocked",
+    "chat.user.ignored",
+    "chat.user.mentioned",
+    "chat.user.unblocked",
+    "chat.user.unignored",
+    "cms.banner.configuration.created",
+    "cms.banner.configuration.deleted",
+    "cms.banner.configuration.set_default",
+    "cms.banner.configuration.unset_default",
+    "cms.banner.image.deleted",
+    "cms.banner.image.set",
+    "cms.banner.schedule.created",
+    "cms.banner.schedule.updated",
+    "cms.page.created",
+    "cms.page.deleted",
+    "cms.page.published",
+    "cms.page.updated",
+    "compliance.game-geo-rule.deleted",
+    "compliance.game-geo-rule.upserted",
+    "compliance.geo-rule.added",
+    "compliance.kyc.high_risk_signal_detected",
+    "compliance.kyc.reverify_required",
+    "compliance.kyc.submitted",
+    "compliance.kyc.updated",
+    "gaming.round.ended",
+    "gaming.round.started",
+    "iam.invitation.accepted",
+    "iam.role.assigned",
+    "iam.role.created",
+    "iam.role.deleted",
+    "iam.role.permissions.changed",
+    "iam.role.revoked",
+    "iam.role.updated",
+    "identity.2fa.backup_codes_regenerated",
+    "identity.2fa.disabled",
+    "identity.2fa.enabled",
+    "identity.2fa.enrollment_blocked",
+    "identity.2fa.failed",
+    "identity.2fa.lockout.triggered",
+    "identity.2fa.reset",
+    "identity.2fa.verified",
+    "identity.authentication.succeeded",
+    "identity.email.verified",
+    "identity.password.admin_reset_requested",
+    "identity.password.reset",
+    "identity.phone.verified",
+    "identity.phone_otp.cancelled",
+    "identity.phone_otp.requested",
+    "identity.profile.updated",
+    "identity.security.login_withdrawal_alerts.updated",
+    "identity.security.withdrawal_pin.removed",
+    "identity.security.withdrawal_pin.set",
+    "identity.session.fingerprint_mismatch",
+    "identity.session.revoked",
+    "identity.sessions.revoked_all",
+    "identity.trusted_device.added",
+    "identity.trusted_device.revoked",
+    "identity.user.deactivated",
+    "identity.user.lockout.triggered",
+    "identity.user.login",
+    "identity.user.login.failed",
+    "identity.user.logout",
+    "identity.user.phone_login",
+    "identity.user.reactivated",
+    "identity.user.registered",
+    "identity.user.registration.failed",
+    "identity.user.unauthorized_access",
+    "identity.user.unlocked",
+    "notifications.created",
+    "player.account.closed",
+    "player.account.reopened",
+    "player.level.changed",
+    "player.login_blocked",
+    "rg.cooling_off.activated",
+    "rg.cooling_off.expired",
+    "rg.cooling_off.lifted",
+    "rg.exclusion.login_blocked",
+    "rg.limit.change_cancelled",
+    "rg.limit.change_confirmed",
+    "rg.limit.change_expired",
+    "rg.limit.change_requested",
+    "rg.limit.set",
+    "rg.self_exclusion.activated",
+    "rg.self_exclusion.lifted",
+    "social.friend_request.accepted",
+    "social.friend_request.cancelled",
+    "social.friend_request.declined",
+    "social.friend_request.sent",
+    "social.friendship.removed",
+    "tag.created",
+    "tag.deleted",
+    "tag.player.assigned",
+    "tag.player.removed",
+    "tag.rule.upserted",
+    "wallet.bonus_rollover.completed",
+    "wallet.deposit.completed",
+    "wallet.manual_adjustment.created",
+    "wallet.reconciliation.alert",
+    "wallet.swap.completed",
+    "wallet.withdrawal.approved",
+    "wallet.withdrawal.completed",
+    "wallet.withdrawal.failed",
+    "wallet.withdrawal.rejected",
+    "wallet.withdrawal.requested"
+  ],
+  "schemas": [
+    {
+      "name": "ActivateCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ActivateSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ActiveCurrencySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ActiveSessionItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "ActiveUsersTrendPointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AddGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "AdminBlockedUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminChatMessageDetailSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminChatMessageSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminCommandSortBySchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "AdminIgnoredUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminInvitationSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "AdminRoleAssignmentDetailSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "AdminRoleAssignmentSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "AdminRoleSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "AdminRoleWithGrantsSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "AdminRoomSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminSecurityConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "AdminSecurityStatusSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "AdminTransactionDetailSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminTransactionSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminTransactionSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminUserSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminUserSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminWalletTransactionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ApproveWithdrawalInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "assignPlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "AuditActorTypeSchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuditExportFiltersSchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuditListFiltersSchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuditLogEntrySchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuditSortBySchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuthenticationMethodSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "AuthGuardReasonSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "AutoWithdrawalConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "AutoWithdrawalRuleKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "AutoWithdrawalRuleSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BackupCodesResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "BannerConfigurationSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerConfigurationSummarySchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerImageSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerLayoutSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerLinkUrlSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerPlacementSummarySchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerScheduleSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BannerScheduleWithConfigurationSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BlockCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "BlockedUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "BlockedUserSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditSourceTypeSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverConfigSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverStatusInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BrandingSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "BrandSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "BulkApproveKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "BulkApproveKycOutputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "BulkApproveKycResultSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "CatalogEntrySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "CatalogSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "ChangeEmailInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ChangePasswordInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ChatAttachmentKindSchema",
+      "file": "packages/core/src/contracts/schemas/chat-attachment.ts"
+    },
+    {
+      "name": "ChatAttachmentSchema",
+      "file": "packages/core/src/contracts/schemas/chat-attachment.ts"
+    },
+    {
+      "name": "ChatCommandDescriptorSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "ChatCommandTypeSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "ChatConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "ChatConnectionGrantSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatMemberRoleChangedSignalSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatMessageSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatMessageTypeSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "ChatModerationEntrySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationResultSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationRoomIdSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationScopeSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatMoneyCommandInputSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "ChatOnlineCountSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatPlatformBanSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomAccessStatusSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomAssignableRoleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomBanSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomCategorySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomConfigurationSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomIdSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "ChatRoomMemberSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomRoleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomRuleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomScheduledForDeletionSignalSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomSlugSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatSignalSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ClientMetaSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "CmsConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "CommandChatMessageSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "CommandConfigSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "CommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "ConversionFunnelSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "CountryCodeSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "CreateBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "CreateBannerScheduleInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "CreateNotificationInputSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "CreatePlayerNoteInputSchema",
+      "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
+      "name": "createTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "CreateWalletAssetInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "CreateWithdrawalAddressInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "CronExpressionSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "CurrencyCodeSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "CurrencyTickerInputSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "CurrencyTickerSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "DateRangeSchema",
+      "file": "packages/core/src/contracts/schemas/reporting.ts"
+    },
+    {
+      "name": "DeleteBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "DeleteBannerImageInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "DeleteGameGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "deleteTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "DepositAddressInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "DepositAddressSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "DepositInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "DestinationTagInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "Disable2faInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "DisplayCurrencyCodeSchema",
+      "file": "packages/core/src/contracts/schemas/display-currency.ts"
+    },
+    {
+      "name": "DisplayCurrencyInfoSchema",
+      "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "DisplayCurrencyInputSchema",
+      "file": "packages/core/src/contracts/schemas/display-currency.ts"
+    },
+    {
+      "name": "DonateCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "E164PhoneSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "EffectivePermissionsSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "Enable2faInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "Enable2faResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "EncryptedMailSendJobSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
+      "name": "EndRoundInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "EndRoundOutputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "ExchangeRateBatchEntrySchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "ExchangeRateConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "ExchangeRateQuoteSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "ExclusionKindSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "ExclusionStatusSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "FeaturedSlotSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "FeatureFlagsSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "FinancialGgrQuerySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FinancialSummaryQuerySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FinancialSummarySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FriendListEntrySchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendRequestDirectionSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendRequestEntrySchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendRequestIdInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendshipSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FunnelQuerySchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "FunnelStageNameSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "FunnelStageSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "GameGeoCheckInputSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoDecisionSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoDenialReasonSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameRoundSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameRoundStatusSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameSummarySchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "GameTypeSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GeoRuleActionSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "GeoRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "GetBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "GetExchangeRateInputSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "GetExchangeRatesInputSchema",
+      "file": "packages/core/src/fx/exchange-rate/contract/index.ts"
+    },
+    {
+      "name": "GetPublicBannerInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "GetRelationshipsInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "GgrPointSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "GgrSeriesSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "GiftCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "GrantInputSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "GranularitySchema",
+      "file": "packages/core/src/contracts/schemas/reporting.ts"
+    },
+    {
+      "name": "HighRiskAmountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskCountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HostAllowlistEntrySchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "IamAssignmentSortBySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "IamInvitationSortBySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "IamRoleSortBySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "IdentitySuccessSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "IdInputSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "IgamingConfigSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "IgnoreCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "IgnoredUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "IgnoredUserSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "InvitationStatusSchema",
+      "file": "packages/core/src/contracts/schemas/iam.ts"
+    },
+    {
+      "name": "JobRunResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "KycCheckResultSchema",
+      "file": "packages/core/src/contracts/adapters/kyc.ts"
+    },
+    {
+      "name": "KycCheckStatusSchema",
+      "file": "packages/core/src/contracts/adapters/kyc.ts"
+    },
+    {
+      "name": "KycConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "KycDocumentSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycDocumentTypeSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycOverrideStatusSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycRiskSignalsSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycStatusSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycStatusSourceSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycStatusUpdatedSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "KycStatusUpdateSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycTierSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycTriggeredBySchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycVerificationSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycVerificationSummarySchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "LanguageSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "LiftCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "LiftSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "LimitChangeKindSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "LimitPeriodSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "LimitSchema",
+      "file": "packages/core/src/compliance/contract/limits.ts"
+    },
+    {
+      "name": "LimitsSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "LimitThresholdDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "LimitTypeSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "LimitViewSchema",
+      "file": "packages/core/src/compliance/contract/limits.ts"
+    },
+    {
+      "name": "ListBannerConfigurationsInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "ListBannerSchedulesByPlacementInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "ListFriendRequestsInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "ListGameGeoRulesInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "ListReconciliationFindingsInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ListRgFlagsInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ListWithdrawalAddressesInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "LobbyCategoryDetailSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbyCategorySchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LoginInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "LoginSecurityStateSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "MailRecipientSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
+      "name": "MailSendJobSchema",
+      "file": "packages/core/src/mail/contract/index.ts"
+    },
+    {
+      "name": "MailTemplateSchema",
+      "file": "packages/core/src/contracts/schemas/mail.ts"
+    },
+    {
+      "name": "ManualAdjustmentDirectionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ManualWalletAdjustmentInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "MarkNotificationReadOutputSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "MemberSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "MentionResultSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "MessageContentSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ModeratedRoomSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "MoneyAmountSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "MoneyByCurrencyRailSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "MoneyByCurrencySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "MyRgHistoryEntrySchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "MyRgHistoryFiltersSchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "NonEmptyReasonSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "NotificationCountSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationDataSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationsConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "NotificationSortBySchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationTypeSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "OrganizationSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "OverrideKycStatusInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "PageQuerySchema",
+      "file": "packages/core/src/contracts/kit.ts"
+    },
+    {
+      "name": "PageSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "PaginatedPlayerSearchArgsSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "PasswordSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PaymentWebhookInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PaymentWebhookOutputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PaymentWebhookProviderInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PermissionLevelSchema",
+      "file": "packages/core/src/contracts/schemas/iam.ts"
+    },
+    {
+      "name": "PhoneLoginErrorReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginOtpInvalidReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginRequestInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginRequestOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginVerifyInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationConfirmInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationRequestInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneVerificationRequestOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PlatformConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "PlatformStatsSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerActivityFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerActivitySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerEmailSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerKycSummaryViewSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "PlayerKycViewSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "PlayerNoteSchema",
+      "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
+      "name": "PlayerNoteSortBySchema",
+      "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
+      "name": "PlayerProfileCardSchema",
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PlayerRegistrationPointSchema",
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PlayerSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "PlayerSearchArgsSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "PlayerSearchResultSchema",
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PlayerSearchSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerSortBySchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "PlayerStatusSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "PlayerSummarySchema",
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PlayerTagAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "playerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "PlayerTagSortBySchema",
+      "file": "packages/core/src/pam/tag/contract/index.ts"
+    },
+    {
+      "name": "PlayerTagWithTagSchema",
+      "file": "packages/core/src/pam/tag/contract/index.ts"
+    },
+    {
+      "name": "PlayerUsernameSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerWithTagsSchema",
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PositiveMoneyAmountSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "ProfileCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "ProviderSelectionSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "PublicBannerSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "PublicBannerSlotSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "PublicWalletAssetSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "RainCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "ReconciliationResolutionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "RegenerateBackupCodesInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RegisterInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RegisterOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RegistrationConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "RegistrationFailureReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RegistrationsOverTimePointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "RejectWithdrawalInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "RelationshipSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "RelationshipStatusSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "RemoveFriendInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "removePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "replacePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "RequestCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RequestKycResubmissionInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "RequestPasswordResetInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RequestSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ResendEmailVerificationInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ResetPasswordInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ResolveReconciliationFindingInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ResponsibleGamingSchema",
+      "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "RetentionCohortRowSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "RgExclusionSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagListItemSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagSortBySchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagStatusSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgFlagTypeSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgInitiatorSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgLimitErrorReasonSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgSectionSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RolePermissionLevelSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "SecurityControlsSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "SelfExcludedLoginDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SendFriendRequestInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "SendGlobalMessageInputSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "SendRoomMessageInputSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "SendTwoFactorOtpResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "SessionItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "SessionSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "SessionSortBySchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "SessionTimeDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SetActiveCurrencyInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetAutoWithdrawalRuleInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetBannerImageInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "SetBonusRolloverConfigInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "SetDisplayCurrencyInputSchema",
+      "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "SetLoginWithdrawalAlertsInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "SetPlayerLimitInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SetWalletAutoWithdrawalConfigInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetWithdrawalPinInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "SignedMoneyAmountSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "SortDirectionSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "SortOrderSchema",
+      "file": "packages/core/src/contracts/kit.ts"
+    },
+    {
+      "name": "StartRoundInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "StartRoundOutputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "SubmitKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "SubmitKycOutputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "SwapInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapQuoteInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapQuoteSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SwapResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SystemChatMessageSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
+      "name": "TagKeySchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "tagRuleSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "tagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "ThemeSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TimestampSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "TimezoneSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "TotpStepUpCodeSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TransactionFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "TransactionResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "TrustCurrentDeviceInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TrustedDeviceItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "TwoFactorChallengeMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TwoFactorDeliveryMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "TwoFactorMethodSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "TwoFactorStatusSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UnblockCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "UnignoreCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "UnsetDefaultBannerConfigurationInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "UpdateBannerScheduleEndInputSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "UpdatePlayerProfileInputSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "UpdateProfileInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "updateTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "UpdateWalletAssetInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "UpsertGameGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "UpsertLimitInputSchema",
+      "file": "packages/core/src/compliance/contract/limits.ts"
+    },
+    {
+      "name": "upsertTagRuleSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "UserIdInputSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "UsernameAvailabilityInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UsernameAvailabilityOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UsernameSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UserRoleSchema",
+      "file": "packages/core/src/contracts/schemas/iam.ts"
+    },
+    {
+      "name": "UserSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UuidSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "Verify2faInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "VerifyEmailInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "VerifyPasswordResetOtpInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "WalletAssetKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletAssetSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletAutoWithdrawalConfigSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletBalanceChangeReasonSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletBalanceSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletBalancesSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletBalanceUpdateSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "WalletCustodySweepStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletJobRunStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletRailSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingKindSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletTransactionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletTransactionSortBySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletTransactionStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletTransactionTypeSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WithdrawalAddressKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalAddressSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalPinSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "WithdrawalQueueFilterSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalQueueItemSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalSortBySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    }
+  ],
+  "config": {
+    "token": "IGAMING_CONFIG",
+    "source": "packages/core/src/contracts/schemas/igaming-config.ts",
+    "fields": [
+      {
+        "key": "branding",
+        "note": ""
+      },
+      {
+        "key": "currencies",
+        "note": "Currencies the igaming transacts in; the first is the default."
+      },
+      {
+        "key": "jurisdictions",
+        "note": "Jurisdictions the igaming is licensed to operate in."
+      },
+      {
+        "key": "blockedCountries",
+        "note": "Countries blocked regardless of licensing (geo-block list)."
+      },
+      {
+        "key": "enabledModules",
+        "note": "Module ids to enable. Empty/omitted = all registered plugins load."
+      },
+      {
+        "key": "limits",
+        "note": ""
+      }
+    ]
+  },
+  "pluginContract": [
+    "events",
+    "jobs",
+    "mcp",
+    "routers"
+  ]
+}

@@ -210,3 +210,49 @@ describe('event currency fields accept a wallet/gaming money ticker', () => {
     expect(domainEventSchemas['wallet.deposit.completed'].safeParse(invalid).success).toBe(false);
   });
 });
+
+describe('game geo rule event reasons', () => {
+  const gameId = randomUUID();
+  const validPayload = {
+    ruleId: randomUUID(),
+    gameId,
+    countryCode: 'US',
+    reason: 'licence restriction',
+    before: null,
+    after: {
+      id: randomUUID(),
+      gameId,
+      countryCode: 'US',
+      reason: 'licence restriction',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    actorId: randomUUID(),
+  };
+
+  it('trims and rejects blank reasons in the event state and envelope', () => {
+    const parsed = domainEventSchemas['compliance.game-geo-rule.upserted'].safeParse({
+      ...validPayload,
+      reason: '  licence restriction  ',
+      after: { ...validPayload.after, reason: '  licence restriction  ' },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.reason).toBe('licence restriction');
+      expect(parsed.data.after.reason).toBe('licence restriction');
+    }
+
+    expect(
+      domainEventSchemas['compliance.game-geo-rule.upserted'].safeParse({
+        ...validPayload,
+        reason: '   ',
+      }).success,
+    ).toBe(false);
+    expect(
+      domainEventSchemas['compliance.game-geo-rule.upserted'].safeParse({
+        ...validPayload,
+        after: { ...validPayload.after, reason: '   ' },
+      }).success,
+    ).toBe(false);
+  });
+});

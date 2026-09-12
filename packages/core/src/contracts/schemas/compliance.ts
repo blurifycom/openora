@@ -14,6 +14,8 @@ export const geoRuleActions = ['allow', 'block'] as const;
 export const GeoRuleActionSchema = z.enum(geoRuleActions);
 export type GeoRuleAction = z.infer<typeof GeoRuleActionSchema>;
 
+export const NonEmptyReasonSchema = z.string().trim().min(1);
+
 export const EXCLUSION_KINDS = ['cooling_off', 'self_exclusion'] as const;
 export const ExclusionKindSchema = z.enum(EXCLUSION_KINDS);
 export type ExclusionKind = z.infer<typeof ExclusionKindSchema>;

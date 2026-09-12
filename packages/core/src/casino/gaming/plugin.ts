@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/ser
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
+  GAME_GEO_CHECK,
   GAMING_COMMANDS,
   IDENTITY_READER,
   PLAY_ELIGIBILITY,
@@ -36,6 +37,7 @@ export default {
         c.get(WALLET_COMMANDS),
         c.get(IDENTITY_READER),
         c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        c.has(GAME_GEO_CHECK) ? c.get(GAME_GEO_CHECK) : undefined,
       ));
 
     ctx.routers.add('gaming', (c) => createGamingRouter(gamingService(c)));
