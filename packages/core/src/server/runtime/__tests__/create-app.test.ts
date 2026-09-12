@@ -80,7 +80,7 @@ describe('createApp - streaming responses opt out of transformation', () => {
   });
 });
 
-describe('createApp - httpCache.additionalPaths extends rather than replaces the default list', () => {
+describe('createApp - httpCache.additionalPaths', () => {
   it('keeps the built-in cache paths cacheable while adding a consumer path', async () => {
     const saved = process.env['REDIS_URL'];
     process.env['REDIS_URL'] = redisUrlForWorker();
@@ -90,12 +90,16 @@ describe('createApp - httpCache.additionalPaths extends rather than replaces the
         databaseUrl: DUMMY_DATABASE_URL,
         httpCache: { additionalPaths: ['/email-assets'] },
       });
-      created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
+      created.app.get('/cms/pages', (c) => c.json({ ok: true }));
+      created.app.get('/lobby/layout', (c) => c.json({ ok: true }));
       created.app.get('/email-assets/banner.png', (c) => c.body('png'));
       created.app.get('/wallet/balance', (c) => c.json({ ok: true }));
 
-      const builtIn = await created.app.request('/lobby/categories');
+      const builtIn = await created.app.request('/cms/pages');
       expect(builtIn.headers.get('cache-control')).toMatch(/^public,/);
+
+      const layout = await created.app.request('/lobby/layout');
+      expect(layout.headers.get('cache-control')).toBe('no-store');
 
       const added = await created.app.request('/email-assets/banner.png');
       expect(added.headers.get('cache-control')).toMatch(/^public,/);
@@ -122,10 +126,10 @@ describe('createApp - httpCache.additionalPaths extends rather than replaces the
         databaseUrl: DUMMY_DATABASE_URL,
         httpCache: { paths: ['/only-this'], additionalPaths: ['/ignored-since-paths-is-set'] },
       });
-      created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
+      created.app.get('/cms/pages', (c) => c.json({ ok: true }));
       created.app.get('/ignored-since-paths-is-set', (c) => c.json({ ok: true }));
 
-      const builtIn = await created.app.request('/lobby/categories');
+      const builtIn = await created.app.request('/cms/pages');
       expect(builtIn.headers.get('cache-control')).toBe('no-store');
 
       const ignored = await created.app.request('/ignored-since-paths-is-set');

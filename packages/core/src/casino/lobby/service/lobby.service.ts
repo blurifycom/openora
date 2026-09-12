@@ -1,16 +1,85 @@
-import { createDomainError, DrizzleService, findOneOrThrow, cached } from '@openora/core/server';
-import type { CacheAdapter } from '@openora/core/contracts';
-import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
-import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
+import { randomUUID } from 'node:crypto';
+import { and, asc, count, eq, ilike, inArray, notInArray, sql } from 'drizzle-orm';
+import {
+  cached,
+  createDomainError,
+  createLogger,
+  findOneOrThrow,
+  invalidate,
+  mapConcurrent,
+  makeNotFoundError,
+  serializeRow,
+  withAdvisoryXactLock,
+  type DrizzleService,
+  type DrizzleTx,
+  type EventBus,
+} from '@openora/core/server';
+import { LobbySectionDataSchema } from '@openora/core/contracts';
+import type {
+  CacheAdapter,
+  ClientMeta,
+  LobbySectionCatalog,
+  LobbySectionConfig,
+  LobbySectionData,
+  LobbySectionDefinition,
+  LobbySectionDefinitionInput,
+  LobbySectionType,
+  LobbySectionValidationResult,
+  User,
+} from '@openora/core/contracts';
+import type {
+  LobbyAdminLayout,
+  LobbyAdminSection,
+  LobbyResolvedSection,
+  ReplaceLobbyLayoutInput,
+} from '../contract/index.js';
+import {
+  featuredSlot,
+  lobbyCategory,
+  lobbyCategoryGame,
+  lobbyLayout,
+  lobbySection,
+  type LobbySection,
+} from '../schema/index.js';
 import { game } from '@openora/core/casino/schema/gaming';
 
+export const LobbySectionNotFoundError = makeNotFoundError('LobbySection');
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
   (slug: string) => `Lobby category not found: ${slug}`,
 );
+export const LobbySectionFieldError = createDomainError<[message: string]>(
+  'LobbySectionFieldError',
+  (message) => message,
+);
+export const LobbyLayoutVersionConflictError = createDomainError<
+  [expectedVersion: number, actualVersion: number]
+>(
+  'LobbyLayoutVersionConflictError',
+  (expectedVersion, actualVersion) =>
+    `Lobby layout version ${expectedVersion} is stale; current version is ${actualVersion}`,
+);
 
-// Feeds tolerate this much staleness; no invalidation wiring - TTL-only expiry.
+type Actor = {
+  actorId?: User['id'];
+} & ClientMeta;
+
+type PreparedLayoutSection = {
+  id: string;
+  isNew: boolean;
+  type: LobbySectionType;
+  config: LobbySectionConfig;
+  isEnabled: boolean;
+  sortOrder: number;
+};
+
+const logger = createLogger('lobby');
+
+const GLOBAL_LAYOUT_KEY = 'global';
+const LAYOUT_LOCK_KEY = 'lobby:global-layout';
 const LOBBY_CACHE_TTL_MS = 30_000;
+const LAYOUT_CACHE_KEY = 'lobby:layout';
+const SECTION_OPERATION_CONCURRENCY = 5;
 const CATEGORIES_CACHE_KEY = 'lobby:categories';
 const FEATURED_CACHE_KEY = 'lobby:featured';
 
@@ -33,8 +102,14 @@ function toGameSummary(record: {
 export class LobbyService {
   constructor(
     private readonly drizzle: DrizzleService,
+    private readonly events: EventBus,
+    private readonly sectionCatalog: LobbySectionCatalog,
     private readonly cache?: CacheAdapter,
   ) {}
+
+  async getLayout() {
+    return cached(this.cache, LAYOUT_CACHE_KEY, LOBBY_CACHE_TTL_MS, () => this.loadLayout());
+  }
 
   async listCategories() {
     return cached(this.cache, CATEGORIES_CACHE_KEY, LOBBY_CACHE_TTL_MS, async () => {
@@ -47,38 +122,33 @@ export class LobbyService {
           .groupBy(lobbyCategoryGame.categoryId),
       ]);
 
-      const countMap = new Map(counts.map((r) => [r.categoryId, Number(r.n)]));
+      const countMap = new Map(counts.map((row) => [row.categoryId, Number(row.n)]));
 
-      return categories.map((cat) => ({
-        id: cat.id,
-        name: cat.name,
-        slug: cat.slug,
-        sortOrder: cat.sortOrder,
-        gameCount: countMap.get(cat.id) ?? 0,
+      return categories.map((category) => ({
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        sortOrder: category.sortOrder,
+        gameCount: countMap.get(category.id) ?? 0,
       }));
     });
   }
 
   async getCategoryGames(slug: string) {
     const db = this.drizzle.db;
-
     const category = findOneOrThrow(
       await db.select().from(lobbyCategory).where(eq(lobbyCategory.slug, slug)),
       new LobbyCategoryNotFoundError(slug),
     );
-
     const links = await db
       .select()
       .from(lobbyCategoryGame)
       .where(eq(lobbyCategoryGame.categoryId, category.id))
       .orderBy(asc(lobbyCategoryGame.sortOrder));
-
-    const gameIds = links.map((l) => l.gameId);
-
+    const gameIds = links.map((link) => link.gameId);
     const games =
       gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
-
-    const gameMap = new Map(games.map((g) => [g.id, g]));
+    const gameMap = new Map(games.map((item) => [item.id, item]));
 
     return {
       id: category.id,
@@ -86,7 +156,7 @@ export class LobbyService {
       slug: category.slug,
       games: gameIds
         .map((id) => gameMap.get(id))
-        .filter((g): g is typeof game.$inferSelect => g !== undefined)
+        .filter((item): item is typeof game.$inferSelect => item !== undefined)
         .map(toGameSummary),
     };
   }
@@ -94,27 +164,24 @@ export class LobbyService {
   async getFeatured() {
     return cached(this.cache, FEATURED_CACHE_KEY, LOBBY_CACHE_TTL_MS, async () => {
       const db = this.drizzle.db;
-
       const slots = await db
         .select()
         .from(featuredSlot)
         .where(eq(featuredSlot.isActive, true))
         .orderBy(asc(featuredSlot.placement), asc(featuredSlot.sortOrder));
-
-      const gameIds = [...new Set(slots.map((s) => s.gameId))];
+      const gameIds = [...new Set(slots.map((slot) => slot.gameId))];
       const games =
         gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
-
-      const gameMap = new Map(games.map((g) => [g.id, g]));
+      const gameMap = new Map(games.map((item) => [item.id, item]));
 
       return slots.map((slot) => {
-        const g = gameMap.get(slot.gameId);
+        const game = gameMap.get(slot.gameId);
         return {
           id: slot.id,
           title: slot.title,
           gameId: slot.gameId,
-          gameName: g?.name ?? '',
-          thumbnailUrl: g?.thumbnailUrl ?? null,
+          gameName: game?.name ?? '',
+          thumbnailUrl: game?.thumbnailUrl ?? null,
           placement: slot.placement,
           sortOrder: slot.sortOrder,
         };
@@ -123,11 +190,331 @@ export class LobbyService {
   }
 
   async search(query: string) {
-    const db = this.drizzle.db;
     const whereClause = and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
-
-    const games = await db.select().from(game).where(whereClause).orderBy(asc(game.name)).limit(50);
+    const games = await this.drizzle.db
+      .select()
+      .from(game)
+      .where(whereClause)
+      .orderBy(asc(game.name))
+      .limit(50);
 
     return games.map(toGameSummary);
   }
+
+  async getAdminLayout(): Promise<LobbyAdminLayout> {
+    return this.drizzle.db.transaction(
+      async (tx) => {
+        const [layout] = await tx
+          .select({ version: lobbyLayout.version })
+          .from(lobbyLayout)
+          .where(eq(lobbyLayout.layoutKey, GLOBAL_LAYOUT_KEY));
+
+        return {
+          version: layout?.version ?? 0,
+          sections: await this.loadAdminSections(tx),
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+  }
+
+  async replaceLayout(input: ReplaceLobbyLayoutInput & Actor): Promise<LobbyAdminLayout> {
+    const { actorId, ip, userAgent } = input;
+
+    this.assertUniqueSectionIds(input.sections.flatMap((section) => section.id ?? []));
+
+    const preparedSections = input.sections.map((section, sortOrder) => {
+      const definition = this.requireDefinition(section.type);
+
+      return {
+        id: section.id ?? randomUUID(),
+        isNew: section.id === undefined,
+        type: section.type,
+        config: this.parseConfig(definition, section.config),
+        isEnabled: section.isEnabled,
+        sortOrder,
+      };
+    });
+    await this.validateSections(preparedSections);
+
+    const { before, after } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, LAYOUT_LOCK_KEY, async () => {
+        await tx
+          .insert(lobbyLayout)
+          .values({ layoutKey: GLOBAL_LAYOUT_KEY })
+          .onConflictDoNothing({ target: lobbyLayout.layoutKey });
+
+        const [layout] = await tx
+          .select()
+          .from(lobbyLayout)
+          .where(eq(lobbyLayout.layoutKey, GLOBAL_LAYOUT_KEY))
+          .for('update');
+
+        if (!layout) {
+          throw new Error('Lobby layout row missing after upsert');
+        }
+
+        if (layout.version !== input.version) {
+          throw new LobbyLayoutVersionConflictError(input.version, layout.version);
+        }
+
+        const before = { version: layout.version, sections: await this.loadAdminSections(tx) };
+        this.assertExistingSectionIds(before.sections, preparedSections);
+        await this.replaceSections(tx, preparedSections);
+
+        const nextVersion = layout.version + 1;
+        await tx
+          .update(lobbyLayout)
+          .set({ version: nextVersion })
+          .where(eq(lobbyLayout.id, layout.id));
+        const after = { version: nextVersion, sections: await this.loadAdminSections(tx) };
+        return { before, after };
+      }),
+    );
+
+    await invalidate(this.cache, LAYOUT_CACHE_KEY);
+
+    this.events.emit('lobby.layout.updated', {
+      actorId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+      before,
+      after,
+    });
+
+    return after;
+  }
+
+  private async loadLayout(): Promise<LobbyResolvedSection[]> {
+    const sections = await this.drizzle.db
+      .select()
+      .from(lobbySection)
+      .where(eq(lobbySection.isEnabled, true))
+      .orderBy(asc(lobbySection.sortOrder), asc(lobbySection.createdAt));
+
+    const groups = this.groupSections(sections);
+
+    const resolvedGroups = await mapConcurrent(
+      [...groups.entries()],
+      SECTION_OPERATION_CONCURRENCY,
+      ([type, group]) => this.resolveSectionGroup(type, group),
+    );
+    const byId = new Map(resolvedGroups.flatMap((group) => [...group]));
+
+    return sections.flatMap((section) => {
+      const resolved = byId.get(section.id);
+      return resolved ? [resolved] : [];
+    });
+  }
+
+  private async resolveSectionGroup(
+    type: string,
+    group: LobbySection[],
+  ): Promise<Map<string, LobbyResolvedSection>> {
+    const definition = this.sectionCatalog.get(type);
+
+    if (!definition) {
+      logger.warn(
+        { type, sectionIds: group.map((section) => section.id) },
+        'Skipping lobby sections with unknown type',
+      );
+      return new Map<string, LobbyResolvedSection>();
+    }
+
+    const validSections: LobbySectionDefinitionInput[] = [];
+
+    for (const section of group) {
+      try {
+        validSections.push({
+          id: section.id,
+          config: definition.parseConfig(section.config),
+        });
+      } catch (err) {
+        logger.warn(
+          { err, type, sectionId: section.id },
+          'Skipping lobby section with invalid config',
+        );
+      }
+    }
+
+    if (validSections.length === 0) {
+      return new Map<string, LobbyResolvedSection>();
+    }
+
+    let data: Map<string, LobbySectionData>;
+    try {
+      data = await definition.resolve(validSections);
+    } catch (err) {
+      logger.warn({ err, type }, 'Skipping lobby sections that failed to resolve');
+      return new Map<string, LobbyResolvedSection>();
+    }
+
+    const resolved = new Map<string, LobbyResolvedSection>();
+
+    for (const section of group) {
+      const sectionData = data.get(section.id);
+
+      if (sectionData === undefined) {
+        logger.warn(
+          { type, sectionId: section.id },
+          'Skipping lobby section that was not resolved',
+        );
+        continue;
+      }
+
+      const parsedData = LobbySectionDataSchema.safeParse(sectionData);
+
+      if (!parsedData.success) {
+        logger.warn(
+          { issues: parsedData.error.issues, type, sectionId: section.id },
+          'Skipping lobby section with invalid resolved data',
+        );
+        continue;
+      }
+
+      resolved.set(section.id, { id: section.id, type, data: parsedData.data });
+    }
+
+    return resolved;
+  }
+
+  private async validateSections(sections: PreparedLayoutSection[]) {
+    const groups = this.groupSections(sections);
+
+    await mapConcurrent(
+      [...groups.entries()],
+      SECTION_OPERATION_CONCURRENCY,
+      async ([type, group]) => {
+        const definition = this.requireDefinition(type);
+        let validation: LobbySectionValidationResult | undefined;
+
+        try {
+          validation = await definition.validate?.(
+            group.map((section) => ({ id: section.id, config: section.config })),
+          );
+        } catch (error) {
+          logger.error({ err: error, type }, 'Lobby section validation failed');
+          throw error;
+        }
+
+        if (validation && !validation.valid) {
+          throw new LobbySectionFieldError(
+            `Invalid '${type}' section configuration: ${validation.message}`,
+          );
+        }
+      },
+    );
+  }
+
+  private parseConfig(definition: LobbySectionDefinition, config: LobbySectionConfig) {
+    try {
+      return definition.parseConfig(config);
+    } catch (error) {
+      throw new LobbySectionFieldError(
+        `Invalid '${definition.type}' section configuration: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  private groupSections<T extends LobbySectionDefinitionInput & { type: string }>(sections: T[]) {
+    const groups = new Map<string, T[]>();
+
+    for (const section of sections) {
+      const group = groups.get(section.type);
+      if (group) {
+        group.push(section);
+      } else {
+        groups.set(section.type, [section]);
+      }
+    }
+
+    return groups;
+  }
+
+  private requireDefinition(type: string): LobbySectionDefinition {
+    const definition = this.sectionCatalog.get(type);
+
+    if (!definition) {
+      throw new LobbySectionFieldError(`Unknown lobby section type: ${type}`);
+    }
+
+    return definition;
+  }
+
+  private async loadAdminSections(tx: DrizzleTx) {
+    const sections = await tx
+      .select()
+      .from(lobbySection)
+      .orderBy(asc(lobbySection.sortOrder), asc(lobbySection.createdAt));
+
+    return sections.map((section) =>
+      serializeRow(section, { dateFields: ['createdAt', 'updatedAt'] as const }),
+    );
+  }
+
+  private assertUniqueSectionIds(sectionIds: string[]) {
+    if (new Set(sectionIds).size !== sectionIds.length) {
+      throw new LobbySectionFieldError('Section ids must be unique');
+    }
+  }
+
+  private assertExistingSectionIds(
+    existingSections: LobbyAdminSection[],
+    preparedSections: PreparedLayoutSection[],
+  ) {
+    const existingById = new Map(existingSections.map((section) => [section.id, section]));
+
+    for (const section of preparedSections) {
+      if (section.isNew) {
+        continue;
+      }
+
+      const existing = existingById.get(section.id);
+
+      if (!existing) {
+        throw new LobbySectionNotFoundError(section.id);
+      }
+
+      if (existing.type !== section.type) {
+        throw new LobbySectionFieldError(
+          `Section type is '${existing.type}', not '${section.type}'`,
+        );
+      }
+    }
+  }
+
+  private async replaceSections(tx: DrizzleTx, sections: PreparedLayoutSection[]) {
+    const sectionIds = sections.map((section) => section.id);
+
+    if (sectionIds.length === 0) {
+      await tx.delete(lobbySection);
+      return;
+    }
+
+    await tx.delete(lobbySection).where(notInArray(lobbySection.id, sectionIds));
+    await tx
+      .insert(lobbySection)
+      .values(
+        sections.map((section) => ({
+          id: section.id,
+          type: section.type,
+          config: section.config,
+          sortOrder: section.sortOrder,
+          isEnabled: section.isEnabled,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: lobbySection.id,
+        set: {
+          config: sql`excluded.config`,
+          sortOrder: sql`excluded.sort_order`,
+          isEnabled: sql`excluded.is_enabled`,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'validation failed';
 }

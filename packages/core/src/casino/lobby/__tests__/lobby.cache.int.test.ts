@@ -1,18 +1,21 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { eq, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import * as z from 'zod';
+import { sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
+import { createLobbySectionCatalog } from '@openora/core/contracts';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
-import { game } from '@openora/core/casino/schema/gaming';
-import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
-import { featuredSlot } from '../schema/index.js';
+import { makeEventBus } from '../../../testing/mock.js';
+import { lobbyLayout, lobbySection } from '../schema/index.js';
 import { LobbyService } from '../service/lobby.service.js';
+
+const configSchema = z.object({ value: z.string() });
 
 let db: TestDb;
 let redis: TestRedis;
 
 beforeAll(async () => {
-  db = await createTestDb([migrateGaming, migrateLobby]);
+  db = await createTestDb([migrateLobby]);
   redis = await createTestRedis();
 });
 
@@ -22,43 +25,41 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${featuredSlot}, ${game} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${lobbySection}, ${lobbyLayout} RESTART IDENTITY CASCADE`,
+  );
   await redis.flush();
 });
 
-describe('LobbyService featured cache (real PG + real Redis)', () => {
-  it('serves the second read from cache under a 30s TTL, ignoring later DB writes', async () => {
-    const [g] = await db.drizzle.db
-      .insert(game)
-      .values({ name: 'Aces', provider: 'acme', category: 'slots', thumbnailUrl: 'aces.png' })
-      .returning();
-    const [slot] = await db.drizzle.db
-      .insert(featuredSlot)
-      .values({ gameId: g.id, title: 'Big Win', placement: 'home', sortOrder: 0, isActive: true })
-      .returning();
-
-    const svc = new LobbyService(db.drizzle, new RedisCache(redis.client));
-
-    const first = await svc.getFeatured();
-    expect(first).toEqual([
+describe('LobbyService layout cache', () => {
+  it('invalidates the public layout cache when the aggregate is replaced', async () => {
+    const catalog = createLobbySectionCatalog([
       {
-        id: slot.id,
-        title: 'Big Win',
-        gameId: g.id,
-        gameName: 'Aces',
-        thumbnailUrl: 'aces.png',
-        placement: 'home',
-        sortOrder: 0,
+        type: 'text',
+        parseConfig: (config) => configSchema.parse(config),
+        async resolve(sections) {
+          return new Map(sections.map((section) => [section.id, section.config]));
+        },
       },
     ]);
+    const svc = new LobbyService(db.drizzle, makeEventBus(), catalog, new RedisCache(redis.client));
+    await svc.replaceLayout({
+      version: 0,
+      sections: [{ type: 'text', config: { value: 'first' }, isEnabled: true }],
+      ip: null,
+      userAgent: null,
+    });
+    const first = await svc.getLayout();
+    expect(first).toMatchObject([{ type: 'text', data: { value: 'first' } }]);
+    expect(await redis.client.pTTL('cache:lobby:layout')).toBeGreaterThan(0);
 
-    const pttl = await redis.client.pTTL('cache:lobby:featured');
-    expect(pttl).toBeGreaterThan(0);
-    expect(pttl).toBeLessThanOrEqual(30_000);
-
-    // TTL-only cache (no invalidation): a direct DB write stays invisible until the TTL lapses.
-    await db.drizzle.db.update(game).set({ name: 'Renamed' }).where(eq(game.id, g.id));
-    const second = await svc.getFeatured();
-    expect(second).toEqual(first);
+    const admin = await svc.getAdminLayout();
+    await svc.replaceLayout({
+      version: admin.version,
+      sections: [{ type: 'text', config: { value: 'second' }, isEnabled: true }],
+      ip: null,
+      userAgent: null,
+    });
+    expect(await svc.getLayout()).toMatchObject([{ type: 'text', data: { value: 'second' } }]);
   });
 });

@@ -15,6 +15,7 @@ import {
   ExclusionKindSchema,
 } from './compliance.js';
 import { TagKeySchema } from './tag.js';
+import { LobbyLayoutSnapshotSchema } from './lobby.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
@@ -27,6 +28,7 @@ import {
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
+const lobbyLayoutAuditSnapshotSchema = LobbyLayoutSnapshotSchema;
 
 const iamRoleEventBase = z
   .object({ roleId: UuidSchema, actorId: UuidSchema })
@@ -364,6 +366,11 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  'lobby.layout.updated': authContextBase.extend({
+    actorId: UuidSchema.optional(),
+    before: lobbyLayoutAuditSnapshotSchema,
+    after: lobbyLayoutAuditSnapshotSchema,
+  }),
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.
