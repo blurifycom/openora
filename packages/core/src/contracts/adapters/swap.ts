@@ -42,8 +42,12 @@ export type SwapWebhookEvent = {
 };
 
 export type SwapAdapter = {
-  /** Returns `null` when the vendor will not quote the pair at all; a thrown error means the call itself failed. */
+  /**
+   * Returns `null` when the vendor will not quote the pair at all; a thrown error means the call itself failed.
+   * `userId` is the player asking, so a desk can bind the quote to them and refuse it from anyone else at `execute`.
+   */
   getQuote(input: {
+    userId: string;
     fromCurrency: string;
     toCurrency: string;
     fromAmount: string;
@@ -55,6 +59,7 @@ export type SwapAdapter = {
    * quote must throw rather than silently fill at a worse price.
    */
   execute(input: {
+    userId: string;
     quoteId?: string;
     fromCurrency: string;
     toCurrency: string;
