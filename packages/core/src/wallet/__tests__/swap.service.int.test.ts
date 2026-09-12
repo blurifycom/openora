@@ -1,16 +1,30 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
+import { call } from '@orpc/server';
 import { findOneOrThrow } from '@openora/core/server';
-import type { SwapAdapter } from '@openora/core/contracts';
+import { queue, type PaymentAdapter, type SwapAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
+import {
+  mock,
+  makeAdminGuard,
+  makeAuditWriter,
+  makeEventBus,
+  makeIdentityReader,
+  makeJobQueue,
+  makePaymentProviderRegistry,
+  makeRealtimeTransport,
+  testContext,
+} from '../../testing/mock.js';
+import { createWalletRouter } from '../router/index.js';
+import type { ReconciliationService } from '../service/reconciliation.service.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletBonusCredit, walletTransaction } from '../schema/index.js';
 import {
   BonusRolloverLockedError,
   IdempotencyKeyReuseError,
   InsufficientBalanceError,
+  WalletService,
 } from '../service/wallet.service.js';
 import {
   SwapFillAmountMissingError,
@@ -49,6 +63,29 @@ function makeService(
   audit = makeAuditWriter(),
 ) {
   return new SwapService({ drizzle: db.drizzle, events, adapter, audit });
+}
+
+// The swap routes over a real DB and a real SwapService: the money path is only proven
+// once a request reaches the ledger and the response comes back off the committed rows.
+function routerWith(swap: SwapService) {
+  return createWalletRouter({
+    wallet: new WalletService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      payment: mock<PaymentAdapter>({}),
+      paymentProviders: makePaymentProviderRegistry(),
+      audit: makeAuditWriter(),
+      identityReader: makeIdentityReader(),
+    }),
+    swap,
+    adminGuard: makeAdminGuard({ caller: { userId: randomUUID(), role: 'admin' } }),
+    audit: makeAuditWriter(),
+    paymentProviders: makePaymentProviderRegistry(),
+    reconciliation: mock<ReconciliationService>({}),
+    jobQueue: makeJobQueue(),
+    reconciliationQueue: queue('wallet-reconciliation'),
+    realtime: makeRealtimeTransport(),
+  });
 }
 
 async function seedWallet(balances: Record<string, string> = { USD: '100' }) {
@@ -350,24 +387,63 @@ describe('SwapService (real PG)', () => {
     expect(await balancesOf(w.id)).toEqual({ USD: 100 });
   });
 
-  it('never credits a fill amount that is not a money value', async () => {
+  it('never credits a fill amount that is not a money value, and says so in the audit trail', async () => {
     const w = await seedWallet();
+    const audit = makeAuditWriter();
     const adapter = makeAdapter({
       execute: vi
         .fn()
         .mockResolvedValue({ externalId: 'ext-bad', status: 'completed', toAmount: 'NaN' }),
     });
 
-    await expect(
-      makeService(adapter).swap({
-        userId: w.userId,
+    const result = makeService(adapter, makeEventBus(), audit).swap({
+      userId: w.userId,
+      fromCurrency: 'USD',
+      toCurrency: 'BTC',
+      fromAmount: '100',
+      idempotencyKey: randomUUID(),
+    });
+
+    await expect(result).rejects.toBeInstanceOf(SwapFillAmountMissingError);
+    expect(await balancesOf(w.id)).toEqual({ USD: 0 });
+    expect(await legs(w.id)).toEqual([
+      expect.objectContaining({ type: 'swap_out', status: 'processing' }),
+    ]);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.swap.fill_rejected',
+        after: expect.objectContaining({ externalId: 'ext-bad', toAmount: 'NaN' }),
+      }),
+    );
+  });
+
+  it('runs a swap end to end over the route: request, ledger rows, audit row, response', async () => {
+    const w = await seedWallet();
+    const audit = makeAuditWriter();
+    const router = routerWith(makeService(makeAdapter(), makeEventBus(), audit));
+
+    const result = await call(
+      router.swap.execute,
+      {
         fromCurrency: 'USD',
         toCurrency: 'BTC',
         fromAmount: '100',
         idempotencyKey: randomUUID(),
+      },
+      { context: testContext({ auth: { userId: w.userId } }) },
+    );
+
+    expect(result).toMatchObject({ status: 'completed', toAmount: '0.00152' });
+    expect(await balancesOf(w.id)).toEqual({ USD: 0, BTC: 0.00152 });
+    expect(await legs(w.id)).toHaveLength(2);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.swap.completed',
+        resourceId: result.transactionId,
+        after: expect.objectContaining({ userId: w.userId }),
       }),
-    ).rejects.toBeInstanceOf(SwapFillAmountMissingError);
-    expect(await balancesOf(w.id)).toEqual({ USD: 0 });
+    );
   });
 
   it('leaves an async fill processing until the vendor webhook settles it', async () => {

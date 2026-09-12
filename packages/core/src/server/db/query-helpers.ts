@@ -1,4 +1,4 @@
-import { MONEY_SCALE } from '@openora/core/contracts';
+import { MONEY_SCALE, MoneyAmountSchema } from '@openora/core/contracts';
 import { sql } from 'drizzle-orm';
 import type { DrizzleTx } from './drizzle.js';
 
@@ -47,6 +47,14 @@ function fromMinorUnits(units: bigint): string {
 // moneyToNumber for the same reason moneyEquals doesn't: a float carries ~15 significant
 // digits, so at MONEY_SCALE (18) two genuinely different amounts can compare equal, or
 // worse, order backwards.
+// A vendor- or operator-supplied amount is untrusted input: a malformed string ('NaN',
+// '', '1e3') must read as "not a positive amount", never reach the ledger, and never be
+// compared as a float. `Number(x) > 0` is false for 'NaN', so a bare float guard lets it
+// through to the next comparison.
+export function isPositiveMoney(value: string): boolean {
+  return MoneyAmountSchema.safeParse(value).success && moneyCompare(value, '0') > 0;
+}
+
 export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
   const diff = toMinorUnits(a) - toMinorUnits(b);
   return diff < 0n ? -1 : diff > 0n ? 1 : 0;
