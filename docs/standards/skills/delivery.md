@@ -90,13 +90,15 @@ Use on "fix the comments", "check <reviewer>'s comments", or a PR or discussion 
 2. Fetch the threads: `gh api "repos/blurifycom/openora/pulls/<n>/comments" --paginate` for inline threads and `gh pr view <n> --json reviews,comments` for the rest. Keep the unresolved ones.
 3. **Verify each comment against the code on this branch before fixing it.** Open the file, read the surrounding code, and decide: correct | already handled | wrong on this branch | out of scope for this PR. Report that verdict per comment and do not change code for a comment that is wrong.
 4. Fix the ones that hold, smallest diff each, following the standard the comment cites.
-5. Run `pnpm verify`.
-6. Report the commit SHA and stop for explicit push confirmation.
-7. Reply per thread after the push, so the reply points at real code. Write replies in the user's voice. State what changed and the SHA, or state plainly why the comment does not apply.
-8. Report which comments were fixed, answered, and rejected.
+5. Prove the fixed flow end to end - request to database and back - before calling it fixed. Drive the real route (`call(router.x.y, input, { context })` or `bootTestApp`) against a real DB, then assert on the rows the request actually wrote and on the response read back off them. A service method called directly does not prove the route, the transaction boundary, or the audit row; leave the end-to-end assertion behind as a test.
+6. Run `pnpm verify`.
+7. Report the commit SHA and stop for explicit push confirmation.
+8. Reply per thread after the push, so the reply points at real code. Write replies in the user's voice. State what changed and the SHA, or state plainly why the comment does not apply.
+9. Report which comments were fixed, answered, and rejected.
 
 ### Rules
 
 - Never silently skip a comment. Every thread gets a fix or a stated reason.
 - Never resolve a thread you did not address.
 - A comment that is right about core but belongs in a consumer overlay is answered, not fixed here.
+- Never report a money, audit, or authz comment as fixed on the strength of a green unit test alone - the end-to-end run is what proves it.
