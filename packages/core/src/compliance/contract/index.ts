@@ -150,6 +150,18 @@ export const BulkApproveKycOutputSchema = z.object({
 });
 export type BulkApproveKycOutput = z.infer<typeof BulkApproveKycOutputSchema>;
 
+export const CountryRuleSchema = z.object({
+  id: UuidSchema,
+  countryCode: CountryCodeSchema,
+  blacklisted: z.boolean(),
+  redirectIp: z.boolean(),
+  kycRequired: z.boolean(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.nullable(),
+  updatedBy: UuidSchema.nullable(),
+});
+export type CountryRule = z.infer<typeof CountryRuleSchema>;
+
 export const GeoRuleSchema = z.object({
   id: UuidSchema,
   countryCode: CountryCodeSchema,
@@ -160,8 +172,39 @@ export type GeoRule = z.infer<typeof GeoRuleSchema>;
 
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
+export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true })
+  .extend({ confirm: z.literal(true).optional() })
+  .strict();
 export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
+
+export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
+  countryCode: true,
+  blacklisted: true,
+  redirectIp: true,
+  kycRequired: true,
+})
+  .extend({
+    expectedUpdatedAt: TimestampSchema.nullable(),
+    confirm: z.boolean().optional(),
+  })
+  .strict();
+export type UpsertCountryRuleInput = z.infer<typeof UpsertCountryRuleInputSchema>;
+
+export const GlobalKycConfigSchema = z.object({
+  enabled: z.boolean(),
+  updatedAt: TimestampSchema.nullable(),
+  updatedBy: UuidSchema.nullable(),
+});
+export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
+
+export const SetGlobalKycConfigInputSchema = z
+  .object({
+    enabled: z.boolean(),
+    confirm: z.literal(true),
+    expectedUpdatedAt: TimestampSchema.nullable(),
+  })
+  .strict();
+export type SetGlobalKycConfigInput = z.infer<typeof SetGlobalKycConfigInputSchema>;
 
 const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
@@ -194,6 +237,24 @@ export const complianceContract = {
   listGeoRules: oc
     .route({ method: 'GET', path: '/compliance/geo-rules' })
     .output(z.array(GeoRuleSchema)),
+
+  upsertCountryRule: oc
+    .route({ method: 'PUT', path: '/compliance/country-rules' })
+    .input(UpsertCountryRuleInputSchema)
+    .output(CountryRuleSchema),
+
+  listCountryRules: oc
+    .route({ method: 'GET', path: '/compliance/country-rules' })
+    .output(z.array(CountryRuleSchema)),
+
+  getGlobalKycConfig: oc
+    .route({ method: 'GET', path: '/compliance/global-kyc' })
+    .output(GlobalKycConfigSchema),
+
+  setGlobalKycConfig: oc
+    .route({ method: 'PUT', path: '/compliance/global-kyc' })
+    .input(SetGlobalKycConfigInputSchema)
+    .output(GlobalKycConfigSchema),
 
   getPlayerKyc: oc
     .route({ method: 'GET', path: '/compliance/players/{userId}/kyc' })

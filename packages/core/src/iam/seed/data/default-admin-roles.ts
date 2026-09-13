@@ -127,6 +127,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       withdrawal: R,
       audit: RW,
       analytics: R,
+      'regulatory-overview': RW,
     },
   },
   {
