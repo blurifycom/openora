@@ -18,10 +18,12 @@ import {
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
   type PlatformConfig,
+  type RgLimitsPort,
   type User,
   type WalletJobRunStatus,
 } from '@openora/core/contracts';
 import {
+  wallet,
   walletCustodySweep,
   walletJobRun,
   walletReconciliationFinding,
@@ -36,7 +38,11 @@ import type {
   WalletReconciliationFinding as WalletReconciliationFindingDto,
 } from '../contract/index.js';
 import type { WalletService } from './wallet.service.js';
-import { recordReconciliationFinding } from './reconciliation-finding.service.js';
+import {
+  OUT_OF_CYCLE_RUN_ID,
+  recordReconciliationFinding,
+  rgDecisionForLandedCredit,
+} from './reconciliation-finding.service.js';
 
 const logger = createLogger('wallet-reconciliation');
 
@@ -115,6 +121,7 @@ export type ReconciliationServiceDeps = {
   paymentProviders: PaymentProviderRegistry;
   audit: AuditWritePort;
   platformConfig?: PlatformConfig;
+  rgLimits?: RgLimitsPort;
 };
 
 /**
@@ -132,6 +139,7 @@ export class ReconciliationService {
   private readonly paymentProviders: PaymentProviderRegistry;
   private readonly audit: AuditWritePort;
   private readonly platformConfig?: PlatformConfig;
+  private readonly rgLimits?: RgLimitsPort;
 
   constructor({
     drizzle,
@@ -140,6 +148,7 @@ export class ReconciliationService {
     paymentProviders,
     audit,
     platformConfig,
+    rgLimits,
   }: ReconciliationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -147,6 +156,7 @@ export class ReconciliationService {
     this.paymentProviders = paymentProviders;
     this.audit = audit;
     this.platformConfig = platformConfig;
+    this.rgLimits = rgLimits;
   }
 
   async listFindings(filter: ListReconciliationFindingsInput) {
@@ -195,9 +205,10 @@ export class ReconciliationService {
     resolution: ReconciliationResolution,
     meta?: ClientMeta,
   ): Promise<WalletReconciliationFindingDto> {
-    return this.drizzle.db.transaction(async (txn) => {
+    const { dto, creditedBy } = await this.drizzle.db.transaction(async (txn) => {
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
+      let creditTx: WalletTransaction | undefined;
 
       if (resolution.outcome === 'credited') {
         const [finding] = await txn
@@ -224,6 +235,7 @@ export class ReconciliationService {
           throw new ReconciliationCreditMismatchError();
         }
         transactionId = tx.id;
+        creditTx = tx;
       } else {
         resolutionNote = resolution.note;
       }
@@ -251,9 +263,12 @@ export class ReconciliationService {
           .from(walletReconciliationFinding)
           .where(eq(walletReconciliationFinding.id, id));
         // Already resolved by a concurrent/earlier call: return it unchanged, no audit entry.
-        return toFindingDto(
-          findOneOrThrow(existing ? [existing] : [], new ReconciliationFindingNotFoundError(id)),
-        );
+        return {
+          dto: toFindingDto(
+            findOneOrThrow(existing ? [existing] : [], new ReconciliationFindingNotFoundError(id)),
+          ),
+          creditedBy: undefined,
+        };
       }
 
       const row = findOneOrThrow(updated, new ReconciliationFindingNotFoundError(id));
@@ -272,8 +287,76 @@ export class ReconciliationService {
         },
         ...meta,
       });
-      return toFindingDto(row);
+      return { dto: toFindingDto(row), creditedBy: creditTx ? { row, tx: creditTx } : undefined };
     });
+
+    if (creditedBy) {
+      await this.recordRgBreachForHandCredit(creditedBy.row, creditedBy.tx);
+    }
+    return dto;
+  }
+
+  /**
+   * The hand-credit counterpart of the gate `WalletService.creditDepositByAddress` runs.
+   * An admin resolving a deposit finding as `credited` puts on-chain money in the player's
+   * wallet through a `manual_credit`, which no deposit window counts and no limit refuses,
+   * so without this the poll-then-credit route is the one way past a deposit limit that
+   * leaves no trace. The credit IS the attempted move here, the opposite of the webhook
+   * path's `0`, because the gate does not count a `manual_credit` row at all.
+   *
+   * Never blocks the resolution: the admin's credit has already committed, and failing
+   * their request over a report would only lose the report - a retry finds the finding
+   * resolved and returns early. A write that fails is logged and lost; the audit row for
+   * the resolution still names the admin, the amount and the transaction.
+   */
+  private async recordRgBreachForHandCredit(
+    finding: WalletReconciliationFindingRow,
+    tx: WalletTransaction,
+  ): Promise<void> {
+    try {
+      const [holder] = await this.drizzle.db
+        .select({ userId: wallet.userId })
+        .from(wallet)
+        .where(eq(wallet.id, tx.walletId));
+      if (!holder) {
+        return;
+      }
+      const decision = await rgDecisionForLandedCredit(
+        this.drizzle.db,
+        this.rgLimits,
+        { userId: holder.userId, attempted: tx.amount, currency: tx.currency },
+        { externalId: finding.externalId, txHash: finding.txHash },
+      );
+      if (!decision) {
+        return;
+      }
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId: OUT_OF_CYCLE_RUN_ID,
+          providerName: finding.providerName,
+          kind: 'rg_limit_breach',
+          currency: tx.currency,
+          network: finding.network,
+          amount: tx.amount,
+          address: finding.address,
+          tag: finding.tag,
+          txHash: finding.txHash,
+          // The resolved finding's own id, not its externalId: the vendor id already keys
+          // a breach filed for the same deposit by the webhook path, and these two are
+          // separate credits of separate money whenever both exist.
+          externalId: finding.id,
+          transactionId: tx.id,
+          detail: `credited by hand past the player's ${decision.period} ${decision.limitType} limit of ${decision.limit} (${decision.used} in the window before this credit) - resolving finding ${finding.id}`,
+        },
+        this.audit,
+      );
+    } catch (err) {
+      logger.error(
+        { err, findingId: finding.id, transactionId: tx.id },
+        'RG breach finding for a hand-credited deposit could not be recorded',
+      );
+    }
   }
 
   /**
@@ -552,6 +635,8 @@ export class ReconciliationService {
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'unknown_at_provider'
+        AND ${walletReconciliationFinding.providerName}
+            = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
     )`;
@@ -565,7 +650,7 @@ export class ReconciliationService {
           lt(walletTransaction.createdAt, cutoff),
         ),
       )
-      // Unreported first, then oldest. Findings dedupe on (kind, externalId), so a row
+      // Unreported first, then oldest. Findings dedupe on (kind, providerName, externalId), so a row
       // already reported produces nothing on a re-run: ordering it last stops a
       // permanent backlog from filling the batch and hiding newer stuck withdrawals,
       // while still re-checking it at the vendor whenever the batch has room.
@@ -643,6 +728,7 @@ export class ReconciliationService {
     const alreadyReportedSweep = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_sweep'
+        AND ${walletReconciliationFinding.providerName} = ${walletCustodySweep.providerName}
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletCustodySweep.externalId}, ${walletCustodySweep.id}::text)
     )`;
