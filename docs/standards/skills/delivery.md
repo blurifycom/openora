@@ -16,7 +16,9 @@ Read-only until the plan is explicitly approved.
 7. Ship co-located unit and integration tests with each slice.
 8. Derive and run E2E cases from the acceptance criteria, including authz negatives, money/idempotency, and audit entries for mutations.
 9. Send E2E and review findings back to the implementer until green.
-10. Regenerate after contract or Drizzle changes, run the full verification gate, then invoke the pull-request workflow.
+10. Update the prose the change made untrue. Delegate to `docs` with the branch diff as its scope, per `docs/standards/documentation.md`, and land its edits in this PR.
+11. Run `cleaner` over the branch diff before the gate, so the PR is reviewed without the scaffolding the build left behind.
+12. Regenerate after contract or Drizzle changes, run the full verification gate, then invoke the pull-request workflow.
 
 ### Delivery rules
 
@@ -41,12 +43,13 @@ Promotion follows `feature -> dev -> stage -> tag`.
 1. Determine the current branch and target.
 2. Inspect `git status -s` and stage only this work's files.
 3. Leave foreign or pre-existing edits untouched and report them.
-4. Create a lowercase conventional commit without AI trailers or sensitive data.
-5. Run `pnpm verify`.
-6. Report the commit SHA and stop for explicit per-action push confirmation.
-7. Push only after that confirmation.
-8. Reuse an existing matching PR if present; otherwise read `.github/pull_request_template.md`, complete its actual sections, then create the PR with `gh`.
-9. Report the PR URL.
+4. Pre-flight, before the commit so both land in it rather than a follow-up: run `cleaner` over the diff, and run `docs` scoped to the diff if the change touched a module surface, an adapter contract, a config field, a standard, or an "is" claim in an ADR.
+5. Create a lowercase conventional commit without AI trailers or sensitive data.
+6. Run `pnpm verify`.
+7. Report the commit SHA and stop for explicit per-action push confirmation.
+8. Push only after that confirmation.
+9. Reuse an existing matching PR if present; otherwise read `.github/pull_request_template.md`, complete its actual sections, then create the PR with `gh`.
+10. Report the PR URL.
 
 ### Public-record rules
 

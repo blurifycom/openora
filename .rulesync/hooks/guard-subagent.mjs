@@ -61,6 +61,10 @@ const ROUTES = [
     re: /\b(acceptance criteria|responsible gaming|regulatory requirement)\b/,
   },
   {
+    agent: 'cleaner',
+    re: /\b(clean ?up (the )?(diff|branch|code)|remove (the )?(dead code|unused)|delete (the )?(dead code|unused)|simplify (the )?(diff|branch))\b/,
+  },
+  {
     agent: 'quality-reviewer',
     re: /\b(quality review|code quality|over-engineer(ed|ing)?|simplification review|duplication review)\b/,
   },
