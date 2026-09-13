@@ -2741,15 +2741,6 @@ export class WalletService {
       return;
     }
 
-    // The funds are already on chain, so the player's deposit limit cannot refuse this credit
-    // the way it refuses a PSP charge. It is still asked, with this deposit as the attempted
-    // move, and a refusal becomes a finding so a human can act on the excess.
-    const rgDecision = await this.rgDecisionForLandedDeposit(
-      depositAddress.userId,
-      event.amount,
-      event.currency,
-    );
-
     const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn
         .select()
@@ -2809,26 +2800,6 @@ export class WalletService {
     });
 
     if (!replayed) {
-      if (rgDecision && !rgDecision.allowed) {
-        await recordReconciliationFinding(
-          this.drizzle.db,
-          {
-            runId: LIVE_WEBHOOK_RUN_ID,
-            providerName: depositAddress.providerName,
-            kind: 'rg_limit_breach',
-            currency: event.currency,
-            network: event.network ?? depositAddress.network,
-            amount: event.amount,
-            address: event.address,
-            tag: event.tag ?? null,
-            txHash: event.txHash,
-            externalId: event.externalId,
-            transactionId,
-            detail: `credited over the player's ${rgDecision.period} ${rgDecision.limitType} limit of ${rgDecision.limit} (${rgDecision.used} already used) - the funds were already on chain`,
-          },
-          this.audit,
-        );
-      }
       this.events.emit('wallet.deposit.completed', {
         userId: depositAddress.userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId),
@@ -2837,23 +2808,66 @@ export class WalletService {
         transactionId,
       });
     }
+
+    // The funds are already on chain, so the player's deposit limit cannot refuse this
+    // credit the way it refuses a PSP charge. It is asked anyway, and a breach becomes a
+    // finding so a human can act on the excess.
+    //
+    // Deliberately NOT guarded by `replayed`: this write failing is what makes the vendor
+    // retry the webhook, and the retry sees the credit as a replay. The (kind, externalId)
+    // unique index is what keeps a replay from filing the finding twice, so the retry
+    // fills a gap instead of duplicating a row.
+    const rgDecision = await this.rgDecisionForLandedDeposit(depositAddress.userId, event);
+    if (rgDecision && !rgDecision.allowed) {
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId: LIVE_WEBHOOK_RUN_ID,
+          providerName: depositAddress.providerName,
+          kind: 'rg_limit_breach',
+          currency: event.currency,
+          network: event.network ?? depositAddress.network,
+          amount: event.amount,
+          address: event.address,
+          tag: event.tag ?? null,
+          txHash: event.txHash,
+          externalId: event.externalId,
+          transactionId,
+          detail: `credited past the player's ${rgDecision.period} ${rgDecision.limitType} limit of ${rgDecision.limit} (${rgDecision.used} in the window, this deposit included) - the funds were already on chain`,
+        },
+        this.audit,
+      );
+    }
   }
 
-  // Outside the credit transaction on purpose: a gate failure must never roll back a credit
-  // for funds that already arrived, and a finding is a report, so it needs no lock.
+  /**
+   * Asked AFTER the credit commits, never before: the gate counts the player's window
+   * from the database, so a pre-credit read judges every deposit against the same stale
+   * snapshot and two that land together are each allowed on their own while the window
+   * closes over the limit. Post-credit, this deposit is already inside `used`, so the
+   * attempted move is `0` - the question is "is the limit passed now", not "does one
+   * more fit". Outside the credit transaction on purpose: a gate failure must never roll
+   * back a credit for funds that already arrived, and a finding is a report, so it needs
+   * no lock.
+   */
   private async rgDecisionForLandedDeposit(
     userId: User['id'],
-    amount: string,
-    currency: string,
+    event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   ): Promise<RgLimitDecision | null> {
     if (!this.rgLimits) {
       return null;
     }
     try {
-      return await this.rgLimits.checkDeposit(this.drizzle.db, userId, amount, currency);
+      return await this.rgLimits.checkDeposit(this.drizzle.db, userId, '0', event.currency);
     } catch (err) {
       logger.error(
-        { err, userId, currency },
+        {
+          err,
+          userId,
+          currency: event.currency,
+          externalId: event.externalId,
+          txHash: event.txHash,
+        },
         'payment webhook: RG limit check failed for a deposit already on chain - crediting it unchecked',
       );
       return null;
