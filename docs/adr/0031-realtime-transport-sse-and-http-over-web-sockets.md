@@ -4,7 +4,7 @@
 **Status**: Accepted
 
 > **Update (2026-08-31)**: `RedisPubSubRealtimeTransport` shipped, superseding
-> ADR-0032's note that `InProcessRealtimeTransport` stays as `createApp`'s production
+> ADR-0039's note that `InProcessRealtimeTransport` stays as `createApp`'s production
 > default. It is deleted, not kept as a fallback: `REALTIME_TRANSPORT` now joins
 > `MESSAGE_BROKER`/`JOB_QUEUE`/`CACHE`/`RATE_LIMITER` in `assertDurableSeamsBound`
 > (`packages/core/src/server/runtime/assert-durable-seams.ts`) and auto-binds only
@@ -15,7 +15,7 @@
 > single throwaway instance, so the marginal cost is one more seam on a connection
 > most operators already have). Every test tier binds the same driver too
 > (`bootTestApp`, and each `.int.test.ts` that exercises delivery, via
-> `createTestRedis`) - see ADR-0032's own philosophy, now extended to this seam.
+> `createTestRedis`) - see ADR-0039's own philosophy, now extended to this seam.
 > **Update (2026-08-31)**: `RealtimePresence` is now genuinely shared, closing the
 > gap the note above disclosed. `RedisPresenceStore` (same file) replaces the
 > interim `LocalPresence` Map with one Redis sorted set per channel - member =

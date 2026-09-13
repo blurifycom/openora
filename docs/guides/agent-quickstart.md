@@ -95,7 +95,7 @@ Edit `packages/core/src/<domain>/<module>/plugin.ts`. Confirm the service is reg
 
 The platform is headless backend only - pages, components, and styling live in the downstream consumer repo. What you can add to the OSS:
 
-- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/`. `@openora/core/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
+- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/hooks/`. `@openora/core/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
 
 ## Step 10: Verify
 

@@ -52,7 +52,7 @@ an unbuilt core edit is invisible to them.
 ## Finish criteria
 
 - `pnpm verify --filter <package>` exits 0; schema changes have a generated migration.
-- New module/plugin registered in `extensions.config.ts`; core contract slice composed in `tools/build-contract.ts`.
+- New module/plugin registered in `extensions.config.ts`; contract slice exported from `packages/core/src/<domain>/contract/index.ts` through the domain barrel, so the composition root's `composeContract` picks it up.
 - A new or changed route has one E2E in `packages/testing` (happy + one hostile path); pure logic has a unit test; nothing mocks the database or a sibling service in-process (`docs/standards/testing.md`).
 - Every acceptance criterion satisfied - list them and confirm each.
 - Every state-changing action audited: domain event declared in `domainEventSchemas` + topic in `SUBSCRIBED_TOPICS` (`packages/core/src/audit/plugin.ts`), or `AUDIT_WRITER.record(...)`. No audit entry = not done.

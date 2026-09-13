@@ -1,8 +1,10 @@
-# ADR-0032: Tests run the production seams - the in-process doubles are deleted
+# ADR-0039: Tests run the production seams - the in-process doubles are deleted
 
 **Date**: 2026-07-25
 **Status**: Accepted
 **Supersedes**: [ADR-0010](./0010-event-driven-broker-and-microservices.md), [ADR-0014](./0014-job-queue-and-realtime-transport-seams.md), [ADR-0016](./0016-event-envelope-and-transport-agnostic-broker.md), [ADR-0028](./0028-redis-reference-adapters-cache-rate-limiting.md), [ADR-0030](./0030-distributed-only-production-seams.md) (only their "the in-process impl survives as a test-only double" clause - every seam interface, the event envelope, the Redis/BullMQ reference drivers, and the distributed-only production rule are unchanged and still in force)
+
+> **Update (2026-09-13)**: renumbered from ADR-0032 to ADR-0039. Two ADRs were filed as 0032 on the same day; the responsible-gambling one keeps the number so its 0032 -> 0036 -> 0037 chain stays in order. Nothing about this decision changed.
 
 ## Context
 
