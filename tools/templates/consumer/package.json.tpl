@@ -12,6 +12,7 @@
     "verify": "turbo run check:types check:lint test:unit",
     "gen:agents": "rulesync generate",
     "sync:agents": "node tools/sync-agents.mjs",
+    "oss:worktree": "node tools/oss-worktree.mjs",
     "prepare": "node tools/sync-agents.mjs && rulesync generate",
     "db:migrate": "pnpm -F @{{name}}/api exec openora-migrate",
     "db:seed": "pnpm -F @{{name}}/api db:seed",
