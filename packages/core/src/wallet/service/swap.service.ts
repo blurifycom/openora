@@ -3,8 +3,10 @@ import {
   createDomainError,
   createLogger,
   findOneOrThrow,
+  isPositiveMoney,
   makeConflictError,
-  moneyToNumber,
+  moneyCompare,
+  moneyEquals,
   type DrizzleService,
   type EventBus,
   type DrizzleTx,
@@ -12,6 +14,7 @@ import {
 import {
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
+  type AuditWritePort,
   type PlatformConfig,
   type RateLimitKey,
   type RateLimiterAdapter,
@@ -93,6 +96,7 @@ export class SwapService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly adapter: SwapAdapter;
+  private readonly audit: AuditWritePort;
   private readonly platformConfig?: PlatformConfig;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
 
@@ -100,12 +104,14 @@ export class SwapService {
     drizzle: DrizzleService;
     events: EventBus;
     adapter: SwapAdapter;
+    audit: AuditWritePort;
     platformConfig?: PlatformConfig;
     limiter?: RateLimiterAdapter<RateLimitKey>;
   }) {
     this.drizzle = deps.drizzle;
     this.events = deps.events;
     this.adapter = deps.adapter;
+    this.audit = deps.audit;
     this.platformConfig = deps.platformConfig;
     this.limiter = deps.limiter;
   }
@@ -126,7 +132,7 @@ export class SwapService {
   }): Promise<SwapQuote> {
     await this.rateLimit(userId);
     this.assertPair(input.fromCurrency, input.toCurrency);
-    const quote = await this.adapter.getQuote(input);
+    const quote = await this.adapter.getQuote({ ...input, userId });
 
     if (!quote) {
       throw new SwapPairUnsupportedError(input.fromCurrency, input.toCurrency);
@@ -211,7 +217,7 @@ export class SwapService {
           readLockedBonusAmount(txn, current.id, fromCurrency),
         ]);
 
-        if (moneyToNumber(available) < moneyToNumber(fromAmount)) {
+        if (moneyCompare(available, fromAmount) < 0) {
           throw new InsufficientBalanceError(available, fromAmount);
         }
 
@@ -231,6 +237,7 @@ export class SwapService {
 
     try {
       execution = await this.adapter.execute({
+        userId,
         quoteId,
         fromCurrency,
         toCurrency,
@@ -300,12 +307,25 @@ export class SwapService {
     externalId: SwapExecution['externalId'],
     toAmount: string | undefined,
   ): Promise<SwapResult> {
-    if (toAmount === undefined || Number(toAmount) <= 0) {
+    if (toAmount === undefined || !isPositiveMoney(toAmount)) {
+      // Deliberately not refunded (see #161): the desk reported a fill, so the funds may
+      // well be on its side. The hold stays and the out-leg stays `processing` - but the
+      // desk gets a row saying what the vendor actually sent, which a `stuck_swap` finding
+      // alone does not say.
+      await this.audit.record({
+        actorType: 'system',
+        action: 'wallet.swap.fill_rejected',
+        resourceType: 'wallet_transaction',
+        resourceId: out.id,
+        after: { externalId, toAmount: toAmount ?? null },
+      });
       throw new SwapFillAmountMissingError(externalId);
     }
 
     const toCurrency = this.toCurrencyOf(out);
 
+    // The transaction returns the player the row belongs to, or `undefined` when another
+    // delivery already settled this swap.
     const settled = await this.drizzle.db.transaction(async (txn) => {
       const flipped = await txn
         .update(walletTransaction)
@@ -314,9 +334,13 @@ export class SwapService {
         .returning({ id: walletTransaction.id });
 
       if (flipped.length === 0) {
-        return false;
+        return undefined;
       }
 
+      // On `txn`, not the pool: the settlement must not be gated on a read that only
+      // fills in an audit field and an event payload. A failure here rolls the credit
+      // back with it instead of leaving the in-leg uncredited and the out-leg processing.
+      const userId = await this.userIdForWallet(txn, out.walletId);
       await creditWalletBalance(txn, out.walletId, toCurrency, toAmount);
       await txn.insert(walletTransaction).values({
         walletId: out.walletId,
@@ -330,13 +354,29 @@ export class SwapService {
         // belongs to the out-leg. The in-leg points back at its own pair instead.
         metadata: JSON.stringify({ swapTransactionId: out.id, externalId }),
       });
-
-      return true;
+      // Written directly, in this transaction, even though `wallet.swap.completed` is also
+      // an event topic: a money-path record has to commit with its ledger rows. The topic
+      // must stay out of the audit plugin's SUBSCRIBED_TOPICS or the swap gets two rows.
+      await this.audit.recordInTransaction(txn, {
+        actorType: 'system',
+        action: 'wallet.swap.completed',
+        resourceType: 'wallet_transaction',
+        resourceId: out.id,
+        after: {
+          userId,
+          fromCurrency: out.currency,
+          fromAmount: out.amount,
+          toCurrency: balanceKey(toCurrency),
+          toAmount,
+          externalId,
+        },
+      });
+      return userId;
     });
 
     if (settled) {
       this.events.emit('wallet.swap.completed', {
-        userId: await this.userIdForWallet(out.walletId),
+        userId: settled,
         transactionId: out.id,
         fromCurrency: out.currency,
         fromAmount: out.amount,
@@ -364,8 +404,23 @@ export class SwapService {
       if (flipped.length === 0) {
         return;
       }
-
+      // On `txn` for the same reason as `settle` - and here it matters more: this is the
+      // failure path, so a throw before the hold is returned would leave the player down
+      // the money and replace the vendor's error with a wallet-lookup one.
+      const userId = await this.userIdForWallet(txn, out.walletId);
       await creditWalletBalance(txn, out.walletId, out.currency, out.amount);
+      await this.audit.recordInTransaction(txn, {
+        actorType: 'system',
+        action: 'wallet.swap.refunded',
+        resourceType: 'wallet_transaction',
+        resourceId: out.id,
+        after: {
+          userId,
+          currency: out.currency,
+          amount: out.amount,
+          externalId: externalId ?? null,
+        },
+      });
     });
   }
 
@@ -405,7 +460,7 @@ export class SwapService {
   ): void {
     if (
       existing.type !== 'swap_out' ||
-      Number(existing.amount) !== Number(fromAmount) ||
+      !moneyEquals(existing.amount, fromAmount) ||
       existing.currency !== balanceKey(fromCurrency)
     ) {
       throw new IdempotencyKeyReuseError();
@@ -438,8 +493,8 @@ export class SwapService {
       );
   }
 
-  private async userIdForWallet(walletId: Wallet['id']): Promise<User['id']> {
-    const [row] = await this.drizzle.db
+  private async userIdForWallet(txn: DrizzleTx, walletId: Wallet['id']): Promise<User['id']> {
+    const [row] = await txn
       .select({ userId: wallet.userId })
       .from(wallet)
       .where(eq(wallet.id, walletId));

@@ -1,0 +1,70 @@
+name: Docs audit
+
+# Deliberately no `schedule:` trigger. n8n owns the clock - the
+# `openora docs audit -> DM` workflow dispatches this one, polls it, and reports
+# the findings to Slack. Adding a cron here would give the job two schedulers.
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 'What to audit - a topic, or "full sweep" for everything.'
+        required: false
+        default: 'full sweep'
+
+concurrency:
+  group: docs-audit
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+
+      # Free and deterministic: dead links, dead anchors, dead repo paths, dead
+      # pnpm scripts, duplicate ADR numbers. Runs on every PR too, so it should
+      # already be green; it runs first here to separate mechanical rot from the
+      # semantic drift only a model can see.
+      - name: Mechanical reference check
+        run: pnpm check:refs
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # Read-only by construction: no Edit, Write, or MultiEdit in --allowedTools,
+      # so a scheduled model cannot touch a regulated codebase's prose. Fixing is
+      # a human's `docs` subagent run against these findings.
+      - name: Audit prose against code
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SCOPE: ${{ inputs.scope }}
+        run: |
+          claude -p "Audit this repo's prose documentation for drift against the actual code, scope: $SCOPE.
+
+          Apply the verification table in .rulesync/subagents/docs.md: the repo map against the real tree, the module roster against list-modules and extensions.config.ts, route and adapter claims against list-routes and list-extension-points, scaffolder flags against tools/gen/gen.ts, MCP tool docs against the server registrations, and every ADR whose Status is Accepted but whose 'is' claims the code no longer supports.
+
+          Report findings only. Make no edits. Emit a JSON array on stdout, one object per finding: {file, line, claim, reality, severity}. Severity is 'stale' when the doc contradicts the code, 'drifted' when it is merely imprecise. Emit [] when nothing is wrong." \
+            --allowedTools "Read,Grep,Glob,Bash(git *),Bash(ls *),Bash(pnpm exec *),mcp__oss-dev__list-modules,mcp__oss-dev__describe-module,mcp__oss-dev__list-routes,mcp__oss-dev__list-extension-points,mcp__oss-dev__schema-get,mcp__oss-dev__docs-search" \
+            --output-format json \
+            > audit.json
+
+      - name: Summarise
+        run: |
+          jq -r '.result' audit.json > findings.json
+          jq -r '.total_cost_usd // "unknown"' audit.json | xargs -I{} echo "cost: {} USD"
+          echo "findings: $(jq 'length' findings.json 2>/dev/null || echo 'unparseable')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-audit-findings
+          path: |
+            audit.json
+            findings.json
+          retention-days: 90

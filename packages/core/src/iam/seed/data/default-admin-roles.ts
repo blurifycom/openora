@@ -199,6 +199,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       audit: R,
       analytics: R,
       'wallet-asset': RW,
+      'swap-config': RW,
     },
   },
   {

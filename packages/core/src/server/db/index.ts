@@ -11,6 +11,7 @@ export {
   moneyToNumber,
   moneyEquals,
   moneyCompare,
+  isPositiveMoney,
   moneyScaleBy,
   moneyDivide,
   moneyAdd,

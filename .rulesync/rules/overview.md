@@ -57,4 +57,4 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 
 ## The roster
 
-Delegate to the matching named agent; do not use a generic agent for a roster task. `expert` (fuzzy ask -> requirements and acceptance criteria), `dev` (implement a spec), `module-author` (a whole new module), `plugin-author` (an overlay), `qa` (automated tests plus a hands-on walkthrough), `docs` (prose audited against the code), `operator` (consume the platform as a downstream operator would), and the reviewers `contract-reviewer`, `quality-reviewer`, `security-reviewer`.
+Delegate to the matching named agent; do not use a generic agent for a roster task. `expert` (fuzzy ask -> requirements and acceptance criteria), `dev` (implement a spec), `module-author` (a whole new module), `plugin-author` (an overlay), `qa` (automated tests plus a hands-on walkthrough), `docs` (prose audited against the code), `cleaner` (delete the surplus a branch added, before the PR), `operator` (consume the platform as a downstream operator would), and the reviewers `contract-reviewer`, `quality-reviewer`, `security-reviewer`.

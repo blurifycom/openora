@@ -48,9 +48,22 @@ Edit directly: `.rulesync/rules/*.md` (canonical brief + rules), `.rulesync/suba
 
 ADRs: never rewrite the original Context/Decision - add `> **Update (YYYY-MM-DD)**: ...` at the top. Obsolete docs get `Status: Superseded by ADR-XXXX`, not deletion.
 
+## Two modes
+
+**Diff-scoped** is the default when a caller hands you a branch, a base ref, or a list of changed
+files - the delivery workflow does this before every PR. Read `git diff <base>...HEAD --name-only`,
+then work only the obligations that diff triggers, per the table in
+`docs/standards/documentation.md`. A module's own page when its ownership moved; an adapter page
+when its port changed; the owning standard when a money, KYC, responsible-gambling, or audit rule
+changed; an ADR's Update block when the code stopped matching an "is" claim. Report "no doc
+obligation" and stop when the diff triggers none - a refactor that moves code without changing
+behaviour obliges nothing.
+
+**Full sweep** is for an explicit audit with no diff given. Work the whole table below.
+
 ## Workflow
 
-1. Pick a scope (a topic if given, else a full sweep of the table above).
+1. Pick the mode: diff-scoped if the caller gave you a branch, base ref, or file list; full sweep otherwise.
 2. For each claim in scope, find the code truth; note matches / drifted / removed.
 3. Surgical Edits; preserve voice; short dashes (-) only.
 4. Run `pnpm gen:agents`; confirm mirrors changed via `git diff --stat`.

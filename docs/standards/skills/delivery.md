@@ -5,6 +5,8 @@
 Use for an OSS platform-core feature, a consumer work-order requiring `@openora/*` changes, or a standalone core feature.
 Read-only until the plan is explicitly approved.
 
+Built-in plan mode enforces that read-only phase, but it cannot be combined with `bypassPermissions`, so an unattended run has no gate. Set `OPENORA_PLAN_GATE=1` for those runs and `guard-plan.mjs` enforces it instead: writes, commits and pushes are denied until `.claude/.plan-approved` exists, and only a human can create that marker. A `PreToolUse` denial holds in every permission mode, including `--dangerously-skip-permissions` and `claude -p`. The gate is off by default.
+
 ### Workflow
 
 1. Resolve the input and collect scoped context from the ticket (read whole per `docs/agents/issue-tracker.md`: comments, images, linked spec pages), relevant ADRs, generated contract surfaces, matching standards, source, and prior design discussion.
@@ -16,7 +18,9 @@ Read-only until the plan is explicitly approved.
 7. Ship co-located unit and integration tests with each slice.
 8. Derive and run E2E cases from the acceptance criteria, including authz negatives, money/idempotency, and audit entries for mutations.
 9. Send E2E and review findings back to the implementer until green.
-10. Regenerate after contract or Drizzle changes, run the full verification gate, then invoke the pull-request workflow.
+10. Update the prose the change made untrue. Delegate to `docs` with the branch diff as its scope, per `docs/standards/documentation.md`, and land its edits in this PR.
+11. Run `cleaner` over the branch diff before the gate, so the PR is reviewed without the scaffolding the build left behind.
+12. Regenerate after contract or Drizzle changes, run the full verification gate, then invoke the pull-request workflow.
 
 ### Delivery rules
 
@@ -41,17 +45,19 @@ Promotion follows `feature -> dev -> stage -> tag`.
 1. Determine the current branch and target.
 2. Inspect `git status -s` and stage only this work's files.
 3. Leave foreign or pre-existing edits untouched and report them.
-4. Create a lowercase conventional commit without AI trailers or sensitive data.
-5. Run `pnpm verify`.
-6. Report the commit SHA and stop for explicit per-action push confirmation.
-7. Push only after that confirmation.
-8. Reuse an existing matching PR if present; otherwise read `.github/pull_request_template.md`, complete its actual sections, then create the PR with `gh`.
-9. Report the PR URL.
+4. Pre-flight, before the commit so both land in it rather than a follow-up: run `cleaner` over the diff, and run `docs` scoped to the diff if the change touched a module surface, an adapter contract, a config field, a standard, or an "is" claim in an ADR.
+5. Create a lowercase conventional commit without AI trailers or sensitive data.
+6. Run `pnpm verify`.
+7. Report the commit SHA and stop for explicit per-action push confirmation.
+8. Push only after that confirmation.
+9. Reuse an existing matching PR if present; otherwise read `.github/pull_request_template.md`, complete its actual sections, then create the PR with `gh`.
+10. Report the PR URL.
 
 ### Public-record rules
 
 - Do not put internal URLs, secrets, tokens, customer or operator names, PII, internal hosts, or paths in commit messages, PR titles, or PR descriptions.
 - Refer to tickets by bare key only.
+- A PR paired with a downstream consumer change uses the consumer's branch name, which is what pairs them. Neither request links to the other, and this PR never names the consumer, because this repo is public.
 
 ## Fix pipeline
 
@@ -90,13 +96,15 @@ Use on "fix the comments", "check <reviewer>'s comments", or a PR or discussion 
 2. Fetch the threads: `gh api "repos/blurifycom/openora/pulls/<n>/comments" --paginate` for inline threads and `gh pr view <n> --json reviews,comments` for the rest. Keep the unresolved ones.
 3. **Verify each comment against the code on this branch before fixing it.** Open the file, read the surrounding code, and decide: correct | already handled | wrong on this branch | out of scope for this PR. Report that verdict per comment and do not change code for a comment that is wrong.
 4. Fix the ones that hold, smallest diff each, following the standard the comment cites.
-5. Run `pnpm verify`.
-6. Report the commit SHA and stop for explicit push confirmation.
-7. Reply per thread after the push, so the reply points at real code. Write replies in the user's voice. State what changed and the SHA, or state plainly why the comment does not apply.
-8. Report which comments were fixed, answered, and rejected.
+5. Prove the fixed flow end to end - request to database and back - before calling it fixed. Drive the real route (`call(router.x.y, input, { context })` or `bootTestApp`) against a real DB, then assert on the rows the request actually wrote and on the response read back off them. A service method called directly does not prove the route, the transaction boundary, or the audit row; leave the end-to-end assertion behind as a test.
+6. Run `pnpm verify`.
+7. Report the commit SHA and stop for explicit push confirmation.
+8. Reply per thread after the push, so the reply points at real code. Write replies in the user's voice. State what changed and the SHA, or state plainly why the comment does not apply.
+9. Report which comments were fixed, answered, and rejected.
 
 ### Rules
 
 - Never silently skip a comment. Every thread gets a fix or a stated reason.
 - Never resolve a thread you did not address.
 - A comment that is right about core but belongs in a consumer overlay is answered, not fixed here.
+- Never report a money, audit, or authz comment as fixed on the strength of a green unit test alone - the end-to-end run is what proves it.

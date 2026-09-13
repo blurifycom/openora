@@ -134,10 +134,12 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
+
 export const ExchangeRateConfigSchema = z
   .object({
     /** Comparison currency the fx module derives a cross rate against. Absent = 'USD'. */
-    pivot: CurrencyCodeSchema.default('USD'),
+    pivot: CurrencyCodeSchema.default(DEFAULT_EXCHANGE_RATE_PIVOT),
     freshTtlMs: z.number().int().positive().default(60_000),
     hardMaxAgeMs: z
       .number()
@@ -149,6 +151,11 @@ export const ExchangeRateConfigSchema = z
   .strict();
 
 export type ExchangeRateConfig = z.infer<typeof ExchangeRateConfigSchema>;
+
+/** The pivot every fx conversion targets. One resolver, so no module converts against another. */
+export function resolveExchangeRatePivot(config: ExchangeRateConfig | undefined): string {
+  return (config?.pivot ?? DEFAULT_EXCHANGE_RATE_PIVOT).toUpperCase();
+}
 
 export const NotificationsConfigSchema = z
   .object({

@@ -1,6 +1,6 @@
-# Capture the staged set first: lint:fix/format rewrite files, and we must re-add
-# ONLY these so the fixes land in this commit without dragging in unrelated
-# unstaged changes.
+# `pnpm verify` is check-only - nothing in it rewrites a file. Re-add the staged
+# set anyway so a fix applied by hand mid-gate lands in this commit, and only
+# that set, so unrelated unstaged work is never dragged in.
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
 pnpm verify
