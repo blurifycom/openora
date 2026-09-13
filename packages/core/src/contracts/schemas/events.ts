@@ -15,6 +15,7 @@ import {
   RgInitiatorSchema,
   ExclusionKindSchema,
 } from './compliance.js';
+import { LobbyLayoutSnapshotSchema } from './lobby.js';
 import { CountryCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -28,6 +29,7 @@ import {
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
+const lobbyLayoutAuditSnapshotSchema = LobbyLayoutSnapshotSchema;
 
 const iamRoleEventBase = z
   .object({ roleId: UuidSchema, actorId: UuidSchema })
@@ -373,6 +375,11 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  'lobby.layout.updated': authContextBase.extend({
+    actorId: UuidSchema.optional(),
+    before: lobbyLayoutAuditSnapshotSchema,
+    after: lobbyLayoutAuditSnapshotSchema,
+  }),
   // Backoffice game-catalog management (actorId = acting admin UUID).
   'gaming.provider.created': authContextBase.extend({
     providerId: UuidSchema,

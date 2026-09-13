@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import { RedisCache } from '@openora/core/server';
+import { createLobbySectionCatalog } from '@openora/core/contracts';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import {
   game,
@@ -11,8 +13,21 @@ import {
 } from '@openora/core/casino/schema/gaming';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
-import { featuredSlot, lobbyCategory, lobbyCategoryGame } from '../schema/index.js';
+import { makeEventBus } from '../../../testing/mock.js';
+import {
+  featuredSlot,
+  lobbyCategory,
+  lobbyCategoryGame,
+  lobbyLayout,
+  lobbySection,
+} from '../schema/index.js';
 import { LobbyService } from '../service/lobby.service.js';
+
+const configSchema = z.object({ value: z.string() });
+
+function makeLobbyService(cache?: RedisCache) {
+  return new LobbyService(db.drizzle, makeEventBus(), createLobbySectionCatalog([]), cache);
+}
 
 let db: TestDb;
 let redis: TestRedis;
@@ -29,7 +44,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${featuredSlot}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${lobbySection}, ${lobbyLayout}, ${featuredSlot}, ${lobbyCategoryGame}, ${lobbyCategory}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
 });
@@ -63,7 +78,7 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
       .values({ gameId: g.id, title: 'Big Win', placement: 'home', sortOrder: 0, isActive: true })
       .returning();
 
-    const svc = new LobbyService(db.drizzle, new RedisCache(redis.client));
+    const svc = makeLobbyService(new RedisCache(redis.client));
 
     const first = await svc.getFeatured();
     expect(first).toEqual([
@@ -119,7 +134,7 @@ describe('LobbyService public game gates (real PG)', () => {
       .set({ isActive: false })
       .where(eq(gameProvider.id, orphaned.provider.id));
 
-    const svc = new LobbyService(db.drizzle);
+    const svc = makeLobbyService();
     expect((await svc.search('gate search')).map((r) => r.name)).toEqual(['Gate Search Live']);
   });
 
@@ -154,7 +169,7 @@ describe('LobbyService public game gates (real PG)', () => {
       { gameId: live.row.id, categoryId: hiddenCategory!.id },
     ]);
 
-    const svc = new LobbyService(db.drizzle);
+    const svc = makeLobbyService();
     const feed = await svc.getCategoryGames(category!.slug);
     expect(feed.games.map((g) => g.name)).toEqual(['Gate Feed Live']);
     expect(feed.games[0]?.categories.map((entry) => entry.name)).toEqual(['Visible']);
@@ -186,7 +201,7 @@ describe('LobbyService public game gates (real PG)', () => {
       .insert(gameCategoryGame)
       .values({ gameId: live.row.id, categoryId: tagged!.id });
 
-    const feed = await new LobbyService(db.drizzle).getCategoryGames(category!.slug);
+    const feed = await makeLobbyService().getCategoryGames(category!.slug);
     expect(feed.games[0]?.categories).toEqual([
       expect.objectContaining({ name: 'Slots', translations: { de: { name: 'Spielautomaten' } } }),
     ]);
@@ -207,9 +222,42 @@ describe('LobbyService public game gates (real PG)', () => {
       { gameId: orphaned.row.id, title: 'Orphaned', placement: 'home', sortOrder: 2 },
     ]);
 
-    const featured = await new LobbyService(db.drizzle).getFeatured();
+    const featured = await makeLobbyService().getFeatured();
 
     expect(featured).toHaveLength(1);
     expect(featured[0]).toMatchObject({ title: 'Live', gameId: live.row.id });
+  });
+});
+
+describe('LobbyService layout cache', () => {
+  it('invalidates the public layout cache when the aggregate is replaced', async () => {
+    const catalog = createLobbySectionCatalog([
+      {
+        type: 'text',
+        parseConfig: (config) => configSchema.parse(config),
+        async resolve(sections) {
+          return new Map(sections.map((section) => [section.id, section.config]));
+        },
+      },
+    ]);
+    const svc = new LobbyService(db.drizzle, makeEventBus(), catalog, new RedisCache(redis.client));
+    await svc.replaceLayout({
+      version: 0,
+      sections: [{ type: 'text', config: { value: 'first' }, isEnabled: true }],
+      ip: null,
+      userAgent: null,
+    });
+    const first = await svc.getLayout();
+    expect(first).toMatchObject([{ type: 'text', data: { value: 'first' } }]);
+    expect(await redis.client.pTTL('cache:lobby:layout')).toBeGreaterThan(0);
+
+    const admin = await svc.getAdminLayout();
+    await svc.replaceLayout({
+      version: admin.version,
+      sections: [{ type: 'text', config: { value: 'second' }, isEnabled: true }],
+      ip: null,
+      userAgent: null,
+    });
+    expect(await svc.getLayout()).toMatchObject([{ type: 'text', data: { value: 'second' } }]);
   });
 });
