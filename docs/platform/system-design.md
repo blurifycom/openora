@@ -289,7 +289,7 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 20 modules, 261 routes, 45 adapter ports, 117 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 20 modules, 262 routes, 46 adapter ports, 118 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                    | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
@@ -303,7 +303,7 @@ Generated from `docs/catalog.json` - 20 modules, 261 routes, 45 adapter ports, 1
 | `fx`                          | exchange-rate                                              | exchange_rate_quote                                                                 | 2      |
 | `@openora/core/iam`           | iam                                                        | admin_invitation, admin_role, admin_role_assignment, admin_role_permission          | 17     |
 | `@openora/core/mail`          | mail                                                       | (owns none - reads through ports)                                                   | 0      |
-| `@openora/core/pam`           | identity · player-management · player-note · profile · tag | account, admin_trusted_device, phone_verification_session, player + 9 more          | 65     |
+| `@openora/core/pam`           | identity · player-management · player-note · profile · tag | account, admin_trusted_device, phone_verification_session, player + 9 more          | 66     |
 | `@openora/core/wallet`        | wallet                                                     | auto_withdrawal_rule, wallet, wallet_asset, wallet_auto_withdrawal_config + 10 more | 38     |
 
 <!-- /gen:catalog-reference -->

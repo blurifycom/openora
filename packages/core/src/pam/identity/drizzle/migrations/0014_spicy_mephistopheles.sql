@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "anti_phishing_code" text;

@@ -202,6 +202,8 @@ export type { SmsAdapter } from './sms.js';
 export { SMS_ADAPTER } from './sms.js';
 export type { EmailTemplateRenderer, RenderedEmail } from './email-template.js';
 export { EMAIL_TEMPLATE_RENDERER } from './email-template.js';
+export type { MailRecipient, MailRecipientDirectory } from './mail-recipient-directory.js';
+export { MAIL_RECIPIENT_DIRECTORY } from './mail-recipient-directory.js';
 
 export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
 export { ERROR_TRACKING } from './error-tracking.js';
