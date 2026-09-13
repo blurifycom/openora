@@ -37,8 +37,10 @@ try {
 // Lint the edited file (no --fix). oxlint exits non-zero only on error-severity
 // diagnostics - so a freshly introduced import cycle (import/no-cycle) or boundary
 // violation is rejected (exit 2) and the capped report is fed back to the agent.
+let lintOutput = '';
+
 try {
-  execSync(`pnpm exec oxlint "${filePath}"`, { stdio: 'pipe' });
+  lintOutput = execSync(`pnpm exec oxlint "${filePath}"`, { stdio: 'pipe' }).toString();
 } catch (e) {
   const output = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');
 
@@ -46,6 +48,33 @@ try {
     process.stderr.write(`oxlint reported an error after editing ${filePath}:\n${cap(output)}`);
     process.exit(2);
   }
+
+  lintOutput = output;
+}
+
+// oxlint exits 0 on warnings, so the block above never sees them - which left
+// every rule still ramping at `warn` invisible while code was being written, and
+// discoverable only in a full lint run after the fact. Feed them back as context
+// instead: informative, not blocking, so a rule mid-ramp can still teach without
+// failing the edit. Claude reads `additionalContext`; the other CLIs read the
+// exit code and ignore this line.
+const warnings = lintOutput
+  .split('\n')
+  .filter((line) => line.includes('warning anti-slop('))
+  .slice(0, 10);
+
+if (warnings.length > 0) {
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext:
+          `anti-slop warnings in ${filePath} - these enforce docs/standards/types.md ` +
+          `and testing.md. Fix them now if the code you just wrote caused them; ` +
+          `leave pre-existing ones alone.\n${cap(warnings.join('\n'))}`,
+      },
+    }),
+  );
 }
 
 // Resolve the owning workspace package (apps/<x> or packages/<group>/<x>).
