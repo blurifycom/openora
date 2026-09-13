@@ -52,7 +52,7 @@ describe('gaming category translations API', () => {
     const create = await admin.post('/backoffice/gaming/categories', {
       slug,
       name: 'Table Games',
-      translations: { DE: { name: 'Tischspiele' } },
+      translations: { de: { name: 'Tischspiele' } },
     });
     expect(create.status).toBe(200);
     const created = object(await create.json());
@@ -60,21 +60,21 @@ describe('gaming category translations API', () => {
     if (typeof categoryId !== 'string') {
       throw new Error('category response has no id');
     }
-    expect(created['translations']).toEqual({ DE: { name: 'Tischspiele' } });
+    expect(created['translations']).toEqual({ de: { name: 'Tischspiele' } });
 
     const adminDetail = await admin.get(`/backoffice/gaming/categories/${categoryId}`);
     expect(adminDetail.status).toBe(200);
     expect(object(await adminDetail.json())['translations']).toEqual({
-      DE: { name: 'Tischspiele' },
+      de: { name: 'Tischspiele' },
     });
 
     const replacement = await admin.patch(`/backoffice/gaming/categories/${categoryId}`, {
       id: categoryId,
-      translations: { FR: { name: 'Jeux de table' } },
+      translations: { fr: { name: 'Jeux de table' } },
     });
     expect(replacement.status).toBe(200);
     expect(object(await replacement.json())['translations']).toEqual({
-      FR: { name: 'Jeux de table' },
+      fr: { name: 'Jeux de table' },
     });
 
     const omitted = await admin.patch(`/backoffice/gaming/categories/${categoryId}`, {
@@ -83,18 +83,22 @@ describe('gaming category translations API', () => {
     });
     expect(omitted.status).toBe(200);
     expect(object(await omitted.json())['translations']).toEqual({
-      FR: { name: 'Jeux de table' },
+      fr: { name: 'Jeux de table' },
     });
 
-    const gaming = await admin.get('/gaming/categories');
+    const gaming = await admin.get('/gaming/categories?page=1&limit=100');
     expect(gaming.status).toBe(200);
     expect(await gaming.json()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: categoryId,
-          translations: { FR: { name: 'Jeux de table' } },
-        }),
-      ]),
+      expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: categoryId,
+            translations: { fr: { name: 'Jeux de table' } },
+          }),
+        ]),
+        page: 1,
+        limit: 100,
+      }),
     );
 
     const adminList = await admin.get('/backoffice/gaming/categories?page=1&limit=50');
@@ -104,7 +108,7 @@ describe('gaming category translations API', () => {
         items: expect.arrayContaining([
           expect.objectContaining({
             id: categoryId,
-            translations: { FR: { name: 'Jeux de table' } },
+            translations: { fr: { name: 'Jeux de table' } },
           }),
         ]),
       }),
@@ -179,9 +183,9 @@ describe('gaming catalog administration API', () => {
       isActive: false,
     });
 
-    const hiddenProviders = await testApp.app.request('/gaming/providers');
+    const hiddenProviders = await testApp.app.request('/gaming/providers?page=1&limit=100');
     expect(hiddenProviders.status).toBe(200);
-    expect(await hiddenProviders.json()).not.toContainEqual(
+    expect(object(await hiddenProviders.json())['items']).not.toContainEqual(
       expect.objectContaining({ id: providerId }),
     );
 
@@ -284,9 +288,9 @@ describe('gaming catalog administration API', () => {
       isActive: true,
     });
 
-    const visibleProviders = await testApp.app.request('/gaming/providers');
+    const visibleProviders = await testApp.app.request('/gaming/providers?page=1&limit=100');
     expect(visibleProviders.status).toBe(200);
-    expect(await visibleProviders.json()).toContainEqual(
+    expect(object(await visibleProviders.json())['items']).toContainEqual(
       expect.objectContaining({ id: providerId, slug: providerSlug, name: 'E2E Studio Updated' }),
     );
 

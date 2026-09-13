@@ -169,12 +169,20 @@ describe('gaming catalog router authz', () => {
       .values({ gameId: g!.id, categoryId: category!.id });
 
     const { router } = routerWith(denyingGuard());
-    await expect(call(router.listProviders, {}, { context: CTX })).resolves.toMatchObject([
-      { slug: 'acme' },
-    ]);
-    await expect(call(router.listCategories, {}, { context: CTX })).resolves.toMatchObject([
-      { slug: 'slots', translations: {} },
-    ]);
+    await expect(call(router.listProviders, {}, { context: CTX })).resolves.toMatchObject({
+      items: [{ slug: 'acme' }],
+      total: 1,
+      page: 1,
+      limit: 100,
+    });
+    await expect(
+      call(router.listCategories, { page: 1, limit: 10 }, { context: CTX }),
+    ).resolves.toMatchObject({
+      items: [{ slug: 'slots', translations: {} }],
+      total: 1,
+      page: 1,
+      limit: 10,
+    });
     await expect(
       call(router.getProviderBySlug, { slug: 'acme' }, { context: CTX }),
     ).resolves.toMatchObject({ slug: 'acme' });
@@ -205,23 +213,23 @@ describe('gaming catalog router authz', () => {
       {
         slug: 'table-games',
         name: 'Table Games',
-        translations: { DE: { name: 'Tischspiele' } },
+        translations: { de: { name: 'Tischspiele' } },
       },
       { context: CTX },
     );
     expect(created).toMatchObject({
       slug: 'table-games',
       sortOrder: 0,
-      translations: { DE: { name: 'Tischspiele' } },
+      translations: { de: { name: 'Tischspiele' } },
     });
 
     await expect(
       call(
         router.updateCategory,
-        { id: created.id, translations: { FR: { name: 'Jeux de table' } } },
+        { id: created.id, translations: { fr: { name: 'Jeux de table' } } },
         { context: CTX },
       ),
-    ).resolves.toMatchObject({ translations: { FR: { name: 'Jeux de table' } } });
+    ).resolves.toMatchObject({ translations: { fr: { name: 'Jeux de table' } } });
 
     const provider = await call(
       router.createProvider,

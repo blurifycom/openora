@@ -202,7 +202,7 @@ describe('GamingService lobby (real PG)', () => {
     const table = await seedCategory({
       slug: 'table-games',
       name: 'Table Games',
-      translations: { DE: { name: 'Tischspiele' } },
+      translations: { de: { name: 'Tischspiele' } },
     });
     const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack', isActive: false });
     const created = await seedGame({ name: 'Roulette' }, [table.id, blackjack.id]);
@@ -212,7 +212,7 @@ describe('GamingService lobby (real PG)', () => {
       name: 'Roulette',
       categories: [
         { slug: 'blackjack', translations: {} },
-        { slug: 'table-games', translations: { DE: { name: 'Tischspiele' } } },
+        { slug: 'table-games', translations: { de: { name: 'Tischspiele' } } },
       ],
     });
     await expect(svc.getGame(created.id, { activeOnly: true })).resolves.toMatchObject({

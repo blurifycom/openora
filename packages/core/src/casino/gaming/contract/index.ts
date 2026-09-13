@@ -121,7 +121,8 @@ export const gamingContract = {
 
   listProviders: oc
     .route({ method: 'GET', path: '/gaming/providers' })
-    .output(z.array(GameProviderSummarySchema)),
+    .input(PageQuerySchema)
+    .output(paginated(GameProviderSummarySchema)),
 
   getProviderBySlug: oc
     .route({ method: 'GET', path: '/gaming/providers/{slug}' })
@@ -130,7 +131,8 @@ export const gamingContract = {
 
   listCategories: oc
     .route({ method: 'GET', path: '/gaming/categories' })
-    .output(z.array(GameCategorySummaryWithTranslationsSchema)),
+    .input(PageQuerySchema)
+    .output(paginated(GameCategorySummaryWithTranslationsSchema)),
 
   getCategoryBySlug: oc
     .route({ method: 'GET', path: '/gaming/categories/{slug}' })

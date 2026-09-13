@@ -65,7 +65,7 @@ export function createGamingRouter({
 
     listRounds: os.listRounds.handler(({ context }) => gaming.getUserRounds(getUserId(context))),
 
-    listProviders: os.listProviders.handler(() => providers.listActiveProviders()),
+    listProviders: os.listProviders.handler(({ input }) => providers.listActiveProviders(input)),
 
     getProviderBySlug: os.getProviderBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameProviderNotFoundError }, () =>
@@ -73,7 +73,9 @@ export function createGamingRouter({
       ),
     ),
 
-    listCategories: os.listCategories.handler(() => categories.listActiveCategories()),
+    listCategories: os.listCategories.handler(({ input }) =>
+      categories.listActiveCategories(input),
+    ),
 
     getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>

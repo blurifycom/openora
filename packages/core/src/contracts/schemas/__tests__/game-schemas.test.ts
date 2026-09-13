@@ -6,20 +6,25 @@ import {
 } from '../game.js';
 
 describe('game category translations', () => {
-  it('accepts uppercase ISO country keys and bounded names', () => {
+  it('accepts BCP 47 language keys and bounded names', () => {
     const result = GameCategoryTranslationsSchema.safeParse({
-      DE: { name: 'Tischspiele' },
-      FR: { name: 'Jeux de table' },
+      de: { name: 'Tischspiele' },
+      'pt-BR': { name: 'Jogos de mesa' },
+      'zh-Hant-TW': { name: 'Table games' },
     });
 
     expect(result.success).toBe(true);
   });
 
-  it('rejects invalid country keys and category names', () => {
-    expect(GameCategoryTranslationsSchema.safeParse({ de: { name: 'Slots' } }).success).toBe(false);
-    expect(GameCategoryTranslationsSchema.safeParse({ DE: { name: '' } }).success).toBe(false);
+  it('rejects malformed language keys and invalid category names', () => {
+    for (const key of ['', 'd', 'de_DE', 'de-', '-de']) {
+      expect(GameCategoryTranslationsSchema.safeParse({ [key]: { name: 'Slots' } }).success).toBe(
+        false,
+      );
+    }
+    expect(GameCategoryTranslationsSchema.safeParse({ de: { name: '' } }).success).toBe(false);
     expect(
-      GameCategoryTranslationsSchema.safeParse({ DE: { name: 'x'.repeat(129) } }).success,
+      GameCategoryTranslationsSchema.safeParse({ de: { name: 'x'.repeat(129) } }).success,
     ).toBe(false);
   });
 

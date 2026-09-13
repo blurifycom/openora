@@ -88,18 +88,24 @@ export class GameProviderService {
     private readonly events: EventBus,
   ) {}
 
-  async listActiveProviders() {
-    const rows = await this.drizzle.db
-      .select({
-        id: gameProvider.id,
-        slug: gameProvider.slug,
-        name: gameProvider.name,
-        logoUrl: gameProvider.logoUrl,
-      })
-      .from(gameProvider)
-      .where(eq(gameProvider.isActive, true))
-      .orderBy(asc(gameProvider.name));
-    return rows;
+  async listActiveProviders({ page, limit }: { page: number; limit: number }) {
+    const where = eq(gameProvider.isActive, true);
+    const [items, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: gameProvider.id,
+          slug: gameProvider.slug,
+          name: gameProvider.name,
+          logoUrl: gameProvider.logoUrl,
+        })
+        .from(gameProvider)
+        .where(where)
+        .orderBy(asc(gameProvider.name), asc(gameProvider.slug))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(gameProvider).where(where),
+    ]);
+    return { items, total: Number(n), page, limit };
   }
 
   async listProvidersAdmin({

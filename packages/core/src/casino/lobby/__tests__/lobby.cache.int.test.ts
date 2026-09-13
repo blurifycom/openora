@@ -179,7 +179,7 @@ describe('LobbyService public game gates (real PG)', () => {
         slug: `tagged-${tag}`,
         name: 'Slots',
         isActive: true,
-        translations: { DE: { name: 'Spielautomaten' } },
+        translations: { de: { name: 'Spielautomaten' } },
       })
       .returning();
     await db.drizzle.db
@@ -188,7 +188,7 @@ describe('LobbyService public game gates (real PG)', () => {
 
     const feed = await new LobbyService(db.drizzle).getCategoryGames(category!.slug);
     expect(feed.games[0]?.categories).toEqual([
-      expect.objectContaining({ name: 'Slots', translations: { DE: { name: 'Spielautomaten' } } }),
+      expect.objectContaining({ name: 'Slots', translations: { de: { name: 'Spielautomaten' } } }),
     ]);
   });
 

@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { UuidSchema } from './common.js';
-import { CountryCodeSchema } from './igaming-config.js';
+import { LanguageSchema } from './identity.js';
 
 export const GAME_TYPES = ['original', 'casino', 'sportsbook'] as const;
 export const GameTypeSchema = z.enum(GAME_TYPES);
@@ -26,8 +26,11 @@ export const GameCategoryTranslationSchema = z
     name: GameCategoryNameSchema,
   })
   .strict();
+// Keyed by BCP 47 language tag, the same value a client reads from `user.language`: a
+// country is not a language (BE, CH and CA each need several). The regex rejects the
+// empty or malformed keys the bare length bound in LanguageSchema would let through.
 export const GameCategoryTranslationsSchema = z.record(
-  CountryCodeSchema,
+  LanguageSchema.regex(/^[a-zA-Z]{2,8}(?:-[a-zA-Z0-9]{2,8})*$/),
   GameCategoryTranslationSchema,
 );
 export type GameCategoryTranslations = z.infer<typeof GameCategoryTranslationsSchema>;

@@ -44,15 +44,18 @@ beforeEach(async () => {
 });
 
 describe('GameCategoryService (real PG)', () => {
-  it('listActiveCategories returns only active categories ordered by sortOrder', async () => {
+  it('listActiveCategories pages only active categories ordered by sortOrder', async () => {
     await seedCategory({ slug: 'b-cat', name: 'B', sortOrder: 2 });
     await seedCategory({ slug: 'a-cat', name: 'A', sortOrder: 1 });
     await seedCategory({ slug: 'old-cat', name: 'Old', isActive: false, sortOrder: 0 });
 
     const { svc } = makeService();
-    const rows = await svc.listActiveCategories();
+    const firstPage = await svc.listActiveCategories({ page: 1, limit: 1 });
 
-    expect(rows.map((r) => r.slug)).toEqual(['a-cat', 'b-cat']);
+    expect(firstPage).toMatchObject({ total: 2, page: 1, limit: 1 });
+    expect(firstPage.items.map((r) => r.slug)).toEqual(['a-cat']);
+    const secondPage = await svc.listActiveCategories({ page: 2, limit: 1 });
+    expect(secondPage.items.map((r) => r.slug)).toEqual(['b-cat']);
   });
 
   it('createCategory stores the row with defaults and emits an event', async () => {
@@ -115,23 +118,23 @@ describe('GameCategoryService (real PG)', () => {
     const created = await seedCategory({
       slug: 'slots',
       name: 'Slots',
-      translations: { DE: { name: 'Automaten' }, FR: { name: 'Machines à sous' } },
+      translations: { de: { name: 'Automaten' }, fr: { name: 'Machines à sous' } },
     });
     const { svc } = makeService();
 
     const replaced = await svc.updateCategory({
       id: created.id,
-      translations: { DE: { name: 'Spielautomaten' } },
+      translations: { de: { name: 'Spielautomaten' } },
       ...ACTOR,
     });
-    expect(replaced.translations).toEqual({ DE: { name: 'Spielautomaten' } });
+    expect(replaced.translations).toEqual({ de: { name: 'Spielautomaten' } });
 
     const renamed = await svc.updateCategory({
       id: created.id,
       name: 'Slot Machines',
       ...ACTOR,
     });
-    expect(renamed.translations).toEqual({ DE: { name: 'Spielautomaten' } });
+    expect(renamed.translations).toEqual({ de: { name: 'Spielautomaten' } });
 
     const cleared = await svc.updateCategory({
       id: created.id,

@@ -65,7 +65,7 @@ describe('mapEventToRecord: gaming.category.created', () => {
       categoryId,
       slug: 'table-games',
       name: 'Table Games',
-      translations: { DE: { name: 'Tischspiele' } },
+      translations: { de: { name: 'Tischspiele' } },
       icon: null,
       sortOrder: 0,
       isActive: true,
@@ -76,7 +76,7 @@ describe('mapEventToRecord: gaming.category.created', () => {
       actorType: 'admin',
       resourceType: 'game_category',
       resourceId: categoryId,
-      after: { translations: { DE: { name: 'Tischspiele' } } },
+      after: { translations: { de: { name: 'Tischspiele' } } },
     });
   });
 });

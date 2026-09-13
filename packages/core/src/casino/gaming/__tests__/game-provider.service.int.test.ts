@@ -54,21 +54,22 @@ beforeEach(async () => {
 });
 
 describe('GameProviderService (real PG)', () => {
-  it('listActiveProviders returns only active providers, ordered by name, as summaries', async () => {
+  it('listActiveProviders pages only active providers, ordered by name, as summaries', async () => {
     await seedProvider({ slug: 'zeta-studio', name: 'Zeta', isActive: true });
     await seedProvider({ slug: 'alpha-studio', name: 'Alpha', isActive: true });
     await seedProvider({ slug: 'retired-studio', name: 'Retired', isActive: false });
 
     const { svc } = makeService();
-    const rows = await svc.listActiveProviders();
+    const firstPage = await svc.listActiveProviders({ page: 1, limit: 1 });
 
-    expect(rows.map((r) => r.slug)).toEqual(['alpha-studio', 'zeta-studio']);
-    expect(rows[0]).toEqual({
-      id: expect.any(String),
-      slug: 'alpha-studio',
-      name: 'Alpha',
-      logoUrl: null,
+    expect(firstPage).toEqual({
+      items: [{ id: expect.any(String), slug: 'alpha-studio', name: 'Alpha', logoUrl: null }],
+      total: 2,
+      page: 1,
+      limit: 1,
     });
+    const secondPage = await svc.listActiveProviders({ page: 2, limit: 1 });
+    expect(secondPage.items.map((r) => r.slug)).toEqual(['zeta-studio']);
   });
 
   it('listProvidersAdmin paginates with totals', async () => {

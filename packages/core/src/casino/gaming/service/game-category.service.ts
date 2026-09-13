@@ -52,20 +52,31 @@ export class GameCategoryService {
     private readonly events: EventBus,
   ) {}
 
-  async listActiveCategories() {
-    const rows = await this.drizzle.db
-      .select({
-        id: gameCategory.id,
-        slug: gameCategory.slug,
-        name: gameCategory.name,
-        translations: gameCategory.translations,
-        icon: gameCategory.icon,
-        sortOrder: gameCategory.sortOrder,
-      })
-      .from(gameCategory)
-      .where(eq(gameCategory.isActive, true))
-      .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
-    return rows.map((row) => ({ ...row, translations: row.translations ?? {} }));
+  async listActiveCategories({ page, limit }: { page: number; limit: number }) {
+    const where = eq(gameCategory.isActive, true);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: gameCategory.id,
+          slug: gameCategory.slug,
+          name: gameCategory.name,
+          translations: gameCategory.translations,
+          icon: gameCategory.icon,
+          sortOrder: gameCategory.sortOrder,
+        })
+        .from(gameCategory)
+        .where(where)
+        .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name), asc(gameCategory.slug))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(gameCategory).where(where),
+    ]);
+    return {
+      items: rows.map((row) => ({ ...row, translations: row.translations ?? {} })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async listCategoriesAdmin({

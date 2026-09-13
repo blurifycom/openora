@@ -698,7 +698,8 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/fx/exchange-rate/plugin.ts",
-        "packages/core/src/pam/profile/plugin.ts"
+        "packages/core/src/pam/profile/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
