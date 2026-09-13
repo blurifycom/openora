@@ -4,6 +4,7 @@ import { mock } from '../../../testing/mock.js';
 import { selectProvider } from '../adapters/exchange-rate-reader.service.js';
 
 const cryptoProvider = mock<ExchangeRateProvider>({});
+
 const fiatProvider = mock<ExchangeRateProvider>({});
 
 describe('selectProvider', () => {

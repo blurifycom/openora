@@ -5,6 +5,7 @@ import { ModuleRegistryImpl } from '../module-registry.js';
 
 function newRegistry() {
   const container = new Container();
+
   return { container, reg: new ModuleRegistryImpl(container) };
 }
 
@@ -48,7 +49,9 @@ describe('ModuleRegistryImpl', () => {
   it('events.on() accumulates handlers per event', () => {
     const { reg } = newRegistry();
     const h1 = () => {};
+
     const h2 = () => {};
+
     reg.events.on('wallet.deposit.completed', h1);
     reg.events.on('wallet.deposit.completed', h2);
     expect(reg.events.getAll().get('wallet.deposit.completed')).toEqual([h1, h2]);

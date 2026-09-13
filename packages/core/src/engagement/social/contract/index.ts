@@ -12,6 +12,7 @@ import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 export const SendFriendRequestInputSchema = z.object({
   targetUserId: UuidSchema,
 });
+
 export type SendFriendRequestInput = z.infer<typeof SendFriendRequestInputSchema>;
 
 export const FriendshipSchema = z.object({
@@ -22,6 +23,7 @@ export const FriendshipSchema = z.object({
   acceptedAt: TimestampSchema.nullable(),
   refusedAt: TimestampSchema.nullable(),
 });
+
 export type Friendship = z.infer<typeof FriendshipSchema>;
 
 // Per-target relationship state for a batch lookup (eg rendering a friends-list /
@@ -37,12 +39,15 @@ export const RELATIONSHIP_STATUSES = [
   'blocked_by_me',
   'unavailable',
 ] as const;
+
 export const RelationshipStatusSchema = z.enum(RELATIONSHIP_STATUSES);
+
 export type RelationshipStatus = z.infer<typeof RelationshipStatusSchema>;
 
 export const GetRelationshipsInputSchema = z.object({
   userIds: z.array(UuidSchema).min(1).max(100),
 });
+
 export type GetRelationshipsInput = z.infer<typeof GetRelationshipsInputSchema>;
 
 export const RelationshipSchema = z.object({
@@ -51,6 +56,7 @@ export const RelationshipSchema = z.object({
   friendshipId: UuidSchema.nullable(),
   canSendRequest: z.boolean(),
 });
+
 export type Relationship = z.infer<typeof RelationshipSchema>;
 
 export const FriendListEntrySchema = z.object({
@@ -61,21 +67,26 @@ export const FriendListEntrySchema = z.object({
   lastSeenAt: TimestampSchema.nullable(),
   isIgnored: z.boolean(),
 });
+
 export type FriendListEntry = z.infer<typeof FriendListEntrySchema>;
 
 export const RemoveFriendInputSchema = z.object({
   targetUserId: UuidSchema,
 });
+
 export type RemoveFriendInput = z.infer<typeof RemoveFriendInputSchema>;
 
 export const FRIEND_REQUEST_DIRECTIONS = ['incoming', 'outgoing'] as const;
+
 export const FriendRequestDirectionSchema = z.enum(FRIEND_REQUEST_DIRECTIONS);
+
 export type FriendRequestDirection = z.infer<typeof FriendRequestDirectionSchema>;
 
 export const ListFriendRequestsInputSchema = z.object({
   ...PageQuerySchema.shape,
   direction: FriendRequestDirectionSchema,
 });
+
 export type ListFriendRequestsInput = z.infer<typeof ListFriendRequestsInputSchema>;
 
 export const FriendRequestEntrySchema = z.object({
@@ -86,11 +97,13 @@ export const FriendRequestEntrySchema = z.object({
   createdAt: TimestampSchema,
   mutualFriendsCount: z.number().int().min(0).nullable(),
 });
+
 export type FriendRequestEntry = z.infer<typeof FriendRequestEntrySchema>;
 
 export const FriendRequestIdInputSchema = z.object({
   friendshipId: UuidSchema,
 });
+
 export type FriendRequestIdInput = z.infer<typeof FriendRequestIdInputSchema>;
 
 export const socialContract = {

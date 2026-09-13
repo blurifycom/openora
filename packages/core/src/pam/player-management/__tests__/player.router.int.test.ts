@@ -28,6 +28,7 @@ import { createPlayerRouter } from '../router/index.js';
 import { PlayerService } from '../service/player.service.js';
 
 const CTX = testContext();
+
 const CALLER = '44444444-4444-4444-8444-444444444444';
 
 let db: TestDb;
@@ -69,11 +70,14 @@ function build(
         // Stands in for identity's USER_COMMANDS so the round-trip through the
         // enriched read still holds; the real port is covered in its own module.
         await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+
         return { success: true };
       }),
     }),
   );
+
   const audit = makeAuditWriter();
+
   return { router: createPlayerRouter(service, adminGuard, audit), audit };
 }
 
@@ -86,7 +90,9 @@ async function seedPlayer() {
       email: `${randomUUID()}@example.com`,
     })
     .returning();
+
   const [row] = await db.drizzle.db.insert(player).values({ userId: account!.id }).returning();
+
   return row!;
 }
 
@@ -161,6 +167,7 @@ describe('player router playerSearch / playerProfile', () => {
       findPlayerIds: async () => [],
       lookupPlayers: async () => [],
     });
+
     const { router } = build(guardAllowing([]), { userDirectory });
 
     await expect(

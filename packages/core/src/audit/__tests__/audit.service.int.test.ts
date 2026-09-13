@@ -14,6 +14,7 @@ import { AuditListFiltersSchema } from '../contract/index.js';
 
 const tamper = async (mutate: () => Promise<unknown>) => {
   await db.drizzle.db.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`);
+
   try {
     await mutate();
   } finally {
@@ -53,13 +54,16 @@ describe('computeHash canonical form', () => {
       createdAt: '2024-01-01T00:00:00.000Z',
       prevHash: null,
     };
+
     const unmodified = computeHash({ ...base, before: null, after: null, result: null });
+
     const tamperedAfter = computeHash({
       ...base,
       before: null,
       after: { role: 'admin' },
       result: null,
     });
+
     const tamperedResult = computeHash({ ...base, before: null, after: null, result: 'success' });
 
     expect(tamperedAfter).not.toBe(unmodified);
@@ -85,6 +89,7 @@ describe('computeHash canonical form', () => {
       before: { role: 'player', nested: { b: 2, a: 1 } },
       after: { nested: { b: 2, a: 1 }, role: 'admin' },
     });
+
     const reorderedKeys = computeHash({
       ...base,
       before: { nested: { a: 1, b: 2 }, role: 'player' },
@@ -106,6 +111,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
     .insert(player)
     .values({ userId: randomUUID(), ...overrides })
     .returning();
+
   return row!;
 }
 
@@ -151,11 +157,13 @@ describe('AuditService.record() (real PG)', () => {
 
   it('chains prevHash from the latest existing row across sequential appends', async () => {
     const svc = makeService();
+
     const first = await svc.record({
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
+
     const second = await svc.record({
       actorType: 'system',
       action: 'wallet.deposit.completed',
@@ -250,6 +258,7 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
+
     await tamper(() =>
       db.drizzle.db
         .update(auditLog)
@@ -260,6 +269,7 @@ describe('AuditService.verifyChain() (real PG)', () => {
     const result = await makeService().verifyChain();
 
     expect(result.valid).toBe(false);
+
     if (!result.valid) {
       expect(result.rowId).toBe(row.id);
       expect(result.firstBrokenSeq).toBe(row.seq);
@@ -277,6 +287,7 @@ describe('AuditService.verifyChain() (real PG)', () => {
       after: { role: 'player' },
       result: 'success',
     });
+
     await tamper(() =>
       db.drizzle.db
         .update(auditLog)
@@ -287,6 +298,7 @@ describe('AuditService.verifyChain() (real PG)', () => {
     const result = await makeService().verifyChain();
 
     expect(result.valid).toBe(false);
+
     if (!result.valid) {
       expect(result.rowId).toBe(row.id);
     }
@@ -298,11 +310,13 @@ describe('AuditService.verifyChain() (real PG)', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
+
     const second = await seedRow({
       actorType: 'system',
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
     });
+
     await tamper(() =>
       db.drizzle.db
         .update(auditLog)
@@ -313,6 +327,7 @@ describe('AuditService.verifyChain() (real PG)', () => {
     const result = await makeService().verifyChain();
 
     expect(result.valid).toBe(false);
+
     if (!result.valid) {
       expect(result.rowId).toBe(second.id);
       expect(result.firstBrokenSeq).toBe(second.seq);
@@ -323,6 +338,7 @@ describe('AuditService.verifyChain() (real PG)', () => {
 describe('AuditService.list() (real PG)', () => {
   async function seed(inputs: Parameters<AuditService['record']>[0][]) {
     const svc = makeService();
+
     for (const input of inputs) {
       await svc.record(input);
     }
@@ -441,6 +457,7 @@ describe('audit date-range boundaries', () => {
       fromDate: '2026-07-01',
       toDate: '2026-07-21',
     });
+
     expect(parsed.success).toBe(true);
   });
 
@@ -453,6 +470,7 @@ describe('audit date-range boundaries', () => {
 describe('AuditService.exportCsv() (real PG)', () => {
   async function seed(inputs: Parameters<AuditService['record']>[0][]) {
     const svc = makeService();
+
     for (const input of inputs) {
       await svc.record(input);
     }
@@ -498,6 +516,7 @@ describe('mapEventToRecord() player.id resolution', () => {
   async function mapAndRecord(topic: string, payload: Record<string, unknown>) {
     const svc = makeService();
     const record = await mapEventToRecord(topic, payload);
+
     return svc.record(record);
   }
 
@@ -673,6 +692,7 @@ describe('mapEventToRecord() player.id resolution', () => {
         playerId: p.id,
         actorId: randomUUID(),
       });
+
       expect(row.resourceId).toBe(p.id);
     }
   });
@@ -745,6 +765,7 @@ describe('mapEventToRecord() player.id resolution', () => {
         actorId: p.userId,
         initiatedBy: 'player',
       });
+
       expect(row.resourceId).toBe(p.id);
       expect(row.actorType).toBe('player');
     }
@@ -1049,6 +1070,7 @@ describe('AuditService.listMyRgHistory() (real PG)', () => {
       effectiveAt: null,
       expiresAt: null,
     });
+
     for (const leaked of [
       'reason',
       'actorId',

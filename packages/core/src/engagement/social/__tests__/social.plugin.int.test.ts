@@ -63,6 +63,7 @@ async function makeFriends(alice: string, bob: string) {
   const svc = new SocialService(db.drizzle, eventsForSetup, makeIdentityReader());
   const first = await svc.sendFriendRequest(alice, bob);
   await svc.sendFriendRequest(bob, alice); // mutual auto-accept
+
   return first;
 }
 
@@ -71,6 +72,7 @@ async function getFriendshipById(id: string) {
     .select()
     .from(friendship)
     .where(sql`${friendship.id} = ${id}`);
+
   return row;
 }
 

@@ -5,7 +5,9 @@ import { join, dirname, relative, resolve, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const ossRoot = resolve(here, '../..');
+
 const templateRoot = join(here, '..', 'templates', 'consumer');
 
 type ParsedArgs = {
@@ -23,9 +25,11 @@ const USAGE = 'Usage: pnpm create:app <target-dir> [--name <name>]';
 function readFlag(args: string[], i: number): { value: string | undefined; next: number } {
   const a = args[i];
   const eq = a.indexOf('=');
+
   if (eq !== -1) {
     return { value: a.slice(eq + 1), next: i };
   }
+
   return { value: args[i + 1], next: i + 1 };
 }
 
@@ -33,8 +37,10 @@ function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   let target: string | undefined;
   let name: string | undefined;
+
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+
     if (a === '--name' || a.startsWith('--name=')) {
       const r = readFlag(args, i);
       name = r.value;
@@ -43,9 +49,11 @@ function parseArgs(argv: string[]): ParsedArgs {
       target = a;
     }
   }
+
   if (!target) {
     die(`missing target directory.\n  ${USAGE}`);
   }
+
   return { target, name };
 }
 
@@ -68,14 +76,17 @@ function substitute(content: string, vars: Record<string, string>): string {
 
 function walk(dir: string): string[] {
   const out: string[] = [];
+
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
+
     if (statSync(full).isDirectory()) {
       out.push(...walk(full));
     } else {
       out.push(full);
     }
   }
+
   return out;
 }
 
@@ -87,6 +98,7 @@ function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: stri
   for (const file of walk(srcRoot)) {
     const rel = relative(srcRoot, file);
     let outRel = rel.split(sep).map(undotSegment).join(sep);
+
     if (outRel.endsWith('.tpl')) {
       outRel = outRel.slice(0, -'.tpl'.length);
     }
@@ -109,11 +121,13 @@ function main(): void {
   if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
     die(`${targetDir} already exists and is not empty.`);
   }
+
   if (!existsSync(templateRoot)) {
     die(`template missing at ${templateRoot}`);
   }
 
   const ossFromRoot = posix(relative(targetDir, ossRoot));
+
   const vars: Record<string, string> = {
     name,
     ossFromRoot,

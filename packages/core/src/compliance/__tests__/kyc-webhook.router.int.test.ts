@@ -36,7 +36,9 @@ import type { RgSelfServiceService } from '../service/rg-self-service.service.js
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 
 let redis: TestRedis;
+
 const instances: BullMqJobQueue[] = [];
+
 const rawQueues: Queue[] = [];
 
 beforeAll(async () => {
@@ -58,6 +60,7 @@ afterAll(async () => {
 function makeJobQueue(): BullMqJobQueue {
   const q = new BullMqJobQueue(redisUrlForWorker());
   instances.push(q);
+
   return q;
 }
 
@@ -65,12 +68,15 @@ function rawQueue(name: QueueName): Queue {
   const q = new Queue(name, {
     connection: { url: redisUrlForWorker(), maxRetriesPerRequest: null },
   });
+
   rawQueues.push(q);
+
   return q;
 }
 
 async function enqueuedJobs() {
   const jobs = await rawQueue(KYC_DECISION_SYNC_QUEUE).getJobs(['waiting', 'delayed', 'active']);
+
   return jobs.map((j) => ({ id: j.id, data: j.data as Record<string, unknown>, opts: j.opts }));
 }
 
@@ -110,6 +116,7 @@ const REDIS_SUBSCRIBE_SETTLE_MS = 200;
 describe('compliance streamKycStatus router', () => {
   it('streams only player-safe updates from the player channel', async () => {
     const realtime = new RedisPubSubRealtimeTransport(redis.client, 'kyc-webhook-test');
+
     try {
       const iterator = createKycStatusStream(realtime, 'user-1', undefined)[Symbol.asyncIterator]();
       const next = iterator.next();
@@ -120,11 +127,13 @@ describe('compliance streamKycStatus router', () => {
         status: 'rejected',
         tier: 'basic',
       });
+
       const callerUpdate = {
         eventId: '22222222-2222-4222-8222-222222222222',
         status: 'approved',
         tier: 'advanced',
       };
+
       await realtime.publish(kycStatusChannel('user-1'), callerUpdate);
 
       await expect(next).resolves.toEqual({ done: false, value: callerUpdate });
@@ -138,10 +147,12 @@ describe('compliance streamKycStatus router', () => {
 describe('compliance kycWebhook router (real Redis-backed JOB_QUEUE)', () => {
   it('acks 2xx and enqueues a kyc-decision-sync job without calling the vendor', async () => {
     const getStatus = vi.fn();
+
     const kycAdapter = mock<KycAdapter>({
       parseWebhook: vi.fn().mockReturnValue({ referenceId: 'ref-1', status: 'approved' }),
       getStatus,
     });
+
     const router = build({
       webhookVerifier: acceptingVerifier(),
       kycAdapter,
@@ -169,9 +180,11 @@ describe('compliance kycWebhook router (real Redis-backed JOB_QUEUE)', () => {
     const kycAdapter = mock<KycAdapter>({
       parseWebhook: vi.fn((rawBody: string) => {
         const parsed = JSON.parse(rawBody) as { status: 'approved' | 'rejected' };
+
         return { referenceId: 'ref-1', status: parsed.status };
       }),
     });
+
     const router = build({
       webhookVerifier: acceptingVerifier(),
       kycAdapter,

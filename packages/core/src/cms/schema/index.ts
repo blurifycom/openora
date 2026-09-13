@@ -106,6 +106,9 @@ export const bannerSchedule = pgTable(
 );
 
 export type Page = typeof page.$inferSelect;
+
 export type BannerConfiguration = typeof bannerConfiguration.$inferSelect;
+
 export type BannerImage = typeof bannerImage.$inferSelect;
+
 export type BannerSchedule = typeof bannerSchedule.$inferSelect;

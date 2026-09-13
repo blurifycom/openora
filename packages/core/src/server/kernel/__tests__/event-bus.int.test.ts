@@ -8,6 +8,7 @@ import { createEventBus } from '../event-bus.js';
 import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/core/testing';
 
 const DELIVERY = { timeout: 5000, interval: 20 };
+
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function fakeLogger(): Logger {
@@ -15,6 +16,7 @@ function fakeLogger(): Logger {
 }
 
 let redis: TestRedis;
+
 const brokers: RedisStreamsBroker[] = [];
 
 // Each test gets a unique service name (= consumer group) so the fixed domain topics
@@ -23,6 +25,7 @@ function realBus(logger: Logger): { bus: ReturnType<typeof createEventBus>; serv
   const serviceName = `evt-${randomUUID()}`;
   const broker = new RedisStreamsBroker(redis.client, { serviceName });
   brokers.push(broker);
+
   return { bus: createEventBus(broker, logger), serviceName };
 }
 
@@ -179,11 +182,13 @@ describe('createEventBus over Redis Streams', () => {
 
   it('logs a rejected async publish instead of an unhandled rejection', async () => {
     const logger = fakeLogger();
+
     const rejectingBroker: MessageBrokerAdapter = {
       publish: () => Promise.reject(new Error('broker down')),
       subscribe: (_topic: string, _handler: BrokerHandler) => () => undefined,
       close: async () => undefined,
     };
+
     const bus = createEventBus(rejectingBroker, logger);
 
     bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1', playerId: null });
@@ -197,6 +202,7 @@ describe('createEventBus over Redis Streams', () => {
 
   it('delegates transport to the bound broker (the swap seam)', () => {
     const published: Array<EventEnvelope> = [];
+
     const fakeBroker: MessageBrokerAdapter = {
       publish: (envelope: EventEnvelope) => {
         published.push(envelope);
@@ -204,6 +210,7 @@ describe('createEventBus over Redis Streams', () => {
       subscribe: (_topic: string, _handler: BrokerHandler) => () => undefined,
       close: async () => undefined,
     };
+
     const bus = createEventBus(fakeBroker, fakeLogger());
 
     bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1', playerId: null });

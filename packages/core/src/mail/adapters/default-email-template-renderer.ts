@@ -70,6 +70,7 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       data.amount !== null
         ? formatMoney(data.amount, data.currency ?? '')
         : `${data.minutes} minutes`;
+
     return {
       subject: 'Your gambling limit was updated',
       text: `A ${data.period} ${data.type} limit of ${value.trim()} is now active on your account.`,
@@ -149,6 +150,7 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
 const renderDefaultEmail = (template: MailTemplate, locale: string): RenderedEmail => {
   const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
   const { subject, text } = plain(template.data, locale);
+
   return { subject, text, html: textToHtml(text) };
 };
 

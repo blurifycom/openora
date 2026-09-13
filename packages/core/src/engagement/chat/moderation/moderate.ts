@@ -14,5 +14,6 @@ export function moderateContent(
   if (hasProfanity(content, languages)) {
     return { ok: false, reason: 'profanity' };
   }
+
   return { ok: true, content: sanitizeUrls(content) };
 }

@@ -10,6 +10,7 @@ import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service
 
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
+
   return {
     ...actual,
     createAuth: vi.fn(() => ({
@@ -19,12 +20,15 @@ vi.mock('@openora/core/server', async (importOriginal) => {
 });
 
 const events = makeEventBus();
+
 const registrationConfig = definePlatformConfig({
   registration: { termsVersion: 'test-v1', requireEmailVerification: false },
 });
 
 let db: TestDb;
+
 let drizzle: IdentityServiceDeps['drizzle'];
+
 let redis: TestRedis;
 
 const validInput = () => ({

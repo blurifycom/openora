@@ -31,6 +31,7 @@ type AnyWorker = WorkerRegistration<unknown>;
 // `kyc-decision-sync` for that) - it only bounds unlimited Redis growth and stops a
 // dedup key from becoming permanently poisoned.
 const RETAIN_COMPLETED = { age: 24 * 60 * 60, count: 10_000 };
+
 const RETAIN_FAILED = { age: 7 * 24 * 60 * 60, count: 10_000 };
 
 // The wire shape stored on every BullMQ job: the caller payload plus carried meta.
@@ -43,6 +44,7 @@ type JobEnvelope = { payload: unknown; meta: Record<string, string | undefined> 
 // two distinct keys can never collapse onto one job id and silently dedupe apart.
 function toJobId(idempotencyKey: string): string {
   const encoded = idempotencyKey.replaceAll('%', '%25').replaceAll(':', '%3A');
+
   return /^\d+$/.test(encoded) ? `key-${encoded}` : encoded;
 }
 
@@ -118,6 +120,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
           enqueuedAt: new Date(job.timestamp),
           meta: job.data.meta,
         };
+
         await reg.handler(ctx);
       },
       // BullMQ rejects an explicit `concurrency: undefined`; default to 1 when unset.
@@ -130,10 +133,13 @@ export class BullMqJobQueue implements JobQueueAdapter {
       if (!job) {
         return;
       }
+
       const maxAttempts = job.opts.attempts ?? 1;
+
       if (job.attemptsMade < maxAttempts) {
         return;
       }
+
       void this.deadLetter(reg, job, error);
     });
 
@@ -147,6 +153,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
     repeat: RepeatOptions,
   ): Promise<void> {
     const envelope: JobEnvelope = { payload, meta: {} };
+
     return this.getQueue(queue)
       .upsertJobScheduler(
         scheduleId,
@@ -171,11 +178,14 @@ export class BullMqJobQueue implements JobQueueAdapter {
 
   private getQueue(queue: QueueName): Queue<JobEnvelope> {
     const existing = this.queues.get(queue);
+
     if (existing) {
       return existing;
     }
+
     const created = new Queue<JobEnvelope>(queue, { connection: this.connection });
     this.queues.set(queue, created);
+
     return created;
   }
 
@@ -188,10 +198,12 @@ export class BullMqJobQueue implements JobQueueAdapter {
       enqueuedAt: new Date(job.timestamp),
       meta: job.data.meta,
     };
+
     this.logger.error(
       { queue: ctx.name, jobId: ctx.id, attempt: ctx.attempt, err: error },
       '[bullmq-job-queue] job exhausted retries -> dead-letter',
     );
+
     if (worker.onDeadLetter) {
       try {
         await worker.onDeadLetter(ctx, error);

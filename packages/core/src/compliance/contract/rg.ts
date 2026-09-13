@@ -31,6 +31,7 @@ export const RgExclusionSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type RgExclusion = z.infer<typeof RgExclusionSchema>;
 
 export const SetPlayerLimitInputSchema = withLimitConsistencyRefinements(
@@ -45,6 +46,7 @@ export const SetPlayerLimitInputSchema = withLimitConsistencyRefinements(
     confirm: z.literal(true),
   }),
 );
+
 export type SetPlayerLimitInput = z.infer<typeof SetPlayerLimitInputSchema>;
 
 // 24h .. 6 weeks (1008h) per the Confluence cooling-off window.
@@ -53,6 +55,7 @@ export const ActivateCoolingOffInputSchema = z.object({
   durationHours: z.number().int().min(24).max(1008),
   reason: z.string().trim().min(1),
 });
+
 export type ActivateCoolingOffInput = z.infer<typeof ActivateCoolingOffInputSchema>;
 
 // Self-exclusion is permanent, OR a fixed term of at least 6 months. `confirm` guards
@@ -69,6 +72,7 @@ export const ActivateSelfExclusionInputSchema = z
     message: 'durationMonths (>= 6) is required unless isPermanent is true',
     path: ['durationMonths'],
   });
+
 export type ActivateSelfExclusionInput = z.infer<typeof ActivateSelfExclusionInputSchema>;
 
 export const LiftSelfExclusionInputSchema = z.object({
@@ -76,12 +80,14 @@ export const LiftSelfExclusionInputSchema = z.object({
   reason: z.string().trim().min(1),
   confirm: z.literal(true),
 });
+
 export type LiftSelfExclusionInput = z.infer<typeof LiftSelfExclusionInputSchema>;
 
 export const LiftCoolingOffInputSchema = z.object({
   userId: UuidSchema,
   reason: z.string().trim().min(1),
 });
+
 export type LiftCoolingOffInput = z.infer<typeof LiftCoolingOffInputSchema>;
 
 export const RgSectionSchema = z.object({
@@ -89,16 +95,19 @@ export const RgSectionSchema = z.object({
   coolingOff: RgExclusionSchema.nullable(),
   selfExclusion: RgExclusionSchema.nullable(),
 });
+
 export type RgSection = z.infer<typeof RgSectionSchema>;
 
 const PendingChangeTargetSchema = z.object({ id: UuidSchema });
 
 export const SELF_SERVICE_BREAK_HOURS = [24, 168, 720] as const;
+
 export const SELF_SERVICE_EXCLUSION_MONTHS = [6, 12, 24, 60] as const;
 
 export const RequestCoolingOffInputSchema = z.object({
   durationHours: z.literal(SELF_SERVICE_BREAK_HOURS),
 });
+
 export type RequestCoolingOffInput = z.infer<typeof RequestCoolingOffInputSchema>;
 
 export const RequestSelfExclusionInputSchema = z
@@ -111,6 +120,7 @@ export const RequestSelfExclusionInputSchema = z
     message: 'durationMonths is required unless isPermanent is true',
     path: ['durationMonths'],
   });
+
 export type RequestSelfExclusionInput = z.infer<typeof RequestSelfExclusionInputSchema>;
 
 // Each flagType writes one known detail shape (see rg-monitoring.service.ts).
@@ -120,20 +130,24 @@ export const LimitThresholdDetailSchema = z.object({
   period: LimitPeriodSchema,
   pct: z.number(),
 });
+
 export const SessionTimeDetailSchema = z.object({
   sessionMinutes: z.number(),
   limitMinutes: z.number(),
   pct: z.number(),
 });
+
 export const SelfExcludedLoginDetailSchema = z.object({
   trigger: z.string(),
   kind: ExclusionKindSchema.nullable(),
 });
+
 export const RgFlagDetailSchema = z.union([
   LimitThresholdDetailSchema,
   SessionTimeDetailSchema,
   SelfExcludedLoginDetailSchema,
 ]);
+
 export type RgFlagDetail = z.infer<typeof RgFlagDetailSchema>;
 
 export const RgFlagListItemSchema = z.object({
@@ -150,6 +164,7 @@ export const RgFlagListItemSchema = z.object({
   flaggedAt: TimestampSchema,
   clearedAt: TimestampSchema.nullable(),
 });
+
 export type RgFlagListItem = z.infer<typeof RgFlagListItemSchema>;
 
 export const RG_FLAG_SORT_BY_VALUES = [
@@ -160,7 +175,9 @@ export const RG_FLAG_SORT_BY_VALUES = [
   'clearedAt',
   'userId',
 ] as const;
+
 export const RgFlagSortBySchema = z.enum(RG_FLAG_SORT_BY_VALUES).default('flaggedAt');
+
 export type RgFlagSortBy = z.infer<typeof RgFlagSortBySchema>;
 
 export const ListRgFlagsInputSchema = PageQuerySchema.extend({
@@ -172,6 +189,7 @@ export const ListRgFlagsInputSchema = PageQuerySchema.extend({
   sortBy: RgFlagSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
 });
+
 export type ListRgFlagsInput = z.infer<typeof ListRgFlagsInputSchema>;
 
 export const rgContract = {

@@ -4,7 +4,9 @@ import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contr
 import z from 'zod';
 
 export const PLAYER_NOTE_SORT_BY_VALUES = ['createdAt', 'updatedAt'] as const;
+
 export const PlayerNoteSortBySchema = z.enum(PLAYER_NOTE_SORT_BY_VALUES).default('createdAt');
+
 export type PlayerNoteSortBy = z.infer<typeof PlayerNoteSortBySchema>;
 
 export const PlayerNoteSchema = z.object({
@@ -22,6 +24,7 @@ export const CreatePlayerNoteInputSchema = z.object({
 });
 
 export type PlayerNoteItem = z.infer<typeof PlayerNoteSchema>;
+
 export type CreatePlayerNoteInput = z.infer<typeof CreatePlayerNoteInputSchema>;
 
 export const playerNoteContract = {

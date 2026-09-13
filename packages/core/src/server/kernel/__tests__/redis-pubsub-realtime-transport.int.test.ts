@@ -6,11 +6,13 @@ import { runRealtimeTransportConformanceSuite } from '../../../testing/realtime-
 import { createTestRedis, type TestRedis } from '@openora/core/testing';
 
 let redis: TestRedis;
+
 const transports: RedisPubSubRealtimeTransport[] = [];
 
 function makeTransport(serviceName = 'svc'): RedisPubSubRealtimeTransport {
   const transport = new RedisPubSubRealtimeTransport(redis.client, serviceName);
   transports.push(transport);
+
   return transport;
 }
 
@@ -164,9 +166,11 @@ describe('RedisPubSubRealtimeTransport', () => {
   it('cross-process proof: publishing on one instance is received on a separate instance', async () => {
     const redisA = await createTestRedis();
     const redisB = await createTestRedis();
+
     try {
       const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'wallet');
       const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'wallet');
+
       try {
         const channel = `wallet:balance:${randomUUID()}`;
         const received: unknown[] = [];
@@ -178,6 +182,7 @@ describe('RedisPubSubRealtimeTransport', () => {
           currency: 'USD',
           reason: 'deposit',
         };
+
         await instanceA.publish(channel, signal);
 
         await vi.waitFor(() => expect(received).toEqual([signal]), { timeout: 5000 });
@@ -193,9 +198,11 @@ describe('RedisPubSubRealtimeTransport', () => {
     it('a member joining on instance A is visible to getOnlineUserIds on instance B', async () => {
       const redisA = await createTestRedis();
       const redisB = await createTestRedis();
+
       try {
         const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
         const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'presence-svc');
+
         try {
           const channel = `room:${randomUUID()}`;
           instanceA.presence?.join(channel, 'player-1', 'tab-1');
@@ -214,8 +221,10 @@ describe('RedisPubSubRealtimeTransport', () => {
 
     it('two connections for one member count once, and closing one leaves them online', async () => {
       const redisA = await createTestRedis();
+
       try {
         const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
+
         try {
           const channel = `room:${randomUUID()}`;
           instanceA.presence?.join(channel, 'player-1', 'tab-1');
@@ -243,9 +252,11 @@ describe('RedisPubSubRealtimeTransport', () => {
     it('excludes anonymous members across instances', async () => {
       const redisA = await createTestRedis();
       const redisB = await createTestRedis();
+
       try {
         const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
         const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'presence-svc');
+
         try {
           const channel = `room:${randomUUID()}`;
           instanceA.presence?.join(channel, 'player-1', 'tab-1');
@@ -266,9 +277,11 @@ describe('RedisPubSubRealtimeTransport', () => {
     it('a crashed instance stops contributing members once its entries expire, with no cleanup call', async () => {
       const redisA = await createTestRedis();
       const redisB = await createTestRedis();
+
       try {
         const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'presence-svc');
         const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'presence-svc');
+
         try {
           const channel = `room:${randomUUID()}`;
           instanceA.presence?.join(channel, 'player-1', 'tab-1');

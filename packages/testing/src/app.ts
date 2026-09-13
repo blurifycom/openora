@@ -70,6 +70,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   let client: ReturnType<typeof createRedisClient> | undefined;
 
   let created;
+
   try {
     created = await createApp(
       {
@@ -96,11 +97,13 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
         container.register(MESSAGE_BROKER, () => {
           const broker = new RedisStreamsBroker(redis, { serviceName, startId: '0' });
           container.onDispose(() => broker.close());
+
           return broker;
         });
         container.register(JOB_QUEUE, () => {
           const queue = new BullMqJobQueue(redisDatabase.url);
           container.onDispose(() => queue.close());
+
           return queue;
         });
         container.register(CACHE, () => new RedisCache(redis));
@@ -110,9 +113,11 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
           container.register(REALTIME_TRANSPORT, () => {
             const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
             container.onDispose(() => transport.close());
+
             return transport;
           });
         }
+
         if (!container.has(REALTIME_CLIENT_AUTHORIZER)) {
           container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
         }

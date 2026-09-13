@@ -18,11 +18,13 @@ export function createBackofficeRouter(
   return os.router({
     getStats: os.getStats.handler(async ({ context }) => {
       await adminGuard.assert(context, 'report', 'view');
+
       return backofficeService.getStats();
     }),
 
     listUsers: os.listUsers.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
+
       return backofficeService.listUsers({
         page: input.page,
         limit: input.limit,
@@ -34,6 +36,7 @@ export function createBackofficeRouter(
 
     getUser: os.getUser.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
+
       return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         backofficeService.getUser(input.userId),
       );
@@ -41,15 +44,18 @@ export function createBackofficeRouter(
 
     updateUser: os.updateUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
+
       // Writing `user.role` (esp. 'admin') grants super-admin via the bootstrap path
       // (IamService.isSuperAdmin), so a role change is super-admin-only - the `admin`
       // resource is held only by super-admins.
       if (input.role !== undefined) {
         await adminGuard.assert(context, 'admin', 'update');
       }
+
       const before = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         backofficeService.getUser(input.userId),
       );
+
       const updated = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         backofficeService.updateUser(
           input.userId,
@@ -58,6 +64,7 @@ export function createBackofficeRouter(
           { ip: caller.ip, userAgent: caller.userAgent },
         ),
       );
+
       await audit.record({
         actorId: caller.userId,
         actorType: 'admin',
@@ -69,16 +76,19 @@ export function createBackofficeRouter(
         ip: caller.ip,
         userAgent: caller.userAgent,
       });
+
       return updated;
     }),
 
     listTransactions: os.listTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
+
       return backofficeService.listTransactions(input);
     }),
 
     getTransaction: os.getTransaction.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
+
       return mapErrors({ NOT_FOUND: TransactionNotFoundError }, () =>
         backofficeService.getTransaction(input.id),
       );
@@ -86,11 +96,13 @@ export function createBackofficeRouter(
 
     getGamePerformance: os.getGamePerformance.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'report', 'view');
+
       return backofficeService.getGamePerformance(input);
     }),
 
     getPlayerActivity: os.getPlayerActivity.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'report', 'view');
+
       return backofficeService.getPlayerActivity(input);
     }),
   });

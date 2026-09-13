@@ -22,12 +22,15 @@ import {
 import { WalletService } from '../service/wallet.service.js';
 
 const events = makeEventBus();
+
 const payment = mock<PaymentAdapter>({
   processDeposit: vi.fn(async () => ({ externalId: randomUUID(), status: 'completed' as const })),
 });
+
 const audit = mock<AuditWritePort>({ record: vi.fn() });
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 const makeService = () =>
@@ -49,9 +52,11 @@ async function seedWallet() {
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: '1000' });
+
   return row;
 }
 
@@ -76,6 +81,7 @@ describe('WalletService - rate limiting (real Redis + real PG)', () => {
   it('rejects a deposit with a 429 once the per-user mutation budget is exhausted', async () => {
     const w = await seedWallet();
     const svc = makeService();
+
     for (let i = 0; i < 30; i++) {
       await svc.deposit({ userId: w.userId, amount: '1', currency: 'USD' });
     }
@@ -93,6 +99,7 @@ describe('WalletService - rate limiting (real Redis + real PG)', () => {
   it('counts deposits and withdrawals against the same per-user budget', async () => {
     const w = await seedWallet();
     const svc = makeService();
+
     for (let i = 0; i < 30; i++) {
       await svc.deposit({ userId: w.userId, amount: '1', currency: 'USD' });
     }
@@ -120,6 +127,7 @@ describe('WalletService - rate limiting (real Redis + real PG)', () => {
     const exhausted = await seedWallet();
     const fresh = await seedWallet();
     const svc = makeService();
+
     for (let i = 0; i < 30; i++) {
       await svc.deposit({ userId: exhausted.userId, amount: '1', currency: 'USD' });
     }
@@ -134,6 +142,7 @@ describe('WalletService - rate limiting (real Redis + real PG)', () => {
   it('counts withdrawal address writes against the same per-user budget', async () => {
     const userId = randomUUID();
     const svc = makeService();
+
     for (let i = 0; i < 30; i++) {
       await svc.createWithdrawalAddress(userId, {
         label: `wallet ${i}`,

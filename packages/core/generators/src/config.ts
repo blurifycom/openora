@@ -26,13 +26,16 @@ import type { PlopTypes } from '@turbo/gen';
 // is CJS, so `require.resolve` is the real Node resolver) and read templates by
 // absolute path.
 declare const require: NodeJS.Require;
+
 const pkgDir = dirname(require.resolve('@openora/core/package.json'));
+
 const tpl = (name: string): string => join(pkgDir, 'generators', 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
 
 // Plop hands actions an open `Answers` bag; read fields through these coercers.
 type Answers = Record<string, unknown>;
+
 const s = (a: Answers, k: string): string => String(a[k] ?? '');
 
 const toKebab = (v: string): string =>
@@ -41,15 +44,20 @@ const toKebab = (v: string): string =>
     .replace(/\s+/g, '-')
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '');
+
 const toCamel = (v: string): string =>
   toKebab(v).replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 
 const root = (): string => process.cwd();
+
 // The OSS monorepo owns the core source tree; a consumer repo only has overlays.
 const coreSrc = (): string => join(root(), 'packages', 'core', 'src');
+
 const isOssRepo = (): boolean => existsSync(join(coreSrc(), 'contracts'));
+
 // extensions.config.ts lives at the repo root (both OSS and consumer repos).
 const extensionsConfigPath = (): string => join(root(), 'extensions.config.ts');
+
 const ossOnly = (gen: string): void => {
   if (!isOssRepo()) {
     throw new Error(
@@ -62,6 +70,7 @@ const ossOnly = (gen: string): void => {
 function registerExtension(id: string, importPath: string): string {
   const file = extensionsConfigPath();
   const line = `  { id: '${id}', path: '${importPath}' },`;
+
   if (!existsSync(file)) {
     writeFileSync(
       file,
@@ -73,28 +82,38 @@ function registerExtension(id: string, importPath: string): string {
         ``,
       ].join('\n'),
     );
+
     return `created ${file}`;
   }
+
   const src = readFileSync(file, 'utf8');
+
   if (src.includes(`id: '${id}'`)) {
     return `extensions.config.ts already has '${id}'`;
   }
+
   writeFileSync(file, src.replace(/(export const extensions = \[)/, `$1\n${line}`));
+
   return `registered '${id}' in extensions.config.ts`;
 }
 
 function appendEventSchema(topic: string): string {
   const file = join(coreSrc(), 'contracts', 'schemas', 'events.ts');
+
   if (!existsSync(file)) {
     return 'no events.ts (skipped)';
   }
+
   let src = readFileSync(file, 'utf8');
+
   if (src.includes(`'${topic}':`)) {
     return `event '${topic}' already in the catalog`;
   }
+
   const entry = `  '${topic}': z.object({\n    // AGENT: define the payload (ids + primitives)\n  }),`;
   src = src.replace(/(export const domainEventSchemas = \{)/, `$1\n${entry}`);
   writeFileSync(file, src);
+
   return `added '${topic}' to domainEventSchemas`;
 }
 
@@ -102,9 +121,11 @@ const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'common', 'testing
 
 function listDomains(): string[] {
   const src = coreSrc();
+
   if (!existsSync(src)) {
     return [];
   }
+
   return readdirSync(src)
     .filter((name) => !ENGINE_ZONES.has(name))
     .filter((name) => existsSync(join(src, name, 'index.ts')))
@@ -122,12 +143,16 @@ function moduleDir(domain: string, name: string): string {
 function appendToBarrel(file: string, line: string, header: string): void {
   if (!existsSync(file)) {
     writeFileSync(file, `${header}\n${line}\n`);
+
     return;
   }
+
   const src = readFileSync(file, 'utf8');
+
   if (src.includes(line)) {
     return;
   }
+
   writeFileSync(file, `${src.replace(/\n*$/, '\n')}${line}\n`);
 }
 
@@ -150,6 +175,7 @@ function wireDomainBarrels(domain: string, name: string): string {
     `export { default as ${camel}Plugin } from './${name}/plugin.js';`,
     `// Server surface of the ${domain} domain - plugin entries for the composition root.`,
   );
+
   return `wired '${name}' into the ${domain} domain barrels`;
 }
 
@@ -184,29 +210,38 @@ const DOMAIN_TARGETS = [
  */
 function wireCoreExports(domain: string, name: string): string {
   const pkgFile = join(root(), 'packages', 'core', 'package.json');
+
   const pkg = JSON.parse(readFileSync(pkgFile, 'utf8')) as {
     exports: Record<string, Record<string, string>>;
   };
+
   const entry = (dist: string) => ({
     types: `${dist}.d.ts`,
     import: `${dist}.js`,
     default: `${dist}.js`,
   });
+
   const added: string[] = [];
+
   const put = (subpath: string, dist: string) => {
     if (pkg.exports[subpath]) {
       return;
     }
+
     pkg.exports[subpath] = entry(dist);
     added.push(subpath);
   };
+
   for (const { suffix, file } of DOMAIN_TARGETS) {
     put(`./${domain}${suffix}`, `./dist/${domain}/${file}`);
   }
+
   for (const { subpath, dist } of SUBPATH_TARGETS) {
     put(subpath(domain, name), dist(domain, name));
   }
+
   writeFileSync(pkgFile, `${JSON.stringify(pkg, null, 2)}\n`);
+
   return added.length > 0
     ? `added ${added.length} subpath(s) to @openora/core exports (${added.join(', ')})`
     : 'no new @openora/core exports needed';
@@ -220,9 +255,11 @@ function appendRoute(
 ): string {
   const name = toKebab(moduleName);
   const dir = moduleDir(toKebab(domain), name);
+
   if (!existsSync(dir)) {
     throw new Error(`module '${name}' not found under packages/core/src/${toKebab(domain)}/`);
   }
+
   const proc = routePath
     .replace(/^\//, '')
     .replace(/\/:(\w+)/g, 'By$1')
@@ -231,9 +268,11 @@ function appendRoute(
     .replace(/[^a-zA-Z0-9.]/g, '');
 
   const contractFile = join(dir, 'contract', 'index.ts');
+
   if (existsSync(contractFile)) {
     let c = readFileSync(contractFile, 'utf8');
     const camel = toCamel(name);
+
     if (!c.includes(`${proc}:`)) {
       const entry = `  ${proc}: oc.route({ method: '${method.toUpperCase()}', path: '${routePath}' }).output(z.object({})),`;
       c = c.replace(new RegExp(`(export const ${camel}Contract = \\{)`), `$1\n${entry}`);
@@ -243,11 +282,13 @@ function appendRoute(
 
   const routerFile = join(dir, 'router', 'index.ts');
   let r = readFileSync(routerFile, 'utf8');
+
   if (!r.includes(`${proc}: os.${proc}`)) {
     const stub = `\n    ${proc}: os.${proc}.handler(() => ({})),`;
     r = r.replace(/(\n\s*\}\);\s*\n\}\s*)$/, `${stub}$1`);
     writeFileSync(routerFile, r);
   }
+
   return `added '${proc}' (${method.toUpperCase()} ${routePath}) to ${name} - implement the handler/service method, then pnpm regen`;
 }
 
@@ -275,11 +316,13 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
       const name = toKebab(s(a, 'name'));
       a['domain'] = domain;
       const base = `packages/core/src/${domain}/{{kebabCase name}}`;
+
       const file = (rel: string, template: string): PlopTypes.ActionType => ({
         type: 'add',
         path: `${base}/${rel}`,
         templateFile: tpl(template),
       });
+
       return [
         file('contract/index.ts', 'contract.hbs'),
         file('schema/index.ts', 'module/schema.hbs'),
@@ -329,6 +372,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('route');
       const a = data ?? {};
+
       return [() => appendRoute(s(a, 'domain'), s(a, 'module'), s(a, 'method'), s(a, 'path'))];
     },
   });
@@ -407,6 +451,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     ],
     actions: (): PlopTypes.ActionType[] => {
       ossOnly('config');
+
       return [
         {
           type: 'add',
@@ -430,6 +475,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('event');
       const a = data ?? {};
+
       return [() => appendEventSchema(s(a, 'topic'))];
     },
   });
@@ -471,11 +517,14 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       const a = data ?? {};
       const adrDir = join(root(), 'docs', 'adr');
+
       const existing = existsSync(adrDir)
         ? readdirSync(adrDir).filter((f) => /^\d{4}-/.test(f))
         : [];
+
       a['number'] = String(existing.length + 1).padStart(4, '0');
       a['date'] = new Date().toISOString().slice(0, 10);
+
       return [
         {
           type: 'add',
@@ -505,6 +554,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('service');
       const a = data ?? {};
+
       return [
         () => {
           execFileSync(
@@ -512,6 +562,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
             ['exec', 'tsx', 'tools/create/create-service.ts', s(a, 'name'), s(a, 'modules')],
             { cwd: root(), stdio: 'inherit' },
           );
+
           return `created apps/${toKebab(s(a, 'name'))}/ (SERVICE_MANIFEST=${s(a, 'modules')})`;
         },
       ];
@@ -532,13 +583,17 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('app');
       const a = data ?? {};
+
       return [
         () => {
           const args = ['exec', 'tsx', 'tools/create/create-igaming-app.ts', s(a, 'dir')];
+
           if (s(a, 'appName')) {
             args.push('--name', s(a, 'appName'));
           }
+
           execFileSync('pnpm', args, { cwd: root(), stdio: 'inherit' });
+
           return `scaffolded consumer repo at ${s(a, 'dir')}`;
         },
       ];

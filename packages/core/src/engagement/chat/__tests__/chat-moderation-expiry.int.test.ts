@@ -13,6 +13,7 @@ import { ChatModerationExpiryService } from '../service/chat-moderation-expiry.s
 import { ChatModerationService } from '../service/chat-moderation.service.js';
 
 let db: TestDb;
+
 let audit: AuditWritePort;
 
 const ADMIN_ID = randomUUID();
@@ -31,6 +32,7 @@ async function seedMute(overrides: Partial<typeof chatMute.$inferInsert> = {}) {
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -46,6 +48,7 @@ async function seedBan(overrides: Partial<typeof chatPlatformBan.$inferInsert> =
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -75,6 +78,7 @@ beforeEach(async () => {
 
 describe('ChatModerationExpiryService.sweep', () => {
   const makeSweep = () => new ChatModerationExpiryService(db.drizzle, audit);
+
   const makeModeration = () =>
     new ChatModerationService(db.drizzle, mock<RealtimeTransport>({}), audit);
 

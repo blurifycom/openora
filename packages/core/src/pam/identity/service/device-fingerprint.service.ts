@@ -17,6 +17,7 @@ export function normalizeUserAgent(userAgent: string | null | undefined): string
   if (!userAgent) {
     return '';
   }
+
   return userAgent
     .toLowerCase()
     .replace(/(\d+)(?:\.\d+)+/g, '$1')
@@ -67,12 +68,16 @@ export function describeDevice(userAgent: string | null | undefined): DeviceDesc
   if (!userAgent) {
     return { label: UNKNOWN_DEVICE_LABEL, browser: null, os: null };
   }
+
   const browser = matchFirst(userAgent, BROWSER_PATTERNS);
   const os = matchFirst(userAgent, OS_PATTERNS);
+
   if (!browser && !os) {
     return { label: UNKNOWN_DEVICE_LABEL, browser: null, os: null };
   }
+
   const label = [browser, os].filter((part) => part !== null).join(' on ');
+
   return { label, browser, os };
 }
 
@@ -100,12 +105,15 @@ export function isSuspiciousIpChange({
   if (policy === 'off' || !sessionIp || !requestIp || sessionIp === requestIp) {
     return false;
   }
+
   if (policy === 'any') {
     return true;
   }
+
   if (!sessionCountry || !requestCountry) {
     return false;
   }
+
   return sessionCountry.toUpperCase() !== requestCountry.toUpperCase();
 }
 

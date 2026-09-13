@@ -102,6 +102,7 @@ export function createComplianceRouter({
 
     geoCheck: os.geoCheck.handler(({ context }) => {
       const { ip } = context.clientMeta;
+
       return compliance.geoCheck(ip ?? '127.0.0.1');
     }),
 
@@ -111,16 +112,19 @@ export function createComplianceRouter({
         'compliance',
         'override-limit',
       );
+
       return compliance.addGeoRule(input, userId, { ip, userAgent });
     }),
 
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
+
       return compliance.listGeoRules();
     }),
 
     getPlayerKyc: os.getPlayerKyc.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
+
       return kyc.getForPlayer(input.userId);
     }),
 
@@ -140,13 +144,16 @@ export function createComplianceRouter({
     // signature header or reject (fail closed); never fall back to an empty body.
     kycWebhook: os.kycWebhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
+
       if (
         rawBody === undefined ||
         !(await webhookVerifier.verify(rawBody, context.request.headers))
       ) {
         throw new ORPCError('UNAUTHORIZED', { message: 'Invalid KYC webhook signature' });
       }
+
       const decision = kycAdapter.parseWebhook?.(rawBody, context.request.headers);
+
       if (decision) {
         // Dedup on a hash of the verbatim delivery bytes, never on referenceId:status.
         // The vendor-neutral KycResult carries no delivery/event id, so the only
@@ -180,11 +187,13 @@ export function createComplianceRouter({
           },
         );
       }
+
       return { ok: true as const };
     }),
 
     requestKycResubmission: os.requestKycResubmission.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
         kyc.requestResubmission(input.userId, input.tier, input.reason, caller.userId),
       );
@@ -192,6 +201,7 @@ export function createComplianceRouter({
 
     overrideKycStatus: os.overrideKycStatus.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
         kyc.overrideStatus(input.userId, input.tier, input.status, input.reason, caller.userId),
       );
@@ -212,11 +222,13 @@ export function createComplianceRouter({
         resourceId: null,
         after: { tier: input.tier, reason: input.reason, results },
       });
+
       return { results };
     }),
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+
       return mapErrors({ CONFLICT: LimitRaiseNotAllowedError }, () =>
         rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
@@ -224,6 +236,7 @@ export function createComplianceRouter({
 
     activateCoolingOff: os.activateCoolingOff.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
         rg.activateCoolingOff(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
@@ -231,6 +244,7 @@ export function createComplianceRouter({
 
     activateSelfExclusion: os.activateSelfExclusion.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
         rg.activateSelfExclusion(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
@@ -238,6 +252,7 @@ export function createComplianceRouter({
 
     liftSelfExclusion: os.liftSelfExclusion.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+
       return mapErrors(
         {
           NOT_FOUND: ExclusionNotFoundError,
@@ -249,6 +264,7 @@ export function createComplianceRouter({
 
     liftCoolingOff: os.liftCoolingOff.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+
       return mapErrors({ NOT_FOUND: ExclusionNotFoundError }, () =>
         rg.liftCoolingOff(input.userId, input, userId, { ip, userAgent }),
       );
@@ -256,11 +272,13 @@ export function createComplianceRouter({
 
     getRgSection: os.getRgSection.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
+
       return rgSelfService.getSection(input.userId);
     }),
 
     listRgFlags: os.listRgFlags.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
+
       return rgMonitoring.listFlags(input);
     }),
 

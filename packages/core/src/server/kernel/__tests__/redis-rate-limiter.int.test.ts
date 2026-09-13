@@ -10,6 +10,7 @@ let redis: TestRedis;
 function offlineLimiter(): RedisRateLimiter {
   const client = createClient({ url: 'redis://localhost:6379' });
   client.on('error', () => undefined);
+
   return new RedisRateLimiter(client);
 }
 

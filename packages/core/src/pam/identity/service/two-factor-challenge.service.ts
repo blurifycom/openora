@@ -38,6 +38,7 @@ export async function resolveChallengeMethod(
     .from(user)
     .where(eq(user.id, userId))
     .limit(1);
+
   return row?.twoFactorMethod === 'email' || row?.twoFactorMethod === 'sms' ? 'otp' : 'totp';
 }
 
@@ -50,8 +51,10 @@ export function verifyChallengeCode(
   if (method === 'backup_code') {
     return api.verifyBackupCode({ body, headers, asResponse: true });
   }
+
   if (method === 'otp') {
     return api.verifyTwoFactorOTP({ body, headers, asResponse: true });
   }
+
   return api.verifyTOTP({ body, headers, asResponse: true });
 }

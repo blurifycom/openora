@@ -14,6 +14,7 @@ export function createPlayerNoteRouter(
   return os.router({
     list: os.list.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player-note', 'view');
+
       return svc.list({
         playerId: input.playerId,
         page: input.page,
@@ -36,6 +37,7 @@ export function createPlayerNoteRouter(
         ip: caller.ip,
         userAgent: caller.userAgent,
       });
+
       return created;
     }),
   });

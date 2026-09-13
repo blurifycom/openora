@@ -36,6 +36,7 @@ async function seedMute(overrides: Partial<typeof chatMute.$inferInsert> = {}) {
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 

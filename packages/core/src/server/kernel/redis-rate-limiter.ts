@@ -44,15 +44,18 @@ export class RedisRateLimiter implements RateLimiterAdapter {
     if (!this.client.isReady) {
       return this.unavailable(opts, { keyPrefix: key.split(':')[0] });
     }
+
     try {
       const reply = await this.client.eval(CONSUME_SCRIPT, {
         keys: [PREFIX + key],
         arguments: [String(opts.windowMs)],
       });
+
       const [countRaw, pttlRaw] = Array.isArray(reply) ? reply : [];
       const count = Number(countRaw);
       const pttl = Number(pttlRaw);
       const allowed = count <= opts.limit;
+
       return { allowed, retryAfterMs: allowed ? 0 : Math.max(0, pttl) };
     } catch (err) {
       return this.unavailable(opts, { keyPrefix: key.split(':')[0], err });
@@ -63,6 +66,7 @@ export class RedisRateLimiter implements RateLimiterAdapter {
     if (!this.client.isReady) {
       return;
     }
+
     try {
       await this.client.del(PREFIX + key);
     } catch (err) {
@@ -80,9 +84,11 @@ export class RedisRateLimiter implements RateLimiterAdapter {
       { ...ctx, onUnavailable: opts.onUnavailable ?? 'allow' },
       'rate limiter backend unavailable',
     );
+
     if (opts.onUnavailable === 'deny') {
       return { allowed: false, retryAfterMs: opts.windowMs };
     }
+
     return { allowed: true, retryAfterMs: 0 };
   }
 }

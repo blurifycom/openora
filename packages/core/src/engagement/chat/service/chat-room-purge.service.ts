@@ -40,6 +40,7 @@ export class ChatRoomPurgeService {
       )
       .orderBy(chatRoom.scheduledDeletionAt)
       .limit(limit);
+
     return due.map((room) => room.id);
   }
 
@@ -59,17 +60,21 @@ export class ChatRoomPurgeService {
             ),
           )
           .limit(1);
+
         if (!room) {
           return null;
         }
+
         const members = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(eq(chatRoomMember.roomId, roomId));
+
         const [messages] = await t
           .select({ value: count() })
           .from(chatMessage)
           .where(eq(chatMessage.roomId, roomId));
+
         const messageCount = messages?.value ?? 0;
         await t.delete(chatMute).where(eq(chatMute.roomId, roomId));
         await this.audit.recordInTransaction(t, {
@@ -80,12 +85,15 @@ export class ChatRoomPurgeService {
           after: { messageCount },
         });
         await t.delete(chatRoom).where(eq(chatRoom.id, roomId));
+
         return { memberIds: members.map((m) => m.userId), messageCount };
       }),
     );
+
     if (!result) {
       return false;
     }
+
     this.events.emit('chat.private_room.purged', {
       roomId,
       messageCount: result.messageCount,
@@ -97,6 +105,7 @@ export class ChatRoomPurgeService {
         logger.error({ err, roomId, memberId }, 'chat room channel revoke failed');
       }
     });
+
     return true;
   }
 }

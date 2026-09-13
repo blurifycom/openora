@@ -67,10 +67,12 @@ export class RgLimitGate implements RgLimitsPort {
       .where(and(eq(userLimit.userId, userId), ne(userLimit.period, 'session')));
 
     const now = new Date();
+
     for (const row of rows) {
       if (!types.includes(row.type as LimitType) || row.amount === null) {
         continue;
       }
+
       const period = row.period as LimitPeriod;
       const { from } = periodWindow(period, now);
 
@@ -79,12 +81,14 @@ export class RgLimitGate implements RgLimitsPort {
       // new limit must refuse. The lock is transaction-scoped, so this stays the truth
       // for the rest of the caller's transaction.
       let resolved: ResolvedLimitRow | undefined;
+
       try {
         resolved = await withAdvisoryXactLock(
           txn,
           limitSlotKey(row.userId, row.type as LimitType, period),
           async () => {
             const [fresh] = await txn.select().from(userLimit).where(eq(userLimit.id, row.id));
+
             return fresh ? await resolveLimitCurrencyInTx(txn, fresh) : undefined;
           },
         );
@@ -92,6 +96,7 @@ export class RgLimitGate implements RgLimitsPort {
         if (!(err instanceof RgLimitCurrencyUnresolvedError)) {
           throw err;
         }
+
         return {
           allowed: false,
           limitType: row.type as LimitType,
@@ -100,9 +105,11 @@ export class RgLimitGate implements RgLimitsPort {
           used: row.amount,
         };
       }
+
       if (!resolved || resolved.amount === null) {
         continue;
       }
+
       const limit = resolved.amount;
       const rowCurrency = resolved.currency;
 
@@ -115,6 +122,7 @@ export class RgLimitGate implements RgLimitsPort {
       });
 
       let used: string;
+
       try {
         used = await this.monitoring.spendFor(
           txn,
@@ -128,6 +136,7 @@ export class RgLimitGate implements RgLimitsPort {
         if (!(err instanceof RgRateUnavailableError)) {
           throw err;
         }
+
         return rateUnavailable();
       }
 
@@ -135,6 +144,7 @@ export class RgLimitGate implements RgLimitsPort {
         amountCurrency === rowCurrency
           ? amount
           : await this.rates.convert(amount, amountCurrency, rowCurrency);
+
       if (attempted === null) {
         return rateUnavailable();
       }
@@ -149,6 +159,7 @@ export class RgLimitGate implements RgLimitsPort {
         };
       }
     }
+
     return { allowed: true };
   }
 }

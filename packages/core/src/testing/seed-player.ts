@@ -20,9 +20,11 @@ export async function seedUser(db: TestDb, overrides: Partial<typeof user.$infer
       ...overrides,
     })
     .returning();
+
   if (!row) {
     throw new Error('seedUser: insert returned no row');
   }
+
   return row;
 }
 
@@ -32,17 +34,21 @@ export type SeedPlayerOverrides = Partial<typeof player.$inferInsert> & { userna
 export async function seedPlayerWithUser(db: TestDb, overrides: SeedPlayerOverrides = {}) {
   const { username, ...playerOverrides } = overrides;
   const userId = playerOverrides.userId ?? randomUUID();
+
   const account = await seedUser(db, {
     id: userId,
     ...(username ? { name: username, username } : {}),
     email: `${userId}@test.dev`,
   });
+
   const [row] = await db.drizzle.db
     .insert(player)
     .values({ ...playerOverrides, userId })
     .returning();
+
   if (!row) {
     throw new Error('seedPlayerWithUser: insert returned no row');
   }
+
   return { account, player: row };
 }

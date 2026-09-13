@@ -79,10 +79,13 @@ describe('actionsToLevel', () => {
   it('round-trips every level for every resource that can express it', () => {
     for (const [resource, actions] of Object.entries(statement)) {
       const viewOnlyResource = actions.length === 1 && actions[0] === 'view';
+
       for (const level of PERMISSION_LEVELS) {
         const granted = levelToActions(resource, level);
+
         const expected =
           granted.length === 0 ? 'no_access' : viewOnlyResource ? 'read_write' : level;
+
         expect(actionsToLevel(resource, granted)).toBe(expected);
       }
     }

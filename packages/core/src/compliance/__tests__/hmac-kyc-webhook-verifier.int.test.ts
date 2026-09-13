@@ -20,6 +20,7 @@ afterAll(async () => {
 });
 
 const SECRET = 'shh';
+
 const BODY = '{"event":"decision"}';
 
 function sign(body: string, secret = SECRET) {

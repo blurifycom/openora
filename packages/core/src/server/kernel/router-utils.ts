@@ -39,6 +39,7 @@ function resolveAuth(context: unknown): AuthContext {
   }
 
   const auth = (context as { auth?: AuthContext }).auth;
+
   if (!auth?.userId) {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'Authentication required',
@@ -67,15 +68,19 @@ export function extractClientMeta(
   opts?: { trustForwarded?: boolean },
 ): ClientMeta {
   let ip: string | null = null;
+
   if (opts?.trustForwarded) {
     const fwd = headers['x-forwarded-for'];
     const first = Array.isArray(fwd) ? fwd[0] : fwd;
     ip = first?.split(',')[0]?.trim() || null;
   }
+
   if (!ip) {
     const real = headers['x-real-ip'];
     ip = (Array.isArray(real) ? real[0] : real) || null;
   }
+
   const ua = headers['user-agent'];
+
   return { ip: ip ?? null, userAgent: (Array.isArray(ua) ? ua[0] : ua) ?? null };
 }

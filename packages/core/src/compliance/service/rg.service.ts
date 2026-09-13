@@ -41,17 +41,21 @@ import type {
 const logger = createLogger('compliance-rg');
 
 type Db = DrizzleService['db'];
+
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export const ExclusionNotFoundError = makeNotFoundError('Exclusion');
+
 export const ActiveExclusionError = makeConflictError(
   'ActiveExclusionError',
   'An active exclusion of this kind already exists for this player',
 );
+
 export const PermanentExclusionLiftError = makeConflictError(
   'PermanentExclusionLiftError',
   'A permanent self-exclusion cannot be lifted',
 );
+
 export const ExclusionPeriodNotElapsedError = makeConflictError(
   'ExclusionPeriodNotElapsedError',
   'The self-exclusion minimum period has not elapsed yet',
@@ -62,6 +66,7 @@ export type LimitRow = typeof userLimit.$inferSelect;
 export function toDbCurrency(type: LimitType, currency: string | null): string {
   return type === 'session' ? SESSION_LIMIT_CURRENCY : (currency as string);
 }
+
 export function toWireCurrency(type: LimitType, currency: string | null): string | null {
   return type === 'session' ? null : currency;
 }
@@ -75,18 +80,24 @@ export async function isWeakening(
 ): Promise<boolean> {
   if (next.amount !== null && row.amount !== null) {
     const nextCurrency = toDbCurrency(row.type as LimitType, next.currency);
+
     if (nextCurrency === row.currency) {
       return moneyCompare(next.amount, row.amount) > 0;
     }
+
     const converted = await rates.convert(next.amount, nextCurrency, row.currency);
+
     if (converted === null) {
       return true;
     }
+
     return moneyCompare(converted, row.amount) > 0;
   }
+
   if (next.minutes !== null && row.minutes !== null) {
     return next.minutes > row.minutes;
   }
+
   return true;
 }
 
@@ -122,6 +133,7 @@ const HOUR_MS = 60 * 60 * 1000;
 
 export const limitSlotKey = (userId: User['id'], type: string, period: string) =>
   `rg-limit:${userId}:${type}:${period}`;
+
 export const NO_PENDING_CHANGE = {
   pendingKind: null,
   pendingAmount: null,
@@ -131,6 +143,7 @@ export const NO_PENDING_CHANGE = {
   pendingEffectiveAt: null,
   pendingExpiresAt: null,
 } as const;
+
 // Cap in-flight enforcement syncs per sweep tick so a large lapsed-cooling-off batch can't
 // exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
 const SWEEP_CONCURRENCY = 10;
@@ -153,25 +166,32 @@ export async function resolveLimitCurrencyInTx(tx: Tx, row: LimitRow): Promise<R
   if (row.currency !== null) {
     return row as ResolvedLimitRow;
   }
+
   const [current] = await tx.select().from(userLimit).where(eq(userLimit.id, row.id));
+
   if (!current) {
     throw new LimitNotFoundError(row.id);
   }
+
   if (current.currency !== null) {
     return current as ResolvedLimitRow;
   }
+
   const [playerRow] = await tx
     .select({ currency: player.currency })
     .from(player)
     .where(eq(player.userId, row.userId));
+
   if (!playerRow) {
     throw new RgLimitCurrencyUnresolvedError(row.userId);
   }
+
   const [updated] = await tx
     .update(userLimit)
     .set({ currency: playerRow.currency })
     .where(eq(userLimit.id, row.id))
     .returning();
+
   return { ...(updated ?? current), currency: playerRow.currency };
 }
 
@@ -188,6 +208,7 @@ export async function resolveLimitCurrency(
   if (row.currency !== null) {
     return row as ResolvedLimitRow;
   }
+
   return drizzle.db.transaction((tx) =>
     withAdvisoryXactLock(tx, limitSlotKey(row.userId, row.type, row.period), () =>
       resolveLimitCurrencyInTx(tx, row),
@@ -207,6 +228,7 @@ export async function writeLimitRow(
   input: Pick<UpsertLimitInput, 'type' | 'amount' | 'minutes' | 'currency' | 'period'>,
 ): Promise<LimitRow> {
   const currency = toDbCurrency(input.type, input.currency);
+
   if (existing) {
     return findOneOrThrow(
       await tx
@@ -222,6 +244,7 @@ export async function writeLimitRow(
       new LimitNotFoundError(userId),
     );
   }
+
   return findOneOrThrow(
     await tx
       .insert(userLimit)
@@ -241,6 +264,7 @@ export async function writeLimitRow(
 function addMonths(from: Date, months: number): Date {
   const d = new Date(from);
   d.setMonth(d.getMonth() + months);
+
   return d;
 }
 
@@ -320,16 +344,21 @@ export class RgService {
             ),
           )
           .limit(1);
+
         if (existing) {
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+
           if (await isWeakening(resolvedExisting, input, this.rates)) {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
         }
+
         return { prior: existing, row: await writeLimitRow(tx, userId, existing, input) };
       }),
     );
+
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
     if (prior?.pendingKind) {
       this.events.emit('rg.limit.change_cancelled', {
         userId,
@@ -348,6 +377,7 @@ export class RgService {
         userAgent: meta?.userAgent ?? null,
       });
     }
+
     this.events.emit('rg.limit.set', {
       userId,
       playerId,
@@ -365,6 +395,7 @@ export class RgService {
       userAgent: meta?.userAgent ?? null,
     });
     await this.notifyLimitUpdated(userId, row);
+
     return toLimitDto(row);
   }
 
@@ -395,8 +426,10 @@ export class RgService {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.durationHours * HOUR_MS);
+
     const { row, lapsed } = await this.drizzle.db.transaction(async (tx) => {
       const lapsedRows = await this.expireLapsedCoolingOff(userId, tx, now);
+
       const r = findOneOrThrow(
         await tx
           .insert(rgExclusion)
@@ -413,10 +446,14 @@ export class RgService {
           .returning(),
         new ExclusionNotFoundError(userId),
       );
+
       await this.syncEnforcement(userId, tx);
+
       return { row: r, lapsed: lapsedRows };
     });
+
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
     for (const lapsedRow of lapsed) {
       this.events.emit('rg.cooling_off.expired', {
         userId,
@@ -425,6 +462,7 @@ export class RgService {
         expiresAt: (lapsedRow.expiresAt ?? now).toISOString(),
       });
     }
+
     this.events.emit('rg.cooling_off.activated', {
       userId,
       playerId,
@@ -441,6 +479,7 @@ export class RgService {
       { key: 'rgCoolingOffActivated', data: { expiresAt: expiresAt.toISOString() } },
       row.id,
     );
+
     return toExclusionDto(row);
   }
 
@@ -459,10 +498,12 @@ export class RgService {
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'self_exclusion');
     const now = new Date();
+
     const expiresAt =
       input.isPermanent || input.durationMonths === undefined
         ? null
         : addMonths(now, input.durationMonths);
+
     const row = await this.drizzle.db.transaction(async (tx) => {
       const r = findOneOrThrow(
         await tx
@@ -480,9 +521,12 @@ export class RgService {
           .returning(),
         new ExclusionNotFoundError(userId),
       );
+
       await this.syncEnforcement(userId, tx);
+
       return r;
     });
+
     this.events.emit('rg.self_exclusion.activated', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -507,6 +551,7 @@ export class RgService {
       },
       row.id,
     );
+
     return toExclusionDto(row);
   }
 
@@ -534,17 +579,21 @@ export class RgService {
         ),
       )
       .limit(1);
+
     if (!existing) {
       throw new ExclusionNotFoundError(userId);
     }
+
     if (existing.isPermanent || existing.expiresAt === null) {
       throw new PermanentExclusionLiftError();
     }
+
     if (new Date() < existing.expiresAt) {
       throw new ExclusionPeriodNotElapsedError();
     }
 
     const now = new Date();
+
     const row = await this.drizzle.db.transaction(async (tx) => {
       const r = findOneOrThrow(
         await tx
@@ -554,11 +603,14 @@ export class RgService {
           .returning(),
         new ExclusionNotFoundError(existing.id),
       );
+
       // Recompute from what remains - a still-active cooling-off keeps its own block
       // rather than being cleared by this lift.
       await this.syncEnforcement(userId, tx);
+
       return r;
     });
+
     this.events.emit('rg.self_exclusion.lifted', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -570,6 +622,7 @@ export class RgService {
       userAgent: meta?.userAgent ?? null,
     });
     await this.notify(userId, { key: 'rgSelfExclusionLifted', data: {} }, row.id);
+
     return toExclusionDto(row);
   }
 
@@ -596,11 +649,13 @@ export class RgService {
         ),
       )
       .limit(1);
+
     if (!existing) {
       throw new ExclusionNotFoundError(userId);
     }
 
     const now = new Date();
+
     const row = await this.drizzle.db.transaction(async (tx) => {
       const r = findOneOrThrow(
         await tx
@@ -610,9 +665,12 @@ export class RgService {
           .returning(),
         new ExclusionNotFoundError(existing.id),
       );
+
       await this.syncEnforcement(userId, tx);
+
       return r;
     });
+
     this.events.emit('rg.cooling_off.lifted', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -623,6 +681,7 @@ export class RgService {
       userAgent: meta?.userAgent ?? null,
     });
     await this.notify(userId, { key: 'rgCoolingOffLifted', data: {} }, row.id);
+
     return toExclusionDto(row);
   }
 
@@ -634,14 +693,18 @@ export class RgService {
     userId: User['id'],
   ): Promise<{ coolingOff: RgExclusion | null; selfExclusion: RgExclusion | null }> {
     const now = new Date();
+
     const exclusions = await this.drizzle.db
       .select()
       .from(rgExclusion)
       .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')))
       .orderBy(desc(rgExclusion.createdAt));
+
     const coolingOff =
       exclusions.find((e) => e.kind === 'cooling_off' && e.expiresAt && e.expiresAt > now) ?? null;
+
     const selfExclusion = exclusions.find((e) => e.kind === 'self_exclusion') ?? null;
+
     return {
       coolingOff: coolingOff ? toExclusionDto(coolingOff) : null,
       selfExclusion: selfExclusion ? toExclusionDto(selfExclusion) : null,
@@ -652,6 +715,7 @@ export class RgService {
   // recompute enforcement for the affected players. Called by the rg-monitor sweep.
   async expireLapsedCoolingOffs(): Promise<void> {
     const now = new Date();
+
     const lapsed = await this.drizzle.db
       .update(rgExclusion)
       .set({ status: 'expired' })
@@ -667,11 +731,14 @@ export class RgService {
         userId: rgExclusion.userId,
         expiresAt: rgExclusion.expiresAt,
       });
+
     const lapsedUserIds = [...new Set(lapsed.map((r) => r.userId))];
     await mapConcurrent(lapsedUserIds, SWEEP_CONCURRENCY, (userId) => this.syncEnforcement(userId));
+
     const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
       lapsed.map((r) => r.userId),
     );
+
     for (const row of lapsed) {
       this.events.emit('rg.cooling_off.expired', {
         userId: row.userId,
@@ -706,6 +773,7 @@ export class RgService {
   // wins with an indefinite block; otherwise the longest active cooling-off; else clear.
   private async syncEnforcement(userId: User['id'], db: Db | Tx = this.drizzle.db): Promise<void> {
     const now = new Date();
+
     const active = await db
       .select({ kind: rgExclusion.kind, expiresAt: rgExclusion.expiresAt })
       .from(rgExclusion)
@@ -716,35 +784,45 @@ export class RgService {
           or(eq(rgExclusion.kind, 'self_exclusion'), gt(rgExclusion.expiresAt, now)),
         ),
       );
+
     if (active.some((e) => e.kind === 'self_exclusion')) {
       await this.loginEnforcement.block(userId, { until: null });
+
       return;
     }
+
     const expiries = active.filter((e) => e.expiresAt).map((e) => (e.expiresAt as Date).getTime());
+
     if (expiries.length > 0) {
       await this.loginEnforcement.block(userId, { until: new Date(Math.max(...expiries)) });
+
       return;
     }
+
     await this.loginEnforcement.unblock(userId);
   }
 
   private async assertNoActiveExclusion(userId: User['id'], kind: RgExclusion['kind']) {
     const now = new Date();
+
     const conditions = [
       eq(rgExclusion.userId, userId),
       eq(rgExclusion.kind, kind),
       eq(rgExclusion.status, 'active'),
     ];
+
     // A lapsed-but-not-yet-swept cooling-off must not block a fresh one; a self-exclusion
     // has no time-based lapse (only an explicit lift clears it).
     if (kind === 'cooling_off') {
       conditions.push(gt(rgExclusion.expiresAt, now));
     }
+
     const [existing] = await this.drizzle.db
       .select({ id: rgExclusion.id })
       .from(rgExclusion)
       .where(and(...conditions))
       .limit(1);
+
     if (existing) {
       throw new ActiveExclusionError();
     }
@@ -758,6 +836,7 @@ export class RgService {
     if (!this.mailDispatch) {
       return;
     }
+
     try {
       await this.mailDispatch.toUser({
         userId,

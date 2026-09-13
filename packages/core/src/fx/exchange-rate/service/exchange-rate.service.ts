@@ -27,14 +27,17 @@ export class ExchangeRateService {
   getRate(from: string, to: string) {
     this.assertSupported(from);
     this.assertSupported(to);
+
     return this.reader.getRate(from, to);
   }
 
   getRates(to: string, from: readonly string[]) {
     this.assertSupported(to);
+
     for (const currency of from) {
       this.assertSupported(currency);
     }
+
     return mapConcurrent(from, GET_RATES_CONCURRENCY, async (currency) => ({
       from: currency,
       quote: await this.reader.getRate(currency, to),

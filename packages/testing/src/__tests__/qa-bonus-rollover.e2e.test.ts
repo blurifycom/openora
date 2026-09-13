@@ -18,8 +18,11 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let appMain: TestApp;
+
 let superAdmin: TestClient;
+
 let gameId: string;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -32,13 +35,16 @@ async function makeSuperAdmin(app: TestApp, email: string) {
   const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
+
   if (!role) {
     throw new Error("makeSuperAdmin: no seeded admin_role with key='super-admin'");
   }
+
   await drizzle
     .insert(adminRoleAssignment)
     .values({ userId, roleId: role.id })
     .onConflictDoNothing();
+
   return { client, userId };
 }
 
@@ -48,6 +54,7 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
     currency,
     idempotencyKey: randomUUID(),
   });
+
   if (res.status !== 200) {
     throw new Error(`deposit failed (${res.status}): ${await res.text()}`);
   }
@@ -65,6 +72,7 @@ async function creditBonus(client: TestClient, userId: string, amount: string) {
       currency: 'USD',
       type: BONUS_CREDIT_SOURCE_TYPE,
     });
+
     if (!result.ok) {
       throw new Error(`bonus credit failed: ${result.reason}`);
     }
@@ -77,18 +85,22 @@ async function bet(client: TestClient, amount: string) {
     currency: 'USD',
     betAmount: amount,
   });
+
   if (res.status !== 200) {
     throw new Error(`startRound failed (${res.status}): ${await res.text()}`);
   }
+
   return readJson(res);
 }
 
 async function rolloverStatus(client: TestClient, status?: 'active' | 'completed') {
   const query = status ? `?status=${status}` : '';
   const res = await client.get(`/wallet/bonus-rollover/status${query}`);
+
   if (res.status !== 200) {
     throw new Error(`bonus-rollover/status failed (${res.status}): ${await res.text()}`);
   }
+
   return (await readJson(res)) as {
     credits: Array<{
       id: string;
@@ -128,9 +140,11 @@ beforeAll(async () => {
     .db.insert(game)
     .values({ name: 'Bonus Rollover QA Game', provider: 'mock', category: 'slots' })
     .returning();
+
   if (!gameRow) {
     throw new Error('failed to seed a game row');
   }
+
   gameId = gameRow.id;
 }, 60_000);
 
@@ -139,10 +153,12 @@ afterAll(async () => {
     await appMain.container.get(DRIZZLE).db.delete(gameRound).where(eq(gameRound.gameId, gameId));
     await appMain.container.get(DRIZZLE).db.delete(game).where(eq(game.id, gameId));
   }
+
   if (appMain) {
     await appMain.container.get(DRIZZLE).db.delete(walletBonusCredit);
     await appMain.container.get(DRIZZLE).db.delete(walletBonusRolloverConfig);
   }
+
   await appMain?.close();
   await db?.dispose();
 });
@@ -150,9 +166,11 @@ afterAll(async () => {
 describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wagering -> auto-release -> notification -> withdrawal', () => {
   it('walks the full lifecycle against the real app, with the status endpoint correct at every step (probes #1 and #7)', async () => {
     const recipientEmail = `bf326-recipient-${randomUUID()}@e2e.test`;
+
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: recipientEmail,
     });
+
     await creditBonus(recipient, recipientId, '40');
 
     let status = await rolloverStatus(recipient);
@@ -176,6 +194,7 @@ describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wageri
       currency: 'USD',
       idempotencyKey: randomUUID(),
     });
+
     expect(blockedWithdraw.status).toBe(409);
     const blockedBody = await readJson(blockedWithdraw);
     expect(String(blockedBody.message ?? blockedBody.error ?? '')).toMatch(/rollover|locked/i);
@@ -190,6 +209,7 @@ describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wageri
     await vi.waitFor(async () => {
       const notifRes = await recipient.get('/notifications');
       expect(notifRes.status).toBe(200);
+
       const { items: notifications } = (await readJson(notifRes)) as {
         items: Array<{
           type: string;
@@ -197,6 +217,7 @@ describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wageri
           body: string;
         }>;
       };
+
       const releaseNotif = notifications.find((n) => n.type === 'wallet.bonus_rollover.completed');
       expect(
         releaseNotif,
@@ -206,11 +227,13 @@ describe('bonus-rollover AC end-to-end: bonus credit -> locked balance -> wageri
     });
 
     await deposit(recipient, '5');
+
     const unlockedWithdraw = await recipient.post('/wallet/withdraw', {
       amount: '5',
       currency: 'USD',
       idempotencyKey: randomUUID(),
     });
+
     expect(unlockedWithdraw.status).toBe(200);
     const unlockedBody = await readJson(unlockedWithdraw);
     expect(['pending', 'completed', 'processing']).toContain(unlockedBody.status);
@@ -230,6 +253,7 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
     const patchRes = await plainPlayer.patch('/backoffice/wallet/bonus-rollover-config', {
       multiplier: '5',
     });
+
     expect(patchRes.status).toBeGreaterThanOrEqual(401);
     expect(patchRes.status).toBeLessThan(500);
   });
@@ -238,6 +262,7 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
     const { client: adminEmail, userId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-plain-admin-${randomUUID()}@e2e.test`,
     });
+
     await appMain.container
       .get(DRIZZLE)
       .db.update(user)
@@ -252,9 +277,11 @@ describe('bonus-rollover authz negatives (probe #2)', () => {
     const { client: ownerClient, userId: ownerId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-scope-owner-${randomUUID()}@e2e.test`,
     });
+
     const { client: bystander } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-scope-bystander-${randomUUID()}@e2e.test`,
     });
+
     await creditBonus(ownerClient, ownerId, '20');
 
     const ownerStatus = await rolloverStatus(ownerClient);
@@ -275,6 +302,7 @@ describe('bonus-rollover waterfall across multiple simultaneously-active credits
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-waterfall-recipient-${randomUUID()}@e2e.test`,
     });
+
     await creditBonus(recipient, recipientId, '30');
     await new Promise((resolve) => setTimeout(resolve, 20));
     await creditBonus(recipient, recipientId, '50');
@@ -305,6 +333,7 @@ describe('bonus-rollover multiplier configurable by Super Admin, forward-only (p
     const setRes = await superAdmin.patch('/backoffice/wallet/bonus-rollover-config', {
       multiplier: '3',
     });
+
     expect(setRes.status).toBe(200);
     const setBody = await readJson(setRes);
     expect(Number(setBody.multiplier)).toBe(3);
@@ -316,6 +345,7 @@ describe('bonus-rollover multiplier configurable by Super Admin, forward-only (p
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-multiplier-recipient-${randomUUID()}@e2e.test`,
     });
+
     await creditBonus(recipient, recipientId, '10');
 
     const status = await rolloverStatus(recipient);
@@ -338,16 +368,20 @@ describe('bonus-rollover audit trail (probe #5)', () => {
     const { client: recipient, userId: recipientId } = await registerAndMaterializePlayer(appMain, {
       email: `bf326-audit-recipient-${randomUUID()}@e2e.test`,
     });
+
     await creditBonus(recipient, recipientId, '12');
 
     const createdAuditRes = await superAdmin.get(
       `/audit/logs?action=wallet.bonus_credit.created&resourceType=wallet_bonus_credit&limit=50`,
     );
+
     expect(createdAuditRes.status).toBe(200);
     const createdAudit = await readJson(createdAuditRes);
+
     const createdEntry = createdAudit.items.find(
       (it: { after: { userId?: string } }) => it.after && it.after.userId === recipientId,
     );
+
     expect(
       createdEntry,
       'expected a wallet.bonus_credit.created audit row for this recipient',
@@ -366,11 +400,14 @@ describe('bonus-rollover audit trail (probe #5)', () => {
     const completedAuditRes = await superAdmin.get(
       `/audit/logs?action=wallet.bonus_credit.completed&resourceType=wallet_bonus_credit&limit=50`,
     );
+
     const completedAudit = await readJson(completedAuditRes);
+
     const completedEntry = completedAudit.items.find(
       (it: { after: { userId?: string; creditedAmount?: string } }) =>
         it.after && it.after.userId === recipientId && Number(it.after.creditedAmount) === 12,
     );
+
     expect(completedEntry, 'expected a wallet.bonus_credit.completed audit row').toBeDefined();
     expect(completedEntry.before).toMatchObject({ status: 'active' });
     expect(completedEntry.after).toMatchObject({ status: 'completed' });
@@ -379,6 +416,7 @@ describe('bonus-rollover audit trail (probe #5)', () => {
     const configAuditRes = await superAdmin.get(
       `/audit/logs?action=wallet.bonus_rollover_config.set&resourceType=bonus_rollover_config&limit=1`,
     );
+
     const configAudit = await readJson(configAuditRes);
     expect(configAudit.items.length).toBeGreaterThanOrEqual(1);
     const configEntry = configAudit.items[0];

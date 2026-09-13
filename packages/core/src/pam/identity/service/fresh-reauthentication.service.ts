@@ -42,15 +42,18 @@ export async function assertFreshReauthentication({
     .from(account)
     .where(and(eq(account.userId, userId), isNotNull(account.password)))
     .limit(1);
+
   if (!credential?.password) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
   }
 
   const authContext = await auth.$context;
+
   const passwordMatches = await authContext.password.verify({
     password: currentPassword,
     hash: credential.password,
   });
+
   if (!passwordMatches) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
   }
@@ -58,6 +61,7 @@ export async function assertFreshReauthentication({
   if (!twoFactorEnabled) {
     return;
   }
+
   if (!totpCode) {
     throw new ORPCError('UNPROCESSABLE_CONTENT', {
       message: 'A second-factor code is required.',
@@ -66,15 +70,18 @@ export async function assertFreshReauthentication({
 
   await twoFactorLockout?.assertNotLocked(userId);
   const api = auth.api as unknown as TwoFactorVerifyApi;
+
   const verification = await verifyChallengeCode(
     api,
     await resolveChallengeMethod(drizzle, userId),
     { code: totpCode, trustDevice: false },
     headers,
   );
+
   if (!verification.ok) {
     await twoFactorLockout?.recordFailure(userId, meta);
     throw new ORPCError('UNAUTHORIZED', { message: 'Invalid second-factor code.' });
   }
+
   await twoFactorLockout?.reset(userId);
 }

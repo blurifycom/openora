@@ -13,6 +13,7 @@ const REDIS_CONNECT_TIMEOUT_MS = 5000;
 // never hangs on a reconnecting socket.
 export function createRedisClient(url: string): RedisClient {
   const logger = createLogger('redis');
+
   const client = createClient({
     url,
     socket: {
@@ -20,7 +21,9 @@ export function createRedisClient(url: string): RedisClient {
       reconnectStrategy: (retries) => Math.min(retries * 100, 2000),
     },
   });
+
   client.on('error', (err: unknown) => logger.error({ err }, 'redis client error'));
   client.connect().catch((err: unknown) => logger.error({ err }, 'redis connect failed'));
+
   return client;
 }

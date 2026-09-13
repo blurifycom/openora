@@ -40,6 +40,7 @@ function realIdentityReader(): IdentityReader {
         .select({ id: player.id })
         .from(player)
         .where(eq(player.userId, userId));
+
       return row?.id ?? null;
     },
   };
@@ -47,6 +48,7 @@ function realIdentityReader(): IdentityReader {
 
 function makeService() {
   const events = makeEventBus();
+
   return { svc: new SocialService(db.drizzle, events, realIdentityReader()), events };
 }
 
@@ -216,6 +218,7 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
     const { svc, events } = makeService();
     const requester = await seedPlayer();
     const addressee = await seedPlayer();
+
     const [refused] = await db.drizzle.db
       .insert(friendship)
       .values({
@@ -361,6 +364,7 @@ describe('SocialService.getRelationships (real PG)', () => {
 async function makeFriends(svc: SocialService, aUserId: string, bUserId: string) {
   const first = await svc.sendFriendRequest(aUserId, bUserId);
   await svc.sendFriendRequest(bUserId, aUserId); // mutual auto-accept
+
   return first;
 }
 
@@ -583,9 +587,11 @@ describe('SocialService.listFriends (real PG)', () => {
     const { svc } = makeService();
     const caller = await seedPlayer();
     const recentlyActive = await seedPlayer({ lastSeenAt: new Date() });
+
     const staleActive = await seedPlayer({
       lastSeenAt: new Date(Date.now() - 10 * 60 * 1000),
     });
+
     await makeFriends(svc, caller.userId, recentlyActive.userId);
     await makeFriends(svc, caller.userId, staleActive.userId);
 
@@ -600,6 +606,7 @@ describe('SocialService.listFriends (real PG)', () => {
   it('paginates results', async () => {
     const { svc } = makeService();
     const caller = await seedPlayer();
+
     for (let i = 0; i < 3; i++) {
       const friend = await seedPlayer({ username: `friend${i}` });
       await makeFriends(svc, caller.userId, friend.userId);
@@ -673,10 +680,12 @@ describe('SocialService.acceptFriendRequest (real PG)', () => {
       accepterId: addressee.userId,
       accepterUsername: 'bob',
     });
+
     const [row] = await db.drizzle.db
       .select()
       .from(friendship)
       .where(eq(friendship.id, request.id));
+
     expect(row?.acceptedAt).toBeInstanceOf(Date);
   });
 
@@ -740,10 +749,12 @@ describe('SocialService.acceptFriendRequest (real PG)', () => {
         FriendRequestUnavailableError,
       );
       expect(events.emit).not.toHaveBeenCalled();
+
       const [row] = await db.drizzle.db
         .select()
         .from(friendship)
         .where(eq(friendship.id, request.id));
+
       expect(row?.acceptedAt).toBeNull();
     },
   );
@@ -768,10 +779,12 @@ describe('SocialService.declineFriendRequest (real PG)', () => {
       'social.friend_request.accepted',
       expect.anything(),
     );
+
     const [row] = await db.drizzle.db
       .select()
       .from(friendship)
       .where(eq(friendship.id, request.id));
+
     expect(row?.refusedAt).toBeNull();
     expect(row?.removedAt).toBeInstanceOf(Date);
   });
@@ -822,10 +835,12 @@ describe('SocialService.cancelFriendRequest (real PG)', () => {
       'social.friend_request.accepted',
       expect.anything(),
     );
+
     const [row] = await db.drizzle.db
       .select()
       .from(friendship)
       .where(eq(friendship.id, request.id));
+
     expect(row?.removedAt).toBeInstanceOf(Date);
     expect(row?.refusedAt).toBeNull();
   });
@@ -875,6 +890,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     expect(result.total).toBe(2);
     // newest first: senderB requested after senderA.
     expect(result.items.map((i) => i.userId)).toEqual([senderB.userId, senderA.userId]);
+
     for (const item of result.items) {
       expect(item.direction).toBe('incoming');
       expect(item.mutualFriendsCount).toBe(0);
@@ -996,6 +1012,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
   it('paginates results', async () => {
     const { svc } = makeService();
     const caller = await seedPlayer();
+
     for (let i = 0; i < 3; i++) {
       const sender = await seedPlayer({ username: `sender${i}` });
       await svc.sendFriendRequest(sender.userId, caller.userId);
@@ -1006,6 +1023,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
       page: 1,
       limit: 2,
     });
+
     const page2 = await svc.listFriendRequests(caller.userId, {
       direction: 'incoming',
       page: 2,

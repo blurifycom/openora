@@ -27,11 +27,13 @@ export default {
   register(ctx) {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
+
     const tagService = (c: TypedContainer<CoreTokenCatalog>) =>
       (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
     // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
     let ruleSvc: TagRuleService | null = null;
+
     const ruleService = (c: TypedContainer<CoreTokenCatalog>) =>
       (ruleSvc ??= new TagRuleService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
@@ -41,6 +43,7 @@ export default {
     // inside the router factory, so wallet's synchronous TAG_EVALUATION_COMMANDS call is
     // never blocked on this module's own router having mounted first.
     let evalSvc: TagEvaluationService | null = null;
+
     const tagEvaluationService = (c: TypedContainer<CoreTokenCatalog>) =>
       (evalSvc ??= new TagEvaluationService({
         tag: tagService(c),

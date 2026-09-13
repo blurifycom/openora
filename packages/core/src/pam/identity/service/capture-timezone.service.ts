@@ -18,6 +18,7 @@ export async function captureTimezone(
   if (!timezone || !provisioning) {
     return;
   }
+
   try {
     await provisioning.recordTimezone?.(userId, timezone);
   } catch (err) {

@@ -39,6 +39,7 @@ import type { ReconciliationService } from '../service/reconciliation.service.js
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
+
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000bb';
 
 let db: TestDb;
@@ -81,6 +82,7 @@ const paymentsManagerDenyingGuard = () =>
 
 function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformConfig>) {
   const audit = makeAuditWriter();
+
   const directory = mock<AdminUserDirectory>({
     lookupPlayers: vi.fn(async (ids: string[]) =>
       ids.map((userId) =>
@@ -88,6 +90,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
       ),
     ),
   });
+
   // excludeRiskFlags defaults to the migration's 5-tag DEFAULT (non-empty), so
   // evaluateAutoApproval needs PLAYER_TAGS bound to check it - bind an empty-tags double by
   // default so tests that aren't specifically exercising risk-tag exclusion still reach
@@ -95,7 +98,9 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   const riskTags = mock<PlayerTags>({
     getActiveTagKeys: vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, []]))),
   });
+
   const paymentProviders = makePaymentProviderRegistry();
+
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -112,6 +117,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
     platformConfig: platformConfig ? mock<PlatformConfig>(platformConfig) : undefined,
     riskTags,
   });
+
   const router = createWalletRouter({
     wallet: service,
     adminGuard,
@@ -122,6 +128,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
     reconciliationQueue: RECONCILIATION_QUEUE,
     realtime: makeRealtimeTransport(),
   });
+
   return { router, audit, service };
 }
 
@@ -136,9 +143,11 @@ async function seedPlayerWallet({
       .returning(),
     new Error('seedPlayerWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: balance });
+
   return row;
 }
 
@@ -299,21 +308,25 @@ describe('wallet auto-withdrawal-config routes', () => {
     );
 
     const below = await seedPlayerWallet();
+
     const belowResult = await service.withdraw({
       userId: below.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
+
     expect(belowResult.status).toBe('completed');
 
     const above = await seedPlayerWallet();
+
     const aboveResult = await service.withdraw({
       userId: above.userId,
       amount: '400',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
+
     expect(aboveResult.status).toBe('pending');
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(

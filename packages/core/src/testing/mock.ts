@@ -72,13 +72,16 @@ const CHAIN_METHODS = [
 const makeQueryBuilder = (results: { select: Row[][]; returning: Row[][]; execute: Row[][] }) => {
   const builder: Record<string, unknown> = {};
   const chain = () => builder;
+
   for (const m of CHAIN_METHODS) {
     builder[m] = vi.fn(chain);
   }
+
   builder['returning'] = vi.fn(() => Promise.resolve(results.returning.shift() ?? []));
   builder['execute'] = vi.fn(() => Promise.resolve({ rows: results.execute?.shift() ?? [] }));
   // oxlint-disable-next-line unicorn/no-thenable -- the builder must be awaitable to mimic Drizzle.
   builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(results.select.shift() ?? []);
+
   return builder;
 };
 
@@ -92,11 +95,14 @@ export const makeDrizzle = (
     returning: results.returning ?? [],
     execute: results.execute ?? [],
   };
+
   const builder = makeQueryBuilder(state);
+
   const db = {
     ...builder,
     transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
   };
+
   return { db } as unknown as DrizzleService;
 };
 
@@ -131,9 +137,12 @@ export const makePaymentProviderRegistry = (
   } = {},
 ): PaymentProviderRegistry => {
   const adapter = options.adapter ?? mock<PaymentAdapter>({});
+
   const webhookVerifier =
     options.webhookVerifier ?? mock<PaymentWebhookVerifier>({ verify: vi.fn(() => false) });
+
   const names = options.names ?? [DEFAULT_PAYMENT_PROVIDER];
+
   return {
     // Any name this registry advertises resolves to the same double; anything else is
     // unregistered, which production code must fail closed on rather than fall back.
@@ -160,17 +169,23 @@ export const makeJobQueue = (): JobQueueAdapter & { enqueue: Mock } =>
  */
 export const makeCache = (): CacheAdapter => {
   const store = new Map<string, { value: unknown; expiresAt: number }>();
+
   const read = (key: string): unknown => {
     const entry = store.get(key);
+
     if (!entry) {
       return undefined;
     }
+
     if (entry.expiresAt <= Date.now()) {
       store.delete(key);
+
       return undefined;
     }
+
     return entry.value;
   };
+
   return {
     get: async <T>(key: string) => read(key) as T | undefined,
     set: async <T>(key: string, value: T, opts: { ttlMs: number }) => {
@@ -180,7 +195,9 @@ export const makeCache = (): CacheAdapter => {
       if (read(key) !== undefined) {
         return false;
       }
+
       store.set(key, { value, expiresAt: Date.now() + opts.ttlMs });
+
       return true;
     },
     delete: async (key: string | string[]) => {
@@ -245,12 +262,14 @@ export const makeAdminGuard = (
       if (resource && action && !isPermitted(options, resource, action)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
+
       return adminCaller(options.caller);
     }),
     assertSuperAdmin: vi.fn(async () => {
       if (options.superAdmin === false) {
         throw new ORPCError('FORBIDDEN', { message: 'Super admin access required' });
       }
+
       return adminCaller(options.caller);
     }),
   });

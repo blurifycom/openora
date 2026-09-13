@@ -19,15 +19,19 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const root = resolve(here, '../..');
 
 const keep = process.argv.includes('--keep');
+
 const GROUP = 'player';
+
 const MODULE = 'eval-tournament';
 
 function run(cmd: string, args: string[]): void {
   console.log(`\n> ${cmd} ${args.join(' ')}`);
   const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: root });
+
   if (r.status !== 0) {
     console.error(`\nFAIL: "${cmd} ${args.join(' ')}" exited ${r.status ?? '?'}`);
     process.exit(r.status ?? 1);
@@ -37,15 +41,18 @@ function run(cmd: string, args: string[]): void {
 function untrackedAndModified(): Set<string> {
   const out = execSync('git status --porcelain', { cwd: root }).toString();
   const files = new Set<string>();
+
   for (const line of out.split('\n')) {
     const f = line
       .slice(3)
       .trim()
       .replace(/ -> .*/, '');
+
     if (f) {
       files.add(f);
     }
   }
+
   return files;
 }
 
@@ -56,6 +63,7 @@ function cleanup(before: Set<string>): void {
 
   if (added.length === 0 && modified.length === 0) {
     console.log('\nNothing to clean up.');
+
     return;
   }
 
@@ -71,6 +79,7 @@ function cleanup(before: Set<string>): void {
 }
 
 const before = untrackedAndModified();
+
 if (!keep && before.size > 0) {
   console.warn(
     `\nWARN: working tree has ${before.size} uncommitted change(s). ` +
@@ -87,15 +96,20 @@ run('pnpm', ['regen']);
 run('pnpm', ['verify']);
 
 const catalogPath = join(root, 'docs', 'catalog.json');
+
 if (existsSync(catalogPath)) {
   const catalog = readFileSync(catalogPath, 'utf8');
+
   if (!catalog.includes(MODULE)) {
     console.error(`\nFAIL: "${MODULE}" not found in docs/catalog.json after regen`);
+
     if (!keep) {
       cleanup(before);
     }
+
     process.exit(1);
   }
+
   console.log(`\nPASS: "${MODULE}" appears in catalog.json`);
 }
 

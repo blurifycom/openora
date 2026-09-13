@@ -34,6 +34,7 @@ const CTX = {
   request: { headers: {} as Record<string, string | string[] | undefined> },
   clientMeta: NO_CLIENT_META,
 };
+
 const ADMIN = '33333333-3333-4333-8333-333333333333';
 
 let db: TestDb;
@@ -56,6 +57,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
       if (resource && action && !allowed.includes(`${resource}:${action}`)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
+
       return { userId: ADMIN, role: 'admin' };
     }),
   });
@@ -64,6 +66,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
 function build(guard: AdminGuard) {
   const events = makeEventBus();
   const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) });
+
   const kyc = new KycVerificationService({
     drizzle: db.drizzle,
     events,
@@ -71,7 +74,9 @@ function build(guard: AdminGuard) {
     statusWriter,
     identityReader: makeIdentityReader(),
   });
+
   const audit = makeAuditWriter();
+
   const router = createComplianceRouter({
     compliance: mock<ComplianceService>({}),
     adminGuard: guard,
@@ -86,6 +91,7 @@ function build(guard: AdminGuard) {
     rgMonitoring: mock<RgMonitoringService>({}),
     rgSelfService: mock<RgSelfServiceService>({}),
   });
+
   return { router, audit, statusWriter, events };
 }
 
@@ -99,6 +105,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -252,6 +259,7 @@ describe('compliance admin KYC router effects (real PG)', () => {
   it('is idempotent on a repeat override that resolves to the current status', async () => {
     const seeded = await seedPlayer();
     const { router, statusWriter } = build(fakeGuard(['compliance:override-limit']));
+
     const input = {
       userId: seeded.userId,
       tier: 'basic' as const,

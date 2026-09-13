@@ -75,6 +75,7 @@ export type AuthOptions = {
 export function createAuth(options: AuthOptions): BetterAuthType {
   const dispatchOtpMail: DispatchOtpMail = options.dispatchOtpMail ?? (() => {});
   const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
+
   return betterAuth({
     database: drizzleAdapter(options.db, {
       provider: 'pg',
@@ -163,6 +164,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           if (type !== 'email-verification' && type !== 'forget-password') {
             return;
           }
+
           const template: MailTemplate =
             type === 'email-verification'
               ? { key: 'verifyEmail', data: { otp } }
@@ -171,6 +173,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
                 : (await options.isAdminPasswordReset?.(email))
                   ? { key: 'adminResetPasswordOtp', data: { otp, email } }
                   : { key: 'resetPasswordOtp', data: { otp, email } };
+
           await dispatchOtpMail({ to: email, template });
         },
       }),

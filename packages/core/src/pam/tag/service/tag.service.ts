@@ -42,29 +42,36 @@ function pgErrorCode(e: unknown): string | undefined {
   if (e instanceof DatabaseError) {
     return e.code;
   }
+
   // drizzle-orm wraps every driver-thrown error in DrizzleQueryError, exposing the
   // real pg DatabaseError only via `.cause`.
   if (e instanceof Error && e.cause instanceof DatabaseError) {
     return e.cause.code;
   }
+
   return undefined;
 }
 
 export const TagNotFoundError = makeNotFoundError('Tag');
+
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
+
 export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
+
 // Distinct from TagAlreadyInUseError above (a player already holding this tag active) -
 // this is the tag CATALOG key colliding on create.
 export const TagKeyConflictError = makeConflictError(
   'TagKeyConflictError',
   'Tag key already exists',
 );
+
 // A tag can't be deleted while a playerTag/tagRule row still references it
 // (onDelete: 'restrict' in the schema).
 export const TagInUseError = makeConflictError(
   'TagInUseError',
   'Tag is still referenced by a player tag or tag rule and cannot be deleted',
 );
+
 export const TagRemovalReasonRequiredError = makeConflictError(
   'TagRemovalReasonRequiredError',
   'A removal reason is required for sticky tags',
@@ -74,9 +81,11 @@ const DEFAULT_MANUAL_REMOVAL_REASON = 'manual tag removal';
 
 function resolveRemovalReason(reason: string | undefined, isSticky: boolean) {
   const normalized = reason?.trim();
+
   if (isSticky && !normalized) {
     throw new TagRemovalReasonRequiredError();
   }
+
   return normalized ?? DEFAULT_MANUAL_REMOVAL_REASON;
 }
 
@@ -92,12 +101,15 @@ function mergeAssignMetadata(
   if (!incoming) {
     return existing;
   }
+
   if (!existing) {
     return incoming;
   }
+
   if (existing.amountBreach && existing.countBreach) {
     return existing;
   }
+
   return {
     amountBreach: existing.amountBreach ?? incoming.amountBreach,
     countBreach: existing.countBreach ?? incoming.countBreach,
@@ -113,20 +125,24 @@ export class TagService implements PlayerTags {
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
   public async getActiveTagKeys(userIds: readonly string[]) {
     const result = new Map<string, TagKey[]>();
+
     if (userIds.length === 0) {
       return result;
     }
+
     const rows = await this.drizzle.db
       .select({ userId: player.userId, key: tag.key })
       .from(player)
       .innerJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
       .innerJoin(tag, eq(tag.id, playerTag.tagId))
       .where(inArray(player.userId, [...userIds]));
+
     for (const row of rows) {
       const keys = result.get(row.userId) ?? [];
       keys.push(row.key);
       result.set(row.userId, keys);
     }
+
     return result;
   }
 
@@ -147,11 +163,13 @@ export class TagService implements PlayerTags {
       .innerJoin(tag, eq(playerTag.tagId, tag.id))
       .innerJoin(player, eq(player.id, playerTag.playerId))
       .where(and(eq(tag.key, tagKey), isNull(playerTag.removedAt)));
+
     return rows.map((r) => ({ userId: r.userId, assignMetadata: r.assignMetadata ?? null }));
   }
 
   private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx) {
     const results = await trx.select().from(tag).where(eq(tag.key, tagKey)).limit(1);
+
     return toTag(findOneOrThrow(results, new TagNotFoundError(tagKey)));
   }
 
@@ -161,11 +179,13 @@ export class TagService implements PlayerTags {
       const [created] = await db.insert(tag).values(args).returning();
       const result = toTag(created);
       void this.event.emit('tag.created', { key: result.key, isSticky: result.isSticky, actorId });
+
       return result;
     } catch (e) {
       if (pgErrorCode(e) === '23505') {
         throw new TagKeyConflictError();
       }
+
       mapDbError(e);
     }
   }
@@ -177,15 +197,19 @@ export class TagService implements PlayerTags {
       // no-op delete of a missing key would still fall through and emit tag.deleted,
       // which the audit module records as a real deletion that never occurred.
       const deleted = await db.delete(tag).where(eq(tag.key, args.key)).returning();
+
       if (deleted.length === 0) {
         throw new TagNotFoundError(args.key);
       }
+
       void this.event.emit('tag.deleted', { key: args.key, actorId });
+
       return true;
     } catch (e) {
       if (pgErrorCode(e) === '23503') {
         throw new TagInUseError();
       }
+
       mapDbError(e);
     }
   }
@@ -200,11 +224,14 @@ export class TagService implements PlayerTags {
     const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
     const db = this.drizzle.db;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const TAG_SORT_COLS = {
       createdAt: playerTag.createdAt,
       assignActor: playerTag.assignActor,
     } as const;
+
     const tagSortCol = TAG_SORT_COLS[sortBy ?? 'createdAt'];
+
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({
@@ -219,6 +246,7 @@ export class TagService implements PlayerTags {
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(playerTag).where(where),
     ]);
+
     return {
       items: rows.map((r) => toPlayerTagWithTag(r.pt, r.tagKey)),
       total: Number(n),
@@ -229,6 +257,7 @@ export class TagService implements PlayerTags {
 
   public async listAssignableTags(playerId: Player['id']) {
     const db = this.drizzle.db;
+
     const rows = await db
       .select()
       .from(tag)
@@ -242,6 +271,7 @@ export class TagService implements PlayerTags {
         ),
       )
       .orderBy(asc(tag.key));
+
     return rows.map(toTag);
   }
 
@@ -261,6 +291,7 @@ export class TagService implements PlayerTags {
   ): Promise<{ status: 'created'; row: PlayerTagWithTag } | { status: 'already_active' }> {
     const { tagKey, ...restArgs } = args;
     const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
+
     // Fast/friendly pre-check only - the real guard is the partial unique index
     // (player_tag_active_key) backing the onConflictDoNothing below. Without it, two
     // concurrent calls (or the same at-least-once event redelivered) can both pass
@@ -276,19 +307,23 @@ export class TagService implements PlayerTags {
         ),
       )
       .limit(1);
+
     if (existing) {
       // A later event can reveal a breach dimension absent from the original assignment;
       // without merging it in, the resweep would act on stale metadata and could wrongly
       // clear a still-risky player.
       const merged = mergeAssignMetadata(existing.assignMetadata, args.assignMetadata);
+
       if (merged !== existing.assignMetadata) {
         await trx
           .update(playerTag)
           .set({ assignMetadata: merged })
           .where(eq(playerTag.id, existing.id));
       }
+
       return { status: 'already_active' };
     }
+
     // The loser of a genuine race hits the unique index here instead: its insert is a
     // no-op (empty returning()), so it also reports 'already_active' - tryAssignTag
     // already treats the resulting TagAlreadyInUseError as an idempotent no-op.
@@ -300,9 +335,11 @@ export class TagService implements PlayerTags {
         where: isNull(playerTag.removedAt),
       })
       .returning();
+
     if (!created) {
       return { status: 'already_active' };
     }
+
     return { status: 'created', row: toPlayerTagWithTag(created, foundTag.key) };
   }
 
@@ -310,9 +347,11 @@ export class TagService implements PlayerTags {
     try {
       const db = this.drizzle.db;
       const outcome = await db.transaction((trx) => this._assignPlayerTagOnTx(trx, args));
+
       if (outcome.status === 'already_active') {
         throw new TagAlreadyInUseError();
       }
+
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
@@ -321,6 +360,7 @@ export class TagService implements PlayerTags {
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
+
       return outcome.row;
     } catch (e) {
       mapDbError(e);
@@ -339,15 +379,18 @@ export class TagService implements PlayerTags {
   public async assignPlayerTagInTx(trx: DrizzleTx, args: AssignPlayerTagArgs) {
     try {
       const outcome = await this._assignPlayerTagOnTx(trx, args);
+
       if (outcome.status === 'already_active') {
         throw new TagAlreadyInUseError();
       }
+
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
         actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
       });
+
       return outcome.row;
     } catch (e) {
       mapDbError(e);
@@ -357,6 +400,7 @@ export class TagService implements PlayerTags {
   private async _removePlayerTagOnTx(trx: DrizzleTx, args: RemovePlayerTagInput) {
     const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
     const removalReason = resolveRemovalReason(args.removalReason, foundTag.isSticky);
+
     const active = findOneOrThrow(
       await trx
         .select()
@@ -371,6 +415,7 @@ export class TagService implements PlayerTags {
         .limit(1),
       new TagAssignmentNotFoundError(args.playerId),
     );
+
     const [updated] = await trx
       .update(playerTag)
       .set({
@@ -381,15 +426,18 @@ export class TagService implements PlayerTags {
       })
       .where(eq(playerTag.id, active.id))
       .returning();
+
     return toPlayerTagWithTag(updated, foundTag.key);
   }
 
   public async removePlayerTag(args: RemovePlayerTagInput, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
+
       const result = await db.transaction(async (trx) => {
         const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
         const removalReason = resolveRemovalReason(args.removalReason, foundTag.isSticky);
+
         const active = findOneOrThrow(
           await trx
             .select()
@@ -404,6 +452,7 @@ export class TagService implements PlayerTags {
             .limit(1),
           new TagAssignmentNotFoundError(args.playerId),
         );
+
         const [updated] = await trx
           .update(playerTag)
           .set({
@@ -414,8 +463,10 @@ export class TagService implements PlayerTags {
           })
           .where(eq(playerTag.id, active.id))
           .returning();
+
         return toPlayerTagWithTag(updated, foundTag.key);
       });
+
       void this.event.emit('tag.player.removed', {
         playerId: args.playerId,
         tagKey: args.tagKey,
@@ -424,6 +475,7 @@ export class TagService implements PlayerTags {
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
+
       return result;
     } catch (e) {
       mapDbError(e);
@@ -445,6 +497,7 @@ export class TagService implements PlayerTags {
     try {
       const db = this.drizzle.db;
       const { removalReason, ...assignArgs } = args;
+
       const [activeAtStart] = await db
         .select({ id: playerTag.id })
         .from(playerTag)
@@ -457,6 +510,7 @@ export class TagService implements PlayerTags {
           ),
         )
         .limit(1);
+
       const result = await db.transaction(async (trx) => {
         // Serialize replacements for the same player before inspecting/removing the
         // current assignment. The partial unique index protects the insert, but without
@@ -480,6 +534,7 @@ export class TagService implements PlayerTags {
             ),
           )
           .limit(1);
+
         if (
           activeAfterWait &&
           (activeAtStart === undefined || activeAfterWait.id !== activeAtStart.id)
@@ -488,6 +543,7 @@ export class TagService implements PlayerTags {
         }
 
         let removed = false;
+
         try {
           // App-level throw from findOneOrThrow, not a failed SQL statement, so
           // catching it here does not abort the surrounding Postgres transaction.
@@ -504,7 +560,9 @@ export class TagService implements PlayerTags {
             throw e;
           }
         }
+
         const assigned = await this._assignPlayerTagOnTx(trx, assignArgs);
+
         if (assigned.status === 'already_active') {
           // Unlike assignPlayerTag/assignPlayerTagInTx (where a lost race is an
           // idempotent no-op that must still let a metadata merge commit), a lost
@@ -513,8 +571,10 @@ export class TagService implements PlayerTags {
           // db.transaction callback is exactly how that rollback happens.
           throw new TagAlreadyInUseError();
         }
+
         return { row: assigned.row, removed };
       });
+
       if (result.removed) {
         void this.event.emit('tag.player.removed', {
           playerId: args.playerId,
@@ -523,12 +583,14 @@ export class TagService implements PlayerTags {
           actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
         });
       }
+
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
         actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
       });
+
       return result.row;
     } catch (e) {
       mapDbError(e);

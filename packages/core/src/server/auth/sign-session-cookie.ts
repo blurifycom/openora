@@ -27,10 +27,12 @@ export function signSessionCookie({
   const signature = createHmac('sha256', secret).update(token).digest('base64');
   const signedValue = `${token}.${signature}`;
   const attributes = { ...sessionCookie.attributes };
+
   if (maxAgeSeconds === undefined) {
     delete attributes.maxAge;
   } else {
     attributes.maxAge = maxAgeSeconds;
   }
+
   return serialize(sessionCookie.name, signedValue, attributes);
 }

@@ -60,6 +60,7 @@
 //     define the enum triple on the contract surface (single source of truth).
 
 const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'scripts']);
+
 // common/ and testing/ are cross-cutting utility dirs, not folded domains (no index.ts at
 // their root, not checked by verify-module-shape.ts either) - out of scope here too.
 const EXCLUDED_TOP_DIRS = new Set(['common', 'testing']);
@@ -107,6 +108,7 @@ function filename(context) {
 // Path relative to packages/core/src/, split into segments, or null if outside that tree.
 function coreSrcSegments(file) {
   const m = file.match(/packages\/core\/src\/(.+)$/);
+
   return m ? m[1].split('/') : null;
 }
 
@@ -115,10 +117,13 @@ const moduleFilePlacement = {
     return {
       Program(node) {
         const segments = coreSrcSegments(filename(context));
+
         if (!segments || segments.length < 2) {
           return;
         }
+
         const [domain, ...rest] = segments;
+
         if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
           return;
         }
@@ -135,6 +140,7 @@ const moduleFilePlacement = {
                 'adapters/, react/, drizzle/, __tests__/, seed/).',
             });
           }
+
           return;
         }
 
@@ -152,6 +158,7 @@ const moduleFilePlacement = {
                 'contract/, service/, router/, adapters/, react/, drizzle/, __tests__/).',
             });
           }
+
           return;
         }
 
@@ -176,10 +183,13 @@ const layerFileNaming = {
     return {
       Program(node) {
         const segments = coreSrcSegments(filename(context));
+
         if (!segments || segments.length < 2) {
           return;
         }
+
         const [domain, ...rest] = segments;
+
         if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
           return;
         }
@@ -189,16 +199,20 @@ const layerFileNaming = {
           : rest.length >= 2 && LAYER_DIRS.has(rest[1])
             ? 1
             : -1;
+
         if (layerIdx === -1) {
           return;
         }
+
         const layer = rest[layerIdx];
+
         // Only enforce naming on files directly inside the layer dir, not nested subfolders
         // (adapters/mock/*, seed/data/* stay free-form - the layer dirs with a naming rule
         // are service/ and __tests__/, neither of which has nested subfolders today).
         if (rest.length !== layerIdx + 2) {
           return;
         }
+
         const base = rest[layerIdx + 1];
 
         if (
@@ -211,6 +225,7 @@ const layerFileNaming = {
             message: `${base} is in service/ but doesn't end .service.ts - rename it (eg wallet.service.ts).`,
           });
         }
+
         if (layer === '__tests__' && !base.endsWith('.test.ts')) {
           context.report({
             node,
@@ -227,19 +242,23 @@ const layerFileNaming = {
 // packages/core/src itself (not expected in the current tree).
 function resolveRelativeSegments(fileSegments, spec) {
   const stack = fileSegments.slice(0, -1);
+
   for (const part of spec.split('/')) {
     if (part === '' || part === '.') {
       continue;
     }
+
     if (part === '..') {
       if (stack.length === 0) {
         return null;
       }
+
       stack.pop();
     } else {
       stack.push(part);
     }
   }
+
   return stack.length > 0 ? stack : null;
 }
 
@@ -247,12 +266,15 @@ function resolveRelativeSegments(fileSegments, spec) {
 // (see the no-relative-zone-escape header note above).
 function moduleRootOf(segments) {
   const [domain, ...rest] = segments;
+
   if (!domain || ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
     return null;
   }
+
   if (rest.length <= 1 || LAYER_DIRS.has(rest[0])) {
     return [domain];
   }
+
   return [domain, rest[0]];
 }
 
@@ -260,37 +282,46 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
   if (!source || !source.startsWith('.')) {
     return;
   }
+
   const targetSegments = resolveRelativeSegments(segments, source);
+
   if (!targetSegments) {
     return;
   }
+
   const targetDomain = targetSegments[0];
 
   if (targetDomain !== domain) {
     if (EXCLUDED_TOP_DIRS.has(targetDomain)) {
       return;
     }
+
     context.report({
       node,
       message:
         `'${source}' escapes packages/core/src/${domain} into ${targetDomain}. Import from the ` +
         `package's own public subpath (eg @openora/core/${targetDomain}) instead of a relative path.`,
     });
+
     return;
   }
 
   if (mRoot.length === 1) {
     return;
   }
+
   const tRoot = moduleRootOf(targetSegments) ?? [domain];
+
   if (tRoot.join('/') === mRoot.join('/')) {
     return;
   }
 
   const targetRest = targetSegments.slice(1);
+
   if (LAYER_DIRS.has(targetRest[0])) {
     return;
   }
+
   // A single extension-bearing segment is a domain-root file (index.js, server.js,
   // contracts.js) - legit composition reach. A single extensionless segment is a bare
   // sibling-slice directory barrel (../../lobby) - an escape, so don't exempt it.
@@ -311,10 +342,13 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
 const noRelativeZoneEscape = {
   create(context) {
     const segments = coreSrcSegments(filename(context));
+
     if (!segments || segments.length < 2) {
       return {};
     }
+
     const [domain] = segments;
+
     // scripts + common + testing are exempt (build/cross-cutting; no zone discipline). Engine
     // zones (contracts/server/react) ARE checked now: their module root is the whole zone, so
     // an intra-zone import (server/kernel -> server/db) passes the mRoot.length===1 short-circuit
@@ -322,12 +356,16 @@ const noRelativeZoneEscape = {
     if (EXCLUDED_TOP_DIRS.has(domain) || domain === 'scripts') {
       return {};
     }
+
     const mRoot = ENGINE_ZONES.has(domain) ? [domain] : moduleRootOf(segments);
+
     if (!mRoot) {
       return {};
     }
+
     const visit = (node) =>
       checkRelativeZoneEscape(context, segments, domain, mRoot, node, node.source?.value);
+
     return {
       ImportDeclaration: visit,
       ExportNamedDeclaration: visit,
@@ -347,7 +385,9 @@ const noInlinePgEnum = {
         if (!isPgEnumCall(node)) {
           return;
         }
+
         const valuesArg = node.arguments[1];
+
         if (valuesArg?.type === 'ArrayExpression') {
           context.report({
             node,
@@ -387,15 +427,19 @@ const noReinferImportedSchema = {
     if (isContractOrSchemaZone(filename(context))) {
       return {};
     }
+
     // Populated by ImportDeclaration below, read by TSTypeReference - imports sit above their
     // use in source order, so this fills in before a same-file z.infer<typeof X> is visited.
     const importedFrom = new Map();
+
     return {
       ImportDeclaration(node) {
         const source = node.source?.value;
+
         if (typeof source !== 'string' || !isContractSchemaSpecifier(source)) {
           return;
         }
+
         for (const spec of node.specifiers ?? []) {
           if (spec.type === 'ImportSpecifier' || spec.type === 'ImportDefaultSpecifier') {
             importedFrom.set(spec.local.name, source);
@@ -406,15 +450,20 @@ const noReinferImportedSchema = {
         if (!isZInferTypeName(node.typeName)) {
           return;
         }
+
         const arg = node.typeArguments?.params?.[0];
+
         if (arg?.type !== 'TSTypeQuery' || arg.exprName?.type !== 'Identifier') {
           return;
         }
+
         const schemaName = arg.exprName.name;
         const source = importedFrom.get(schemaName);
+
         if (!source) {
           return;
         }
+
         context.report({
           node,
           message:
@@ -429,13 +478,17 @@ const noReinferImportedSchema = {
 
 function isServiceOrRouterFile(file) {
   const segments = coreSrcSegments(file);
+
   if (!segments) {
     return false;
   }
+
   const [domain, ...rest] = segments;
+
   if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
     return false;
   }
+
   return rest.includes('service') || rest.includes('router');
 }
 
@@ -461,6 +514,7 @@ function checkIdParam(context, name, typeAnnotation, node) {
   if (!name.endsWith('Id') || EXTERNAL_ID_PARAM_NAMES.has(name)) {
     return;
   }
+
   if (isBareStringType(typeAnnotation)) {
     reportBareStringId(context, name, node);
   }
@@ -472,16 +526,20 @@ function checkIdParam(context, name, typeAnnotation, node) {
 function checkParams(context, params) {
   for (const param of params) {
     const paramType = param.typeAnnotation?.typeAnnotation;
+
     if (param.type === 'Identifier') {
       checkIdParam(context, param.name, paramType, param);
     }
+
     if (paramType?.type !== 'TSTypeLiteral') {
       continue;
     }
+
     for (const member of paramType.members) {
       if (member.type !== 'TSPropertySignature' || member.key?.type !== 'Identifier') {
         continue;
       }
+
       checkIdParam(context, member.key.name, member.typeAnnotation?.typeAnnotation, member);
     }
   }
@@ -492,7 +550,9 @@ const noBareStringIdParam = {
     if (!isServiceOrRouterFile(filename(context))) {
       return {};
     }
+
     const visit = (node) => checkParams(context, node.params);
+
     return {
       FunctionDeclaration: visit,
       FunctionExpression: visit,
@@ -518,10 +578,13 @@ function isUnboundedMapCall(node) {
   if (node?.type !== 'CallExpression' || node.callee?.type !== 'MemberExpression') {
     return false;
   }
+
   const { property, object } = node.callee;
+
   if (property?.type !== 'Identifier' || (property.name !== 'map' && property.name !== 'flatMap')) {
     return false;
   }
+
   return object?.type !== 'ArrayExpression';
 }
 
@@ -530,11 +593,13 @@ const noUnboundedDbFanout = {
     if (!isServiceOrRouterFile(filename(context))) {
       return {};
     }
+
     return {
       CallExpression(node) {
         if (!isPromiseAllCallee(node.callee) || !isUnboundedMapCall(node.arguments?.[0])) {
           return;
         }
+
         context.report({
           node,
           message:
@@ -553,9 +618,11 @@ const noUnboundedDbFanout = {
 // drizzle tables, so it is explicitly out of scope.
 function isDrizzleSchemaFile(file) {
   const segments = coreSrcSegments(file);
+
   if (!segments || segments.includes('schemas')) {
     return false;
   }
+
   return segments.includes('schema') || segments.at(-1) === 'schema.ts';
 }
 
@@ -572,11 +639,13 @@ const noNaiveTimestamp = {
     if (!isDrizzleSchemaFile(filename(context))) {
       return {};
     }
+
     return {
       CallExpression(node) {
         if (!isIdentifierCallee(node, 'timestamp')) {
           return;
         }
+
         const hasTz = node.arguments?.some(
           (arg) =>
             arg?.type === 'ObjectExpression' &&
@@ -589,6 +658,7 @@ const noNaiveTimestamp = {
                 p.value.value === true,
             ),
         );
+
         if (!hasTz) {
           context.report({
             node,
@@ -609,11 +679,13 @@ const noFloatMoney = {
     if (!isDrizzleSchemaFile(filename(context))) {
       return {};
     }
+
     return {
       CallExpression(node) {
         if (node.callee?.type !== 'Identifier' || !FLOAT_COLUMN_BUILDERS.has(node.callee.name)) {
           return;
         }
+
         context.report({
           node,
           message:
@@ -635,6 +707,7 @@ const DRIZZLE_NAME_DECLARERS = new Set([
   'primaryKey',
   'unique',
 ]);
+
 const DRIZZLE_COLUMN_BUILDERS = new Set([
   'uuid',
   'text',
@@ -668,23 +741,28 @@ const drizzleSnakeCase = {
     if (!isDrizzleSchemaFile(filename(context))) {
       return {};
     }
+
     return {
       CallExpression(node) {
         if (node.callee?.type !== 'Identifier') {
           return;
         }
+
         const name = node.callee.name;
         const literal = stringLiteralValue(node.arguments?.[0]);
         // Column builders take an OPTIONAL explicit name; when present it must be snake_case
         // (drizzle derives it from the camelCase key via casing:'snake_case', so a camelCase
         // literal produces a camelCase SQL column). Name-declarers always take a name string.
         const isDeclarer = DRIZZLE_NAME_DECLARERS.has(name);
+
         if (!isDeclarer && !DRIZZLE_COLUMN_BUILDERS.has(name)) {
           return;
         }
+
         if (literal === null || isSnakeCase(literal)) {
           return;
         }
+
         context.report({
           node,
           message: `'${literal}' is not snake_case. Drizzle SQL identifiers (${
@@ -703,10 +781,12 @@ const drizzleSnakeCase = {
 // Walk a member-call chain (z.string().uuid()) back to its root identifier.
 function rootIdentifierName(node) {
   let current = node;
+
   while (current) {
     if (current.type === 'Identifier') {
       return current.name;
     }
+
     if (current.type === 'CallExpression') {
       current = current.callee;
     } else if (current.type === 'MemberExpression') {
@@ -715,19 +795,23 @@ function rootIdentifierName(node) {
       return null;
     }
   }
+
   return null;
 }
 
 const noRawZUuid = {
   create(context) {
     const file = filename(context);
+
     // Scope to the platform's own source; the one sanctioned definition is the shared schema.
     if (!coreSrcSegments(file) || file.endsWith('contracts/schemas/common.ts')) {
       return {};
     }
+
     return {
       CallExpression(node) {
         const callee = node.callee;
+
         if (
           callee?.type !== 'MemberExpression' ||
           callee.property?.type !== 'Identifier' ||
@@ -736,6 +820,7 @@ const noRawZUuid = {
         ) {
           return;
         }
+
         context.report({
           node,
           message:
@@ -750,12 +835,15 @@ const noRawZUuid = {
 const noInlineZEnumOutsideContract = {
   create(context) {
     const file = filename(context);
+
     if (!coreSrcSegments(file) || isContractOrSchemaZone(file)) {
       return {};
     }
+
     return {
       CallExpression(node) {
         const callee = node.callee;
+
         if (
           callee?.type !== 'MemberExpression' ||
           callee.object?.type !== 'Identifier' ||
@@ -766,6 +854,7 @@ const noInlineZEnumOutsideContract = {
         ) {
           return;
         }
+
         context.report({
           node,
           message:
@@ -783,17 +872,21 @@ const REAL_INFRA_FACTORIES = new Set(['createTestDb', 'createTestRedis']);
 const intTestFileNaming = {
   create(context) {
     const file = filename(context);
+
     if (!file.endsWith('.test.ts') || file.endsWith('.int.test.ts')) {
       return {};
     }
+
     return {
       ImportDeclaration(node) {
         const usesRealInfra = node.specifiers.some(
           (s) => s.imported && REAL_INFRA_FACTORIES.has(s.imported.name),
         );
+
         if (!usesRealInfra) {
           return;
         }
+
         context.report({
           node,
           message:

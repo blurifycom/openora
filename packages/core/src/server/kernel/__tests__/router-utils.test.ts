@@ -13,6 +13,7 @@ const reasonOf = (fn: () => unknown) => {
   } catch (err) {
     return (err as ORPCError<string, { reason: string }>).data.reason;
   }
+
   throw new Error('expected getUserId to throw');
 };
 

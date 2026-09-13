@@ -15,11 +15,13 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
+
   const sessions = new SessionService({
     drizzle: db.drizzle,
     events,
     identityReader: makeIdentityReader(),
   });
+
   return { svc: new LoginEnforcementService(db.drizzle, sessions), events };
 }
 
@@ -32,11 +34,13 @@ async function seedActiveSession(userId: string) {
       expiresAt: new Date(Date.now() + 24 * HOUR),
     })
     .returning();
+
   return row!;
 }
 
 async function readUser(id: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, id));
+
   return row!;
 }
 
@@ -45,6 +49,7 @@ async function activeSessionCount(userId: string) {
     .select()
     .from(session)
     .where(sql`${session.userId} = ${userId} AND ${session.expiresAt} > NOW()`);
+
   return rows.length;
 }
 

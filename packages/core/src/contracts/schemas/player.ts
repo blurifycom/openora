@@ -12,6 +12,7 @@ export const PLAYER_STATUSES = [
   'suspended',
   'closed',
 ] as const;
+
 export const PlayerStatusSchema = z.enum(PLAYER_STATUSES);
 
 export const KYC_STATUSES = [
@@ -23,14 +24,19 @@ export const KYC_STATUSES = [
   'resubmission_requested',
   'manually_overridden',
 ] as const;
+
 export const KycStatusSchema = z.enum(KYC_STATUSES);
 
 export const KYC_TIERS = ['basic', 'advanced'] as const;
+
 export const KycTierSchema = z.enum(KYC_TIERS);
+
 export type KycTier = z.infer<typeof KycTierSchema>;
 
 export const KYC_STATUS_SOURCES = ['vendor', 'manual', 'webhook', 'reverify'] as const;
+
 export const KycStatusSourceSchema = z.enum(KYC_STATUS_SOURCES);
+
 export type KycStatusSource = z.infer<typeof KycStatusSourceSchema>;
 
 /**
@@ -87,7 +93,9 @@ export const PLAYER_SORT_BY_VALUES = [
   'lastSeenAt',
   'level',
 ] as const;
+
 export const PlayerSortBySchema = z.enum(PLAYER_SORT_BY_VALUES).default('createdAt');
+
 export type PlayerSortBy = z.infer<typeof PlayerSortBySchema>;
 
 export const PaginatedPlayerSearchArgsSchema = z.object({
@@ -98,7 +106,9 @@ export const PaginatedPlayerSearchArgsSchema = z.object({
 });
 
 export type Player = z.infer<typeof PlayerSchema>;
+
 export type PlayerStatus = z.infer<typeof PlayerStatusSchema>;
+
 export type KycStatus = z.infer<typeof KycStatusSchema>;
 
 export type PaginatedPlayerListSearchArgs = z.infer<typeof PaginatedPlayerSearchArgsSchema>;
@@ -115,6 +125,7 @@ export function isAdultDateOfBirth(dateOfBirth: string, now = new Date()): boole
     (now.getUTCFullYear() - MIN_PLAYER_AGE_YEARS) * 10_000 +
     (now.getUTCMonth() + 1) * 100 +
     now.getUTCDate();
+
   return Number(dateOfBirth.replaceAll('-', '')) <= cutoff;
 }
 

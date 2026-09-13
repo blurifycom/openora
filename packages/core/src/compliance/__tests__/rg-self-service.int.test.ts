@@ -29,6 +29,7 @@ import { LimitOwnershipError } from '../service/compliance.service.js';
 let db: TestDb;
 
 const HOUR = 3600_000;
+
 const DAY = 24 * HOUR;
 
 function identityRates(): ExchangeRateReader {
@@ -47,10 +48,12 @@ function makeService(
   rates: ExchangeRateReader = identityRates(),
 ) {
   const events = makeEventBus();
+
   const enforcement = mock<LoginEnforcementPort>({
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
+
   const rg = new RgService({
     drizzle: db.drizzle,
     events,
@@ -58,7 +61,9 @@ function makeService(
     identityReader: makeIdentityReader(),
     rates,
   });
+
   const monitoring = new RgMonitoringService({ drizzle: db.drizzle, rates });
+
   const svc = new RgSelfServiceService({
     drizzle: db.drizzle,
     events,
@@ -72,6 +77,7 @@ function makeService(
     },
     rates,
   });
+
   return { svc, rg, monitoring, events, enforcement };
 }
 
@@ -89,6 +95,7 @@ async function allLimitRows(userId: string) {
 
 async function limitRow(userId: string) {
   const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+
   return row!;
 }
 
@@ -108,6 +115,7 @@ async function seedUnresolvedLimit(userId: string, amount = '100') {
     .insert(userLimit)
     .values({ userId, type: 'deposit', amount, minutes: null, currency: null, period: 'daily' })
     .returning();
+
   return row!;
 }
 
@@ -253,12 +261,15 @@ describe('RgSelfServiceService.getLimits - multi-currency usage', () => {
         if (from === to) {
           return amount;
         }
+
         if (from === 'BTC' && to === 'USD') {
           return (Number(amount) * BTC_USD_RATE).toFixed(18);
         }
+
         return null;
       }),
     });
+
     const { svc } = makeService({}, btcToUsd);
     const userId = randomUUID();
     await seedCompletedDeposit(db, userId, '0.002', { currency: 'BTC' });
@@ -275,6 +286,7 @@ describe('RgSelfServiceService.getLimits - multi-currency usage', () => {
       getRate: vi.fn(async () => null),
       convert: vi.fn(async () => null),
     });
+
     const { svc } = makeService({}, noRates);
     const userId = randomUUID();
     await seedCompletedDeposit(db, userId, '0.002', { currency: 'BTC' });
@@ -505,9 +517,11 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
     const after = await limitRow(userId);
     const winner = Number(after.amount);
     expect([50, 80]).toContain(winner);
+
     if (winner === 80) {
       expect(after.pendingKind).toBeNull();
     }
+
     expect(winner).toBeLessThanOrEqual(100);
   });
 
@@ -543,6 +557,7 @@ describe('RgSelfServiceService concurrency (real PG)', () => {
     const confirmed = events.emit.mock.calls.filter(
       (c: unknown[]) => c[0] === 'rg.limit.change_confirmed',
     );
+
     expect(confirmed.length).toBeLessThanOrEqual(1);
     expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
   });

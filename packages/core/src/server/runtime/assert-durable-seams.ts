@@ -56,9 +56,11 @@ const REQUIRED_DURABLE_SEAMS: readonly SeamRequirement[] = [
 
 export function assertDurableSeamsBound(container: DurableSeamContainerView): void {
   const missing = REQUIRED_DURABLE_SEAMS.filter((seam) => !container.has(seam.token));
+
   if (missing.length === 0) {
     return;
   }
+
   throw new Error(
     `[create-app] production is distributed-only - the following seams have no durable binding:\n` +
       missing.map((seam) => `  - ${seam.name}: ${seam.fix}`).join('\n'),

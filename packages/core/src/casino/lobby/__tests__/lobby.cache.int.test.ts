@@ -9,6 +9,7 @@ import { featuredSlot } from '../schema/index.js';
 import { LobbyService } from '../service/lobby.service.js';
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 beforeAll(async () => {
@@ -32,6 +33,7 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
       .insert(game)
       .values({ name: 'Aces', provider: 'acme', category: 'slots', thumbnailUrl: 'aces.png' })
       .returning();
+
     const [slot] = await db.drizzle.db
       .insert(featuredSlot)
       .values({ gameId: g.id, title: 'Big Win', placement: 'home', sortOrder: 0, isActive: true })

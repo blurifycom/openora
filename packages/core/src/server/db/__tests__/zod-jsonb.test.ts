@@ -4,6 +4,7 @@ import { pgTable, uuid } from 'drizzle-orm/pg-core';
 import { zodJsonb } from '../zod-jsonb.js';
 
 const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
+
 vi.mock('../../kernel/logger.js', () => ({ createLogger: () => log }));
 
 const ConfigSchema = z.object({ minAmount: z.record(z.string(), z.string()).optional() });
@@ -41,6 +42,7 @@ describe('zodJsonb', () => {
         severity: 'error',
       })(),
     });
+
     log.warn.mockClear();
     log.error.mockClear();
 

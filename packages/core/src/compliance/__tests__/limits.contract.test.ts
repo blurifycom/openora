@@ -84,6 +84,7 @@ describe('LimitViewSchema used/remaining scale', () => {
       used: '33.336000000000000000',
       remaining: '66.664000000000000000',
     });
+
     expect(result.success).toBe(true);
   });
 
@@ -93,6 +94,7 @@ describe('LimitViewSchema used/remaining scale', () => {
       used: '33.3360000000000000001',
       remaining: '66.664000000000000000',
     });
+
     expect(result.success).toBe(false);
   });
 });

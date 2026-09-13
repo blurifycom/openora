@@ -24,7 +24,9 @@ function pendingIdentifier(cookieValue: string | undefined): string | undefined 
   if (!cookieValue) {
     return undefined;
   }
+
   const [identifier = ''] = cookieValue.split('.');
+
   return identifier.startsWith(PENDING_2FA_IDENTIFIER_PREFIX) ? identifier : undefined;
 }
 
@@ -55,14 +57,17 @@ export class TwoFactorLockoutService {
 
   async resolvePendingUserId(cookieValue: string | undefined): Promise<User['id'] | undefined> {
     const identifier = pendingIdentifier(cookieValue);
+
     if (!identifier) {
       return undefined;
     }
+
     const [row] = await this.drizzle.db
       .select({ value: verification.value })
       .from(verification)
       .where(eq(verification.identifier, identifier))
       .limit(1);
+
     return row?.value;
   }
 
@@ -95,12 +100,14 @@ export class TwoFactorLockoutService {
 
     const attempts = row.failedAttempts + 1;
     const isLocking = attempts >= this.config.maxAttempts;
+
     const { durationMs } = computeLockoutTier({
       lockoutCount: row.lockoutCount,
       lastFailedLoginAt: row.lastFailedAt,
       nowMs: Date.now(),
       fallbackDurationMs: this.config.durationMs,
     });
+
     const lockoutUntil = isLocking ? new Date(Date.now() + durationMs) : null;
 
     await this.drizzle.db

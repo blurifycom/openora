@@ -6,13 +6,16 @@ import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { FUNNEL_STAGES, type ConversionFunnel, type FunnelQuery } from '../contract/index.js';
 
 const ANALYTICS_CACHE_TTL_MS = 60_000;
+
 const DEFAULT_FUNNEL_RANGE_DAYS = 30;
 
 function resolveFunnelRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date } {
   const to = dateTo ? new Date(dateTo) : new Date();
+
   const from = dateFrom
     ? new Date(dateFrom)
     : new Date(to.getTime() - DEFAULT_FUNNEL_RANGE_DAYS * 24 * 60 * 60 * 1000);
+
   return { from, to };
 }
 
@@ -20,6 +23,7 @@ function dropOffRate(previous: number, current: number): number {
   if (previous === 0) {
     return 0;
   }
+
   return (previous - current) / previous;
 }
 
@@ -32,11 +36,14 @@ export class FunnelAnalyticsService {
   async conversion(query: FunnelQuery): Promise<ConversionFunnel> {
     const key = `analytics:funnel.conversion:${JSON.stringify(query, Object.keys(query).sort())}`;
     const cached = await this.cache.get<ConversionFunnel>(key);
+
     if (cached !== undefined) {
       return cached;
     }
+
     const value = await this.computeConversion(query);
     await this.cache.set(key, value, { ttlMs: ANALYTICS_CACHE_TTL_MS });
+
     return value;
   }
 
@@ -77,6 +84,7 @@ export class FunnelAnalyticsService {
     `);
 
     const row = result.rows[0];
+
     const counts = {
       registered: Number(row?.registered ?? 0),
       email_verified: Number(row?.email_verified ?? 0),
@@ -86,6 +94,7 @@ export class FunnelAnalyticsService {
 
     return FUNNEL_STAGES.map((stage, index) => {
       const previousStage = FUNNEL_STAGES[index - 1];
+
       return {
         stage,
         count: counts[stage],

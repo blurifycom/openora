@@ -25,6 +25,7 @@ import {
  */
 
 let db: TestDb;
+
 let app: TestApp;
 
 const PASSWORD = 'password1234';
@@ -43,12 +44,14 @@ async function login(email: string, timezone?: string): Promise<Response> {
 async function readProfile(client: TestClient): Promise<PlayerRead> {
   const res = await client.get('/profile');
   expect(res.status).toBe(200);
+
   return (await res.json()) as PlayerRead;
 }
 
 async function newPlayer(): Promise<{ client: TestClient; email: string }> {
   const email = `player-timezone-${randomUUID()}@e2e.test`;
   const { client } = await registerAndMaterializePlayer(app, { email, password: PASSWORD });
+
   return { client, email };
 }
 
@@ -182,6 +185,7 @@ describe('POST /identity/email/verify - player timezone capture', () => {
         acceptedAge: true,
       }),
     });
+
     expect(registered.status).toBe(200);
 
     const verified = await app.app.request('/identity/email/verify', {
@@ -193,6 +197,7 @@ describe('POST /identity/email/verify - player timezone capture', () => {
         timezone: 'Asia/Tokyo',
       }),
     });
+
     expect(verified.status).toBe(200);
 
     const client = await asPlayer(app.app, { email, password: PASSWORD });
@@ -217,6 +222,7 @@ describe('POST /identity/register - player timezone capture', () => {
         timezone: 'Australia/Sydney',
       }),
     });
+
     expect(res.status).toBe(200);
 
     await verifyEmailByOtp(app, email);

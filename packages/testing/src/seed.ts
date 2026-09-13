@@ -34,15 +34,18 @@ export async function seedMinimal(
 ): Promise<SeedResult> {
   const drizzleSvc = container.get(DRIZZLE);
   const url = process.env['DATABASE_URL'];
+
   if (!url) {
     throw new Error('seedMinimal: DATABASE_URL is not set (boot the app first)');
   }
 
   const authPool = new Pool({ connectionString: url });
+
   const authDb = drizzle(authPool, {
     schema: { user, session, account, verification },
     casing: 'snake_case',
   });
+
   // Library boundary: this seed-local drizzle instance carries a different schema generic
   // than core's DrizzleDb alias. Sanctioned cast, see conventions.
   const auth = createAuth({ db: authDb as unknown as DrizzleDb });
@@ -50,6 +53,7 @@ export async function seedMinimal(
   try {
     await seedIam(drizzleSvc.db);
     await seedTag(drizzleSvc.db);
+
     return await seedDemoData({
       db: drizzleSvc.db,
       auth,

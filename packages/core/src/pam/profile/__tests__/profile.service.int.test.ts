@@ -35,6 +35,7 @@ async function seedPlayer(userId: string, overrides: Partial<typeof player.$infe
     .insert(player)
     .values({ userId, ...overrides })
     .returning();
+
   return row!;
 }
 
@@ -193,6 +194,7 @@ describe('ProfileService.getMyDisplayCurrency (real PG)', () => {
   it('falls back to the currency held with the most value when nothing was chosen', async () => {
     const account = await seedUser(db);
     await seedPlayer(account.id, { displayCurrency: null });
+
     const svc = makeService({
       walletReader: mock<WalletReader>({
         getBalances: async () => ({
@@ -216,6 +218,7 @@ describe('ProfileService.getMyDisplayCurrency (real PG)', () => {
   it('skips a balance whose rate is unavailable rather than failing', async () => {
     const account = await seedUser(db);
     await seedPlayer(account.id, { displayCurrency: null });
+
     const svc = makeService({
       walletReader: mock<WalletReader>({
         getBalances: async () => ({
@@ -239,6 +242,7 @@ describe('ProfileService.getMyDisplayCurrency (real PG)', () => {
   it('falls back to the wallet active currency when no balance is held', async () => {
     const account = await seedUser(db);
     await seedPlayer(account.id, { displayCurrency: null });
+
     const svc = makeService({
       walletReader: mock<WalletReader>({
         getBalances: async () => ({ activeCurrency: 'GBP', balances: [] }),
@@ -256,6 +260,7 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
     const account = await seedUser(db);
     await seedPlayer(account.id, { displayCurrency: null });
     const audit = makeAuditWriter();
+
     const svc = new ProfileService(
       db.drizzle,
       mock<WalletReader>({}),

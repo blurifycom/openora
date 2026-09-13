@@ -86,27 +86,34 @@ async function makeService({
       ...(excludeRiskFlags !== undefined ? { excludeRiskFlags: [...excludeRiskFlags] } : {}),
     });
   }
+
   const events = makeEventBus();
+
   const psp = {
     processWithdrawal: vi.fn(async () => ({
       externalId: randomUUID(),
       status: 'completed' as const,
     })),
   };
+
   const audit = makeAuditWriter();
+
   const directory = mock<AdminUserDirectory>({
     lookupPlayers: vi.fn(async (ids: string[]) => {
       if (directoryThrows) {
         throw new Error('directory down');
       }
+
       return kycStatus
         ? ids.map((userId) => mock<AdminPlayerSummary>({ userId, username: 'player', kycStatus }))
         : [];
     }),
   });
+
   const platformConfig = mock<PlatformConfig>(
     autoWithdrawal ? { autoWithdrawal: { enabled: true, ...autoWithdrawal } } : {},
   );
+
   const svc = new WalletService({
     drizzle: db.drizzle,
     events: events,
@@ -126,6 +133,7 @@ async function makeService({
           }),
         }),
   });
+
   return { svc, events, psp, audit };
 }
 
@@ -140,9 +148,11 @@ async function seedWallet({
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: balance });
+
   return row;
 }
 
@@ -151,6 +161,7 @@ async function txById(id: string) {
     await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
     new Error('txById: query returned no row'),
   );
+
   return row;
 }
 
@@ -174,6 +185,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoWithdrawal: {},
       fiatThreshold: '1000',
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -245,10 +257,12 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
+
     const row = findOneOrThrow(
       await db.drizzle.db.select().from(walletBalance).where(eq(walletBalance.walletId, w.id)),
       new Error('no wallet_balance row'),
     );
+
     expect(Number(row.amount)).toBe(60);
   });
 
@@ -287,6 +301,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       fiatThreshold: '1000',
       skipConfigSeed: true,
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -320,6 +335,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       fiatThreshold: '1000',
       kycStatus: 'pending',
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -338,6 +354,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       fiatThreshold: '1000',
       directoryThrows: true,
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -357,6 +374,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       excludeRiskFlags: ['bonus_abuser'],
       riskTags: ['bonus_abuser'],
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -375,18 +393,22 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     // withdrawal_review assignment on the caller's own tx (see wallet.service.ts's
     // withdraw()) - by the time this resolves, the tag must be visible to any later read.
     const assignedTags = new Set<TagKey>();
+
     const tagEvaluationCommands = mock<TagEvaluationCommands>({
       evaluateWithdrawalRequested: vi.fn(async () => {
         callOrder.push('evaluateWithdrawalRequested');
         assignedTags.add('withdrawal_review');
       }),
     });
+
     const riskTags = mock<PlayerTags>({
       getActiveTagKeys: vi.fn(async (ids: readonly string[]) => {
         callOrder.push('getActiveTagKeys');
+
         return new Map(ids.map((id) => [id, [...assignedTags]]));
       }),
     });
+
     const directory = mock<AdminUserDirectory>({
       lookupPlayers: vi.fn(async (ids: string[]) =>
         ids.map((userId) =>
@@ -394,23 +416,27 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
         ),
       ),
     });
+
     await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
       singletonKey: 'global',
       fiatThreshold: '1000',
       cryptoThreshold: '0',
       excludeRiskFlags: ['withdrawal_review'],
     });
+
     const platformConfig = mock<PlatformConfig>({
       autoWithdrawal: {
         enabled: true,
       },
     });
+
     const payment = mock<PaymentAdapter>({
       processWithdrawal: vi.fn(async () => ({
         externalId: randomUUID(),
         status: 'completed' as const,
       })),
     });
+
     const svc = new WalletService({
       drizzle: db.drizzle,
       events: makeEventBus(),
@@ -423,6 +449,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       riskTags,
       tagEvaluationCommands,
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -454,6 +481,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       excludeRiskFlags: [],
       riskTags: ['vip'],
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -473,6 +501,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       excludeRiskFlags: ['bonus_abuser'],
       riskTags: 'unbound',
     });
+
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -491,6 +520,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       fiatThreshold: '1000',
       riskTags: ['high_risk'],
     });
+
     await svc.setAutoWithdrawalConfig(randomUUID(), {
       fiatThreshold: '1000',
       cryptoThreshold: '0',
@@ -514,6 +544,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       fiatThreshold: '10',
       riskTags: ['kyc_rejected'],
     });
+
     const w = await seedWallet();
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
@@ -610,6 +641,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoWithdrawal: { dailyCapCount: 1 },
       fiatThreshold: '1000',
     });
+
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
@@ -635,6 +667,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoWithdrawal: { dailyCapAmount: '50' },
       fiatThreshold: '1000',
     });
+
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
@@ -660,6 +693,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoWithdrawal: { dailyCapCount: 1 },
       fiatThreshold: '1000',
     });
+
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
@@ -685,6 +719,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoWithdrawal: { dailyCapCount: 1 },
       fiatThreshold: '1000',
     });
+
     const w = await seedWallet();
 
     const results = await Promise.all([
@@ -754,6 +789,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
       cryptoThreshold: '2',
       kycStatus: 'rejected',
     });
+
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
     const result = await svc.withdraw({
@@ -820,6 +856,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
       fiatThreshold: '1000',
       skipConfigSeed: true,
     });
+
     const w = await seedWallet();
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
@@ -892,6 +929,7 @@ describe('WalletService auto-withdrawal rule methods (real PG)', () => {
       reason: 'initial',
       createdBy,
     });
+
     const updated = await svc.setAutoWithdrawalRule({
       userId,
       threshold: '750',
@@ -902,10 +940,12 @@ describe('WalletService auto-withdrawal rule methods (real PG)', () => {
     expect(created.id).toBe(updated.id);
     expect(Number(updated.threshold)).toBe(750);
     expect(updated.reason).toBe('raised');
+
     const rows = await db.drizzle.db
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
+
     expect(rows).toHaveLength(1);
   });
 

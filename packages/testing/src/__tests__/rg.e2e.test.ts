@@ -40,7 +40,9 @@ import {
 const JOB_WAIT = { timeout: 15000, interval: 100 };
 
 let db: TestDb;
+
 let app: TestApp;
+
 let admin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -74,6 +76,7 @@ async function exclusionStatus(container: Container<CoreTokenCatalog>, exclusion
     .db.select({ status: rgExclusion.status })
     .from(rgExclusion)
     .where(eq(rgExclusion.id, exclusionId));
+
   return row?.status;
 }
 
@@ -116,6 +119,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'initial deposit limit',
       confirm: true,
     });
+
     expect(depositRes.status).toBe(200);
     expect((await readJson(depositRes)).amount).toBe('500.000000000000000000');
 
@@ -128,6 +132,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'initial session-time limit',
       confirm: true,
     });
+
     expect(sessionRes.status).toBe(200);
 
     const sectionRes = await admin.get(`/compliance/players/${userId}/rg`);
@@ -155,14 +160,17 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'operator lowered on a support request',
       confirm: true,
     });
+
     expect(setRes.status).toBe(200);
 
     await vi.waitFor(async () => {
       const notifyRes = await client.get('/notifications');
       const notifications = await readJson(notifyRes);
+
       const found = (notifications as { items: Array<{ type: string; body: string }> }).items.find(
         (n) => n.type === 'rg.limit.admin_updated',
       );
+
       expect(found).toBeTruthy();
       expect(found?.body).toContain('deposit');
       expect(found?.body).toContain('daily');
@@ -173,10 +181,12 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     const rgEmails = capturedEmailsFor(email).filter(
       (e) => e.subject === 'Your gambling limit was updated',
     );
+
     expect(rgEmails).toHaveLength(1);
     expect(rgEmails[0]?.text).not.toContain('operator lowered on a support request');
 
     const beforeCount = (await readJson(await client.get('/notifications'))).total;
+
     const selfRes = await client.put('/compliance/limits', {
       type: 'deposit',
       amount: '100',
@@ -184,6 +194,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       currency: 'USD',
       period: 'daily',
     });
+
     expect(selfRes.status).toBe(200);
 
     const afterCount = (await readJson(await client.get('/notifications'))).total;
@@ -199,6 +210,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       durationHours: 24,
       reason: 'player requested a break',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('active');
@@ -213,6 +225,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     const fixed = await registerAndMaterializePlayer(app, {
       email: `rg-selfexcl-fixed-${randomUUID()}@e2e.test`,
     });
+
     const permanent = await registerAndMaterializePlayer(app, {
       email: `rg-selfexcl-perm-${randomUUID()}@e2e.test`,
     });
@@ -223,6 +236,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'player requested',
       confirm: true,
     });
+
     expect(fixedRes.status).toBe(200);
     const fixedBody = await readJson(fixedRes);
     expect(fixedBody.isPermanent).toBe(false);
@@ -237,6 +251,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'player requested, permanent',
       confirm: true,
     });
+
     expect(permRes.status).toBe(200);
     const permBody = await readJson(permRes);
     expect(permBody.isPermanent).toBe(true);
@@ -254,6 +269,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'player requested',
       confirm: true,
     });
+
     expect(activateRes.status).toBe(200);
     const exclusionId = (await readJson(activateRes)).id as string;
 
@@ -263,6 +279,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       reason: 'minimum period elapsed, player requested reinstatement',
       confirm: true,
     });
+
     expect(liftRes.status).toBe(200);
     const lifted = await readJson(liftRes);
     expect(lifted.status).toBe('lifted');
@@ -280,12 +297,15 @@ describe('RG self-exclusion leaves player funds unlocked', () => {
       amount: '50',
       currency: 'USD',
     });
+
     expect(depositRes.status).toBe(200);
+
     const withdrawRes = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '20',
       currency: 'USD',
     });
+
     expect(withdrawRes.status).toBe(200);
     const withdrawalId = (await readJson(withdrawRes)).transactionId as string;
 
@@ -294,6 +314,7 @@ describe('RG self-exclusion leaves player funds unlocked', () => {
       reason: 'player requested, permanent',
       confirm: true,
     });
+
     expect(exclusionRes.status).toBe(200);
 
     const queueRes = await admin.get('/wallet/withdrawals?status=pending&currency=USD&limit=100');
@@ -323,6 +344,7 @@ describe('RG login enforcement', () => {
       durationHours: 24,
       reason: 'RG monitoring flag',
     });
+
     expect(coolOffRes.status).toBe(200);
 
     const blockedLoginRes = await attemptLogin(email, 'password1234');
@@ -351,6 +373,7 @@ describe('RG login enforcement', () => {
       reason: 'player requested, permanent',
       confirm: true,
     });
+
     expect(res.status).toBe(200);
 
     const blockedLoginRes = await attemptLogin(email, 'password1234');
@@ -378,6 +401,7 @@ describe('RG cooling-off lift', () => {
       durationHours: 1008,
       reason: 'activated on the wrong player',
     });
+
     expect(activateRes.status).toBe(200);
     const exclusionId = (await readJson(activateRes)).id as string;
 
@@ -387,6 +411,7 @@ describe('RG cooling-off lift', () => {
     const liftRes = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
       reason: 'raised in error, support ticket 42',
     });
+
     expect(liftRes.status).toBe(200);
     const lifted = await readJson(liftRes);
     expect(lifted.status).toBe('lifted');
@@ -417,6 +442,7 @@ describe('RG cooling-off lift', () => {
     const liftRes = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
       reason: 'superseded by the self-exclusion',
     });
+
     expect(liftRes.status).toBe(200);
 
     expect((await attemptLogin(email, 'password1234')).status).toBe(403);
@@ -431,6 +457,7 @@ describe('RG cooling-off lift', () => {
     const res = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
       reason: 'nothing to lift',
     });
+
     expect(res.status).toBe(404);
   });
 
@@ -451,6 +478,7 @@ describe('RG cooling-off lift', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.lifted`,
       );
+
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -471,6 +499,7 @@ describe('RG cooling-off expiry', () => {
       durationHours: 24,
       reason: 'audit trail check',
     });
+
     expect(activateRes.status).toBe(200);
     const exclusionId = (await readJson(activateRes)).id as string;
 
@@ -481,6 +510,7 @@ describe('RG cooling-off expiry', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.expired`,
       );
+
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('system');
@@ -503,12 +533,14 @@ describe('RG self-exclusion lift negatives', () => {
       reason: 'player requested',
       confirm: true,
     });
+
     expect(activateRes.status).toBe(200);
 
     const liftRes = await admin.post(`/compliance/players/${userId}/self-exclusion/lift`, {
       reason: 'trying too early',
       confirm: true,
     });
+
     expect(liftRes.status).toBe(409);
   });
 
@@ -522,12 +554,14 @@ describe('RG self-exclusion lift negatives', () => {
       reason: 'player requested, permanent',
       confirm: true,
     });
+
     expect(activateRes.status).toBe(200);
 
     const liftRes = await admin.post(`/compliance/players/${userId}/self-exclusion/lift`, {
       reason: 'player changed their mind',
       confirm: true,
     });
+
     expect(liftRes.status).toBe(409);
   });
 
@@ -547,6 +581,7 @@ describe('RG self-exclusion lift negatives', () => {
       reason: '',
       confirm: true,
     });
+
     expect(missingReasonRes.status).toBeGreaterThanOrEqual(400);
     expect(missingReasonRes.status).toBeLessThan(500);
 
@@ -554,6 +589,7 @@ describe('RG self-exclusion lift negatives', () => {
       `/compliance/players/${userId}/self-exclusion/lift`,
       { reason: 'a good reason', confirm: false },
     );
+
     expect(missingConfirmRes.status).toBeGreaterThanOrEqual(400);
     expect(missingConfirmRes.status).toBeLessThan(500);
   });
@@ -569,6 +605,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
       reason: 'player requested, permanent',
       confirm: true,
     });
+
     expect(permRes.status).toBe(200);
     expect((await attemptLogin(email, 'password1234')).status).toBe(403);
 
@@ -576,6 +613,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
       durationHours: 24,
       reason: 'also flagged for a short cooling-off',
     });
+
     expect(coolOffRes.status).toBe(200);
     const coolOffId = (await readJson(coolOffRes)).id as string;
 
@@ -603,6 +641,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
       durationHours: 48,
       reason: 'second cooling-off after the first expired',
     });
+
     expect(secondCoolOffRes.status).toBe(200);
     expect((await readJson(secondCoolOffRes)).status).toBe('active');
   });
@@ -626,6 +665,7 @@ describe('RG authz negatives', () => {
 
   it('rejects every RG route for an unauthenticated caller with 401', async () => {
     const userId = randomUUID();
+
     const routes: Array<[string, string, unknown?]> = [
       ['PUT', `/compliance/players/${userId}/limits`, validBodies['limits']],
       ['POST', `/compliance/players/${userId}/cooling-off`, validBodies['coolingOff']],
@@ -634,6 +674,7 @@ describe('RG authz negatives', () => {
       ['GET', `/compliance/players/${userId}/rg`],
       ['GET', `/compliance/rg-flags`],
     ];
+
     for (const [method, path, body] of routes) {
       const res = await app.app.request(path, {
         method,
@@ -641,6 +682,7 @@ describe('RG authz negatives', () => {
           ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
           : {}),
       });
+
       expect(res.status, `${method} ${path}`).toBe(401);
     }
   });
@@ -658,12 +700,14 @@ describe('RG authz negatives', () => {
       ['POST', `/compliance/players/${targetUserId}/self-exclusion`, validBodies['selfExclusion']],
       ['POST', `/compliance/players/${targetUserId}/self-exclusion/lift`, validBodies['lift']],
     ];
+
     for (const [method, path, body] of mutationRoutes) {
       const res = await support.request(path, {
         method,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
+
       expect(res.status, `${method} ${path}`).toBe(403);
     }
 
@@ -687,6 +731,7 @@ describe('RG monitoring (queue-based)', () => {
       reason: 'initial limit',
       confirm: true,
     });
+
     expect(limitRes.status).toBe(200);
 
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -697,12 +742,14 @@ describe('RG monitoring (queue-based)', () => {
       amount: '85',
       currency: 'USD',
     });
+
     expect(depositRes.status).toBe(200);
 
     await vi.waitFor(async () => {
       const res = await admin.get(
         `/compliance/rg-flags?flagType=limit_threshold&limitType=deposit&fromDate=${yesterday}&toDate=${tomorrow}`,
       );
+
       const body = await readJson(res);
       const flag = body.items.find((i: { userId: string }) => i.userId === userId);
       expect(flag).toBeDefined();
@@ -714,6 +761,7 @@ describe('RG monitoring (queue-based)', () => {
     const farPastRes = await admin.get(
       `/compliance/rg-flags?flagType=limit_threshold&limitType=deposit&toDate=${new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()}`,
     );
+
     const farPastBody = await readJson(farPastRes);
     expect(farPastBody.items.find((i: { userId: string }) => i.userId === userId)).toBeUndefined();
   });
@@ -727,6 +775,7 @@ describe('RG monitoring (queue-based)', () => {
       reason: 'player requested, permanent',
       confirm: true,
     });
+
     expect(res.status).toBe(200);
 
     expect((await attemptLogin(email, 'password1234')).status).toBe(403);
@@ -756,12 +805,14 @@ describe('RG audit trail', () => {
       reason: 'initial limit',
       confirm: true,
     });
+
     expect(limitRes.status).toBe(200);
 
     const coolOffRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
       reason: 'audit trail check',
     });
+
     expect(coolOffRes.status).toBe(200);
     const coolOffId = (await readJson(coolOffRes)).id as string;
     await expireExclusion(app.container, coolOffId);
@@ -772,6 +823,7 @@ describe('RG audit trail', () => {
       reason: 'audit trail check',
       confirm: true,
     });
+
     expect(selfExclRes.status).toBe(200);
     const exclusionId = (await readJson(selfExclRes)).id as string;
     await expireExclusion(app.container, exclusionId);
@@ -780,6 +832,7 @@ describe('RG audit trail', () => {
       reason: 'audit trail check lift',
       confirm: true,
     });
+
     expect(liftRes.status).toBe(200);
 
     await vi.waitFor(async () => {
@@ -794,6 +847,7 @@ describe('RG audit trail', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.activated`,
       );
+
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -803,6 +857,7 @@ describe('RG audit trail', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.self_exclusion.activated`,
       );
+
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -820,6 +875,7 @@ describe('RG audit trail', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.self_exclusion.lifted`,
       );
+
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -842,6 +898,7 @@ describe('RG audit trail', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=rg.exclusion.login_blocked`,
       );
+
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('system');
@@ -863,6 +920,7 @@ describe('RG audit trail', () => {
       reason: 'initial limit',
       confirm: true,
     });
+
     expect(limitRes.status).toBe(200);
 
     await vi.waitFor(async () => {
@@ -874,6 +932,7 @@ describe('RG audit trail', () => {
     expect(exportRes.status).toBe(200);
     const { csv } = await readJson(exportRes);
     expect(csv).toContain('rg.limit.set');
+
     for (const line of csv.split('\n').slice(1).filter(Boolean)) {
       expect(line).toMatch(/rg\./);
     }
@@ -885,6 +944,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
     const mine = await registerAndMaterializePlayer(app, {
       email: `rg-history-mine-${randomUUID()}@e2e.test`,
     });
+
     const other = await registerAndMaterializePlayer(app, {
       email: `rg-history-other-${randomUUID()}@e2e.test`,
     });
@@ -900,6 +960,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       reason: 'initial limit',
       confirm: true,
     });
+
     expect(setRes.status).toBe(200);
 
     await admin.put(`/compliance/players/${other.userId}/limits`, {
@@ -965,6 +1026,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
     const { client, userId, playerId } = await registerAndMaterializePlayer(app, {
       email: `rg-history-noscope-${randomUUID()}@e2e.test`,
     });
+
     await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
       amount: '300',
@@ -979,6 +1041,7 @@ describe('GET /audit/me/rg-history (player self-service limit history)', () => {
       const res = await client.get(
         `/audit/me/rg-history?resourceId=someone-else&actionPrefix=&q=admin`,
       );
+
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items.every((i: { action: string }) => i.action.startsWith('rg.limit.'))).toBe(

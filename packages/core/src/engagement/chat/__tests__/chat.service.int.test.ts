@@ -79,13 +79,17 @@ import {
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
 import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
+
 let db: TestDb;
+
 let redis: TestRedis;
+
 const transports: RedisPubSubRealtimeTransport[] = [];
 
 function makeTransport(): RedisPubSubRealtimeTransport {
   const transport = new RedisPubSubRealtimeTransport(redis.client, `chat-test-${randomUUID()}`);
   transports.push(transport);
+
   return transport;
 }
 
@@ -107,12 +111,15 @@ function makeService(
   transport: RealtimeTransport = makeTransport(),
 ) {
   const events = makeEventBus();
+
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
+
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
   const identityReader = makeIdentityReader();
+
   const chatService = new ChatService({
     drizzle: db.drizzle,
     events,
@@ -124,6 +131,7 @@ function makeService(
     allowedAttachmentHosts,
     socialCommands,
   });
+
   const membership = new ChatRoomMembershipService(
     db.drizzle,
     events,
@@ -131,8 +139,10 @@ function makeService(
     transport,
     identityReader,
   );
+
   const roomBan = new ChatRoomBanService(db.drizzle, events, audit, transport, identityReader);
   const roomMute = new ChatRoomMuteService(db.drizzle, audit);
+
   return {
     moderation,
     svc: Object.assign(chatService, {
@@ -163,6 +173,7 @@ async function seedRoom(overrides: Partial<typeof chatRoom.$inferInsert> = {}) {
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -177,15 +188,18 @@ async function seedMessage(overrides: Partial<typeof chatMessage.$inferInsert> =
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
+
   while (!predicate()) {
     if (Date.now() > deadline) {
       throw new Error('condition not met within the timeout');
     }
+
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
@@ -290,6 +304,7 @@ describe('ChatService realtime wiring', () => {
           role: id === 'admin' ? 'admin' : id === 'super-admin' ? 'super-admin' : 'player',
         })),
     });
+
     const { svc } = makeService(directory);
     const playerUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'player');
     const adminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'admin');
@@ -455,6 +470,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
       username: 'Alice',
       content: 'hello',
     });
+
     await waitFor(() => delivered.length === 1);
 
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
@@ -465,6 +481,7 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
     await settle();
+
     const attachment = {
       kind: 'gif' as const,
       provider: 'example',
@@ -484,9 +501,11 @@ describe('ChatService.sendGlobalMessage (real PG)', () => {
     });
 
     expect(msg.type).toBe('user');
+
     if (msg.type === 'user') {
       expect(msg.attachment).toEqual(attachment);
     }
+
     const [stored] = await db.drizzle.db.select().from(chatMessage);
     expect(stored?.attachment).toEqual(attachment);
     await waitFor(() => delivered.length === 1);
@@ -600,10 +619,12 @@ describe('ChatService message reads (real PG)', () => {
   it('scopes room messages to the room and honours the before cursor', async () => {
     const { svc } = makeService();
     const room = await seedRoom();
+
     const old = await seedMessage({
       roomId: room.id,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
     });
+
     await seedMessage({ roomId: room.id, createdAt: new Date('2026-03-01T00:00:00.000Z') });
     await seedMessage();
 
@@ -673,6 +694,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
     await settle();
+
     const attachment = {
       kind: 'gif' as const,
       provider: 'example',
@@ -693,9 +715,11 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     });
 
     expect(msg.type).toBe('user');
+
     if (msg.type === 'user') {
       expect(msg.attachment).toEqual(attachment);
     }
+
     const [stored] = await db.drizzle.db.select().from(chatMessage);
     expect(stored?.attachment).toEqual(attachment);
     await waitFor(() => delivered.length === 1);
@@ -831,9 +855,11 @@ describe('ChatService @mention detection (real PG)', () => {
     await waitFor(() =>
       vi.mocked(events.emit).mock.calls.some(([topic]) => topic === 'chat.user.mentioned'),
     );
+
     const mentionCalls = vi
       .mocked(events.emit)
       .mock.calls.filter(([topic]) => topic === 'chat.user.mentioned');
+
     expect(mentionCalls).toHaveLength(1);
   });
 
@@ -905,6 +931,7 @@ describe('ChatService.deleteMessage (real PG)', () => {
       .select()
       .from(chatMessage)
       .where(eq(chatMessage.id, message.id));
+
     expect(stored?.isDeleted).toBe(true);
     expect(stored?.deletedAt).toBeInstanceOf(Date);
   });
@@ -974,11 +1001,14 @@ describe('ChatService block list (real PG)', () => {
       otherUserId: randomUUID(),
       reason: 'blocked',
     };
+
     const dissolveFriendshipOnBlock = vi.fn(async () => payload);
+
     const { svc, events } = makeService(
       undefined,
       mock<SocialCommands>({ dissolveFriendshipOnBlock }),
     );
+
     const blockerId = randomUUID();
     const blockedId = randomUUID();
 
@@ -989,10 +1019,12 @@ describe('ChatService block list (real PG)', () => {
 
   it('does not emit a dissolved-friendship event when there was no active friendship to dissolve', async () => {
     const dissolveFriendshipOnBlock = vi.fn(async () => null);
+
     const { svc, events } = makeService(
       undefined,
       mock<SocialCommands>({ dissolveFriendshipOnBlock }),
     );
+
     const blockerId = randomUUID();
     const blockedId = randomUUID();
 
@@ -1007,6 +1039,7 @@ describe('ChatService block list (real PG)', () => {
     const dissolveFriendshipOnBlock = vi.fn(async () => {
       throw new Error('boom');
     });
+
     const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
     const blockerId = randomUUID();
     const blockedId = randomUUID();
@@ -1090,6 +1123,7 @@ describe('ChatService block list (real PG)', () => {
   it('enriches each entry with the blocked users username, and falls back to null when unresolvable', async () => {
     const blockedId = randomUUID();
     const unresolvableId = randomUUID();
+
     const directory = mock<AdminUserDirectory>({
       lookupPlayers: async (userIds: readonly string[]) =>
         userIds
@@ -1109,6 +1143,7 @@ describe('ChatService block list (real PG)', () => {
             }),
           ),
     });
+
     const { svc } = makeService(directory);
     const blockerId = randomUUID();
     await db.drizzle.db.insert(chatUserBlock).values([
@@ -1147,6 +1182,7 @@ describe('ChatService block list (real PG)', () => {
       sortBy: 'createdAt',
       sortOrder: 'asc',
     });
+
     const page2 = await svc.listBlockedUsers({
       blockerId,
       page: 2,
@@ -1290,6 +1326,7 @@ describe('ChatService ignore list (real PG)', () => {
   it('enriches each entry with the ignored users username, and falls back to null when unresolvable', async () => {
     const ignoredId = randomUUID();
     const unresolvableId = randomUUID();
+
     const directory = mock<AdminUserDirectory>({
       lookupPlayers: async (userIds: readonly string[]) =>
         userIds
@@ -1309,6 +1346,7 @@ describe('ChatService ignore list (real PG)', () => {
             }),
           ),
     });
+
     const { svc } = makeService(directory);
     const ignorerId = randomUUID();
     await db.drizzle.db.insert(chatUserIgnore).values([
@@ -1347,6 +1385,7 @@ describe('ChatService ignore list (real PG)', () => {
       sortBy: 'createdAt',
       sortOrder: 'asc',
     });
+
     const page2 = await svc.listIgnoredUsers({
       ignorerId,
       page: 2,
@@ -1394,6 +1433,7 @@ describe('ChatService ignore list (real PG)', () => {
       sortBy: 'createdAt' as const,
       sortOrder: 'desc' as const,
     };
+
     expect(
       (await svc.listBlockedUsers({ blockerId: viewerId, ...defaultPage })).items.map(
         (r) => r.blockedId,
@@ -1465,10 +1505,12 @@ describe('ChatService admin rooms (real PG)', () => {
 
     expect(room).toMatchObject({ slug: 'wheel-spin', isPublic: true });
     expect(typeof room.createdAt).toBe('string');
+
     const [configuration] = await db.drizzle.db
       .select()
       .from(chatRoomConfiguration)
       .where(eq(chatRoomConfiguration.roomId, room.id));
+
     expect(configuration).toMatchObject({ roomId: room.id });
     expect(events.emit).toHaveBeenCalledWith(
       'chat.room.created',
@@ -1587,6 +1629,7 @@ describe('ChatService admin rooms (real PG)', () => {
     const { svc, events } = makeService();
     const ownerId = randomUUID();
     const otherUserId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'End me',
@@ -1617,11 +1660,13 @@ describe('ChatService admin rooms (real PG)', () => {
     const { svc, transport } = makeService();
     const ownerId = randomUUID();
     const memberId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'End me',
       ...NO_CLIENT_META,
     });
+
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
     const ownerDeliveries: unknown[] = [];
     const memberDeliveries: unknown[] = [];
@@ -1657,11 +1702,13 @@ describe('ChatService admin rooms (real PG)', () => {
     const { svc, transport } = makeService();
     const ownerId = randomUUID();
     const memberId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'End me',
       ...NO_CLIENT_META,
     });
+
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
     const firstTab: unknown[] = [];
     const secondTab: unknown[] = [];
@@ -1679,8 +1726,10 @@ describe('ChatService admin rooms (real PG)', () => {
     const transport: RealtimeTransport = Object.assign(makeTransport(), {
       revokeUserFromChannel: vi.fn().mockRejectedValue(new Error('transport down')),
     });
+
     const { svc, events } = makeService(undefined, undefined, [], transport);
     const ownerId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'End me',
@@ -1702,6 +1751,7 @@ describe('ChatService admin rooms (real PG)', () => {
   it('lets only one of two concurrent deletes through, with one deletion event', async () => {
     const { svc, events } = makeService();
     const ownerId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'End me',
@@ -1725,11 +1775,13 @@ describe('ChatService admin rooms (real PG)', () => {
     const { svc, transport } = makeService();
     const ownerId = randomUUID();
     const memberId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'Keep me',
       ...NO_CLIENT_META,
     });
+
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
     const memberDeliveries: unknown[] = [];
     transport.subscribe(chatChannel(room.id), () => memberDeliveries.push(true), memberId);
@@ -1756,10 +1808,12 @@ describe('ChatService.createPrivateRoom (real PG)', () => {
     expect(room.joinCode).toMatch(/^[A-Z2-9]{6}$/);
     expect(room.slug.startsWith('private-')).toBe(true);
     expect(room.slug).not.toContain(room.joinCode?.toLowerCase());
+
     const [member] = await db.drizzle.db
       .select()
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, room.id));
+
     expect(member).toMatchObject({ userId, role: 'owner' });
     expect(events.emit).toHaveBeenCalledWith(
       'chat.private_room.created',
@@ -1770,6 +1824,7 @@ describe('ChatService.createPrivateRoom (real PG)', () => {
   it('rejects one room past the per-player cap', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
+
     for (let i = 0; i < MAX_PRIVATE_ROOMS_PER_PLAYER; i++) {
       await svc.createPrivateRoom({ userId, name: `Room ${i}`, ...NO_CLIENT_META });
     }
@@ -1783,9 +1838,11 @@ describe('ChatService.createPrivateRoom (real PG)', () => {
     const { svc } = makeService();
     const userId = randomUUID();
     const rooms = [];
+
     for (let i = 0; i < MAX_PRIVATE_ROOMS_PER_PLAYER; i++) {
       rooms.push(await svc.createPrivateRoom({ userId, name: `Room ${i}`, ...NO_CLIENT_META }));
     }
+
     await svc.deleteRoom(rooms[0]!.id);
 
     await expect(
@@ -1796,6 +1853,7 @@ describe('ChatService.createPrivateRoom (real PG)', () => {
   it('serializes concurrent creates so the cap cannot be overshot', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
+
     for (let i = 0; i < MAX_PRIVATE_ROOMS_PER_PLAYER - 1; i++) {
       await svc.createPrivateRoom({ userId, name: `Room ${i}`, ...NO_CLIENT_META });
     }
@@ -1823,11 +1881,13 @@ describe('ChatService.joinRoom (real PG)', () => {
       .select()
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, room.id));
+
     expect(members.map((member) => member.userId)).toContain(userId);
   });
 
   it('creates a default-disabled configuration for new private rooms', async () => {
     const { svc } = makeService();
+
     const room = await svc.createPrivateRoom({
       userId: randomUUID(),
       name: 'Configured room',
@@ -1838,6 +1898,7 @@ describe('ChatService.joinRoom (real PG)', () => {
       .select()
       .from(chatRoomConfiguration)
       .where(eq(chatRoomConfiguration.roomId, room.id));
+
     expect(configuration).toMatchObject({
       slowMode: false,
       slowModeSeconds: 0,
@@ -1851,11 +1912,13 @@ describe('ChatService.joinRoom (real PG)', () => {
   it('joins by code and records the membership once', async () => {
     const { svc, events } = makeService();
     const creatorId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: creatorId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     const joinerId = randomUUID();
 
     await svc.joinRoom({ userId: joinerId, joinCode: room.joinCode!, ...NO_CLIENT_META });
@@ -1865,6 +1928,7 @@ describe('ChatService.joinRoom (real PG)', () => {
       .select()
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, room.id));
+
     expect(members).toHaveLength(2);
     expect(
       events.emit.mock.calls.filter(([topic]) => topic === 'chat.room.member.joined'),
@@ -1882,11 +1946,13 @@ describe('ChatService.joinRoom (real PG)', () => {
   it('throws ChatRoomBannedError for a banned user', async () => {
     const { svc } = makeService();
     const creatorId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: creatorId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     const bannedId = randomUUID();
     await db.drizzle.db
       .insert(chatRoomBan)
@@ -1902,6 +1968,7 @@ describe('ChatService.leaveRoom (real PG)', () => {
   it('refuses to let the owner leave', async () => {
     const { svc } = makeService();
     const creatorId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: creatorId,
       name: 'Room',
@@ -1916,11 +1983,13 @@ describe('ChatService.leaveRoom (real PG)', () => {
   it('still refuses the owner once a moderator exists to cover the room', async () => {
     const { svc } = makeService();
     const ownerId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     const memberId = randomUUID();
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
     await svc.setMemberRole({
@@ -1934,10 +2003,12 @@ describe('ChatService.leaveRoom (real PG)', () => {
     await expect(
       svc.leaveRoom({ userId: ownerId, roomId: room.id, ...NO_CLIENT_META }),
     ).rejects.toBeInstanceOf(ChatRoomOwnerCannotLeaveError);
+
     const [owner] = await db.drizzle.db
       .select({ userId: chatRoomMember.userId })
       .from(chatRoomMember)
       .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, ownerId)));
+
     expect(owner).toBeDefined();
   });
 
@@ -1956,11 +2027,13 @@ describe('ChatService.leaveRoom (real PG)', () => {
 
   it('removes a plain member and emits left', async () => {
     const { svc, events } = makeService();
+
     const room = await svc.createPrivateRoom({
       userId: randomUUID(),
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     const memberId = randomUUID();
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
 
@@ -1970,6 +2043,7 @@ describe('ChatService.leaveRoom (real PG)', () => {
       .select()
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, room.id));
+
     expect(members.map((m) => m.userId)).not.toContain(memberId);
     expect(events.emit).toHaveBeenCalledWith(
       'chat.room.member.left',
@@ -1981,6 +2055,7 @@ describe('ChatService.leaveRoom (real PG)', () => {
 describe('ChatService.setMemberRole (real PG)', () => {
   function transportWithSignal() {
     const signal = vi.fn();
+
     return { transport: Object.assign(makeTransport(), { signal }), signal };
   }
 
@@ -1991,14 +2066,18 @@ describe('ChatService.setMemberRole (real PG)', () => {
       audit,
       transport: bound,
     } = makeService(undefined, undefined, [], transport);
+
     const ownerId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: ownerId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     const memberId = randomUUID();
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
     return { svc, events, audit, transport: bound, room, ownerId, memberId };
   }
 
@@ -2182,6 +2261,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
 
   it('is idempotent on a repeated promote and a repeated revoke', async () => {
     const { svc, events, room, ownerId, memberId } = await roomWithMember();
+
     const roleChanges = () =>
       events.emit.mock.calls.filter(([topic]) => topic === 'chat.room.member.role-changed').length;
 
@@ -2374,6 +2454,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
     const transport: RealtimeTransport = Object.assign(makeTransport(), {
       signal: undefined,
     });
+
     const { svc, room, ownerId, memberId } = await roomWithMember(transport);
 
     await expect(
@@ -2391,6 +2472,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
     const transport: RealtimeTransport = Object.assign(makeTransport(), {
       signal: vi.fn().mockRejectedValue(new Error('transport down')),
     });
+
     const { svc, events, room, ownerId, memberId } = await roomWithMember(transport);
 
     await expect(
@@ -2490,13 +2572,16 @@ describe('ChatService moderation (real PG)', () => {
   async function roomWithMember() {
     const { svc, events, audit, moderation, transport } = makeService();
     const moderatorId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     const memberId = randomUUID();
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
     return { svc, events, room, moderatorId, memberId, audit, moderation, transport };
   }
 
@@ -2513,6 +2598,7 @@ describe('ChatService moderation (real PG)', () => {
       .select()
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, room.id));
+
     expect(afterKick.map((m) => m.userId)).not.toContain(memberId);
     transport.publish(chatChannel(room.id), { type: 'chat.message.sent' });
     await settle();
@@ -2755,6 +2841,7 @@ describe('ChatService moderation (real PG)', () => {
       .select()
       .from(chatRoomMute)
       .where(eq(chatRoomMute.roomId, room.id));
+
     expect(rows).toHaveLength(2);
     expect(rows.filter((row) => row.liftedAt)).toHaveLength(1);
     expect(rows.filter((row) => !row.liftedAt)).toHaveLength(1);
@@ -2814,10 +2901,12 @@ describe('ChatService moderation (real PG)', () => {
       actorId,
       ...NO_CLIENT_META,
     });
+
     const active = await db.drizzle.db
       .select()
       .from(chatPlatformBan)
       .where(and(eq(chatPlatformBan.userId, userId), isNull(chatPlatformBan.liftedAt)));
+
     expect(active).toHaveLength(1);
 
     const privateRoom = await svc.createPrivateRoom({
@@ -2825,6 +2914,7 @@ describe('ChatService moderation (real PG)', () => {
       name: 'Private',
       ...NO_CLIENT_META,
     });
+
     await expect(
       moderation.ban({
         userId,
@@ -2908,6 +2998,7 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     const moderatorId = randomUUID();
     const memberId = randomUUID();
     const now = new Date();
+
     function summary(userId: string, username: string): AdminPlayerSummary {
       return {
         playerId: randomUUID(),
@@ -2922,18 +3013,22 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
         currency: 'USD',
       };
     }
+
     const directory = mock<AdminUserDirectory>({
       lookupPlayers: async (ids: readonly string[]) =>
         [summary(moderatorId, 'Moderator'), summary(memberId, 'SilentMember')].filter((s) =>
           ids.includes(s.userId),
         ),
     });
+
     const { svc } = makeService(directory);
+
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
+
     // memberId joins via invite code and never sends a message - the exact repro:
     // a never-posted member must still resolve a real username, not their raw id.
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
@@ -2951,6 +3046,7 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
     const { svc } = makeService(directory);
     const moderatorId = randomUUID();
+
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
       name: 'Room',
@@ -2968,12 +3064,15 @@ describe('ChatService staff visibility in a room roster (real PG)', () => {
     const { svc } = makeService();
     const admin = await seedUser(db, { name: 'Room Admin', role: 'admin' });
     const player = await seedUser(db, { name: 'Player One', role: 'player' });
+
     const room = await svc.createPrivateRoom({
       userId: admin.id,
       name: 'Admin room',
       ...NO_CLIENT_META,
     });
+
     await svc.joinRoom({ userId: player.id, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
     return { svc, admin, player, room };
   }
 

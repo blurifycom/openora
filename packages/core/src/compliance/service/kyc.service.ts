@@ -57,7 +57,9 @@ type KycReconcileOutcome = {
 };
 
 const DEFAULT_PROVIDER = 'mock';
+
 const MANUAL_PROVIDER = 'manual';
+
 const BULK_APPROVE_CONCURRENCY = 10;
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
@@ -97,6 +99,7 @@ function mapVendorStatus(vendor: KycVendorStatus) {
 
 function isDecided(status: KycStatus) {
   const normalized = normalizeKycStatus(status);
+
   return (
     normalized === 'approved' || normalized === 'rejected' || normalized === 'manually_overridden'
   );
@@ -121,9 +124,11 @@ function findIncompleteCheck(checks?: KycCheckResult[]): KycCheckResult | undefi
   if (checks === undefined) {
     return undefined;
   }
+
   if (checks.length === 0) {
     return NO_STEPS_RESOLVED_CHECK;
   }
+
   return checks.find((check) => check.status !== 'approved');
 }
 
@@ -156,6 +161,7 @@ export function toPlayerSummaryView(view: PlayerKycView): PlayerKycSummaryView {
     current: tier.current ? toSummaryDto(tier.current) : null,
     history: tier.history.map(toSummaryDto),
   });
+
   return {
     basic: summarizeTier(view.basic),
     advanced: summarizeTier(view.advanced),
@@ -213,9 +219,11 @@ export class KycVerificationService {
     if (params.tier === 'basic' && !params.playerTransition) {
       return;
     }
+
     if (params.tier === 'advanced' && params.previousStatus === params.status) {
       return;
     }
+
     this.events.emit('compliance.kyc.updated', {
       userId: params.userId,
       playerId:
@@ -261,6 +269,7 @@ export class KycVerificationService {
             { userId, tier: input.tier, existingId: previous.id },
             'kyc submit collapsed onto an in-flight session',
           );
+
           return { duplicate: true as const, row: previous };
         }
 
@@ -269,9 +278,12 @@ export class KycVerificationService {
           input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
           input.tier,
         );
+
         const mappedStatus = mapVendorStatus(result.status);
+
         const incompleteCheck =
           mappedStatus === 'approved' ? findIncompleteCheck(result.checks) : undefined;
+
         const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
         const decisionReason = incompleteCheck ? describeIncompleteCheck(incompleteCheck) : null;
         const decided = isDecided(status);
@@ -309,6 +321,7 @@ export class KycVerificationService {
             .returning(),
           new KycVerificationNotFoundError(userId),
         );
+
         const playerTransition =
           input.tier === 'basic'
             ? await this.statusWriter.setStatus(
@@ -318,6 +331,7 @@ export class KycVerificationService {
                 trx,
               )
             : null;
+
         // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
         // compliance.md): emitted here, inside the transaction, so it can never be dropped
         // by a crash between commit and a post-commit emit.
@@ -331,6 +345,7 @@ export class KycVerificationService {
           reason: decisionReason,
           source: 'vendor',
         });
+
         return {
           duplicate: false as const,
           row: inserted,
@@ -353,6 +368,7 @@ export class KycVerificationService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { ...toDto(outcome.row), verificationUrl: outcome.verificationUrl };
   }
 
@@ -407,26 +423,35 @@ export class KycVerificationService {
         .where(eq(kycVerification.referenceId, referenceId))
         .orderBy(desc(kycVerification.createdAt))
         .for('update');
+
       const [firstRow] = rows;
+
       if (!firstRow) {
         return [];
       }
+
       const ownerUserId = firstRow.userId;
+
       if (rows.some((row) => row.userId !== ownerUserId)) {
         throw new KycReferenceOwnerMismatchError(referenceId);
       }
+
       const targetRows = opts.tier ? rows.filter((row) => row.tier === opts.tier) : rows;
       const reconciled: KycReconcileOutcome[] = [];
 
       for (const row of targetRows) {
         const mappedStatus = mapVendorStatus(vendorStatus);
         const persistedChecks = opts.checks ?? row.checks ?? undefined;
+
         const incompleteCheck =
           mappedStatus === 'approved' ? findIncompleteCheck(persistedChecks) : undefined;
+
         const status = incompleteCheck ? 'resubmission_requested' : mappedStatus;
+
         const reasonFromThisReconcile = incompleteCheck
           ? describeIncompleteCheck(incompleteCheck)
           : opts.reason;
+
         const decisionReason = reasonFromThisReconcile ?? row.decisionReason;
 
         if (row.status === status && row.decidedAt) {
@@ -471,6 +496,7 @@ export class KycVerificationService {
             .returning(),
           new KycVerificationNotFoundError(row.id),
         );
+
         const playerTransition =
           row.tier === 'basic'
             ? await this.statusWriter.setStatus(
@@ -480,6 +506,7 @@ export class KycVerificationService {
                 trx,
               )
             : null;
+
         // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
         // compliance.md): emitted here, inside the transaction, so it can never be dropped
         // by a crash between commit and a post-commit emit.
@@ -513,8 +540,10 @@ export class KycVerificationService {
     // vendor SESSION (referenceId), not a tier - a shared-workflow decision touching
     // both tiers is still exactly one real signal.
     const anyChanged = outcomes.some((outcome) => outcome.changed);
+
     if (anyChanged && opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
       const [primaryOutcome] = outcomes;
+
       if (primaryOutcome) {
         this.events.emit('compliance.kyc.high_risk_signal_detected', {
           userId: primaryOutcome.row.userId,
@@ -530,6 +559,7 @@ export class KycVerificationService {
     }
 
     const primary = outcomes.find((outcome) => outcome.changed) ?? outcomes[0];
+
     return primary ? toDto(primary.row) : null;
   }
 
@@ -560,13 +590,17 @@ export class KycVerificationService {
     const riskSignals = this.kycAdapter.resolveRiskSignals
       ? await this.kycAdapter.resolveRiskSignals(referenceId)
       : undefined;
+
     if (!this.kycAdapter.resolveDecision) {
       return this.reconcile(referenceId, status, { tier: webhookTier, riskSignals, receivedAt });
     }
+
     const decision = await this.kycAdapter.resolveDecision(referenceId);
+
     if (webhookTier && decision.tier && webhookTier !== decision.tier) {
       throw new KycReferenceTierMismatchError(referenceId);
     }
+
     return this.reconcile(referenceId, decision.status, {
       tier: webhookTier ?? decision.tier,
       reason: decision.decisionReason,
@@ -583,8 +617,10 @@ export class KycVerificationService {
       .from(kycVerification)
       .where(eq(kycVerification.userId, userId))
       .orderBy(desc(kycVerification.createdAt));
+
     const basic = rows.filter((row) => row.tier === 'basic').map(toDto);
     const advanced = rows.filter((row) => row.tier === 'advanced').map(toDto);
+
     return {
       basic: { current: basic[0] ?? null, history: basic },
       advanced: { current: advanced[0] ?? null, history: advanced },
@@ -602,6 +638,7 @@ export class KycVerificationService {
       .select({ id: player.id, currency: player.currency, kycStatus: player.kycStatus })
       .from(player)
       .where(eq(player.userId, userId));
+
     if (!current || normalizeKycStatus(current.kycStatus) !== 'approved') {
       return;
     }
@@ -633,12 +670,15 @@ export class KycVerificationService {
       .limit(1);
 
     const totalDeposits = deposited?.total ?? '0';
+
     const snapshot = {
       totalDeposits,
       currency: current.currency,
       lastTriggeredDeposits: lastFire?.triggerDeposits ?? '0',
     };
+
     const thresholds = this.platformConfig?.kyc?.reverifyThresholds;
+
     if (!this.reKycTrigger.requiresReverify(snapshot, thresholds)) {
       return;
     }
@@ -656,6 +696,7 @@ export class KycVerificationService {
         triggerDeposits: totalDeposits,
         decisionReason: reason,
       });
+
       const playerTransition = await this.statusWriter.setStatus(
         userId,
         'resubmission_requested',
@@ -666,6 +707,7 @@ export class KycVerificationService {
         },
         trx,
       );
+
       // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
       // compliance.md): emitted here, inside the transaction, so it can never be dropped
       // by a crash between commit and a post-commit emit.
@@ -724,6 +766,7 @@ export class KycVerificationService {
         .returning(),
       new KycVerificationNotFoundError(params.userId),
     );
+
     const playerTransition =
       params.tier === 'basic'
         ? await this.statusWriter.setStatus(
@@ -733,6 +776,7 @@ export class KycVerificationService {
             trx,
           )
         : null;
+
     return { row: toDto(inserted), playerTransition };
   }
 
@@ -751,6 +795,7 @@ export class KycVerificationService {
       const current = await this.requirePlayerRowForUpdate(userId, trx);
       const latest = await this.latestVerification(userId, tier, trx);
       const currentStatus = tier === 'basic' ? current.kycStatus : latest?.status;
+
       if (currentStatus === 'resubmission_requested') {
         return {
           row: latest ? toDto(latest) : null,
@@ -759,6 +804,7 @@ export class KycVerificationService {
           changed: false,
         };
       }
+
       const applied = await this.applyManualDecision(trx, {
         userId,
         tier,
@@ -768,6 +814,7 @@ export class KycVerificationService {
         referenceIdPrefix: 'manual-resubmit',
         decidedAt: null,
       });
+
       // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
       // compliance.md): emitted here, inside the transaction, so it can never be dropped
       // by a crash between commit and a post-commit emit.
@@ -781,11 +828,14 @@ export class KycVerificationService {
         reason,
         source: 'manual',
       });
+
       return { ...applied, previousStatus: currentStatus ?? null, changed: true };
     });
+
     if (!outcome.row) {
       throw new KycVerificationNotFoundError(userId);
     }
+
     return outcome.row;
   }
 
@@ -803,10 +853,12 @@ export class KycVerificationService {
     actorId: User['id'],
   ) {
     const resolvedStatus = resolveManualStatus(status);
+
     const outcome = await this.drizzle.db.transaction(async (trx) => {
       const current = await this.requirePlayerRowForUpdate(userId, trx);
       const latest = await this.latestVerification(userId, tier, trx);
       const currentStatus = tier === 'basic' ? current.kycStatus : latest?.status;
+
       if (
         currentStatus &&
         normalizeKycStatus(currentStatus) === normalizeKycStatus(resolvedStatus)
@@ -818,6 +870,7 @@ export class KycVerificationService {
           changed: false,
         };
       }
+
       const applied = await this.applyManualDecision(trx, {
         userId,
         tier,
@@ -827,6 +880,7 @@ export class KycVerificationService {
         referenceIdPrefix: 'manual-override',
         decidedAt: isDecided(resolvedStatus) ? new Date() : null,
       });
+
       // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
       // compliance.md): emitted here, inside the transaction, so it can never be dropped
       // by a crash between commit and a post-commit emit.
@@ -840,11 +894,14 @@ export class KycVerificationService {
         reason,
         source: 'manual',
       });
+
       return { ...applied, previousStatus: currentStatus ?? null, changed: true };
     });
+
     if (!outcome.row) {
       throw new KycVerificationNotFoundError(userId);
     }
+
     return outcome.row;
   }
 
@@ -864,6 +921,7 @@ export class KycVerificationService {
     return mapConcurrent(userIds, BULK_APPROVE_CONCURRENCY, async (userId) => {
       try {
         await this.overrideStatus(userId, tier, 'approved', reason, actorId);
+
         return { userId, success: true, error: null };
       } catch (err) {
         // Fixed string on the wire, regardless of error type - never the raw exception
@@ -872,6 +930,7 @@ export class KycVerificationService {
         // already an existence oracle over an id an admin didn't otherwise confirm; the
         // full error is logged server-side (with userId) for ops.
         logger.error({ err, userId }, 'bulk KYC approve failed for player');
+
         return { userId, success: false, error: 'Failed to approve KYC' };
       }
     });
@@ -883,10 +942,13 @@ export class KycVerificationService {
       .from(player)
       .where(eq(player.userId, userId))
       .for('update');
+
     const row = rows[0];
+
     if (!row) {
       throw new PlayerNotFoundError(userId);
     }
+
     return row;
   }
 
@@ -901,6 +963,7 @@ export class KycVerificationService {
       .where(and(eq(kycVerification.userId, userId), eq(kycVerification.tier, tier)))
       .orderBy(desc(kycVerification.createdAt))
       .limit(1);
+
     return rows[0] ?? null;
   }
 }

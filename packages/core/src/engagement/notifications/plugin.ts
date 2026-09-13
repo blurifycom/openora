@@ -33,11 +33,15 @@ const describeLimitValue = (amount: string | null, minutes: number | null): stri
   amount !== null ? amount : `${minutes} minutes`;
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
+
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
+
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
+
 const SECURITY_ALERT_DISPATCH_QUEUE = queue('security-alert-dispatch');
 
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
+
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
 
 const KycResubmissionNotifyJobSchema = z.object({
@@ -77,6 +81,7 @@ function compactData(
   const entries = Object.entries(fields).filter(
     (entry): entry is [string, string] => entry[1] !== null && entry[1] !== undefined,
   );
+
   return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
@@ -95,6 +100,7 @@ function mapEvent<K extends DomainEventName>(
     event,
     parse: (payload) => {
       const parsed = domainEventSchemas[event].safeParse(payload);
+
       return parsed.success ? parsed.data : null;
     },
     buildNotification: (data) => buildNotification(data as DomainEventPayload<K>),
@@ -314,6 +320,7 @@ export default {
       if (!mailDispatchRef) {
         return;
       }
+
       try {
         await mailDispatchRef.toUser({
           userId,
@@ -336,9 +343,11 @@ export default {
       if (!mailDispatchRef || !identityReaderRef) {
         return;
       }
+
       if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(userId))) {
         return;
       }
+
       await mailDispatchRef.toUser({
         userId,
         template,
@@ -352,7 +361,9 @@ export default {
       if (!realtimeRef) {
         return;
       }
+
       const dto = toNotificationDto(record);
+
       if (dto) {
         void Promise.resolve(realtimeRef.publish(notificationsChannel(record.userId), dto)).catch(
           (err: unknown) => logger.error({ err }, 'notification realtime publish failed'),
@@ -365,10 +376,13 @@ export default {
         if (!jobQueueRef || !envelope) {
           return;
         }
+
         const data = entry.parse(payload);
+
         if (data === null) {
           return;
         }
+
         jobQueueRef
           .enqueue(
             NOTIFICATIONS_DISPATCH_QUEUE,
@@ -395,22 +409,27 @@ export default {
 
     ctx.events.on('identity.authentication.succeeded', async (payload, envelope) => {
       const parsed = domainEventSchemas['identity.authentication.succeeded'].safeParse(payload);
+
       if (!parsed.success || !jobQueueRef || !identityReaderRef) {
         return;
       }
+
       if (!envelope?.eventId) {
         logger.warn(
           { userId: parsed.data.userId },
           'security login alert enqueue skipped: missing event id',
         );
+
         return;
       }
+
       // Skip the job entirely for the normal opt-out case. Delivery checks the same
       // current state again, so a preference or email change between here and the
       // worker cannot result in a stale-address email.
       if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(parsed.data.userId))) {
         return;
       }
+
       await jobQueueRef.enqueue(
         SECURITY_ALERT_DISPATCH_QUEUE,
         { userId: parsed.data.userId, eventId: envelope.eventId, occurredAt: envelope.occurredAt },
@@ -426,15 +445,19 @@ export default {
     // limit changes always emit `reason: null`.
     ctx.events.on('rg.limit.set', (payload) => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
+
       if (!parsed.success || !svcRef || parsed.data.reason === null) {
         return;
       }
+
       const p = parsed.data;
       const title = 'Your responsible gambling limit was changed';
+
       const previous =
         p.previousAmount !== null || p.previousMinutes !== null
           ? describeLimitValue(p.previousAmount, p.previousMinutes)
           : 'no prior limit';
+
       const next = describeLimitValue(p.amount, p.minutes);
       const body = `An administrator changed your ${p.period} ${p.type} limit from ${previous} to ${next}.`;
       // In-app only: `RgService.setPlayerLimit` already sends the `rgLimitUpdated` mail on this write.
@@ -445,16 +468,22 @@ export default {
 
     ctx.events.on('chat.room.scheduled_for_deletion', (payload, envelope) => {
       const parsed = domainEventSchemas['chat.room.scheduled_for_deletion'].safeParse(payload);
+
       if (!parsed.success || !jobQueueRef) {
         return;
       }
+
       const p = parsed.data;
+
       if (!envelope?.eventId) {
         logger.warn({ roomId: p.roomId }, 'chat-room-deletion notify skipped: missing eventId');
+
         return;
       }
+
       const eventId = envelope.eventId;
       const jobQueue = jobQueueRef;
+
       for (const userId of p.memberIds.filter((id) => id !== p.previousOwnerId)) {
         jobQueue
           .enqueue(
@@ -483,23 +512,29 @@ export default {
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
+
       if (!parsed.success || !jobQueueRef) {
         return;
       }
+
       const p = parsed.data;
+
       // Generic copy below assumes basic-tier document requirements; advanced-tier
       // resubmission has no tier-specific copy yet (see tag-evaluation.service.ts's
       // same guard).
       if (p.status !== 'resubmission_requested' || p.source !== 'manual' || p.tier !== 'basic') {
         return;
       }
+
       if (!envelope?.eventId) {
         logger.warn(
           { userId: p.userId },
           'kyc-resubmission-notify enqueue skipped: missing eventId',
         );
+
         return;
       }
+
       jobQueueRef
         .enqueue(
           KYC_RESUBMISSION_NOTIFY_QUEUE,
@@ -516,12 +551,16 @@ export default {
         if (!svcRef) {
           return;
         }
+
         const input = buildKycResubmissionNotification(payload);
         const record = await svcRef.create(input);
+
         if (!record) {
           return;
         }
+
         publishNotification(record);
+
         if (payload.eventId) {
           await dispatchMail(
             payload.userId,
@@ -539,7 +578,9 @@ export default {
         if (!svcRef) {
           return;
         }
+
         const record = await svcRef.create(payload.input);
+
         if (!record) {
           // A prior attempt may have already persisted the in-app notification. Continue so a
           // retried security alert can still be delivered through this job's retry policy.
@@ -550,9 +591,12 @@ export default {
               payload.input.eventId,
             );
           }
+
           return;
         }
+
         publishNotification(record);
+
         if (payload.email) {
           const mailKey = payload.input.eventId ?? record.id;
           await (payload.securityAlert
@@ -593,6 +637,7 @@ export default {
         if (!svcRef) {
           return;
         }
+
         const { count } = await svcRef.purgeExpired(retentionDaysRef);
         logger.info({ count }, 'notification retention purge complete');
       },
@@ -608,8 +653,10 @@ export default {
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       retentionDaysRef =
         platformConfig?.notifications?.retention?.days ?? DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
+
       const purgeCron =
         platformConfig?.notifications?.retention?.cron ?? DEFAULT_NOTIFICATIONS_RETENTION_CRON;
+
       // Off-peak, one hour after tag's daily-evaluation (0 2 * * *), so the in-process
       // driver doesn't run both sweeps at once in dev/test.
       void jobQueueRef.schedule(
@@ -618,6 +665,7 @@ export default {
         {},
         { cron: purgeCron },
       );
+
       return createNotificationsRouter({ notifications: svc, realtime: realtimeRef });
     });
   },

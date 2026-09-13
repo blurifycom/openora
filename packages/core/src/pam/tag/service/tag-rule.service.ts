@@ -33,6 +33,7 @@ export class TagRuleService {
       .from(tagRule)
       .innerJoin(tag, eq(tagRule.tagId, tag.id))
       .orderBy(asc(tag.key));
+
     return rows.map(toTagRule);
   }
 
@@ -53,6 +54,7 @@ export class TagRuleService {
       .innerJoin(tag, eq(tagRule.tagId, tag.id))
       .where(eq(tag.key, tagKey))
       .limit(1);
+
     return toTagRule(findOneOrThrow(results, new TagRuleNotFoundError(tagKey)));
   }
 
@@ -73,8 +75,10 @@ export class TagRuleService {
       thresholdDays: input.thresholdDays,
       thresholdCount: input.thresholdCount,
     };
+
     // Exclude the conflict-target column from the update set.
     const { tagId: _id, ...updateValues } = values;
+
     const row = findOneOrThrow(
       await this.drizzle.db
         .insert(tagRule)
@@ -83,6 +87,7 @@ export class TagRuleService {
         .returning(),
       new TagRuleNotFoundError(input.tagKey),
     );
+
     const result = toTagRule({ ...row, tagKey: input.tagKey });
     void this.events.emit('tag.rule.upserted', {
       tagKey: input.tagKey,
@@ -91,6 +96,7 @@ export class TagRuleService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return result;
   }
 }

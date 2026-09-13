@@ -10,5 +10,6 @@ export function useOrpcClient<TContract extends AnyContractRouter>(
   contract: TContract,
 ): OssClient<TContract> {
   const { baseUrl } = useApiClient();
+
   return useMemo(() => createClient(contract, { baseUrl }), [baseUrl, contract]);
 }

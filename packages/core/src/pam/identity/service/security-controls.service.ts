@@ -20,11 +20,14 @@ export async function getSecurityControls(
     .from(user)
     .where(eq(user.id, userId))
     .limit(1);
+
   if (!row) {
     return null;
   }
+
   const phone = E164PhoneSchema.safeParse(row.phoneNumber);
   const { withdrawalPinHash, ...rest } = row;
+
   return {
     ...rest,
     phoneNumber: phone.success ? phone.data : null,

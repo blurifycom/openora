@@ -35,9 +35,11 @@ async function seedWallet(balance: string, currency = 'USD') {
     await db.drizzle.db.insert(wallet).values({ userId: randomUUID(), currency }).returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: balance });
+
   return row;
 }
 
@@ -111,6 +113,7 @@ describe('bonus-rollover QA concurrency probe: two simultaneous bets against ONE
           svc.debit(txn, { userId: w.userId, amount: '70', type: 'bet' }),
         ),
       ]);
+
       if (!r1.ok || !r2.ok) {
         throw new Error(`trial ${trial}: expected both debits ok`);
       }
@@ -119,6 +122,7 @@ describe('bonus-rollover QA concurrency probe: two simultaneous bets against ONE
         .select()
         .from(walletBonusCredit)
         .where(eq(walletBonusCredit.id, credit.id));
+
       expect(Number(row!.rolloverProgress), `trial ${trial}: progress must cap at 100`).toBe(100);
       expect(row!.status, `trial ${trial}: must flip to completed`).toBe('completed');
 
@@ -126,6 +130,7 @@ describe('bonus-rollover QA concurrency probe: two simultaneous bets against ONE
         ...(r1.completedBonusCredits ?? []),
         ...(r2.completedBonusCredits ?? []),
       ];
+
       expect(
         completions,
         `trial ${trial}: exactly one debit reports the completion, not zero, not both`,
@@ -152,6 +157,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
       const betPromise = db.drizzle.db.transaction((txn) =>
         commandsSvc.debit(txn, { userId: w.userId, amount: '10', type: 'bet' }),
       );
+
       const withdrawPromise = walletSvc
         .withdraw({
           userId: w.userId,
@@ -166,6 +172,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         );
 
       const [betResult, withdrawOutcome] = await Promise.all([betPromise, withdrawPromise]);
+
       if (!betResult.ok) {
         throw new Error(`trial ${trial}: expected bet debit ok`);
       }
@@ -174,6 +181,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         withdrawOutcome.ok,
         `trial ${trial}: a 100-unit withdrawal must never succeed here`,
       ).toBe(false);
+
       if (!withdrawOutcome.ok) {
         expect(
           withdrawOutcome.err,
@@ -188,6 +196,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         .select()
         .from(walletBalance)
         .where(eq(walletBalance.walletId, w.id));
+
       expect(
         Number(balRow!.amount),
         `trial ${trial}: only the bet's 10 ever left the balance`,
@@ -197,6 +206,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         .select()
         .from(walletBonusCredit)
         .where(eq(walletBonusCredit.walletId, w.id));
+
       expect(creditRow!.status).toBe('completed');
       expect(Number(creditRow!.rolloverProgress)).toBe(100);
     }
@@ -216,6 +226,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
       const betPromise = db.drizzle.db.transaction((txn) =>
         commandsSvc.debit(txn, { userId: w.userId, amount: '10', type: 'bet' }),
       );
+
       const withdrawPromise = walletSvc
         .withdraw({
           userId: w.userId,
@@ -230,6 +241,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         );
 
       const [betResult, withdrawSucceeded] = await Promise.all([betPromise, withdrawPromise]);
+
       if (!betResult.ok) {
         throw new Error(`trial ${trial}: expected bet debit ok`);
       }
@@ -238,6 +250,7 @@ describe('bonus-rollover QA concurrency probe: withdrawal racing the bet that un
         .select()
         .from(walletBalance)
         .where(eq(walletBalance.walletId, w.id));
+
       expect(
         Number(balRow!.amount),
         `trial ${trial}: balance must equal 100 - bet(10) - withdraw(10 if it succeeded)`,

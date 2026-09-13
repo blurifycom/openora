@@ -35,4 +35,5 @@ export const friendship = pgTable(
     ),
   ],
 );
+
 export type Friendship = typeof friendship.$inferSelect;

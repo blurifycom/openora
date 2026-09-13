@@ -15,17 +15,20 @@ export function createAnalyticsRouter(
     financial: {
       summary: os.financial.summary.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'analytics', 'view');
+
         return financial.summary(input);
       }),
 
       ggr: os.financial.ggr.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'analytics', 'view');
+
         return financial.ggr(input);
       }),
     },
     funnel: {
       conversion: os.funnel.conversion.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'analytics', 'view');
+
         return funnel.conversion(input);
       }),
     },

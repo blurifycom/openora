@@ -19,6 +19,7 @@ export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
 export const PlayerWithTagsSchema = PlayerSchema.extend({
   tags: z.array(TagKeySchema),
 });
+
 export type PlayerWithTags = z.infer<typeof PlayerWithTagsSchema>;
 
 export const PlayerRegistrationPointSchema = z.object({
@@ -41,6 +42,7 @@ export const PlayerSearchResultSchema = z.object({
   avatarUrl: z.string().nullable(),
   level: z.number().int(),
 });
+
 export type PlayerSearchResult = z.infer<typeof PlayerSearchResultSchema>;
 
 export const PlayerProfileCardSchema = z.object({
@@ -53,6 +55,7 @@ export const PlayerProfileCardSchema = z.object({
   totalBets: z.number().int().nullable(),
   currency: z.string().nullable(),
 });
+
 export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
 
 export const playerContract = populateContractRouterPaths({

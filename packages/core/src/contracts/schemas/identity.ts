@@ -2,9 +2,13 @@ import { z } from 'zod';
 import { UuidSchema, TimestampSchema, TimezoneSchema } from './common.js';
 
 export const THEMES = ['light', 'dark', 'system'] as const;
+
 export const OTP_CODE_LENGTH = 6;
+
 export const OTP_EXPIRES_IN_SEC = 3600;
+
 export const ThemeSchema = z.enum(THEMES);
+
 export type Theme = z.infer<typeof ThemeSchema>;
 
 // BCP 47 upper bound - the longest real-world tags stay well under this.
@@ -54,9 +58,11 @@ export const PHONE_LOGIN_ERROR_REASONS = [
   'rg_blocked',
   'account_suspended',
 ] as const;
+
 export const PhoneLoginErrorReasonSchema = z.enum(PHONE_LOGIN_ERROR_REASONS);
 
 export const PHONE_LOGIN_OTP_INVALID_REASONS = ['expired', 'wrong_code'] as const;
+
 export const PhoneLoginOtpInvalidReasonSchema = z.enum(PHONE_LOGIN_OTP_INVALID_REASONS);
 
 /**
@@ -72,6 +78,7 @@ export const REGISTRATION_FAILURE_REASONS = [
   'email_already_registered',
   'error',
 ] as const;
+
 export const RegistrationFailureReasonSchema = z.enum(REGISTRATION_FAILURE_REASONS);
 
 export const OrganizationSchema = z.object({
@@ -137,6 +144,7 @@ export const UsernameAvailabilityOutputSchema = z.object({ available: z.boolean(
 // `app` reads a TOTP off the shared secret, `email` and `sms` have a one-time code
 // pushed to the registered address. The account holds exactly one at a time.
 export const TWO_FACTOR_DELIVERY_METHODS = ['app', 'email', 'sms'] as const;
+
 export const TwoFactorDeliveryMethodSchema = z.enum(TWO_FACTOR_DELIVERY_METHODS);
 
 export const Enable2faInputSchema = z.object({
@@ -311,43 +319,83 @@ export const ChangeEmailInputSchema = z.object({
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
 
 export type IdentitySuccess = z.infer<typeof IdentitySuccessSchema>;
+
 export type User = z.infer<typeof UserSchema>;
+
 export type Organization = z.infer<typeof OrganizationSchema>;
+
 export type Member = z.infer<typeof MemberSchema>;
+
 export type LoginInput = z.infer<typeof LoginInputSchema>;
+
 export type LoginSecurityState = z.infer<typeof LoginSecurityStateSchema>;
+
 export type RegisterInput = z.infer<typeof RegisterInputSchema>;
+
 export type RegisterOutput = z.infer<typeof RegisterOutputSchema>;
+
 export type UsernameAvailabilityInput = z.infer<typeof UsernameAvailabilityInputSchema>;
+
 export type UsernameAvailabilityOutput = z.infer<typeof UsernameAvailabilityOutputSchema>;
+
 export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
+
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
+
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
+
 export type TwoFactorChallengeMethod = z.infer<typeof TwoFactorChallengeMethodSchema>;
+
 export type TwoFactorDeliveryMethod = z.infer<typeof TwoFactorDeliveryMethodSchema>;
+
 export type TwoFactorStatus = z.infer<typeof TwoFactorStatusSchema>;
+
 export type SendTwoFactorOtpResult = z.infer<typeof SendTwoFactorOtpResultSchema>;
+
 export type RegenerateBackupCodesInput = z.infer<typeof RegenerateBackupCodesInputSchema>;
+
 export type TrustCurrentDeviceInput = z.infer<typeof TrustCurrentDeviceInputSchema>;
+
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
+
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;
+
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>;
+
 export type VerifyPasswordResetOtpInput = z.infer<typeof VerifyPasswordResetOtpInputSchema>;
+
 export type ResendEmailVerificationInput = z.infer<typeof ResendEmailVerificationInputSchema>;
+
 export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
+
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
+
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
+
 export type ChangeEmailInput = z.infer<typeof ChangeEmailInputSchema>;
+
 export type E164Phone = z.infer<typeof E164PhoneSchema>;
+
 export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
+
 export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
+
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
+
 export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
+
 export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
+
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
+
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
+
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
+
 export type PhoneVerificationConfirmInput = z.infer<typeof PhoneVerificationConfirmInputSchema>;
+
 export type PhoneLoginErrorReason = z.infer<typeof PhoneLoginErrorReasonSchema>;
+
 export type PhoneLoginOtpInvalidReason = z.infer<typeof PhoneLoginOtpInvalidReasonSchema>;
+
 export type RegistrationFailureReason = z.infer<typeof RegistrationFailureReasonSchema>;

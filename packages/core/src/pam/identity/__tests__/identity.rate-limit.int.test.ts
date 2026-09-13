@@ -36,6 +36,7 @@ function withTemplateRenderer(
 // stub createAuth so the constructor doesn't touch a real DB.
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
+
   return {
     ...actual,
     createAuth: vi.fn(() => ({
@@ -47,8 +48,11 @@ vi.mock('@openora/core/server', async (importOriginal) => {
 const events = makeEventBus();
 
 let db: TestDb;
+
 let drizzle: IdentityServiceDeps['drizzle'];
+
 let redis: TestRedis;
+
 const makeLimiter = () => new RedisRateLimiter(redis.client);
 
 beforeAll(async () => {
@@ -70,10 +74,12 @@ describe('IdentityService - rate limiting (real Redis)', () => {
   it('rejects register with a 429 once the per-email limit is exhausted', async () => {
     const email = 'abuse@x.dev';
     const limiter = makeLimiter();
+
     // Pre-exhaust the register bucket (5 per 15min) so the service's own consume is denied.
     for (let i = 0; i < 5; i++) {
       await limiter.consume(`register:${email}`, { limit: 5, windowMs: 15 * 60 * 1000 });
     }
+
     const svc = withTemplateRenderer({
       drizzle,
       events,
@@ -123,12 +129,14 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
   it('keys on the two_factor cookie VALUE, not the raw Cookie header, so junk cookie pairs cannot churn the bucket', async () => {
     const limiter = makeLimiter();
     const twoFactorIdentifier = 'pending-2fa-identifier-abc';
+
     for (let i = 0; i < 5; i++) {
       await limiter.consume(`verify2fa:${twoFactorIdentifier}`, {
         limit: 5,
         windowMs: 5 * 60 * 1000,
       });
     }
+
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     // Same two_factor cookie + different junk pairs must still hit the one exhausted bucket.
@@ -147,9 +155,11 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
 describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 finding #6)', () => {
   it('rejects changePassword with a 429 once the per-caller limit is exhausted', async () => {
     const limiter = makeLimiter();
+
     for (let i = 0; i < 5; i++) {
       await limiter.consume('change-password:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
+
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
@@ -163,9 +173,11 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
 
   it('rejects verifyEmail with a 429 once the per-address limit is exhausted', async () => {
     const limiter = makeLimiter();
+
     for (let i = 0; i < 5; i++) {
       await limiter.consume('verify-email:target@e2e.test', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
+
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     // Six digits are guessable, so the budget follows the address under attack.
@@ -180,9 +192,11 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
 
   it('buckets verifyEmail addresses separately, so one target cannot stall the rest', async () => {
     const limiter = makeLimiter();
+
     for (let i = 0; i < 5; i++) {
       await limiter.consume('verify-email:target@e2e.test', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
+
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     // Codes are entered without a session. A shared bucket would let the exhausted
@@ -198,9 +212,11 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
 
   it('rejects enableTwoFactor with a 429 once the per-caller limit is exhausted', async () => {
     const limiter = makeLimiter();
+
     for (let i = 0; i < 5; i++) {
       await limiter.consume('enable2fa:anonymous', { limit: 5, windowMs: 5 * 60 * 1000 });
     }
+
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
@@ -210,9 +226,11 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
 
   it('rejects disableTwoFactor with a 429 once the per-caller limit is exhausted', async () => {
     const limiter = makeLimiter();
+
     for (let i = 0; i < 5; i++) {
       await limiter.consume('disable2fa:anonymous', { limit: 5, windowMs: 5 * 60 * 1000 });
     }
+
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
@@ -228,6 +246,7 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
   // fail-closed behaviour is covered in the kernel redis-rate-limiter suite.)
   function denyingLimiter() {
     const consume = vi.fn(async () => ({ allowed: false, retryAfterMs: 1 }));
+
     return { limiter: mock<RateLimiterAdapter>({ consume }), consume };
   }
 

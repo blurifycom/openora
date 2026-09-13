@@ -55,11 +55,14 @@ function identityRates(): ExchangeRateReader {
 
 function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRates()) {
   const events = makeEventBus();
+
   const enforcement = mock<LoginEnforcementPort>({
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
+
   const audit = mock<AuditWritePort>({ record: vi.fn(async () => undefined) });
+
   const svc = new RgService({
     drizzle: db.drizzle,
     events,
@@ -69,6 +72,7 @@ function makeService(notifier?: Notifier, rates: ExchangeRateReader = identityRa
     identityReader: makeIdentityReader(),
     rates,
   });
+
   return { svc, events, enforcement, audit };
 }
 
@@ -85,6 +89,7 @@ async function seedExclusion(overrides: Partial<typeof rgExclusion.$inferInsert>
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -93,7 +98,9 @@ async function exclusionsOf(userId: string) {
 }
 
 const HOURS = 3600_000;
+
 const future = () => new Date(Date.now() + 200 * 24 * HOURS);
+
 const past = () => new Date(Date.now() - 1000);
 
 beforeAll(async () => {
@@ -374,6 +381,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     const notifier = makeNotifier();
     const { svc } = makeService(notifier);
     const userId = randomUUID();
+
     const input = {
       userId,
       type: 'deposit' as const,
@@ -484,6 +492,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.amount)).toBe(50);
     const raiseAttempt = results[1];
+
     if (raiseAttempt.status === 'rejected') {
       expect(raiseAttempt.reason).toBeInstanceOf(LimitRaiseNotAllowedError);
     }
@@ -519,9 +528,11 @@ describe('isWeakening across currencies', () => {
         if (from === to) {
           return amount;
         }
+
         if (from === 'EUR' && to === 'USD') {
           return '50';
         }
+
         return null;
       }),
     });
@@ -539,9 +550,11 @@ describe('isWeakening across currencies', () => {
         if (from === to) {
           return amount;
         }
+
         if (from === 'EUR' && to === 'USD') {
           return '150';
         }
+
         return null;
       }),
     });
@@ -594,6 +607,7 @@ describe('isWeakening across currencies', () => {
       minutes: 60,
       currency: 'SESSION',
     });
+
     await expect(
       isWeakening(row, { amount: null, minutes: 120, currency: null }, rates),
     ).resolves.toBe(true);
@@ -622,6 +636,7 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
         ...overrides,
       })
       .returning();
+
     return row!;
   }
 
@@ -641,6 +656,7 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
       .select()
       .from(userLimit)
       .where(eq(userLimit.id, row.id));
+
     expect(persisted?.currency).toBe('JPY');
   });
 
@@ -670,6 +686,7 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
       .select()
       .from(userLimit)
       .where(eq(userLimit.id, row.id));
+
     expect(persisted?.currency).toBeNull();
   });
 
@@ -682,6 +699,7 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
       resolveLimitCurrency(db.drizzle, row),
       resolveLimitCurrency(db.drizzle, row),
     ]);
+
     expect(a.currency).toBe('GBP');
     expect(b.currency).toBe('GBP');
 
@@ -689,11 +707,13 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
       .select()
       .from(userLimit)
       .where(eq(userLimit.id, row.id));
+
     expect(persisted?.currency).toBe('GBP');
   });
 
   it('leaves a session-type row (already carrying the sentinel) unaffected', async () => {
     const userId = randomUUID();
+
     const row = await insertNullCurrencyLimit(userId, {
       type: 'session',
       period: 'session',
@@ -709,6 +729,7 @@ describe('resolveLimitCurrency / resolveLimitCurrencyInTx (real PG)', () => {
       .select()
       .from(userLimit)
       .where(eq(userLimit.id, row.id));
+
     expect(persisted?.currency).toBe('SESSION');
   });
 });
@@ -755,6 +776,7 @@ describe('RgService.activateCoolingOff (real PG)', () => {
     const { svc, events } = makeService();
     const userId = randomUUID();
     const lapsedExpiresAt = past();
+
     const lapsed = await seedExclusion({
       userId,
       kind: 'cooling_off',
@@ -1033,11 +1055,13 @@ describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
     const lapsedUser = randomUUID();
     const runningUser = randomUUID();
     const lapsedExpiresAt = past();
+
     const lapsedRow = await seedExclusion({
       userId: lapsedUser,
       kind: 'cooling_off',
       expiresAt: lapsedExpiresAt,
     });
+
     await seedExclusion({ userId: runningUser, kind: 'cooling_off', expiresAt: future() });
 
     await svc.expireLapsedCoolingOffs();

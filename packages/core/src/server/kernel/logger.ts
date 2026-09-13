@@ -21,11 +21,13 @@ const DISCARD = { write() {} };
 
 function levelAndDestination(): [string, typeof DISCARD | undefined] {
   const level = process.env['LOG_LEVEL'] ?? 'info';
+
   return level === 'silent' ? ['info', DISCARD] : [level, undefined];
 }
 
 export function createLogger(name: string): Logger {
   const [level, destination] = levelAndDestination();
+
   return pino(
     {
       name,
@@ -37,7 +39,9 @@ export function createLogger(name: string): Logger {
           if (level < levels.values['error']) {
             return;
           }
+
           const [first, second] = inputArgs;
+
           if (!first || typeof first !== 'object' || !('err' in first)) {
             return;
           }
@@ -46,6 +50,7 @@ export function createLogger(name: string): Logger {
             err?: unknown;
             report?: boolean;
           } & Record<string, unknown>;
+
           if (!err || report === false) {
             return;
           }

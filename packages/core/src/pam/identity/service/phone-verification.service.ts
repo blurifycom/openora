@@ -27,12 +27,17 @@ import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
 import { hashCode, generateCode } from '../../shared/otp.js';
 
 const MINUTE_MS = 60 * 1000;
+
 const OTP_TTL_MS = 5 * MINUTE_MS;
+
 const RESEND_COOLDOWN_MS = MINUTE_MS;
+
 const MAX_VERIFY_ATTEMPTS = 5;
+
 const REAUTH_TTL_MS = 5 * MINUTE_MS;
 
 const REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS, onUnavailable: 'deny' } as const;
+
 const VERIFY_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 
 function phoneVerificationCooldownError(retryAfterMs: number) {
@@ -48,6 +53,7 @@ function phoneVerificationInvalidError() {
 
 function isPhoneNumberCollision(error: unknown): boolean {
   const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
+
   return (
     cause instanceof DatabaseError &&
     cause.code === '23505' &&
@@ -106,14 +112,17 @@ export class PhoneVerificationService {
     meta: ClientMeta;
   }): Promise<PhoneVerificationRequestOutput> {
     await assertRateLimit(this.limiter, `phone-verification-request:${userId}`, REQUEST_RATE_LIMIT);
+
     const [caller] = await this.drizzle.db
       .select({ role: user.role, twoFactorEnabled: user.twoFactorEnabled })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (!caller) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+
     // A verified number is also a login credential: PhoneLoginService mints a session
     // from an SMS code alone. Binding one therefore stays a player-only control, so a
     // backoffice account cannot trade its password login for a single SMS factor.
@@ -122,6 +131,7 @@ export class PhoneVerificationService {
         message: 'Only players can verify a phone number.',
       });
     }
+
     await assertFreshReauthentication({
       drizzle: this.drizzle,
       auth: this.auth,
@@ -135,11 +145,13 @@ export class PhoneVerificationService {
     });
 
     const now = new Date();
+
     const [phoneOwner] = await this.drizzle.db
       .select({ id: user.id })
       .from(user)
       .where(eq(user.phoneNumber, input.phone))
       .limit(1);
+
     // Anti-enumeration, the same trade PhoneLoginService makes for this identifier: a
     // number owned by someone else answers with the ordinary success shape and no SMS,
     // rather than a CONFLICT that would confirm to any signed-in player that a given
@@ -162,7 +174,9 @@ export class PhoneVerificationService {
         ),
       )
       .limit(1);
+
     const elapsedMs = existing ? now.getTime() - existing.createdAt.getTime() : RESEND_COOLDOWN_MS;
+
     if (elapsedMs < RESEND_COOLDOWN_MS) {
       throw phoneVerificationCooldownError(RESEND_COOLDOWN_MS - elapsedMs);
     }
@@ -192,6 +206,7 @@ export class PhoneVerificationService {
         },
       });
     await this.sms.sendOtp({ to: input.phone, code });
+
     return {
       expiresAt: expiresAt.toISOString(),
       resendAfter: new Date(now.getTime() + RESEND_COOLDOWN_MS).toISOString(),
@@ -211,6 +226,7 @@ export class PhoneVerificationService {
   }): Promise<SecurityControls> {
     await assertRateLimit(this.limiter, `phone-verification-confirm:${userId}`, VERIFY_RATE_LIMIT);
     const now = new Date();
+
     const [otp] = await this.drizzle.db
       .select({
         id: phoneVerificationSession.id,
@@ -228,6 +244,7 @@ export class PhoneVerificationService {
         ),
       )
       .limit(1);
+
     if (
       !otp ||
       otp.sessionId !== sessionId ||
@@ -245,15 +262,18 @@ export class PhoneVerificationService {
         .set({ failedAttempts: sql`${phoneVerificationSession.failedAttempts} + 1` })
         .where(eq(phoneVerificationSession.id, otp.id))
         .returning({ failedAttempts: phoneVerificationSession.failedAttempts });
+
       if (attempt !== undefined && attempt.failedAttempts >= MAX_VERIFY_ATTEMPTS) {
         await this.drizzle.db
           .delete(phoneVerificationSession)
           .where(eq(phoneVerificationSession.id, otp.id));
       }
+
       throw phoneVerificationInvalidError();
     }
 
     let previousPhoneVerified = false;
+
     try {
       await this.drizzle.db.transaction(async (tx) => {
         // Consuming the challenge and binding the number commit together, and the
@@ -263,9 +283,11 @@ export class PhoneVerificationService {
           .delete(phoneVerificationSession)
           .where(eq(phoneVerificationSession.id, otp.id))
           .returning({ id: phoneVerificationSession.id });
+
         if (!consumed) {
           throw phoneVerificationInvalidError();
         }
+
         // Read before the write: RETURNING yields the new row, and the audit record needs
         // the state this verification replaced.
         const [before] = await tx
@@ -273,26 +295,33 @@ export class PhoneVerificationService {
           .from(user)
           .where(eq(user.id, userId))
           .limit(1);
+
         const [updated] = await tx
           .update(user)
           .set({ phoneNumber: otp.phone, phoneVerified: true, phoneVerifiedAt: new Date() })
           .where(eq(user.id, userId))
           .returning({ id: user.id });
+
         if (!updated) {
           throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
         }
+
         previousPhoneVerified = before?.phoneVerified ?? false;
       });
     } catch (error) {
       if (isPhoneNumberCollision(error)) {
         throw new ORPCError('CONFLICT', { message: 'Phone number is unavailable.' });
       }
+
       throw error;
     }
+
     const controls = await getSecurityControls(this.drizzle, userId);
+
     if (!controls) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+
     this.events.emit('identity.phone.verified', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -300,6 +329,7 @@ export class PhoneVerificationService {
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
+
     return controls;
   }
 }

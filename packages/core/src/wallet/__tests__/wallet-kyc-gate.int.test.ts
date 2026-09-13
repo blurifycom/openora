@@ -33,6 +33,7 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
         : ids.map((userId) => mock<AdminPlayerSummary>({ userId, username: 'p', kycStatus })),
     ),
   });
+
   const svc = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -43,6 +44,7 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
     directory,
     platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals } }),
   });
+
   return { svc, directory };
 }
 
@@ -54,9 +56,11 @@ async function seedWallet() {
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: '100' });
+
   return row;
 }
 
@@ -65,6 +69,7 @@ async function txCount(walletId: string) {
     .select()
     .from(walletTransaction)
     .where(eq(walletTransaction.walletId, walletId));
+
   return rows.length;
 }
 

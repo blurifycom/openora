@@ -36,6 +36,7 @@ function pick<T>(
   value: unknown,
 ): T | null {
   const result = schema.safeParse(value);
+
   return result.success ? (result.data ?? null) : null;
 }
 
@@ -96,9 +97,11 @@ function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortKeysDeep);
   }
+
   if (value === null || typeof value !== 'object') {
     return value;
   }
+
   return Object.fromEntries(
     Object.keys(value as Record<string, unknown>)
       .sort()
@@ -135,11 +138,13 @@ function likePrefix(prefix: string): string {
 
 export function startOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
+
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
 }
 
 export function endOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
+
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
 }
 
@@ -187,22 +192,26 @@ export class AuditService {
   // concurrent record() calls cannot fork the chain. Append-only.
   async record(input: RecordInput) {
     const row = await this.drizzle.db.transaction((tx) => this.recordInTransaction(tx, input));
+
     return toDto(row);
   }
 
   async recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
     const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
+
     const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
       const [latest] = await txn
         .select({ hash: auditLog.hash })
         .from(auditLog)
         .orderBy(desc(auditLog.seq))
         .limit(1);
+
       const prevHash = latest?.hash ?? null;
 
       const seqResult = await txn.execute<{ seq: string | number }>(
         sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
       );
+
       const seq = +(seqResult.rows.at(0)?.seq ?? 0);
 
       const id = randomUUID();
@@ -230,6 +239,7 @@ export class AuditService {
 
       return inserted;
     });
+
     return row;
   }
 
@@ -269,6 +279,7 @@ export class AuditService {
   async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
     const { page, limit } = filters;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+
     if (!playerId) {
       return { items: [], total: 0, page, limit };
     }
@@ -307,6 +318,7 @@ export class AuditService {
 
     const header =
       'id,actorId,actorType,action,resourceType,resourceId,ip,correlationId,result,seq,prevHash,hash,createdAt';
+
     const lines = rows.map((r) =>
       [
         r.id,

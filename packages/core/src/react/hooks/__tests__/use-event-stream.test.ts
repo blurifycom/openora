@@ -28,9 +28,11 @@ function createControllableIterable<T>(): Controllable<T> {
               resolveNext = resolve;
             });
           }
+
           if (queue.length > 0) {
             return { value: queue.shift() as T, done: false };
           }
+
           return { value: undefined, done: true };
         },
       };
@@ -53,6 +55,7 @@ function createControllableIterable<T>(): Controllable<T> {
 function endedIterable<T>(): AsyncIterable<T> {
   const stream = createControllableIterable<T>();
   stream.end();
+
   return stream.iterable;
 }
 
@@ -90,8 +93,10 @@ describe('useEventStream', () => {
 
   it('grows the retry delay on repeated accept-then-immediate-drop cycles instead of pinning it at 1s', async () => {
     const callTimes: number[] = [];
+
     const subscribe = vi.fn().mockImplementation(async () => {
       callTimes.push(Date.now());
+
       return endedIterable();
     });
 
@@ -121,16 +126,20 @@ describe('useEventStream', () => {
     const callTimes: number[] = [];
     let call = 0;
     const streams: Controllable<unknown>[] = [];
+
     const subscribe = vi.fn().mockImplementation(async () => {
       callTimes.push(Date.now());
       call += 1;
+
       if (call === 1) {
         // First cycle: accepted then dropped immediately - retryCount -> 1, next delay 1000ms.
         return endedIterable();
       }
+
       // Second cycle: stays open - the test advances past the stability window before ending it.
       const stream = createControllableIterable();
       streams.push(stream);
+
       return stream.iterable;
     });
 
@@ -175,6 +184,7 @@ describe('useEventStream', () => {
         initialProps: { enabled: true },
       },
     );
+
     await flush();
     expect(result.current.status).toBe('open');
     expect(subscribe).toHaveBeenCalledOnce();

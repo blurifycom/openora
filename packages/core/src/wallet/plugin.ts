@@ -53,6 +53,7 @@ const logger = createLogger('wallet');
 const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
+
 const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
 
 export default {
@@ -89,6 +90,7 @@ export default {
       if (!realtimeTransport) {
         return;
       }
+
       return realtimeTransport.publish(walletBalanceChannel(userId), {
         eventId,
         currency,
@@ -98,16 +100,20 @@ export default {
 
     ctx.events.on('wallet.deposit.completed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+
       if (!parsed.success || !envelope) {
         return;
       }
+
       publishBalanceChanged(parsed.data.userId, parsed.data.currency, 'deposit', envelope.eventId);
     });
     ctx.events.on('wallet.withdrawal.requested', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.withdrawal.requested'].safeParse(payload);
+
       if (!parsed.success || !envelope) {
         return;
       }
+
       publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
@@ -117,9 +123,11 @@ export default {
     });
     ctx.events.on('wallet.withdrawal.failed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.withdrawal.failed'].safeParse(payload);
+
       if (!parsed.success || !envelope) {
         return;
       }
+
       publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
@@ -129,9 +137,11 @@ export default {
     });
     ctx.events.on('wallet.withdrawal.rejected', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.withdrawal.rejected'].safeParse(payload);
+
       if (!parsed.success || !envelope) {
         return;
       }
+
       publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
@@ -143,17 +153,21 @@ export default {
     // only its active currency would otherwise miss the leg it swapped out of.
     ctx.events.on('wallet.swap.completed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.swap.completed'].safeParse(payload);
+
       if (!parsed.success || !envelope) {
         return;
       }
+
       publishBalanceChanged(parsed.data.userId, parsed.data.fromCurrency, 'swap', envelope.eventId);
       publishBalanceChanged(parsed.data.userId, parsed.data.toCurrency, 'swap', envelope.eventId);
     });
     ctx.events.on('wallet.manual_adjustment.created', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.manual_adjustment.created'].safeParse(payload);
+
       if (!parsed.success || !envelope) {
         return;
       }
+
       publishBalanceChanged(
         parsed.data.userId,
         parsed.data.currency,
@@ -166,6 +180,7 @@ export default {
     // constructed (subscriptions/workers wire before router factories run), matching
     // pam/tag's and compliance's job-worker shape.
     let sweepSvc: CustodySweepService | null = null;
+
     const custodySweepService = (c: TypedContainer<CoreTokenCatalog>) =>
       (sweepSvc ??= new CustodySweepService({
         drizzle: c.get(DRIZZLE),
@@ -181,6 +196,7 @@ export default {
         if (!sweepSvc) {
           throw new Error('wallet custody sweep: service not constructed yet');
         }
+
         await sweepSvc.runCycle(payload.runId);
       },
     });
@@ -192,6 +208,7 @@ export default {
         if (!reconciliationRef) {
           throw new Error('wallet reconciliation: service not constructed yet');
         }
+
         await reconciliationRef.runCycle(payload.runId);
       },
     });
@@ -203,6 +220,7 @@ export default {
         .min(1)
         .optional()
         .parse(process.env.PAYMENT_WEBHOOK_SECRET || undefined);
+
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
     // Wraps the single PAYMENT_ADAPTER/PAYMENT_WEBHOOK_VERIFIER tokens as the 'default'
@@ -238,6 +256,7 @@ export default {
     ctx.routers.add('wallet', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+
       const walletService = new WalletService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
@@ -263,6 +282,7 @@ export default {
         audit: c.get(AUDIT_WRITER),
         platformConfig,
       });
+
       reconciliationRef = reconciliation;
 
       const jobQueue = c.get(JOB_QUEUE);
@@ -292,6 +312,7 @@ export default {
       // then refuse rather than the module failing to load.
       const swapAdapter = c.has(SWAP_ADAPTER) ? c.get(SWAP_ADAPTER) : undefined;
       const swapVerifier = c.has(SWAP_WEBHOOK_VERIFIER) ? c.get(SWAP_WEBHOOK_VERIFIER) : undefined;
+
       const swap = swapAdapter
         ? new SwapService({
             drizzle: c.get(DRIZZLE),
@@ -301,6 +322,7 @@ export default {
             limiter: c.get(RATE_LIMITER),
           })
         : undefined;
+
       // A webhook needs BOTH: an adapter that parses the vendor's format and that same
       // vendor's verifier. One without the other leaves the route refusing everything.
       const swapWebhook =

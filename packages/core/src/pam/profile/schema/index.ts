@@ -12,6 +12,7 @@ import {
 import { PLAYER_STATUSES, KYC_STATUSES } from '@openora/core/contracts';
 
 export const playerStatusEnum = pgEnum('player_status', PLAYER_STATUSES);
+
 export const kycStatusEnum = pgEnum('kyc_status', KYC_STATUSES);
 
 export const player = pgTable(

@@ -13,8 +13,11 @@ import { createExchangeRateRouter } from './router/index.js';
 import { ExchangeRateReaderService } from './adapters/exchange-rate-reader.service.js';
 
 const DEFAULT_PIVOT = 'USD';
+
 const DEFAULT_FRESH_TTL_MS = 60_000;
+
 const DEFAULT_HARD_MAX_AGE_MS = 15 * 60_000;
+
 const DEFAULT_PROVIDER_TIMEOUT_MS = 2_000;
 
 function resolvePivot(platformConfig: PlatformConfig): string {
@@ -27,6 +30,7 @@ export default {
     ctx.provide(EXCHANGE_RATE_READER, (c: TypedContainer<CoreTokenCatalog>) => {
       const platformConfig = c.get(PLATFORM_CONFIG);
       const exchangeRateConfig = platformConfig.exchangeRate;
+
       return new ExchangeRateReaderService({
         drizzle: c.get(DRIZZLE),
         pivot: resolvePivot(platformConfig),
@@ -45,12 +49,14 @@ export default {
 
     ctx.routers.add('exchangeRate', (c) => {
       const platformConfig = c.get(PLATFORM_CONFIG);
+
       // The pivot joins the list even when the operator does not offer it for display:
       // every cross rate is computed through it, so a quote against it is always legitimate.
       const supported = [
         ...resolveDisplayCurrencies(platformConfig.displayCurrencies),
         resolvePivot(platformConfig),
       ];
+
       return createExchangeRateRouter(
         new ExchangeRateService(c.get(EXCHANGE_RATE_READER), supported),
       );

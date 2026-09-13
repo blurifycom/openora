@@ -22,7 +22,9 @@ import { makeEventBus, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 const PHONE = '+14155550100';
 
 const AUTH_SECRET = 'unit-test-secret-do-not-use-in-prod';
+
 const SESSION_COOKIE_NAME = 'better-auth.session_token';
+
 const DONT_REMEMBER_COOKIE_NAME = 'better-auth.dont_remember';
 
 const OTP_TTL_MS = 5 * 60 * 1000;
@@ -55,6 +57,7 @@ const fakeAuth: Auth = mock<Auth>({
 });
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 const allowLimiter = (): RateLimiterAdapter => ({
@@ -67,6 +70,7 @@ function build({
   cache,
 }: { sms?: SmsAdapter; cache?: CacheAdapter } = {}) {
   const events = makeEventBus();
+
   const svc = new PhoneLoginService({
     drizzle: db.drizzle,
     events: events,
@@ -75,6 +79,7 @@ function build({
     auth: fakeAuth,
     cache,
   });
+
   return { svc, events, sms };
 }
 
@@ -101,10 +106,12 @@ async function seedOtp(userId: string, over: Partial<typeof smsOtpSession.$infer
       ...over,
     })
     .returning();
+
   return row;
 }
 
 const otpRows = () => db.drizzle.db.select().from(smsOtpSession);
+
 const sessionRows = () => db.drizzle.db.select().from(session);
 
 beforeAll(async () => {
@@ -211,10 +218,12 @@ describe('PhoneLoginService.requestOtp (real PG + real Redis)', () => {
 
   it('supersedes an expired-cooldown prior OTP in place and emits cancelled(new_otp_requested)', async () => {
     const account = await seedUser();
+
     const prior = await seedOtp(account.id, {
       createdAt: new Date(Date.now() - 120_000),
       failedAttempts: 3,
     });
+
     const { svc, events, sms } = build();
 
     await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
@@ -239,6 +248,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
       failedLoginAttempts: 5,
       lockoutUntil: new Date(Date.now() + 60_000),
     });
+
     await seedOtp(account.id);
     const { svc } = build();
 
@@ -290,6 +300,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
     const cookieValue = decodeURIComponent(
       setCookie?.split(';')[0]?.split('=').slice(1).join('=') ?? '',
     );
+
     const sigPos = cookieValue.lastIndexOf('.');
     expect(cookieValue.slice(0, sigPos)).toBe(out.session.token);
     expect(cookieValue.slice(sigPos + 1)).toBe(expectedSignature(out.session.token));
@@ -307,12 +318,14 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
     const dontRemember = resHeaders
       .getSetCookie()
       .find((c) => c.startsWith(`${DONT_REMEMBER_COOKIE_NAME}=`));
+
     expect(dontRemember).toBeDefined();
     expect(dontRemember).not.toContain('Max-Age');
 
     const value = decodeURIComponent(
       dontRemember?.split(';')[0]?.split('=').slice(1).join('=') ?? '',
     );
+
     const sigPos = value.lastIndexOf('.');
     expect(value.slice(0, sigPos)).toBe('true');
     expect(value.slice(sigPos + 1)).toBe(expectedSignature('true'));
@@ -336,6 +349,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
     const hasDontRemember = resHeaders
       .getSetCookie()
       .some((c) => c.startsWith(`${DONT_REMEMBER_COOKIE_NAME}=`));
+
     expect(hasDontRemember).toBe(false);
   });
 
@@ -348,6 +362,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
       { phone: PHONE, code: '111111', ...NO_CLIENT_META },
       new Headers(),
     );
+
     await expect(promise).rejects.toBeInstanceOf(ORPCError);
     await expect(promise).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
@@ -445,6 +460,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
 
   it('anti-enumeration: an untouched shadow past the OTP TTL returns "expired", not "wrong_code"', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
+
     try {
       const { svc } = build({ cache: realCache() });
 

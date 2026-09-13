@@ -12,9 +12,11 @@ export class DrizzleService {
 
   constructor() {
     const url = process.env['DATABASE_URL'];
+
     if (!url) {
       throw new Error('DATABASE_URL is required');
     }
+
     this.pool = new Pool({ connectionString: url });
     // A pg Pool emits 'error' when an idle backend connection dies (DB restart,
     // failover, network drop). With no listener Node escalates it to an

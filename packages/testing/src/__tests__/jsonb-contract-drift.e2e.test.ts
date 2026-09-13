@@ -13,6 +13,7 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let app: TestApp;
 
 beforeAll(async () => {
@@ -53,6 +54,7 @@ describe('a jsonb value the current contract cannot read', () => {
       email: `drift_${randomUUID().slice(0, 8)}@e2e.test`,
       username: `drift_${randomUUID().replaceAll('-', '').slice(0, 10)}`,
     });
+
     const drizzle = app.container.get(DRIZZLE);
     // `command: 'tip'` is no command this build knows - the shape a removed or renamed
     // command leaves behind in messages already sent.

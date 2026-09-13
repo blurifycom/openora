@@ -42,12 +42,14 @@ describe('signSessionCookie', () => {
       secret: 'secret-a',
       maxAgeSeconds: 60,
     });
+
     const b = signSessionCookie({
       token: 'same-token',
       sessionCookie: SESSION_COOKIE,
       secret: 'secret-b',
       maxAgeSeconds: 60,
     });
+
     expect(a).not.toBe(b);
   });
 

@@ -28,6 +28,7 @@ export const LimitSchema = z.object({
   period: LimitPeriodSchema,
   createdAt: TimestampSchema,
 });
+
 export type Limit = z.infer<typeof LimitSchema>;
 
 // A session-time limit is the only limit that uses the 'session' period, and it is
@@ -84,6 +85,7 @@ export const UpsertLimitInputSchema = withLimitConsistencyRefinements(
     period: true,
   }).extend({ currency: CurrencyTickerInputSchema.nullable() }),
 );
+
 export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
 
 export const LimitViewSchema = LimitSchema.extend({
@@ -98,4 +100,5 @@ export const LimitViewSchema = LimitSchema.extend({
   pendingEffectiveAt: TimestampSchema.nullable(),
   pendingExpiresAt: TimestampSchema.nullable(),
 });
+
 export type LimitView = z.infer<typeof LimitViewSchema>;

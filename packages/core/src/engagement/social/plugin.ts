@@ -9,6 +9,7 @@ export default {
   dependsOn: ['chat', 'identity'],
   register(ctx) {
     let svc: SocialService | null = null;
+
     const socialService = (c: TypedContainer<CoreTokenCatalog>) =>
       (svc ??= new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER)));
 

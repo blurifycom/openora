@@ -14,23 +14,28 @@ export function createPlayerRouter(
   return os.router({
     list: os.list.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
+
       return player.list(input);
     }),
 
     get: os.get.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () => player.get(input.playerId));
     }),
 
     getByUserId: os.getByUserId.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () => player.getByUserId(input.userId));
     }),
 
     update: os.update.handler(async ({ input, context }) => {
       const { userId: adminId } = await adminGuard.assert(context, 'player', 'update');
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, async () => {
         const before = await player.get(input.playerId);
+
         const updated = await player.update(
           input.playerId,
           {
@@ -40,6 +45,7 @@ export function createPlayerRouter(
           },
           adminId,
         );
+
         await audit.record({
           actorId: adminId,
           actorType: 'admin',
@@ -57,12 +63,14 @@ export function createPlayerRouter(
             level: updated.level,
           },
         });
+
         return updated;
       });
     }),
 
     remove: os.remove.handler(async ({ input, context }) => {
       const { userId: adminId } = await adminGuard.assert(context, 'player', 'ban');
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, async () => {
         const before = await player.get(input.playerId);
         const result = await player.remove(input.playerId, adminId);
@@ -75,17 +83,20 @@ export function createPlayerRouter(
           before: { status: before.status },
           after: { status: 'closed' },
         });
+
         return result;
       });
     }),
 
     registrationsOverTime: os.registrationsOverTime.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'analytics', 'view');
+
       return player.registrationsOverTime(input.days ?? 30);
     }),
 
     summary: os.summary.handler(async ({ context }) => {
       await adminGuard.assert(context, 'analytics', 'view');
+
       return player.summary();
     }),
 
@@ -93,11 +104,13 @@ export function createPlayerRouter(
     // same as the routes this replaces in chat-commands.
     playerSearch: os.playerSearch.handler(({ input, context }) => {
       const viewerId = getUserId(context);
+
       return player.searchPlayers(input.q, input.limit, viewerId);
     }),
 
     playerProfile: os.playerProfile.handler(({ input, context }) => {
       const viewerId = getUserId(context);
+
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
         player.getPlayerProfile(input.userId, viewerId),
       );

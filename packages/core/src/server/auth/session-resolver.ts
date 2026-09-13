@@ -32,6 +32,7 @@ export class SessionResolver {
   ): Promise<{ userId: string; sessionId?: string | undefined } | undefined> {
     const resolved = await this.auth.api.getSession({ headers });
     const userId = resolved?.user?.id;
+
     return userId ? { userId, sessionId: resolved?.session?.id } : undefined;
   }
 }

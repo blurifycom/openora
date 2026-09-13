@@ -8,9 +8,11 @@ import {
 
 function entryFor(event: (typeof notificationEventMap)[number]['event']) {
   const entry = notificationEventMap.find((e) => e.event === event);
+
   if (!entry) {
     throw new Error(`no notificationEventMap entry for ${event}`);
   }
+
   return entry;
 }
 
@@ -18,6 +20,7 @@ describe('notificationEventMap', () => {
   it('maps wallet.withdrawal.approved to an in-app notification for the payee, carrying the transaction id', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
+
     const input = entryFor('wallet.withdrawal.approved').buildNotification({
       userId,
       amount: '10.00',
@@ -32,6 +35,7 @@ describe('notificationEventMap', () => {
   it('maps wallet.deposit.completed to a deposit.completed notification, carrying the transaction id', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
+
     const input = entryFor('wallet.deposit.completed').buildNotification({
       userId,
       amount: '25.50',
@@ -46,6 +50,7 @@ describe('notificationEventMap', () => {
   it('maps wallet.manual_adjustment.created to a balance.adjusted notification carrying the reason and transaction id', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
+
     const input = entryFor('wallet.manual_adjustment.created').buildNotification({
       userId,
       amount: '5.00',
@@ -66,6 +71,7 @@ describe('notificationEventMap', () => {
     const mentionedUserId = randomUUID();
     const roomId = randomUUID();
     const messageId = randomUUID();
+
     const input = entryFor('chat.user.mentioned').buildNotification({
       mentionedUserId,
       byUserId,
@@ -79,6 +85,7 @@ describe('notificationEventMap', () => {
 
   it('carries only the message id for a global-chat mention (null roomId)', () => {
     const messageId = randomUUID();
+
     const input = entryFor('chat.user.mentioned').buildNotification({
       mentionedUserId: randomUUID(),
       byUserId: randomUUID(),
@@ -91,6 +98,7 @@ describe('notificationEventMap', () => {
 
   it('maps social.friend_request.sent to the requester id (who to link to)', () => {
     const requesterId = randomUUID();
+
     const input = entryFor('social.friend_request.sent').buildNotification({
       friendshipId: randomUUID(),
       requesterId,
@@ -107,6 +115,7 @@ describe('notificationEventMap', () => {
   it('maps social.friend_request.accepted to the accepter id, not the requester (self-referential otherwise)', () => {
     const requesterId = randomUUID();
     const accepterId = randomUUID();
+
     const input = entryFor('social.friend_request.accepted').buildNotification({
       friendshipId: randomUUID(),
       requesterId,
@@ -125,6 +134,7 @@ describe('notificationEventMap', () => {
   it('maps chat.room.ownership.transferred to the inheriting owner, carrying the room id', () => {
     const roomId = randomUUID();
     const newOwnerId = randomUUID();
+
     const input = entryFor('chat.room.ownership.transferred').buildNotification({
       roomId,
       roomName: 'Wheel Spin',
@@ -194,6 +204,7 @@ describe('notificationEventMap', () => {
 
   it('builds a preference-gated security alert mail for a requested withdrawal', () => {
     const transactionId = randomUUID();
+
     const payload = {
       userId: randomUUID(),
       amount: '10.00',
@@ -234,6 +245,7 @@ describe('notificationEventMap', () => {
   it('builds a withdrawal mail dated from the envelope, not the worker clock', () => {
     const userId = randomUUID();
     const transactionId = randomUUID();
+
     const payload = {
       userId,
       amount: '10.00',

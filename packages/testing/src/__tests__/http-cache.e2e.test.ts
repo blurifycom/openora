@@ -18,6 +18,7 @@ import {
  */
 
 let db: TestDb;
+
 let app: TestApp;
 
 async function readJson(res: Response): Promise<unknown> {
@@ -25,6 +26,7 @@ async function readJson(res: Response): Promise<unknown> {
 }
 
 type CmsPage = { id: string; title: string };
+
 const isCmsPage = (value: unknown): value is CmsPage =>
   typeof value === 'object' &&
   value !== null &&
@@ -57,11 +59,14 @@ describe('httpCache etag gate (GET/HEAD only)', () => {
       title: 'Original title',
       publishedAt: new Date().toISOString(),
     });
+
     expect(createRes.status).toBe(200);
     const createdJson = await readJson(createRes);
+
     if (!isCmsPage(createdJson)) {
       throw new Error('expected a CMS page in the create response');
     }
+
     const page = createdJson;
 
     // The etag middleware IS applied to GET under this prefix - capture the real etag.
@@ -81,9 +86,11 @@ describe('httpCache etag gate (GET/HEAD only)', () => {
 
     expect(putRes.status).toBe(200);
     const putJson = await readJson(putRes);
+
     if (!isCmsPage(putJson)) {
       throw new Error('expected a CMS page in the put response');
     }
+
     expect(putJson.title).toBe('Original title');
     expect(putJson.id).toBe(page.id);
   });

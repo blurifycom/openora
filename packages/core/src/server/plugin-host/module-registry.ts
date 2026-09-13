@@ -32,6 +32,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
     factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void => {
     const desc = token.description ?? '';
+
     if (desc.startsWith('sealed:')) {
       throw new Error(
         `[plugin-host] Refusing to bind a sealed token (${desc}). ` +
@@ -41,6 +42,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
           `See @openora/core/compliance for the canonical list.`,
       );
     }
+
     this.container.registerUnsafe(token, factory);
   };
 
@@ -58,6 +60,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
           `A sealed service may be bound exactly once, by its owning module, and never rebound.`,
       );
     }
+
     this._sealedBound.add(token);
     this.container.registerUnsafe(token, factory);
   };
@@ -67,6 +70,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       if (this._routers.has(namespace)) {
         throw new Error(`Router namespace "${namespace}" is already registered`);
       }
+
       this._routers.set(namespace, factory);
     },
     getAll: () => this._routers,

@@ -24,6 +24,7 @@ let db: TestDb;
 
 function build() {
   const events = makeEventBus();
+
   return {
     router: createSocialRouter(new SocialService(db.drizzle, events, makeIdentityReader())),
     events,
@@ -124,6 +125,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
     const { router } = build();
     const requester = await seedPlayer({ username: 'alice' });
     const addressee = await seedPlayer({ username: 'bob' });
+
     const sent = await call(
       router.sendFriendRequest,
       { targetUserId: addressee.userId },
@@ -135,6 +137,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { page: 1, limit: 20, direction: 'incoming' },
       { context: ctxFor(addressee.userId) },
     );
+
     expect(incoming.items).toHaveLength(1);
     expect(incoming.items[0]).toMatchObject({
       friendshipId: sent.id,
@@ -148,6 +151,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { friendshipId: sent.id },
       { context: ctxFor(addressee.userId) },
     );
+
     expect(accepted.acceptedAt).toEqual(expect.any(String));
 
     const afterAccept = await call(
@@ -155,6 +159,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { page: 1, limit: 20, direction: 'incoming' },
       { context: ctxFor(addressee.userId) },
     );
+
     expect(afterAccept.items).toHaveLength(0);
   });
 
@@ -176,6 +181,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
     const { router } = build();
     const requester = await seedPlayer();
     const addressee = await seedPlayer();
+
     const sent = await call(
       router.sendFriendRequest,
       { targetUserId: addressee.userId },
@@ -187,6 +193,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { friendshipId: sent.id },
       { context: ctxFor(addressee.userId) },
     );
+
     expect(result).toEqual({ success: true });
 
     const afterDecline = await call(
@@ -194,6 +201,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { page: 1, limit: 20, direction: 'incoming' },
       { context: ctxFor(addressee.userId) },
     );
+
     expect(afterDecline.items).toHaveLength(0);
   });
 
@@ -201,6 +209,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
     const { router } = build();
     const requester = await seedPlayer();
     const addressee = await seedPlayer();
+
     const sent = await call(
       router.sendFriendRequest,
       { targetUserId: addressee.userId },
@@ -212,6 +221,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { page: 1, limit: 20, direction: 'outgoing' },
       { context: ctxFor(requester.userId) },
     );
+
     expect(outgoing.items).toHaveLength(1);
     expect(outgoing.items[0]).toMatchObject({
       friendshipId: sent.id,
@@ -225,6 +235,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { friendshipId: sent.id },
       { context: ctxFor(requester.userId) },
     );
+
     expect(result).toEqual({ success: true });
 
     const afterCancel = await call(
@@ -232,6 +243,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
       { page: 1, limit: 20, direction: 'outgoing' },
       { context: ctxFor(requester.userId) },
     );
+
     expect(afterCancel.items).toHaveLength(0);
   });
 
@@ -239,6 +251,7 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
     const { router } = build();
     const requester = await seedPlayer();
     const addressee = await seedPlayer();
+
     const sent = await call(
       router.sendFriendRequest,
       { targetUserId: addressee.userId },

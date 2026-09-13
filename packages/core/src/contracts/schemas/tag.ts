@@ -2,7 +2,9 @@ import z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 
 export const tagAssignRemoveSource = ['scheduled', 'manual'] as const;
+
 const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
+
 export type TagAssignSource = z.infer<typeof tagAssignRemoveSourceSchema>;
 
 export const tagKeys = [
@@ -23,7 +25,9 @@ export const tagKeys = [
   'multi_account',
   'level',
 ] as const;
+
 export const TagKeySchema = z.enum(tagKeys);
+
 export type TagKey = z.infer<typeof TagKeySchema>;
 
 export const tagSchema = z.object({
@@ -33,15 +37,19 @@ export const tagSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type Tag = z.infer<typeof tagSchema>;
 
 export const createTagSchema = tagSchema.omit({ id: true, createdAt: true, updatedAt: true });
+
 export type CreateTagInput = z.infer<typeof createTagSchema>;
 
 export const updateTagSchema = tagSchema.omit({ id: true, createdAt: true, updatedAt: true });
+
 export type UpdateTagInput = z.infer<typeof updateTagSchema>;
 
 export const deleteTagSchema = tagSchema.pick({ key: true });
+
 export type DeleteTagInput = z.infer<typeof deleteTagSchema>;
 
 export const playerTagSchema = z.object({
@@ -59,6 +67,7 @@ export const playerTagSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type PlayerTag = z.infer<typeof playerTagSchema>;
 
 export const assignPlayerTagSchema = playerTagSchema
@@ -67,6 +76,7 @@ export const assignPlayerTagSchema = playerTagSchema
     tagKey: TagKeySchema,
     assignReason: z.string().min(5),
   });
+
 export type AssignPlayerTagInput = z.infer<typeof assignPlayerTagSchema>;
 
 export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).extend({
@@ -75,6 +85,7 @@ export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).ex
   removalActor: tagAssignRemoveSourceSchema,
   removalActorUserId: UuidSchema.nullable(),
 });
+
 export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;
 
 // Atomic same-key swap (the mutable `level` tag): one actor performs both halves,
@@ -82,6 +93,7 @@ export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;
 export const replacePlayerTagSchema = assignPlayerTagSchema.extend({
   removalReason: z.string().trim().min(5),
 });
+
 export type ReplacePlayerTagInput = z.infer<typeof replacePlayerTagSchema>;
 
 export const tagRuleSchema = z.object({
@@ -98,6 +110,7 @@ export const tagRuleSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type TagRule = z.infer<typeof tagRuleSchema>;
 
 export const upsertTagRuleSchema = tagRuleSchema.omit({
@@ -106,4 +119,5 @@ export const upsertTagRuleSchema = tagRuleSchema.omit({
   createdAt: true,
   updatedAt: true,
 });
+
 export type UpsertTagRuleInput = z.infer<typeof upsertTagRuleSchema>;

@@ -1,4 +1,5 @@
 export * from './financial.js';
+
 export * from './funnel.js';
 
 import { financialContract } from './financial.js';

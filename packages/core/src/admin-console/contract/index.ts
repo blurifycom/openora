@@ -21,7 +21,9 @@ import {
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export const PlayerEmailSchema = z.email();
+
 export const PlayerUsernameSchema = z.string();
+
 export const PlayerSearchSchema = z
   .string()
   .trim()
@@ -52,9 +54,11 @@ export const AdminUserSchema = z.object({
 });
 
 export const AdminUserSortBySchema = z.enum(ADMIN_USER_SORT_BY_VALUES).default('createdAt');
+
 export type AdminUserSortBy = z.infer<typeof AdminUserSortBySchema>;
 
 export const AdminTransactionSortBySchema = z.enum(ADMIN_TX_SORT_BY_VALUES).default('createdAt');
+
 export type AdminTransactionSortBy = z.infer<typeof AdminTransactionSortBySchema>;
 
 export const TransactionFilterSchema = PageQuerySchema.extend({
@@ -98,6 +102,7 @@ export const AdminTransactionDetailSchema = AdminTransactionSchema.extend({
 });
 
 export const GamePerformanceSortBySchema = z.enum(GAME_PERFORMANCE_SORT_FIELDS);
+
 export const SortDirectionSchema = z.enum(['asc', 'desc']);
 
 export const GamePerformanceFilterSchema = z.object({
@@ -207,8 +212,13 @@ export const backofficeContract = {
 };
 
 export type TransactionFilter = z.infer<typeof TransactionFilterSchema>;
+
 export type AdminUser = z.infer<typeof AdminUserSchema>;
+
 export type GamePerformanceFilter = z.infer<typeof GamePerformanceFilterSchema>;
+
 export type GamePerformance = z.infer<typeof GamePerformanceSchema>;
+
 export type PlayerActivityFilter = z.infer<typeof PlayerActivityFilterSchema>;
+
 export type PlayerActivity = z.infer<typeof PlayerActivitySchema>;

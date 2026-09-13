@@ -17,22 +17,26 @@ export async function cached<T>(
   }
 
   let hit: T | undefined;
+
   try {
     hit = await cache.get<T>(key);
   } catch (err) {
     logger.warn({ key, err }, 'cache get failed');
     hit = undefined;
   }
+
   if (hit !== undefined) {
     return hit;
   }
 
   const value = await loader();
+
   try {
     await cache.set(key, value, { ttlMs });
   } catch (err) {
     logger.warn({ key, err }, 'cache set failed');
   }
+
   return value;
 }
 
@@ -43,6 +47,7 @@ export async function invalidate(
   if (!cache) {
     return;
   }
+
   try {
     await cache.delete(keys);
   } catch (err) {

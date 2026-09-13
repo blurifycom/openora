@@ -125,11 +125,13 @@ export class RgSelfServiceService {
       this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId)),
       this.rg.getActiveExclusions(userId),
     ]);
+
     return { limits: await this.toViews(userId, rows), ...exclusions };
   }
 
   async getLimits(userId: User['id']): Promise<LimitView[]> {
     const rows = await this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+
     return this.toViews(userId, rows);
   }
 
@@ -159,6 +161,7 @@ export class RgSelfServiceService {
 
         if (existing) {
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
+
           if (await isWeakening(resolvedExisting, input, this.rates)) {
             return {
               applied: false as const,
@@ -167,22 +170,28 @@ export class RgSelfServiceService {
             };
           }
         }
+
         const row = await writeLimitRow(tx, userId, existing, input);
+
         return { applied: true as const, existing: existing ?? null, row };
       }),
     );
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
     if (!outcome.applied) {
       this.emitRequested(userId, playerId, outcome.existing, outcome.row, meta);
+
       return this.toView(userId, outcome.row);
     }
+
     if (outcome.existing?.pendingKind) {
       this.events.emit(
         'rg.limit.change_cancelled',
         this.actedPayload(userId, playerId, outcome.existing, meta),
       );
     }
+
     this.events.emit('rg.limit.set', {
       userId,
       playerId,
@@ -200,6 +209,7 @@ export class RgSelfServiceService {
       userAgent: meta?.userAgent ?? null,
     });
     await this.rg.notifyLimitUpdated(userId, outcome.row);
+
     return this.toView(userId, outcome.row);
   }
 
@@ -210,9 +220,11 @@ export class RgSelfServiceService {
     meta?: ClientMeta,
   ): Promise<LimitView> {
     const target = await this.ownedLimit(limitId, userId);
+
     const { existing, row } = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const current = await this.reread(tx, limitId, userId);
+
         return {
           existing: current,
           row: await this.park(tx, current, 'removal', {
@@ -223,6 +235,7 @@ export class RgSelfServiceService {
         };
       }),
     );
+
     this.emitRequested(
       userId,
       await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -230,6 +243,7 @@ export class RgSelfServiceService {
       row,
       meta,
     );
+
     return this.toView(userId, row);
   }
 
@@ -254,15 +268,18 @@ export class RgSelfServiceService {
         if (status === null) {
           throw new NoPendingLimitChangeError(limitId);
         }
+
         if (status === 'waiting') {
           throw new CooldownNotElapsedError();
         }
+
         if (status === 'expired') {
           await tx
             .update(userLimit)
             .set(NO_PENDING_CHANGE)
             .where(this.pinnedTo(current))
             .returning({ id: userLimit.id });
+
           return { kind: 'expired' as const, existing: current };
         }
 
@@ -271,9 +288,11 @@ export class RgSelfServiceService {
             .delete(userLimit)
             .where(this.pinnedTo(current))
             .returning({ id: userLimit.id });
+
           if (deleted.length === 0) {
             throw new NoPendingLimitChangeError(limitId);
           }
+
           return { kind: 'removed' as const, existing: current };
         }
 
@@ -290,6 +309,7 @@ export class RgSelfServiceService {
             .returning(),
           new NoPendingLimitChangeError(limitId),
         );
+
         return { kind: 'raised' as const, existing: current, row };
       }),
     );
@@ -312,6 +332,7 @@ export class RgSelfServiceService {
     if (outcome.kind === 'removed') {
       await this.monitoring.clearLimitThresholdFlag(userId, outcome.existing.type);
       await this.monitoring.evaluateUser(userId, 'rg.limit.set');
+
       return null;
     }
 
@@ -332,6 +353,7 @@ export class RgSelfServiceService {
       userAgent: meta?.userAgent ?? null,
     });
     await this.rg.notifyLimitUpdated(userId, outcome.row);
+
     return this.toView(userId, outcome.row);
   }
 
@@ -341,20 +363,25 @@ export class RgSelfServiceService {
     meta?: ClientMeta,
   ): Promise<LimitView> {
     const target = await this.ownedLimit(limitId, userId);
+
     const outcome = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, limitSlotKey(userId, target.type, target.period), async () => {
         const current = await this.reread(tx, limitId, userId);
+
         if (current.pendingKind === null) {
           return { cleared: false as const, row: current };
         }
+
         const rows = await tx
           .update(userLimit)
           .set(NO_PENDING_CHANGE)
           .where(this.pinnedTo(current))
           .returning();
+
         return { cleared: rows.length > 0, existing: current, row: rows[0] ?? current };
       }),
     );
+
     if (outcome.cleared && outcome.existing) {
       this.events.emit(
         'rg.limit.change_cancelled',
@@ -366,6 +393,7 @@ export class RgSelfServiceService {
         ),
       );
     }
+
     return this.toView(userId, outcome.row);
   }
 
@@ -411,13 +439,16 @@ export class RgSelfServiceService {
   /** Drops requests nobody confirmed in time. Never touches `amount`. */
   async expireStaleLimitChanges(): Promise<void> {
     const now = new Date();
+
     const candidates = await this.drizzle.db
       .select()
       .from(userLimit)
       .where(and(isNotNull(userLimit.pendingKind), lte(userLimit.pendingExpiresAt, now)));
+
     if (candidates.length === 0) {
       return;
     }
+
     const cleared = await this.drizzle.db
       .update(userLimit)
       .set(NO_PENDING_CHANGE)
@@ -432,14 +463,18 @@ export class RgSelfServiceService {
         ),
       )
       .returning({ id: userLimit.id });
+
     const clearedIds = new Set(cleared.map((r) => r.id));
+
     const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
       candidates.map((c) => c.userId),
     );
+
     for (const row of candidates) {
       if (!clearedIds.has(row.id)) {
         continue;
       }
+
       this.events.emit('rg.limit.change_expired', {
         userId: row.userId,
         playerId: playerIds.get(row.userId) ?? null,
@@ -464,9 +499,11 @@ export class RgSelfServiceService {
   ): Promise<LimitRow> {
     const now = new Date();
     const effectiveAt = new Date(now.getTime() + this.config.limitIncreaseCooldownHours * HOUR_MS);
+
     const expiresAt = new Date(
       effectiveAt.getTime() + this.config.limitChangeConfirmationWindowHours * HOUR_MS,
     );
+
     return findOneOrThrow(
       await tx
         .update(userLimit)
@@ -581,7 +618,9 @@ export class RgSelfServiceService {
       await this.drizzle.db.select().from(userLimit).where(eq(userLimit.id, limitId)),
       new LimitNotFoundError(limitId),
     );
+
     assertOwnership(existing.userId, userId, new LimitOwnershipError());
+
     return existing;
   }
 
@@ -599,26 +638,32 @@ export class RgSelfServiceService {
         ),
       new LimitNotFoundError(userId),
     );
+
     return this.toView(userId, row);
   }
 
   private async toViews(userId: User['id'], rows: LimitRow[]): Promise<LimitView[]> {
     const views: LimitView[] = [];
+
     for (const row of rows) {
       views.push(await this.toView(userId, row));
     }
+
     return views;
   }
 
   private async toView(userId: User['id'], row: LimitRow): Promise<LimitView> {
     const now = new Date();
     const status = pendingChangeStatus(row, now);
+
     const base = serializeRow(row, {
       dateFields: ['createdAt', 'pendingEffectiveAt', 'pendingExpiresAt'],
     });
+
     const isMoneyLimit = row.amount !== null && row.period !== 'session';
     let resolvedCurrency = row.currency;
     let used: string | null = null;
+
     if (isMoneyLimit) {
       try {
         const resolved = await resolveLimitCurrency(this.drizzle, row);
@@ -638,19 +683,23 @@ export class RgSelfServiceService {
         ) {
           throw err;
         }
+
         logger.warn(
           { err, userId, limitId: row.id },
           'RG limit usage unavailable: rate or currency missing',
         );
       }
     }
+
     const limit = row.amount;
+
     const remaining =
       used !== null && limit !== null
         ? moneyCompare(used, limit) >= 0
           ? '0'
           : moneySubtract(limit, used)
         : null;
+
     return {
       id: base.id,
       userId: base.userId,

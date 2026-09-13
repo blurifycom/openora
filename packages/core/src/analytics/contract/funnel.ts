@@ -8,7 +8,9 @@ export const FUNNEL_STAGES = [
   'first_deposit',
   'first_bet',
 ] as const;
+
 export const FunnelStageNameSchema = z.enum(FUNNEL_STAGES);
+
 export type FunnelStageName = z.infer<typeof FunnelStageNameSchema>;
 
 export const FunnelStageSchema = z.object({
@@ -16,12 +18,15 @@ export const FunnelStageSchema = z.object({
   count: z.number().int().nonnegative(),
   dropOffRate: z.number().min(0).max(1).nullable(),
 });
+
 export type FunnelStage = z.infer<typeof FunnelStageSchema>;
 
 export const ConversionFunnelSchema = z.array(FunnelStageSchema);
+
 export type ConversionFunnel = z.infer<typeof ConversionFunnelSchema>;
 
 export const FunnelQuerySchema = DateRangeSchema;
+
 export type FunnelQuery = z.infer<typeof FunnelQuerySchema>;
 
 export const funnelContract = {

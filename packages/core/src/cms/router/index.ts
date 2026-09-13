@@ -27,11 +27,13 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     createPage: os.createPage.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'create');
+
       return cms.createPage(input, userId, { ip, userAgent });
     }),
 
     updatePage: os.updatePage.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'update');
+
       return mapErrors({ NOT_FOUND: PageNotFoundError }, () =>
         cms.updatePage(input, userId, { ip, userAgent }),
       );
@@ -39,6 +41,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     deletePage: os.deletePage.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'delete');
+
       return mapErrors({ NOT_FOUND: PageNotFoundError }, () =>
         cms.deletePage(input.id, userId, { ip, userAgent }),
       );
@@ -46,12 +49,14 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     listBannerPlacements: os.listBannerPlacements.handler(async ({ context }) => {
       await adminGuard.assert(context, 'content', 'update');
+
       return cms.listPlacements();
     }),
 
     listBannerConfigurationsByPlacement: os.listBannerConfigurationsByPlacement.handler(
       async ({ input, context }) => {
         await adminGuard.assert(context, 'content', 'update');
+
         return cms.listConfigurationsByPlacement(input.placement);
       },
     ),
@@ -59,12 +64,14 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
     unsetDefaultBannerConfiguration: os.unsetDefaultBannerConfiguration.handler(
       async ({ input, context }) => {
         const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
+
         return cms.unsetDefaultConfiguration(input.placement, userId, { ip, userAgent });
       },
     ),
 
     getBannerConfiguration: os.getBannerConfiguration.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'content', 'update');
+
       return mapErrors({ NOT_FOUND: BannerConfigurationNotFoundError }, () =>
         cms.getConfiguration(input.id),
       );
@@ -72,6 +79,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     createBannerConfiguration: os.createBannerConfiguration.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'create');
+
       return cms.createConfiguration(input, userId, { ip, userAgent });
     }),
 
@@ -84,12 +92,14 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
         },
         () => cms.deleteConfiguration(input.id, userId, { ip, userAgent }),
       );
+
       return { success: true as const };
     }),
 
     setDefaultBannerConfiguration: os.setDefaultBannerConfiguration.handler(
       async ({ input, context }) => {
         const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
+
         return mapErrors(
           {
             NOT_FOUND: BannerConfigurationNotFoundError,
@@ -102,6 +112,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     setBannerImage: os.setBannerImage.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'update');
+
       return mapErrors(
         {
           NOT_FOUND: BannerConfigurationNotFoundError,
@@ -116,6 +127,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
       await mapErrors({ NOT_FOUND: BannerImageNotFoundError }, () =>
         cms.deleteBannerImage(input.id, userId, { ip, userAgent }),
       );
+
       return { success: true as const };
     }),
 
@@ -125,6 +137,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     createBannerSchedule: os.createBannerSchedule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
+
       return mapErrors(
         {
           NOT_FOUND: BannerConfigurationNotFoundError,
@@ -148,6 +161,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     updateBannerScheduleEnd: os.updateBannerScheduleEnd.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
+
       return mapErrors(
         {
           NOT_FOUND: [BannerConfigurationNotFoundError, BannerScheduleNotFoundError],
@@ -165,6 +179,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
     listBannerSchedulesByPlacement: os.listBannerSchedulesByPlacement.handler(
       async ({ input, context }) => {
         await adminGuard.assert(context, 'content', 'update');
+
         return cms.listBannerSchedulesByPlacement(input.placement);
       },
     ),

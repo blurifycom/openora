@@ -10,10 +10,13 @@ export const PageSchema = z.object({
   publishedAt: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+
 export type Page = z.infer<typeof PageSchema>;
 
 export const BANNER_LAYOUTS = ['carousel', 'grid', 'single'] as const;
+
 export const BannerLayoutSchema = z.enum(BANNER_LAYOUTS);
+
 export type BannerLayout = z.infer<typeof BannerLayoutSchema>;
 
 export const BANNER_IMAGE_COUNT_BOUNDS: Record<BannerLayout, { min: number; max: number }> = {
@@ -27,14 +30,17 @@ export const DEFAULT_LOCALE = 'default';
 function isSafeInternalBannerPath(value: string): boolean {
   return /^\/(?![\\/])/.test(value);
 }
+
 function isSafeExternalBannerUrl(value: string): boolean {
   try {
     const url = new URL(value);
+
     return url.protocol === 'http:' || url.protocol === 'https:';
   } catch {
     return false;
   }
 }
+
 export const BannerLinkUrlSchema = z
   .string()
   .min(1)
@@ -53,6 +59,7 @@ export const BannerImageSchema = z.object({
   linkUrl: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+
 export type BannerImage = z.infer<typeof BannerImageSchema>;
 
 export const BannerConfigurationSchema = z.object({
@@ -64,6 +71,7 @@ export const BannerConfigurationSchema = z.object({
   createdAt: TimestampSchema,
   images: z.array(BannerImageSchema),
 });
+
 export type BannerConfiguration = z.infer<typeof BannerConfigurationSchema>;
 
 export const BannerConfigurationSummarySchema = BannerConfigurationSchema.omit({
@@ -71,6 +79,7 @@ export const BannerConfigurationSummarySchema = BannerConfigurationSchema.omit({
 }).extend({
   imageCount: z.number().int().min(0),
 });
+
 export type BannerConfigurationSummary = z.infer<typeof BannerConfigurationSummarySchema>;
 
 export const BannerPlacementSummarySchema = z.object({
@@ -79,6 +88,7 @@ export const BannerPlacementSummarySchema = z.object({
   defaultConfiguration: BannerConfigurationSchema.nullable(),
   updatedAt: TimestampSchema,
 });
+
 export type BannerPlacementSummary = z.infer<typeof BannerPlacementSummarySchema>;
 
 export const PublicBannerSlotSchema = z.object({
@@ -87,6 +97,7 @@ export const PublicBannerSlotSchema = z.object({
   mobileImageUrl: z.string(),
   linkUrl: z.string().nullable(),
 });
+
 export type PublicBannerSlot = z.infer<typeof PublicBannerSlotSchema>;
 
 export const PublicBannerSchema = z.object({
@@ -94,20 +105,24 @@ export const PublicBannerSchema = z.object({
   layout: BannerLayoutSchema,
   slots: z.array(PublicBannerSlotSchema),
 });
+
 export type PublicBanner = z.infer<typeof PublicBannerSchema>;
 
 export const CreateBannerConfigurationInputSchema = z.object({
   placement: z.string(),
   layout: BannerLayoutSchema,
 });
+
 export type CreateBannerConfigurationInput = z.infer<typeof CreateBannerConfigurationInputSchema>;
 
 export const ListBannerConfigurationsInputSchema = z.object({
   placement: z.string(),
 });
+
 export type ListBannerConfigurationsInput = z.infer<typeof ListBannerConfigurationsInputSchema>;
 
 export const GetBannerConfigurationInputSchema = IdInputSchema;
+
 export const DeleteBannerConfigurationInputSchema = IdInputSchema;
 
 export const SetDefaultBannerConfigurationInputSchema = IdInputSchema;
@@ -115,6 +130,7 @@ export const SetDefaultBannerConfigurationInputSchema = IdInputSchema;
 export const UnsetDefaultBannerConfigurationInputSchema = z.object({
   placement: z.string(),
 });
+
 export type UnsetDefaultBannerConfigurationInput = z.infer<
   typeof UnsetDefaultBannerConfigurationInputSchema
 >;
@@ -127,6 +143,7 @@ export const SetBannerImageInputSchema = z.object({
   mobileImageUrl: z.string(),
   linkUrl: BannerLinkUrlSchema.nullable().optional(),
 });
+
 export type SetBannerImageInput = z.infer<typeof SetBannerImageInputSchema>;
 
 export const DeleteBannerImageInputSchema = IdInputSchema;
@@ -135,6 +152,7 @@ export const GetPublicBannerInputSchema = z.object({
   placement: z.string(),
   locale: z.string().optional(),
 });
+
 export type GetPublicBannerInput = z.infer<typeof GetPublicBannerInputSchema>;
 
 export const BannerScheduleSchema = z.object({
@@ -145,11 +163,13 @@ export const BannerScheduleSchema = z.object({
   createdBy: UuidSchema,
   createdAt: TimestampSchema,
 });
+
 export type BannerSchedule = z.infer<typeof BannerScheduleSchema>;
 
 export const BannerScheduleWithConfigurationSchema = BannerScheduleSchema.extend({
   configuration: BannerConfigurationSummarySchema,
 });
+
 export type BannerScheduleWithConfiguration = z.infer<typeof BannerScheduleWithConfigurationSchema>;
 
 export const CreateBannerScheduleInputSchema = z.object({
@@ -157,17 +177,20 @@ export const CreateBannerScheduleInputSchema = z.object({
   startsAt: TimestampSchema,
   endsAt: TimestampSchema,
 });
+
 export type CreateBannerScheduleInput = z.infer<typeof CreateBannerScheduleInputSchema>;
 
 export const UpdateBannerScheduleEndInputSchema = z.object({
   id: UuidSchema,
   endsAt: TimestampSchema,
 });
+
 export type UpdateBannerScheduleEndInput = z.infer<typeof UpdateBannerScheduleEndInputSchema>;
 
 export const ListBannerSchedulesByPlacementInputSchema = z.object({
   placement: z.string(),
 });
+
 export type ListBannerSchedulesByPlacementInput = z.infer<
   typeof ListBannerSchedulesByPlacementInputSchema
 >;

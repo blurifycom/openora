@@ -47,9 +47,11 @@ async function seedWallet(balances: Record<string, string> = { USD: '100' }) {
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   for (const [currency, amount] of Object.entries(balances)) {
     await db.drizzle.db.insert(walletBalance).values({ walletId: row.id, currency, amount });
   }
+
   return row;
 }
 
@@ -58,6 +60,7 @@ async function balancesOf(walletId: string) {
     .select({ currency: walletBalance.currency, amount: walletBalance.amount })
     .from(walletBalance)
     .where(eq(walletBalance.walletId, walletId));
+
   return Object.fromEntries(rows.map((r) => [r.currency, Number(r.amount)]));
 }
 
@@ -66,6 +69,7 @@ async function legs(walletId: string) {
     .select()
     .from(walletTransaction)
     .where(eq(walletTransaction.walletId, walletId));
+
   return rows.map((r) => ({
     type: r.type,
     amount: Number(r.amount),
@@ -156,6 +160,7 @@ describe('SwapService (real PG)', () => {
 
   it('credits the filled amount, never the quoted one', async () => {
     const w = await seedWallet();
+
     const adapter = makeAdapter({
       execute: vi
         .fn()
@@ -175,6 +180,7 @@ describe('SwapService (real PG)', () => {
 
   it('holds the funds before the vendor is called and returns them when it refuses', async () => {
     const w = await seedWallet();
+
     const adapter = makeAdapter({
       execute: vi.fn().mockImplementation(async () => {
         // Mid-flight: the hold must already be committed and the balance gone.
@@ -252,6 +258,7 @@ describe('SwapService (real PG)', () => {
     const adapter = makeAdapter();
     const svc = makeService(adapter);
     const idempotencyKey = randomUUID();
+
     const args = {
       userId: w.userId,
       fromCurrency: 'USD',
@@ -270,9 +277,11 @@ describe('SwapService (real PG)', () => {
 
   it('leaves an async fill processing until the vendor webhook settles it', async () => {
     const w = await seedWallet();
+
     const adapter = makeAdapter({
       execute: vi.fn().mockResolvedValue({ externalId: 'ext-3', status: 'processing' }),
     });
+
     const svc = makeService(adapter);
 
     const result = await svc.swap({
@@ -306,9 +315,11 @@ describe('SwapService (real PG)', () => {
 
   it('returns the held funds when the vendor reports the swap failed', async () => {
     const w = await seedWallet();
+
     const adapter = makeAdapter({
       execute: vi.fn().mockResolvedValue({ externalId: 'ext-4', status: 'processing' }),
     });
+
     const svc = makeService(adapter);
     await svc.swap({
       userId: w.userId,
@@ -329,6 +340,7 @@ describe('SwapService (real PG)', () => {
   it('refuses a pair the vendor does not make and a swap into the same currency', async () => {
     const w = await seedWallet();
     const adapter = makeAdapter({ supportsPair: vi.fn().mockReturnValue(false) });
+
     const args = {
       userId: w.userId,
       fromCurrency: 'USD',

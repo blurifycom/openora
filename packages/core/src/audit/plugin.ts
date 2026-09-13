@@ -143,6 +143,7 @@ export async function mapEventToRecord(
   if (topic.startsWith('iam.role.')) {
     const carriesMatrix = topic === 'iam.role.permissions.changed' || topic === 'iam.role.updated';
     const carriesTarget = topic === 'iam.role.assigned' || topic === 'iam.role.revoked';
+
     return {
       ...base,
       actorType: 'admin',
@@ -197,6 +198,7 @@ export async function mapEventToRecord(
     const action = str(p['action']);
     const role = p['role'] ? str(p['role']) : undefined;
     const isPlayer = role === 'player';
+
     return {
       ...base,
       actorType: isPlayer ? 'player' : 'admin',
@@ -272,6 +274,7 @@ export async function mapEventToRecord(
     const isForced = !isSystem && rawActorId !== p['userId'];
     const actorType = isSystem ? 'system' : isForced ? 'admin' : 'player';
     const actorId = isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']);
+
     return {
       ...base,
       actorType,
@@ -374,6 +377,7 @@ export async function mapEventToRecord(
   // change). resource = the member whose role moved; before/after carry the two roles.
   if (topic === 'chat.room.member.role-changed') {
     const actorPlayerId = str(p['playerId']);
+
     return {
       ...base,
       actorType: actorPlayerId ? 'player' : 'admin',
@@ -435,6 +439,7 @@ export async function mapEventToRecord(
   // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
     const isActive = topic === 'identity.user.reactivated';
+
     return {
       ...base,
       actorType: 'admin',
@@ -465,6 +470,7 @@ export async function mapEventToRecord(
   if (topic === 'tag.player.assigned' || topic === 'tag.player.removed') {
     const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
     const actorId = str(p['actorId']);
+
     return {
       ...base,
       actorType: actorId === SYSTEM_ACTOR ? 'system' : 'admin',
@@ -503,6 +509,7 @@ export async function mapEventToRecord(
 
   if (topic === 'social.friendship.removed') {
     const actorPlayerId = p['actorPlayerId'];
+
     return {
       ...base,
       actorType: actorPlayerId ? 'player' : 'admin',
@@ -572,10 +579,12 @@ export async function mapEventToRecord(
     topic === 'cms.banner.image.deleted'
   ) {
     const isBanner = topic.startsWith('cms.banner.');
+
     const bannerResourceId =
       topic === 'cms.banner.configuration.unset_default'
         ? (str(p['previousBannerConfigurationId']) ?? str(p['placement']))
         : (str(p['bannerImageId']) ?? str(p['bannerConfigurationId']));
+
     return {
       ...base,
       actorType: 'admin',
@@ -608,6 +617,7 @@ export async function mapEventToRecord(
       after: isRecord(p['after']) ? p['after'] : null,
     };
   }
+
   // Admin created or deleted a tag catalog definition (the tag itself, not a
   // player assignment - see the tag.player.assigned/removed branch for that).
   if (topic === 'tag.created' || topic === 'tag.deleted') {
@@ -619,6 +629,7 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
+
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
     topic === 'rg.limit.set' ||
@@ -636,7 +647,9 @@ export async function mapEventToRecord(
         : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
+
     const initiatedBy = p['initiatedBy'];
+
     return {
       ...base,
       actorType:
@@ -752,6 +765,7 @@ export async function mapEventToRecord(
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
     const isForced = !isSystem && rawActorId !== p['userId'];
+
     return {
       ...base,
       actorType: isSystem ? 'system' : isForced ? 'admin' : 'player',
@@ -763,6 +777,7 @@ export async function mapEventToRecord(
 
   if (topic === 'identity.phone.verified') {
     const playerId = p['playerId'];
+
     return {
       ...base,
       actorType: playerId ? 'player' : 'admin',
@@ -776,6 +791,7 @@ export async function mapEventToRecord(
 
   if (topic === 'identity.security.login_withdrawal_alerts.updated') {
     const playerId = p['playerId'];
+
     return {
       ...base,
       actorType: playerId ? 'player' : 'admin',
@@ -789,6 +805,7 @@ export async function mapEventToRecord(
 
   if (topic === 'identity.security.withdrawal_pin.set') {
     const playerId = p['playerId'];
+
     return {
       ...base,
       actorType: playerId ? 'player' : 'admin',
@@ -803,6 +820,7 @@ export async function mapEventToRecord(
 
   if (topic === 'identity.security.withdrawal_pin.removed') {
     const playerId = p['playerId'];
+
     return {
       ...base,
       actorType: playerId ? 'player' : 'admin',
@@ -835,6 +853,7 @@ export async function mapEventToRecord(
     topic === 'identity.profile.updated'
   ) {
     const playerId = p['playerId'];
+
     return playerId
       ? { ...base, actorId: str(playerId), actorType: 'player' }
       : { ...base, actorId: str(p['userId']), actorType: 'admin' };
@@ -978,6 +997,7 @@ export default {
 
     ctx.provideSealed(AUDIT_WRITER, (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
+
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
@@ -990,6 +1010,7 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
+
         const svc = svcRef;
         void mapEventToRecord(topic, payload)
           .then((record) => svc.record(record))
@@ -1000,6 +1021,7 @@ export default {
     ctx.routers.add('audit', (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       svcRef = svc;
+
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });
   },

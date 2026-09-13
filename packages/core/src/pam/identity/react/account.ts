@@ -26,29 +26,37 @@ import { useOrpcQueryUtils } from '@openora/core/react';
 import { identityContract, type SessionItem } from '../contract/index.js';
 
 export type UseMySessionsResult = UseQueryResult<Paginated<SessionItem>, Error>;
+
 export type UseRevokeMySessionResult = UseMutationResult<IdentitySuccess, Error, { id: string }>;
+
 export type UseMySecurityControlsResult = UseQueryResult<SecurityControls, Error>;
+
 export type UseSetLoginWithdrawalAlertsResult = UseMutationResult<
   SecurityControls,
   Error,
   SetLoginWithdrawalAlertsInput
 >;
+
 export type UseSetWithdrawalPinResult = UseMutationResult<
   SecurityControls,
   Error,
   SetWithdrawalPinInput
 >;
+
 export type UseRequestPhoneVerificationResult = UseMutationResult<
   PhoneVerificationRequestOutput,
   Error,
   PhoneVerificationRequestInput
 >;
+
 export type UseConfirmPhoneVerificationResult = UseMutationResult<
   SecurityControls,
   Error,
   PhoneVerificationConfirmInput
 >;
+
 export type UseTwoFactorStatusResult = UseQueryResult<TwoFactorStatus, Error>;
+
 // The route takes no body, so the mutation carries no variables of its own.
 export type UseSendTwoFactorOtpResult = UseMutationResult<SendTwoFactorOtpResult, Error, unknown>;
 
@@ -71,6 +79,7 @@ const invalidateSecurityControls = (utils: IdentityUtils, queryClient: QueryClie
 export function useEnable2fa() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.enable2fa.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -80,6 +89,7 @@ export function useEnable2fa() {
 export function useVerify2fa() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.verify2fa.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -91,17 +101,20 @@ export function useVerify2fa() {
 // changes without dragging the whole user object along.
 export function useTwoFactorStatus(): UseTwoFactorStatusResult {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useQuery(utils.twoFactorStatus.queryOptions());
 }
 
 export function useSendTwoFactorOtp(): UseSendTwoFactorOtpResult {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useMutation(utils.sendTwoFactorOtp.mutationOptions());
 }
 
 export function useDisable2fa() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.disable2fa.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -111,6 +124,7 @@ export function useDisable2fa() {
 export function useVerifyEmail() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.verifyEmail.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -120,6 +134,7 @@ export function useVerifyEmail() {
 export function useUpdateProfile() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.updateProfile.mutationOptions(),
     onSuccess: invalidateMe(utils, queryClient),
@@ -129,6 +144,7 @@ export function useUpdateProfile() {
 export function useChangePassword() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.changePassword.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -137,12 +153,14 @@ export function useChangePassword() {
 
 export function useMySecurityControls(): UseMySecurityControlsResult {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useQuery(utils.security.me.queryOptions());
 }
 
 export function useSetLoginWithdrawalAlerts(): UseSetLoginWithdrawalAlertsResult {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.security.loginWithdrawalAlerts.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -152,6 +170,7 @@ export function useSetLoginWithdrawalAlerts(): UseSetLoginWithdrawalAlertsResult
 export function useSetWithdrawalPin(): UseSetWithdrawalPinResult {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.security.setWithdrawalPin.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -161,6 +180,7 @@ export function useSetWithdrawalPin(): UseSetWithdrawalPinResult {
 export function useRemoveWithdrawalPin() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.security.removeWithdrawalPin.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -169,12 +189,14 @@ export function useRemoveWithdrawalPin() {
 
 export function useRequestPhoneVerification(): UseRequestPhoneVerificationResult {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useMutation(utils.phoneVerification.request.mutationOptions());
 }
 
 export function useConfirmPhoneVerification(): UseConfirmPhoneVerificationResult {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.phoneVerification.confirm.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
@@ -183,6 +205,7 @@ export function useConfirmPhoneVerification(): UseConfirmPhoneVerificationResult
 
 export function useSendEmailVerification() {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useMutation({
     ...utils.sendEmailVerification.mutationOptions(),
   });
@@ -190,12 +213,14 @@ export function useSendEmailVerification() {
 
 export function useMySessions(): UseMySessionsResult {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useQuery(utils.sessions.listMine.queryOptions({ input: {} }));
 }
 
 export function useRevokeMySession(): UseRevokeMySessionResult {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.sessions.revokeMine.mutationOptions(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.sessions.listMine.key() }),

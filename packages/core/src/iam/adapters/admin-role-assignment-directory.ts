@@ -13,6 +13,7 @@ export class DrizzleAdminRoleAssignmentDirectory implements AdminRoleAssignmentD
     if (userIds.length === 0) {
       return [];
     }
+
     return this.drizzle.db
       .select({
         userId: adminRoleAssignment.userId,

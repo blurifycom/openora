@@ -66,20 +66,25 @@ export function diffDeposit(
   if (!tx) {
     return 'missing_deposit';
   }
+
   if (tx.currency.toUpperCase() !== event.currency.toUpperCase()) {
     return 'currency_mismatch';
   }
+
   if (!moneyEquals(tx.amount, event.amount)) {
     return 'amount_mismatch';
   }
+
   return null;
 }
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
+
   for (let i = 0; i < items.length; i += size) {
     chunks.push(items.slice(i, i + size));
   }
+
   return chunks;
 }
 
@@ -152,15 +157,19 @@ export class ReconciliationService {
   async listFindings(filter: ListReconciliationFindingsInput) {
     const db = this.drizzle.db;
     const conditions = [];
+
     if (filter.status) {
       conditions.push(eq(walletReconciliationFinding.status, filter.status));
     }
+
     if (filter.kind) {
       conditions.push(eq(walletReconciliationFinding.kind, filter.kind));
     }
+
     if (filter.providerName) {
       conditions.push(eq(walletReconciliationFinding.providerName, filter.providerName));
     }
+
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [rows, [{ n } = { n: 0 }]] = await Promise.all([
@@ -204,16 +213,20 @@ export class ReconciliationService {
           .select()
           .from(walletReconciliationFinding)
           .where(eq(walletReconciliationFinding.id, id));
+
         if (!finding) {
           throw new ReconciliationFindingNotFoundError(id);
         }
+
         const [tx] = await txn
           .select()
           .from(walletTransaction)
           .where(eq(walletTransaction.id, resolution.transactionId));
+
         if (!tx) {
           throw new ReconciliationCreditTransactionNotFoundError(resolution.transactionId);
         }
+
         if (
           tx.type !== 'manual_credit' ||
           finding.currency === null ||
@@ -223,6 +236,7 @@ export class ReconciliationService {
         ) {
           throw new ReconciliationCreditMismatchError();
         }
+
         transactionId = tx.id;
       } else {
         resolutionNote = resolution.note;
@@ -250,6 +264,7 @@ export class ReconciliationService {
           .select()
           .from(walletReconciliationFinding)
           .where(eq(walletReconciliationFinding.id, id));
+
         // Already resolved by a concurrent/earlier call: return it unchanged, no audit entry.
         return toFindingDto(
           findOneOrThrow(existing ? [existing] : [], new ReconciliationFindingNotFoundError(id)),
@@ -272,6 +287,7 @@ export class ReconciliationService {
         },
         ...meta,
       });
+
       return toFindingDto(row);
     });
   }
@@ -289,6 +305,7 @@ export class ReconciliationService {
     lookbackHours: number,
   ): Promise<{ since: Date; unreconciledHours: number }> {
     const lookbackStart = new Date(until.getTime() - lookbackHours * 3_600_000);
+
     const [last] = await this.drizzle.db
       .select({ finishedAt: walletJobRun.finishedAt })
       .from(walletJobRun)
@@ -297,12 +314,14 @@ export class ReconciliationService {
       .limit(1);
 
     const anchor = last?.finishedAt;
+
     if (!anchor || anchor >= lookbackStart) {
       return { since: lookbackStart, unreconciledHours: 0 };
     }
 
     const floor = new Date(until.getTime() - lookbackHours * MAX_CATCH_UP_MULTIPLE * 3_600_000);
     const since = anchor < floor ? floor : anchor;
+
     return {
       since,
       unreconciledHours: Math.round((since.getTime() - anchor.getTime()) / 3_600_000),
@@ -319,6 +338,7 @@ export class ReconciliationService {
     runId: WalletJobRun['runId'] = randomUUID(),
   ): Promise<{ runId: WalletJobRun['runId'] } | null> {
     const jobRunId = await this.claimRun(runId);
+
     if (!jobRunId) {
       return null;
     }
@@ -335,10 +355,12 @@ export class ReconciliationService {
 
     try {
       const cfg = this.platformConfig?.wallet?.reconciliation;
+
       if (cfg) {
         const until = new Date();
         const { since, unreconciledHours } = await this.resolveWindow(until, cfg.lookbackHours);
         counts.unreconciledHours = unreconciledHours;
+
         if (unreconciledHours > 0) {
           logger.error(
             { runId, unreconciledHours, since },
@@ -417,9 +439,11 @@ export class ReconciliationService {
     },
   ): Promise<void> {
     const provider = this.paymentProviders.get(providerName);
+
     if (!provider?.adapter.listTransactions) {
       return;
     }
+
     const events = await provider.adapter.listTransactions({ since, until });
 
     // Every sweep (an internal transfer of vendor-side funds, never a ledger row) shows
@@ -432,6 +456,7 @@ export class ReconciliationService {
       (event): event is Extract<PaymentWebhookEvent, { kind: 'deposit' }> =>
         event.kind === 'deposit',
     );
+
     const withdrawals = relevant.filter(
       (event): event is Extract<PaymentWebhookEvent, { kind: 'withdrawal' }> =>
         event.kind === 'withdrawal',
@@ -457,6 +482,7 @@ export class ReconciliationService {
           gte(walletCustodySweep.createdAt, since),
         ),
       );
+
     return new Set(rows.map((row) => row.externalId).filter((id): id is string => id !== null));
   }
 
@@ -469,6 +495,7 @@ export class ReconciliationService {
     if (deposits.length === 0) {
       return;
     }
+
     const byExternalId = await this.batchLookupByProviderRefId(
       providerName,
       deposits.map((d) => d.externalId),
@@ -477,9 +504,11 @@ export class ReconciliationService {
     for (const event of deposits) {
       const tx = byExternalId.get(event.externalId);
       const result = diffDeposit(event, tx);
+
       if (result === null) {
         continue;
       }
+
       counts[
         result === 'missing_deposit'
           ? 'missingDeposit'
@@ -520,6 +549,7 @@ export class ReconciliationService {
     externalIds: string[],
   ): Promise<Map<string, WalletTransaction>> {
     const byExternalId = new Map<string, WalletTransaction>();
+
     for (const batch of chunk(externalIds, PROVIDER_REF_LOOKUP_CHUNK_SIZE)) {
       const rows = await this.drizzle.db
         .select()
@@ -530,12 +560,14 @@ export class ReconciliationService {
             inArray(walletTransaction.providerRefId, batch),
           ),
         );
+
       for (const row of rows) {
         if (row.providerRefId) {
           byExternalId.set(row.providerRefId, row);
         }
       }
     }
+
     return byExternalId;
   }
 
@@ -548,6 +580,7 @@ export class ReconciliationService {
     counts: { unknownAtProvider: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
+
     // Mirrors the externalId this loop files below, which is the findings dedup key.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
@@ -555,6 +588,7 @@ export class ReconciliationService {
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
     )`;
+
     const stuck = await this.drizzle.db
       .select()
       .from(walletTransaction)
@@ -599,6 +633,7 @@ export class ReconciliationService {
       }
 
       const status = await provider?.adapter.getWithdrawalStatus?.(tx.providerRefId);
+
       if (status) {
         await this.wallet.reconcileWithdrawalStatus(
           {
@@ -640,12 +675,14 @@ export class ReconciliationService {
     counts: { stuckSweeps: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - unknownAfterMinutes * 60 * 1000);
+
     const alreadyReportedSweep = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_sweep'
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletCustodySweep.externalId}, ${walletCustodySweep.id}::text)
     )`;
+
     const stuck = await this.drizzle.db
       .select()
       .from(walletCustodySweep)
@@ -691,6 +728,7 @@ export class ReconciliationService {
       .select({ n: count() })
       .from(walletReconciliationFinding)
       .where(eq(walletReconciliationFinding.status, 'open'));
+
     return Number(row?.n ?? 0);
   }
 
@@ -702,6 +740,7 @@ export class ReconciliationService {
    */
   private async claimRun(runId: WalletJobRun['runId']): Promise<WalletJobRun['id'] | null> {
     const claimed = await this.retryClaim(runId);
+
     if (claimed) {
       return claimed;
     }
@@ -710,13 +749,16 @@ export class ReconciliationService {
       .select()
       .from(walletJobRun)
       .where(and(eq(walletJobRun.jobName, JOB_NAME), isNull(walletJobRun.finishedAt)));
+
     if (!existing) {
       // The blocking run finished between our insert conflict and this read - retry once.
       return this.retryClaim(runId);
     }
+
     const staleAfterMs =
       (this.platformConfig?.wallet?.reconciliation?.staleRunAfterMinutes ??
         DEFAULT_STALE_RUN_AFTER_MINUTES) * 60_000;
+
     if (existing.startedAt.getTime() >= Date.now() - staleAfterMs) {
       // A live run genuinely owns the claim - return immediately, no retry loop.
       return null;
@@ -727,10 +769,12 @@ export class ReconciliationService {
       .set({ status: 'abandoned', finishedAt: new Date() })
       .where(and(eq(walletJobRun.id, existing.id), isNull(walletJobRun.finishedAt)))
       .returning({ id: walletJobRun.id });
+
     if (abandoned.length === 0) {
       // Someone else already resolved the stale run concurrently.
       return null;
     }
+
     return this.retryClaim(runId);
   }
 
@@ -740,6 +784,7 @@ export class ReconciliationService {
       .values({ jobName: JOB_NAME, runId })
       .onConflictDoNothing()
       .returning({ id: walletJobRun.id });
+
     return inserted?.id ?? null;
   }
 

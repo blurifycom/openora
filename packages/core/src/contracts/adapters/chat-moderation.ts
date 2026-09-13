@@ -23,6 +23,7 @@ export type ChatPlatformBan = {
 };
 
 export type ChatModerationRoomId = Uuid | '__global' | '__all_public' | '__all';
+
 export type ChatModerationScope = '__global' | '__all_public' | '__all' | 'room';
 
 export type ChatModeration = {

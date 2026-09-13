@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { CORE_VERSION } from './generated/core-version.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const templateRoot = join(here, '..', 'template');
 
 const MCP_COMMAND = 'node';
+
 const MCP_ARGS = ['node_modules/@openora/mcp/dist/main.js'];
+
 const SKIPPED_BASENAMES = new Set();
 
 type ParsedArgs = {
@@ -27,9 +30,11 @@ const USAGE = 'Usage: npm create @openora <target-dir> [--name <name>]';
 function readFlag(args: string[], index: number): { value: string | undefined; next: number } {
   const arg = args[index] ?? '';
   const eq = arg.indexOf('=');
+
   if (eq !== -1) {
     return { value: arg.slice(eq + 1), next: index };
   }
+
   return { value: args[index + 1], next: index + 1 };
 }
 
@@ -37,11 +42,14 @@ function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   let target: string | undefined;
   let name: string | undefined;
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+
     if (arg === undefined) {
       continue;
     }
+
     if (arg === '--name' || arg.startsWith('--name=')) {
       const flag = readFlag(args, i);
       name = flag.value;
@@ -50,9 +58,11 @@ function parseArgs(argv: string[]): ParsedArgs {
       target = arg;
     }
   }
+
   if (!target) {
     die(`missing target directory.\n  ${USAGE}`);
   }
+
   return name === undefined ? { target } : { target, name };
 }
 
@@ -72,20 +82,24 @@ function posix(path: string): string {
 function substitute(content: string, vars: Record<string, string>): string {
   return content.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
     const value = vars[key];
+
     return value === undefined ? match : value;
   });
 }
 
 function walk(dir: string): string[] {
   const out: string[] = [];
+
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
+
     if (statSync(full).isDirectory()) {
       out.push(...walk(full));
     } else {
       out.push(full);
     }
   }
+
   return out;
 }
 
@@ -101,6 +115,7 @@ function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: stri
 
     const rel = relative(srcRoot, file);
     let outRel = rel.split(sep).map(undotSegment).join(sep);
+
     if (outRel.endsWith('.tpl')) {
       outRel = outRel.slice(0, -'.tpl'.length);
     }
@@ -123,6 +138,7 @@ function main(): void {
   if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
     die(`${targetDir} already exists and is not empty.`);
   }
+
   if (!existsSync(templateRoot)) {
     die(`template missing at ${templateRoot}`);
   }

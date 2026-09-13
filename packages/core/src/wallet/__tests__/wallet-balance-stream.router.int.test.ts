@@ -21,10 +21,12 @@ afterAll(async () => {
 describe('wallet streamBalance router', () => {
   it('streams only the caller-scoped channel, never another player`s balance updates', async () => {
     const realtime = new RedisPubSubRealtimeTransport(redis.client, 'wallet-balance-stream-test');
+
     try {
       const iterator = createWalletBalanceStream(realtime, 'user-1', undefined)[
         Symbol.asyncIterator
       ]();
+
       const next = iterator.next();
       await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_SETTLE_MS));
 
@@ -33,11 +35,13 @@ describe('wallet streamBalance router', () => {
         currency: 'USD',
         reason: 'deposit',
       });
+
       const callerUpdate = {
         eventId: '22222222-2222-4222-8222-222222222222',
         currency: 'USD',
         reason: 'withdrawal',
       };
+
       await realtime.publish(walletBalanceChannel('user-1'), callerUpdate);
 
       await expect(next).resolves.toEqual({ done: false, value: callerUpdate });

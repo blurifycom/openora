@@ -17,13 +17,16 @@ import { NotificationsService } from '../service/notifications.service.js';
 import type { Notification } from '../contract/index.js';
 
 let db: TestDb;
+
 let redis: TestRedis;
+
 const transports: RedisPubSubRealtimeTransport[] = [];
 
 function build() {
   const notifications = new NotificationsService(db.drizzle, makeEventBus());
   const realtime = new RedisPubSubRealtimeTransport(redis.client, 'notifications-test');
   transports.push(realtime);
+
   return { router: createNotificationsRouter({ notifications, realtime }), realtime };
 }
 
@@ -37,6 +40,7 @@ async function nextStreamEventAfterSubscribed<T>(
   await new Promise((resolve) => setTimeout(resolve, 20));
   publish();
   const { value } = await pending;
+
   return value;
 }
 
@@ -51,6 +55,7 @@ async function seedNotification(overrides: Partial<typeof notification.$inferIns
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -73,14 +78,17 @@ describe('notifications router: list', () => {
   it('returns only the caller notifications, newest first, as a paginated page', async () => {
     const { router } = build();
     const userId = randomUUID();
+
     const older = await seedNotification({
       userId,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
     });
+
     const newer = await seedNotification({
       userId,
       createdAt: new Date('2026-02-01T00:00:00.000Z'),
     });
+
     await seedNotification();
 
     const page = await call(router.list, { page: 1, limit: 10 }, { context: ctxFor(userId) });
@@ -151,10 +159,12 @@ describe('notifications router: markAllRead', () => {
     const result = await call(router.markAllRead, undefined, { context: ctxFor(userId) });
 
     expect(result).toEqual({ count: 2 });
+
     const [stillUnread] = await db.drizzle.db
       .select()
       .from(notification)
       .where(sql`${notification.id} = ${otherUsersNotification.id}`);
+
     expect(stillUnread?.readAt).toBeNull();
   });
 });
@@ -180,9 +190,11 @@ describe('notifications router: stream', () => {
       readAt: null,
       createdAt: new Date().toISOString(),
     };
+
     const value = await nextStreamEventAfterSubscribed(stream, () =>
       realtime.publish(notificationsChannel(userId), published),
     );
+
     controller.abort();
 
     expect(value).toEqual(published);

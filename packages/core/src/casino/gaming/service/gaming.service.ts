@@ -28,10 +28,12 @@ export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
   'play is restricted by an active responsible-gambling exclusion',
 );
+
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
+
 // Thrown inside the settlement transaction, so the round stays `active` and the win can be
 // settled again rather than being lost silently.
 export const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
@@ -79,6 +81,7 @@ export class GamingService {
       .from(game)
       .where(eq(game.isActive, true))
       .orderBy(asc(game.name));
+
     return games.map(toGame);
   }
 
@@ -87,6 +90,7 @@ export class GamingService {
       await this.drizzle.db.select().from(game).where(eq(game.id, id)),
       new GameNotFoundError(id),
     );
+
     return toGame(record);
   }
 
@@ -94,7 +98,9 @@ export class GamingService {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
+
     const decision = await this.rgLimits?.checkWager(this.drizzle.db, userId, betAmount, currency);
+
     if (decision && !decision.allowed) {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
@@ -110,9 +116,11 @@ export class GamingService {
         currency,
         type: 'bet',
       });
+
       if (!outcome.ok) {
         throw new InsufficientBalanceError(outcome.available, betAmount);
       }
+
       const insertedRound = findOneOrThrow(
         await tx
           .insert(gameRound)
@@ -126,6 +134,7 @@ export class GamingService {
           .returning(),
         new GameRoundNotFoundError(gameId),
       );
+
       return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
 
@@ -188,9 +197,11 @@ export class GamingService {
           ),
         )
         .returning({ id: gameRound.id });
+
       if (settled.length === 0) {
         return false;
       }
+
       if (Number(winAmount) > 0) {
         // The bet already opened this currency's balance, so `allowNewCurrency` only
         // covers a player whose active currency moved between start and settlement.
@@ -201,10 +212,12 @@ export class GamingService {
           type: 'win',
           allowNewCurrency: true,
         });
+
         if (!credited.ok) {
           throw new WinCreditFailedError(roundId, credited.reason);
         }
       }
+
       return true;
     });
 
@@ -239,6 +252,7 @@ export class GamingService {
     const winDelta = args.winDelta ?? '0';
     const status = args.isFinal ? 'completed' : 'active';
     const endedAt = args.isFinal ? new Date() : undefined;
+
     const [row] = await txn
       .insert(gameRound)
       .values({
@@ -268,9 +282,11 @@ export class GamingService {
         betAmount: gameRound.betAmount,
         winAmount: gameRound.winAmount,
       });
+
     if (!row) {
       throw new ExternalRoundOwnerMismatchError(args.externalRoundId);
     }
+
     return { roundId: row.id, betAmount: row.betAmount, winAmount: row.winAmount };
   }
 
@@ -281,6 +297,7 @@ export class GamingService {
       .where(eq(gameRound.userId, userId))
       .orderBy(desc(gameRound.startedAt))
       .limit(50);
+
     return rounds.map(toGameRound);
   }
 }

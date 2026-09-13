@@ -29,6 +29,7 @@ import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
+
 const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
 
 function toDateKey(d: Date): string {
@@ -66,9 +67,11 @@ export class PlayerService implements PlayerActivityTracker {
   >) {
     const db = this.drizzle.db;
     const conditions = [];
+
     if (status) {
       conditions.push(eq(player.status, status));
     }
+
     if (kycStatus) {
       // `player.kyc_status` is queried directly (this module owns the table, so there
       // is no shared read boundary to normalize through - see
@@ -82,6 +85,7 @@ export class PlayerService implements PlayerActivityTracker {
           : eq(player.kycStatus, kycStatus),
       );
     }
+
     if (search) {
       conditions.push(
         or(
@@ -92,6 +96,7 @@ export class PlayerService implements PlayerActivityTracker {
         ),
       );
     }
+
     if (tags && tags.length > 0) {
       conditions.push(
         inArray(
@@ -104,7 +109,9 @@ export class PlayerService implements PlayerActivityTracker {
         ),
       );
     }
+
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({
@@ -145,15 +152,18 @@ export class PlayerService implements PlayerActivityTracker {
         .leftJoin(user, eq(user.id, player.userId))
         .where(whereClause),
     ]);
+
     const items = rows.map((r) => ({
       ...toPlayer(r.player, r.email ?? '', r.username ?? ''),
       tags: r.tags as TagKey[],
     }));
+
     return { items, total: Number(n), page, limit };
   }
 
   private async fetchOneWithTags(playerId: Player['id']) {
     const db = this.drizzle.db;
+
     const row = findOneOrThrow(
       await db
         .select({
@@ -173,6 +183,7 @@ export class PlayerService implements PlayerActivityTracker {
         .where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
+
     return {
       ...toPlayer(row.player, row.email ?? '', row.username ?? ''),
       tags: row.tags as TagKey[],
@@ -188,7 +199,9 @@ export class PlayerService implements PlayerActivityTracker {
       await this.drizzle.db.select().from(player).where(eq(player.userId, userId)),
       new PlayerNotFoundError(userId),
     );
+
     const identity = await fetchIdentityByUserId(this.drizzle, record.userId);
+
     return toPlayer(record, identity?.email ?? '', identity?.username ?? '');
   }
 
@@ -207,9 +220,11 @@ export class PlayerService implements PlayerActivityTracker {
     );
 
     const patch: Partial<typeof player.$inferInsert> = {};
+
     if (data.status !== undefined) {
       patch.status = data.status;
     }
+
     if (data.level !== undefined) {
       patch.level = data.level;
     }
@@ -219,10 +234,12 @@ export class PlayerService implements PlayerActivityTracker {
     if (data.username !== undefined) {
       await this.userCommands.setUsername(existing.userId, data.username);
     }
+
     await this.drizzle.db.transaction(async (trx) => {
       if (Object.keys(patch).length > 0) {
         await trx.update(player).set(patch).where(eq(player.id, playerId));
       }
+
       findOneOrThrow(
         await trx.select().from(player).where(eq(player.id, playerId)),
         new PlayerNotFoundError(playerId),
@@ -291,6 +308,7 @@ export class PlayerService implements PlayerActivityTracker {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
+
     await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
     await this.sessionCommands.revokeAll(existing.userId, actorId);
     this.events.emit('player.account.closed', {
@@ -298,6 +316,7 @@ export class PlayerService implements PlayerActivityTracker {
       userId: existing.userId,
       actorId,
     });
+
     return { success: true };
   }
 
@@ -306,16 +325,20 @@ export class PlayerService implements PlayerActivityTracker {
     since.setUTCHours(0, 0, 0, 0);
     since.setUTCDate(since.getUTCDate() - (days - 1));
     const dayKey = sql<string>`to_char(date_trunc('day', ${player.createdAt}), 'YYYY-MM-DD')`;
+
     const rows = await this.drizzle.db
       .select({ date: dayKey, n: count() })
       .from(player)
       .where(gte(player.createdAt, since))
       .groupBy(dayKey);
+
     const countByDay = new Map(rows.map((r) => [r.date, Number(r.n)]));
+
     return Array.from({ length: days }, (_, i) => {
       const d = new Date(since);
       d.setUTCDate(since.getUTCDate() + i);
       const date = toDateKey(d);
+
       return { date, count: countByDay.get(date) ?? 0 };
     });
   }
@@ -324,6 +347,7 @@ export class PlayerService implements PlayerActivityTracker {
     const weekAgo = new Date();
     weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
     const db = this.drizzle.db;
+
     const [total, active, newLastWeek, selfExcluded] = await Promise.all([
       db
         .select({ n: count() })
@@ -345,6 +369,7 @@ export class PlayerService implements PlayerActivityTracker {
         .where(eq(player.status, 'self_excluded'))
         .then(([r]) => Number(r?.n ?? 0)),
     ]);
+
     return { total, active, newLastWeek, selfExcluded };
   }
 
@@ -357,15 +382,20 @@ export class PlayerService implements PlayerActivityTracker {
     viewerId: User['id'],
   ): Promise<PlayerSearchResult[]> {
     const ids = await this.userDirectory.findPlayerIds(q, limit);
+
     if (ids.length === 0) {
       return [];
     }
+
     const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
     const filteredIds = ids.filter((id) => !excluded.has(id));
+
     if (filteredIds.length === 0) {
       return [];
     }
+
     const summaries = await this.userDirectory.lookupPlayers(filteredIds);
+
     return summaries.map((s) => ({
       userId: s.userId,
       username: s.username,
@@ -380,11 +410,14 @@ export class PlayerService implements PlayerActivityTracker {
   async getPlayerProfile(userId: User['id'], viewerId: User['id']): Promise<PlayerProfileCard> {
     const summaries = await this.userDirectory.lookupPlayers([userId]);
     const summary = summaries.find((s) => s.userId === userId);
+
     if (!summary) {
       throw new PlayerNotFoundError(userId);
     }
+
     const isSelf = userId === viewerId;
     const stats = isSelf ? await this.gameReporting.getPlayerStats(userId) : null;
+
     return {
       userId: summary.userId,
       username: summary.username,

@@ -71,6 +71,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
     .insert(game)
     .values({ name: 'Game', provider: 'mock', category: 'slots', ...overrides })
     .returning();
+
   return row!;
 }
 
@@ -124,6 +125,7 @@ describe('GamingService.startRound (real PG)', () => {
   it('refuses a wager over the players own limit before touching the provider', async () => {
     const launchGame = vi.fn();
     const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       walletCommands,
@@ -149,6 +151,7 @@ describe('GamingService.startRound (real PG)', () => {
 
   it('refuses a restricted player before touching the provider', async () => {
     const launchGame = vi.fn();
+
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       playEligibility: eligibility(true),
@@ -162,6 +165,7 @@ describe('GamingService.startRound (real PG)', () => {
 
   it('passes the gate for an unrestricted player and fails later on the game lookup', async () => {
     const launchGame = vi.fn();
+
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
     });
@@ -181,6 +185,7 @@ describe('GamingService.startRound (real PG)', () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a1', name: 'Aces' });
     const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
     const launchGame = vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' });
+
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       walletCommands,
@@ -212,6 +217,7 @@ describe('GamingService.startRound (real PG)', () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a2', name: 'Aces' });
     const walletCommands = makeWalletCommands({ ok: false, available: '2' });
     const launchGame = vi.fn();
+
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       walletCommands,
@@ -229,6 +235,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
   it('emits wallet.bonus_rollover.completed once per credit the bet just completed', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a3', name: 'Aces' });
     const events = makeEventBus();
+
     const walletCommands = makeWalletCommands({
       ok: true,
       newBalance: '60',
@@ -238,6 +245,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
         { id: '00000000-0000-0000-0000-0000000000c2', currency: 'USD', creditedAmount: '10' },
       ],
     });
+
     const svc = new GamingService(
       db.drizzle,
       events,
@@ -249,6 +257,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       walletCommands,
       makeIdentityReader(),
     );
+
     const userId = '00000000-0000-0000-0000-000000000401';
 
     await svc.startRound(userId, created.id, 'USD', '40');
@@ -271,6 +280,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a5', name: 'Aces' });
     const events = makeEventBus();
     const launchGame = vi.fn().mockRejectedValue(new Error('provider unavailable'));
+
     const walletCommands = makeWalletCommands({
       ok: true,
       newBalance: '0',
@@ -279,6 +289,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
         { id: '00000000-0000-0000-0000-0000000000c5', currency: 'USD', creditedAmount: '25' },
       ],
     });
+
     const svc = new GamingService(
       db.drizzle,
       events,
@@ -287,6 +298,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       walletCommands,
       makeIdentityReader(),
     );
+
     const userId = '00000000-0000-0000-0000-000000000405';
 
     await expect(svc.startRound(userId, created.id, 'USD', '25')).rejects.toThrow(
@@ -306,6 +318,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a4', name: 'Aces' });
     const events = makeEventBus();
     const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+
     const svc = new GamingService(
       db.drizzle,
       events,
@@ -317,6 +330,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       walletCommands,
       makeIdentityReader(),
     );
+
     const userId = '00000000-0000-0000-0000-000000000402';
 
     await svc.startRound(userId, created.id, 'USD', '10');
@@ -333,6 +347,7 @@ async function seedRound(gameId: string, userId: string) {
     .insert(gameRound)
     .values({ gameId, userId, currency: 'USD', betAmount: '10', status: 'active' })
     .returning();
+
   return row!;
 }
 
@@ -392,10 +407,12 @@ describe('GamingService.endRound (real PG)', () => {
   it('leaves the round open when the win credit is refused, so the payout is not lost', async () => {
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
+
     const walletCommands = makeWalletCommands(
       { ok: true, newBalance: '0', currency: 'USD' },
       { ok: false, reason: 'wallet not found' },
     );
+
     const svc = makeService({ provider: settlingProvider('7'), walletCommands });
 
     await expect(svc.endRound(userId, round.id)).rejects.toBeInstanceOf(WinCreditFailedError);
@@ -447,6 +464,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       externalRoundId: 'ext-round-2',
       betDelta: '10',
     });
+
     const second = await svc.accumulateExternalRound(db.drizzle.db, {
       gameId: created.id,
       userId,
@@ -512,6 +530,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       .select()
       .from(gameRound)
       .where(eq(gameRound.externalRoundId, 'ext-round-4'));
+
     expect(rows).toHaveLength(0);
   });
 
@@ -527,6 +546,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       externalRoundId: 'ext-round-5',
       betDelta: '10',
     });
+
     const result = await svc.accumulateExternalRound(db.drizzle.db, {
       gameId: created.id,
       userId,
@@ -540,6 +560,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       .select()
       .from(gameRound)
       .where(eq(gameRound.id, result.roundId));
+
     expect(rows[0]).toMatchObject({ status: 'completed' });
     expect(rows[0]?.endedAt).not.toBeNull();
   });
@@ -572,6 +593,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
       .select()
       .from(gameRound)
       .where(eq(gameRound.externalRoundId, 'ext-round-6'));
+
     expect(rows).toHaveLength(1);
     expect(Number(rows[0]?.betAmount)).toBe(10);
   });

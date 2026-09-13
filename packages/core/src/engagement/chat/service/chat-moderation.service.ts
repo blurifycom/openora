@@ -9,8 +9,11 @@ import type { ChatMessage } from '../contract/index.js';
 import { ChatBanService } from './chat-ban.service.js';
 import { ChatMessageModerationService } from './chat-message-moderation.service.js';
 import { ChatMuteService } from './chat-mute.service.js';
+
 export * from './errors/chat-moderation.errors.js';
+
 export { ChatMessageNotFoundError } from './chat-message-moderation.service.js';
+
 import { DrizzleService } from '@openora/core/server';
 
 export class ChatModerationService implements ChatModeration {

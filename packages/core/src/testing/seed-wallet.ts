@@ -19,9 +19,11 @@ export async function seedCompletedDeposit(
     .onConflictDoNothing()
     .returning();
   const [walletRow] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+
   if (!walletRow) {
     throw new Error('seedCompletedDeposit: no wallet row for user');
   }
+
   await db.drizzle.db.insert(walletTransaction).values({
     walletId: walletRow.id,
     type: 'deposit',

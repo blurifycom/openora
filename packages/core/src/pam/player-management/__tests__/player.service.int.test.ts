@@ -34,9 +34,11 @@ function makeService(
   const userDirectory = overrides.userDirectory ?? mock<AdminUserDirectory>({});
   const gameReporting = overrides.gameReporting ?? mock<AdminGameReporting>({});
   const blockWriter = overrides.blockWriter ?? mock<ChatBlockWriter>({});
+
   const sessionCommands =
     overrides.sessionCommands ??
     mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) });
+
   const userCommands =
     overrides.userCommands ??
     mock<UserCommands>({
@@ -44,9 +46,11 @@ function makeService(
         // Stands in for identity's USER_COMMANDS so the round-trip through the
         // enriched read still holds; the real port is covered in its own module.
         await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+
         return { success: true };
       }),
     });
+
   return {
     userCommands,
     svc: new PlayerService(
@@ -64,10 +68,13 @@ function makeService(
 }
 
 const SEARCH_VIEWER_ID = '00000000-0000-0000-0000-0000000000a1';
+
 const SEARCH_OTHER_ID = '00000000-0000-0000-0000-0000000000a2';
+
 const SEARCH_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 
 const SEARCH_VIEWER_PLAYER_ID = '00000000-0000-0000-0000-0000000000b1';
+
 const SEARCH_OTHER_PLAYER_ID = '00000000-0000-0000-0000-0000000000b2';
 
 function makeUserDirectory(): AdminUserDirectory {
@@ -97,6 +104,7 @@ function makeUserDirectory(): AdminUserDirectory {
       currency: 'USD',
     },
   ];
+
   return mock<AdminUserDirectory>({
     findPlayerIds: vi.fn().mockResolvedValue([SEARCH_VIEWER_ID]),
     lookupPlayers: vi.fn().mockImplementation((ids: string[]) => {
@@ -122,6 +130,7 @@ async function seedPlayer(userId: string, overrides: Partial<typeof player.$infe
     .insert(player)
     .values({ userId, ...overrides })
     .returning();
+
   return row!;
 }
 
@@ -131,11 +140,13 @@ async function seedPlayerWithUser(
 ) {
   const account = await seedUser(db, userOverrides);
   const row = await seedPlayer(account.id, playerOverrides);
+
   return { account, player: row };
 }
 
 async function seedTag(key: TagKey) {
   const [row] = await db.drizzle.db.insert(tag).values({ key }).returning();
+
   return row!;
 }
 
@@ -151,6 +162,7 @@ async function assignTag(playerId: string, tagId: string) {
 
 async function rowById(playerId: string) {
   const [row] = await db.drizzle.db.select().from(player).where(eq(player.id, playerId));
+
   return row;
 }
 
@@ -572,6 +584,7 @@ describe('PlayerService.searchPlayers', () => {
       findPlayerIds: vi.fn().mockResolvedValue([]),
       lookupPlayers: vi.fn().mockResolvedValue([]),
     });
+
     const { svc } = makeService({ userDirectory });
 
     const result = await svc.searchPlayers('xyz', 10, SEARCH_VIEWER_ID);
@@ -615,6 +628,7 @@ describe('PlayerService.getPlayerProfile', () => {
     const userDirectory = mock<AdminUserDirectory>({
       lookupPlayers: vi.fn().mockResolvedValue([]),
     });
+
     const { svc } = makeService({ userDirectory });
 
     await expect(svc.getPlayerProfile(SEARCH_OTHER_ID, SEARCH_VIEWER_ID)).rejects.toBeInstanceOf(

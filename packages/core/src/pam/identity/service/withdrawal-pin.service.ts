@@ -25,6 +25,7 @@ import type { TwoFactorLockoutService } from './two-factor-lockout.service.js';
 import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
 
 const MINUTE_MS = 60 * 1000;
+
 const WITHDRAWAL_PIN_RATE_LIMIT = {
   limit: 5,
   windowMs: 5 * MINUTE_MS,
@@ -76,9 +77,11 @@ export class WithdrawalPinService {
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
     const controls = await getSecurityControls(this.drizzle, userId);
+
     if (!controls) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+
     return controls;
   }
 
@@ -92,9 +95,11 @@ export class WithdrawalPinService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (!caller) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+
     return caller;
   }
 
@@ -107,6 +112,7 @@ export class WithdrawalPinService {
     if (role === 'player') {
       return;
     }
+
     // A service-level denial still owes the audit log the same signal AdminGuard emits,
     // since this check rejects before any shared guard runs (docs/standards/audit.md).
     this.events.emit('identity.user.unauthorized_access', {
@@ -161,6 +167,7 @@ export class WithdrawalPinService {
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
+
     return this.securityControlsFor(userId);
   }
 
@@ -176,6 +183,7 @@ export class WithdrawalPinService {
     if (caller.withdrawalPinHash === null) {
       return this.securityControlsFor(userId);
     }
+
     await this.drizzle.db
       .update(user)
       .set({ withdrawalPinHash: null, withdrawalPinSetAt: null })
@@ -186,6 +194,7 @@ export class WithdrawalPinService {
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
+
     return this.securityControlsFor(userId);
   }
 }

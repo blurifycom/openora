@@ -86,6 +86,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     this.identityReader = identityReader;
     this.config = config;
     this.geoIp = geoIp;
+
     if (config.bindSessionToDevice && config.ipChangePolicy === 'country' && !geoIp) {
       logger.warn(
         'adminSecurity.ipChangePolicy is "country" but no GEO_IP_ADAPTER is bound - ' +
@@ -98,6 +99,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     if (!this.config.requireTwoFactor) {
       return;
     }
+
     const [row] = await this.drizzle.db
       .select({ twoFactorEnabled: user.twoFactorEnabled })
       .from(user)
@@ -124,6 +126,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     if (!this.config.bindSessionToDevice || !sessionId) {
       return;
     }
+
     const [row] = await this.drizzle.db
       .select({
         ipAddress: session.ipAddress,
@@ -154,19 +157,24 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     requestIp: string | null,
   ): Promise<boolean> {
     const policy = this.config.ipChangePolicy;
+
     if (policy === 'off' || !sessionIp || !requestIp || sessionIp === requestIp) {
       return false;
     }
+
     if (policy === 'any') {
       return true;
     }
+
     if (!this.geoIp) {
       return false;
     }
+
     const [sessionCountry, requestCountry] = await Promise.all([
       this.lookupCountry(sessionIp),
       this.lookupCountry(requestIp),
     ]);
+
     return isSuspiciousIpChange({
       policy,
       sessionIp,
@@ -181,6 +189,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       return (await this.geoIp?.lookup(ipAddress))?.countryCode ?? null;
     } catch (error) {
       logger.warn(`geo-ip lookup failed for a session check: ${String(error)}`);
+
       return null;
     }
   }
@@ -216,6 +225,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     if (lastSeenAt && Date.now() - lastSeenAt.getTime() < LAST_SEEN_THROTTLE_MS) {
       return;
     }
+
     await this.drizzle.db
       .update(session)
       .set({ lastSeenAt: sql`now()` })
@@ -267,8 +277,10 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     if (!row) {
       return null;
     }
+
     try {
       const parsed: unknown = JSON.parse(row.backupCodes);
+
       return Array.isArray(parsed) ? parsed.length : null;
     } catch {
       return null;
@@ -288,6 +300,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
   ) {
     const { userAgent } = await this.trustedDevices.revoke(userId, deviceId, actorId, meta);
     await this.endSessionsOnDevice(userId, userAgent, actorId, meta, keepSessionId);
+
     return { success: true as const };
   }
 
@@ -335,6 +348,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (!account) {
       throw new UserNotFoundError(userId);
     }
@@ -369,6 +383,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true as const };
   }
 

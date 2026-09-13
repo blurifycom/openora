@@ -34,6 +34,7 @@ export class ComplianceService {
         .select({ action: geoRule.action })
         .from(geoRule)
         .limit(1);
+
       return anyRule
         ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
         : { allowed: true, countryCode: null, reason: null };
@@ -53,6 +54,7 @@ export class ComplianceService {
 
   async checkRegistration(ipAddress: string | null) {
     const result = await this.geoCheck(ipAddress);
+
     return { allowed: result.allowed };
   }
 
@@ -68,6 +70,7 @@ export class ComplianceService {
         .returning(),
       new GeoRuleNotFoundError(input.countryCode),
     );
+
     this.events.emit('compliance.geo-rule.added', {
       countryCode: input.countryCode,
       action: input.action,
@@ -75,11 +78,13 @@ export class ComplianceService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return serializeRow(row, { dateFields: ['createdAt'] });
   }
 
   async listGeoRules() {
     const rows = await this.drizzle.db.select().from(geoRule);
+
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 }

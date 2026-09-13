@@ -6,11 +6,13 @@ import { defaultPlatformConfig } from '@openora/core/contracts';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../platform-config-loader.js';
 
 let dir: string;
+
 const originalCwd = process.cwd();
 
 const write = (name: string, contents: string) => {
   const path = join(dir, name);
   writeFileSync(path, contents, 'utf8');
+
   return path;
 };
 

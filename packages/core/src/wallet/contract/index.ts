@@ -69,9 +69,11 @@ const ADDRESS_PATTERN_BY_NETWORK: Record<string, RegExp> = {
  */
 export function isWalletAddressValidForNetwork(address: string, network: string): boolean {
   const pattern = ADDRESS_PATTERN_BY_NETWORK[network.toUpperCase()];
+
   if (!pattern) {
     return address.length >= 8 && address.length <= 128;
   }
+
   return pattern.test(address);
 }
 
@@ -96,6 +98,7 @@ export const WalletBalanceChangeReasonSchema = z.enum([
   'adjustment',
   'swap',
 ]);
+
 export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
 
 export const WalletBalanceUpdateSchema = z.object({
@@ -103,6 +106,7 @@ export const WalletBalanceUpdateSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   reason: WalletBalanceChangeReasonSchema,
 });
+
 export type WalletBalanceUpdate = z.infer<typeof WalletBalanceUpdateSchema>;
 
 export const SetActiveCurrencyInputSchema = z.object({ currency: WalletCurrencyCodeSchema });
@@ -112,7 +116,9 @@ export const ActiveCurrencySchema = z.object({ activeCurrency: WalletCurrencyCod
 // Shared by a manual adjustment's input direction and a transaction row's recorded
 // direction - a wallet move only ever goes one of these two ways.
 export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
+
 export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
+
 export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
 
 export const WalletTransactionSchema = z.object({
@@ -135,6 +141,7 @@ export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
 });
+
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
 export const DepositInputSchema = z.object({
@@ -182,12 +189,14 @@ export const ManualWalletAdjustmentInputSchema = z.object({
   reason: z.string().trim().min(1),
   idempotencyKey: UuidSchema,
 });
+
 export type ManualWalletAdjustmentInput = z.infer<typeof ManualWalletAdjustmentInputSchema>;
 
 export const TransactionResultSchema = z.object({
   transactionId: UuidSchema,
   status: WalletTransactionStatusSchema,
 });
+
 export type TransactionResult = z.infer<typeof TransactionResultSchema>;
 
 export const WALLET_TX_SORT_BY_VALUES = [
@@ -199,7 +208,9 @@ export const WALLET_TX_SORT_BY_VALUES = [
   'rail',
   'reviewedAt',
 ] as const;
+
 export const WalletTransactionSortBySchema = z.enum(WALLET_TX_SORT_BY_VALUES).default('createdAt');
+
 export type WalletTransactionSortBy = z.infer<typeof WalletTransactionSortBySchema>;
 
 export const WITHDRAWAL_SORT_BY_VALUES = [
@@ -210,7 +221,9 @@ export const WITHDRAWAL_SORT_BY_VALUES = [
   'rail',
   'reviewedAt',
 ] as const;
+
 export const WithdrawalSortBySchema = z.enum(WITHDRAWAL_SORT_BY_VALUES).default('createdAt');
+
 export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 
 export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
@@ -238,6 +251,7 @@ export const WithdrawalQueueItemSchema = z.object({
   destinationTag: z.string().nullable(),
   txHash: z.string().nullable(),
 });
+
 export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
 
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
@@ -252,6 +266,7 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   sortBy: WithdrawalSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
 });
+
 export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
 
 export const AutoWithdrawalRuleSchema = z.object({
@@ -263,6 +278,7 @@ export const AutoWithdrawalRuleSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type AutoWithdrawalRule = z.infer<typeof AutoWithdrawalRuleSchema>;
 
 export const SetAutoWithdrawalRuleInputSchema = z.object({
@@ -282,6 +298,7 @@ export const WalletAutoWithdrawalConfigSchema = z.object({
   updatedAt: TimestampSchema,
   createdAt: TimestampSchema,
 });
+
 export type WalletAutoWithdrawalConfig = z.infer<typeof WalletAutoWithdrawalConfigSchema>;
 
 // wallet_auto_withdrawal_config.{fiatThreshold,cryptoThreshold} are decimal(18,8) - 10
@@ -300,11 +317,15 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
 });
 
 export const BONUS_CREDIT_SOURCE_TYPES = ['gift', 'rain'] as const;
+
 export const BonusCreditSourceTypeSchema = z.enum(BONUS_CREDIT_SOURCE_TYPES);
+
 export type BonusCreditSourceType = z.infer<typeof BonusCreditSourceTypeSchema>;
 
 export const BONUS_CREDIT_STATUSES = ['active', 'completed'] as const;
+
 export const BonusCreditStatusSchema = z.enum(BONUS_CREDIT_STATUSES);
+
 export type BonusCreditStatus = z.infer<typeof BonusCreditStatusSchema>;
 
 export const MAX_BONUS_ROLLOVER_MULTIPLIER = '100';
@@ -318,6 +339,7 @@ function decimalStringAtMost(value: string, maximum: string): boolean {
   if (normalizedValueWhole.length !== normalizedMaximumWhole.length) {
     return normalizedValueWhole.length < normalizedMaximumWhole.length;
   }
+
   if (normalizedValueWhole !== normalizedMaximumWhole) {
     return normalizedValueWhole < normalizedMaximumWhole;
   }
@@ -337,6 +359,7 @@ export const BonusCreditSchema = z.object({
   createdAt: TimestampSchema,
   completedAt: TimestampSchema.nullable(),
 });
+
 export type BonusCredit = z.infer<typeof BonusCreditSchema>;
 
 export const BonusRolloverStatusSchema = z.object({
@@ -352,6 +375,7 @@ export const BonusRolloverConfigSchema = z.object({
   multiplier: MoneyAmountSchema,
   updatedAt: TimestampSchema,
 });
+
 export type BonusRolloverConfig = z.infer<typeof BonusRolloverConfigSchema>;
 
 export const SetBonusRolloverConfigInputSchema = z.object({
@@ -406,6 +430,7 @@ export const SwapResultSchema = z.object({
 });
 
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
+
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
 // The vendor's raw JSON body plus the path-carried `provider` key (oRPC merges a route's
@@ -420,6 +445,7 @@ export const DepositAddressInputSchema = z.object({
   currency: WalletCurrencyInputSchema,
   network: WalletNetworkInputSchema.optional(),
 });
+
 export const DepositAddressSchema = z.object({
   address: z.string(),
   currency: WalletCurrencyCodeSchema,
@@ -443,6 +469,7 @@ export const PublicWalletAssetSchema = z.object({
   depositEnabled: z.boolean(),
   withdrawalEnabled: z.boolean(),
 });
+
 export type PublicWalletAsset = z.infer<typeof PublicWalletAssetSchema>;
 
 // Admin-only, same treatment as providerAssetId: which vendor settles a pair and its
@@ -459,6 +486,7 @@ export const WalletAssetSchema = PublicWalletAssetSchema.extend({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type WalletAsset = z.infer<typeof WalletAssetSchema>;
 
 export const WalletAssetKeySchema = z.object({
@@ -483,6 +511,7 @@ export const CreateWalletAssetInputSchema = z.object({
   sweepFeeCeiling: WalletAssetAmountSchema.optional(),
   poolLiquidityFloor: WalletAssetAmountSchema.optional(),
 });
+
 export type CreateWalletAssetInput = z.infer<typeof CreateWalletAssetInputSchema>;
 
 // The (currency, network) key is not mutable: renaming a pair is a delete plus a create,
@@ -501,6 +530,7 @@ export const UpdateWalletAssetInputSchema = WalletAssetKeySchema.extend({
   sweepFeeCeiling: WalletAssetAmountSchema.optional(),
   poolLiquidityFloor: WalletAssetAmountSchema.optional(),
 });
+
 export type UpdateWalletAssetInput = z.infer<typeof UpdateWalletAssetInputSchema>;
 
 // Shared by both cron-style admin triggers - the caller gets back the id of the
@@ -527,6 +557,7 @@ export const WalletReconciliationFindingSchema = z.object({
   resolutionNote: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+
 export type WalletReconciliationFinding = z.infer<typeof WalletReconciliationFindingSchema>;
 
 export const ListReconciliationFindingsInputSchema = PageQuerySchema.extend({
@@ -534,6 +565,7 @@ export const ListReconciliationFindingsInputSchema = PageQuerySchema.extend({
   kind: WalletReconciliationFindingKindSchema.optional(),
   providerName: z.string().optional(),
 });
+
 export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationFindingsInputSchema>;
 
 // There is no third way to close a finding: crediting the player (a manual ledger entry
@@ -543,12 +575,14 @@ export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('credited'), transactionId: UuidSchema }),
   z.object({ outcome: z.literal('dismissed'), note: z.string().trim().min(1) }),
 ]);
+
 export type ReconciliationResolution = z.infer<typeof ReconciliationResolutionSchema>;
 
 export const ResolveReconciliationFindingInputSchema = z.object({
   id: UuidSchema,
   resolution: ReconciliationResolutionSchema,
 });
+
 export type ResolveReconciliationFindingInput = z.infer<
   typeof ResolveReconciliationFindingInputSchema
 >;
@@ -562,6 +596,7 @@ export const WithdrawalAddressSchema = z.object({
   destinationTag: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
 
 export const CreateWithdrawalAddressInputSchema = z
@@ -581,6 +616,7 @@ export const CreateWithdrawalAddressInputSchema = z
       });
     }
   });
+
 export type CreateWithdrawalAddressInput = z.infer<typeof CreateWithdrawalAddressInputSchema>;
 
 export const ListWithdrawalAddressesInputSchema = z.object({

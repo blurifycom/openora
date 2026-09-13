@@ -8,6 +8,7 @@ import { wallet, walletTransaction } from '../schema/index.js';
 import { DrizzleAdminWalletReporting } from '../admin-reporting.js';
 
 let db: TestDb;
+
 let reporting: DrizzleAdminWalletReporting;
 
 const AT = (iso: string) => new Date(iso);
@@ -20,6 +21,7 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   return row;
 }
 
@@ -43,6 +45,7 @@ async function seedTx(
       .returning(),
     new Error('seedTx: query returned no row'),
   );
+
   return row;
 }
 
@@ -137,12 +140,14 @@ describe('DrizzleAdminWalletReporting.listTransactions (real PG)', () => {
 
   it('filters by type, currency, rail and status', async () => {
     const w = await seedWallet();
+
     const match = await seedTx(w.id, {
       type: 'withdrawal',
       currency: 'BTC',
       rail: 'crypto',
       status: 'pending',
     });
+
     await seedTx(w.id, {
       type: 'withdrawal',
       currency: 'BTC',
@@ -278,6 +283,7 @@ describe('DrizzleAdminWalletReporting.getTransaction (real PG)', () => {
   it('maps unset provider columns to null and surfaces the review columns', async () => {
     const w = await seedWallet();
     const reviewer = randomUUID();
+
     const tx = await seedTx(w.id, {
       reviewedBy: reviewer,
       reviewedAt: AT('2026-01-02T00:00:00.000Z'),

@@ -48,6 +48,7 @@ describe('createWithdrawalAddress: the 50-row cap is enforced by the insert itse
   it('throws WithdrawalAddressLimitReachedError once the cap is reached, not a duplicate error', async () => {
     const svc = makeService();
     const userId = randomUUID();
+
     for (let i = 0; i < 50; i++) {
       await svc.createWithdrawalAddress(userId, addressInput(i));
     }
@@ -82,6 +83,7 @@ describe('createWithdrawalAddress: the 50-row cap is enforced by the insert itse
     );
 
     const succeeded = results.filter((r) => r.status === 'fulfilled');
+
     const rejectedWithCapError = results.filter(
       (r) => r.status === 'rejected' && r.reason instanceof WithdrawalAddressLimitReachedError,
     );

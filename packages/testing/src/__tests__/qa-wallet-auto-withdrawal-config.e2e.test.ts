@@ -39,12 +39,17 @@ import {
  */
 
 let db: TestDb;
+
 let appMain: TestApp;
+
 let appUnseeded: TestApp;
 
 let superAdmin: TestClient;
+
 let paymentsManager: TestClient;
+
 let plainAdmin: TestClient;
+
 let bootstrapAdmin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -58,6 +63,7 @@ async function verifyKyc(admin: TestClient, userId: string) {
     status: 'approved',
     reason: 'QA fixture verification',
   });
+
   if (res.status !== 200) {
     throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
   }
@@ -84,9 +90,11 @@ async function assignIamRoleByKey(
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, roleKey));
+
   if (!role) {
     throw new Error(`assignIamRoleByKey: no seeded admin_role with key='${roleKey}'`);
   }
+
   await drizzle
     .insert(adminRoleAssignment)
     .values({ userId, roleId: role.id })
@@ -98,6 +106,7 @@ async function setStaticRole(container: Container<CoreTokenCatalog>, userId: str
 }
 
 let unseededDbName: string;
+
 let unseededAdminClient: Client;
 
 /**
@@ -112,17 +121,21 @@ async function createIsolatedTestDatabase(): Promise<string> {
   const baseUrl =
     process.env['TEST_DATABASE_URL'] ??
     'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
+
   const url = new URL(baseUrl);
   const dbName = `unseeded_${randomUUID().replaceAll('-', '')}`;
+
   const admin = new Client({
     connectionString: `${url.protocol}//${url.username}:${url.password}@${url.host}/postgres`,
   });
+
   await admin.connect();
   await admin.query(`CREATE DATABASE "${dbName}"`);
   unseededAdminClient = admin;
   unseededDbName = dbName;
   const isolatedUrl = new URL(baseUrl);
   isolatedUrl.pathname = `/${dbName}`;
+
   return isolatedUrl.toString();
 }
 
@@ -165,30 +178,38 @@ beforeAll(async () => {
   await seedMinimal(appUnseeded.container, { playerCount: 0 });
 
   const superAdminEmail = `super-admin-${randomUUID()}@e2e.test`;
+
   const { client: superAdminClient, userId: superAdminUserId } = await registerAndMaterializePlayer(
     appMain,
     { email: superAdminEmail },
   );
+
   await assignIamRoleByKey(appMain.container, superAdminUserId, 'super-admin');
   superAdmin = superAdminClient;
 
   const paymentsManagerEmail = `payments-manager-${randomUUID()}@e2e.test`;
+
   const { client: paymentsManagerClient, userId: paymentsManagerUserId } =
     await registerAndMaterializePlayer(appMain, { email: paymentsManagerEmail });
+
   await assignIamRoleByKey(appMain.container, paymentsManagerUserId, 'payments-manager');
   paymentsManager = paymentsManagerClient;
 
   const plainAdminEmail = `plain-admin-${randomUUID()}@e2e.test`;
+
   const { client: plainAdminClient, userId: plainAdminUserId } = await registerAndMaterializePlayer(
     appMain,
     { email: plainAdminEmail },
   );
+
   await assignIamRoleByKey(appMain.container, plainAdminUserId, 'admin');
   plainAdmin = plainAdminClient;
 
   const bootstrapAdminEmail = `bootstrap-admin-${randomUUID()}@e2e.test`;
+
   const { client: bootstrapAdminClient, userId: bootstrapAdminUserId } =
     await registerAndMaterializePlayer(appMain, { email: bootstrapAdminEmail });
+
   await setStaticRole(appMain.container, bootstrapAdminUserId, 'admin');
   bootstrapAdmin = bootstrapAdminClient;
 }, 60_000);
@@ -197,6 +218,7 @@ afterAll(async () => {
   await appMain?.close();
   await appUnseeded?.close();
   await db?.dispose();
+
   if (unseededAdminClient) {
     await unseededAdminClient.query(`DROP DATABASE IF EXISTS "${unseededDbName}" WITH (FORCE)`);
     await unseededAdminClient.end();
@@ -213,6 +235,7 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       cryptoThreshold: '1',
       excludeRiskFlags: [],
     });
+
     expect(setRes.status).toBe(200);
   });
 
@@ -225,6 +248,7 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       cryptoThreshold: '1',
       excludeRiskFlags: [],
     });
+
     expect(setRes.status).toBe(403);
   });
 
@@ -237,6 +261,7 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       cryptoThreshold: '1',
       excludeRiskFlags: [],
     });
+
     expect(setRes.status).toBe(403);
   });
 
@@ -249,6 +274,7 @@ describe('authz: auto-withdrawal-config is super-admin only (real DB-backed IAM 
       cryptoThreshold: '1',
       excludeRiskFlags: [],
     });
+
     expect(setRes.status).toBe(200);
   });
 
@@ -265,6 +291,7 @@ describe('validation: threshold input', () => {
       cryptoThreshold: '0',
       excludeRiskFlags: [],
     });
+
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
   });
@@ -275,6 +302,7 @@ describe('validation: threshold input', () => {
       cryptoThreshold: 'not-a-number',
       excludeRiskFlags: [],
     });
+
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
   });
@@ -301,6 +329,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
       cryptoThreshold: '0.01',
       excludeRiskFlags: [],
     });
+
     expect(setRes.status).toBe(200);
     const set = await readJson(setRes);
     expect(set).toMatchObject({
@@ -326,6 +355,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     const configAuditRes = await superAdmin.get(
       '/audit/logs?action=wallet.auto_withdrawal_config.set&limit=1',
     );
+
     const configAudit = await readJson(configAuditRes);
     expect(configAudit.items.length).toBeGreaterThanOrEqual(1);
     expect(configAudit.items[0].after).toMatchObject({
@@ -342,11 +372,13 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
       amount: '500',
       currency: 'USD',
     });
+
     const belowRes = await below.client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '50',
       currency: 'USD',
     });
+
     expect(belowRes.status).toBe(200);
     const belowBody = await readJson(belowRes);
     expect(belowBody.status).toBe('completed');
@@ -359,26 +391,31 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
       amount: '500',
       currency: 'USD',
     });
+
     const aboveRes = await above.client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '150',
       currency: 'USD',
     });
+
     expect(aboveRes.status).toBe(200);
     const aboveBody = await readJson(aboveRes);
     expect(aboveBody.status).toBe('pending');
 
     const pendingListRes = await superAdmin.get('/wallet/withdrawals?status=pending&limit=100');
     const pendingList = await readJson(pendingListRes);
+
     const pendingIds = new Set(
       (pendingList.items as Array<{ transactionId: string }>).map((i) => i.transactionId),
     );
+
     expect(pendingIds.has(aboveBody.transactionId)).toBe(true);
     expect(pendingIds.has(belowBody.transactionId)).toBe(false);
 
     const autoApprovedAuditRes = await superAdmin.get(
       `/audit/logs?resourceId=${belowBody.transactionId}&action=wallet.withdrawal.auto_approved`,
     );
+
     const autoApprovedAudit = await readJson(autoApprovedAuditRes);
     expect(autoApprovedAudit.items.length).toBeGreaterThanOrEqual(1);
     expect(autoApprovedAudit.items[0].actorType).toBe('system');
@@ -406,6 +443,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       cryptoThreshold: '0',
       excludeRiskFlags: [],
     });
+
     const first = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -413,6 +451,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
         currency: 'USD',
       }),
     );
+
     expect(first.status).toBe('pending');
 
     await superAdmin.put('/wallet/auto-withdrawal-config', {
@@ -420,6 +459,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       cryptoThreshold: '0',
       excludeRiskFlags: [],
     });
+
     const second = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -427,6 +467,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
         currency: 'USD',
       }),
     );
+
     expect(second.status).toBe('completed');
 
     await superAdmin.put('/wallet/auto-withdrawal-config', {
@@ -434,6 +475,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
       cryptoThreshold: '0',
       excludeRiskFlags: [],
     });
+
     const third = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -441,6 +483,7 @@ describe('immediate effect: two consecutive config changes in one run', () => {
         currency: 'USD',
       }),
     );
+
     expect(third.status).toBe('pending');
   });
 });
@@ -465,6 +508,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -472,11 +516,13 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('completed');
 
     const auditRes = await superAdmin.get(
       `/audit/logs?resourceId=${res.transactionId}&action=wallet.withdrawal.auto_approved`,
     );
+
     const audit = await readJson(auditRes);
     expect(audit.items[0].after).toMatchObject({ thresholdSource: 'per-player' });
   });
@@ -500,6 +546,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -507,6 +554,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('pending');
   });
 });
@@ -517,6 +565,7 @@ describe('fail-closed: the singleton config row is missing', () => {
       .get(DRIZZLE)
       .db.select()
       .from(walletAutoWithdrawalConfig);
+
     expect(row).toBeUndefined();
 
     const email = `unseeded-${randomUUID()}@e2e.test`;
@@ -534,6 +583,7 @@ describe('fail-closed: the singleton config row is missing', () => {
       amount: '10',
       currency: 'USD',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -570,6 +620,7 @@ describe('fail-closed: the singleton config row is missing', () => {
       cryptoThreshold: '1',
       excludeRiskFlags: [],
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body).toMatchObject({
@@ -581,6 +632,7 @@ describe('fail-closed: the singleton config row is missing', () => {
       .get(DRIZZLE)
       .db.select()
       .from(walletAutoWithdrawalConfig);
+
     expect(row).toMatchObject({
       fiatThreshold: '100.000000000000000000',
       cryptoThreshold: '1.000000000000000000',
@@ -595,6 +647,7 @@ describe('regression spot-check: static platform-config.yaml AutoWithdrawalConfi
       dailyCapAmount: '5000',
       dailyCapCount: 10,
     });
+
     expect(parsed).toMatchObject({
       enabled: true,
       dailyCapAmount: '5000',

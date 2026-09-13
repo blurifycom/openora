@@ -127,9 +127,11 @@ export class SwapService {
     await this.rateLimit(userId);
     this.assertPair(input.fromCurrency, input.toCurrency);
     const quote = await this.adapter.getQuote(input);
+
     if (!quote) {
       throw new SwapPairUnsupportedError(input.fromCurrency, input.toCurrency);
     }
+
     return quote;
   }
 
@@ -161,8 +163,10 @@ export class SwapService {
       );
 
       const existing = await this.findByIdempotencyKey(txn, current.id, idempotencyKey);
+
       if (existing) {
         this.assertReplayMatches(existing, fromAmount, fromCurrency);
+
         return { row: existing, replayed: true };
       }
 
@@ -189,7 +193,9 @@ export class SwapService {
           await this.findByIdempotencyKeyRows(txn, current.id, idempotencyKey),
           new IdempotencyKeyReuseError(),
         );
+
         this.assertReplayMatches(winner, fromAmount, fromCurrency);
+
         return { row: winner, replayed: true };
       }
 
@@ -198,14 +204,17 @@ export class SwapService {
       // but a debit that did not land means rollover held it, and telling the player
       // "insufficient balance" against a balance they can see would be a lie.
       const debited = await debitWithdrawableBalance(txn, current.id, fromCurrency, fromAmount);
+
       if (debited.length !== 1) {
         const [available, locked] = await Promise.all([
           readWalletBalance(txn, current.id, fromCurrency),
           readLockedBonusAmount(txn, current.id, fromCurrency),
         ]);
+
         if (moneyToNumber(available) < moneyToNumber(fromAmount)) {
           throw new InsufficientBalanceError(available, fromAmount);
         }
+
         throw new BonusRolloverLockedError(locked);
       }
 
@@ -219,6 +228,7 @@ export class SwapService {
     // Phase two, outside the transaction. The out-leg's id is the idempotency key the
     // vendor must dedupe on, so a retried execute returns the original trade.
     let execution;
+
     try {
       execution = await this.adapter.execute({
         quoteId,
@@ -235,6 +245,7 @@ export class SwapService {
 
     if (execution.status === 'failed') {
       await this.refund(row, execution.externalId);
+
       return { transactionId: row.id, status: 'failed', toAmount: null };
     }
 
@@ -243,6 +254,7 @@ export class SwapService {
         .update(walletTransaction)
         .set({ providerRefId: execution.externalId })
         .where(eq(walletTransaction.id, row.id));
+
       return { transactionId: row.id, status: 'processing', toAmount: null };
     }
 
@@ -255,20 +267,26 @@ export class SwapService {
       .select()
       .from(walletTransaction)
       .where(eq(walletTransaction.providerRefId, event.externalId));
+
     if (!row || row.type !== 'swap_out') {
       logger.warn(
         { externalId: event.externalId },
         'swap webhook: no matching swap for externalId',
       );
+
       return;
     }
+
     if (row.status !== 'processing') {
       return;
     }
+
     if (event.status === 'completed') {
       await this.settle(row, event.externalId, event.toAmount);
+
       return;
     }
+
     if (event.status === 'failed') {
       await this.refund(row, event.externalId);
     }
@@ -285,6 +303,7 @@ export class SwapService {
     if (toAmount === undefined || Number(toAmount) <= 0) {
       throw new SwapFillAmountMissingError(externalId);
     }
+
     const toCurrency = this.toCurrencyOf(out);
 
     const settled = await this.drizzle.db.transaction(async (txn) => {
@@ -293,6 +312,7 @@ export class SwapService {
         .set({ status: 'completed', providerRefId: externalId })
         .where(and(eq(walletTransaction.id, out.id), eq(walletTransaction.status, 'processing')))
         .returning({ id: walletTransaction.id });
+
       if (flipped.length === 0) {
         return false;
       }
@@ -310,6 +330,7 @@ export class SwapService {
         // belongs to the out-leg. The in-leg points back at its own pair instead.
         metadata: JSON.stringify({ swapTransactionId: out.id, externalId }),
       });
+
       return true;
     });
 
@@ -339,9 +360,11 @@ export class SwapService {
         .set({ status: 'failed', ...(externalId ? { providerRefId: externalId } : {}) })
         .where(and(eq(walletTransaction.id, out.id), eq(walletTransaction.status, 'processing')))
         .returning({ id: walletTransaction.id });
+
       if (flipped.length === 0) {
         return;
       }
+
       await creditWalletBalance(txn, out.walletId, out.currency, out.amount);
     });
   }
@@ -350,6 +373,7 @@ export class SwapService {
     if (balanceKey(fromCurrency) === balanceKey(toCurrency)) {
       throw new SwapPairUnsupportedError(fromCurrency, toCurrency);
     }
+
     if (this.adapter.supportsPair && !this.adapter.supportsPair(fromCurrency, toCurrency)) {
       throw new SwapPairUnsupportedError(fromCurrency, toCurrency);
     }
@@ -362,9 +386,11 @@ export class SwapService {
     const parsed = SwapLegMetadataSchema.safeParse(
       out.metadata ? (JSON.parse(out.metadata) as unknown) : null,
     );
+
     if (!parsed.success) {
       throw new Error(`wallet swap: transaction ${out.id} has no target currency recorded`);
     }
+
     return parsed.data.toCurrency;
   }
 
@@ -392,6 +418,7 @@ export class SwapService {
     idempotencyKey: NonNullable<WalletTransaction['idempotencyKey']>,
   ): Promise<WalletTransaction | undefined> {
     const [row] = await this.findByIdempotencyKeyRows(txn, walletId, idempotencyKey);
+
     return row;
   }
 
@@ -416,9 +443,11 @@ export class SwapService {
       .select({ userId: wallet.userId })
       .from(wallet)
       .where(eq(wallet.id, walletId));
+
     if (!row) {
       throw new WalletNotFoundError(walletId);
     }
+
     return row.userId;
   }
 

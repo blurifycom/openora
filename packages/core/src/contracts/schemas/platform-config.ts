@@ -210,6 +210,7 @@ export const HostAllowlistEntrySchema = z
     (hostname) => {
       try {
         const url = new URL(`https://${hostname}`);
+
         return (
           url.hostname === hostname.toLowerCase() &&
           url.pathname === '/' &&
@@ -245,6 +246,7 @@ export const ChatConfigSchema = z
       .optional(),
   })
   .strict();
+
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
 
 export const AdminSecurityConfigSchema = z
@@ -297,6 +299,7 @@ export const CmsConfigSchema = z
     allowedBannerImageHosts: z.array(HostAllowlistEntrySchema).default([]),
   })
   .strict();
+
 export type CmsConfig = z.infer<typeof CmsConfigSchema>;
 
 export const PlatformConfigSchema = z
@@ -365,6 +368,7 @@ export const PlatformConfigSchema = z
   });
 
 export type PlatformConfig = z.infer<typeof PlatformConfigSchema>;
+
 export type PlatformConfigInput = z.input<typeof PlatformConfigSchema>;
 
 /**
@@ -373,12 +377,15 @@ export type PlatformConfigInput = z.input<typeof PlatformConfigSchema>;
  */
 export function definePlatformConfig(config: PlatformConfigInput): PlatformConfig {
   const result = PlatformConfigSchema.safeParse(config);
+
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('\n');
+
     throw new Error(`Invalid platform config:\n${issues}`);
   }
+
   return result.data;
 }
 

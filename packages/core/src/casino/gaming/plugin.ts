@@ -27,6 +27,7 @@ export default {
 
     // One memoized instance backs both the router and the GAMING_COMMANDS port.
     let svc: GamingService | null = null;
+
     const gamingService = (c: TypedContainer<CoreTokenCatalog>) =>
       (svc ??= new GamingService(
         c.get(DRIZZLE),

@@ -7,6 +7,7 @@ import { AppError } from '../errors.base.js';
 const pgError = (code: string) => {
   const err = new DatabaseError('driver text', 0, 'error');
   err.code = code;
+
   return err;
 };
 
@@ -29,8 +30,10 @@ describe('mapDbError', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(AppError);
       expect((err as AppError).meta).toEqual({ code: '40001' });
+
       return;
     }
+
     throw new Error('expected mapDbError to throw');
   });
 
@@ -41,12 +44,15 @@ describe('mapDbError', () => {
 
   it('rethrows a domain error untouched so a service guard is not reclassified', () => {
     const domain = new ConflictError('tag key already in use');
+
     try {
       mapDbError(domain);
     } catch (err) {
       expect(err).toBe(domain);
+
       return;
     }
+
     throw new Error('expected mapDbError to throw');
   });
 
@@ -55,8 +61,10 @@ describe('mapDbError', () => {
       mapDbError('connection terminated');
     } catch (err) {
       expect(err).toBe('connection terminated');
+
       return;
     }
+
     throw new Error('expected mapDbError to throw');
   });
 });

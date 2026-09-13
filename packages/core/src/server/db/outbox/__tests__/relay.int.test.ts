@@ -20,6 +20,7 @@ async function seedRow(overrides: Partial<typeof eventOutbox.$inferInsert> = {})
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -35,6 +36,7 @@ function brokerThat(onPublish?: (envelope: EventEnvelope) => void): MessageBroke
 
 async function rowsById() {
   const rows = await db.drizzle.db.select().from(eventOutbox);
+
   return new Map(rows.map((r) => [r.eventId, r]));
 }
 
@@ -56,6 +58,7 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
       topic: 'wallet.deposit.completed',
       occurredAt: new Date('2026-01-01T00:00:00.000Z'),
     });
+
     await seedRow({
       topic: 'wallet.withdrawal.completed',
       occurredAt: new Date('2026-01-01T00:00:01.000Z'),
@@ -88,6 +91,7 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
 
   it('leaves the row pending when broker.publish throws', async () => {
     const row = await seedRow();
+
     const broker: MessageBrokerAdapter = {
       publish: vi.fn(async () => {
         throw new Error('broker unreachable');
@@ -95,6 +99,7 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
       subscribe: () => () => {},
       close: async () => {},
     };
+
     const relay = new OutboxRelay(db.drizzle.db, broker);
 
     await expect(relay.drainOnce()).rejects.toThrow('broker unreachable');
@@ -103,6 +108,7 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
       .select()
       .from(eventOutbox)
       .where(eq(eventOutbox.eventId, row.eventId));
+
     expect(after?.publishedAt).toBeNull();
   });
 
@@ -110,11 +116,13 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
     const a = await seedRow({ occurredAt: new Date('2026-01-01T00:00:00.000Z') });
     const b = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z') });
     const c = await seedRow({ occurredAt: new Date('2026-01-01T00:00:02.000Z') });
+
     const broker = brokerThat((envelope) => {
       if (envelope.eventId === b.eventId) {
         throw new Error('broker unreachable');
       }
     });
+
     const relay = new OutboxRelay(db.drizzle.db, broker);
 
     await expect(relay.drainOnce()).rejects.toThrow('broker unreachable');
@@ -139,9 +147,11 @@ describe('OutboxRelay.drainOnce (real PG)', () => {
 
 function deferred() {
   let resolve = () => {};
+
   const promise = new Promise<void>((r) => {
     resolve = r;
   });
+
   return { promise, resolve: () => resolve() };
 }
 
@@ -151,6 +161,7 @@ describe('OutboxRelay poll loop (real PG)', () => {
     const relay = new OutboxRelay(db.drizzle.db, brokerThat(), { intervalMs: 10 });
 
     relay.start();
+
     try {
       await vi.waitFor(async () => {
         expect((await rowsById()).get(row.eventId)?.publishedAt).not.toBeNull();
@@ -163,20 +174,24 @@ describe('OutboxRelay poll loop (real PG)', () => {
   it('reports a failing drain to onError and keeps polling', async () => {
     await seedRow();
     const errors: unknown[] = [];
+
     const broker = brokerThat(() => {
       throw new Error('broker unreachable');
     });
+
     const relay = new OutboxRelay(db.drizzle.db, broker, {
       intervalMs: 10,
       onError: (err) => errors.push(err),
     });
 
     relay.start();
+
     try {
       await vi.waitFor(() => expect(errors.length).toBeGreaterThan(1));
     } finally {
       await relay.stop();
     }
+
     expect(errors[0]).toMatchObject({ message: 'broker unreachable' });
   });
 
@@ -184,6 +199,7 @@ describe('OutboxRelay poll loop (real PG)', () => {
     await seedRow();
     const publishStarted = deferred();
     const releasePublish = deferred();
+
     const broker: MessageBrokerAdapter = {
       publish: vi.fn(async () => {
         publishStarted.resolve();
@@ -192,15 +208,18 @@ describe('OutboxRelay poll loop (real PG)', () => {
       subscribe: () => () => {},
       close: async () => {},
     };
+
     const relay = new OutboxRelay(db.drizzle.db, broker, { intervalMs: 10 });
 
     relay.start();
     await publishStarted.promise;
 
     let stopped = false;
+
     const stopping = relay.stop().then(() => {
       stopped = true;
     });
+
     await new Promise((r) => setTimeout(r, 50));
     expect(stopped).toBe(false);
 

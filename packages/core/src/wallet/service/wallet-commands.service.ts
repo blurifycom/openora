@@ -99,23 +99,28 @@ export class WalletCommandsService implements WalletCommands {
 
     if (!providerRef) {
       const [inserted] = await insertQuery.returning();
+
       if (!inserted) {
         throw new Error('wallet ledger row: insert returned no row');
       }
+
       return { row: inserted, replayed: false };
     }
 
     const [inserted] = await insertQuery.onConflictDoNothing().returning();
+
     if (inserted) {
       return { row: inserted, replayed: false };
     }
 
     const existing = await this.findByProviderRef(txn, providerRef);
+
     if (!existing) {
       throw new Error(
         `wallet ledger row: idempotency conflict but no row found (provider=${providerRef.providerName} ref=${providerRef.providerRefId})`,
       );
     }
+
     return { row: existing, replayed: true };
   }
 
@@ -127,6 +132,7 @@ export class WalletCommandsService implements WalletCommands {
       .select()
       .from(walletTransaction)
       .where(providerRefCondition(providerRef.providerName, providerRef.providerRefId));
+
     return row;
   }
 
@@ -146,6 +152,7 @@ export class WalletCommandsService implements WalletCommands {
     }
 
     const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update');
+
     if (!row) {
       return { ok: false, available: '0' };
     }
@@ -157,6 +164,7 @@ export class WalletCommandsService implements WalletCommands {
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
+
       return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
@@ -173,6 +181,7 @@ export class WalletCommandsService implements WalletCommands {
         amount,
         currency ?? row.currency,
       );
+
       if (!decision.allowed) {
         throw new RgLimitExceededError('wager_limit_exceeded', decision);
       }
@@ -184,7 +193,9 @@ export class WalletCommandsService implements WalletCommands {
       type === 'bet'
         ? await debitWalletBalance(txn, row.id, debitCurrency, amount)
         : await debitWithdrawableBalance(txn, row.id, debitCurrency, amount);
+
     const newBalance = debited[0]?.amount;
+
     if (newBalance === undefined) {
       return { ok: false, available };
     }
@@ -197,6 +208,7 @@ export class WalletCommandsService implements WalletCommands {
         currency: debitCurrency,
         amount,
       });
+
       return { ok: true, newBalance, currency: debitCurrency, completedBonusCredits };
     }
 
@@ -224,9 +236,11 @@ export class WalletCommandsService implements WalletCommands {
     const row = allowNewWallet
       ? await this.resolveOrOpenWallet(txn, userId, currency)
       : (await txn.select().from(wallet).where(eq(wallet.userId, userId)))[0];
+
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
+
     if (!allowNewCurrency && balanceKey(row.currency) !== balanceKey(currency)) {
       return { ok: false, reason: 'currency mismatch' };
     }
@@ -243,12 +257,15 @@ export class WalletCommandsService implements WalletCommands {
       'credit',
       providerRef,
     );
+
     if (replayed) {
       const currentBalance = await readWalletBalance(txn, row.id, balanceKey(currency));
+
       return { ok: true, newBalance: currentBalance };
     }
 
     const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
+
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
@@ -272,18 +289,23 @@ export class WalletCommandsService implements WalletCommands {
     currency: string,
   ): Promise<Wallet | undefined> {
     const [existing] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+
     if (existing) {
       return existing;
     }
+
     const [created] = await txn
       .insert(wallet)
       .values({ userId, currency: balanceKey(currency) })
       .onConflictDoNothing()
       .returning();
+
     if (created) {
       return created;
     }
+
     const [raced] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+
     return raced;
   }
 
@@ -292,6 +314,7 @@ export class WalletCommandsService implements WalletCommands {
       .select({ multiplier: walletBonusRolloverConfig.multiplier })
       .from(walletBonusRolloverConfig)
       .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+
     return row?.multiplier ?? DEFAULT_ROLLOVER_MULTIPLIER;
   }
 
@@ -327,6 +350,7 @@ export class WalletCommandsService implements WalletCommands {
         status: 'active',
       })
       .returning();
+
     if (!creditRow) {
       throw new Error('wallet bonus credit: no row');
     }

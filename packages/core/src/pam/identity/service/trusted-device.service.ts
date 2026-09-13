@@ -47,9 +47,11 @@ export class TrustedDeviceService {
     if (this.trustedDeviceDays <= 0) {
       return null;
     }
+
     const hash = deviceHash(meta.userAgent);
     const { label } = describeDevice(meta.userAgent);
     const expiresAt = trustedDeviceExpiry(this.trustedDeviceDays);
+
     const [row] = await this.drizzle.db
       .insert(adminTrustedDevice)
       .values({
@@ -77,6 +79,7 @@ export class TrustedDeviceService {
     if (!row) {
       return null;
     }
+
     this.events.emit('identity.trusted_device.added', {
       userId,
       deviceId: row.id,
@@ -85,6 +88,7 @@ export class TrustedDeviceService {
       ip: meta.ip ?? null,
       userAgent: meta.userAgent ?? null,
     });
+
     return row;
   }
 
@@ -94,11 +98,13 @@ export class TrustedDeviceService {
       .from(adminTrustedDevice)
       .where(this.activeDeviceWhere(userId, deviceHash(userAgent)))
       .limit(1);
+
     return row !== undefined;
   }
 
   async list(userId: User['id'], currentUserAgent: string | null): Promise<TrustedDeviceItem[]> {
     const currentHash = deviceHash(currentUserAgent);
+
     const rows = await this.drizzle.db
       .select()
       .from(adminTrustedDevice)
@@ -107,6 +113,7 @@ export class TrustedDeviceService {
 
     return rows.map((row): TrustedDeviceItem => {
       const { browser, os } = describeDevice(row.userAgent);
+
       return {
         id: row.id,
         label: row.label,
@@ -139,6 +146,7 @@ export class TrustedDeviceService {
       .returning({ id: adminTrustedDevice.id, userAgent: adminTrustedDevice.userAgent });
 
     const [row] = revoked;
+
     if (!row) {
       throw new TrustedDeviceNotFoundError(deviceId);
     }
@@ -150,6 +158,7 @@ export class TrustedDeviceService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true, userAgent: row.userAgent };
   }
 

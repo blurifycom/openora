@@ -5,11 +5,13 @@ import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/
 import type { EventEnvelope } from '@openora/core/contracts';
 
 let redis: TestRedis;
+
 const brokers: RedisStreamsBroker[] = [];
 
 function makeBroker(serviceName: string): RedisStreamsBroker {
   const broker = new RedisStreamsBroker(redis.client, { serviceName });
   brokers.push(broker);
+
   return broker;
 }
 
@@ -129,9 +131,11 @@ describe('RedisStreamsBroker', () => {
     const topic = uniqueTopic();
     const seen1: EventEnvelope[] = [];
     const seen2: EventEnvelope[] = [];
+
     const unsubscribe1 = broker.subscribe(topic, (e) => {
       seen1.push(e);
     });
+
     broker.subscribe(topic, (e) => {
       seen2.push(e);
     });

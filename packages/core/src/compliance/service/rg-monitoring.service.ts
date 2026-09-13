@@ -47,6 +47,7 @@ export const RG_EVAL_TRIGGERS = [
   'rg.exclusion.login_blocked',
   'rg.limit.set',
 ] as const;
+
 export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
 const SESSION_LIMIT = { type: 'session', period: 'session' } as const;
@@ -74,6 +75,7 @@ export class RgMonitoringService {
 
   async evaluateUser(userId: User['id'], trigger: RgEvalTrigger) {
     const now = new Date();
+
     if (trigger === 'rg.exclusion.login_blocked') {
       // Label the flag with the exclusion kind so dashboards distinguish a cooling-off
       // login attempt from a self-exclusion one.
@@ -87,12 +89,16 @@ export class RgMonitoringService {
             or(eq(rgExclusion.kind, 'self_exclusion'), gt(rgExclusion.expiresAt, now)),
           ),
         );
+
       const kind = active.some((e) => e.kind === 'self_exclusion')
         ? 'self_exclusion'
         : (active[0]?.kind ?? null);
+
       await this.raiseFlag(userId, 'self_excluded_login', null, { trigger, kind });
+
       return;
     }
+
     const limits = await this.drizzle.db
       .select()
       .from(userLimit)
@@ -103,9 +109,11 @@ export class RgMonitoringService {
       if (limit.period === 'session' || limit.type === 'session' || limit.amount === null) {
         continue;
       }
+
       const limitAmount = limit.amount;
       const { from } = periodWindow(limit.period as LimitPeriod, now);
       let actualAmount: string;
+
       try {
         const limitCurrency = (await resolveLimitCurrency(this.drizzle, limit)).currency;
         actualAmount = await this.spendFor(
@@ -123,12 +131,14 @@ export class RgMonitoringService {
         ) {
           throw err;
         }
+
         logger.warn(
           { err, userId, limitType: limit.type },
           'RG flag evaluation skipped: rate or currency missing',
         );
         continue;
       }
+
       // Threshold comparison is a review-flag decision, not a ledger write - moneyToNumber
       // is the documented single conversion point (see the helper's own doc comment).
       if (isAtThreshold(moneyToNumber(actualAmount), moneyToNumber(limitAmount))) {
@@ -149,6 +159,7 @@ export class RgMonitoringService {
   // flags for players who have since ended or rolled over their session.
   async sweep() {
     const now = new Date();
+
     const sessionLimits = await this.drizzle.db
       .select()
       .from(userLimit)
@@ -157,6 +168,7 @@ export class RgMonitoringService {
       );
 
     const userIds = sessionLimits.map((l) => l.userId);
+
     const activeSessions = userIds.length
       ? await this.drizzle.db
           .select({ userId: session.userId, createdAt: session.createdAt })
@@ -165,8 +177,10 @@ export class RgMonitoringService {
       : [];
 
     const earliestByUser = new Map<User['id'], Date>();
+
     for (const s of activeSessions) {
       const current = earliestByUser.get(s.userId);
+
       if (!current || s.createdAt < current) {
         earliestByUser.set(s.userId, s.createdAt);
       }
@@ -185,16 +199,20 @@ export class RgMonitoringService {
           pct: thresholdPct(elapsedMinutes, limitMinutes),
         });
       }
+
       return this.clearFlag(limit.userId, 'session_time', null);
     });
   }
 
   async listFlags(filters: ListRgFlagsInput) {
     const db = this.drizzle.db;
+
     const { page, limit, flagType, limitType, status, fromDate, toDate, sortBy, sortOrder } =
       filters;
+
     const offset = pageToOffset(page, limit);
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const RG_SORT_COLS = {
       flaggedAt: rgFlag.flaggedAt,
       limitType: rgFlag.limitType,
@@ -205,21 +223,27 @@ export class RgMonitoringService {
     } as const;
 
     const conditions: SQL[] = [];
+
     if (flagType) {
       conditions.push(eq(rgFlag.flagType, flagType));
     }
+
     if (limitType) {
       conditions.push(eq(rgFlag.limitType, limitType));
     }
+
     if (status) {
       conditions.push(eq(rgFlag.status, status));
     }
+
     if (fromDate) {
       conditions.push(gte(rgFlag.flaggedAt, new Date(fromDate)));
     }
+
     if (toDate) {
       conditions.push(lte(rgFlag.flaggedAt, new Date(toDate)));
     }
+
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [rows, countResult] = await Promise.all([
@@ -239,6 +263,7 @@ export class RgMonitoringService {
     const summaries = this.directory
       ? await this.directory.lookupPlayers(rows.map((r) => r.userId))
       : [];
+
     const byId = new Map(summaries.map((s) => [s.userId, s]));
 
     const items: RgFlagListItem[] = rows.map((r) => ({
@@ -279,6 +304,7 @@ export class RgMonitoringService {
         limitCurrency,
       );
     }
+
     if (type === 'loss') {
       return this.convertedTotal(
         await this.netLossByCurrency(db, userId, from),
@@ -287,6 +313,7 @@ export class RgMonitoringService {
         limitCurrency,
       );
     }
+
     return this.convertedTotal(
       await this.betsByCurrency(db, userId, from),
       type,
@@ -302,17 +329,22 @@ export class RgMonitoringService {
     limitCurrency: string,
   ): Promise<string> {
     let total = '0';
+
     for (const group of groups) {
       if (group.currency === limitCurrency) {
         total = moneyAdd(total, group.total);
         continue;
       }
+
       const converted = await this.rates.convert(group.total, group.currency, limitCurrency);
+
       if (converted === null) {
         throw new RgRateUnavailableError(type, period, group.currency, limitCurrency);
       }
+
       total = moneyAdd(total, converted);
     }
+
     return total;
   }
 
@@ -389,8 +421,10 @@ export class RgMonitoringService {
 
     if (existing) {
       await this.drizzle.db.update(rgFlag).set({ detail }).where(eq(rgFlag.id, existing.id));
+
       return;
     }
+
     await this.drizzle.db.insert(rgFlag).values({ userId, flagType, limitType, detail });
   }
 

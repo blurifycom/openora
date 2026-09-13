@@ -21,7 +21,9 @@ import {
 } from '@openora/core/pam/contracts/tag';
 
 const EVAL_CHUNK_SIZE = 100;
+
 const MULTI_ACCOUNT_REASON = 'identity signal matched another player account';
+
 const BONUS_ABUSER_REASON = 'multi-account risk rule matched';
 
 function isPendingKycStatus(status: KycStatus): boolean {
@@ -55,14 +57,17 @@ export class TagEvaluationService {
   private async getEnabledRule(tagKey: TagKey): Promise<TagRule | null> {
     try {
       const rule = await this.rule.getTagRule(tagKey);
+
       if (!rule.isEnabled) {
         return null;
       }
+
       return rule;
     } catch (e) {
       if (e instanceof TagRuleNotFoundError) {
         return null;
       }
+
       throw e;
     }
   }
@@ -76,9 +81,11 @@ export class TagEvaluationService {
   }) {
     const { userId, tagKey, reason, assignMetadata } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+
     if (!playerId) {
       return;
     }
+
     try {
       await this.tag.assignPlayerTag({
         playerId,
@@ -92,6 +99,7 @@ export class TagEvaluationService {
       if (e instanceof TagAlreadyInUseError) {
         return;
       }
+
       throw e;
     }
   }
@@ -100,9 +108,11 @@ export class TagEvaluationService {
   private async tryRemoveTag(args: { userId: User['id']; tagKey: TagKey; reason: string }) {
     const { userId, tagKey, reason } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+
     if (!playerId) {
       return;
     }
+
     try {
       await this.tag.removePlayerTag({
         playerId,
@@ -115,6 +125,7 @@ export class TagEvaluationService {
       if (e instanceof TagAssignmentNotFoundError) {
         return;
       }
+
       throw e;
     }
   }
@@ -125,9 +136,11 @@ export class TagEvaluationService {
    */
   async onDepositCompleted(payload: unknown) {
     const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId, amount } = parsed.data;
 
     const [highRoller, largeDepositor] = await Promise.all([
@@ -151,6 +164,7 @@ export class TagEvaluationService {
 
     if (highRoller && highRoller.threshold !== null) {
       const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
+
       if (moneyToNumber(lifetimeDeposit) >= moneyToNumber(highRoller.threshold)) {
         await this.tryAssignTag({
           userId,
@@ -170,9 +184,11 @@ export class TagEvaluationService {
   /** True when the withdrawal_review rule is enabled and amount crosses its threshold. Shared by the event path and the synchronous command-port path below so both stay in lockstep. */
   private async _withdrawalReviewThresholdCrossed(amount: string): Promise<boolean> {
     const rule = await this.getEnabledRule('withdrawal_review');
+
     if (!rule || rule.threshold === null) {
       return false;
     }
+
     return moneyToNumber(amount) >= moneyToNumber(rule.threshold);
   }
 
@@ -187,6 +203,7 @@ export class TagEvaluationService {
    */
   async onWithdrawalRequested(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.requested'].parse(payload);
+
     if (await this._withdrawalReviewThresholdCrossed(amount)) {
       await this.tryAssignTag({
         userId,
@@ -212,14 +229,19 @@ export class TagEvaluationService {
     args: { userId: User['id']; amount: string },
   ): Promise<void> {
     const { userId, amount } = args;
+
     if (!(await this._withdrawalReviewThresholdCrossed(amount))) {
       return;
     }
+
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+
     if (!playerId) {
       return;
     }
+
     const trx = tx as DrizzleTx;
+
     try {
       await this.tag.assignPlayerTagInTx(trx, {
         playerId,
@@ -232,6 +254,7 @@ export class TagEvaluationService {
       if (e instanceof TagAlreadyInUseError) {
         return;
       }
+
       throw e;
     }
 
@@ -240,11 +263,14 @@ export class TagEvaluationService {
 
   private async evaluateBasicKycNeededOnDeposit(userId: User['id']) {
     const rule = await this.getEnabledRule('basic_kyc_needed');
+
     if (!rule) {
       return;
     }
+
     const [summary] = await this.adminUserDirectory.lookupPlayers([userId]);
     const status = summary?.kycStatus ? normalizeKycStatus(summary.kycStatus) : null;
+
     if (status === 'not_started' || status === 'rejected') {
       await this.tryAssignTag({
         userId,
@@ -265,12 +291,15 @@ export class TagEvaluationService {
    */
   async onWithdrawalCompleted(payload: unknown) {
     const parsed = domainEventSchemas['wallet.withdrawal.completed'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId, amount } = parsed.data;
 
     const rule = await this.getEnabledRule('high_risk');
+
     if (!rule) {
       return;
     }
@@ -281,8 +310,10 @@ export class TagEvaluationService {
         : null;
 
     let countBreach: HighRiskCountBreachDetail | null = null;
+
     if (rule.thresholdDays !== null && rule.thresholdCount !== null) {
       const count = await this.walletReader.getWithdrawalCountInWindow(userId, rule.thresholdDays);
+
       if (count >= rule.thresholdCount) {
         countBreach = {
           count,
@@ -309,9 +340,11 @@ export class TagEvaluationService {
    */
   async onUserLogin(payload: unknown) {
     const parsed = domainEventSchemas['identity.user.login'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId, ip } = parsed.data;
     await this.onAuthenticatedLogin({ userId, ip });
   }
@@ -334,6 +367,7 @@ export class TagEvaluationService {
 
   private async evaluateSharedLoginIp(userId: User['id'], ip?: string | null) {
     const normalizedIp = ip?.trim();
+
     if (!normalizedIp) {
       return;
     }
@@ -342,6 +376,7 @@ export class TagEvaluationService {
       this.getEnabledRule('multi_account'),
       this.getEnabledRule('bonus_abuser'),
     ]);
+
     if (!multiAccountRule && !bonusAbuserRule) {
       return;
     }
@@ -350,6 +385,7 @@ export class TagEvaluationService {
       userId,
       normalizedIp,
     );
+
     if (linkedUserIds.length === 0) {
       return;
     }
@@ -363,6 +399,7 @@ export class TagEvaluationService {
           reason: MULTI_ACCOUNT_REASON,
         });
       }
+
       if (bonusAbuserRule) {
         await this.tryAssignTag({
           userId: linkedUserId,
@@ -381,24 +418,32 @@ export class TagEvaluationService {
    */
   async onKycSubmitted(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.submitted'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId, tier } = parsed.data;
     // Each tier clears only its own *_kyc_needed tag - completing one tier says nothing
     // about the other's state.
     await this.removeKycNeededTag(userId, tier, 'kyc resubmitted');
+
     if (tier !== 'basic') {
       return;
     }
+
     const rule = await this.getEnabledRule('kyc_pending');
+
     if (!rule) {
       return;
     }
+
     const status = await this.identityReader.getPlayerKycStatusByUserId(userId);
+
     if (!status || !isPendingKycStatus(status)) {
       return;
     }
+
     await this.tryAssignTag({
       userId,
       tagKey: 'kyc_pending',
@@ -409,6 +454,7 @@ export class TagEvaluationService {
   private async removeKycNeededTag(userId: User['id'], tier: KycTier, reason: string) {
     const tagKey = tier === 'basic' ? 'basic_kyc_needed' : 'advanced_kyc_needed';
     const rule = await this.getEnabledRule(tagKey);
+
     if (rule) {
       await this.tryRemoveTag({ userId, tagKey, reason });
     }
@@ -416,10 +462,13 @@ export class TagEvaluationService {
 
   private async evaluateBasicKycNeededOnRejection(userId: User['id']) {
     const rule = await this.getEnabledRule('basic_kyc_needed');
+
     if (!rule) {
       return;
     }
+
     const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
+
     if (moneyToNumber(lifetimeDeposit) > 0) {
       await this.tryAssignTag({
         userId,
@@ -447,20 +496,25 @@ export class TagEvaluationService {
    */
   async onKycStatusUpdated(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId, status, tier } = parsed.data;
 
     if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
       // Each tier clears only its own *_kyc_needed tag - an Advanced approval must be
       // able to clear advanced_kyc_needed on its own, same as Basic clears its own.
       await this.removeKycNeededTag(userId, tier, 'kyc approved');
+
       if (tier !== 'basic') {
         return;
       }
+
       await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });
       await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc approved' });
+
       return;
     }
 
@@ -471,6 +525,7 @@ export class TagEvaluationService {
     if (status === 'rejected') {
       await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc rejected' });
       const rule = await this.getEnabledRule('kyc_rejected');
+
       if (rule) {
         await this.tryAssignTag({
           userId,
@@ -478,12 +533,15 @@ export class TagEvaluationService {
           reason: 'kyc verification rejected',
         });
       }
+
       await this.evaluateBasicKycNeededOnRejection(userId);
+
       return;
     }
 
     if (status === 'resubmission_requested') {
       const rule = await this.getEnabledRule('kyc_pending');
+
       if (rule) {
         await this.tryAssignTag({
           userId,
@@ -501,14 +559,18 @@ export class TagEvaluationService {
    */
   async onKycReverifyRequired(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.reverify_required'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId } = parsed.data;
     const rule = await this.getEnabledRule('advanced_kyc_needed');
+
     if (!rule) {
       return;
     }
+
     await this.tryAssignTag({
       userId,
       tagKey: 'advanced_kyc_needed',
@@ -524,14 +586,18 @@ export class TagEvaluationService {
   async onKycHighRiskSignalDetected(payload: unknown) {
     const parsed =
       domainEventSchemas['compliance.kyc.high_risk_signal_detected'].safeParse(payload);
+
     if (!parsed.success) {
       return;
     }
+
     const { userId } = parsed.data;
     const rule = await this.getEnabledRule('high_risk');
+
     if (!rule) {
       return;
     }
+
     await this.tryAssignTag({
       userId,
       tagKey: 'high_risk',
@@ -575,9 +641,11 @@ export class TagEvaluationService {
   async onPlayerLevelChanged(payload: unknown) {
     const { userId, newLevel } = domainEventSchemas['player.level.changed'].parse(payload);
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+
     if (!playerId) {
       return;
     }
+
     try {
       await this.tag.replacePlayerTag({
         playerId,
@@ -591,6 +659,7 @@ export class TagEvaluationService {
       if (e instanceof TagAlreadyInUseError) {
         return;
       }
+
       throw e;
     }
   }
@@ -627,6 +696,7 @@ export class TagEvaluationService {
 
   private async _runInactiveSweep() {
     const rule = await this.getEnabledRule('inactive');
+
     if (!rule || rule.thresholdDays === null) {
       return;
     }
@@ -647,6 +717,7 @@ export class TagEvaluationService {
 
   private async _runDormantHighRollerSweep() {
     const rule = await this.getEnabledRule('dormant_high_roller');
+
     if (!rule || rule.thresholdDays === null) {
       return;
     }
@@ -686,15 +757,19 @@ export class TagEvaluationService {
    */
   private async _runHighRiskResweep() {
     const rule = await this.getEnabledRule('high_risk');
+
     if (!rule || rule.thresholdDays === null || rule.thresholdCount === null) {
       return;
     }
+
     const { thresholdDays, thresholdCount } = rule;
 
     const holders = await this.tag.listActiveHoldersByTagKey('high_risk');
+
     if (holders.length === 0) {
       return;
     }
+
     const holderUserIds = holders.map((h) => h.userId);
     const metadataByUser = new Map(holders.map((h) => [h.userId, h.assignMetadata]));
 
@@ -707,16 +782,20 @@ export class TagEvaluationService {
       : new Map(
           await mapConcurrent(holderUserIds, EVAL_CHUNK_SIZE, async (userId) => {
             const count = await this.walletReader.getWithdrawalCountInWindow(userId, thresholdDays);
+
             return [userId, count] as const;
           }),
         );
 
     await mapConcurrent(holderUserIds, EVAL_CHUNK_SIZE, async (userId) => {
       const metadata = metadataByUser.get(userId) ?? null;
+
       if (!metadata || metadata.amountBreach) {
         return;
       }
+
       const countInWindow = countsByUser.get(userId) ?? 0;
+
       if (countInWindow < thresholdCount) {
         await this.tryRemoveTag({
           userId,

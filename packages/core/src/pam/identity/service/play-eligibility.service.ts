@@ -13,9 +13,11 @@ export class PlayEligibilityService implements PlayEligibilityPort {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (!row) {
       return true;
     }
+
     return isRgBlocked(row);
   }
 }

@@ -37,5 +37,6 @@ export async function fetchIdentityByUserId(drizzle: DrizzleService, userId: Use
     .select({ email: user.email, username: user.username })
     .from(user)
     .where(eq(user.id, userId));
+
   return record ?? null;
 }

@@ -22,9 +22,13 @@ import {
 export * from './constants.js';
 
 export const AdminRoomSortByValues = ['name', 'createdAt'] as const;
+
 export const AdminRoomSortBySchema = z.enum(AdminRoomSortByValues).default('createdAt');
+
 export type AdminRoomSortBy = z.infer<typeof AdminRoomSortBySchema>;
+
 export const ModeratedRoomSortBySchema = z.enum(['name', 'createdAt']).default('name');
+
 export type ModeratedRoomSortBy = z.infer<typeof ModeratedRoomSortBySchema>;
 
 export type SortOrder = z.infer<typeof SortOrderSchema>;
@@ -45,9 +49,11 @@ export const ChatRoomSlugSchema = z
 export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
+
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
 
 export const ChatRoomAssignableRoleSchema = z.enum(CHAT_ROOM_ASSIGNABLE_ROLES);
+
 export type ChatRoomAssignableRole = z.infer<typeof ChatRoomAssignableRoleSchema>;
 
 export const CHAT_ROOM_CATEGORIES = [
@@ -56,7 +62,9 @@ export const CHAT_ROOM_CATEGORIES = [
   'languages',
   'private-channels',
 ] as const;
+
 export const ChatRoomCategorySchema = z.enum(CHAT_ROOM_CATEGORIES);
+
 export type ChatRoomCategory = z.infer<typeof ChatRoomCategorySchema>;
 
 export const ChatRoomSchema = z.object({
@@ -74,6 +82,7 @@ export const ChatRoomSchema = z.object({
   isBanned: z.boolean(),
   bannedUntil: TimestampSchema.nullable(),
 });
+
 export type ChatRoom = z.infer<typeof ChatRoomSchema>;
 
 export const ChatRoomMemberSchema = z.object({
@@ -83,6 +92,7 @@ export const ChatRoomMemberSchema = z.object({
   username: z.string().nullable(),
   isDeletedAccount: z.boolean(),
 });
+
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
 // Payload of the CHAT_MEMBER_ROLE_CHANGED_SIGNAL realtime signal. Deliberately just the
@@ -92,12 +102,14 @@ export const ChatMemberRoleChangedSignalSchema = z.object({
   userId: UuidSchema,
   role: ChatRoomRoleSchema,
 });
+
 export type ChatMemberRoleChangedSignal = z.infer<typeof ChatMemberRoleChangedSignalSchema>;
 
 export const ChatRoomScheduledForDeletionSignalSchema = z.object({
   roomId: UuidSchema,
   scheduledDeletionAt: TimestampSchema.nullable(),
 });
+
 export type ChatRoomScheduledForDeletionSignal = z.infer<
   typeof ChatRoomScheduledForDeletionSignalSchema
 >;
@@ -106,6 +118,7 @@ export type ChatRoomScheduledForDeletionSignal = z.infer<
 // `unknown` because the vocabulary of names is open: a client parses the ones it asked for
 // (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.
 export const ChatSignalSchema = z.object({ name: z.string(), payload: z.unknown() });
+
 export type ChatSignal = z.infer<typeof ChatSignalSchema>;
 
 export const ChatRoomRuleSchema = z.object({
@@ -117,6 +130,7 @@ export const ChatRoomRuleSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type ChatRoomRule = z.infer<typeof ChatRoomRuleSchema>;
 
 export const ChatRoomConfigurationSchema = z.object({
@@ -131,9 +145,11 @@ export const ChatRoomConfigurationSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type ChatRoomConfiguration = z.infer<typeof ChatRoomConfigurationSchema>;
 
 export const ChatRoomAccessStatusSchema = z.enum(['all', 'member', 'owner']);
+
 export type ChatRoomAccessStatus = z.infer<typeof ChatRoomAccessStatusSchema>;
 
 export const ChatRoomUserSchema = z.object({
@@ -146,6 +162,7 @@ export const ChatRoomUserSchema = z.object({
   banExpiresAt: TimestampSchema.nullable(),
   isDeletedAccount: z.boolean(),
 });
+
 export type ChatRoomUser = z.infer<typeof ChatRoomUserSchema>;
 
 export const ChatRoomBanSchema = z.object({
@@ -172,15 +189,18 @@ const UserChatMessageSchema = z.object({
   isDeleted: z.boolean(),
   createdAt: TimestampSchema,
 });
+
 export const ChatMessageSchema = z.discriminatedUnion('type', [
   UserChatMessageSchema,
   SystemChatMessageSchema,
 ]);
+
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
 export const AdminChatMessageDetailSchema = ChatMessageSchema.and(
   z.object({ playerId: UuidSchema.nullable() }),
 );
+
 export type AdminChatMessageDetail = z.infer<typeof AdminChatMessageDetailSchema>;
 
 export const AdminChatMessageSchema = z.object({
@@ -193,6 +213,7 @@ export const AdminChatMessageSchema = z.object({
   attachment: ChatAttachmentSchema.nullable(),
   time: z.string(),
 });
+
 export type AdminChatMessage = z.infer<typeof AdminChatMessageSchema>;
 
 export const BlockedUserSchema = z.object({
@@ -202,7 +223,9 @@ export const BlockedUserSchema = z.object({
 });
 
 export const BLOCKED_USER_SORT_BY_VALUES = ['createdAt'] as const;
+
 export const BlockedUserSortBySchema = z.enum(BLOCKED_USER_SORT_BY_VALUES).default('createdAt');
+
 export type BlockedUserSortBy = z.infer<typeof BlockedUserSortBySchema>;
 
 export const IgnoredUserSchema = z.object({
@@ -212,7 +235,9 @@ export const IgnoredUserSchema = z.object({
 });
 
 export const IGNORED_USER_SORT_BY_VALUES = ['createdAt'] as const;
+
 export const IgnoredUserSortBySchema = z.enum(IGNORED_USER_SORT_BY_VALUES).default('createdAt');
+
 export type IgnoredUserSortBy = z.infer<typeof IgnoredUserSortBySchema>;
 
 // Backoffice-only, site-wide views (distinct from the per-caller BlockedUserSchema/
@@ -240,12 +265,19 @@ export const ChatConnectionGrantSchema = z
   .loose();
 
 export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
+
 export const CHAT_MODERATION_SCOPES = ['__global', '__all_public', '__all'] as const;
+
 export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;
+
 export const ChatModerationScopeSchema = z.enum(CHAT_MODERATION_SCOPE_VALUES);
+
 export type ChatModerationScope = z.infer<typeof ChatModerationScopeSchema>;
+
 export const ChatModerationRoomIdSchema = z.union([UuidSchema, z.enum(CHAT_MODERATION_SCOPES)]);
+
 export type ChatModerationRoomId = z.infer<typeof ChatModerationRoomIdSchema>;
+
 export const ChatModerationEntrySchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -255,6 +287,7 @@ export const ChatModerationEntrySchema = z.object({
   createdAt: TimestampSchema,
   expiresAt: TimestampSchema.nullable(),
 });
+
 export const ChatPlatformBanSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -272,15 +305,20 @@ const AdminModerationInput = z.object({
   roomId: ChatModerationRoomIdSchema,
   durationSeconds: z.number().int().positive().max(31_536_000).nullable().default(null),
 });
+
 const AdminMuteInput = AdminModerationInput.extend({});
 
 const RoomIdInput = z.object({ roomId: UuidSchema });
+
 const RoomRulesInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
+
 const RoomUserInput = z.object({ roomId: UuidSchema, userId: UuidSchema });
+
 const RoomModerationInput = RoomUserInput.extend({
   reason: z.string().trim().min(1).max(500).default(''),
   durationSeconds: z.number().int().positive().max(31_536_000).nullable().default(null),
 });
+
 const ChatJoinCodeSchema = z.string().trim().min(1).max(JOIN_CODE_INPUT_MAX_LENGTH);
 
 function hasContentOrAttachment({

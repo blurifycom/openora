@@ -10,6 +10,7 @@ import { PhoneVerificationService } from '../service/phone-verification.service.
 import { makeEventBus, makeIdentityReader, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 
 const PASSWORD = 'current-password';
+
 const PHONE = '+14155550100';
 
 let db: TestDb;
@@ -23,12 +24,14 @@ const allowLimiter = (): RateLimiterAdapter =>
 function build({ passwordMatches = true }: { passwordMatches?: boolean } = {}) {
   const events = makeEventBus();
   const sms = mock<SmsAdapter>({ sendOtp: vi.fn().mockResolvedValue(undefined) });
+
   const auth = mock<Auth>({
     $context: Promise.resolve({
       password: { verify: vi.fn().mockResolvedValue(passwordMatches) },
     }),
     api: { verifyTOTP: vi.fn().mockResolvedValue(new Response(null, { status: 200 })) },
   });
+
   const svc = new PhoneVerificationService({
     drizzle: db.drizzle,
     events,
@@ -37,6 +40,7 @@ function build({ passwordMatches = true }: { passwordMatches?: boolean } = {}) {
     auth,
     identityReader: makeIdentityReader(),
   });
+
   return { svc, events, sms };
 }
 
@@ -46,12 +50,14 @@ async function seedAuthenticatedUser(overrides: { role?: string; email?: string 
     email: overrides.email ?? 'phone-verification@test.dev',
     ...(overrides.role ? { role: overrides.role } : {}),
   });
+
   await db.drizzle.db.insert(account).values({
     userId: accountUser.id,
     accountId: accountUser.id,
     providerId: 'credential',
     password: 'stored-password-hash',
   });
+
   const [activeSession] = await db.drizzle.db
     .insert(session)
     .values({
@@ -60,6 +66,7 @@ async function seedAuthenticatedUser(overrides: { role?: string; email?: string 
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     })
     .returning({ id: session.id });
+
   return { accountUser, sessionId: activeSession!.id };
 }
 
@@ -126,10 +133,12 @@ describe('PhoneVerificationService (real PG)', () => {
     });
 
     expect(controls).toMatchObject({ phoneNumber: PHONE, phoneVerified: true });
+
     const [updatedUser] = await db.drizzle.db
       .select({ phoneNumber: user.phoneNumber, phoneVerified: user.phoneVerified })
       .from(user)
       .where(eq(user.id, accountUser.id));
+
     expect(updatedUser).toEqual({ phoneNumber: PHONE, phoneVerified: true });
     expect(await db.drizzle.db.select().from(phoneVerificationSession)).toEqual([]);
     expect(events.emit).toHaveBeenCalledWith('identity.phone.verified', {
@@ -147,6 +156,7 @@ describe('PhoneVerificationService (real PG)', () => {
 
   it('does not allow a challenge created in another session to confirm the phone number', async () => {
     const { accountUser, sessionId } = await seedAuthenticatedUser();
+
     const [otherSession] = await db.drizzle.db
       .insert(session)
       .values({
@@ -155,6 +165,7 @@ describe('PhoneVerificationService (real PG)', () => {
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       })
       .returning({ id: session.id });
+
     const { svc, sms } = build();
 
     await svc.request({
@@ -179,6 +190,7 @@ describe('PhoneVerificationService (real PG)', () => {
       .select({ phoneVerified: user.phoneVerified })
       .from(user)
       .where(eq(user.id, accountUser.id));
+
     expect(unchanged?.phoneVerified).toBe(false);
   });
 
@@ -193,6 +205,7 @@ describe('PhoneVerificationService (real PG)', () => {
       providerId: 'credential',
       password: 'stored-password-hash',
     });
+
     const [secondSession] = await db.drizzle.db
       .insert(session)
       .values({
@@ -201,6 +214,7 @@ describe('PhoneVerificationService (real PG)', () => {
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       })
       .returning({ id: session.id });
+
     const { svc, sms } = build();
 
     await svc.request({
@@ -240,6 +254,7 @@ describe('PhoneVerificationService (real PG)', () => {
       .select({ phoneNumber: user.phoneNumber, phoneVerified: user.phoneVerified })
       .from(user)
       .where(eq(user.id, second.id));
+
     expect(unchanged).toEqual({ phoneNumber: null, phoneVerified: false });
   });
   it('keeps counting wrong codes and burns the challenge on the last one', async () => {
@@ -283,6 +298,7 @@ describe('PhoneVerificationService (real PG)', () => {
       role: 'admin',
       email: 'phone-verification-admin@test.dev',
     });
+
     const { svc, sms } = build();
 
     await expect(

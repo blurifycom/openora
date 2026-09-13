@@ -67,6 +67,7 @@ describe('CreateWithdrawalAddressInputSchema network/address cross-check', () =>
       network: 'SEGWIT',
       address: INVALID_BY_NETWORK['SEGWIT'],
     });
+
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.path).toEqual(['address']);
   });
@@ -78,6 +79,7 @@ describe('CreateWithdrawalAddressInputSchema network/address cross-check', () =>
       network: 'ERC20',
       address: `  ${VALID_BY_NETWORK['ERC20']}  `,
     });
+
     expect(result.success).toBe(true);
   });
 });
@@ -91,6 +93,7 @@ describe('WithdrawInputSchema network/destinationAddress cross-check', () => {
       idempotencyKey: '9a2f7c11-0000-4000-8000-00000000a001',
       destinationAddress: INVALID_BY_NETWORK['SEGWIT'],
     });
+
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.path).toEqual(['destinationAddress']);
   });
@@ -102,6 +105,7 @@ describe('WithdrawInputSchema network/destinationAddress cross-check', () => {
       idempotencyKey: '9a2f7c11-0000-4000-8000-00000000a001',
       destinationAddress: 'anything-well-formed-enough',
     });
+
     expect(result.success).toBe(true);
   });
 
@@ -112,6 +116,7 @@ describe('WithdrawInputSchema network/destinationAddress cross-check', () => {
       network: 'SEGWIT',
       idempotencyKey: '9a2f7c11-0000-4000-8000-00000000a001',
     });
+
     expect(result.success).toBe(true);
   });
 });

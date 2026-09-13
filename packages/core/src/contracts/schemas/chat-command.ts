@@ -12,7 +12,9 @@ import {
 } from './chat-command-metadata.js';
 
 export const CHAT_MESSAGE_TYPES = ['user', 'system'] as const;
+
 export const ChatMessageTypeSchema = z.enum(CHAT_MESSAGE_TYPES);
+
 export type ChatMessageType = z.infer<typeof ChatMessageTypeSchema>;
 
 export const CommandMetadataSchema = z.discriminatedUnion('command', [
@@ -25,6 +27,7 @@ export const CommandMetadataSchema = z.discriminatedUnion('command', [
   UnignoreCommandMetadataSchema,
   DonateCommandMetadataSchema,
 ]);
+
 export type CommandMetadata = z.infer<typeof CommandMetadataSchema>;
 
 export const SystemChatMessageSchema = z.object({
@@ -39,10 +42,12 @@ export const SystemChatMessageSchema = z.object({
   isDeleted: z.boolean(),
   createdAt: z.string(),
 });
+
 export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
 
 /** A system-authored chat message carrying structured command metadata. */
 export const CommandChatMessageSchema = SystemChatMessageSchema;
+
 export type CommandChatMessage = SystemChatMessage;
 
 /**
@@ -56,6 +61,7 @@ export const GLOBAL_CHAT_ROOM_ID = '__global';
 export const ChatRoomIdSchema = z
   .union([UuidSchema, z.literal(GLOBAL_CHAT_ROOM_ID)])
   .transform((value) => (value === GLOBAL_CHAT_ROOM_ID ? null : value));
+
 export type ChatRoomIdInput = z.input<typeof ChatRoomIdSchema>;
 
 /**

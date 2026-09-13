@@ -16,7 +16,9 @@ import { WithdrawalPinService } from '../service/withdrawal-pin.service.js';
 import { makeEventBus, makeIdentityReader, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 
 const PASSWORD = 'current-password';
+
 const HMAC_SECRET = 'a'.repeat(32);
+
 const PIN = '1234';
 
 let db: TestDb;
@@ -32,12 +34,14 @@ function build({
   limiter,
 }: { passwordMatches?: boolean; limiter?: RateLimiterAdapter } = {}) {
   const events = makeEventBus();
+
   const auth = mock<Auth>({
     $context: Promise.resolve({
       password: { verify: vi.fn().mockResolvedValue(passwordMatches) },
     }),
     api: { verifyTOTP: vi.fn().mockResolvedValue(new Response(null, { status: 200 })) },
   });
+
   const svc = new WithdrawalPinService({
     drizzle: db.drizzle,
     events,
@@ -46,6 +50,7 @@ function build({
     identityReader: makeIdentityReader(),
     hmacSecret: HMAC_SECRET,
   });
+
   return { svc, events, auth };
 }
 
@@ -60,17 +65,20 @@ async function seedAuthenticatedUser(
       ? { twoFactorEnabled: overrides.twoFactorEnabled }
       : {}),
   });
+
   await db.drizzle.db.insert(account).values({
     userId: accountUser.id,
     accountId: accountUser.id,
     providerId: 'credential',
     password: 'stored-password-hash',
   });
+
   return accountUser;
 }
 
 async function readUser(userId: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+
   return row;
 }
 
@@ -236,6 +244,7 @@ describe('WithdrawalPinService - input validation (unit)', () => {
       confirmPin: '4321',
       currentPassword: 'password123',
     });
+
     expect(result.success).toBe(false);
   });
 });

@@ -43,6 +43,7 @@ type IdentityContainer = TypedContainer<CoreTokenCatalog>;
 
 function adminSecurityConfig(c: IdentityContainer) {
   const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+
   return platformConfig?.adminSecurity ?? AdminSecurityConfigSchema.parse({});
 }
 
@@ -65,6 +66,7 @@ function makeTwoFactorLockout(c: IdentityContainer) {
 
 function makeAdminSecurity(c: IdentityContainer) {
   const identityReader = c.get(IDENTITY_READER);
+
   return new AdminSecurityService({
     drizzle: c.get(DRIZZLE),
     events: c.get(EVENT_BUS),
@@ -93,6 +95,7 @@ export default {
     const resolveAdminSecurity = (c: IdentityContainer) => (adminSecurity ??= makeAdminSecurity(c));
 
     const withdrawalPinHmacSecret = process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ?? '';
+
     if (withdrawalPinHmacSecret.length < MIN_WITHDRAWAL_PIN_SECRET_LENGTH) {
       throw new Error(
         `identity: WITHDRAWAL_PIN_HMAC_SECRET must be at least ${MIN_WITHDRAWAL_PIN_SECRET_LENGTH} characters - the withdrawal PIN is hashed with it`,
@@ -135,6 +138,7 @@ export default {
         events: c.get(EVENT_BUS),
         identityReader: c.get(IDENTITY_READER),
       });
+
       return {
         revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
       };
@@ -145,6 +149,7 @@ export default {
         events: c.get(EVENT_BUS),
         identityReader: c.get(IDENTITY_READER),
       });
+
       return createIdentityRouter(
         new IdentityService({
           drizzle: c.get(DRIZZLE),

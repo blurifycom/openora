@@ -31,6 +31,7 @@ export const ADMIN_USER_SORT_BY_VALUES = [
   'isActive',
   'lastLockoutAt',
 ] as const;
+
 export type AdminUserSortBy = (typeof ADMIN_USER_SORT_BY_VALUES)[number];
 
 export type AdminUserListOptions = {

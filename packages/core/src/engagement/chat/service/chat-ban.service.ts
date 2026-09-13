@@ -40,7 +40,9 @@ export class ChatBanService {
   } & ClientMeta) {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
+
     const concreteRoomId = scope === 'room' ? roomId : null;
+
     if (concreteRoomId || scope === GLOBAL_CHAT_ROOM_ID) {
       const [room] = await this.drizzle.db
         .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
@@ -54,18 +56,23 @@ export class ChatBanService {
           ),
         )
         .limit(1);
+
       if (!room) {
         throw new ChatRoomNotFoundError(concreteRoomId ?? GLOBAL_CHAT_ROOM_ID);
       }
+
       if (!room.isPublic) {
         throw new ChatAdminPrivateRoomModerationError();
       }
     }
+
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+
     const created = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
         const now = new Date();
+
         const [existing] = await t
           .select({ id: chatPlatformBan.id, expiresAt: chatPlatformBan.expiresAt })
           .from(chatPlatformBan)
@@ -80,22 +87,27 @@ export class ChatBanService {
             ),
           )
           .limit(1);
+
         if (existing && (!existing.expiresAt || existing.expiresAt > now)) {
           return existing;
         }
+
         if (existing) {
           await t
             .update(chatPlatformBan)
             .set({ liftedAt: now, liftedBy: actorId })
             .where(eq(chatPlatformBan.id, existing.id));
         }
+
         const [inserted] = await t
           .insert(chatPlatformBan)
           .values({ userId, bannedBy: actorId, roomId: concreteRoomId, scope, reason, expiresAt })
           .returning();
+
         return inserted;
       }),
     );
+
     await this.audit.record({
       actorId,
       actorType: 'admin',
@@ -106,6 +118,7 @@ export class ChatBanService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     if (concreteRoomId) {
       await this.transport?.revokeUserFromChannel?.(userId, `chat:room:${concreteRoomId}`);
     } else if (scope === '__global') {
@@ -115,6 +128,7 @@ export class ChatBanService {
         .select({ id: chatRoom.id })
         .from(chatRoom)
         .where(and(eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)));
+
       await Promise.all([
         this.transport?.revokeUserFromChannel?.(userId, chatChannel(null)),
         ...publicRooms.map(({ id }) =>
@@ -126,11 +140,13 @@ export class ChatBanService {
         .select({ id: chatRoom.id })
         .from(chatRoom)
         .where(isNull(chatRoom.deletedAt));
+
       await Promise.all([
         this.transport?.revokeUserFromChannel?.(userId, chatChannel(null)),
         ...rooms.map(({ id }) => this.transport?.revokeUserFromChannel?.(userId, chatChannel(id))),
       ]);
     }
+
     return { success: true } as const;
   }
 
@@ -143,8 +159,10 @@ export class ChatBanService {
   }: { userId: Uuid; roomId: ChatModerationRoomId; actorId: Uuid } & ClientMeta) {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
+
     const concreteRoomId = scope === 'room' ? roomId : null;
     const liftedAt = new Date();
+
     const [lifted] = await this.drizzle.db
       .update(chatPlatformBan)
       .set({ liftedAt, liftedBy: actorId })
@@ -163,6 +181,7 @@ export class ChatBanService {
         ),
       )
       .returning({ id: chatPlatformBan.id });
+
     await this.audit.record({
       actorId,
       actorType: 'admin',
@@ -173,6 +192,7 @@ export class ChatBanService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     return { success: true } as const;
   }
 
@@ -197,6 +217,7 @@ export class ChatBanService {
         ),
       )
       .orderBy(desc(chatPlatformBan.createdAt));
+
     return rows.map((row) => ({
       ...serializeRow(row, { dateFields: ['createdAt', 'liftedAt', 'bannedUntil'] }),
       scope: row.scope as ChatModerationScope,

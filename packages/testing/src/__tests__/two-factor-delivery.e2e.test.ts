@@ -24,17 +24,23 @@ import {
 function decodeBase32(input: string): Buffer {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   let bits = '';
+
   for (const char of input.toUpperCase().replace(/=+$/, '')) {
     const value = alphabet.indexOf(char);
+
     if (value === -1) {
       throw new Error(`invalid base32 character: ${char}`);
     }
+
     bits += value.toString(2).padStart(5, '0');
   }
+
   const bytes: number[] = [];
+
   for (let i = 0; i + 8 <= bits.length; i += 8) {
     bytes.push(parseInt(bits.slice(i, i + 8), 2));
   }
+
   return Buffer.from(bytes);
 }
 
@@ -50,19 +56,23 @@ function totpCode(base32Secret: string, atMs = Date.now()): string {
   counter.writeBigUInt64BE(BigInt(Math.floor(atMs / 1000 / 30)));
   const hmac = createHmac('sha1', key).update(counter).digest();
   const offset = hmac[hmac.length - 1]! & 0x0f;
+
   const truncated =
     ((hmac[offset]! & 0x7f) << 24) |
     ((hmac[offset + 1]! & 0xff) << 16) |
     ((hmac[offset + 2]! & 0xff) << 8) |
     (hmac[offset + 3]! & 0xff);
+
   return String(truncated % 1_000_000).padStart(6, '0');
 }
 
 function secretFromTotpUri(totpUri: string): string {
   const secret = new URL(totpUri.replace('otpauth://', 'http://')).searchParams.get('secret');
+
   if (!secret) {
     throw new Error(`no secret in totpUri: ${totpUri}`);
   }
+
   return secret;
 }
 
@@ -71,6 +81,7 @@ const smsFailurePluginPath = fileURLToPath(
 );
 
 let db: TestDb;
+
 let app: TestApp;
 
 const PASSWORD = 'password1234';
@@ -78,15 +89,18 @@ const PASSWORD = 'password1234';
 const newPlayer = async (): Promise<{ email: string; userId: string; client: TestClient }> => {
   const email = `2fa-${randomUUID()}@e2e.test`;
   const userId = await registerPlayer(app, { email, password: PASSWORD });
+
   return { email, userId, client: await asPlayer(app.app, { email, password: PASSWORD }) };
 };
 
 const codeFromEmail = async (email: string): Promise<string> => {
   const mail = await waitForEmail(email, (m) => m.subject === 'Your verification code');
   const match = /(\d{6})/.exec(mail.text);
+
   if (!match?.[1]) {
     throw new Error(`no 6-digit code in mail: ${mail.text}`);
   }
+
   return match[1];
 };
 
@@ -100,6 +114,7 @@ const followCookie = (res: Response) => {
     .map((c) => c.split(';')[0])
     .filter(Boolean)
     .join('; ');
+
   return {
     get: (path: string) => app.app.request(path, { headers: { cookie } }),
     post: (path: string, body?: unknown) =>
@@ -145,12 +160,14 @@ describe('GET /identity/2fa/status', () => {
     const res = await client.get('/identity/2fa/status');
 
     expect(res.status).toBe(200);
+
     const body = (await res.json()) as {
       enabled: boolean;
       method: string | null;
       maskedEmail: string;
       maskedPhone: string | null;
     };
+
     expect(body.enabled).toBe(false);
     expect(body.method).toBeNull();
     expect(body.maskedPhone).toBeNull();
@@ -194,11 +211,13 @@ describe('two-factor enrolment by email', () => {
     });
 
     expect(enable.status).toBe(200);
+
     const enrolment = (await enable.json()) as {
       totpUri?: string;
       backupCodes: string[];
       maskedDestination?: string;
     };
+
     // Nothing to scan on a pushed method, so no URI is minted for the client.
     expect(enrolment.totpUri).toBeUndefined();
     expect(enrolment.maskedDestination).toBe(`${email[0]}***@e2e.test`);
@@ -209,6 +228,7 @@ describe('two-factor enrolment by email', () => {
       enabled: boolean;
       method: string | null;
     };
+
     expect(midway.enabled).toBe(false);
     expect(midway.method).toBeNull();
 
@@ -216,18 +236,22 @@ describe('two-factor enrolment by email', () => {
       code: await codeFromEmail(email),
       method: 'otp',
     });
+
     expect(verify.status).toBe(200);
 
     const after = (await (await followCookie(verify).get('/identity/2fa/status')).json()) as {
       enabled: boolean;
       method: string | null;
     };
+
     expect(after).toMatchObject({ enabled: true, method: 'email' });
+
     const [row] = await app.container
       .get(DRIZZLE)
       .db.select({ method: user.twoFactorMethod })
       .from(user)
       .where(eq(user.id, userId));
+
     expect(row?.method).toBe('email');
   });
 
@@ -255,6 +279,7 @@ describe('two-factor enrolment by email', () => {
     const result = await app.container
       .get(DRIZZLE)
       .db.execute(`SELECT value FROM verification WHERE identifier LIKE '2fa-otp-%'`);
+
     const stored = (result.rows as { value: unknown }[]).map((r) => String(r.value));
 
     expect(stored.length).toBeGreaterThan(0);
@@ -267,10 +292,12 @@ describe('two-factor enrolment by email', () => {
     clearCapturedEmails();
     const { email, client } = await newPlayer();
     await client.post('/identity/2fa/enable', { password: PASSWORD, method: 'email' });
+
     const verify = await client.post('/identity/2fa/verify', {
       code: await codeFromEmail(email),
       method: 'otp',
     });
+
     const live = followCookie(verify);
 
     const again = await live.post('/identity/2fa/enable', {
@@ -281,10 +308,12 @@ describe('two-factor enrolment by email', () => {
     // Enrolling again would mint a fresh secret and fresh backup codes on the spot,
     // so the working second factor must survive the attempt untouched.
     expect(again.status).toBe(409);
+
     const after = (await (await live.get('/identity/2fa/status')).json()) as {
       enabled: boolean;
       method: string | null;
     };
+
     expect(after).toMatchObject({ enabled: true, method: 'email' });
   });
 });
@@ -319,6 +348,7 @@ describe('two-factor enrolment gates', () => {
 describe('POST /identity/2fa/otp/send - adapter rejection', () => {
   it('reports a vendor rejection instead of promising a code that never left', async () => {
     const failingDb = await setupTestDb();
+
     const failingApp = await bootTestApp({
       plugins: [
         ...(await loadExtensions()),
@@ -326,6 +356,7 @@ describe('POST /identity/2fa/otp/send - adapter rejection', () => {
       ],
       databaseUrl: failingDb.url,
     });
+
     try {
       await seedMinimal(failingApp.container, { playerCount: 0 });
       const email = `2fa-smsfail-${randomUUID()}@e2e.test`;
@@ -343,12 +374,14 @@ describe('POST /identity/2fa/otp/send - adapter rejection', () => {
       // job), so the caller learns about it in the same response instead of being
       // told a code is on its way.
       expect(res.status).toBe(503);
+
       // Not enabled by the failed attempt - the method the player asked for is what
       // a retry needs, and it survives the failure by design (see the docblock on
       // `enableTwoFactor`).
       const status = (await (await client.get('/identity/2fa/status')).json()) as {
         enabled: boolean;
       };
+
       expect(status.enabled).toBe(false);
     } finally {
       await failingApp.close();
@@ -363,10 +396,12 @@ describe('IdentityService.trustCurrentDevice - real second-factor flows', () => 
 
     const enable = await client.post('/identity/2fa/enable', { password: PASSWORD, method: 'app' });
     expect(enable.status).toBe(200);
+
     const { totpUri, backupCodes } = (await enable.json()) as {
       totpUri: string;
       backupCodes: string[];
     };
+
     expect(backupCodes.length).toBeGreaterThan(0);
     const secret = secretFromTotpUri(totpUri);
 
@@ -374,6 +409,7 @@ describe('IdentityService.trustCurrentDevice - real second-factor flows', () => 
       code: totpCode(secret),
       method: 'totp',
     });
+
     expect(verify.status).toBe(200);
     const live = followCookie(verify);
 
@@ -393,10 +429,12 @@ describe('IdentityService.trustCurrentDevice - real second-factor flows', () => 
     clearCapturedEmails();
     const { email, client } = await newPlayer();
     await client.post('/identity/2fa/enable', { password: PASSWORD, method: 'email' });
+
     const verify = await client.post('/identity/2fa/verify', {
       code: await codeFromEmail(email),
       method: 'otp',
     });
+
     const live = followCookie(verify);
 
     // A pushed code is keyed to the challenge that requested it - the fresh one this

@@ -45,6 +45,7 @@ async function dropRunDatabases(admin: Pool, template: string): Promise<void> {
     `SELECT datname FROM pg_database WHERE datname = $1 OR datname LIKE $2`,
     [template, `${template}\\_%`],
   );
+
   for (const { datname } of rows) {
     await admin.query(`DROP DATABASE IF EXISTS "${datname}" WITH (FORCE)`);
   }

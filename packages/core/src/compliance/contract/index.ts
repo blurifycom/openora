@@ -53,11 +53,13 @@ export const SubmitKycInputSchema = z.object({
   tier: KycTierSchema,
   documents: z.array(KycDocumentSchema),
 });
+
 export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
 
 export const SubmitKycOutputSchema = KycVerificationSchema.extend({
   verificationUrl: z.string().optional(),
 });
+
 export type SubmitKycOutput = z.infer<typeof SubmitKycOutputSchema>;
 
 export const PlayerKycViewSchema = z.object({
@@ -70,7 +72,9 @@ export const PlayerKycViewSchema = z.object({
     history: z.array(KycVerificationSchema),
   }),
 });
+
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
+
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
 // Player-facing projection of KycVerificationSchema: no riskSignals, checks, decisionReason,
@@ -84,6 +88,7 @@ export const KycVerificationSummarySchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
+
 export type KycVerificationSummary = z.infer<typeof KycVerificationSummarySchema>;
 
 export const PlayerKycSummaryViewSchema = z.object({
@@ -96,6 +101,7 @@ export const PlayerKycSummaryViewSchema = z.object({
     history: z.array(KycVerificationSummarySchema),
   }),
 });
+
 export type PlayerKycSummaryView = z.infer<typeof PlayerKycSummaryViewSchema>;
 
 export const KycStatusUpdateSchema = z.object({
@@ -103,6 +109,7 @@ export const KycStatusUpdateSchema = z.object({
   status: KycStatusSchema,
   tier: KycTierSchema,
 });
+
 export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;
 
 const NonEmptyReasonSchema = z.string().trim().min(1);
@@ -112,9 +119,11 @@ export const RequestKycResubmissionInputSchema = z.object({
   tier: KycTierSchema,
   reason: NonEmptyReasonSchema,
 });
+
 export type RequestKycResubmissionInput = z.infer<typeof RequestKycResubmissionInputSchema>;
 
 export const KycOverrideStatusSchema = KycStatusSchema.exclude(['verified', 'manually_overridden']);
+
 export type KycOverrideStatus = z.infer<typeof KycOverrideStatusSchema>;
 
 export const OverrideKycStatusInputSchema = z.object({
@@ -123,6 +132,7 @@ export const OverrideKycStatusInputSchema = z.object({
   status: KycOverrideStatusSchema,
   reason: NonEmptyReasonSchema,
 });
+
 export type OverrideKycStatusInput = z.infer<typeof OverrideKycStatusInputSchema>;
 
 const MAX_BULK_KYC_APPROVE_USERS = 100;
@@ -136,6 +146,7 @@ export const BulkApproveKycInputSchema = z.object({
   reason: NonEmptyReasonSchema,
   tier: KycTierSchema,
 });
+
 export type BulkApproveKycInput = z.infer<typeof BulkApproveKycInputSchema>;
 
 export const BulkApproveKycResultSchema = z.object({
@@ -143,11 +154,13 @@ export const BulkApproveKycResultSchema = z.object({
   success: z.boolean(),
   error: z.string().nullable(),
 });
+
 export type BulkApproveKycResult = z.infer<typeof BulkApproveKycResultSchema>;
 
 export const BulkApproveKycOutputSchema = z.object({
   results: z.array(BulkApproveKycResultSchema),
 });
+
 export type BulkApproveKycOutput = z.infer<typeof BulkApproveKycOutputSchema>;
 
 export const GeoRuleSchema = z.object({
@@ -156,11 +169,13 @@ export const GeoRuleSchema = z.object({
   action: GeoRuleActionSchema,
   createdAt: TimestampSchema,
 });
+
 export type GeoRule = z.infer<typeof GeoRuleSchema>;
 
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
 export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
+
 export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
 
 const GeoCheckOutputSchema = z.object({
@@ -237,4 +252,5 @@ export const complianceContract = {
 };
 
 export * from './limits.js';
+
 export * from './rg.js';

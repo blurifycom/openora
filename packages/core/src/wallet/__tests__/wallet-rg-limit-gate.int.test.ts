@@ -32,6 +32,7 @@ function makeService(rgLimits?: RgLimitsPort) {
   const payment = mock<PaymentAdapter>({
     processDeposit: vi.fn(async () => ({ externalId: `psp-${randomUUID()}`, status: 'completed' })),
   });
+
   const svc = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -41,6 +42,7 @@ function makeService(rgLimits?: RgLimitsPort) {
     identityReader: makeIdentityReader(),
     ...(rgLimits ? { rgLimits } : {}),
   });
+
   return { svc, payment };
 }
 
@@ -103,16 +105,20 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
     const userId = randomUUID();
     const idempotencyKey = randomUUID();
     let used = 0;
+
     const gate = mock<RgLimitsPort>({
       checkWager: vi.fn(),
       checkDeposit: vi.fn(async (_u: string, amount: string) => {
         if (used + Number(amount) > 100) {
           return { ...REFUSED, used: String(used) };
         }
+
         used += Number(amount);
+
         return { allowed: true as const };
       }),
     });
+
     const { svc, payment } = makeService(gate);
     const first = await svc.deposit({ userId, amount: '100', currency: 'USD', idempotencyKey });
 

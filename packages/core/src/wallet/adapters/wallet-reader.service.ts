@@ -19,6 +19,7 @@ function toProviderTransaction(
   if (row.providerName === null || row.providerRefId === null) {
     throw new Error('toProviderTransaction: matched row is missing its provider ref columns');
   }
+
   return {
     id: row.id,
     walletId: row.walletId,
@@ -54,12 +55,14 @@ export class WalletReaderService implements WalletReader {
           eq(walletTransaction.status, 'completed'),
         ),
       );
+
     return row?.total ?? '0';
   }
 
   async getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number> {
     // TODO: count completed withdrawals for userId within the last windowDays days
     const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
     const [row] = await this.drizzle.db
       .select({ n: count() })
       .from(walletTransaction)
@@ -72,6 +75,7 @@ export class WalletReaderService implements WalletReader {
           gt(walletTransaction.createdAt, since),
         ),
       );
+
     return Number(row?.n ?? 0);
   }
 
@@ -80,10 +84,13 @@ export class WalletReaderService implements WalletReader {
     windowDays: number,
   ): Promise<Map<string, number>> {
     const result = new Map<string, number>();
+
     if (userIds.length === 0) {
       return result;
     }
+
     const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
     const rows = await this.drizzle.db
       .select({ userId: wallet.userId, n: count() })
       .from(walletTransaction)
@@ -97,9 +104,11 @@ export class WalletReaderService implements WalletReader {
         ),
       )
       .groupBy(wallet.userId);
+
     for (const row of rows) {
       result.set(row.userId, Number(row.n));
     }
+
     return result;
   }
 
@@ -112,6 +121,7 @@ export class WalletReaderService implements WalletReader {
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(providerRefCondition(providerName, providerRefId));
+
     return row ? toProviderTransaction(row.transaction, row.userId) : null;
   }
 

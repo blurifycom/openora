@@ -13,6 +13,7 @@ export async function loadExtensions(
   filter?: (entries: PluginEntry[]) => PluginEntry[],
 ): Promise<PluginEntry[]> {
   const fromEnv = process.env['EXTENSIONS_CONFIG'];
+
   const configPath = fromEnv
     ? isAbsolute(fromEnv)
       ? fromEnv
@@ -31,32 +32,41 @@ export async function loadExtensions(
 
   const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
   const selected = applyServiceManifest(filtered, manifest);
+
   if (manifest !== null) {
     process.stdout.write(
       `SERVICE_MANIFEST active: booting ${selected.map((e) => e.id).join(', ')}\n`,
     );
   }
+
   return selected;
 }
 
 function findConfigUpwards(start: string): string {
   let dir = start;
+
   for (let i = 0; i < 8; i++) {
     for (const ext of ['.js', '.ts']) {
       const candidate = resolve(dir, `extensions.config${ext}`);
+
       try {
         accessSync(candidate);
+
         return candidate;
       } catch {
         // not here - try parent
       }
     }
+
     const parent = dirname(dir);
+
     if (parent === dir) {
       break;
     }
+
     dir = parent;
   }
+
   throw new Error(
     `extensions.config.js not found above ${start}. ` +
       `Set EXTENSIONS_CONFIG to point at it explicitly.`,

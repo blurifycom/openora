@@ -21,13 +21,16 @@ export const NOTIFICATION_TYPES = [
   'chat.room.ownership_transferred',
   'chat.room.scheduled_for_deletion',
 ] as const;
+
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
+
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
 
 // Bare entity-reference IDs mirrored from the source domain event's own payload (eg
 // `{ roomId, messageId }`) - never a path, URL, or asset reference. Lets a consumer
 // build its own banner/CTA mapping keyed off `type` without openora knowing routes.
 export const NotificationDataSchema = z.record(z.string(), z.string());
+
 export type NotificationData = z.infer<typeof NotificationDataSchema>;
 
 export const NotificationSchema = z.object({
@@ -40,6 +43,7 @@ export const NotificationSchema = z.object({
   readAt: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+
 export type Notification = z.infer<typeof NotificationSchema>;
 
 // Internal-only - fed by domain-event handlers in plugin.ts, not a wire route.
@@ -51,16 +55,21 @@ export const CreateNotificationInputSchema = z.object({
   data: NotificationDataSchema.nullable().optional(),
   eventId: UuidSchema.nullable().optional(),
 });
+
 export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
 
 export const NOTIFICATION_SORT_BY_VALUES = ['createdAt'] as const;
+
 export const NotificationSortBySchema = z.enum(NOTIFICATION_SORT_BY_VALUES).default('createdAt');
+
 export type NotificationSortBy = z.infer<typeof NotificationSortBySchema>;
 
 export const NotificationCountSchema = z.object({ count: z.number() });
+
 export type NotificationCount = z.infer<typeof NotificationCountSchema>;
 
 export const MarkNotificationReadOutputSchema = z.object({ success: z.literal(true) });
+
 export type MarkNotificationReadOutput = z.infer<typeof MarkNotificationReadOutputSchema>;
 
 export const notificationsContract = {

@@ -12,12 +12,14 @@ export function createExchangeRateRouter(exchangeRate: ExchangeRateService) {
   return os.router({
     getRate: os.getRate.handler(({ input, context }) => {
       getUserId(context);
+
       return mapErrors({ BAD_REQUEST: UnsupportedExchangeCurrencyError }, () =>
         exchangeRate.getRate(input.from, input.to),
       );
     }),
     getRates: os.getRates.handler(({ input, context }) => {
       getUserId(context);
+
       return mapErrors({ BAD_REQUEST: UnsupportedExchangeCurrencyError }, () =>
         exchangeRate.getRates(input.to, input.from),
       );

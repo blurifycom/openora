@@ -48,7 +48,9 @@ import { ChatRoomPurgeService } from '../service/chat-room-purge.service.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let db: TestDb;
+
 let redis: TestRedis;
+
 const transports: RedisPubSubRealtimeTransport[] = [];
 
 function makeTransport(): RedisPubSubRealtimeTransport {
@@ -56,16 +58,20 @@ function makeTransport(): RedisPubSubRealtimeTransport {
     redis.client,
     `chat-handover-test-${randomUUID()}`,
   );
+
   transports.push(transport);
+
   return transport;
 }
 
 function makeServices(transport: RealtimeTransport = makeTransport()) {
   const events = makeEventBus();
+
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
+
   const directory = mock<AdminUserDirectory>({
     lookupPlayers: async () => [],
     lookupUsers: async (ids: readonly string[]) =>
@@ -78,8 +84,10 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
         role: 'player',
       })),
   });
+
   const identityReader = makeIdentityReader();
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
+
   const chat = new ChatService({
     drizzle: db.drizzle,
     events,
@@ -90,6 +98,7 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
     identityReader,
     allowedAttachmentHosts: [],
   });
+
   const membership = new ChatRoomMembershipService(
     db.drizzle,
     events,
@@ -97,8 +106,10 @@ function makeServices(transport: RealtimeTransport = makeTransport()) {
     transport,
     identityReader,
   );
+
   const purge = new ChatRoomPurgeService(db.drizzle, events, transport, audit);
   const ban = new ChatRoomBanService(db.drizzle, events, audit, transport, identityReader);
+
   return { chat, membership, purge, ban, events, transport, audit };
 }
 
@@ -112,9 +123,11 @@ async function seedPrivateRoom(
     name: 'Wheel Spin',
     ...NO_CLIENT_META,
   });
+
   for (const userId of memberIds) {
     await services.membership.joinRoom({ userId, joinCode: room.joinCode!, ...NO_CLIENT_META });
   }
+
   return room;
 }
 
@@ -132,6 +145,7 @@ async function promote(
     role: 'moderator',
     ...NO_CLIENT_META,
   });
+
   if (roleAssignedAt !== undefined) {
     await db.drizzle.db
       .update(chatRoomMember)
@@ -153,6 +167,7 @@ function emittedAudience(services: ReturnType<typeof makeServices>): string[] {
   const call = services.events.emit.mock.calls.find(
     (args: unknown[]) => args[0] === 'chat.room.scheduled_for_deletion',
   );
+
   return (call?.[1] as { memberIds: string[] } | undefined)?.memberIds ?? [];
 }
 
@@ -538,10 +553,12 @@ describe('ChatRoomMembershipService.handleAccountClosed - non-owners (real PG)',
   it('leaves public rooms alone - they have no owner to inherit', async () => {
     const services = makeServices();
     const ownerId = randomUUID();
+
     const [publicRoom] = await db.drizzle.db
       .insert(chatRoom)
       .values({ name: 'Lobby', slug: `lobby-${randomUUID()}`, isPublic: true })
       .returning();
+
     await services.membership.joinPublicRoom({
       roomId: publicRoom!.id,
       userId: ownerId,
@@ -560,13 +577,17 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
 
   function holdRoomLock(roomId: string) {
     let held!: () => void;
+
     const acquired = new Promise<void>((resolve) => {
       held = resolve;
     });
+
     let release!: (work: (t: DrizzleTx) => Promise<void>) => void;
+
     const work = new Promise<(t: DrizzleTx) => Promise<void>>((resolve) => {
       release = resolve;
     });
+
     const done = db.drizzle.db.transaction(async (t) => {
       await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-room:${roomId}`}))`);
       held();
@@ -574,6 +595,7 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
         await work
       )(t);
     });
+
     return { acquired, release: (w: (t: DrizzleTx) => Promise<void>) => release(w), done };
   }
 
@@ -599,15 +621,18 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
     const closedAt = new Date('2026-08-31T10:00:00.000Z');
 
     let commitDelete!: () => void;
+
     const deleteCommitted = new Promise<void>((resolve) => {
       commitDelete = resolve;
     });
+
     const deleting = db.drizzle.db.transaction(async (t) => {
       await t
         .delete(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, modId)));
       await deleteCommitted;
     });
+
     await settle();
 
     const handover = services.membership.handleAccountClosed({ userId: ownerId, closedAt });
@@ -638,10 +663,12 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
       userId: modId,
       ...NO_CLIENT_META,
     });
+
     const outcome = removing.then(
       () => 'settled',
       () => 'settled',
     );
+
     expect(await Promise.race([outcome, settle().then(() => 'blocked')])).toBe('blocked');
 
     lock.release(handoverWrites(room.id, ownerId, modId));
@@ -667,10 +694,12 @@ describe('handleAccountClosed against a concurrent membership write (real PG)', 
       userId: modId,
       ...NO_CLIENT_META,
     });
+
     const outcome = banning.then(
       () => 'settled',
       () => 'settled',
     );
+
     expect(await Promise.race([outcome, settle().then(() => 'blocked')])).toBe('blocked');
 
     lock.release(handoverWrites(room.id, ownerId, modId));
@@ -708,9 +737,11 @@ describe('ChatRoomMembershipService.handleAccountReopened (real PG)', () => {
         ...NO_CLIENT_META,
       }),
     ).resolves.toBeDefined();
+
     const cancelled = services.events.emit.mock.calls.find(
       (args: unknown[]) => args[0] === 'chat.room.deletion.cancelled',
     );
+
     expect(cancelled?.[1]).toMatchObject({ roomId: room.id, ownerId });
     expect((cancelled?.[1] as { memberIds: string[] }).memberIds).toEqual(
       expect.arrayContaining([ownerId, memberId]),
@@ -811,6 +842,7 @@ describe('ChatRoomPurgeService (real PG)', () => {
       .insert(chatRoom)
       .values({ name: 'Room', slug: `room-${randomUUID()}`, isPublic: false, ...overrides })
       .returning();
+
     return row!;
   }
 
@@ -859,18 +891,22 @@ describe('ChatRoomPurgeService (real PG)', () => {
 
   it('leaves a public room, a null-deadline room and a future-deadline room untouched', async () => {
     const services = makeServices();
+
     const publicRoom = await seedRoom({
       isPublic: true,
       scheduledDeletionAt: new Date(Date.now() - DAY_MS),
     });
+
     const noDeadline = await seedRoom({});
     const future = await seedRoom({ scheduledDeletionAt: new Date(Date.now() + DAY_MS) });
+
     const soft = await seedRoom({
       deletedAt: new Date(),
       scheduledDeletionAt: new Date(Date.now() - DAY_MS),
     });
 
     await expect(services.purge.listDueRooms(100)).resolves.toEqual([]);
+
     for (const room of [publicRoom, noDeadline, future, soft]) {
       await expect(services.purge.purgeRoom(room.id)).resolves.toBe(false);
       expect(await readRoom(room.id)).not.toBeNull();
@@ -882,6 +918,7 @@ describe('ChatRoomPurgeService (real PG)', () => {
     const ownerId = randomUUID();
     const memberId = randomUUID();
     const room = await seedPrivateRoom(services, ownerId, [memberId]);
+
     for (const content of ['one', 'two']) {
       await services.chat.sendRoomMessage({
         userId: memberId,
@@ -890,6 +927,7 @@ describe('ChatRoomPurgeService (real PG)', () => {
         content,
       });
     }
+
     await db.drizzle.db
       .update(chatRoom)
       .set({ scheduledDeletionAt: new Date(Date.now() - DAY_MS) })

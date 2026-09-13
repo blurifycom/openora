@@ -9,11 +9,17 @@ import type { RedisClient } from './redis-client.js';
 import { createLogger } from './logger.js';
 
 const STREAM_PREFIX = 'oss:evt:';
+
 const STREAM_MAXLEN = 10_000;
+
 const READ_COUNT = 10;
+
 const BLOCK_MS = 5_000;
+
 const CLAIM_INTERVAL_MS = 30_000;
+
 const CLAIM_MIN_IDLE_MS = 60_000;
+
 const RETRY_DELAY_MS = 2_000;
 
 function delay(ms: number): Promise<void> {
@@ -26,7 +32,9 @@ function delay(ms: number): Promise<void> {
 // RESP/typeMapping, so at runtime the reply is always this plain shape - declared
 // once here and cast at the two call sites below.
 type StreamMessage = { id: string; message: Record<string, string> };
+
 type StreamReadReply = Array<{ name: string; messages: StreamMessage[] }> | null;
+
 type StreamClaimReply = {
   nextId: string;
   messages: (StreamMessage | null)[];
@@ -130,17 +138,21 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     const loopKey = `${key}::${group}`;
 
     let loop = this.loops.get(loopKey);
+
     if (!loop) {
       loop = this.startLoop(key, group);
       this.loops.set(loopKey, loop);
     }
+
     loop.handlers.add(handler);
 
     return () => {
       const current = this.loops.get(loopKey);
+
       if (!current || !current.handlers.delete(handler)) {
         return;
       }
+
       if (current.handlers.size === 0) {
         this.loops.delete(loopKey);
         current.stop();
@@ -151,9 +163,11 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
   async close(): Promise<void> {
     const loops = [...this.loops.values()];
     this.loops.clear();
+
     for (const loop of loops) {
       loop.stop();
     }
+
     await Promise.allSettled(loops.map((loop) => loop.done));
   }
 
@@ -179,12 +193,14 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     // backoff rather than permanently abandoning this (topic, group)'s consumption.
     const done = (async (): Promise<void> => {
       let ready = false;
+
       while (!stopped) {
         try {
           if (!ready) {
             if (!reader.isOpen) {
               await reader.connect();
             }
+
             try {
               await reader.xGroupCreate(key, group, this.startId, { MKSTREAM: true });
             } catch (err) {
@@ -192,21 +208,26 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
                 throw err;
               }
             }
+
             ready = true;
           }
+
           if (Date.now() - lastClaimAt > CLAIM_INTERVAL_MS) {
             lastClaimAt = Date.now();
             await this.reclaimPending(reader, key, group, handlers);
           }
+
           const reply = (await reader.xReadGroup(
             group,
             this.consumerId,
             { key, id: '>' },
             { COUNT: READ_COUNT, BLOCK: BLOCK_MS },
           )) as StreamReadReply;
+
           if (!reply) {
             continue;
           }
+
           for (const stream of reply) {
             for (const message of stream.messages) {
               await this.dispatch(reader, key, group, message, handlers);
@@ -216,6 +237,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
           if (stopped) {
             break;
           }
+
           ready = false;
           this.logger.error({ err, key, group }, 'stream loop error, retrying');
           await delay(RETRY_DELAY_MS);
@@ -241,6 +263,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
         '0-0',
         { COUNT: READ_COUNT },
       )) as StreamClaimReply;
+
       for (const message of claimed.messages) {
         if (message) {
           await this.dispatch(reader, key, group, message, handlers);
@@ -259,18 +282,24 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     handlers: Set<BrokerHandler>,
   ): Promise<void> {
     const raw = message.message['data'];
+
     if (raw === undefined) {
       await reader.xAck(key, group, message.id);
+
       return;
     }
+
     let envelope: EventEnvelope;
+
     try {
       envelope = JSON.parse(raw);
     } catch (err) {
       this.logger.error({ err, key, group, id: message.id }, 'stream envelope parse failed');
       await reader.xAck(key, group, message.id);
+
       return;
     }
+
     for (const fn of handlers) {
       try {
         await fn(envelope);
@@ -278,6 +307,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
         this.logger.error({ err, topic: envelope.topic }, 'message broker handler threw');
       }
     }
+
     await reader.xAck(key, group, message.id);
   }
 }

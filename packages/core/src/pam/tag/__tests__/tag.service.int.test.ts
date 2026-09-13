@@ -21,11 +21,13 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
+
   return { svc: new TagService(db.drizzle, events), events };
 }
 
 async function seedTag(key: TagKey, isSticky = false) {
   const [row] = await db.drizzle.db.insert(tag).values({ key, isSticky }).returning();
+
   return row!;
 }
 
@@ -34,6 +36,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
     .insert(player)
     .values({ userId: randomUUID(), ...overrides })
     .returning();
+
   return row!;
 }
 
@@ -68,6 +71,7 @@ async function activeAssignmentRow(playerId: string, tagId: string) {
         isNull(playerTag.removedAt),
       ),
     );
+
   return row;
 }
 
@@ -271,9 +275,11 @@ describe('TagService.assignPlayerTag (real PG)', () => {
     const rejected = results.filter((r) => r.status === 'rejected');
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(4);
+
     for (const r of rejected) {
       expect((r as PromiseRejectedResult).reason).toBeInstanceOf(TagAlreadyInUseError);
     }
+
     expect(await playerTagsOf(p.id)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledTimes(1);
   });
@@ -392,10 +398,12 @@ describe('TagService.assignPlayerTagInTx (real PG)', () => {
     await seedTag('high_risk');
     const p = await seedPlayer();
     const actorId = randomUUID();
+
     const existingAssignMetadata = {
       amountBreach: { amount: '500.00', threshold: '400.00' },
       countBreach: { count: 5, thresholdCount: 3, thresholdDays: 30 },
     };
+
     await svc.assignPlayerTag({
       playerId: p.id,
       tagKey: 'high_risk',
@@ -439,6 +447,7 @@ describe('TagService.assignPlayerTagInTx (real PG)', () => {
       assignActorUserId: actorId,
     });
     events.emit.mockClear();
+
     const incomingAssignMetadata = {
       amountBreach: null,
       countBreach: { count: 5, thresholdCount: 3, thresholdDays: 30 },
@@ -576,6 +585,7 @@ describe('TagService.listPlayerTags (real PG)', () => {
     const { svc } = makeService();
     const actorId = randomUUID();
     const p = await seedPlayer();
+
     for (const key of ['vip', 'high_roller', 'inactive'] as const) {
       await seedTag(key);
       await svc.assignPlayerTag(assignment(p.id, key, actorId));
@@ -697,6 +707,7 @@ describe('TagService.replacePlayerTag (real PG)', () => {
     await seedTag('level');
     const p = await seedPlayer();
     const actorId = randomUUID();
+
     const args = {
       playerId: p.id,
       tagKey: 'level' as TagKey,
@@ -705,6 +716,7 @@ describe('TagService.replacePlayerTag (real PG)', () => {
       assignActor: 'scheduled' as const,
       assignActorUserId: actorId,
     };
+
     const otherArgs = { ...args, assignReason: 'player level set to 2' };
 
     // Both replaces must actually overlap at the DB for one of them to lose. The seeds

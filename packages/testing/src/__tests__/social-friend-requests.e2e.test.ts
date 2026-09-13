@@ -45,7 +45,9 @@ import {
  */
 
 let db: TestDb;
+
 let app: TestApp;
+
 let admin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -58,7 +60,9 @@ async function registerNamedPlayer(email: string, name: string) {
     .toLowerCase()
     .replaceAll(/[^a-z0-9_]+/g, '_')
     .slice(0, 7);
+
   const username = `${usernamePrefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+
   return { ...(await registerAndMaterializePlayer(app, { email, username })), username };
 }
 
@@ -84,6 +88,7 @@ async function friendshipRowCount(
   userB: string,
 ): Promise<number> {
   const all = await container.get(DRIZZLE).db.select().from(friendship);
+
   return all.filter(
     (r) =>
       (r.requesterId === userA && r.addresseeId === userB) ||
@@ -135,6 +140,7 @@ describe('AC: relationship button-state + pending-on-send', () => {
     const aView = await readJson(
       await a.client.post('/social/relationships', { userIds: [b.userId] }),
     );
+
     expect(aView).toEqual([
       {
         userId: b.userId,
@@ -147,6 +153,7 @@ describe('AC: relationship button-state + pending-on-send', () => {
     const bView = await readJson(
       await b.client.post('/social/relationships', { userIds: [a.userId] }),
     );
+
     expect(bView).toEqual([
       {
         userId: a.userId,
@@ -173,9 +180,11 @@ describe('AC: recipient gets an in-app notification, type round-trips, and audit
     await vi.waitFor(async () => {
       const listRes = await b.client.get('/notifications');
       expect(listRes.status).toBe(200);
+
       const { items } = (await readJson(listRes)) as {
         items: Array<{ type: string; title: string; body: string }>;
       };
+
       const row = items.find((n) => n.type === 'social.friend_request.received');
       // This is the exact silent-drop failure mode the brief calls out: a
       // notification whose `type` is missing from NOTIFICATION_TYPES is written
@@ -191,6 +200,7 @@ describe('AC: recipient gets an in-app notification, type round-trips, and audit
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${sent.id}&action=social.friend_request.sent`,
       );
+
       expect(auditRes.status).toBe(200);
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
@@ -212,6 +222,7 @@ describe('AC: duplicate request while pending is rejected, not silently accepted
     const first = await readJson(
       await a.client.post('/social/friend-requests', { targetUserId: b.userId }),
     );
+
     expect(first.acceptedAt).toBeNull();
     expect(first.refusedAt).toBeNull();
 
@@ -224,6 +235,7 @@ describe('AC: duplicate request while pending is rejected, not silently accepted
     const aView = await readJson(
       await a.client.post('/social/relationships', { userIds: [b.userId] }),
     );
+
     expect(aView[0]).toMatchObject({ status: 'pending_outgoing', friendshipId: first.id });
   });
 });
@@ -237,6 +249,7 @@ describe('AC: "Add Friend" not offered when the recipient has blocked the sender
     const sendRes = await blockedSender.client.post('/social/friend-requests', {
       targetUserId: target.userId,
     });
+
     // Not a 404: the target genuinely exists, so the API doesn't lie about that -
     // it only withholds WHY the request can't go through (see FriendRequestUnavailableError).
     expect(sendRes.status).toBe(409);
@@ -248,6 +261,7 @@ describe('AC: "Add Friend" not offered when the recipient has blocked the sender
     const nonexistentRes = await blockedSender.client.post('/social/friend-requests', {
       targetUserId: randomUUID(),
     });
+
     expect(nonexistentRes.status).toBe(404);
 
     // But a suspended target gets the SAME 409 shape as a block: the caller still
@@ -256,10 +270,13 @@ describe('AC: "Add Friend" not offered when the recipient has blocked the sender
       `blk-mod-${randomUUID()}@e2e.test`,
       'Grace Moderated',
     );
+
     await setPlayerStatus(app.container, suspendedTarget.userId, 'suspended');
+
     const suspendedRes = await blockedSender.client.post('/social/friend-requests', {
       targetUserId: suspendedTarget.userId,
     });
+
     expect(suspendedRes.status).toBe(409);
     const suspendedBody = await readJson(suspendedRes);
     expect(sendBody.message).toBe(suspendedBody.message);
@@ -267,6 +284,7 @@ describe('AC: "Add Friend" not offered when the recipient has blocked the sender
     const relRes = await blockedSender.client.post('/social/relationships', {
       userIds: [target.userId],
     });
+
     expect(await readJson(relRes)).toEqual([
       { userId: target.userId, status: 'unavailable', friendshipId: null, canSendRequest: false },
     ]);
@@ -282,6 +300,7 @@ describe('locked decision: caller blocked the target themselves -> disclosed CON
     const res = await blocker.client.post('/social/friend-requests', {
       targetUserId: target.userId,
     });
+
     expect(res.status).toBe(409);
     const body = await readJson(res);
     expect(String(body.message).toLowerCase()).toContain('block');
@@ -305,6 +324,7 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
     const first = await readJson(
       await a.client.post('/social/friend-requests', { targetUserId: b.userId }),
     );
+
     expect(first.acceptedAt).toBeNull();
     expect(first.refusedAt).toBeNull();
 
@@ -312,6 +332,7 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
     const second = await readJson(
       await b.client.post('/social/friend-requests', { targetUserId: a.userId }),
     );
+
     expect(second.id).toBe(first.id);
     expect(second.acceptedAt).toEqual(expect.any(String));
     expect(second.refusedAt).toBeNull();
@@ -321,10 +342,13 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
     const aView = await readJson(
       await a.client.post('/social/relationships', { userIds: [b.userId] }),
     );
+
     expect(aView[0]).toMatchObject({ status: 'friends', friendshipId: first.id });
+
     const bView = await readJson(
       await b.client.post('/social/relationships', { userIds: [a.userId] }),
     );
+
     expect(bView[0]).toMatchObject({ status: 'friends', friendshipId: first.id });
 
     // A was the ORIGINAL requester - A gets the accepted notification, not B.
@@ -332,6 +356,7 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
       const { items } = (await readJson(await a.client.get('/notifications'))) as {
         items: Array<{ type: string; body: string }>;
       };
+
       const row = items.find((n) => n.type === 'social.friend_request.accepted');
       expect(row).toBeTruthy();
       expect(row?.body).toContain(b.username);
@@ -346,6 +371,7 @@ describe('locked decision: mutual/simultaneous request auto-accepts', () => {
     const reSendReverseRes = await b.client.post('/social/friend-requests', {
       targetUserId: a.userId,
     });
+
     expect(reSendReverseRes.status).toBe(409);
   });
 });
@@ -359,11 +385,13 @@ describe('locked decision: a suspended/closed target is unavailable, not a false
         `mod-${status}-${randomUUID()}@e2e.test`,
         `Target ${status}`,
       );
+
       await setPlayerStatus(app.container, target.userId, status);
 
       const sendRes = await caller.client.post('/social/friend-requests', {
         targetUserId: target.userId,
       });
+
       // The target genuinely exists - a real 404 would be a lie a downstream API
       // consumer could act on incorrectly (e.g. "no such player").
       expect(sendRes.status).toBe(409);
@@ -373,6 +401,7 @@ describe('locked decision: a suspended/closed target is unavailable, not a false
       const relRes = await caller.client.post('/social/relationships', {
         userIds: [target.userId],
       });
+
       expect(await readJson(relRes)).toEqual([
         { userId: target.userId, status: 'unavailable', friendshipId: null, canSendRequest: false },
       ]);
@@ -401,6 +430,7 @@ describe('break-it: rapid concurrent double-submit at the same target', () => {
       const { items } = (await readJson(await b.client.get('/notifications'))) as {
         items: Array<{ type: string }>;
       };
+
       const matches = items.filter((n) => n.type === 'social.friend_request.received');
       expect(matches.length).toBe(1);
     });
@@ -414,6 +444,7 @@ describe('authz: unauthenticated caller', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ targetUserId: randomUUID() }),
     });
+
     expect(sendRes.status).toBe(401);
 
     const relRes = await app.app.request('/social/relationships', {
@@ -421,6 +452,7 @@ describe('authz: unauthenticated caller', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ userIds: [randomUUID()] }),
     });
+
     expect(relRes.status).toBe(401);
   });
 });

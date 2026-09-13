@@ -37,10 +37,15 @@ import {
 import { hashCode, generateCode } from '../../shared/otp.js';
 
 const MINUTE_MS = 60 * 1000;
+
 const OTP_TTL_MS = 5 * MINUTE_MS;
+
 const RESEND_COOLDOWN_MS = MINUTE_MS;
+
 const MAX_VERIFY_ATTEMPTS = 5;
+
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
 const REMEMBER_ME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const OTP_REQUEST_RATE_LIMIT = {
@@ -48,6 +53,7 @@ const OTP_REQUEST_RATE_LIMIT = {
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+
 const OTP_VERIFY_RATE_LIMIT = {
   limit: 10,
   windowMs: 5 * MINUTE_MS,
@@ -119,6 +125,7 @@ function serializeUser(u: UserRow): User {
     createdAt: u.createdAt.toISOString(),
     updatedAt: u.updatedAt.toISOString(),
   };
+
   return u.image !== null && u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
@@ -167,10 +174,12 @@ export class PhoneLoginService {
     if (!this.cache) {
       return undefined;
     }
+
     try {
       return await this.cache.get<FakeOtpShadow>(key);
     } catch (err) {
       logger.warn({ key, err }, 'phone-otp shadow cache read failed');
+
       return undefined;
     }
   }
@@ -179,6 +188,7 @@ export class PhoneLoginService {
     if (!this.cache) {
       return;
     }
+
     try {
       await this.cache.set(key, value, { ttlMs: FAKE_OTP_SHADOW_TTL_MS });
     } catch (err) {
@@ -216,10 +226,13 @@ export class PhoneLoginService {
     if (!account || !account.phoneVerified || account.twoFactorEnabled) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
+
       if (shadow && now - shadow.createdAt < RESEND_COOLDOWN_MS) {
         throw OtpCooldownError(RESEND_COOLDOWN_MS - (now - shadow.createdAt));
       }
+
       await this.shadowSet(key, { createdAt: now, failedAttempts: 0 });
+
       return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
     }
 
@@ -250,6 +263,7 @@ export class PhoneLoginService {
     // audit trail (no cancelled-without-requested orphan in the audit log).
     const ip = input.ip ?? null;
     const userAgent = input.userAgent ?? null;
+
     if (existing) {
       this.events.emit('identity.phone_otp.cancelled', {
         userId: account.id,
@@ -258,6 +272,7 @@ export class PhoneLoginService {
         userAgent,
       });
     }
+
     this.events.emit('identity.phone_otp.requested', { userId: account.id, ip, userAgent });
 
     return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
@@ -282,20 +297,26 @@ export class PhoneLoginService {
     if (!otp) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
+
       if (!shadow) {
         throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - 1, 'wrong_code');
       }
+
       if (Date.now() - shadow.createdAt >= OTP_TTL_MS) {
         throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - shadow.failedAttempts, 'expired');
       }
+
       const newAttempts = shadow.failedAttempts + 1;
+
       if (newAttempts >= MAX_VERIFY_ATTEMPTS) {
         await invalidate(this.cache, key);
         throw OtpCancelledError();
       }
+
       await this.shadowSet(key, { createdAt: shadow.createdAt, failedAttempts: newAttempts });
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
+
     if (otp.expiresAt.getTime() < Date.now()) {
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts, 'expired');
     }
@@ -311,6 +332,7 @@ export class PhoneLoginService {
         .set({ failedAttempts: sql`${smsOtpSession.failedAttempts} + 1` })
         .where(eq(smsOtpSession.id, otp.id))
         .returning({ failedAttempts: smsOtpSession.failedAttempts });
+
       const newAttempts = row?.failedAttempts;
 
       // row is undefined when a concurrent request already deleted the session after
@@ -326,8 +348,10 @@ export class PhoneLoginService {
             userAgent,
           });
         }
+
         throw OtpCancelledError();
       }
+
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
 
@@ -359,11 +383,13 @@ export class PhoneLoginService {
       .from(user)
       .where(eq(user.id, otp.userId))
       .limit(1);
+
     if (!account) {
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
     }
 
     const nowMs = Date.now();
+
     if (account.lockoutUntil && account.lockoutUntil.getTime() > nowMs) {
       throw createAccountLockedError(account.lockoutUntil);
     }
@@ -425,9 +451,11 @@ export class PhoneLoginService {
     // Delete the OTP and insert the new session atomically: if the insert fails the
     // OTP is not consumed and the user can retry with the same code.
     const token = randomUUID();
+
     const sessionExpiresAt = new Date(
       Date.now() + (rememberMe ? REMEMBER_ME_TTL_MS : SESSION_TTL_MS),
     );
+
     await this.drizzle.db.transaction(async (t) => {
       await t.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
       await t.insert(session).values({
@@ -475,6 +503,7 @@ export class PhoneLoginService {
     const maxAgeSeconds = rememberMe
       ? Math.max(0, Math.round((sessionExpiresAt.getTime() - Date.now()) / 1000))
       : undefined;
+
     resHeaders.append(
       'set-cookie',
       signSessionCookie({

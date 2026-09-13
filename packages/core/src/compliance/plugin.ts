@@ -50,14 +50,18 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');
+
 const RG_MONITOR_QUEUE = queue('rg-monitor');
+
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
   trigger: z.enum(RG_EVAL_TRIGGERS),
 });
+
 const RgMonitorJobSchema = z.object({});
+
 const KycDecisionSyncJobSchema = z.object({
   referenceId: z.string().min(1),
   status: z.enum(KYC_VENDOR_STATUSES),
@@ -79,11 +83,13 @@ export default {
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
+
       const webhookSecret = z
         .string()
         .min(1)
         .optional()
         .parse(process.env[envName] || undefined);
+
       return new HmacKycWebhookVerifier(webhookSecret, c.get(CACHE));
     });
 
@@ -93,22 +99,26 @@ export default {
     let rgRef: RgService | null = null;
     let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
+
     const monitoring = (c: TypedContainer<CoreTokenCatalog>) =>
       (monitorRef ??= new RgMonitoringService({
         drizzle: c.get(DRIZZLE),
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       }));
+
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
+
       // kycStatusChannel is the basic-tier withdrawal-status stream; advanced-tier
       // updates have no consumer here yet (see tag-evaluation.service.ts's same guard).
       if (!parsed.success || !realtimeTransport || !envelope || parsed.data.tier !== 'basic') {
         return;
       }
+
       return realtimeTransport.publish(kycStatusChannel(parsed.data.userId), {
         eventId: envelope.eventId,
         status: parsed.data.status,
@@ -118,9 +128,11 @@ export default {
 
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+
       if (!parsed.success || !kycRef) {
         return;
       }
+
       kycRef
         .handleDeposit(parsed.data.userId)
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
@@ -130,6 +142,7 @@ export default {
       if (!jobQueueRef) {
         return;
       }
+
       void jobQueueRef
         .enqueue(RG_EVAL_QUEUE, { userId, trigger }, { orderingKey: userId })
         .catch((err) => logger.error({ err }, 'rg-eval enqueue failed'));
@@ -137,24 +150,28 @@ export default {
 
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+
       if (parsed.success) {
         enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
       }
     });
     ctx.events.on('gaming.round.ended', (payload) => {
       const parsed = domainEventSchemas['gaming.round.ended'].safeParse(payload);
+
       if (parsed.success) {
         enqueueEval(parsed.data.userId, 'gaming.round.ended');
       }
     });
     ctx.events.on('rg.exclusion.login_blocked', (payload) => {
       const parsed = domainEventSchemas['rg.exclusion.login_blocked'].safeParse(payload);
+
       if (parsed.success) {
         enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
       }
     });
     ctx.events.on('rg.limit.set', (payload) => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
+
       if (parsed.success) {
         enqueueEval(parsed.data.userId, 'rg.limit.set');
       }
@@ -177,9 +194,11 @@ export default {
         if (rgRef) {
           await rgRef.expireLapsedCoolingOffs();
         }
+
         if (selfServiceRef) {
           await selfServiceRef.expireStaleLimitChanges();
         }
+
         if (monitorRef) {
           await monitorRef.sweep();
         }
@@ -204,17 +223,21 @@ export default {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const kycAdapter = c.get(KYC_ADAPTER);
+
       // A KYC-gated withdrawal is meaningless while an auto-approving adapter (the default
       // MockKycAdapter) is bound: any player self-verifies and passes the gate. Fail loud -
       // refuse to boot in production, warn everywhere else.
       if (platformConfig?.kyc?.gateWithdrawals && kycAdapter.autoApproves) {
         const msg =
           'kyc.gateWithdrawals is enabled but the bound KYC_ADAPTER auto-approves (MockKycAdapter). Bind a real provider or the withdrawal gate is a no-op.';
+
         if (process.env['NODE_ENV'] === 'production') {
           throw new Error(msg);
         }
+
         logger.warn(msg);
       }
+
       const kyc = new KycVerificationService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
@@ -223,6 +246,7 @@ export default {
         identityReader: c.get(IDENTITY_READER),
         platformConfig,
       });
+
       kycRef = kyc;
 
       const rg = new RgService({
@@ -234,8 +258,10 @@ export default {
         audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
         rates: c.get(EXCHANGE_RATE_READER),
       });
+
       rgRef = rg;
       const rgMonitoring = monitoring(c);
+
       const rgSelfService = new RgSelfServiceService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
@@ -245,6 +271,7 @@ export default {
         config: platformConfig?.responsibleGambling ?? defaultResponsibleGamingConfig,
         rates: c.get(EXCHANGE_RATE_READER),
       });
+
       selfServiceRef = rgSelfService;
 
       jobQueueRef = c.get(JOB_QUEUE);

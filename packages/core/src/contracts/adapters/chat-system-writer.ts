@@ -6,6 +6,7 @@ import type {
 } from '../schemas/chat-command.js';
 
 export type { SystemChatMessage as ChatSystemMessage };
+
 export type { CommandChatMessage };
 
 export type ChatSystemWriter = {

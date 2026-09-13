@@ -12,8 +12,10 @@ const logger = createLogger('exchange-rate-reader');
 
 /** Tolerated forward clock skew between the provider's `asOf` and this process. */
 const MAX_PROVIDER_CLOCK_SKEW_MS = 60_000;
+
 /** Upper bound on a plausible pivot-denominated rate; anything beyond is a provider defect. */
 const MAX_PLAUSIBLE_RATE = 1e12;
+
 /** Hard cap on the failure-cooldown map, so an unbounded code space cannot grow it. */
 const MAX_FAILURE_ENTRIES = 512;
 
@@ -31,6 +33,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
     const timer = setTimeout(() => {
       reject(new Error(`exchange rate provider timed out fetching ${label}`));
     }, timeoutMs);
+
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -98,6 +101,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   async getRate(from: string, to: string): Promise<ExchangeRateQuote | null> {
     const fromCode = from.toUpperCase();
     const toCode = to.toUpperCase();
+
     if (fromCode === toCode) {
       return { rate: '1.000000000000000000', asOf: new Date().toISOString() };
     }
@@ -106,20 +110,24 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       this.resolveLeg(fromCode),
       this.resolveLeg(toCode),
     ]);
+
     if (!fromLeg || !toLeg) {
       return null;
     }
 
     const rate = moneyDivide(fromLeg.rate, toLeg.rate);
     const asOf = fromLeg.asOf < toLeg.asOf ? fromLeg.asOf : toLeg.asOf;
+
     return { rate, asOf };
   }
 
   async convert(amount: string, from: string, to: string): Promise<string | null> {
     const quote = await this.getRate(from, to);
+
     if (!quote) {
       return null;
     }
+
     return moneyScaleBy(amount, quote.rate);
   }
 
@@ -129,6 +137,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
 
     const row = await this.readRow(currency);
+
     // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
     const ageMs = row
       ? Math.max(0, Date.now() - row.providerAsOf.getTime())
@@ -145,10 +154,12 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
           'background exchange rate refresh failed',
         );
       });
+
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
     }
 
     const cooldownUntil = this.failedUntil.get(currency);
+
     if (cooldownUntil !== undefined && Date.now() < cooldownUntil) {
       return null;
     }
@@ -156,6 +167,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     try {
       const quote = await this.fetchLeg(currency);
       this.failedUntil.delete(currency);
+
       return quote;
     } catch (err) {
       this.rememberFailure(currency);
@@ -163,6 +175,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
         { err, currency, pivot: this.pivot, hadRow: row !== null },
         'exchange rate hard-stale and unavailable; failing closed',
       );
+
       return null;
     }
   }
@@ -170,18 +183,23 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   /** Records a cooldown, evicting expired entries first so the map cannot grow without bound. */
   private rememberFailure(currency: string): void {
     const now = Date.now();
+
     for (const [key, until] of this.failedUntil) {
       if (until <= now) {
         this.failedUntil.delete(key);
       }
     }
+
     while (this.failedUntil.size >= MAX_FAILURE_ENTRIES) {
       const [oldest] = this.failedUntil.keys();
+
       if (oldest === undefined) {
         break;
       }
+
       this.failedUntil.delete(oldest);
     }
+
     this.failedUntil.set(currency, now + this.providerTimeoutMs);
   }
 
@@ -198,12 +216,14 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
           eq(exchangeRateQuote.quoteCurrency, this.pivot),
         ),
       );
+
     return row ?? null;
   }
 
   private fetchLeg(currency: string): Promise<ExchangeRateQuote> {
     const key = `${currency}:${this.pivot}`;
     const existing = this.inFlight.get(key);
+
     if (existing) {
       return existing;
     }
@@ -213,7 +233,9 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
         this.inFlight.delete(key);
       }
     });
+
     this.inFlight.set(key, attempt);
+
     return attempt;
   }
 
@@ -224,6 +246,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       this.fiatProvider,
       this.cryptoCurrencies,
     );
+
     if (!provider) {
       throw new Error(`no exchange rate provider bound for ${currency}/${this.pivot}`);
     }
@@ -233,12 +256,15 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       this.providerTimeoutMs,
       `${currency}/${this.pivot}`,
     );
+
     if (!quote) {
       throw new Error(`exchange rate provider returned no quote for ${currency}/${this.pivot}`);
     }
+
     this.assertUsableQuote(currency, quote);
 
     await this.persist(currency, quote);
+
     return quote;
   }
 
@@ -250,17 +276,23 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private assertUsableQuote(currency: string, quote: ExchangeRateQuote): void {
     const pair = `${currency}/${this.pivot}`;
     const rate = Number(quote.rate);
+
     if (!Number.isFinite(rate) || rate <= 0 || rate > MAX_PLAUSIBLE_RATE) {
       throw new Error(`exchange rate provider returned an out-of-range rate for ${pair}`);
     }
+
     const asOf = new Date(quote.asOf).getTime();
+
     if (Number.isNaN(asOf)) {
       throw new Error(`exchange rate provider returned an unparseable timestamp for ${pair}`);
     }
+
     const now = Date.now();
+
     if (asOf > now + MAX_PROVIDER_CLOCK_SKEW_MS) {
       throw new Error(`exchange rate provider returned a future timestamp for ${pair}`);
     }
+
     if (now - asOf >= this.hardMaxAgeMs) {
       throw new Error(`exchange rate provider returned an already hard-stale quote for ${pair}`);
     }

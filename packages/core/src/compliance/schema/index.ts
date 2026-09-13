@@ -34,12 +34,19 @@ import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
 
 export const kycVerificationStatus = pgEnum('kyc_verification_status', KYC_STATUSES);
+
 export const kycVerificationTier = pgEnum('kyc_verification_tier', KYC_TIERS);
+
 export const kycTriggeredBy = pgEnum('kyc_triggered_by', KYC_TRIGGERED_BY);
+
 export const rgExclusionKind = pgEnum('rg_exclusion_kind', EXCLUSION_KINDS);
+
 export const rgExclusionStatus = pgEnum('rg_exclusion_status', EXCLUSION_STATUSES);
+
 export const rgFlagType = pgEnum('rg_flag_type', RG_FLAG_TYPES);
+
 export const rgFlagStatus = pgEnum('rg_flag_status', RG_FLAG_STATUSES);
+
 export const limitChangeKind = pgEnum('limit_change_kind', LIMIT_CHANGE_KINDS);
 
 // Postgres treats every NULL as distinct in a unique index, so a session-type row uses
@@ -198,7 +205,11 @@ export const rgFlag = pgTable(
 );
 
 export type UserLimit = typeof userLimit.$inferSelect;
+
 export type GeoRule = typeof geoRule.$inferSelect;
+
 export type KycVerification = typeof kycVerification.$inferSelect;
+
 export type RgExclusion = typeof rgExclusion.$inferSelect;
+
 export type RgFlag = typeof rgFlag.$inferSelect;

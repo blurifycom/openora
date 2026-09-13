@@ -13,6 +13,7 @@ const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = [
   'swap_in',
   'bet_reversal',
 ];
+
 const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = [
   'withdrawal',
   'bet',

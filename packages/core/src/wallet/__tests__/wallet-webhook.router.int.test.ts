@@ -39,7 +39,9 @@ import { WalletService } from '../service/wallet.service.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
 
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
+
 const DEPOSIT_ADDRESS = 'bc1qxyz';
+
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 let db: TestDb;
@@ -69,6 +71,7 @@ function routerWith(
     adapter: payment,
     webhookVerifier: verifier,
   });
+
   return routerWithProviders(paymentProviders, payment, limiter);
 }
 
@@ -85,6 +88,7 @@ function routerWithProviders(
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
+
   return createWalletRouter({
     wallet: service,
     adminGuard: mock<AdminGuard>({ assert: vi.fn() }),
@@ -116,9 +120,11 @@ function twoProviderRegistry(
       if (name === 'vendor-a') {
         return { adapter: a.payment, webhookVerifier: a.verifier };
       }
+
       if (name === 'vendor-b') {
         return { adapter: b.payment, webhookVerifier: b.verifier };
       }
+
       return null;
     },
     names: () => ['vendor-a', 'vendor-b'],
@@ -140,9 +146,11 @@ async function seedWallet(currency = 'BTC') {
     await db.drizzle.db.insert(wallet).values({ userId: USER_ID, currency }).returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: '0' });
+
   return row;
 }
 
@@ -172,6 +180,7 @@ async function seedProcessingWithdrawal(walletId: string, externalId: string) {
       .returning(),
     new Error('seedProcessingWithdrawal: query returned no row'),
   );
+
   return row;
 }
 
@@ -232,10 +241,12 @@ describe('wallet webhook route (M2M, no admin session)', () => {
       providerRefId: 'vendor-ext-1',
       txHash: '0xabc',
     });
+
     const [credited] = await db.drizzle.db
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
+
     expect(credited?.amount).toBe('0.500000000000000000');
   });
 
@@ -248,10 +259,12 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     await call(router.webhook, {}, ctx('{"event":"deposit"}'));
 
     expect(await ledgerFor(w.id)).toHaveLength(1);
+
     const [credited] = await db.drizzle.db
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
+
     expect(credited?.amount).toBe('0.500000000000000000');
   });
 
@@ -259,6 +272,7 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     const w = await seedWallet();
     const externalId = randomUUID();
     const withdrawal = await seedProcessingWithdrawal(w.id, externalId);
+
     const router = routerWith(
       paymentParsing({ kind: 'withdrawal', externalId, status: 'completed', txHash: '0xdef' }),
       verifierReturning(true),
@@ -267,10 +281,12 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     const result = await call(router.webhook, {}, ctx('{"event":"withdrawal"}'));
 
     expect(result).toEqual({ ok: true });
+
     const [settled] = await db.drizzle.db
       .select()
       .from(walletTransaction)
       .where(eq(walletTransaction.id, withdrawal.id));
+
     expect(settled).toMatchObject({ status: 'completed', txHash: '0xdef' });
   });
 
@@ -432,6 +448,7 @@ describe('wallet webhook route - per-IP rate limit', () => {
       consume: vi.fn(async () => ({ allowed: true, retryAfterMs: 0 })),
       reset: vi.fn(async () => undefined),
     };
+
     await seedWallet();
     await seedDepositAddress();
     const router = routerWith(paymentParsing(depositEvent), verifierReturning(true), limiter);

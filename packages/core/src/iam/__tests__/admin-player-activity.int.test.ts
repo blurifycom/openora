@@ -7,6 +7,7 @@ import { user, session } from '@openora/core/pam/schema/identity';
 import { DrizzleAdminPlayerActivity } from '../adapters/admin-player-activity.js';
 
 let db: TestDb;
+
 let activity: DrizzleAdminPlayerActivity;
 
 const AT = (iso: string) => new Date(iso);

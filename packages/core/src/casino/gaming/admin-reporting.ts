@@ -28,6 +28,7 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       // sum - the operator UI shows a disclaimer in that case; this is intentional.
       filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
+
     const where = filter.gameType ? eq(game.gameType, filter.gameType) : undefined;
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
@@ -44,6 +45,7 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       uniquePlayers,
       roundsPlayed,
     };
+
     const order = filter.sortDir === 'asc' ? asc : desc;
 
     const rows = await db
@@ -75,6 +77,7 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
 
   async getPlayerStats(userId: string): Promise<PlayerGameStats> {
     const db = this.drizzle.db;
+
     const [row] = await db
       .select({
         totalWagered: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`,
@@ -82,6 +85,7 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       })
       .from(gameRound)
       .where(and(eq(gameRound.userId, userId), eq(gameRound.status, 'completed')));
+
     return {
       totalWagered: row?.totalWagered ?? '0',
       totalBets: Number(row?.totalBets ?? 0),

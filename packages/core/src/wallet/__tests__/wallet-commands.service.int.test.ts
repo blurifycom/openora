@@ -18,6 +18,7 @@ const eligibility = (isRestricted: boolean) =>
   mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
 
 const audit = makeAuditWriter();
+
 const svc = new WalletCommandsService(eligibility(false), audit);
 
 async function seedWallet({
@@ -31,9 +32,11 @@ async function seedWallet({
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: balance });
+
   return row;
 }
 
@@ -43,6 +46,7 @@ async function balanceOf(userId: string) {
     .from(walletBalance)
     .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
     .where(eq(wallet.userId, userId));
+
   return Number(row?.amount ?? 0);
 }
 
@@ -78,6 +82,7 @@ const refusingLimits = () =>
       used: '45',
     }),
   });
+
 const allowingLimits = () =>
   mock<RgLimitsPort>({
     checkDeposit: vi.fn(),
@@ -137,10 +142,12 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
   it('serializes concurrent bets so they cannot jointly pass the same limit', async () => {
     const w = await seedWallet({ balance: '1000' });
     let staked = 0;
+
     const limits = mock<RgLimitsPort>({
       checkDeposit: vi.fn(),
       checkWager: vi.fn(async (_tx: unknown, _userId: string, amount: string) => {
         await new Promise((r) => setTimeout(r, 10));
+
         if (staked + Number(amount) > 100) {
           return {
             allowed: false as const,
@@ -150,10 +157,13 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
             used: String(staked),
           };
         }
+
         staked += Number(amount);
+
         return { allowed: true as const };
       }),
     });
+
     const gated = new WalletCommandsService(eligibility(false), audit, undefined, limits);
 
     const results = await Promise.allSettled([
@@ -463,6 +473,7 @@ describe('WalletCommandsService providerRef replay safety (real PG)', () => {
       type: 'bet',
       providerRef,
     });
+
     const second = await svc.debit(db.drizzle.db, {
       userId: w.userId,
       amount: '10',
@@ -489,6 +500,7 @@ describe('WalletCommandsService providerRef replay safety (real PG)', () => {
       type: 'win',
       providerRef,
     });
+
     const second = await svc.credit(db.drizzle.db, {
       userId: w.userId,
       amount: '20',

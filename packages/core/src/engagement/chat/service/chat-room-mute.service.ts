@@ -19,15 +19,18 @@ export class ChatRoomMuteService {
       .from(chatRoomMember)
       .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
       .limit(1);
+
     if (!actor || (actor.role !== 'moderator' && actor.role !== 'owner')) {
       throw new ChatRoomNotModeratorError(roomId);
     }
+
     if (targetId) {
       const [target] = await this.drizzle.db
         .select({ role: chatRoomMember.role })
         .from(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, targetId)))
         .limit(1);
+
       if (actor.role !== 'owner' && target && target.role !== 'member') {
         throw new ChatRoomNotModeratorError(roomId);
       }
@@ -50,12 +53,16 @@ export class ChatRoomMuteService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
+
     await this.assertModerator(roomId, moderatorId, userId);
+
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+
     const created = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room-mute:${roomId}:${userId}`, async () => {
         const now = new Date();
+
         const [active] = await t
           .select({ id: chatRoomMute.id, expiresAt: chatRoomMute.expiresAt })
           .from(chatRoomMute)
@@ -67,22 +74,27 @@ export class ChatRoomMuteService {
             ),
           )
           .limit(1);
+
         if (active && (!active.expiresAt || active.expiresAt > now)) {
           return null;
         }
+
         if (active) {
           await t
             .update(chatRoomMute)
             .set({ liftedAt: now, liftedBy: moderatorId })
             .where(eq(chatRoomMute.id, active.id));
         }
+
         const [inserted] = await t
           .insert(chatRoomMute)
           .values({ roomId, userId, mutedBy: moderatorId, reason, expiresAt })
           .returning({ id: chatRoomMute.id });
+
         return inserted;
       }),
     );
+
     if (created) {
       await this.audit.record({
         actorId: moderatorId,
@@ -93,6 +105,7 @@ export class ChatRoomMuteService {
         after: { roomId, userId, durationSeconds, reason },
       });
     }
+
     return { success: true } as const;
   }
 
@@ -124,6 +137,7 @@ export class ChatRoomMuteService {
       resourceId: null,
       after: { roomId, userId },
     });
+
     return { success: true } as const;
   }
 }

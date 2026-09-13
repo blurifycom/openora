@@ -56,6 +56,7 @@ export const roles = {
 } as const;
 
 export type RoleName = keyof typeof roles;
+
 // Server-side aliases of the contract types, so AdminGuard.assert and the
 // permission-level helpers keep reading in `server/auth` terms.
 export type {

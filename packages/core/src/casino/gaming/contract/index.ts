@@ -11,7 +11,9 @@ import {
 export { GameTypeSchema } from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
+
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
+
 export type GameRoundStatus = z.infer<typeof GameRoundStatusSchema>;
 
 export const GameSchema = z.object({
@@ -36,6 +38,7 @@ export const GameRoundSchema = z.object({
   startedAt: z.string(),
   endedAt: z.string().nullable(),
 });
+
 export type GameRound = z.infer<typeof GameRoundSchema>;
 
 export const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {

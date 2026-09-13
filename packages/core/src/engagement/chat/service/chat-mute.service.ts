@@ -31,6 +31,7 @@ export class ChatMuteService {
 
   async assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic = true) {
     const now = new Date();
+
     const [config] =
       roomId === null
         ? await this.drizzle.db
@@ -44,9 +45,11 @@ export class ChatMuteService {
             .from(chatRoomConfiguration)
             .where(eq(chatRoomConfiguration.roomId, roomId))
             .limit(1);
+
     if (config?.readOnlyMode) {
       throw new ChatPlayerMutedError(null);
     }
+
     if (roomId !== null) {
       const [roomMute] = await this.drizzle.db
         .select({ id: chatRoomMute.id, expiresAt: chatRoomMute.expiresAt })
@@ -60,10 +63,12 @@ export class ChatMuteService {
           ),
         )
         .limit(1);
+
       if (roomMute) {
         throw new ChatPlayerMutedError(roomMute.expiresAt);
       }
     }
+
     const [ban] = await this.drizzle.db
       .select({ id: chatPlatformBan.id, expiresAt: chatPlatformBan.expiresAt })
       .from(chatPlatformBan)
@@ -94,9 +99,11 @@ export class ChatMuteService {
         ),
       )
       .limit(1);
+
     if (ban) {
       throw new ChatPlayerBannedError(ban.expiresAt);
     }
+
     const [mute] = await this.drizzle.db
       .select({ id: chatMute.id, expiresAt: chatMute.expiresAt })
       .from(chatMute)
@@ -119,6 +126,7 @@ export class ChatMuteService {
         ),
       )
       .limit(1);
+
     if (mute) {
       throw new ChatPlayerMutedError(mute.expiresAt);
     }
@@ -141,16 +149,20 @@ export class ChatMuteService {
   } & ClientMeta) {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
+
     const concreteRoomId = scope === 'room' ? roomId : null;
+
     if (concreteRoomId) {
       const [room] = await this.drizzle.db
         .select()
         .from(chatRoom)
         .where(and(eq(chatRoom.id, concreteRoomId), isNull(chatRoom.deletedAt)))
         .limit(1);
+
       if (!room) {
         throw new ChatRoomNotFoundError(concreteRoomId);
       }
+
       if (!room.isPublic) {
         throw new ChatAdminPrivateRoomModerationError();
       }
@@ -160,16 +172,20 @@ export class ChatMuteService {
         .from(chatRoom)
         .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
         .limit(1);
+
       if (globalRoom && !globalRoom.isPublic) {
         throw new ChatAdminPrivateRoomModerationError();
       }
     }
+
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+
     const [created] = await this.drizzle.db
       .insert(chatMute)
       .values({ userId, roomId: concreteRoomId, scope, mutedBy: actorId, reason, expiresAt })
       .returning();
+
     await this.audit.record({
       actorId,
       actorType: 'admin',
@@ -180,6 +196,7 @@ export class ChatMuteService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     return { success: true } as const;
   }
 
@@ -192,8 +209,10 @@ export class ChatMuteService {
   }: { userId: Uuid; roomId: ChatModerationRoomId; actorId: Uuid } & ClientMeta) {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
+
     const concreteRoomId = scope === 'room' ? roomId : null;
     const liftedAt = new Date();
+
     const rows = await this.drizzle.db
       .update(chatMute)
       .set({ liftedAt, liftedBy: actorId })
@@ -215,6 +234,7 @@ export class ChatMuteService {
         ),
       )
       .returning({ id: chatMute.id });
+
     await this.audit.record({
       actorId,
       actorType: 'admin',
@@ -225,6 +245,7 @@ export class ChatMuteService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     return { success: true } as const;
   }
 
@@ -251,6 +272,7 @@ export class ChatMuteService {
         ),
       )
       .orderBy(desc(chatMute.createdAt));
+
     return rows.map((row) => ({
       ...serializeRow(row, { dateFields: ['createdAt', 'expiresAt'] }),
       scope: row.scope as ChatModerationScope,

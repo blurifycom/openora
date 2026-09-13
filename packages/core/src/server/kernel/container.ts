@@ -48,9 +48,11 @@ export class Container<C extends TokenCatalog> {
     }
 
     const factory = this.factories.get(token);
+
     if (!factory) {
       throw new Error(`No provider registered for token "${token.description ?? String(token)}"`);
     }
+
     if (this.resolving.has(token)) {
       throw new Error(
         `Circular dependency resolving token "${token.description ?? String(token)}"`,
@@ -61,6 +63,7 @@ export class Container<C extends TokenCatalog> {
     const instance = factory(this) as TokenValue<T>;
     this.resolving.delete(token);
     this.instances.set(token, instance);
+
     return instance;
   }
 

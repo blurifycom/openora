@@ -19,6 +19,7 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
   it('boots and serves once REDIS_URL auto-binds all four seams', async () => {
     const saved = process.env['REDIS_URL'];
     process.env['REDIS_URL'] = redisUrlForWorker();
+
     try {
       const created = await createApp({
         plugins: [],
@@ -28,6 +29,7 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
       for (const token of [MESSAGE_BROKER, JOB_QUEUE, CACHE, RATE_LIMITER]) {
         expect(created.container.has(token)).toBe(true);
       }
+
       const res = await created.app.request('/health');
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ status: 'ok' });
@@ -55,6 +57,7 @@ describe('createApp - streaming responses opt out of transformation', () => {
   it('marks an SSE response no-transform so an intermediary cannot batch its frames', async () => {
     const saved = process.env['REDIS_URL'];
     process.env['REDIS_URL'] = redisUrlForWorker();
+
     try {
       const created = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL });
       created.app.get('/sse-probe', (c) =>
@@ -84,12 +87,14 @@ describe('createApp - httpCache.additionalPaths extends rather than replaces the
   it('keeps the built-in cache paths cacheable while adding a consumer path', async () => {
     const saved = process.env['REDIS_URL'];
     process.env['REDIS_URL'] = redisUrlForWorker();
+
     try {
       const created = await createApp({
         plugins: [],
         databaseUrl: DUMMY_DATABASE_URL,
         httpCache: { additionalPaths: ['/email-assets'] },
       });
+
       created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
       created.app.get('/email-assets/banner.png', (c) => c.body('png'));
       created.app.get('/wallet/balance', (c) => c.json({ ok: true }));
@@ -116,12 +121,14 @@ describe('createApp - httpCache.additionalPaths extends rather than replaces the
   it('lets `paths` still replace the default list wholesale, ignoring additionalPaths', async () => {
     const saved = process.env['REDIS_URL'];
     process.env['REDIS_URL'] = redisUrlForWorker();
+
     try {
       const created = await createApp({
         plugins: [],
         databaseUrl: DUMMY_DATABASE_URL,
         httpCache: { paths: ['/only-this'], additionalPaths: ['/ignored-since-paths-is-set'] },
       });
+
       created.app.get('/lobby/categories', (c) => c.json({ ok: true }));
       created.app.get('/ignored-since-paths-is-set', (c) => c.json({ ok: true }));
 

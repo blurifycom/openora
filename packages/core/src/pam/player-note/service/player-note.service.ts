@@ -24,6 +24,7 @@ export class PlayerNoteService {
     const db = this.drizzle.db;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
     const col = sortBy === 'updatedAt' ? playerNote.updatedAt : playerNote.createdAt;
+
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
@@ -34,6 +35,7 @@ export class PlayerNoteService {
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(playerNote).where(where),
     ]);
+
     return { items: rows.map(toItem), total: Number(n), page, limit };
   }
 
@@ -42,6 +44,7 @@ export class PlayerNoteService {
       .insert(playerNote)
       .values({ ...input, actorId })
       .returning();
+
     return toItem(created);
   }
 }

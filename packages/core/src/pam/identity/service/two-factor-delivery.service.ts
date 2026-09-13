@@ -19,11 +19,13 @@ export function maskEmail(email: string): string {
   // A one-character local part has nothing to keep and nothing to hide; showing it
   // whole would leak the entire address, so it masks to a bare marker.
   const head = local.length > 1 ? local.slice(0, 1) : '';
+
   return `${head}***@${domain}`;
 }
 
 export function maskPhone(phone: string): string {
   const tail = phone.slice(-2);
+
   return `+** *** *** ${tail}`;
 }
 
@@ -74,6 +76,7 @@ export class TwoFactorDeliveryService {
   takeFailure(userId: User['id']): unknown {
     const failure = this.lastFailure.get(userId);
     this.lastFailure.delete(userId);
+
     return failure;
   }
 
@@ -83,12 +86,15 @@ export class TwoFactorDeliveryService {
    */
   async describeDestination(userId: User['id']): Promise<TwoFactorDestination | undefined> {
     const row = await this.findAccount(userId);
+
     if (!row?.twoFactorMethod || row.twoFactorMethod === 'app') {
       return undefined;
     }
+
     if (row.twoFactorMethod === 'email') {
       return { method: 'email', masked: maskEmail(row.email) };
     }
+
     return row.phoneVerified && row.phoneNumber
       ? { method: 'sms', masked: maskPhone(row.phoneNumber) }
       : // An `sms` enrolment whose phone has since been cleared or unverified has
@@ -108,6 +114,7 @@ export class TwoFactorDeliveryService {
     code: string;
   }): Promise<void> {
     this.lastFailure.delete(args.userId);
+
     try {
       await this.dispatch(args);
     } catch (error) {
@@ -122,6 +129,7 @@ export class TwoFactorDeliveryService {
   private async dispatch(args: { userId: User['id']; code: string }): Promise<void> {
     const row = await this.findAccount(args.userId);
     const method = row?.twoFactorMethod;
+
     // `app` reads the code off the shared secret and an unenrolled account has no
     // method yet, so neither has anywhere to deliver to. Staying silent is correct:
     // better-auth calls this hook unconditionally.
@@ -134,10 +142,13 @@ export class TwoFactorDeliveryService {
       // never be routed to a number the account has not proven it holds, however the
       // column came to have it.
       const phone = row.phoneVerified ? row.phoneNumber : null;
+
       if (!phone) {
         return;
       }
+
       await this.sms.sendOtp({ to: phone, code: args.code });
+
       return;
     }
 
@@ -162,6 +173,7 @@ export class TwoFactorDeliveryService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     return row;
   }
 }

@@ -4,10 +4,13 @@ import { Container } from '../../kernel/index.js';
 import { ModuleRegistryImpl, type Plugin } from '../index.js';
 
 const COUNT = createToken<number>('COUNT');
+
 const SEED = createToken<number>('SEED');
+
 const OTHER = createToken<string>('OTHER');
 
 const catalog = { COUNT, SEED } satisfies TokenCatalog;
+
 const typedCatalog = { COUNT, SEED } satisfies TokenCatalog<{ COUNT: number; SEED: number }>;
 
 void typedCatalog;
@@ -48,6 +51,7 @@ const typedPlugin = {
 
     ctx.routers.add('typed', (container) => {
       const seed: number = container.get(SEED);
+
       return { seed };
     });
 
@@ -77,7 +81,9 @@ const invalidTypedPlugin = {
 void invalidTypedPlugin;
 
 const typedPluginId: 'typed-plugin' = typedPlugin.id;
+
 const typedDependency: readonly ['foundation'] = typedPlugin.dependsOn;
+
 const typedRequiredPort: typeof SEED = typedPlugin.requiresPorts[0];
 
 describe('typed plugin surface', () => {

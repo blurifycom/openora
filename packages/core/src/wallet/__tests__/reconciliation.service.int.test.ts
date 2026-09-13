@@ -67,9 +67,11 @@ function makeServices(
   const paymentProviders = makePaymentProviderRegistry({ adapter: payment });
   const audit = makeAuditWriter();
   const events = makeEventBus();
+
   const platformConfig = mock<PlatformConfig>({
     wallet: { reconciliation: RECONCILIATION_CONFIG, ...overrides.platformConfig },
   });
+
   const wallet = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -79,6 +81,7 @@ function makeServices(
     identityReader: overrides.identityReader ?? makeIdentityReader(),
     platformConfig,
   });
+
   const reconciliation = new ReconciliationService({
     drizzle: db.drizzle,
     events,
@@ -87,6 +90,7 @@ function makeServices(
     audit,
     platformConfig,
   });
+
   return { wallet, reconciliation, audit, events };
 }
 
@@ -95,7 +99,9 @@ async function seedWallet(currency = 'BTC', balance = '0') {
     await db.drizzle.db.insert(wallet).values({ userId: randomUUID(), currency }).returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db.insert(walletBalance).values({ walletId: row.id, currency, amount: balance });
+
   return row;
 }
 
@@ -104,6 +110,7 @@ async function balanceOf(walletId: string) {
     .select()
     .from(walletBalance)
     .where(eq(walletBalance.walletId, walletId));
+
   return row?.amount ?? '0';
 }
 
@@ -122,17 +129,21 @@ function listTransactionsReturning(events: PaymentWebhookEvent[]): PaymentAdapte
  */
 async function waitForOpenClaim(jobName: string, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+
   for (;;) {
     const [row] = await db.drizzle.db
       .select({ id: walletJobRun.id })
       .from(walletJobRun)
       .where(and(eq(walletJobRun.jobName, jobName), isNull(walletJobRun.finishedAt)));
+
     if (row) {
       return;
     }
+
     if (Date.now() > deadline) {
       throw new Error(`waitForOpenClaim: no open claim for '${jobName}' within ${timeoutMs}ms`);
     }
+
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
@@ -151,6 +162,7 @@ describe('ReconciliationService.runCycle - internal transfer exclusion', () => {
       externalId: sweepExternalId,
       status: 'completed',
     });
+
     // The vendor's own ledger reports the sweep back as a transaction with no ledger
     // row on our side - exactly the shape that would file a false missing_deposit if
     // the exclusion were skipped.
@@ -164,6 +176,7 @@ describe('ReconciliationService.runCycle - internal transfer exclusion', () => {
         externalId: sweepExternalId,
       },
     ]);
+
     const { reconciliation } = makeServices(payment);
 
     const result = await reconciliation.runCycle();
@@ -177,6 +190,7 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
   it('produces a finding and zero balance change', async () => {
     const w = await seedWallet('BTC', '2');
     const externalId = randomUUID();
+
     const payment = listTransactionsReturning([
       {
         kind: 'deposit',
@@ -187,6 +201,7 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
         externalId,
       },
     ]);
+
     const { reconciliation } = makeServices(payment);
 
     await reconciliation.runCycle();
@@ -200,6 +215,7 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
 
   it('does not duplicate the finding when the same window is reconciled again', async () => {
     const externalId = randomUUID();
+
     const payment = listTransactionsReturning([
       {
         kind: 'deposit',
@@ -210,6 +226,7 @@ describe('ReconciliationService.runCycle - missing deposit', () => {
         externalId,
       },
     ]);
+
     const { reconciliation } = makeServices(payment);
 
     await reconciliation.runCycle();
@@ -224,6 +241,7 @@ describe('ReconciliationService.runCycle - amount and currency mismatch', () => 
   it('flags amount_mismatch when the ledger amount differs from the vendor report', async () => {
     const w = await seedWallet();
     const externalId = randomUUID();
+
     const tx = findOneOrThrow(
       await db.drizzle.db
         .insert(walletTransaction)
@@ -251,6 +269,7 @@ describe('ReconciliationService.runCycle - amount and currency mismatch', () => 
         externalId,
       },
     ]);
+
     const { reconciliation } = makeServices(payment);
 
     await reconciliation.runCycle();
@@ -265,6 +284,7 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
   async function seedStuckWithdrawal(providerRefId: string) {
     const w = await seedWallet('BTC', '5');
     const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
     const tx = findOneOrThrow(
       await db.drizzle.db
         .insert(walletTransaction)
@@ -282,25 +302,30 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
         .returning(),
       new Error('seedStuckWithdrawal: query returned no row'),
     );
+
     return { w, tx };
   }
 
   it('finalizes through reconcileWithdrawalStatus and refunds exactly once when it comes back failed', async () => {
     const providerRefId = randomUUID();
     const { w } = await seedStuckWithdrawal(providerRefId);
+
     const payment = mock<PaymentAdapter>({
       listTransactions: vi.fn(async () => []),
       getWithdrawalStatus: vi.fn(async () => ({ status: 'failed' as const })),
     });
+
     const { reconciliation } = makeServices(payment);
 
     await reconciliation.runCycle();
 
     expect(await balanceOf(w.id)).toBe('6.000000000000000000');
+
     const [tx] = await db.drizzle.db
       .select()
       .from(walletTransaction)
       .where(eq(walletTransaction.walletId, w.id));
+
     expect(tx?.status).toBe('failed');
 
     // Re-running must not refund a second time: the withdrawal is no longer
@@ -312,10 +337,12 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
   it('a permanently stuck withdrawal does not starve later ones out of the batch', async () => {
     await seedStuckWithdrawal(randomUUID());
     await seedStuckWithdrawal(randomUUID());
+
     const payment = mock<PaymentAdapter>({
       listTransactions: vi.fn(async () => []),
       getWithdrawalStatus: vi.fn(async () => null),
     });
+
     const { reconciliation } = makeServices(payment, {
       platformConfig: { reconciliation: { ...RECONCILIATION_CONFIG, batchSize: 1 } },
     });
@@ -332,10 +359,12 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
   it('files an unknown_at_provider finding when the vendor has no record', async () => {
     const providerRefId = randomUUID();
     await seedStuckWithdrawal(providerRefId);
+
     const payment = mock<PaymentAdapter>({
       listTransactions: vi.fn(async () => []),
       getWithdrawalStatus: vi.fn(async () => null),
     });
+
     const { reconciliation } = makeServices(payment);
 
     await reconciliation.runCycle();
@@ -355,15 +384,19 @@ describe('ReconciliationService.runCycle - claim concurrency', () => {
     // of guessing a fixed delay is long enough: a fixed wait is exactly what made this
     // test flaky under CI's less predictable scheduling.
     let releaseFirstCycle!: () => void;
+
     const gate = new Promise<void>((resolve) => {
       releaseFirstCycle = resolve;
     });
+
     const payment = mock<PaymentAdapter>({
       listTransactions: vi.fn(async () => {
         await gate;
+
         return [];
       }),
     });
+
     const { reconciliation } = makeServices(payment);
 
     const first = reconciliation.runCycle();
@@ -385,10 +418,12 @@ describe('ReconciliationService.runCycle - retried run', () => {
     // would reach back and stamp `completed` over the first attempt - erasing the only
     // record that reconciliation ever failed.
     const runId = randomUUID();
+
     const listTransactions = vi
       .fn()
       .mockRejectedValueOnce(new Error('vendor 503'))
       .mockResolvedValue([]);
+
     const { reconciliation } = makeServices(mock<PaymentAdapter>({ listTransactions }));
 
     await expect(reconciliation.runCycle(runId)).rejects.toThrow('vendor 503');
@@ -398,6 +433,7 @@ describe('ReconciliationService.runCycle - retried run', () => {
       .select()
       .from(walletJobRun)
       .where(eq(walletJobRun.runId, runId));
+
     expect(runs.map((r) => r.status).sort()).toEqual(['completed', 'failed']);
   });
 });
@@ -405,6 +441,7 @@ describe('ReconciliationService.runCycle - retried run', () => {
 describe('ReconciliationService.runCycle - audit', () => {
   it('audits the run and each finding, with no address or tx hash in either payload', async () => {
     const externalId = randomUUID();
+
     const payment = listTransactionsReturning([
       {
         kind: 'deposit',
@@ -415,6 +452,7 @@ describe('ReconciliationService.runCycle - audit', () => {
         externalId,
       },
     ]);
+
     const { reconciliation, audit } = makeServices(payment);
 
     await reconciliation.runCycle();
@@ -422,6 +460,7 @@ describe('ReconciliationService.runCycle - audit', () => {
     const entries = (audit.record as ReturnType<typeof vi.fn>).mock.calls.map(
       ([entry]) => entry as Record<string, unknown>,
     );
+
     expect(entries.map((e) => e.action)).toEqual([
       'wallet.reconciliation_finding.recorded',
       'wallet.reconciliation_run.completed',
@@ -436,6 +475,7 @@ describe('ReconciliationService.resolveFinding', () => {
   async function seedFinding(kind: 'missing_deposit' = 'missing_deposit') {
     const runId = randomUUID();
     await db.drizzle.db.insert(walletJobRun).values({ jobName: 'wallet-reconciliation', runId });
+
     const [row] = await db.drizzle.db
       .insert(walletReconciliationFinding)
       .values({
@@ -447,6 +487,7 @@ describe('ReconciliationService.resolveFinding', () => {
         externalId: randomUUID(),
       })
       .returning();
+
     return findOneOrThrow([row], new Error('seedFinding: insert returned no row'));
   }
 
@@ -454,12 +495,14 @@ describe('ReconciliationService.resolveFinding', () => {
     const finding = await seedFinding();
     const w = await seedWallet('BTC', '0');
     const payment = listTransactionsReturning([]);
+
     const { wallet: walletSvc, reconciliation } = makeServices(payment, {
       identityReader: mock<IdentityReader>({
         ...makeIdentityReader(),
         getPlayerIdByUserId: vi.fn().mockResolvedValue(randomUUID()),
       }),
     });
+
     const creditTx = await walletSvc.manualAdjust({
       adminId: randomUUID(),
       userId: w.userId,
@@ -484,12 +527,14 @@ describe('ReconciliationService.resolveFinding', () => {
     const finding = await seedFinding();
     const w = await seedWallet('BTC', '0');
     const payment = listTransactionsReturning([]);
+
     const { wallet: walletSvc, reconciliation } = makeServices(payment, {
       identityReader: mock<IdentityReader>({
         ...makeIdentityReader(),
         getPlayerIdByUserId: vi.fn().mockResolvedValue(randomUUID()),
       }),
     });
+
     const creditTx = await walletSvc.manualAdjust({
       adminId: randomUUID(),
       userId: w.userId,

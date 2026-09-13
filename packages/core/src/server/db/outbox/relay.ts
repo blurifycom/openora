@@ -38,6 +38,7 @@ export class OutboxRelay {
     if (this.timer) {
       return;
     }
+
     this.timer = setInterval(() => void this.drainSafe(), this.opts.intervalMs ?? 1000);
     this.timer.unref?.();
   }
@@ -47,6 +48,7 @@ export class OutboxRelay {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+
     while (this.draining) {
       await new Promise((r) => setTimeout(r, 10));
     }
@@ -66,7 +68,9 @@ export class OutboxRelay {
     if (this.draining) {
       return 0;
     }
+
     this.draining = true;
+
     try {
       const batch = await this.db.transaction((txn) =>
         txn
@@ -79,6 +83,7 @@ export class OutboxRelay {
       );
 
       let published = 0;
+
       for (const row of batch) {
         const envelope: EventEnvelope = {
           eventId: row.eventId,
@@ -89,6 +94,7 @@ export class OutboxRelay {
           ...(row.traceId ? { traceId: row.traceId } : {}),
           ...(row.orderingKey ? { orderingKey: row.orderingKey } : {}),
         };
+
         await this.broker.publish(envelope);
         await this.db
           .update(eventOutbox)
@@ -96,6 +102,7 @@ export class OutboxRelay {
           .where(eq(eventOutbox.eventId, row.eventId));
         published += 1;
       }
+
       return published;
     } finally {
       this.draining = false;

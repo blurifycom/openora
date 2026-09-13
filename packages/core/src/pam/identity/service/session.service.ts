@@ -13,6 +13,7 @@ import { type ActiveSessionItem, type SessionItem, type SessionSortBy } from '..
 import { describeDevice } from './device-fingerprint.service.js';
 
 export const SessionNotFoundError = makeNotFoundError('Session');
+
 export const CurrentSessionRevokeError = makeConflictError(
   'CurrentSessionRevokeError',
   'The current session cannot be revoked - sign out instead',
@@ -26,6 +27,7 @@ export type SessionServiceDeps = {
 
 function toSessionItem(row: Session, currentSessionId?: Session['id']): SessionItem {
   const { label, browser, os } = describeDevice(row.userAgent);
+
   return {
     id: row.id,
     expiresAt: row.expiresAt.toISOString(),
@@ -67,16 +69,19 @@ export class SessionService {
     const where = activeOnly
       ? and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`))
       : eq(session.userId, userId);
+
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), then user-chosen sort within each group.
     const activeFirst = sql<number>`CASE WHEN ${session.expiresAt} > NOW() THEN 0 ELSE 1 END`;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const col =
       sortBy === 'expiresAt'
         ? session.expiresAt
         : sortBy === 'updatedAt'
           ? session.updatedAt
           : session.createdAt;
+
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
@@ -87,6 +92,7 @@ export class SessionService {
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(session).where(where),
     ]);
+
     return {
       items: rows.map((s) => toSessionItem(s, currentSessionId)),
       total: Number(n),
@@ -114,14 +120,18 @@ export class SessionService {
   >) {
     const db = this.drizzle.db;
     const filters = [gt(session.expiresAt, sql`now()`)];
+
     if (role) {
       filters.push(eq(user.role, role));
     }
+
     if (query) {
       filters.push(ilike(user.email, `%${query}%`));
     }
+
     const where = and(...filters);
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const col =
       sortBy === 'expiresAt'
         ? session.expiresAt
@@ -174,6 +184,7 @@ export class SessionService {
     if (currentSessionId && id === currentSessionId) {
       throw new CurrentSessionRevokeError();
     }
+
     return this.revokeSession(userId, id, userId, meta);
   }
 
@@ -198,6 +209,7 @@ export class SessionService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true as const };
   }
 
@@ -214,6 +226,7 @@ export class SessionService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true as const };
   }
 }

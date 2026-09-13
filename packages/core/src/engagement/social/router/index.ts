@@ -23,6 +23,7 @@ export function createSocialRouter(social: SocialService) {
   return os.router({
     sendFriendRequest: os.sendFriendRequest.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return mapErrors(
         {
           BAD_REQUEST: [SelfFriendRequestError],
@@ -41,24 +42,29 @@ export function createSocialRouter(social: SocialService) {
 
     getRelationships: os.getRelationships.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return social.getRelationships(callerId, input.userIds);
     }),
 
     listFriends: os.listFriends.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return social.listFriends(callerId, { page: input.page, limit: input.limit });
     }),
 
     removeFriend: os.removeFriend.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return mapErrors({ NOT_FOUND: [FriendshipNotFoundError] }, async () => {
         await social.removeFriend(callerId, input.targetUserId);
+
         return { success: true as const };
       });
     }),
 
     listFriendRequests: os.listFriendRequests.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return social.listFriendRequests(callerId, {
         direction: input.direction,
         page: input.page,
@@ -68,6 +74,7 @@ export function createSocialRouter(social: SocialService) {
 
     acceptFriendRequest: os.acceptFriendRequest.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return mapErrors({ NOT_FOUND: [FriendRequestNotFoundError] }, () =>
         social.acceptFriendRequest(callerId, input.friendshipId),
       );
@@ -75,16 +82,20 @@ export function createSocialRouter(social: SocialService) {
 
     declineFriendRequest: os.declineFriendRequest.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return mapErrors({ NOT_FOUND: [FriendRequestNotFoundError] }, async () => {
         await social.declineFriendRequest(callerId, input.friendshipId);
+
         return { success: true as const };
       });
     }),
 
     cancelFriendRequest: os.cancelFriendRequest.handler(({ input, context }) => {
       const callerId = getUserId(context);
+
       return mapErrors({ NOT_FOUND: [FriendRequestNotFoundError] }, async () => {
         await social.cancelFriendRequest(callerId, input.friendshipId);
+
         return { success: true as const };
       });
     }),

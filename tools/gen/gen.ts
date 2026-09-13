@@ -11,5 +11,7 @@ if (!generator) {
 }
 
 const args = ['gen', generator, ...(rest.length > 0 ? ['--args', ...rest] : [])];
+
 const result = spawnSync('turbo', args, { stdio: 'inherit' });
+
 process.exit(result.status ?? 1);

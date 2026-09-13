@@ -15,6 +15,7 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
+
   return { svc: new NotificationsService(db.drizzle, events), events };
 }
 
@@ -29,6 +30,7 @@ async function seedNotification(overrides: Partial<typeof notification.$inferIns
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -138,10 +140,12 @@ describe('NotificationsService.create (real PG)', () => {
     });
 
     expect(created?.data).toEqual({ transactionId });
+
     const [stored] = await db.drizzle.db
       .select()
       .from(notification)
       .where(eq(notification.id, created!.id));
+
     expect(stored?.data).toEqual({ transactionId });
   });
 
@@ -181,6 +185,7 @@ describe('NotificationsService.create (real PG)', () => {
     const { svc } = makeService();
     const userId = randomUUID();
     const eventId = randomUUID();
+
     const input = {
       userId,
       type: 'deposit.completed' as const,
@@ -194,10 +199,12 @@ describe('NotificationsService.create (real PG)', () => {
 
     expect(first).not.toBeNull();
     expect(second).toBeNull();
+
     const rows = await db.drizzle.db
       .select()
       .from(notification)
       .where(eq(notification.eventId, eventId));
+
     expect(rows).toHaveLength(1);
   });
 });
@@ -206,14 +213,17 @@ describe('NotificationsService.listForUser (real PG)', () => {
   it('returns only the requesting player rows, newest first, with a total count', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
+
     const older = await seedNotification({
       userId,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
     });
+
     const newer = await seedNotification({
       userId,
       createdAt: new Date('2026-02-01T00:00:00.000Z'),
     });
+
     await seedNotification();
 
     const page = await svc.listForUser({ userId, page: 1, limit: 100 });
@@ -280,10 +290,12 @@ describe('NotificationsService.markRead (real PG)', () => {
     const updated = await svc.markRead(row.id, row.userId);
 
     expect(updated.readAt).toBeInstanceOf(Date);
+
     const [stored] = await db.drizzle.db
       .select()
       .from(notification)
       .where(eq(notification.id, row.id));
+
     expect(stored?.readAt).toBeInstanceOf(Date);
   });
 
@@ -302,10 +314,12 @@ describe('NotificationsService.markRead (real PG)', () => {
     await expect(svc.markRead(row.id, randomUUID())).rejects.toBeInstanceOf(
       NotificationOwnershipError,
     );
+
     const [stored] = await db.drizzle.db
       .select()
       .from(notification)
       .where(eq(notification.id, row.id));
+
     expect(stored?.readAt).toBeNull();
   });
 });
@@ -333,6 +347,7 @@ describe('NotificationsService.markAllRead (real PG)', () => {
       .select()
       .from(notification)
       .where(eq(notification.id, other.id));
+
     expect(stored?.readAt).toBeNull();
   });
 
@@ -348,9 +363,11 @@ describe('NotificationsService.markAllRead (real PG)', () => {
 describe('NotificationsService.purgeExpired (real PG)', () => {
   it('deletes only rows older than the retention window, regardless of readAt', async () => {
     const { svc } = makeService();
+
     const expired = await seedNotification({
       createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
     });
+
     const fresh = await seedNotification({
       createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
     });

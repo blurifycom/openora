@@ -12,7 +12,9 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let app: TestApp;
+
 let player: TestClient;
 
 beforeAll(async () => {

@@ -5,6 +5,7 @@ import { assertRequiredPorts } from '../load-plugins.js';
 import type { Plugin } from '../define-plugin.js';
 
 const WALLET_COMMANDS = createToken<{ debit: () => void }>('WALLET_COMMANDS');
+
 const catalog = { WALLET_COMMANDS } satisfies TokenCatalog;
 
 const consumer: Plugin<typeof catalog> = {

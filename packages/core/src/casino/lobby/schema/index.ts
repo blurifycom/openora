@@ -45,5 +45,7 @@ export const featuredSlot = pgTable('featured_slot', {
 });
 
 export type LobbyCategory = typeof lobbyCategory.$inferSelect;
+
 export type LobbyCategoryGame = typeof lobbyCategoryGame.$inferSelect;
+
 export type FeaturedSlot = typeof featuredSlot.$inferSelect;

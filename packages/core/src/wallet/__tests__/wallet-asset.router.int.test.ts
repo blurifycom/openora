@@ -32,6 +32,7 @@ import type { ReconciliationService } from '../service/reconciliation.service.js
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
+
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000cc';
 
 const USDT_ERC20 = {
@@ -80,9 +81,11 @@ function routerWith(
   providerNames?: readonly string[],
 ) {
   const audit = makeAuditWriter();
+
   const paymentProviders = makePaymentProviderRegistry(
     providerNames ? { names: providerNames } : {},
   );
+
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -91,6 +94,7 @@ function routerWith(
     audit,
     identityReader: makeIdentityReader(),
   });
+
   const router = createWalletRouter({
     wallet: service,
     adminGuard: guard,
@@ -101,6 +105,7 @@ function routerWith(
     reconciliationQueue: RECONCILIATION_QUEUE,
     realtime: makeRealtimeTransport(),
   });
+
   return { router, audit, service };
 }
 
@@ -109,7 +114,9 @@ async function seedBalance(currency: string, amount: string) {
     await db.drizzle.db.insert(wallet).values({ userId: randomUUID(), currency }).returning(),
     new Error('seedBalance: query returned no row'),
   );
+
   await db.drizzle.db.insert(walletBalance).values({ walletId: row.id, currency, amount });
+
   return row;
 }
 

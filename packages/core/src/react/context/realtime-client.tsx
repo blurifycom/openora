@@ -49,6 +49,7 @@ export function RealtimeClientProvider({
   children: ReactNode;
 }) {
   useEffect(() => () => adapter.close?.(), [adapter]);
+
   return (
     <RealtimeClientContext.Provider value={adapter}>{children}</RealtimeClientContext.Provider>
   );

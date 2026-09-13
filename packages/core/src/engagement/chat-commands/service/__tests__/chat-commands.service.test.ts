@@ -17,6 +17,7 @@ const ENABLED_ROW = {
   config: null,
   updatedAt: new Date(),
 };
+
 const DISABLED_ROW = { ...ENABLED_ROW, enabled: false };
 
 function makeService(select: Record<string, unknown>[][] = []) {
@@ -43,6 +44,7 @@ type MentionDeps = {
 
 function makeMentionService(deps: MentionDeps = {}) {
   const players = deps.players ?? [];
+
   return new ChatCommandsService(
     makeDrizzle({ select: [] }),
     mock<AdminUserDirectory>({
@@ -95,6 +97,7 @@ describe('ChatCommandsService command registry', () => {
 
   it('emits a descriptor the route contract accepts for a single-currency limit', async () => {
     const config = { minAmount: { currency: 'USD', amount: '1.00000000' }, maxRecipients: 100 };
+
     const result = await makeService([[{ ...ENABLED_ROW, config }], [{ n: 1 }]]).adminListCommands({
       page: 1,
       limit: 10,
@@ -160,6 +163,7 @@ describe('ChatCommandsService searchMentions', () => {
 
   it('excludes the caller and blocked users before limiting a typed query', async () => {
     const findPlayerIds = vi.fn().mockResolvedValue(['wanted']);
+
     const service = new ChatCommandsService(
       makeDrizzle({ select: [] }),
       mock<AdminUserDirectory>({

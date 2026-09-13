@@ -12,12 +12,14 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let testApp: TestApp;
 
 function object(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new Error('expected JSON object');
   }
+
   return value;
 }
 
@@ -32,6 +34,7 @@ async function registerPlayer() {
   const { client, userId } = await registerAndMaterializePlayer(testApp, {
     email: `manual-adjustment-${randomUUID()}@e2e.test`,
   });
+
   return { player: client, userId };
 }
 
@@ -64,6 +67,7 @@ describe('manual wallet adjustment', () => {
       reason: 'attempted self-credit',
       idempotencyKey: randomUUID(),
     });
+
     expect(denied.status).toBe(403);
 
     const adjusted = await admin.post('/wallet/manual-adjustments', {
@@ -74,10 +78,12 @@ describe('manual wallet adjustment', () => {
       reason: 'support compensation',
       idempotencyKey,
     });
+
     expect(adjusted.status).toBe(200);
     const adjustmentRaw: unknown = await adjusted.json();
     const adjustmentBody = object(adjustmentRaw);
     const transactionId = adjustmentBody['transactionId'];
+
     if (typeof transactionId !== 'string') {
       throw new Error('adjustment has no transactionId');
     }
@@ -89,11 +95,14 @@ describe('manual wallet adjustment', () => {
     const historyRaw: unknown = await (
       await admin.get(`/wallet/transactions/${userId}?page=1&limit=20`)
     ).json();
+
     const history = object(historyRaw);
     const items = history['items'];
+
     if (!Array.isArray(items)) {
       throw new Error('admin history has no items');
     }
+
     expect(items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -109,6 +118,7 @@ describe('manual wallet adjustment', () => {
         `/audit/logs?resourceId=${transactionId}&action=wallet.manual_adjustment.created`,
       )
     ).json();
+
     const audit = object(auditRaw);
     expect(audit['items']).toEqual(
       expect.arrayContaining([

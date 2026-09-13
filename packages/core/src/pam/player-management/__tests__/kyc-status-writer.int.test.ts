@@ -18,11 +18,13 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
     .insert(player)
     .values({ userId: randomUUID(), ...overrides })
     .returning();
+
   return row!;
 }
 
 async function statusOf(userId: string) {
   const [row] = await db.drizzle.db.select().from(player).where(eq(player.userId, userId));
+
   return row?.kycStatus;
 }
 

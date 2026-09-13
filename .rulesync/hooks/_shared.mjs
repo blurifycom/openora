@@ -24,6 +24,7 @@ export function readPayload() {
 /** Copilot's toolArgs may be a JSON string; normalize to an object. */
 function toolArgsObject(payload) {
   const a = payload.toolArgs;
+
   if (typeof a === 'string') {
     try {
       return JSON.parse(a);
@@ -31,6 +32,7 @@ function toolArgsObject(payload) {
       return {};
     }
   }
+
   return a && typeof a === 'object' ? a : {};
 }
 
@@ -38,6 +40,7 @@ function toolArgsObject(payload) {
 export function extractCommand(payload) {
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
+
   return String(ti.command ?? ca.command ?? '');
 }
 
@@ -45,6 +48,7 @@ export function extractCommand(payload) {
 export function extractFilePath(payload) {
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
+
   return String(
     ti.file_path ??
       ti.path ??

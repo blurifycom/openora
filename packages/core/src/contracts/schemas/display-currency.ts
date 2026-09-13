@@ -49,5 +49,6 @@ export type DisplayCurrency = z.infer<typeof DisplayCurrencyCodeSchema>;
  */
 export function resolveDisplayCurrencies(overrides?: readonly string[]): string[] {
   const source = overrides && overrides.length > 0 ? overrides : DEFAULT_DISPLAY_CURRENCIES;
+
   return [...new Set(source.map((c) => c.toUpperCase()))];
 }

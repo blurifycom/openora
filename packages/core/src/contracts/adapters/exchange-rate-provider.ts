@@ -15,6 +15,7 @@ export type ExchangeRateProvider = {
 export const CRYPTO_EXCHANGE_RATE_PROVIDER: Token<ExchangeRateProvider> = createToken(
   'CRYPTO_EXCHANGE_RATE_PROVIDER',
 );
+
 export const FIAT_EXCHANGE_RATE_PROVIDER: Token<ExchangeRateProvider> = createToken(
   'FIAT_EXCHANGE_RATE_PROVIDER',
 );

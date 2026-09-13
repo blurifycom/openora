@@ -21,13 +21,16 @@ type Message = { id: string };
 function fakeAdapter() {
   const channels = new Map<string, RealtimeSubscribeHandlers<never>>();
   const closed = vi.fn();
+
   const adapter: RealtimeClientAdapter = {
     subscribe<T>(channel: string, handlers: RealtimeSubscribeHandlers<T>) {
       channels.set(channel, handlers);
+
       return () => channels.delete(channel);
     },
     close: closed,
   };
+
   return {
     adapter,
     closed,

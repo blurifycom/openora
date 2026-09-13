@@ -7,6 +7,7 @@ import {
 } from '../request-context.js';
 
 const CLIENT_META = { ip: '203.0.113.7', userAgent: 'curl/8.4.0' };
+
 const CONTEXT = { userId: 'user-1', traceId: 'trace-1', clientMeta: CLIENT_META };
 
 describe('request context outside a request', () => {
@@ -62,6 +63,7 @@ describe('withRequestContext', () => {
     const traceAfterDelay = (traceId: string) =>
       withRequestContext({ traceId }, async () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
+
         return getCurrentTraceId();
       });
 

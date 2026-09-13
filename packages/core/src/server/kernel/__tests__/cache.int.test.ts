@@ -5,6 +5,7 @@ import { RedisCache } from '../redis-cache.js';
 import { createTestRedis, type TestRedis } from '@openora/core/testing';
 
 let redis: TestRedis;
+
 let cache: RedisCache;
 
 beforeAll(async () => {
@@ -59,6 +60,7 @@ describe('invalidate', () => {
         throw new Error('backend down');
       },
     };
+
     await expect(invalidate(failing, 'k')).resolves.toBeUndefined();
   });
 });

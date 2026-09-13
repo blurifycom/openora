@@ -4,6 +4,7 @@ import { RedisCache } from '../redis-cache.js';
 import { createTestRedis, type TestRedis } from '@openora/core/testing';
 
 let redis: TestRedis;
+
 let cache: RedisCache;
 
 beforeAll(async () => {

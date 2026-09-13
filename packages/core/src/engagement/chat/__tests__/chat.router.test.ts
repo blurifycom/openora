@@ -19,7 +19,9 @@ import {
 } from '../service/errors/chat-moderation.errors.js';
 
 const ROOM_ID = '9a2f7c11-0000-4000-8000-000000000001';
+
 const USER_ID = '9a2f7c11-0000-4000-8000-000000000002';
+
 const CTX = testContext({ auth: { userId: USER_ID } });
 
 function routerWithLeaveRoom(leaveRoom: () => Promise<unknown>) {

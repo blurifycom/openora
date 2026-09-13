@@ -23,16 +23,20 @@ type AdapterResult = { referenceId: string; status: KycVendorStatus; verificatio
 
 function makeService(options: { adapter?: Partial<AdapterResult>; config?: PlatformConfig } = {}) {
   const events = makeEventBus();
+
   const adapterResult: AdapterResult = {
     referenceId: randomUUID(),
     status: 'approved',
     ...options.adapter,
   };
+
   const kycAdapter = mock<KycAdapter>({
     submit: vi.fn(async () => adapterResult),
     getStatus: vi.fn(async () => adapterResult.status),
   });
+
   const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => null) });
+
   const svc = new KycVerificationService({
     drizzle: db.drizzle,
     events: events,
@@ -41,6 +45,7 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
     identityReader: makeIdentityReader(),
     ...(options.config ? { platformConfig: options.config } : {}),
   });
+
   return { svc, events, kycAdapter, statusWriter, adapterResult };
 }
 
@@ -59,6 +64,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -68,6 +74,7 @@ async function seedDeposit(userId: string, amount: string, currency = 'USD') {
     .values({ userId, currency })
     .onConflictDoNothing()
     .returning();
+
   const [existing] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
   await db.drizzle.db.insert(walletTransaction).values({
     walletId: (walletRow ?? existing)!.id,
@@ -316,6 +323,7 @@ describe('KycVerificationService.reconcile (real PG)', () => {
   it('refuses a reference id shared across two different players, updating neither row', async () => {
     const { svc } = makeService();
     const referenceId = randomUUID();
+
     const [playerA] = await db.drizzle.db
       .insert(kycVerification)
       .values({
@@ -328,6 +336,7 @@ describe('KycVerificationService.reconcile (real PG)', () => {
         triggeredBy: 'submission',
       })
       .returning();
+
     const [playerB] = await db.drizzle.db
       .insert(kycVerification)
       .values({
@@ -349,6 +358,7 @@ describe('KycVerificationService.reconcile (real PG)', () => {
       .select()
       .from(kycVerification)
       .where(eq(kycVerification.referenceId, referenceId));
+
     expect(rows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: playerA!.id, status: 'pending' }),
@@ -465,10 +475,12 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
   it('ignores a pending deposit that has not settled', async () => {
     const { svc, statusWriter } = makeService({ config });
     const { userId } = await seedPlayer();
+
     const [walletRow] = await db.drizzle.db
       .insert(wallet)
       .values({ userId, currency: 'USD' })
       .returning();
+
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: walletRow!.id,
       type: 'deposit',

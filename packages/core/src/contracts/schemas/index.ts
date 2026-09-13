@@ -1,17 +1,33 @@
 export * from './common.js';
+
 export * from './identity.js';
+
 export * from './iam.js';
+
 export * from './compliance.js';
+
 export * from './player.js';
+
 export * from './wallet-tx.js';
+
 export * from './display-currency.js';
+
 export * from './game.js';
+
 export * from './igaming-config.js';
+
 export * from './tag.js';
+
 export * from './platform-config.js';
+
 export * from './events.js';
+
 export * from './reporting.js';
+
 export * from './chat-command-metadata.js';
+
 export * from './chat-command.js';
+
 export * from './chat-attachment.js';
+
 export * from './mail.js';

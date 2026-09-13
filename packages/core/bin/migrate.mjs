@@ -6,11 +6,14 @@ import { config } from 'dotenv';
 
 const findEnvFile = (from) => {
   const { root } = parse(from);
+
   for (let dir = from; ; dir = dirname(dir)) {
     const candidate = join(dir, '.env');
+
     if (existsSync(candidate)) {
       return candidate;
     }
+
     if (dir === root) {
       return undefined;
     }
@@ -20,6 +23,7 @@ const findEnvFile = (from) => {
 config({ path: findEnvFile(process.cwd()), quiet: true });
 
 const packageRoot = new URL('../', import.meta.url);
+
 const manifest = JSON.parse(await readFile(new URL('package.json', packageRoot), 'utf8'));
 
 const toLabel = (key) =>
@@ -38,6 +42,7 @@ const toEntry = ([key, value]) => ({
 });
 
 const isMigrateKey = (key) => key.split('/').includes('migrate');
+
 const engineFirst = (a, b) =>
   Number(b.label === 'server') - Number(a.label === 'server') || a.label.localeCompare(b.label);
 

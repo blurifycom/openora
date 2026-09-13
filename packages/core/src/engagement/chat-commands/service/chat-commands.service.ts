@@ -22,6 +22,7 @@ import type {
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
+
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
 
 function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {
@@ -56,6 +57,7 @@ export class ChatCommandsService {
       .select()
       .from(chatCommandConfig)
       .where(includeDisabled ? undefined : eq(chatCommandConfig.enabled, true));
+
     return rows.map(toDescriptor);
   }
 
@@ -72,6 +74,7 @@ export class ChatCommandsService {
   }) {
     const dir = sortOrder === 'asc' ? asc : desc;
     const col = ADMIN_COMMAND_SORT_COLUMNS[sortBy];
+
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
         .select()
@@ -81,6 +84,7 @@ export class ChatCommandsService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatCommandConfig),
     ]);
+
     return { items: rows.map(toDescriptor), total: Number(n), page, limit };
   }
 
@@ -106,6 +110,7 @@ export class ChatCommandsService {
         },
       })
       .returning();
+
     const row = findOneOrThrow(rows, new CommandDisabledError(input.key));
     await this.audit.record({
       actorId,
@@ -116,6 +121,7 @@ export class ChatCommandsService {
       before: null,
       after: { enabled: input.enabled, config: input.config ?? null },
     });
+
     return toDescriptor(row);
   }
 
@@ -132,6 +138,7 @@ export class ChatCommandsService {
   }) {
     const query = q.trim();
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
+
     if (query.length === 0 && onlineUserIds.length === 0) {
       return [];
     }
@@ -140,6 +147,7 @@ export class ChatCommandsService {
     const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
     excluded.add(viewerId);
     const canSeeAdminUsers = await this.canSeeAdminUsers(viewerId);
+
     let ids =
       query.length === 0
         ? onlineUserIds
@@ -147,9 +155,11 @@ export class ChatCommandsService {
             excludeUserIds: [...excluded],
             playerOnly: true,
           });
+
     if (canSeeAdminUsers && query.length > 0) {
       const onlineAccounts = await this.directory.lookupUsers(onlineUserIds);
       const queryLower = query.toLowerCase();
+
       const matchingAdminIds = onlineAccounts
         .filter(
           (account) =>
@@ -159,18 +169,24 @@ export class ChatCommandsService {
             ),
         )
         .map((account) => account.id);
+
       ids = [...new Set([...ids, ...matchingAdminIds])];
     }
+
     if (ids.length === 0) {
       return [];
     }
+
     const candidateIds = ids.filter(
       (id) => !excluded.has(id) && (query.length > 0 || onlineIds.has(id)),
     );
+
     if (candidateIds.length === 0) {
       return [];
     }
+
     const summaries = await this.directory.lookupPlayers(candidateIds);
+
     if (!canSeeAdminUsers) {
       return summaries.slice(0, limit).map((s) => ({ userId: s.userId, username: s.username }));
     }
@@ -178,17 +194,23 @@ export class ChatCommandsService {
     const summaryById = new Map(summaries.map((summary) => [summary.userId, summary.username]));
     const accounts = await this.directory.lookupUsers(candidateIds);
     const accountsById = new Map(accounts.map((account) => [account.id, account]));
+
     const visible = candidateIds.flatMap((userId) => {
       const username = summaryById.get(userId);
+
       if (username) {
         return [{ userId, username }];
       }
+
       const account = accountsById.get(userId);
+
       if (!account || !onlineIds.has(userId)) {
         return [];
       }
+
       return [{ userId, username: account.name ?? account.email }];
     });
+
     return visible.slice(0, limit);
   }
 
@@ -196,7 +218,9 @@ export class ChatCommandsService {
     if (typeof this.directory.get !== 'function') {
       return false;
     }
+
     const viewer = await this.directory.get(viewerId);
+
     return isStaffRole(viewer?.role);
   }
 }

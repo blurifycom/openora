@@ -8,6 +8,7 @@ import {
 } from '../service/rg-eval.js';
 
 const NOW = new Date('2026-07-06T12:00:00.000Z');
+
 const DAY = 24 * 60 * 60 * 1000;
 
 describe('periodWindow', () => {

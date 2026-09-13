@@ -11,20 +11,25 @@ import { playerTag, tag } from '../schema/index.js';
 import { TagService } from '../service/tag.service.js';
 
 let db: TestDb;
+
 let svc: TagService;
 
 async function tagIdFor(key: TagKey) {
   const [existing] = await db.drizzle.db.select().from(tag).where(eq(tag.key, key));
+
   if (existing) {
     return existing.id;
   }
+
   const [created] = await db.drizzle.db.insert(tag).values({ key }).returning();
+
   return created!.id;
 }
 
 async function seedPlayerWithTags(activeKeys: TagKey[], removedKeys: TagKey[] = []) {
   const userId = randomUUID();
   const [playerRow] = await db.drizzle.db.insert(player).values({ userId }).returning();
+
   for (const key of [...activeKeys, ...removedKeys]) {
     await db.drizzle.db.insert(playerTag).values({
       playerId: playerRow!.id,
@@ -35,6 +40,7 @@ async function seedPlayerWithTags(activeKeys: TagKey[], removedKeys: TagKey[] = 
       removedAt: removedKeys.includes(key) ? new Date() : null,
     });
   }
+
   return userId;
 }
 

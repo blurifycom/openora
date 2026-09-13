@@ -52,9 +52,11 @@ export type RunMigrationsOptions = {
 
 function migrateUrl(override?: string): string {
   const url = override ?? process.env['DATABASE_ADMIN_URL'] ?? process.env['DATABASE_URL'];
+
   if (!url) {
     throw new Error('Cannot run migrations: set DATABASE_URL (or DATABASE_ADMIN_URL).');
   }
+
   return url;
 }
 
@@ -76,6 +78,7 @@ export async function withMigrationAdvisoryLock<T>(
   action: () => Promise<T>,
 ) {
   await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
+
   try {
     return await action();
   } finally {
@@ -98,23 +101,29 @@ export async function applyMigrationsIndividually({
 /** Apply one migration set against the admin connection. Idempotent: drizzle skips already-recorded migrations. */
 export async function runMigrations(opts: RunMigrationsOptions) {
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
+
   try {
     for (const ext of opts.extensions ?? []) {
       if (!/^[a-z0-9_]+$/.test(ext)) {
         throw new Error(`Invalid extension name: ${ext}`);
       }
+
       await pool.query(`CREATE EXTENSION IF NOT EXISTS ${ext}`);
     }
+
     for (const sql of opts.preSql ?? []) {
       await pool.query(sql);
     }
+
     const migrationsTable = opts.migrationsTable ?? '__drizzle_migrations';
     const migrationsSchema = opts.migrationsSchema ?? 'drizzle';
+
     const migrationConfig = {
       migrationsFolder: opts.migrationsFolder,
       migrationsTable,
       migrationsSchema,
     };
+
     const schema = quoteIdentifier(migrationsSchema);
     const table = quoteIdentifier(migrationsTable);
     await pool.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
@@ -122,6 +131,7 @@ export async function runMigrations(opts: RunMigrationsOptions) {
       `CREATE TABLE IF NOT EXISTS ${schema}.${table} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
     );
     const lockClient = await pool.connect();
+
     try {
       await withMigrationAdvisoryLock(
         lockClient,
@@ -130,24 +140,31 @@ export async function runMigrations(opts: RunMigrationsOptions) {
           const applied = await lockClient.query<{ hash: string }>(
             `SELECT hash FROM ${schema}.${table}`,
           );
+
           const appliedHashes = new Set(applied.rows.map(({ hash }) => hash));
+
           for (const hash of appliedHashes) {
             for (const alias of opts.migrationHashAliases?.[hash] ?? []) {
               appliedHashes.add(alias);
             }
           }
+
           const pending = readMigrationFiles(migrationConfig).filter(
             (migration) => !appliedHashes.has(migration.hash),
           );
+
           await applyMigrationsIndividually({
             migrations: pending,
             apply: async (migration) => {
               const client = await pool.connect();
+
               try {
                 await client.query('BEGIN');
+
                 for (const statement of migration.sql) {
                   await client.query(statement);
                 }
+
                 await client.query(
                   `INSERT INTO ${schema}.${table} (hash, created_at) VALUES ($1, $2)`,
                   [migration.hash, migration.folderMillis],
@@ -161,6 +178,7 @@ export async function runMigrations(opts: RunMigrationsOptions) {
               }
             },
           });
+
           for (const sql of opts.postSql ?? []) {
             await pool.query(sql);
           }

@@ -16,6 +16,7 @@ import { GAME_ROUND_STATUSES } from '../contract/index.js';
 
 // Derives from the contract tuple so the Zod schema and DB enum can never drift.
 export const gameRoundStatusEnum = pgEnum('game_round_status', GAME_ROUND_STATUSES);
+
 // GAME_TYPES is hoisted to core contracts (not module-local like GAME_ROUND_STATUSES)
 // because ADMIN_GAME_REPORTING (contracts/adapters, isomorphic) and admin-console's
 // contract both need the same type - see contracts/schemas/game.ts.
@@ -60,4 +61,5 @@ export const gameRound = pgTable(
 );
 
 export type Game = typeof game.$inferSelect;
+
 export type GameRound = typeof gameRound.$inferSelect;

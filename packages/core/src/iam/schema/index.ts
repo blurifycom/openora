@@ -86,6 +86,9 @@ export const adminInvitation = pgTable(
 );
 
 export type AdminRole = typeof adminRole.$inferSelect;
+
 export type AdminRolePermission = typeof adminRolePermission.$inferSelect;
+
 export type AdminRoleAssignment = typeof adminRoleAssignment.$inferSelect;
+
 export type AdminInvitation = typeof adminInvitation.$inferSelect;

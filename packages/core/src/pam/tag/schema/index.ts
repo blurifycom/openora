@@ -16,6 +16,7 @@ import { PlayerTagAssignMetadataSchema } from '../contract/player-tag-assign-met
 import { zodJsonb } from '@openora/core/server';
 
 export const tagAssignRemoveSourceEnum = pgEnum('tag_assign_remove_source', tagAssignRemoveSource);
+
 export const tagKeyEnum = pgEnum('tag_key', tagKeys);
 
 export const tag = pgTable('tag', {
@@ -67,6 +68,7 @@ export const playerTag = pgTable(
 );
 
 export type Tag = typeof tag.$inferSelect;
+
 export type PlayerTag = typeof playerTag.$inferSelect;
 
 export const tagRule = pgTable('tag_rule', {

@@ -65,6 +65,7 @@ export const SessionItemSchema = z.object({
   // (eg an admin listing someone else's devices).
   current: z.boolean(),
 });
+
 export type SessionItem = z.infer<typeof SessionItemSchema>;
 
 // A session row plus who it belongs to - the cross-user list is useless without it.
@@ -73,6 +74,7 @@ export const ActiveSessionItemSchema = SessionItemSchema.extend({
   email: z.email(),
   role: z.string(),
 });
+
 export type ActiveSessionItem = z.infer<typeof ActiveSessionItemSchema>;
 
 export const TrustedDeviceItemSchema = z.object({
@@ -85,6 +87,7 @@ export const TrustedDeviceItemSchema = z.object({
   expiresAt: TimestampSchema,
   isCurrent: z.boolean(),
 });
+
 export type TrustedDeviceItem = z.infer<typeof TrustedDeviceItemSchema>;
 
 export const AdminSecurityStatusSchema = z.object({
@@ -99,10 +102,13 @@ export const AdminSecurityStatusSchema = z.object({
   trustedDeviceUntil: TimestampSchema.nullable(),
   lockedUntil: TimestampSchema.nullable(),
 });
+
 export type AdminSecurityStatus = z.infer<typeof AdminSecurityStatusSchema>;
 
 export const SESSION_SORT_BY_VALUES = ['createdAt', 'expiresAt', 'updatedAt'] as const;
+
 export const SessionSortBySchema = z.enum(SESSION_SORT_BY_VALUES).default('createdAt');
+
 export type SessionSortBy = z.infer<typeof SessionSortBySchema>;
 
 export const identityContract = {

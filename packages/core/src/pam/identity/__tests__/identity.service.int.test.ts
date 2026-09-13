@@ -69,6 +69,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
+
     return {
       options: {
         session: {
@@ -99,6 +100,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
 const { RedisCache } = await import('@openora/core/server');
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 const allowLimiter = () =>
@@ -143,6 +145,7 @@ const seedUser = (over: Partial<typeof user.$inferInsert> = {}) =>
 
 async function readUser(userId: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+
   return row;
 }
 
@@ -218,6 +221,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       lastLockoutAt: new Date(Date.now() - 60_000),
       lastFailedLoginAt: new Date(Date.now() - 60_000),
     });
+
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService();
 
@@ -239,6 +243,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       lastLockoutAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
       lastFailedLoginAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
     });
+
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService();
 
@@ -247,6 +252,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
         svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
       ).rejects.toMatchObject({ data: { attemptsRemaining, lockoutUntil: null } });
     }
+
     await expect(
       svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
     ).rejects.toMatchObject({
@@ -372,8 +378,10 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       role: 'admin',
       failedLoginAttempts: 4,
     });
+
     const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+
     const svc = buildService({
       events,
       options: { lockout: { enabled: true, bypassForAdmins: true } },
@@ -402,8 +410,10 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       role: 'support',
       failedLoginAttempts: 4,
     });
+
     const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+
     const svc = buildService({
       events,
       options: { lockout: { enabled: true, bypassForAdmins: true, maxAttempts: 5 } },
@@ -587,6 +597,7 @@ describe('IdentityService - RG login gate (real PG)', () => {
       .select()
       .from(session)
       .where(eq(session.userId, account.id));
+
     expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
@@ -595,6 +606,7 @@ describe('IdentityService - RG login gate (real PG)', () => {
       rgBlocked: true,
       rgBlockedUntil: new Date(Date.now() - 60_000),
     });
+
     const events = makeEventBus();
     signInEmailMock.mockResolvedValue(signInSuccess(account.id));
     const svc = buildService({ events });
@@ -618,6 +630,7 @@ describe('IdentityService - player-status login gate (real PG)', () => {
     await db.drizzle.db
       .insert(session)
       .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+
     return account;
   }
 
@@ -645,6 +658,7 @@ describe('IdentityService - player-status login gate (real PG)', () => {
         .select()
         .from(session)
         .where(eq(session.userId, account.id));
+
       expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
     });
   }
@@ -670,6 +684,7 @@ describe('IdentityService - player-status login gate (real PG)', () => {
 describe('IdentityService - trusted device login (real PG)', () => {
   const TRUSTED_UA =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
   const trustedHeaders = {
     cookie: 'better-auth.session_token=tok; better-auth.trust_device=signed-trust-value',
     'user-agent': TRUSTED_UA,
@@ -709,9 +724,11 @@ describe('IdentityService - trusted device login (real PG)', () => {
     const account = await seedUser();
     const trustedDevices = makeTrustedDevices();
     const device = await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+
     if (!device) {
       throw new Error('trust() stored no device');
     }
+
     await trustedDevices.revoke(account.id, device.id, account.id);
     honourTrustCookie(account.id);
     const svc = buildService({ trustedDevices });
@@ -775,6 +792,7 @@ describe('IdentityService.unlockUser (real PG)', () => {
       failedLoginAttempts: 5,
       lockoutUntil: new Date('2020-01-01'),
     });
+
     const limiter = allowLimiter();
     const svc = buildService({ limiter });
 
@@ -836,6 +854,7 @@ describe('IdentityService.adminRequestPasswordReset (real PG)', () => {
     await cache.set(`admin-password-reset:${email}`, true, { ttlMs: 120_000 });
 
     const isAdminPasswordReset = capturedAuthOptions.current?.isAdminPasswordReset;
+
     if (!isAdminPasswordReset) {
       throw new Error('isAdminPasswordReset was not wired into createAuth');
     }
@@ -950,6 +969,7 @@ describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
       failedLoginAttempts: 5,
       lockoutUntil: new Date(Date.now() + 60_000),
     });
+
     const events = makeEventBus();
     buildService({ events });
 
@@ -980,6 +1000,7 @@ describe('IdentityService.updateProfile language validation', () => {
   it('accepts a supported language and forwards it to updateUser', async () => {
     updateUserMock.mockResolvedValue(jsonResponse({ status: true }, 200));
     getSessionMock.mockResolvedValueOnce({ user: { ...betterAuthUser, language: 'fr' } });
+
     const svc = buildService({
       platformConfig: mock<PlatformConfig>({ supportedLanguages: ['en', 'fr'] }),
     });
@@ -1102,17 +1123,21 @@ describe('IdentityService 2fa step-up teardown', () => {
 
   const buildTeardownDeps = (userId: string) => {
     const events = makeEventBus();
+
     const trustedDevices = new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
       trustedDeviceDays: 30,
     });
+
     const sessions = new SessionService({
       drizzle: db.drizzle,
       events: makeEventBus(),
       identityReader: makeIdentityReader(),
     });
+
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: userId } });
+
     return { events, trustedDevices, sessions };
   };
 
@@ -1121,6 +1146,7 @@ describe('IdentityService 2fa step-up teardown', () => {
     verifyBackupCodeMock.mockResolvedValue(okResponse());
     const { events, trustedDevices } = buildTeardownDeps(account.id);
     getSessionMock.mockResolvedValue(null);
+
     const lockout = mock<TwoFactorLockoutService>({
       resolvePendingUserId: vi.fn(async () => account.id),
       assertNotLocked: vi.fn(async () => undefined),
@@ -1159,10 +1185,12 @@ describe('IdentityService 2fa step-up teardown', () => {
       expect.objectContaining({ body: { code: '123456', trustDevice: false } }),
     );
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
+
     const [row] = await db.drizzle.db
       .select({ live: sql<boolean>`${session.expiresAt} > now()` })
       .from(session)
       .where(eq(session.id, liveSession));
+
     expect(row?.live).toBe(false);
     expect(events.emit).toHaveBeenCalledWith('identity.2fa.disabled', expect.anything());
   });
@@ -1246,6 +1274,7 @@ describe('IdentityService.trustCurrentDevice', () => {
   const challengeResponse = () => {
     const res = jsonResponse({ twoFactorRedirect: true }, 200);
     res.headers.append('set-cookie', 'better-auth.two_factor=pending-value; Path=/; HttpOnly');
+
     return res;
   };
 
@@ -1316,6 +1345,7 @@ describe('IdentityService security controls', () => {
       emailVerified: true,
       loginWithdrawalAlertsEnabled: false,
     });
+
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
 
     await expect(
@@ -1341,6 +1371,7 @@ describe('IdentityService security controls', () => {
       emailVerified: true,
       loginWithdrawalAlertsEnabled: true,
     });
+
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
     // better-auth's `/change-email` returns the same `{ status: true }` shape whether or
     // not it actually touched the row (see the identity.service.ts `changeEmail` comment),
@@ -1351,6 +1382,7 @@ describe('IdentityService security controls', () => {
         .update(user)
         .set({ email: 'new-address@test.dev' })
         .where(eq(user.id, account.id));
+
       return jsonResponse({ status: true }, 200);
     });
     const events = makeEventBus();
@@ -1376,6 +1408,7 @@ describe('IdentityService security controls', () => {
       emailVerified: true,
       loginWithdrawalAlertsEnabled: true,
     });
+
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
     changeEmailMock.mockResolvedValue(jsonResponse({ status: true }, 200));
     const events = makeEventBus();

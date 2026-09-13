@@ -19,11 +19,13 @@ export const DisplayCurrencyInfoSchema = z.object({
   currency: DisplayCurrencyCodeSchema,
   supported: z.array(DisplayCurrencyCodeSchema),
 });
+
 export type DisplayCurrencyInfo = z.infer<typeof DisplayCurrencyInfoSchema>;
 
 export const SetDisplayCurrencyInputSchema = z.object({
   currency: DisplayCurrencyInputSchema,
 });
+
 export type SetDisplayCurrencyInput = z.infer<typeof SetDisplayCurrencyInputSchema>;
 
 export const profileContract = {

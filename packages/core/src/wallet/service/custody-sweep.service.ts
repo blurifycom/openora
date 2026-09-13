@@ -31,6 +31,7 @@ import { recordReconciliationFinding } from './reconciliation-finding.service.js
 const logger = createLogger('wallet-custody-sweep');
 
 export const CUSTODY_SWEEP_JOB_NAME = 'wallet-custody-sweep';
+
 export const CUSTODY_SWEEP_QUEUE = queue('wallet.custody-sweep');
 
 // `runId` is only present when an admin's on-demand POST /wallet/custody/sweep/run
@@ -38,6 +39,7 @@ export const CUSTODY_SWEEP_QUEUE = queue('wallet.custody-sweep');
 // runId synchronously, before the job actually runs. A cron tick omits it and the
 // service mints its own.
 export const CustodySweepJobPayloadSchema = z.object({ runId: UuidSchema.optional() });
+
 export type CustodySweepJobPayload = z.infer<typeof CustodySweepJobPayloadSchema>;
 
 const IN_FLIGHT_STATUSES = ['pending', 'processing', 'unknown'] as const;
@@ -82,19 +84,24 @@ export function gateSweepBalance(args: {
   if (moneyCompare(args.amount, args.dustThreshold) < 0) {
     return 'dust';
   }
+
   const feeFloor = moneyScaleBy(args.estimatedFee, args.feeMultiple);
+
   if (moneyCompare(args.amount, feeFloor) < 0) {
     return 'fee';
   }
+
   if (args.sweepFeeCeiling !== null && moneyCompare(args.estimatedFee, args.sweepFeeCeiling) > 0) {
     const poolBelowFloor =
       args.poolLiquidityFloor !== null &&
       args.poolBalance !== null &&
       moneyCompare(args.poolBalance, args.poolLiquidityFloor) < 0;
+
     if (!poolBelowFloor) {
       return 'ceiling';
     }
   }
+
   return 'sweep';
 }
 
@@ -136,14 +143,17 @@ export class CustodySweepService {
     requestedRunId?: Uuid,
   ): Promise<{ runId: Uuid; summary: SweepCycleSummary } | null> {
     const sweepConfig = this.platformConfig?.wallet?.sweep;
+
     if (!sweepConfig) {
       return null;
     }
 
     const claim = await this.claimRun(requestedRunId, sweepConfig.staleRunAfterMinutes);
+
     if (!claim) {
       return null;
     }
+
     const { runId, jobRunId } = claim;
 
     const summary: SweepCycleSummary = {
@@ -165,14 +175,17 @@ export class CustodySweepService {
       await this.resolveInFlightSweeps(sweepConfig.concurrency, sweepConfig.batchSize);
 
       const poolBalanceCache = new Map<string, string>();
+
       for (const providerName of this.paymentProviders.names()) {
         const adapter = this.paymentProviders.get(providerName)?.adapter;
+
         // sweepToPool is checked here, not after a claim row exists: an adapter that
         // advertises listSweepableBalances without it would otherwise claim a container,
         // throw, and park an `unknown` row that holds the in-flight guard forever.
         if (!adapter?.listSweepableBalances) {
           continue;
         }
+
         if (!adapter.sweepToPool) {
           logger.error(
             { providerName },
@@ -180,6 +193,7 @@ export class CustodySweepService {
           );
           continue;
         }
+
         // listSweepableBalances is unbounded; sweeping is throughput work, so the cron
         // cadence drains the backlog rather than one cycle chasing it all.
         const balances = (await adapter.listSweepableBalances()).slice(0, sweepConfig.batchSize);
@@ -202,6 +216,7 @@ export class CustodySweepService {
     }
 
     await this.finishRun(jobRunId, runId, summary);
+
     return { runId, summary };
   }
 
@@ -214,12 +229,14 @@ export class CustodySweepService {
     staleAfterMinutes: number,
   ): Promise<{ runId: Uuid; jobRunId: WalletJobRun['id'] } | null> {
     const runId = requestedRunId ?? randomUUID();
+
     return this.drizzle.db.transaction(async (txn) => {
       const [inserted] = await txn
         .insert(walletJobRun)
         .values({ jobName: CUSTODY_SWEEP_JOB_NAME, runId })
         .onConflictDoNothing()
         .returning();
+
       if (inserted) {
         return { runId, jobRunId: inserted.id };
       }
@@ -231,26 +248,33 @@ export class CustodySweepService {
           and(eq(walletJobRun.jobName, CUSTODY_SWEEP_JOB_NAME), isNull(walletJobRun.finishedAt)),
         )
         .for('update');
+
       if (!existing) {
         // The owning run finished between our failed insert and this read - let the
         // next tick claim cleanly instead of racing a second insert here.
         return null;
       }
+
       const staleMs = staleAfterMinutes * 60_000;
+
       if (Date.now() - existing.startedAt.getTime() < staleMs) {
         return null;
       }
+
       await txn
         .update(walletJobRun)
         .set({ status: 'abandoned', finishedAt: new Date() })
         .where(eq(walletJobRun.id, existing.id));
+
       const [takenOver] = await txn
         .insert(walletJobRun)
         .values({ jobName: CUSTODY_SWEEP_JOB_NAME, runId })
         .returning();
+
       if (!takenOver) {
         throw new Error('wallet-custody-sweep: failed to claim run after abandoning a stale one');
       }
+
       return { runId, jobRunId: takenOver.id };
     });
   }
@@ -272,15 +296,20 @@ export class CustodySweepService {
       // at the head of every batch and starve later in-flight rows of a status check.
       .orderBy(sql`random()`)
       .limit(batchSize);
+
     await mapConcurrent(rows, concurrency, async (row) => {
       const adapter = this.paymentProviders.get(row.providerName)?.adapter;
+
       if (!adapter?.getWithdrawalStatus || !row.externalId) {
         return;
       }
+
       const result = await adapter.getWithdrawalStatus(row.externalId);
+
       if (!result || result.status === 'processing') {
         return;
       }
+
       await this.drizzle.db
         .update(walletCustodySweep)
         .set({ status: result.status, txHash: result.txHash ?? row.txHash })
@@ -293,6 +322,7 @@ export class CustodySweepService {
       .select()
       .from(walletAsset)
       .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+
     return row ?? null;
   }
 
@@ -312,6 +342,7 @@ export class CustodySweepService {
           inArray(walletCustodySweep.status, IN_FLIGHT_STATUSES),
         ),
       );
+
     return row !== undefined;
   }
 
@@ -324,13 +355,17 @@ export class CustodySweepService {
     if (!adapter.getPoolBalance) {
       return null;
     }
+
     const key = `${currency}:${network}`;
     const cached = cache.get(key);
+
     if (cached !== undefined) {
       return cached;
     }
+
     const balance = await adapter.getPoolBalance(currency, network);
     cache.set(key, balance);
+
     return balance;
   }
 
@@ -352,6 +387,7 @@ export class CustodySweepService {
     poolBalanceCache: Map<string, string>;
   }): Promise<void> {
     const asset = await this.assetFor(balance.currency, balance.network);
+
     if (!asset) {
       // Funds sitting in a container the operator has no policy for must be visible,
       // not a log line.
@@ -375,6 +411,7 @@ export class CustodySweepService {
         },
         this.audit,
       );
+
       return;
     }
 
@@ -386,7 +423,9 @@ export class CustodySweepService {
       sweepFeeCeiling: asset.sweepFeeCeiling,
       poolLiquidityFloor: asset.poolLiquidityFloor,
     };
+
     let decision = gateSweepBalance({ ...gateArgs, poolBalance: null });
+
     // Only fetch the pool balance when the ceiling actually blocks - it's an extra
     // vendor call, not a free one.
     if (decision === 'ceiling' && asset.poolLiquidityFloor) {
@@ -396,24 +435,31 @@ export class CustodySweepService {
         balance.currency,
         balance.network,
       );
+
       decision = gateSweepBalance({ ...gateArgs, poolBalance });
     }
 
     if (decision === 'dust') {
       summary.skippedDust += 1;
+
       return;
     }
+
     if (decision === 'fee') {
       summary.skippedFee += 1;
+
       return;
     }
+
     if (decision === 'ceiling') {
       summary.skippedCeiling += 1;
+
       return;
     }
 
     if (await this.hasInFlightSweep(balance.userId, balance.currency, balance.network)) {
       summary.inFlight += 1;
+
       return;
     }
 
@@ -431,10 +477,12 @@ export class CustodySweepService {
       })
       .onConflictDoNothing()
       .returning();
+
     if (!claimed) {
       // Another cycle claimed this (userId, currency, network) between the check above
       // and this insert - the partial unique index is the real guard, this is a race.
       summary.inFlight += 1;
+
       return;
     }
 
@@ -445,15 +493,18 @@ export class CustodySweepService {
       // Keyed by provider: one flat string would send vendor A's treasury account id to
       // vendor B and route custody funds to an account that vendor does not own.
       const treasuryRef = this.platformConfig?.wallet?.treasuryRefs?.[providerName];
+
       const result = await adapter.sweepToPool?.(balance, {
         idempotencyKey: claimed.id,
         ...(treasuryRef ? { treasuryRef } : {}),
       });
+
       if (!result) {
         throw new Error(
           `provider "${providerName}" advertised listSweepableBalances but has no sweepToPool`,
         );
       }
+
       await this.drizzle.db
         .update(walletCustodySweep)
         // poolRef records WHICH pool received the funds, not just that a transfer
@@ -493,6 +544,7 @@ export class CustodySweepService {
   ): Promise<void> {
     const error =
       err === undefined ? {} : { error: err instanceof Error ? err.message : String(err) };
+
     await this.drizzle.db.transaction(async (txn) => {
       // Read inside the transaction: a concurrent path moving another row of this run to
       // `processing` between the read and the writes would otherwise leave that sweep
@@ -503,10 +555,12 @@ export class CustodySweepService {
         .where(
           and(eq(walletCustodySweep.runId, runId), eq(walletCustodySweep.status, 'processing')),
         );
+
       await txn
         .update(walletJobRun)
         .set({ finishedAt: new Date(), status, summary: { ...summary, ...error } })
         .where(eq(walletJobRun.id, jobRunId));
+
       for (const sweep of moved) {
         await this.audit.recordInTransaction(txn, {
           actorType: 'system',
@@ -526,6 +580,7 @@ export class CustodySweepService {
           },
         });
       }
+
       await this.audit.recordInTransaction(txn, {
         actorType: 'system',
         action: 'wallet.custody.sweep_cycle',

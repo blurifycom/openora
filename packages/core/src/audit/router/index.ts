@@ -9,6 +9,7 @@ export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
   return os.router({
     list: os.list.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'audit', 'view');
+
       return mapErrors({}, () => svc.list(input));
     }),
 
@@ -29,6 +30,7 @@ export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
         ...context.clientMeta,
         result: 'success',
       });
+
       return { csv };
     }),
   });

@@ -35,6 +35,7 @@ export default {
         c.get(DRIZZLE),
         c.has(CACHE) ? c.get(CACHE) : undefined,
       );
+
       return resolverRef;
     });
 
@@ -44,19 +45,24 @@ export default {
     for (const event of ['iam.role.assigned', 'iam.role.revoked'] as const) {
       ctx.events.on(event, (payload) => {
         const parsed = domainEventSchemas[event].safeParse(payload);
+
         if (!parsed.success || !resolverRef) {
           return;
         }
+
         resolverRef
           .invalidateUser(parsed.data.userId)
           .catch((err) => logger.error({ err }, 'grant cache purge failed'));
       });
     }
+
     ctx.events.on('iam.role.permissions.changed', (payload) => {
       const parsed = domainEventSchemas['iam.role.permissions.changed'].safeParse(payload);
+
       if (!parsed.success || !resolverRef) {
         return;
       }
+
       resolverRef
         .invalidateRole(parsed.data.roleId)
         .catch((err) => logger.error({ err }, 'grant cache purge failed'));

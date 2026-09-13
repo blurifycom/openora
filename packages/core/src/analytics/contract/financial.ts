@@ -16,12 +16,14 @@ export const MoneyByCurrencyRailSchema = z.object({
   rail: WalletRailSchema.nullable(),
   total: MoneyAmountSchema,
 });
+
 export type MoneyByCurrencyRail = z.infer<typeof MoneyByCurrencyRailSchema>;
 
 export const MoneyByCurrencySchema = z.object({
   currency: CurrencyCodeSchema,
   total: SignedMoneyAmountSchema,
 });
+
 export type MoneyByCurrency = z.infer<typeof MoneyByCurrencySchema>;
 
 export const FinancialSummarySchema = z.object({
@@ -30,11 +32,13 @@ export const FinancialSummarySchema = z.object({
   netRevenue: z.array(MoneyByCurrencySchema),
   bonusCost: z.array(MoneyByCurrencySchema),
 });
+
 export type FinancialSummary = z.infer<typeof FinancialSummarySchema>;
 
 export const FinancialSummaryQuerySchema = DateRangeSchema.extend({
   currency: CurrencyCodeSchema.optional(),
 });
+
 export type FinancialSummaryQuery = z.infer<typeof FinancialSummaryQuerySchema>;
 
 export const GgrPointSchema = z.object({
@@ -46,12 +50,14 @@ export const GgrSeriesSchema = z.object({
   currency: CurrencyCodeSchema,
   points: z.array(GgrPointSchema),
 });
+
 export type GgrSeries = z.infer<typeof GgrSeriesSchema>;
 
 export const FinancialGgrQuerySchema = DateRangeSchema.extend({
   currency: CurrencyCodeSchema.optional(),
   granularity: GranularitySchema.default('day'),
 });
+
 export type FinancialGgrQuery = z.infer<typeof FinancialGgrQuerySchema>;
 
 export const financialContract = {

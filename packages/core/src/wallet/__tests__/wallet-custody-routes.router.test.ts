@@ -23,7 +23,9 @@ import { WalletService } from '../service/wallet.service.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
 
 const CTX = testContext();
+
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000dd';
+
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 // Neither route reads or writes a row directly - they authorize, then delegate to a
@@ -34,6 +36,7 @@ function routerWith(
   overrides: { reconciliation?: ReconciliationService; jobQueue?: JobQueueAdapter } = {},
 ) {
   const paymentProviders = makePaymentProviderRegistry();
+
   const service = new WalletService({
     drizzle: makeDrizzle(),
     events: makeEventBus(),
@@ -42,6 +45,7 @@ function routerWith(
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
+
   return createWalletRouter({
     wallet: service,
     adminGuard: guard,
@@ -63,6 +67,7 @@ describe('wallet custody and reconciliation routes', () => {
   describe('POST /wallet/custody/sweep/run', () => {
     it('enqueues a sweep cycle and returns its runId for an authorized caller', async () => {
       const enqueue = vi.fn().mockResolvedValue({ id: 'job-1' });
+
       const router = routerWith(authorizedGuard(), {
         jobQueue: mock<JobQueueAdapter>({ enqueue }),
       });
@@ -94,6 +99,7 @@ describe('wallet custody and reconciliation routes', () => {
 
     it('delegates to the reconciliation service for an authorized caller', async () => {
       const listFindings = vi.fn(async () => ({ items: [], total: 0, page: 1, limit: 20 }));
+
       const router = routerWith(authorizedGuard(), {
         reconciliation: mock<ReconciliationService>({ listFindings }),
       });
@@ -118,6 +124,7 @@ describe('wallet custody and reconciliation routes', () => {
       id: '63d3c264-3bf4-4d08-9b92-ea3eaf40a440',
       resolution: { outcome: 'dismissed' as const, note: 'confirmed non-issue' },
     };
+
     const resolved = {
       id: input.id,
       runId: '00000000-0000-0000-0000-000000000000',
@@ -141,6 +148,7 @@ describe('wallet custody and reconciliation routes', () => {
 
     it('delegates to the reconciliation service for an authorized caller', async () => {
       const resolveFinding = vi.fn(async () => resolved);
+
       const router = routerWith(authorizedGuard(), {
         reconciliation: mock<ReconciliationService>({ resolveFinding }),
       });

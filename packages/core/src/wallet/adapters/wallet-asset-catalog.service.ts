@@ -34,6 +34,7 @@ export class WalletAssetCatalogService implements WalletAssetCatalog {
       .select(ASSET_COLUMNS)
       .from(walletAsset)
       .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+
     return row ?? null;
   }
 }

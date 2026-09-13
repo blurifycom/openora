@@ -8,17 +8,21 @@ function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boole
 
 function validateUrl(raw: string, allowedHosts: readonly string[]): AttachmentValidationResult {
   let url: URL;
+
   try {
     url = new URL(raw);
   } catch {
     return { ok: false, reason: `invalid URL: ${raw}` };
   }
+
   if (url.protocol !== 'https:') {
     return { ok: false, reason: `unsupported protocol: ${url.protocol}` };
   }
+
   if (!isAllowedHost(url.hostname, allowedHosts)) {
     return { ok: false, reason: `host not allowed: ${url.hostname}` };
   }
+
   return { ok: true };
 }
 
@@ -27,8 +31,10 @@ export function validateAttachment(
   allowedHosts: readonly string[],
 ): AttachmentValidationResult {
   const urlResult = validateUrl(attachment.url, allowedHosts);
+
   if (!urlResult.ok) {
     return urlResult;
   }
+
   return validateUrl(attachment.previewUrl, allowedHosts);
 }

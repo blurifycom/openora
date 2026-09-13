@@ -16,13 +16,19 @@ import { createCmsRouter } from '../router/index.js';
 import { CmsService } from '../service/cms.service.js';
 
 const CTX = testContext();
+
 const PAGE_ID = '11111111-1111-4111-8111-111111111111';
+
 const BANNER_CONFIGURATION_ID = '22222222-2222-4222-8222-222222222222';
+
 const BANNER_IMAGE_ID = '33333333-3333-4333-8333-333333333333';
+
 const ALLOWED_IMAGE_HOST = 'img.example.test';
+
 const imageUrl = (path: string) => `https://${ALLOWED_IMAGE_HOST}${path}`;
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 beforeAll(async () => {
@@ -46,14 +52,17 @@ function routerWith(adminGuard: AdminGuard) {
   const service = new CmsService(db.drizzle, makeEventBus(), new RedisCache(redis.client), [
     ALLOWED_IMAGE_HOST,
   ]);
+
   return createCmsRouter(service, adminGuard);
 }
 
 function routerWithEvents(adminGuard: AdminGuard) {
   const events = makeEventBus();
+
   const service = new CmsService(db.drizzle, events, new RedisCache(redis.client), [
     ALLOWED_IMAGE_HOST,
   ]);
+
   return { router: createCmsRouter(service, adminGuard), events };
 }
 
@@ -217,6 +226,7 @@ describe('cms router admin writes', () => {
 
   it('updatePage writes the new title through to the row', async () => {
     const router = routerWith(allowingGuard());
+
     const created = await call(
       router.createPage,
       { slug: 'about', title: 'About' },
@@ -230,6 +240,7 @@ describe('cms router admin writes', () => {
 
   it('deletePage removes the row', async () => {
     const router = routerWith(allowingGuard());
+
     const created = await call(
       router.createPage,
       { slug: 'about', title: 'About' },
@@ -255,6 +266,7 @@ describe('cms router admin writes', () => {
 describe('cms router banner configuration writes', () => {
   it('creates a configuration, sets an image, and reads it back through the router', async () => {
     const router = routerWith(allowingGuard());
+
     const created = await call(
       router.createBannerConfiguration,
       { placement: 'home-top', layout: 'single' },
@@ -280,11 +292,13 @@ describe('cms router banner configuration writes', () => {
 describe('cms router banner error mapping', () => {
   it('maps deleting the placement default to CONFLICT', async () => {
     const router = routerWith(allowingGuard());
+
     const created = await call(
       router.createBannerConfiguration,
       { placement: 'home-top', layout: 'single' },
       { context: CTX },
     );
+
     await call(
       router.setBannerImage,
       {
@@ -309,6 +323,7 @@ describe('cms router banner error mapping', () => {
 
   it('maps setting default with too few images to CONFLICT', async () => {
     const router = routerWith(allowingGuard());
+
     const created = await call(
       router.createBannerConfiguration,
       { placement: 'home-top', layout: 'single' },
@@ -327,6 +342,7 @@ describe('cms router banner error mapping', () => {
 
   it('maps a disallowed image host to BAD_REQUEST', async () => {
     const router = routerWith(allowingGuard());
+
     const created = await call(
       router.createBannerConfiguration,
       { placement: 'home-top', layout: 'single' },
@@ -358,6 +374,7 @@ describe('cms router banner events', () => {
       { placement: 'home-top', layout: 'single' },
       { context: CTX },
     );
+
     const image = await call(
       router.setBannerImage,
       {
@@ -368,6 +385,7 @@ describe('cms router banner events', () => {
       },
       { context: CTX },
     );
+
     await call(router.setDefaultBannerConfiguration, { id: created.id }, { context: CTX });
     await call(router.unsetDefaultBannerConfiguration, { placement: 'home-top' }, { context: CTX });
     await call(router.deleteBannerImage, { id: image.id }, { context: CTX });
@@ -390,6 +408,7 @@ async function createDefaultConfiguration(router: Router, placement: string) {
     { placement, layout: 'single' },
     { context: CTX },
   );
+
   await call(
     router.setBannerImage,
     {
@@ -401,6 +420,7 @@ async function createDefaultConfiguration(router: Router, placement: string) {
     { context: CTX },
   );
   await call(router.setDefaultBannerConfiguration, { id: created.id }, { context: CTX });
+
   return created;
 }
 
@@ -410,6 +430,7 @@ async function createSchedulableConfiguration(router: Router, placement: string)
     { placement, layout: 'single' },
     { context: CTX },
   );
+
   await call(
     router.setBannerImage,
     {
@@ -420,6 +441,7 @@ async function createSchedulableConfiguration(router: Router, placement: string)
     },
     { context: CTX },
   );
+
   return created;
 }
 
@@ -431,19 +453,23 @@ describe('cms router banner schedule writes', () => {
 
     const startsAt = new Date(Date.now() + 60_000).toISOString();
     const endsAt = new Date(Date.now() + 120_000).toISOString();
+
     const schedule = await call(
       router.createBannerSchedule,
       { id: target.id, startsAt, endsAt },
       { context: CTX },
     );
+
     expect(schedule).toMatchObject({ bannerConfigurationId: target.id, startsAt, endsAt });
 
     const newEndsAt = new Date(Date.now() + 90_000).toISOString();
+
     const updated = await call(
       router.updateBannerScheduleEnd,
       { id: target.id, endsAt: newEndsAt },
       { context: CTX },
     );
+
     expect(updated.endsAt).toBe(newEndsAt);
 
     const list = await call(
@@ -451,6 +477,7 @@ describe('cms router banner schedule writes', () => {
       { placement: 'home-top' },
       { context: CTX },
     );
+
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
       bannerConfigurationId: target.id,

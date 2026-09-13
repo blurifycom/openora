@@ -7,6 +7,7 @@ export const ProfileCommandMetadataSchema = z.object({
   displayName: z.string(),
   level: z.number().int(),
 });
+
 export type ProfileCommandMetadata = z.infer<typeof ProfileCommandMetadataSchema>;
 
 export const GiftCommandMetadataSchema = z.object({
@@ -23,6 +24,7 @@ export const GiftCommandMetadataSchema = z.object({
   claimedByUsername: z.string().nullable().optional(),
   claimedAt: z.string().nullable().optional(),
 });
+
 export type GiftCommandMetadata = z.infer<typeof GiftCommandMetadataSchema>;
 
 export const RainCommandMetadataSchema = z.object({
@@ -42,6 +44,7 @@ export const RainCommandMetadataSchema = z.object({
     )
     .optional(),
 });
+
 export type RainCommandMetadata = z.infer<typeof RainCommandMetadataSchema>;
 
 export const BlockCommandMetadataSchema = z.object({
@@ -49,6 +52,7 @@ export const BlockCommandMetadataSchema = z.object({
   targetUserId: UuidSchema,
   displayName: z.string(),
 });
+
 export type BlockCommandMetadata = z.infer<typeof BlockCommandMetadataSchema>;
 
 export const UnblockCommandMetadataSchema = z.object({
@@ -56,6 +60,7 @@ export const UnblockCommandMetadataSchema = z.object({
   targetUserId: UuidSchema,
   displayName: z.string(),
 });
+
 export type UnblockCommandMetadata = z.infer<typeof UnblockCommandMetadataSchema>;
 
 export const IgnoreCommandMetadataSchema = z.object({
@@ -63,6 +68,7 @@ export const IgnoreCommandMetadataSchema = z.object({
   targetUserId: UuidSchema,
   displayName: z.string(),
 });
+
 export type IgnoreCommandMetadata = z.infer<typeof IgnoreCommandMetadataSchema>;
 
 export const UnignoreCommandMetadataSchema = z.object({
@@ -70,6 +76,7 @@ export const UnignoreCommandMetadataSchema = z.object({
   targetUserId: UuidSchema,
   displayName: z.string(),
 });
+
 export type UnignoreCommandMetadata = z.infer<typeof UnignoreCommandMetadataSchema>;
 
 export const DonateCommandMetadataSchema = z.object({
@@ -81,4 +88,5 @@ export const DonateCommandMetadataSchema = z.object({
   amount: MoneyAmountSchema,
   currency: z.string(),
 });
+
 export type DonateCommandMetadata = z.infer<typeof DonateCommandMetadataSchema>;

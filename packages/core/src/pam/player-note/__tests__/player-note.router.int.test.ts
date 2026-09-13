@@ -10,7 +10,9 @@ import { playerNote } from '../schema/index.js';
 import { PlayerNoteService } from '../service/player-note.service.js';
 
 const CTX = testContext();
+
 const CALLER = '44444444-4444-4444-8444-444444444444';
+
 const PLAYER_ID = '11111111-1111-4111-8111-111111111111';
 
 let db: TestDb;
@@ -32,6 +34,7 @@ const guardAllowing = (allow: readonly string[]) =>
 
 function build(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
+
   return {
     router: createPlayerNoteRouter(new PlayerNoteService(db.drizzle), adminGuard, audit),
     audit,

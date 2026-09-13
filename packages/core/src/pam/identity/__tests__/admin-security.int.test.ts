@@ -14,6 +14,7 @@ import { TrustedDeviceService } from '../service/trusted-device.service.js';
 
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 const SAFARI_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
 
@@ -23,6 +24,7 @@ function buildService() {
   const events = makeEventBus();
   const drizzle = db.drizzle;
   const trustedDevices = new TrustedDeviceService({ drizzle, events, trustedDeviceDays: 30 });
+
   const service = new AdminSecurityService({
     drizzle,
     events,
@@ -31,6 +33,7 @@ function buildService() {
     identityReader: makeIdentityReader(),
     config: AdminSecurityConfigSchema.parse({ requireTwoFactor: true, bindSessionToDevice: true }),
   });
+
   return { service, trustedDevices, events };
 }
 
@@ -52,6 +55,7 @@ async function isActive(sessionId: string) {
     .select({ live: sql<boolean>`${session.expiresAt} > now()` })
     .from(session)
     .where(eq(session.id, sessionId));
+
   return row?.live ?? false;
 }
 
@@ -77,6 +81,7 @@ describe('AdminSecurityService.revokeTrustedDevice (real PG)', () => {
     const otherSession = await seedSession(admin.id, SAFARI_UA);
     const { service, trustedDevices } = buildService();
     const device = await trustedDevices.trust(admin.id, { ip: null, userAgent: CHROME_UA });
+
     if (!device) {
       throw new Error('trust() stored no device');
     }
@@ -93,6 +98,7 @@ describe('AdminSecurityService.revokeTrustedDevice (real PG)', () => {
     const otherTab = await seedSession(admin.id, CHROME_UA);
     const { service, trustedDevices } = buildService();
     const device = await trustedDevices.trust(admin.id, { ip: null, userAgent: CHROME_UA });
+
     if (!device) {
       throw new Error('trust() stored no device');
     }
@@ -108,6 +114,7 @@ describe('AdminSecurityService.revokeTrustedDevice (real PG)', () => {
     const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
     const { service, trustedDevices } = buildService();
     const device = await trustedDevices.trust(admin.id, { ip: null, userAgent: CHROME_UA });
+
     if (!device) {
       throw new Error('trust() stored no device');
     }

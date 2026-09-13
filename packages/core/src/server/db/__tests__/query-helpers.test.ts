@@ -171,8 +171,10 @@ describe('mapConcurrent', () => {
 
   it('returns results in input order, not completion order', async () => {
     const delays = [30, 5, 20, 1];
+
     const result = await mapConcurrent(delays, 2, async (ms, index) => {
       await new Promise((resolve) => setTimeout(resolve, ms));
+
       return index;
     });
 
@@ -227,6 +229,7 @@ describe('mapConcurrent', () => {
         if (n === 2) {
           throw new Error('item 2 failed');
         }
+
         return n;
       }),
     ).rejects.toThrow('item 2 failed');

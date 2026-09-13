@@ -26,6 +26,7 @@ describe('FinancialAnalyticsService.summary', () => {
         ],
       ],
     });
+
     const service = new FinancialAnalyticsService(drizzle, fakeCache());
 
     const result = await service.summary({ currency: undefined });
@@ -67,6 +68,7 @@ describe('FinancialAnalyticsService.ggr', () => {
         { currency: 'EUR', bucket: new Date('2026-01-01T00:00:00.000Z'), ggr: '-5.00' },
       ],
     });
+
     const service = new FinancialAnalyticsService(mock({ db: { execute } }), fakeCache(undefined));
 
     const result = await service.ggr({
@@ -91,6 +93,7 @@ describe('FinancialAnalyticsService.ggr', () => {
     const execute = vi.fn().mockResolvedValue({
       rows: [{ currency: 'USD', bucket: '2026-01-01 00:00:00+00', ggr: '10.00' }],
     });
+
     const service = new FinancialAnalyticsService(mock({ db: { execute } }), fakeCache(undefined));
 
     const result = await service.ggr({ granularity: 'day' });

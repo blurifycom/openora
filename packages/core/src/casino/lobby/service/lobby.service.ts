@@ -11,7 +11,9 @@ export const LobbyCategoryNotFoundError = createDomainError(
 
 // Feeds tolerate this much staleness; no invalidation wiring - TTL-only expiry.
 const LOBBY_CACHE_TTL_MS = 30_000;
+
 const CATEGORIES_CACHE_KEY = 'lobby:categories';
+
 const FEATURED_CACHE_KEY = 'lobby:featured';
 
 function toGameSummary(record: {
@@ -39,6 +41,7 @@ export class LobbyService {
   async listCategories() {
     return cached(this.cache, CATEGORIES_CACHE_KEY, LOBBY_CACHE_TTL_MS, async () => {
       const db = this.drizzle.db;
+
       const [categories, counts] = await Promise.all([
         db.select().from(lobbyCategory).orderBy(asc(lobbyCategory.sortOrder)),
         db
@@ -102,6 +105,7 @@ export class LobbyService {
         .orderBy(asc(featuredSlot.placement), asc(featuredSlot.sortOrder));
 
       const gameIds = [...new Set(slots.map((s) => s.gameId))];
+
       const games =
         gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
 
@@ -109,6 +113,7 @@ export class LobbyService {
 
       return slots.map((slot) => {
         const g = gameMap.get(slot.gameId);
+
         return {
           id: slot.id,
           title: slot.title,

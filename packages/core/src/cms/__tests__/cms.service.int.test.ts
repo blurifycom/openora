@@ -24,10 +24,13 @@ import {
 } from '../service/cms.service.js';
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 const ALLOWED_IMAGE_HOST = 'img.example.test';
+
 const imageUrl = (path: string) => `https://${ALLOWED_IMAGE_HOST}${path}`;
+
 // banner_configuration.createdBy is a real uuid column - a non-uuid actor id (fine for
 // the page tests, which never persist actorId) fails Postgres uuid parsing.
 const ADMIN_ID = '99999999-9999-4999-8999-999999999999';
@@ -35,6 +38,7 @@ const ADMIN_ID = '99999999-9999-4999-8999-999999999999';
 function makeService(allowedBannerImageHosts: readonly string[] = [ALLOWED_IMAGE_HOST]) {
   const events = makeEventBus();
   const cache = new RedisCache(redis.client);
+
   return { svc: new CmsService(db.drizzle, events, cache, allowedBannerImageHosts), events };
 }
 
@@ -46,6 +50,7 @@ async function configurationById(id: string) {
     .select()
     .from(bannerConfigurationTable)
     .where(eq(bannerConfigurationTable.id, id));
+
   return row;
 }
 
@@ -54,6 +59,7 @@ async function scheduleByConfigurationId(bannerConfigurationId: string) {
     .select()
     .from(bannerScheduleTable)
     .where(eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationId));
+
   return row;
 }
 
@@ -70,6 +76,7 @@ async function makeDefaultConfiguration(svc: CmsService, placement: string) {
     ADMIN_ID,
   );
   await svc.setDefaultConfiguration(created.id, ADMIN_ID);
+
   return created;
 }
 
@@ -84,6 +91,7 @@ async function makeSchedulableConfiguration(svc: CmsService, placement: string) 
     },
     ADMIN_ID,
   );
+
   return created;
 }
 
@@ -99,6 +107,7 @@ async function insertScheduleDirect(input: {
     .insert(bannerScheduleTable)
     .values({ ...input, createdBy: ADMIN_ID })
     .returning();
+
   return row;
 }
 
@@ -143,10 +152,12 @@ describe('CmsService.createPage (real PG)', () => {
 describe('CmsService.updatePage (real PG + real Redis)', () => {
   it('invalidates both the old and new slug cache keys when the slug changes', async () => {
     const { svc } = makeService();
+
     const created = await svc.createPage(
       { slug: 'old-slug', title: 'Page', publishedAt: '2024-01-01T00:00:00.000Z' },
       ADMIN_ID,
     );
+
     await svc.getPage('old-slug');
     expect(await redis.client.get('cache:cms:page:old-slug')).not.toBeNull();
 
@@ -158,6 +169,7 @@ describe('CmsService.updatePage (real PG + real Redis)', () => {
 
   it('emits page.published only on the draft to published transition', async () => {
     const { svc, events } = makeService();
+
     const published = await svc.createPage(
       { slug: 'already-live', title: 'Page', publishedAt: '2024-01-01T00:00:00.000Z' },
       ADMIN_ID,
@@ -176,10 +188,12 @@ describe('CmsService.updatePage (real PG + real Redis)', () => {
 describe('CmsService.deletePage (real PG + real Redis)', () => {
   it('deletes the row, invalidates the cache, and 404s a follow-up getPage', async () => {
     const { svc, events } = makeService();
+
     const created = await svc.createPage(
       { slug: 'to-delete', title: 'Page', publishedAt: '2024-01-01T00:00:00.000Z' },
       ADMIN_ID,
     );
+
     await svc.getPage('to-delete');
 
     await svc.deletePage(created.id, ADMIN_ID);
@@ -197,10 +211,12 @@ describe('CmsService.deletePage (real PG + real Redis)', () => {
 describe('CmsService banner configurations (real PG + real Redis)', () => {
   it('creates, gets, lists, and deletes a configuration', async () => {
     const { svc, events } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     expect(created).toMatchObject({
       placement: 'home-top',
       layout: 'single',
@@ -236,6 +252,7 @@ describe('CmsService banner configurations (real PG + real Redis)', () => {
 describe('CmsService.setDefaultConfiguration image-count bounds (real PG)', () => {
   it('rejects a single-layout configuration with zero images, accepts it with one', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
@@ -262,10 +279,12 @@ describe('CmsService.setDefaultConfiguration image-count bounds (real PG)', () =
 
   it('rejects a grid-layout configuration with too many images', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-grid', layout: 'grid' },
       ADMIN_ID,
     );
+
     for (let i = 0; i < 4; i += 1) {
       await svc.setBannerImage(
         {
@@ -287,10 +306,12 @@ describe('CmsService.setDefaultConfiguration image-count bounds (real PG)', () =
 describe('CmsService exactly-one-default-per-placement (real PG)', () => {
   it('setting a second configuration as default un-defaults the first', async () => {
     const { svc } = makeService();
+
     const first = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: first.id,
@@ -306,6 +327,7 @@ describe('CmsService exactly-one-default-per-placement (real PG)', () => {
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: second.id,
@@ -325,10 +347,12 @@ describe('CmsService exactly-one-default-per-placement (real PG)', () => {
 describe('CmsService.deleteConfiguration blocked-while-default (real PG)', () => {
   it('rejects deleting the placement default, succeeds after unsetting', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: created.id,
@@ -354,6 +378,7 @@ describe('CmsService.deleteConfiguration blocked-while-default (real PG)', () =>
 describe('CmsService.setBannerImage upsert (real PG)', () => {
   it('upserts by (bannerConfigurationId, sortOrder, locale) instead of duplicating', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
@@ -368,6 +393,7 @@ describe('CmsService.setBannerImage upsert (real PG)', () => {
       },
       ADMIN_ID,
     );
+
     const second = await svc.setBannerImage(
       {
         bannerConfigurationId: created.id,
@@ -379,16 +405,19 @@ describe('CmsService.setBannerImage upsert (real PG)', () => {
     );
 
     expect(second.id).toBe(first.id);
+
     const rows = await db.drizzle.db
       .select()
       .from(bannerImageTable)
       .where(eq(bannerImageTable.bannerConfigurationId, created.id));
+
     expect(rows).toHaveLength(1);
     expect(rows[0]?.desktopImageUrl).toBe(imageUrl('/d2.png'));
   });
 
   it('rejects a URL whose host is not in the allow-list', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
@@ -417,10 +446,12 @@ describe('CmsService.getPublicBanner (real PG + real Redis)', () => {
 
   it("returns the default configuration's slots", async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: created.id,
@@ -450,10 +481,12 @@ describe('CmsService.getPublicBanner (real PG + real Redis)', () => {
 
   it('falls back to the default locale for a slot missing the requested locale', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: created.id,
@@ -472,10 +505,12 @@ describe('CmsService.getPublicBanner (real PG + real Redis)', () => {
 
   it('resolves the requested locale row when present, over the default-locale fallback', async () => {
     const { svc } = makeService();
+
     const created = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: created.id,
@@ -575,6 +610,7 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('rejects scheduling a configuration without the required base-locale slots', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
+
     const target = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
@@ -665,6 +701,7 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
 
     const overlappingStart = new Date(Date.now() + 120_000);
     const overlappingEnd = new Date(Date.now() + 240_000);
+
     const error: unknown = await svc
       .createBannerSchedule(
         second.id,
@@ -705,10 +742,12 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   it('serializes concurrent overlapping schedules for a placement', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
+
     const [first, second] = await Promise.all([
       makeSchedulableConfiguration(svc, 'home-top'),
       makeSchedulableConfiguration(svc, 'home-top'),
     ]);
+
     const startsAt = new Date(Date.now() + 60_000).toISOString();
     const endsAt = new Date(Date.now() + 120_000).toISOString();
 
@@ -847,6 +886,7 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
       { endsAt: secondStart.toISOString() },
       ADMIN_ID,
     );
+
     expect(updated.endsAt).toBe(secondStart.toISOString());
   });
 });
@@ -898,10 +938,12 @@ describe('CmsService.getPublicBanner schedule resolution (real PG + real Redis)'
   it('prefers an active schedule over the placement default', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
+
     const scheduled = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: scheduled.id,
@@ -925,10 +967,12 @@ describe('CmsService.getPublicBanner schedule resolution (real PG + real Redis)'
   it('falls back to the default once the schedule has expired', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
+
     const scheduled = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: scheduled.id,
@@ -952,10 +996,12 @@ describe('CmsService.getPublicBanner schedule resolution (real PG + real Redis)'
   it('falls back to the default before a queued schedule has started', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
+
     const scheduled = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await svc.setBannerImage(
       {
         bannerConfigurationId: scheduled.id,
@@ -999,10 +1045,12 @@ describe('CmsService.deleteConfiguration blocked-while-scheduled (real PG)', () 
   it('rejects deleting a configuration even once its schedule has expired', async () => {
     const { svc } = makeService();
     await makeDefaultConfiguration(svc, 'home-top');
+
     const target = await svc.createConfiguration(
       { placement: 'home-top', layout: 'single' },
       ADMIN_ID,
     );
+
     await insertScheduleDirect({
       bannerConfigurationId: target.id,
       startsAt: new Date(Date.now() - 120_000),

@@ -23,5 +23,6 @@ export function mapDbError(err: unknown): never {
         });
     }
   }
+
   throw err;
 }

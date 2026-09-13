@@ -44,9 +44,11 @@ async function seedWallet({
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
+
   await db.drizzle.db
     .insert(walletBalance)
     .values({ walletId: row.id, currency: row.currency, amount: balance });
+
   return row;
 }
 
@@ -72,6 +74,7 @@ async function insertCredit(
       .returning(),
     new Error('insertCredit: query returned no row'),
   );
+
   return row;
 }
 
@@ -205,22 +208,27 @@ describe('WalletCommandsService bonus credit creation on gift/rain (real PG)', (
 describe('WalletCommandsService bonus rollover progress waterfall (real PG)', () => {
   it('drains the oldest active credit first, caps at rolloverRequired, and cascades leftover', async () => {
     const w = await seedWallet({ balance: '1000' });
+
     const older = await insertCredit(w, {
       creditedAmount: '30',
       rolloverRequired: '30',
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
     });
+
     const newer = await insertCredit(w, {
       creditedAmount: '50',
       rolloverRequired: '50',
       createdAt: new Date('2026-01-02T00:00:00.000Z'),
     });
+
     const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
 
     const res1 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '40', type: 'bet' });
+
     if (!res1.ok) {
       throw new Error('expected res1.ok');
     }
+
     expect(res1.completedBonusCredits).toEqual([
       { id: older.id, currency: 'USD', creditedAmount: older.creditedAmount },
     ]);
@@ -232,18 +240,22 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     expect(Number(rows.find((r) => r.id === newer.id)!.rolloverProgress)).toBe(10);
 
     const res2 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
+
     if (!res2.ok) {
       throw new Error('expected res2.ok');
     }
+
     expect(res2.completedBonusCredits).toEqual([]);
     rows = await creditsFor(w.userId);
     expect(rows.find((r) => r.id === newer.id)).toMatchObject({ status: 'active' });
     expect(Number(rows.find((r) => r.id === newer.id)!.rolloverProgress)).toBe(40);
 
     const res3 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '20', type: 'bet' });
+
     if (!res3.ok) {
       throw new Error('expected res3.ok');
     }
+
     expect(res3.completedBonusCredits).toEqual([
       { id: newer.id, currency: 'USD', creditedAmount: newer.creditedAmount },
     ]);
@@ -284,34 +296,42 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
 
   it('leaves an already-completed credit and a different-currency credit untouched', async () => {
     const w = await seedWallet({ balance: '1000', currency: 'USD' });
+
     const alreadyDone = await insertCredit(w, {
       creditedAmount: '10',
       rolloverRequired: '10',
       rolloverProgress: '10',
       status: 'completed',
     });
+
     const otherCurrency = await insertCredit(w, {
       currency: 'EUR',
       creditedAmount: '30',
       rolloverRequired: '30',
     });
+
     const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
 
     const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
+
     if (!res.ok) {
       throw new Error('expected res.ok');
     }
+
     expect(res.completedBonusCredits).toEqual([]);
 
     const [done] = await db.drizzle.db
       .select()
       .from(walletBonusCredit)
       .where(eq(walletBonusCredit.id, alreadyDone.id));
+
     expect(Number(done!.rolloverProgress)).toBe(10);
+
     const [eur] = await db.drizzle.db
       .select()
       .from(walletBonusCredit)
       .where(eq(walletBonusCredit.id, otherCurrency.id));
+
     expect(Number(eur!.rolloverProgress)).toBe(0);
   });
 
@@ -326,12 +346,14 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
       currency: 'USD',
       type: 'win',
     });
+
     expect(res.ok).toBe(true);
 
     const [row] = await db.drizzle.db
       .select()
       .from(walletBonusCredit)
       .where(eq(walletBonusCredit.id, credit.id));
+
     expect(Number(row!.rolloverProgress)).toBe(0);
   });
 
@@ -350,15 +372,19 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     });
 
     expect(result.ok).toBe(false);
+
     if (result.ok) {
       throw new Error('expected locked debit to fail');
     }
+
     expect(Number(result.available)).toBe(100);
     expect(await creditsFor(w.userId)).toHaveLength(1);
+
     const [balance] = await db.drizzle.db
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
+
     expect(balance!.amount).toBe('100.000000000000000000');
   });
 });
@@ -384,6 +410,7 @@ describe('WalletService.withdraw with an active bonus rollover lock (real PG)', 
       ip: null,
       userAgent: null,
     });
+
     expect(result.status).toBe('pending');
   });
 
@@ -404,6 +431,7 @@ describe('WalletService.withdraw with an active bonus rollover lock (real PG)', 
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
+
     expect(Number(bal!.amount)).toBe(100);
   });
 
@@ -425,10 +453,12 @@ describe('WalletService.withdraw with an active bonus rollover lock (real PG)', 
     });
 
     expect(res.status).toBe('pending');
+
     const [bal] = await db.drizzle.db
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
+
     expect(Number(bal!.amount)).toBe(80);
   });
 
@@ -451,10 +481,12 @@ describe('WalletService.withdraw with an active bonus rollover lock (real PG)', 
     });
 
     expect(res.status).toBe('pending');
+
     const [bal] = await db.drizzle.db
       .select()
       .from(walletBalance)
       .where(eq(walletBalance.walletId, w.id));
+
     expect(Number(bal!.amount)).toBe(0);
   });
 

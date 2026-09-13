@@ -13,7 +13,9 @@ const { appliedHashes, calls, poolInstances, failOnSql, FakePool, readMigrationF
         if (failOnSql.value !== null && sql === failOnSql.value) {
           throw new Error(`boom: ${sql}`);
         }
+
         calls.push(sql);
+
         return {
           rows: sql.startsWith('SELECT hash FROM')
             ? appliedHashes.value.map((hash) => ({ hash }))
@@ -28,7 +30,9 @@ const { appliedHashes, calls, poolInstances, failOnSql, FakePool, readMigrationF
         if (failOnSql.value !== null && sql === failOnSql.value) {
           throw new Error(`boom: ${sql}`);
         }
+
         calls.push(sql);
+
         return { rows: [] };
       });
       readonly connect = vi.fn(async () => new FakeClient());
@@ -46,6 +50,7 @@ const { appliedHashes, calls, poolInstances, failOnSql, FakePool, readMigrationF
   });
 
 vi.mock('pg', () => ({ Pool: FakePool }));
+
 vi.mock('drizzle-orm/migrator', () => ({ readMigrationFiles: readMigrationFilesMock }));
 
 const { runMigrations, applyMigrationsIndividually, withMigrationAdvisoryLock } =

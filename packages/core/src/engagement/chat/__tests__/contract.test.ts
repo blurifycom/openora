@@ -13,6 +13,7 @@ describe('SendRoomMessageInputSchema', () => {
       roomId: randomUUID(),
       content: 'hello',
     });
+
     expect(result.success).toBe(true);
   });
 
@@ -31,6 +32,7 @@ describe('SendRoomMessageInputSchema', () => {
         title: 'a gif',
       },
     });
+
     expect(result.success).toBe(true);
   });
 });

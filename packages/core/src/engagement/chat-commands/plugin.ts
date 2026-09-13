@@ -21,6 +21,7 @@ export default {
         c.get(CHAT_REALTIME_TRANSPORT),
         c.get(AUDIT_WRITER),
       );
+
       return createChatCommandsRouter(svc, c.get(ADMIN_GUARD));
     });
   },

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const repoRoot = join(here, '..', '..', '..');
 
 function repoPath(...parts: string[]): string {
@@ -18,6 +19,7 @@ function readFile(p: string): string {
   if (!existsSync(p)) {
     return '';
   }
+
   return readFileSync(p, 'utf8');
 }
 
@@ -25,12 +27,16 @@ function listDirs(p: string): string[] {
   if (!existsSync(p)) {
     return [];
   }
+
   return readdirSync(p).filter((f) => statSync(join(p, f)).isDirectory());
 }
 
 const CORE_SRC = ['packages', 'core', 'src'] as const;
+
 const CONTRACTS_ZONE = [...CORE_SRC, 'contracts'] as const;
+
 const ADAPTERS_ZONE = [...CONTRACTS_ZONE, 'adapters'] as const;
+
 const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'common', 'testing', 'scripts']);
 
 type ModuleDir = { group: string; name: string; dir: string };
@@ -41,22 +47,28 @@ type ModuleDir = { group: string; name: string; dir: string };
 function listAllModules(): ModuleDir[] {
   const out: ModuleDir[] = [];
   const hasPlugin = (dir: string): boolean => existsSync(join(dir, 'plugin.ts'));
+
   for (const domain of listDirs(repoPath(...CORE_SRC))) {
     if (ENGINE_ZONES.has(domain)) {
       continue;
     }
+
     const domainDir = repoPath(...CORE_SRC, domain);
+
     if (hasPlugin(domainDir)) {
       out.push({ group: domain, name: domain, dir: domainDir });
       continue;
     }
+
     for (const member of listDirs(domainDir)) {
       const memberDir = join(domainDir, member);
+
       if (hasPlugin(memberDir)) {
         out.push({ group: domain, name: member, dir: memberDir });
       }
     }
   }
+
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -68,9 +80,11 @@ function findModuleDir(name: string): string | null {
 // contract/ dir - the two places a Zod schema may be declared. See ADR-0021/0025.
 function contractFiles(): string[] {
   const files = walkFiles(repoPath(...CONTRACTS_ZONE), '.ts');
+
   for (const { dir } of listAllModules()) {
     files.push(...walkFiles(join(dir, 'contract'), '.ts'));
   }
+
   return files.filter((f) => !f.endsWith('.d.ts'));
 }
 
@@ -78,28 +92,35 @@ function parseAgentsMdSection(content: string, heading: string): string {
   const lines = content.split('\n');
   let capture = false;
   const out: string[] = [];
+
   for (const line of lines) {
     if (line.startsWith('## ') && line.slice(3).trim() === heading) {
       capture = true;
       continue;
     }
+
     if (capture && line.startsWith('## ')) {
       break;
     }
+
     if (capture) {
       out.push(line);
     }
   }
+
   return out.join('\n').trim();
 }
 
 function listModulesFromConfig(): Array<{ id: string; path: string }> {
   const configPath = repoPath('extensions.config.ts');
+
   if (!existsSync(configPath)) {
     return [];
   }
+
   const src = readFileSync(configPath, 'utf8');
   const matches = [...src.matchAll(/\{\s*id:\s*'([^']+)',\s*path:\s*'([^']+)'\s*\}/g)];
+
   return matches.map((m) => ({ id: m[1] ?? '', path: m[2] ?? '' }));
 }
 
@@ -111,9 +132,11 @@ function run(cmd: string): { ok: boolean; output: string } {
       stdio: 'pipe',
       timeout: 120_000,
     });
+
     return { ok: true, output };
   } catch (e: unknown) {
     const err = e as { stdout?: Buffer; stderr?: Buffer; message: string };
+
     return {
       ok: false,
       output: (err.stdout?.toString() ?? '') + (err.stderr?.toString() ?? '') + err.message,
@@ -125,17 +148,21 @@ function walkFiles(dir: string, ext: string, acc: string[] = []): string[] {
   if (!existsSync(dir)) {
     return acc;
   }
+
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === 'dist' || entry === '.next' || entry === '.turbo') {
       continue;
     }
+
     const full = join(dir, entry);
+
     if (statSync(full).isDirectory()) {
       walkFiles(full, ext, acc);
     } else if (full.endsWith(ext)) {
       acc.push(full);
     }
   }
+
   return acc;
 }
 
@@ -147,16 +174,20 @@ function walkFiles(dir: string, ext: string, acc: string[] = []): string[] {
 function extractDeclaration(src: string, name: string): { line: number; code: string } | null {
   const lines = src.split('\n');
   const startRe = new RegExp(`^\\s*export\\s+const\\s+${name}\\b`);
+
   for (let i = 0; i < lines.length; i++) {
     if (!startRe.test(lines[i] ?? '')) {
       continue;
     }
+
     let depth = 0;
     let started = false;
     const out: string[] = [];
+
     for (let j = i; j < lines.length; j++) {
       const l = lines[j] ?? '';
       out.push(l);
+
       for (const ch of l) {
         if (ch === '(' || ch === '{' || ch === '[') {
           depth++;
@@ -165,15 +196,19 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
           depth--;
         }
       }
+
       if (started && depth <= 0) {
         break;
       }
+
       if (!started && l.includes(';')) {
         break;
       }
     }
+
     return { line: i + 1, code: out.join('\n') };
   }
+
   return null;
 }
 
@@ -190,6 +225,7 @@ type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'downstream-app'
 function classifyIntent(ask: string): IntentKind {
   const a = ` ${ask.toLowerCase()} `;
   const has = (re: RegExp) => re.test(a);
+
   if (
     has(
       /\b(downstream|consumer repo|new project|new app|new repo|my own|standalone|bootstrap|spin up)\b/,
@@ -197,6 +233,7 @@ function classifyIntent(ask: string): IntentKind {
   ) {
     return 'downstream-app';
   }
+
   if (
     has(
       /\b(payment|psp|stripe|adyen|kyc|onfido|identity check|sms|email|notification|vendor|adapter|gateway|provider integration)\b/,
@@ -204,12 +241,15 @@ function classifyIntent(ask: string): IntentKind {
   ) {
     return 'adapter';
   }
+
   if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/)) {
     return 'ui-page';
   }
+
   if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) {
     return 'route';
   }
+
   if (
     has(
       /\b(module|feature|domain|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|quest|reward|system)\b/,
@@ -217,6 +257,7 @@ function classifyIntent(ask: string): IntentKind {
   ) {
     return 'feature';
   }
+
   return 'unsure';
 }
 
@@ -228,18 +269,23 @@ const ADAPTER_TOKEN_RE =
 /** DI tokens exported from @openora/core/contracts - the vendor swap seams. */
 function readAdapterTokens(): string[] {
   const dir = repoPath(...ADAPTERS_ZONE);
+
   if (!existsSync(dir)) {
     return [];
   }
+
   const out: string[] = [];
+
   for (const f of readdirSync(dir)) {
     if (!f.endsWith('.ts') || f === 'index.ts') {
       continue;
     }
+
     for (const m of readFileSync(join(dir, f), 'utf8').matchAll(ADAPTER_TOKEN_RE)) {
       out.push(m[1] ?? '');
     }
   }
+
   return out.sort();
 }
 
@@ -247,6 +293,7 @@ function buildPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: strin
   const moduleList = ctx.modules.length
     ? ctx.modules.map((m) => `- ${m}`).join('\n')
     : '- (none yet)';
+
   switch (kind) {
     case 'feature':
       return [
@@ -366,12 +413,15 @@ server.registerTool(
   async ({ section }) => {
     const filePath = repoPath('AGENTS.md');
     const content = readFile(filePath);
+
     if (!content) {
       return { content: [{ type: 'text', text: `No AGENTS.md found at ${filePath}` }] };
     }
+
     const text = section
       ? parseAgentsMdSection(content, section) || `Section "${section}" not found.`
       : content;
+
     return { content: [{ type: 'text', text }] };
   },
 );
@@ -384,6 +434,7 @@ server.registerTool(
   },
   async () => {
     const modules = listModulesFromConfig();
+
     if (modules.length === 0) {
       return {
         content: [
@@ -394,7 +445,9 @@ server.registerTool(
         ],
       };
     }
+
     const lines = modules.map((m) => `- ${m.id}  (${m.path})`).join('\n');
+
     return { content: [{ type: 'text', text: lines }] };
   },
 );
@@ -445,9 +498,11 @@ server.registerTool(
     } else {
       const tables = [...schemaSrc.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]);
       const zods = [...zodSrc.matchAll(/export const (\w+Schema)\b/g)].map((m) => m[1]);
+
       const routes = [...routerSrc.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map(
         (m) => `${name}.${m[1]}`,
       );
+
       parts.push(`\n--- Tables ---\n${tables.join(', ') || '(none)'}`);
       parts.push(`\n--- Schemas ---\n${zods.join(', ') || '(none)'}`);
       parts.push(`\n--- Routes ---\n${routes.join(', ') || '(none)'}`);
@@ -468,19 +523,25 @@ server.registerTool(
     const all = listAllModules();
     const modules = mod ? all.filter((m) => m.name === mod) : all;
     const lines: string[] = [];
+
     for (const { name, dir } of modules) {
       const routerFile = join(dir, 'router', 'index.ts');
+
       if (!existsSync(routerFile)) {
         continue;
       }
+
       const src = readFileSync(routerFile, 'utf8');
+
       const procedures = [...src.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map(
         (m) => `  ${name}.${m[1]}`,
       );
+
       if (procedures.length > 0) {
         lines.push(`${name}:\n${procedures.join('\n')}`);
       }
     }
+
     return { content: [{ type: 'text', text: lines.join('\n\n') || 'No routes defined yet.' }] };
   },
 );
@@ -496,6 +557,7 @@ server.registerTool(
     const parts: string[] = [];
 
     const eventsFile = repoPath(...CONTRACTS_ZONE, 'schemas', 'events.ts');
+
     if (existsSync(eventsFile)) {
       parts.push(
         `\n=== Domain events (domainEventSchemas from @openora/core/contracts) ===\n${readFile(eventsFile)}`,
@@ -506,15 +568,18 @@ server.registerTool(
 
     const adaptersDir = repoPath(...ADAPTERS_ZONE);
     parts.push('\n=== Adapter interfaces (@openora/core/contracts) ===');
+
     if (existsSync(adaptersDir)) {
       for (const f of readdirSync(adaptersDir)) {
         if (!f.endsWith('.ts') || f === 'index.ts') {
           continue;
         }
+
         const src = readFileSync(join(adaptersDir, f), 'utf8');
         const interfaces = [...src.matchAll(/^export type (\w+) = \{/gm)].map((m) => m[1]);
         const tokens = [...src.matchAll(ADAPTER_TOKEN_RE)].map((m) => m[1]);
         const label = [...interfaces, ...tokens.map((t) => `${t} (token)`)].join(', ');
+
         if (label) {
           parts.push(`${f.replace(/\.ts$/, '')}: ${label}`);
         }
@@ -536,6 +601,7 @@ server.registerTool(
   },
   async ({ domain, name }) => {
     const result = run(`pnpm gen module ${domain} ${name}`);
+
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -550,6 +616,7 @@ server.registerTool(
   },
   async ({ name }) => {
     const result = run(`pnpm gen plugin ${name}`);
+
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -569,6 +636,7 @@ server.registerTool(
   },
   async ({ domain, module: mod, method, path }) => {
     const result = run(`pnpm gen route ${domain} ${mod} ${method} ${path}`);
+
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -592,6 +660,7 @@ server.registerTool(
   async ({ target, name }) => {
     const nameFlag = name ? ` --name ${name}` : '';
     const result = run(`pnpm create:app ${target}${nameFlag}`);
+
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -608,6 +677,7 @@ server.registerTool(
   async ({ filter }) => {
     const cmd = filter ? `pnpm verify --filter "${filter}"` : 'pnpm verify';
     const result = run(cmd);
+
     return {
       content: [
         {
@@ -628,6 +698,7 @@ server.registerTool(
   },
   async () => {
     const result = run('pnpm regen');
+
     return {
       content: [
         {
@@ -656,6 +727,7 @@ server.registerTool(
     const detailed = response_format === 'detailed';
     const all = listAllModules();
     const modules = mod ? all.filter((m) => m.name === mod) : all;
+
     if (mod && modules.length === 0) {
       return {
         content: [
@@ -666,27 +738,36 @@ server.registerTool(
         ],
       };
     }
+
     const parts: string[] = [];
+
     for (const { group, name, dir } of modules) {
       const schemaFile = join(dir, 'schema', 'index.ts');
+
       if (!existsSync(schemaFile)) {
         continue;
       }
+
       const src = readFileSync(schemaFile, 'utf8');
       const tables = [...src.matchAll(/export const (\w+)\s*=\s*pgTable\(\s*'([^']+)'/g)];
+
       if (tables.length === 0) {
         continue;
       }
+
       if (detailed) {
         parts.push(`=== ${group}/${name} (src/schema/index.ts) ===\n${src.trim()}`);
       } else {
         const summary = tables.map(
           ([, constName, tableName]) => `  ${constName} -> '${tableName}'`,
         );
+
         parts.push(`${group}/${name}:\n${summary.join('\n')}`);
       }
     }
+
     const text = parts.join('\n\n') || 'No Drizzle tables found.';
+
     return {
       content: [
         {
@@ -709,12 +790,16 @@ server.registerTool(
   },
   async ({ table }) => {
     const want = table.trim();
+
     for (const { group, name, dir } of listAllModules()) {
       const schemaFile = join(dir, 'schema', 'index.ts');
+
       if (!existsSync(schemaFile)) {
         continue;
       }
+
       const src = readFileSync(schemaFile, 'utf8');
+
       for (const [, tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
         if (tableName === want) {
           return {
@@ -728,6 +813,7 @@ server.registerTool(
         }
       }
     }
+
     return {
       content: [
         {
@@ -751,25 +837,33 @@ server.registerTool(
   async ({ name }) => {
     const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
     const files = contractFiles();
+
     for (const file of files) {
       const src = readFileSync(file, 'utf8');
+
       for (const cand of candidates) {
         const decl = extractDeclaration(src, cand);
+
         if (decl) {
           const rel = file.replace(`${repoRoot}/`, '');
+
           return {
             content: [{ type: 'text', text: `${rel}:${decl.line}\n\n${decl.code}` }],
           };
         }
       }
     }
+
     const names = new Set<string>();
+
     for (const file of files) {
       for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
         names.add(m[1] ?? '');
       }
     }
+
     const list = [...names].sort().join(', ');
+
     return {
       content: [
         { type: 'text', text: `Schema "${name}" not found.\n\nAvailable schemas:\n${list}` },
@@ -792,6 +886,7 @@ server.registerTool(
     const max = limit ?? 60;
     const roots = [repoPath('docs'), repoPath('packages'), repoPath('apps')];
     const files = new Set<string>([repoPath('README.md'), repoPath('AGENTS.md')]);
+
     for (const root of roots) {
       for (const f of walkFiles(root, '.md')) {
         files.add(f);
@@ -800,25 +895,32 @@ server.registerTool(
 
     const needle = query.toLowerCase();
     const hits: string[] = [];
+
     for (const file of [...files].sort()) {
       if (!existsSync(file)) {
         continue;
       }
+
       const lines = readFileSync(file, 'utf8').split('\n');
       const rel = file.replace(`${repoRoot}/`, '');
+
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i] ?? '';
+
         if (line.toLowerCase().includes(needle)) {
           hits.push(`${rel}:${i + 1}: ${line.trim()}`);
+
           if (hits.length >= max) {
             break;
           }
         }
       }
+
       if (hits.length >= max) {
         break;
       }
     }
+
     return {
       content: [
         {
@@ -843,9 +945,11 @@ server.registerTool(
   async ({ sql }) => {
     const trimmed = sql.trim().replace(/;\s*$/, '');
     const lower = trimmed.toLowerCase();
+
     if (trimmed.includes(';')) {
       return { content: [{ type: 'text', text: 'Only a single statement is allowed (no `;`).' }] };
     }
+
     if (!READONLY_SQL_PREFIXES.some((p) => lower.startsWith(p))) {
       return {
         content: [
@@ -856,7 +960,9 @@ server.registerTool(
         ],
       };
     }
+
     const client = new pg.Client({ connectionString: resolveDatabaseUrl() });
+
     try {
       await client.connect();
       await client.query('BEGIN TRANSACTION READ ONLY');
@@ -864,10 +970,12 @@ server.registerTool(
       const res = await client.query(trimmed);
       await client.query('ROLLBACK');
       const rows = res.rows.slice(0, 200);
+
       const text =
         rows.length === 0
           ? '(0 rows)'
           : `${res.rowCount} row(s)${res.rowCount && res.rowCount > 200 ? ' (showing 200)' : ''}:\n${JSON.stringify(rows, null, 2)}`;
+
       return { content: [{ type: 'text', text }] };
     } catch (e: unknown) {
       return { content: [{ type: 'text', text: `Query failed: ${(e as Error).message}` }] };
@@ -886,26 +994,34 @@ server.registerTool(
   },
   async () => {
     const commandsDir = join(repoRoot, '.claude', 'commands');
+
     if (!existsSync(commandsDir)) {
       return { content: [{ type: 'text', text: 'No .claude/commands/ directory found.' }] };
     }
+
     const lines: string[] = ['Available slash commands:\n'];
+
     for (const file of readdirSync(commandsDir).sort()) {
       if (!file.endsWith('.md')) {
         continue;
       }
+
       const name = '/' + file.replace(/\.md$/, '');
       const content = readFileSync(join(commandsDir, file), 'utf8');
       const descLine = content.split('\n').find((l) => l.startsWith('description:'));
+
       const desc = descLine
         ? descLine
             .slice('description:'.length)
             .trim()
             .replace(/^["']|["']$/g, '')
         : '';
+
       lines.push(`  ${name.padEnd(28)} ${desc}`);
     }
+
     lines.push('\nNote: use the MCP scaffold-* tools to invoke these from any editor.');
+
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   },
 );
@@ -929,14 +1045,17 @@ server.registerTool(
   },
   async ({ ask, kind }) => {
     const resolved = kind && kind !== 'unsure' ? kind : classifyIntent(ask);
+
     const ctx = {
       modules: listAllModules().map((m) => `${m.group}/${m.name}`),
       tokens: readAdapterTokens(),
     };
+
     const tree = parseAgentsMdSection(
       readFile(repoPath('AGENTS.md')),
       'Where does X go? (decision tree)',
     );
+
     const detected = kind && kind !== 'unsure' ? '' : ' (auto-detected - correct me if wrong)';
 
     const text = [
@@ -984,33 +1103,40 @@ server.registerTool(
   async ({ action = 'up' }) => {
     if (action === 'status') {
       const r = run('docker compose ps');
+
       return { content: [{ type: 'text', text: r.output || '(no output)' }] };
     }
 
     if (action === 'down') {
       const r = run('docker compose down');
+
       return { content: [{ type: 'text', text: r.ok ? 'Stopped.' : r.output }] };
     }
 
     const up = run('docker compose up -d');
+
     if (!up.ok) {
       return { content: [{ type: 'text', text: `docker compose up failed:\n${up.output}` }] };
     }
 
     const deadline = Date.now() + 30_000;
     let ready = false;
+
     while (Date.now() < deadline) {
       const probe = run('docker compose exec -T postgres pg_isready -U postgres');
+
       if (probe.ok) {
         ready = true;
         break;
       }
+
       await new Promise((r) => setTimeout(r, 1_500));
     }
 
     const text = ready
       ? `Postgres is ready on :5432.\n\nNext: pnpm db:migrate (apply schema) then pnpm dev.`
       : `Containers started but postgres did not become ready within 30 s.\nRun \`docker compose logs postgres\` to investigate.`;
+
     return { content: [{ type: 'text', text: text }] };
   },
 );
@@ -1041,6 +1167,7 @@ server.registerTool(
     if (ask) {
       const resolved = classifyIntent(ask);
       const playbook = buildPlaybook(resolved, { modules, tokens });
+
       const text = [
         '# Onboarding',
         `The user opened with: **${ask}**  (looks like: ${resolved})`,
@@ -1057,6 +1184,7 @@ server.registerTool(
         '',
         playbook,
       ].join('\n');
+
       return { content: [{ type: 'text', text }] };
     }
 
@@ -1090,4 +1218,5 @@ server.registerTool(
 );
 
 const transport = new StdioServerTransport();
+
 await server.connect(transport);

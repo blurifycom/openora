@@ -93,9 +93,13 @@ import type {
 const logger = createLogger('wallet');
 
 export const WalletNotFoundError = makeNotFoundError('Wallet');
+
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
+
 export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
+
 export const BonusRolloverConfigNotFoundError = makeNotFoundError('BonusRolloverConfig');
+
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
@@ -277,21 +281,28 @@ export function resolveWithdrawalNetwork(
   if (assets.length === 0) {
     return network?.toUpperCase() ?? null;
   }
+
   const payable = assets.filter((asset) => asset.withdrawalEnabled);
   const [only, ...rest] = payable;
+
   if (!only) {
     throw new WithdrawalDisabledError(currency);
   }
+
   if (network === undefined) {
     if (rest.length > 0) {
       throw new AmbiguousNetworkError(currency, payable.map((asset) => asset.network).join(', '));
     }
+
     return only.network.toUpperCase();
   }
+
   const wanted = network.toUpperCase();
+
   if (!payable.some((asset) => asset.network.toUpperCase() === wanted)) {
     throw new UnsupportedNetworkError(currency, wanted);
   }
+
   return wanted;
 }
 
@@ -310,6 +321,7 @@ export function assertAboveMinimumWithdrawal(
   const asset = assets.find(
     (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
   );
+
   if (asset && moneyCompare(amount, asset.minWithdrawal) < 0) {
     throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
   }
@@ -334,19 +346,25 @@ export function assertDepositAllowed(
     if (network !== undefined) {
       throw new UnsupportedNetworkError(currency, network.toUpperCase());
     }
+
     return;
   }
+
   if (network === undefined) {
     if (!assets.some((asset) => asset.depositEnabled)) {
       throw new DepositDisabledError(currency, null);
     }
+
     return;
   }
+
   const wanted = network.toUpperCase();
   const asset = assets.find((candidate) => candidate.network.toUpperCase() === wanted);
+
   if (!asset) {
     throw new UnsupportedNetworkError(currency, wanted);
   }
+
   if (!asset.depositEnabled) {
     throw new DepositDisabledError(currency, asset.network);
   }
@@ -360,14 +378,17 @@ export function assertAboveMinimumDeposit(
 ): void {
   const enabled = assets.filter((asset) => asset.depositEnabled);
   const wanted = network?.toUpperCase();
+
   const applicable = wanted
     ? enabled.filter((asset) => asset.network.toUpperCase() === wanted)
     : enabled;
+
   const floor = applicable.reduce<DepositAsset | undefined>(
     (lowest, asset) =>
       !lowest || moneyCompare(asset.minDeposit, lowest.minDeposit) < 0 ? asset : lowest,
     undefined,
   );
+
   if (floor && moneyCompare(amount, floor.minDeposit) < 0) {
     throw new BelowMinimumDepositError(amount, floor.minDeposit, currency, floor.network);
   }
@@ -430,6 +451,7 @@ export async function readWalletBalance(
     .where(
       and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, balanceKey(currency))),
     );
+
   return row?.amount ?? '0';
 }
 
@@ -457,9 +479,11 @@ export async function resolveWalletBalance(
   userId: User['id'],
 ): Promise<{ balance: string; currency: string }> {
   const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+
   if (!record) {
     return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
   }
+
   return {
     balance: await readWalletBalance(txn, record.id, record.currency),
     currency: record.currency,
@@ -519,6 +543,7 @@ export async function readLockedBonusAmount(
   currency: string,
 ): Promise<string> {
   const currencyKey = balanceKey(currency);
+
   const [row] = await txn
     .select({
       locked: sql<string>`coalesce(sum(
@@ -535,6 +560,7 @@ export async function readLockedBonusAmount(
         eq(walletBonusCredit.status, 'active'),
       ),
     );
+
   return row?.locked ?? '0';
 }
 
@@ -542,7 +568,9 @@ export async function readLockedBonusAmount(
 // collide on the (walletId, idempotencyKey) unique index. The column is a uuid, so a string
 // prefix won't parse - hash namespace + key into a stable pseudo-uuid instead.
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
+
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
+
 const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
 
 /** Serialises one player's PSP deposits, so an RG reservation cannot be spent twice. */
@@ -552,6 +580,7 @@ const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', '
 
 function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
+
   return [
     hex.slice(0, 8),
     hex.slice(8, 12),
@@ -568,6 +597,7 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 const HIGH_FREQUENCY_MIN_COUNT = 3;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -785,6 +815,7 @@ export class WalletService {
   ) {
     const assets = await this.depositAssetsForCurrency(currency, db);
     assertDepositAllowed(assets, currency, network);
+
     if (amount !== undefined) {
       assertAboveMinimumDeposit(assets, amount, currency, network);
     }
@@ -799,7 +830,9 @@ export class WalletService {
     if (!this.rgLimits) {
       return;
     }
+
     const decision = await this.rgLimits.checkDeposit(tx, userId, amount, currency);
+
     if (!decision.allowed) {
       throw new RgLimitExceededError('deposit_limit_exceeded', decision);
     }
@@ -818,10 +851,12 @@ export class WalletService {
     if (network === null) {
       return DEFAULT_PAYMENT_PROVIDER;
     }
+
     const [row] = await this.drizzle.db
       .select({ providerName: walletAsset.providerName })
       .from(walletAsset)
       .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+
     return row?.providerName ?? DEFAULT_PAYMENT_PROVIDER;
   }
 
@@ -831,13 +866,17 @@ export class WalletService {
   // the old provider name - money moved somewhere the ledger does not describe.
   private async paymentAdapterFor(currency: string, network: string | null) {
     const providerName = await this.providerNameFor(currency, network);
+
     if (providerName === DEFAULT_PAYMENT_PROVIDER) {
       return { providerName, adapter: this.payment };
     }
+
     const adapter = this.paymentProviders.get(providerName)?.adapter;
+
     if (!adapter) {
       throw new WalletAssetUnknownProviderError();
     }
+
     return { providerName, adapter };
   }
 
@@ -851,7 +890,9 @@ export class WalletService {
     if (!this.platformConfig?.kyc?.gateWithdrawals) {
       return;
     }
+
     const status = await this.autoApprovalKycStatus(userId);
+
     if (!status || !KYC_PASS_STATUSES.has(normalizeKycStatus(status))) {
       throw new KycRequiredError();
     }
@@ -874,10 +915,13 @@ export class WalletService {
       .set({ currency })
       .where(eq(wallet.userId, userId))
       .returning({ currency: wallet.currency });
+
     const record = updated[0];
+
     if (!record) {
       throw new WalletNotFoundError(userId);
     }
+
     return { activeCurrency: record.currency };
   }
 
@@ -918,11 +962,14 @@ export class WalletService {
     // first-attempts for the same key landing here at once) can still both reach the
     // PSP; the ledger write itself is guaranteed not to double-credit (see below).
     let preResolvedWallet: Wallet | undefined;
+
     if (idempotencyKey) {
       const found = await this.findDepositReplay({ userId, idempotencyKey, amount, currency });
+
       if (found.replay) {
         return found.replay;
       }
+
       preResolvedWallet = found.walletRecord;
     } else {
       [preResolvedWallet] = await this.drizzle.db
@@ -936,25 +983,32 @@ export class WalletService {
     // deposit reads the first one's reservation instead of spending the same headroom.
     const reservation = await this.drizzle.db.transaction(async (txn) => {
       let walletRecord = preResolvedWallet;
+
       if (!walletRecord) {
         [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       }
+
       if (!walletRecord) {
         walletRecord = findOneOrThrow(
           await txn.insert(wallet).values({ userId, currency }).returning(),
           new WalletNotFoundError(userId),
         );
       }
+
       const holder = walletRecord;
+
       return withAdvisoryXactLock(txn, depositSlotKey(userId), async () => {
         const namespacedKey = idempotencyKey
           ? namespacedIdempotencyKey(DEPOSIT_IDEMPOTENCY_NAMESPACE, idempotencyKey)
           : undefined;
+
         const existing = namespacedKey
           ? await this.findByIdempotencyKey(txn, holder.id, namespacedKey)
           : undefined;
+
         if (existing) {
           this.assertReplayMatches(existing, amount, currency);
+
           return { walletRecord: holder, row: existing, replay: true };
         }
 
@@ -977,6 +1031,7 @@ export class WalletService {
             providerName: provider,
           },
         });
+
         return { walletRecord: holder, row, replay: false };
       });
     });
@@ -986,6 +1041,7 @@ export class WalletService {
     }
 
     let psp: Awaited<ReturnType<PaymentAdapter['processDeposit']>>;
+
     try {
       psp = await this.payment.processDeposit(amount, currency, { userId, provider });
     } catch (err) {
@@ -1006,10 +1062,13 @@ export class WalletService {
           ),
         )
         .returning();
+
       if (!settled) {
         return { transactionId: reservation.row.id, replayed: true };
       }
+
       await creditWalletBalance(txn, reservation.walletRecord.id, currency, amount);
+
       return { transactionId: settled.id, replayed: false };
     });
 
@@ -1046,6 +1105,7 @@ export class WalletService {
     idempotencyKey: string;
   } & ClientMeta): Promise<TransactionResult> {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+
     if (!playerId) {
       throw new PlayerNotFoundError(userId);
     }
@@ -1054,15 +1114,18 @@ export class WalletService {
       let walletRecord = (
         await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update')
       ).at(0);
+
       if (!walletRecord) {
         if (direction === 'debit') {
           throw new InsufficientBalanceError('0', amount);
         }
+
         const [created] = await txn
           .insert(wallet)
           .values({ userId, currency })
           .onConflictDoNothing()
           .returning();
+
         walletRecord =
           created ??
           findOneOrThrow(
@@ -1076,6 +1139,7 @@ export class WalletService {
         walletRecord.id,
         namespacedIdempotencyKey(MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE, idempotencyKey),
       );
+
       if (existing) {
         this.assertManualAdjustmentReplayMatches(existing, {
           adminId,
@@ -1084,6 +1148,7 @@ export class WalletService {
           currency,
           reason,
         });
+
         return { result: { transactionId: existing.id, status: existing.status }, emitted: false };
       }
 
@@ -1105,6 +1170,7 @@ export class WalletService {
           reviewReason: reason,
         },
       });
+
       if (replayed) {
         this.assertManualAdjustmentReplayMatches(row, {
           adminId,
@@ -1113,6 +1179,7 @@ export class WalletService {
           currency,
           reason,
         });
+
         return { result: { transactionId: row.id, status: row.status }, emitted: false };
       }
 
@@ -1120,13 +1187,16 @@ export class WalletService {
         direction === 'credit'
           ? await creditWalletBalance(txn, walletRecord.id, currency, amount)
           : await debitWalletBalance(txn, walletRecord.id, currency, amount);
+
       const [balance] = balances;
+
       if (!balance) {
         throw new InsufficientBalanceError(
           await readWalletBalance(txn, walletRecord.id, currency),
           amount,
         );
       }
+
       // Derived from the row the update returned, never read separately beforehand. The
       // wallet row is locked here but the deposit credit path does not take that lock, so
       // a deposit can commit between a pre-read and this update - and `before` is going
@@ -1135,6 +1205,7 @@ export class WalletService {
         direction === 'credit'
           ? moneySubtract(balance.amount, amount)
           : moneyAdd(balance.amount, amount);
+
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
         actorType: 'admin',
@@ -1153,6 +1224,7 @@ export class WalletService {
         ip,
         userAgent,
       });
+
       return { result: { transactionId: row.id, status: row.status }, emitted: true };
     });
 
@@ -1173,6 +1245,7 @@ export class WalletService {
         userAgent,
       });
     }
+
     return result;
   }
 
@@ -1211,18 +1284,23 @@ export class WalletService {
       .select()
       .from(wallet)
       .where(eq(wallet.userId, userId));
+
     if (!walletRecord) {
       return { walletRecord: undefined, replay: undefined };
     }
+
     const existing = await this.findByIdempotencyKey(
       this.drizzle.db,
       walletRecord.id,
       namespacedIdempotencyKey(DEPOSIT_IDEMPOTENCY_NAMESPACE, idempotencyKey),
     );
+
     if (!existing) {
       return { walletRecord, replay: undefined };
     }
+
     this.assertReplayMatches(existing, amount, currency);
+
     return { walletRecord, replay: { transactionId: existing.id, status: existing.status } };
   }
 
@@ -1261,6 +1339,7 @@ export class WalletService {
     ) {
       throw new IdempotencyKeyReuseError();
     }
+
     this.assertReplayMatches(existing, amount, currency);
   }
 
@@ -1297,6 +1376,7 @@ export class WalletService {
     const insertQuery = txn
       .insert(walletTransaction)
       .values({ ...values, idempotencyKey: idempotencyKey ?? null });
+
     const [row] = idempotencyKey
       ? await insertQuery.onConflictDoNothing().returning()
       : await insertQuery.returning();
@@ -1310,13 +1390,17 @@ export class WalletService {
     if (!idempotencyKey) {
       throw new Error(`wallet ${namespace}: insert returned no row`);
     }
+
     const winner = await this.findByIdempotencyKey(txn, walletId, idempotencyKey);
+
     if (!winner) {
       throw new Error(
         `wallet ${namespace}: idempotency conflict but no row found (key=${rawIdempotencyKey})`,
       );
     }
+
     this.assertReplayMatches(winner, amount, currency);
+
     return { row: winner, replayed: true };
   }
 
@@ -1351,12 +1435,15 @@ export class WalletService {
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
+
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
+
     const assets = await this.assetsForCurrency(currency);
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
+
     const destinationWalletId = await this.requireWhitelistedWalletId(
       userId,
       currency,
@@ -1372,6 +1459,7 @@ export class WalletService {
           await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
           new WalletNotFoundError(userId),
         );
+
         // Replay of an already-committed key: return the original untouched. The new-key race is caught by the insert below.
         if (idempotencyKey) {
           const existing = await this.findByIdempotencyKey(
@@ -1379,8 +1467,10 @@ export class WalletService {
             current.id,
             namespacedIdempotencyKey(WITHDRAW_IDEMPOTENCY_NAMESPACE, idempotencyKey),
           );
+
           if (existing) {
             this.assertReplayMatches(existing, amount, currency);
+
             return {
               transactionId: existing.id,
               status: existing.status,
@@ -1423,14 +1513,17 @@ export class WalletService {
         }
 
         const debited = await debitWithdrawableBalance(txn, current.id, currency, amount);
+
         if (debited.length !== 1) {
           const [available, locked] = await Promise.all([
             readWalletBalance(txn, current.id, currency),
             readLockedBonusAmount(txn, current.id, currency),
           ]);
+
           if (moneyToNumber(available) < moneyToNumber(amount)) {
             throw new InsufficientBalanceError(available, amount);
           }
+
           throw new BonusRolloverLockedError(locked);
         }
 
@@ -1471,6 +1564,7 @@ export class WalletService {
       walletId,
       rail,
     });
+
     return auto ?? { transactionId, status };
   }
 
@@ -1479,24 +1573,31 @@ export class WalletService {
     const { page, limit } = filters;
 
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
+
     if (filters.status) {
       conditions.push(eq(walletTransaction.status, filters.status));
     }
+
     if (filters.currency) {
       conditions.push(eq(walletTransaction.currency, filters.currency));
     }
+
     if (filters.rail) {
       conditions.push(eq(walletTransaction.rail, filters.rail));
     }
+
     if (filters.minAmount !== undefined) {
       conditions.push(gte(walletTransaction.amount, filters.minAmount));
     }
+
     if (filters.maxAmount !== undefined) {
       conditions.push(lte(walletTransaction.amount, filters.maxAmount));
     }
+
     if (filters.dateFrom) {
       conditions.push(gte(walletTransaction.createdAt, new Date(filters.dateFrom)));
     }
+
     if (filters.dateTo) {
       conditions.push(lte(walletTransaction.createdAt, new Date(filters.dateTo)));
     }
@@ -1505,6 +1606,7 @@ export class WalletService {
     // else DB-side pagination makes `total` wrong once kycStatus prunes.
     const wdSortBy = filters.sortBy ?? 'createdAt';
     const wdDir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const WD_SORT_COLS = {
       createdAt: walletTransaction.createdAt,
       amount: walletTransaction.amount,
@@ -1513,6 +1615,7 @@ export class WalletService {
       rail: walletTransaction.rail,
       reviewedAt: walletTransaction.reviewedAt,
     } as const;
+
     const rows = await db
       .select({ tx: walletTransaction, userId: wallet.userId })
       .from(walletTransaction)
@@ -1530,9 +1633,11 @@ export class WalletService {
     // read boundary - a raw `===` here would silently hide every legacy-verified player
     // from the queue the moment an admin filters by the canonical `approved`.
     const kycStatusFilter = filters.kycStatus ? normalizeKycStatus(filters.kycStatus) : undefined;
+
     const matching = kycStatusFilter
       ? rows.filter((r) => {
           const kycStatus = byUserId.get(r.userId)?.kycStatus;
+
           return kycStatus !== undefined && kycStatus !== null
             ? normalizeKycStatus(kycStatus) === kycStatusFilter
             : false;
@@ -1549,12 +1654,15 @@ export class WalletService {
     const items: WithdrawalQueueItem[] = pageRows.map((r) => {
       const summary = byUserId.get(r.userId);
       const riskTags: string[] = [];
+
       if (moneyToNumber(r.tx.amount) >= moneyToNumber(LARGE_WITHDRAWAL_THRESHOLD)) {
         riskTags.push('large_amount');
       }
+
       if (frequentWalletIds.has(r.tx.walletId)) {
         riskTags.push('high_frequency');
       }
+
       return {
         transactionId: r.tx.id,
         userId: r.userId,
@@ -1592,6 +1700,7 @@ export class WalletService {
     const tx = await this.drizzle.db.transaction((txn) =>
       this.flipToProcessing({ txn, withdrawalId, adminId }),
     );
+
     return this.settleApproved(tx, adminId, meta);
   }
 
@@ -1616,10 +1725,12 @@ export class WalletService {
         .for('update'),
       new WithdrawalNotFoundError(withdrawalId),
     );
+
     // Only a pending withdrawal can be approved, so a concurrent or repeated approve can't double-send to the PSP.
     if (current.status !== 'pending' || current.type !== 'withdrawal') {
       throw new WithdrawalNotPendingError();
     }
+
     return findOneOrThrow(
       await txn
         .update(walletTransaction)
@@ -1644,6 +1755,7 @@ export class WalletService {
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const amount = tx.amount;
+
     // approved/failed are admin-attributed events (schema requires a uuid adminId); the system auto path
     // skips them - its trail is the AUDIT_WRITER entry plus the shared `completed` event below.
     if (adminId) {
@@ -1661,6 +1773,7 @@ export class WalletService {
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
+
     try {
       result = await adapter.processWithdrawal(amount, tx.currency, {
         transactionId: tx.id,
@@ -1685,6 +1798,7 @@ export class WalletService {
 
     if (result.status === 'failed') {
       await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+
       return { transactionId: tx.id, status: 'failed' };
     }
 
@@ -1696,6 +1810,7 @@ export class WalletService {
           providerRefId: result.externalId,
         })
         .where(eq(walletTransaction.id, tx.id));
+
       return { transactionId: tx.id, status: 'processing' };
     }
 
@@ -1735,12 +1850,16 @@ export class WalletService {
         .set({ status: 'failed' })
         .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
         .returning({ id: walletTransaction.id });
+
       if (updated.length === 0) {
         return false;
       }
+
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
+
       return true;
     });
+
     if (transitioned && adminId) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,
@@ -1757,6 +1876,7 @@ export class WalletService {
     providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
     const { externalId, status, txHash } = event;
+
     const [tx] = await this.drizzle.db
       .select()
       .from(walletTransaction)
@@ -1766,13 +1886,16 @@ export class WalletService {
           eq(walletTransaction.providerRefId, externalId),
         ),
       );
+
     if (!tx || tx.type !== 'withdrawal') {
       logger.warn(
         { externalId, providerName },
         'payment webhook: no matching withdrawal for providerRefId',
       );
+
       return;
     }
+
     if (tx.status !== 'processing') {
       return;
     }
@@ -1785,9 +1908,11 @@ export class WalletService {
         .set({ status: 'completed', txHash: txHash ?? tx.txHash })
         .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
         .returning({ id: walletTransaction.id });
+
       if (updated.length === 0) {
         return;
       }
+
       this.events.emit('wallet.withdrawal.completed', {
         userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -1795,6 +1920,7 @@ export class WalletService {
         currency: tx.currency,
         transactionId: tx.id,
       });
+
       return;
     }
 
@@ -1822,6 +1948,7 @@ export class WalletService {
 
       // Threshold/KYC/risk/velocity gates run outside any lock; only the cap check below needs serializing.
       const gates = await this.evaluateAutoApproval(args);
+
       if (!gates) {
         return undefined;
       }
@@ -1836,18 +1963,22 @@ export class WalletService {
             { walletId: args.walletId, amount: args.amount, cfg },
             txn,
           );
+
           if (caps.exceeded) {
             return null;
           }
+
           const tx = await this.flipToProcessing({
             txn,
             withdrawalId: args.transactionId,
             adminId: null,
             reviewReason: AUTO_APPROVED_REASON,
           });
+
           return { tx, caps };
         }),
       );
+
       if (!decided) {
         return undefined;
       }
@@ -1888,6 +2019,7 @@ export class WalletService {
     } catch (err) {
       // Fail closed: any thrown gate leaves the withdrawal pending for a human rather than paying out.
       logger.error({ err, transactionId: args.transactionId }, 'auto-withdrawal evaluation failed');
+
       return undefined;
     }
   }
@@ -1906,19 +2038,24 @@ export class WalletService {
     rail: WalletRail;
   }): Promise<AutoApprovalGates | null> {
     const cfg = this.platformConfig?.autoWithdrawal;
+
     if (!cfg?.enabled) {
       return null;
     }
+
     const threshold = await this.resolveAutoThreshold(userId, rail);
+
     if (!threshold || moneyToNumber(threshold.value) <= 0) {
       return null;
     }
+
     if (moneyToNumber(amount) > moneyToNumber(threshold.value)) {
       return null;
     }
 
     // Independent of kyc.gateWithdrawals: auto-approval always demands a passing status; anything else fails closed.
     const kycStatus = await this.autoApprovalKycStatus(userId);
+
     if (!kycStatus || !KYC_PASS_STATUSES.has(normalizeKycStatus(kycStatus))) {
       return null;
     }
@@ -1926,15 +2063,18 @@ export class WalletService {
     const effectiveExcludeTags = threshold.config.excludeRiskFlags;
 
     const riskTags = await this.autoApprovalRiskTags(userId, effectiveExcludeTags);
+
     // null = exclusions configured but the lookup port is unavailable => fail closed.
     if (riskTags === null) {
       return null;
     }
+
     if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
       return null;
     }
 
     const heuristics = await this.autoApprovalHeuristics({ walletId, amount });
+
     if (heuristics.largeAmount || heuristics.highFrequency) {
       return null;
     }
@@ -1960,14 +2100,18 @@ export class WalletService {
     // winning below - an unseeded install (missing row) must fail closed for EVERY player,
     // not just those without an override. getAutoWithdrawalConfig() throws when absent.
     const config = await this.getAutoWithdrawalConfig();
+
     const [rule] = await this.drizzle.db
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
+
     if (rule) {
       return { value: rule.threshold, source: 'per-player', config };
     }
+
     const global = rail === 'crypto' ? config.cryptoThreshold : config.fiatThreshold;
+
     return { value: global, source: 'global', config };
   }
 
@@ -1978,9 +2122,11 @@ export class WalletService {
   // other unexpected error: fail closed to pending.
   async getAutoWithdrawalConfig(): Promise<WalletAutoWithdrawalConfig> {
     const config = await this.getAutoWithdrawalConfigOrNull();
+
     if (!config) {
       throw new AutoWithdrawalConfigNotFoundError('global');
     }
+
     return config;
   }
 
@@ -1991,6 +2137,7 @@ export class WalletService {
       .select()
       .from(walletAutoWithdrawalConfig)
       .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+
     return row ? toAutoWithdrawalConfigDto(row) : null;
   }
 
@@ -2016,6 +2163,7 @@ export class WalletService {
         .select()
         .from(walletAutoWithdrawalConfig)
         .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+
       const rows = await txn
         .insert(walletAutoWithdrawalConfig)
         .values({
@@ -2030,9 +2178,11 @@ export class WalletService {
           set: { fiatThreshold, cryptoThreshold, excludeRiskFlags, updatedBy: adminId },
         })
         .returning();
+
       const config = toAutoWithdrawalConfigDto(
         findOneOrThrow(rows, new AutoWithdrawalConfigNotFoundError('global')),
       );
+
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
         actorType: 'admin',
@@ -2053,6 +2203,7 @@ export class WalletService {
         },
         ...meta,
       });
+
       return config;
     });
   }
@@ -2067,14 +2218,17 @@ export class WalletService {
       .where(and(eq(walletBonusCredit.userId, userId), eq(walletBonusCredit.status, status)))
       .orderBy(desc(walletBonusCredit.createdAt))
       .limit(50);
+
     return { credits: rows.map(toBonusCreditDto) };
   }
 
   async getBonusRolloverConfig(): Promise<BonusRolloverConfig> {
     const config = await this.getBonusRolloverConfigOrNull();
+
     if (!config) {
       throw new BonusRolloverConfigNotFoundError('global');
     }
+
     return config;
   }
 
@@ -2083,6 +2237,7 @@ export class WalletService {
       .select()
       .from(walletBonusRolloverConfig)
       .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+
     return row ? toBonusRolloverConfigDto(row) : null;
   }
 
@@ -2096,6 +2251,7 @@ export class WalletService {
         .select()
         .from(walletBonusRolloverConfig)
         .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+
       const rows = await txn
         .insert(walletBonusRolloverConfig)
         .values({ singletonKey: 'global', multiplier, updatedBy: adminId })
@@ -2104,9 +2260,11 @@ export class WalletService {
           set: { multiplier, updatedBy: adminId, updatedAt: new Date() },
         })
         .returning();
+
       const config = toBonusRolloverConfigDto(
         findOneOrThrow(rows, new BonusRolloverConfigNotFoundError('global')),
       );
+
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
         actorType: 'admin',
@@ -2117,6 +2275,7 @@ export class WalletService {
         after: { multiplier: config.multiplier },
         ...meta,
       });
+
       return config;
     });
   }
@@ -2126,6 +2285,7 @@ export class WalletService {
       .select()
       .from(walletAsset)
       .orderBy(asc(walletAsset.currency), asc(walletAsset.network));
+
     return rows.map(toWalletAssetDto);
   }
 
@@ -2142,6 +2302,7 @@ export class WalletService {
       .select()
       .from(walletAsset)
       .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+
     return row ? toWalletAssetDto(row) : null;
   }
 
@@ -2150,6 +2311,7 @@ export class WalletService {
   private assertAdapterSupports(currency: string, network: string, providerName?: string) {
     const adapter =
       (providerName ? this.paymentProviders.get(providerName)?.adapter : undefined) ?? this.payment;
+
     if (adapter.supportsAsset && !adapter.supportsAsset(currency, network)) {
       throw new WalletAssetUnsupportedError();
     }
@@ -2171,6 +2333,7 @@ export class WalletService {
   ): Promise<WalletAsset> {
     this.assertProviderNameValid(input.providerName);
     this.assertAdapterSupports(input.currency, input.network, input.providerName);
+
     return this.drizzle.db.transaction(async (txn) => {
       const rows = await txn.insert(walletAsset).values(input).onConflictDoNothing().returning();
       // Empty => the (currency, network) unique index rejected it.
@@ -2185,6 +2348,7 @@ export class WalletService {
         after: asset,
         ...meta,
       });
+
       return asset;
     });
   }
@@ -2205,20 +2369,25 @@ export class WalletService {
         // (see depositAssetsForCurrency) commits its address first and is then seen by
         // the in-use count below, instead of slipping in behind the delete.
         .for('update');
+
       if (!before) {
         throw new WalletAssetNotFoundError(`${currency}/${network}`);
       }
+
       if (changes.providerAssetId !== undefined) {
         this.assertAdapterSupports(currency, network, before.providerName ?? undefined);
       }
+
       const rows = await txn
         .update(walletAsset)
         .set(changes)
         .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
         .returning();
+
       const asset = toWalletAssetDto(
         findOneOrThrow(rows, new WalletAssetNotFoundError(`${currency}/${network}`)),
       );
+
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
         actorType: 'admin',
@@ -2229,6 +2398,7 @@ export class WalletService {
         after: asset,
         ...meta,
       });
+
       return asset;
     });
   }
@@ -2248,9 +2418,11 @@ export class WalletService {
         // (see depositAssetsForCurrency) commits its address first and is then seen by
         // the in-use count below, instead of slipping in behind the delete.
         .for('update');
+
       if (!before) {
         return false;
       }
+
       // wallet_balance is keyed by currency only (no network column), so this guard is
       // necessarily currency-wide: removing one network of a currency players still hold
       // is blocked even if their balance arrived over another network. Fails safe.
@@ -2259,9 +2431,11 @@ export class WalletService {
         .from(walletBalance)
         .where(and(eq(walletBalance.currency, currency), sql`${walletBalance.amount} > 0`))
         .for('update');
+
       if (held.length > 0) {
         throw new WalletAssetInUseError();
       }
+
       const [issued] = await txn
         .select({ n: count() })
         .from(walletDepositAddress)
@@ -2271,9 +2445,11 @@ export class WalletService {
             eq(walletDepositAddress.network, network),
           ),
         );
+
       if ((issued?.n ?? 0) > 0) {
         throw new WalletAssetHasIssuedAddressesError();
       }
+
       // Renaming a pair is a delete plus a create (the (currency, network) key AND
       // providerName are immutable), so this delete is the only way providerName ever
       // effectively changes. Block it while a pending/processing transaction exists for
@@ -2289,9 +2465,11 @@ export class WalletService {
             inArray(walletTransaction.status, ['pending', 'processing']),
           ),
         );
+
       if ((inFlight?.n ?? 0) > 0) {
         throw new WalletAssetHasInFlightTransactionsError();
       }
+
       await txn
         .delete(walletAsset)
         .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
@@ -2305,6 +2483,7 @@ export class WalletService {
         after: null,
         ...meta,
       });
+
       return true;
     });
   }
@@ -2314,7 +2493,9 @@ export class WalletService {
     if (!this.directory) {
       return null;
     }
+
     const [summary] = await this.directory.lookupPlayers([userId]);
+
     return summary?.kycStatus ?? null;
   }
 
@@ -2326,10 +2507,13 @@ export class WalletService {
     if (excludeRiskFlags.length === 0) {
       return [];
     }
+
     if (!this.riskTags) {
       return null;
     }
+
     const byUser = await this.riskTags.getActiveTagKeys([userId]);
+
     return byUser.get(userId) ?? [];
   }
 
@@ -2341,6 +2525,7 @@ export class WalletService {
     amount: string;
   }): Promise<{ largeAmount: boolean; highFrequency: boolean }> {
     const frequent = await this.frequentWithdrawalWalletIds(this.drizzle.db, [walletId]);
+
     return {
       largeAmount: moneyToNumber(amount) >= moneyToNumber(LARGE_WITHDRAWAL_THRESHOLD),
       highFrequency: frequent.has(walletId),
@@ -2354,10 +2539,13 @@ export class WalletService {
     walletIds: string[],
   ): Promise<Set<string>> {
     const frequent = new Set<string>();
+
     if (walletIds.length === 0) {
       return frequent;
     }
+
     const since = new Date(Date.now() - HIGH_FREQUENCY_WINDOW_MS);
+
     const counts = await db
       .select({ walletId: walletTransaction.walletId, n: count() })
       .from(walletTransaction)
@@ -2369,11 +2557,13 @@ export class WalletService {
         ),
       )
       .groupBy(walletTransaction.walletId);
+
     for (const row of counts) {
       if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) {
         frequent.add(row.walletId);
       }
     }
+
     return frequent;
   }
 
@@ -2392,6 +2582,7 @@ export class WalletService {
     db: DrizzleTx,
   ): Promise<{ exceeded: boolean; amountUsed: string; countUsed: number }> {
     const since = new Date(Date.now() - DAILY_CAP_WINDOW_MS);
+
     const [row] = await db
       .select({
         total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
@@ -2406,14 +2597,18 @@ export class WalletService {
           gte(walletTransaction.createdAt, since),
         ),
       );
+
     const amountUsed = row?.total ?? '0';
     const countUsed = Number(row?.n ?? 0);
+
     // Cap comparison is a review-queue decision, not a ledger write - moneyToNumber is the
     // documented single conversion point (see the helper's own doc comment).
     const amountExceeded =
       cfg.dailyCapAmount !== undefined &&
       moneyToNumber(amountUsed) + moneyToNumber(amount) > moneyToNumber(cfg.dailyCapAmount);
+
     const countExceeded = cfg.dailyCapCount !== undefined && countUsed + 1 > cfg.dailyCapCount;
+
     return { exceeded: amountExceeded || countExceeded, amountUsed, countUsed };
   }
 
@@ -2439,6 +2634,7 @@ export class WalletService {
         .returning(),
       new WalletNotFoundError(userId),
     );
+
     return toAutoWithdrawalRuleDto(row);
   }
 
@@ -2447,6 +2643,7 @@ export class WalletService {
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
+
     return row ? toAutoWithdrawalRuleDto(row) : null;
   }
 
@@ -2455,6 +2652,7 @@ export class WalletService {
       .delete(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId))
       .returning({ id: autoWithdrawalRule.id });
+
     return deleted.length > 0;
   }
 
@@ -2475,9 +2673,11 @@ export class WalletService {
           .for('update'),
         new WithdrawalNotFoundError(withdrawalId),
       );
+
       if (current.status !== 'pending' || current.type !== 'withdrawal') {
         throw new WithdrawalNotPendingError();
       }
+
       const updated = findOneOrThrow(
         await txn
           .update(walletTransaction)
@@ -2521,10 +2721,13 @@ export class WalletService {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
+
     if (!walletRecord) {
       return { items: [], total: 0, page, limit };
     }
+
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const TX_SORT_COLS = {
       createdAt: walletTransaction.createdAt,
       amount: walletTransaction.amount,
@@ -2534,8 +2737,10 @@ export class WalletService {
       rail: walletTransaction.rail,
       reviewedAt: walletTransaction.reviewedAt,
     } as const;
+
     const col = TX_SORT_COLS[sortBy ?? 'createdAt'];
     const where = eq(walletTransaction.walletId, walletRecord.id);
+
     const [txs, [{ n }]] = await Promise.all([
       db
         .select()
@@ -2546,6 +2751,7 @@ export class WalletService {
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(walletTransaction).where(where),
     ]);
+
     return {
       items: txs.map((tx) => ({
         id: tx.id,
@@ -2575,13 +2781,17 @@ export class WalletService {
     await this.assertDepositable(currency, undefined, network);
 
     const existing = await this.findDepositAddress(userId, currency, network);
+
     if (existing) {
       return toDepositAddressResult(existing);
     }
+
     const { providerName, adapter } = await this.paymentAdapterFor(currency, network ?? null);
+
     if (!adapter.issueDepositAddress) {
       throw new DepositAddressUnsupportedError();
     }
+
     const issued = await adapter.issueDepositAddress(userId, currency, network);
 
     // Re-gate inside the transaction that writes the row: the catalog pair can be
@@ -2589,6 +2799,7 @@ export class WalletService {
     // deleteWalletAsset's in-use check race-free.
     const [row] = await this.drizzle.db.transaction(async (txn) => {
       await this.assertDepositable(currency, undefined, network, txn);
+
       return txn
         .insert(walletDepositAddress)
         .values({
@@ -2602,15 +2813,19 @@ export class WalletService {
         .onConflictDoNothing()
         .returning();
     });
+
     if (row) {
       return toDepositAddressResult(row);
     }
+
     const winner = await this.findDepositAddress(userId, currency, network);
+
     if (!winner) {
       throw new Error(
         `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency}, network=${network ?? 'none'})`,
       );
     }
+
     return toDepositAddressResult(winner);
   }
 
@@ -2625,6 +2840,7 @@ export class WalletService {
     providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
     const depositAddress = await this.findDepositAddressByAddress(event);
+
     if (!depositAddress) {
       // A known vendor defect hits this live: a token deposit reported under a sibling
       // token's asset id never resolves to a row. Never let it survive only as a log
@@ -2650,8 +2866,10 @@ export class WalletService {
         },
         this.audit,
       );
+
       return;
     }
+
     if (
       event.network === undefined &&
       event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
@@ -2683,6 +2901,7 @@ export class WalletService {
         },
         this.audit,
       );
+
       return;
     }
 
@@ -2691,6 +2910,7 @@ export class WalletService {
         .select()
         .from(wallet)
         .where(eq(wallet.userId, depositAddress.userId));
+
       if (!walletRecord) {
         walletRecord = findOneOrThrow(
           await txn
@@ -2724,6 +2944,7 @@ export class WalletService {
 
       if (inserted) {
         await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
+
         return { transactionId: inserted.id, replayed: false };
       }
 
@@ -2736,11 +2957,13 @@ export class WalletService {
             eq(walletTransaction.providerRefId, event.externalId),
           ),
         );
+
       if (!winner) {
         throw new Error(
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
         );
       }
+
       return { transactionId: winner.id, replayed: true };
     });
 
@@ -2763,6 +2986,7 @@ export class WalletService {
         .where(eq(wallet.id, walletId)),
       new WalletNotFoundError(walletId),
     );
+
     return record.userId;
   }
 
@@ -2780,6 +3004,7 @@ export class WalletService {
           eq(walletTransaction.idempotencyKey, idempotencyKey),
         ),
       );
+
     return existing;
   }
 
@@ -2796,6 +3021,7 @@ export class WalletService {
             : eq(walletDepositAddress.network, network),
         ),
       );
+
     return row;
   }
 
@@ -2818,9 +3044,11 @@ export class WalletService {
       );
 
     const owners = new Set(rows.map((row) => row.userId));
+
     if (owners.size > 1) {
       throw new AmbiguousDepositAddressError(address, network);
     }
+
     return rows.find((row) => row.network === network) ?? rows[0];
   }
 
@@ -2840,6 +3068,7 @@ export class WalletService {
         ),
       )
       .orderBy(desc(walletWithdrawalAddress.createdAt));
+
     return rows.map(toWithdrawalAddressDto);
   }
 
@@ -2863,6 +3092,7 @@ export class WalletService {
           .select({ total: count() })
           .from(walletWithdrawalAddress)
           .where(eq(walletWithdrawalAddress.userId, userId));
+
         if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
           throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
         }
@@ -2872,9 +3102,11 @@ export class WalletService {
           .values({ userId, ...input })
           .onConflictDoNothing()
           .returning();
+
         if (!inserted) {
           throw new WithdrawalAddressAlreadyExistsError();
         }
+
         return inserted;
       }),
     );
@@ -2883,6 +3115,7 @@ export class WalletService {
     // destination. A row left behind by a failed release carries no providerWalletId, which
     // the payout path re-registers rather than trusts - it is never a whitelist bypass.
     let whitelisted: Awaited<ReturnType<typeof this.whitelistWithdrawalAddress>>;
+
     try {
       whitelisted = await this.whitelistWithdrawalAddress(userId, input);
     } catch (err) {
@@ -2897,6 +3130,7 @@ export class WalletService {
           .where(eq(walletWithdrawalAddress.id, reserved.id))
           .returning()
       : [];
+
     const row = updated ?? reserved;
 
     await this.audit.record({
@@ -2910,6 +3144,7 @@ export class WalletService {
       after: { label: row.label, currency: row.currency, network: row.network },
       ...meta,
     });
+
     return toWithdrawalAddressDto(row);
   }
 
@@ -2932,6 +3167,7 @@ export class WalletService {
     if (!this.payment.whitelistWithdrawalAddress || !destinationAddress) {
       return null;
     }
+
     const walletId = await this.whitelistedWalletId(
       userId,
       currency,
@@ -2939,9 +3175,11 @@ export class WalletService {
       destinationAddress,
       destinationTag,
     );
+
     if (!walletId) {
       throw new DestinationAddressNotWhitelistedError();
     }
+
     return walletId;
   }
 
@@ -2961,7 +3199,9 @@ export class WalletService {
     if (!this.payment.whitelistWithdrawalAddress || !address) {
       return null;
     }
+
     const providerName = await this.providerNameFor(currency, network);
+
     const [row] = await this.drizzle.db
       .select({
         id: walletWithdrawalAddress.id,
@@ -2983,9 +3223,11 @@ export class WalletService {
         ),
       )
       .limit(1);
+
     if (!row) {
       return null;
     }
+
     // An id minted by a different provider names nothing in the current one, and a row
     // saved while no whitelisting adapter was bound has no id at all. Both re-register
     // with the provider that will actually settle, rather than failing a payout on a
@@ -2993,6 +3235,7 @@ export class WalletService {
     if (row.providerWalletId && row.providerName === providerName) {
       return row.providerWalletId;
     }
+
     const { providerWalletId } = await this.payment.whitelistWithdrawalAddress({
       userId,
       currency,
@@ -3000,10 +3243,12 @@ export class WalletService {
       address,
       ...(row.destinationTag ? { destinationTag: row.destinationTag } : {}),
     });
+
     await this.drizzle.db
       .update(walletWithdrawalAddress)
       .set({ providerName, providerWalletId })
       .where(eq(walletWithdrawalAddress.id, row.id));
+
     return providerWalletId;
   }
 
@@ -3031,6 +3276,7 @@ export class WalletService {
     if (!this.payment.whitelistWithdrawalAddress) {
       return {};
     }
+
     const { providerWalletId } = await this.payment.whitelistWithdrawalAddress({
       userId,
       currency: input.currency,
@@ -3038,6 +3284,7 @@ export class WalletService {
       address: input.address,
       ...(input.destinationTag ? { destinationTag: input.destinationTag } : {}),
     });
+
     return {
       providerName: await this.providerNameFor(input.currency, input.network),
       providerWalletId,
@@ -3052,10 +3299,12 @@ export class WalletService {
     meta?: Partial<ClientMeta>,
   ): Promise<boolean> {
     await this.rateLimit(userId);
+
     const [row] = await this.drizzle.db
       .delete(walletWithdrawalAddress)
       .where(and(eq(walletWithdrawalAddress.id, id), eq(walletWithdrawalAddress.userId, userId)))
       .returning();
+
     if (!row) {
       return false;
     }
@@ -3069,6 +3318,7 @@ export class WalletService {
       before: { label: row.label, currency: row.currency, network: row.network },
       ...meta,
     });
+
     return true;
   }
 }

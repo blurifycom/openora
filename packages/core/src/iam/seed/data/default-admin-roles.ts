@@ -13,6 +13,7 @@ export type DefaultAdminRole = {
 };
 
 const RW: PermissionLevel = 'read_write';
+
 const R: PermissionLevel = 'read';
 
 const allReadWrite: Partial<Record<ModuleKey, PermissionLevel>> = Object.fromEntries(

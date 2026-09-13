@@ -14,6 +14,7 @@ describe('wallet currency codes', () => {
       currency: 'usdt',
       idempotencyKey: randomUUID(),
     });
+
     expect(parsed.currency).toBe('USDT');
   });
 
@@ -36,12 +37,14 @@ describe('withdrawal destination address', () => {
       network: 'erc20',
       address: `  ${ADDRESS}  `,
     });
+
     const payout = WithdrawInputSchema.parse({
       amount: '10',
       currency: 'usdt',
       idempotencyKey: '9a2f7c11-0000-4000-8000-00000000a001',
       destinationAddress: ` ${ADDRESS}\n`,
     });
+
     expect(payout.destinationAddress).toBe(saved.address);
   });
 
@@ -52,6 +55,7 @@ describe('withdrawal destination address', () => {
       idempotencyKey: '9a2f7c11-0000-4000-8000-00000000a001',
       destinationAddress: ADDRESS,
     });
+
     expect(payout.destinationAddress).toBe(ADDRESS);
   });
 });

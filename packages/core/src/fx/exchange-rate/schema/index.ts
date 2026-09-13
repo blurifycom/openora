@@ -22,4 +22,5 @@ export const exchangeRateQuote = pgTable(
 );
 
 export type ExchangeRateQuoteRow = typeof exchangeRateQuote.$inferSelect;
+
 export type ExchangeRateQuoteInsert = typeof exchangeRateQuote.$inferInsert;

@@ -33,6 +33,7 @@ type RuleOverrides = {
 
 async function seedTagRow(key: TagKey) {
   const [row] = await db.drizzle.db.insert(tag).values({ key }).returning();
+
   return row!;
 }
 
@@ -46,12 +47,14 @@ async function seedRule(key: TagKey, overrides: RuleOverrides = {}) {
     thresholdCount: null,
     ...overrides,
   });
+
   return tagRow;
 }
 
 async function seedKycPendingRule(overrides: RuleOverrides = {}) {
   const kycPendingTag = await seedRule('kyc_pending', overrides);
   const kycRejectedTag = await seedRule('kyc_rejected');
+
   return { kycPendingTag, kycRejectedTag };
 }
 
@@ -61,6 +64,7 @@ async function seedKycPendingRule(overrides: RuleOverrides = {}) {
 async function seedLoginCleanupTags() {
   const inactiveTag = await seedTagRow('inactive');
   const dormantTag = await seedTagRow('dormant_high_roller');
+
   return { inactiveTag, dormantTag };
 }
 
@@ -80,6 +84,7 @@ async function seedActiveAssignment(
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -89,6 +94,7 @@ async function activeTagKeys(playerId: string) {
     .from(playerTag)
     .innerJoin(tag, eq(playerTag.tagId, tag.id))
     .where(and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt)));
+
   return rows.map((r) => r.key);
 }
 
@@ -97,6 +103,7 @@ async function assignmentRow(playerId: string, tagRow: { id: string }) {
     .select()
     .from(playerTag)
     .where(and(eq(playerTag.playerId, playerId), eq(playerTag.tagId, tagRow.id)));
+
   return row;
 }
 
@@ -111,6 +118,7 @@ async function activeAssignmentRow(playerId: string, tagRow: { id: string }) {
         isNull(playerTag.removedAt),
       ),
     );
+
   return row;
 }
 
@@ -119,12 +127,14 @@ async function seedPlayer(userId: string, overrides: Partial<typeof player.$infe
     .insert(player)
     .values({ userId, ...overrides })
     .returning();
+
   return row!;
 }
 
 async function seedPlayerWithUser() {
   const account = await seedUser(db);
   const row = await seedPlayer(account.id);
+
   return { account, player: row };
 }
 
@@ -134,6 +144,7 @@ async function seedPlayerWithUser() {
 // tests seed a real player and must resolve to its real id, not just echo the userId.
 function identityLookup(pairs: ReadonlyArray<readonly [string, string]>) {
   const map = new Map(pairs);
+
   return vi.fn(async (uid: string) => map.get(uid) ?? null);
 }
 
@@ -147,12 +158,14 @@ function makeServices(
   const events = makeEventBus();
   const tagService = new TagService(db.drizzle, events);
   const ruleService = new TagRuleService(db.drizzle, events);
+
   const walletReader = mock<WalletReader>({
     getLifetimeDeposit: vi.fn().mockResolvedValue('0'),
     getWithdrawalCountInWindow: vi.fn().mockResolvedValue(0),
     getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map()),
     ...overrides.walletReader,
   });
+
   const identityReader = mock<IdentityReader>({
     getLastLoginAt: vi.fn().mockResolvedValue(null),
     getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([]),
@@ -162,10 +175,12 @@ function makeServices(
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
     ...overrides.identityReader,
   });
+
   const adminUserDirectory = mock<AdminUserDirectory>({
     lookupPlayers: vi.fn().mockResolvedValue([]),
     ...overrides.adminUserDirectory,
   });
+
   const service = new TagEvaluationService({
     tag: tagService,
     rule: ruleService,
@@ -173,6 +188,7 @@ function makeServices(
     identityReader,
     adminUserDirectory,
   });
+
   return { service, tagService, ruleService, walletReader, identityReader, adminUserDirectory };
 }
 
@@ -185,6 +201,7 @@ function depositPayload(userId: string, amount: number) {
     transactionId: randomUUID(),
   };
 }
+
 function withdrawalPayload(userId: string, amount: number) {
   return {
     userId,
@@ -194,6 +211,7 @@ function withdrawalPayload(userId: string, amount: number) {
     transactionId: randomUUID(),
   };
 }
+
 function kycUpdatedPayload(
   userId: string,
   status: KycStatus,
@@ -248,9 +266,11 @@ describe('TagEvaluationService.onDepositCompleted (real PG)', () => {
 
   it('assigns high_roller when lifetime deposits meet the threshold', async () => {
     const userId = randomUUID();
+
     const { service } = makeServices({
       walletReader: { getLifetimeDeposit: vi.fn().mockResolvedValue('12000') },
     });
+
     await seedRule('high_roller', { threshold: '10000' });
 
     await service.onDepositCompleted(depositPayload(userId, 100));
@@ -260,9 +280,11 @@ describe('TagEvaluationService.onDepositCompleted (real PG)', () => {
 
   it('removes an active high_roller assignment when lifetime deposits fall below a raised threshold', async () => {
     const userId = randomUUID();
+
     const { service } = makeServices({
       walletReader: { getLifetimeDeposit: vi.fn().mockResolvedValue('5000') },
     });
+
     const highRollerTag = await seedRule('high_roller', { threshold: '10000' });
     await seedActiveAssignment(userId, highRollerTag);
 
@@ -305,9 +327,11 @@ describe('TagEvaluationService.onWithdrawalCompleted (real PG)', () => {
 
   it('assigns high_risk when the withdrawal count in the window meets the threshold, recording the count breach detail', async () => {
     const userId = randomUUID();
+
     const { service, walletReader } = makeServices({
       walletReader: { getWithdrawalCountInWindow: vi.fn().mockResolvedValue(3) },
     });
+
     const highRisk = await seedRule('high_risk', {
       threshold: '1000',
       thresholdDays: 7,
@@ -326,9 +350,11 @@ describe('TagEvaluationService.onWithdrawalCompleted (real PG)', () => {
 
   it('records both breach details when both amount and frequency thresholds are met', async () => {
     const userId = randomUUID();
+
     const { service } = makeServices({
       walletReader: { getWithdrawalCountInWindow: vi.fn().mockResolvedValue(5) },
     });
+
     const highRisk = await seedRule('high_risk', {
       threshold: '1000',
       thresholdDays: 7,
@@ -346,9 +372,11 @@ describe('TagEvaluationService.onWithdrawalCompleted (real PG)', () => {
 
   it('takes no action when neither threshold is met (risk designation requires admin clear)', async () => {
     const userId = randomUUID();
+
     const { service } = makeServices({
       walletReader: { getWithdrawalCountInWindow: vi.fn().mockResolvedValue(1) },
     });
+
     await seedRule('high_risk', { threshold: '1000', thresholdDays: 7, thresholdCount: 3 });
 
     await service.onWithdrawalCompleted(withdrawalPayload(userId, 10));
@@ -510,9 +538,11 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
   it('assigns multi_account and bonus_abuser to both player accounts when login IP is shared', async () => {
     const userId = randomUUID();
     const otherUserId = randomUUID();
+
     const { service, identityReader } = makeServices({
       identityReader: { getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([otherUserId]) },
     });
+
     await seedLoginCleanupTags();
     await seedRule('multi_account');
     await seedRule('bonus_abuser');
@@ -546,9 +576,11 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
   it('uses the same shared-IP risk path for phone login', async () => {
     const userId = randomUUID();
     const otherUserId = randomUUID();
+
     const { service, identityReader } = makeServices({
       identityReader: { getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([otherUserId]) },
     });
+
     await seedLoginCleanupTags();
     await seedRule('multi_account');
     await seedRule('bonus_abuser');
@@ -607,9 +639,11 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
 
   it('does not assign kyc_pending when the profile status is already terminal', async () => {
     const userId = randomUUID();
+
     const { service } = makeServices({
       identityReader: { getPlayerKycStatusByUserId: vi.fn().mockResolvedValue('verified') },
     });
+
     await seedKycPendingRule();
 
     await service.onKycSubmitted({
@@ -659,6 +693,7 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
       .select()
       .from(playerTag)
       .where(and(eq(playerTag.playerId, userId), eq(playerTag.tagId, kycPendingTag.id)));
+
     expect(rows).toHaveLength(1);
   });
 
@@ -774,6 +809,7 @@ describe('TagEvaluationService.onKycStatusUpdated (real PG)', () => {
       .select()
       .from(playerTag)
       .where(and(eq(playerTag.playerId, userId), eq(playerTag.tagId, kycRejectedTag.id)));
+
     expect(rows).toHaveLength(1);
   });
 
@@ -791,6 +827,7 @@ describe('TagEvaluationService.onKycStatusUpdated (real PG)', () => {
       .select()
       .from(playerTag)
       .where(and(eq(playerTag.playerId, userId), eq(playerTag.tagId, kycPendingTag.id)));
+
     expect(rows).toHaveLength(1);
   });
 
@@ -823,6 +860,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
     const playerA = randomUUID();
     const playerB = randomUUID();
     const inactiveTag = await seedRule('inactive', { thresholdDays: 30 });
+
     const { service } = makeServices({
       identityReader: { getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([playerA, playerB]) },
     });
@@ -831,10 +869,12 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
 
     expect(await activeTagKeys(playerA)).toContain('inactive');
     expect(await activeTagKeys(playerB)).toContain('inactive');
+
     const rows = await db.drizzle.db
       .select()
       .from(playerTag)
       .where(eq(playerTag.tagId, inactiveTag.id));
+
     expect(rows).toHaveLength(2);
   });
 
@@ -865,6 +905,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
       const kycPending = await seedTagRow('kyc_pending');
       await seedActiveAssignment(p2.id, kycPending);
       await seedRule('dormant_high_roller', { thresholdDays: 60 });
+
       const { service } = makeServices({
         identityReader: {
           getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([a1.id, a2.id]),
@@ -886,6 +927,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
       const vip = await seedTagRow('vip');
       await seedActiveAssignment(seededPlayer.id, vip);
       await seedRule('dormant_high_roller', { thresholdDays: 60 });
+
       const { service } = makeServices({
         identityReader: {
           getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([account.id]),
@@ -922,6 +964,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
       amountBreach: null,
       countBreach: { count: 3, thresholdCount: 3, thresholdDays: 7 },
     };
+
     const amountBreachMetadata: PlayerTagAssignMetadata = {
       amountBreach: { amount: '2000', threshold: '1000' },
       countBreach: null,
@@ -933,6 +976,7 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
     ) {
       const { account, player: seededPlayer } = await seedPlayerWithUser();
       await seedActiveAssignment(seededPlayer.id, highRiskTag, { assignMetadata: metadata });
+
       return { account, player: seededPlayer };
     }
 
@@ -942,10 +986,12 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account, player: seededPlayer } = await seedHighRiskHolder(
         highRisk,
         countOnlyMetadata,
       );
+
       const { service, walletReader } = makeServices({
         walletReader: {
           getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map([[account.id, 1]])),
@@ -965,10 +1011,12 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account, player: seededPlayer } = await seedHighRiskHolder(
         highRisk,
         countOnlyMetadata,
       );
+
       const { service } = makeServices({
         walletReader: {
           getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map([[account.id, 3]])),
@@ -987,10 +1035,12 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account, player: seededPlayer } = await seedHighRiskHolder(
         highRisk,
         countOnlyMetadata,
       );
+
       const { service } = makeServices({
         walletReader: { getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map()) },
         identityReader: { getPlayerIdByUserId: identityLookup([[account.id, seededPlayer.id]]) },
@@ -1048,8 +1098,10 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account: a1, player: p1 } = await seedHighRiskHolder(highRisk, countOnlyMetadata);
       const { account: a2, player: p2 } = await seedHighRiskHolder(highRisk, countOnlyMetadata);
+
       const { service, walletReader } = makeServices({
         // Simulate an external WalletReader implementation that predates the batched method.
         walletReader: {
@@ -1078,10 +1130,12 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account, player: seededPlayer } = await seedHighRiskHolder(
         highRisk,
         amountBreachMetadata,
       );
+
       const { service } = makeServices({
         walletReader: {
           getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map([[account.id, 0]])),
@@ -1100,10 +1154,12 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account, player: seededPlayer } = await seedHighRiskHolder(
         highRisk,
         countOnlyMetadata,
       );
+
       const { service } = makeServices({
         walletReader: {
           getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map([[account.id, 1]])),
@@ -1122,7 +1178,9 @@ describe('TagEvaluationService.runDailyEvaluation (real PG)', () => {
         thresholdDays: 7,
         thresholdCount: 3,
       });
+
       const { account, player: seededPlayer } = await seedHighRiskHolder(highRisk, null);
+
       const { service } = makeServices({
         walletReader: {
           getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map([[account.id, 0]])),
@@ -1272,6 +1330,7 @@ describe('TagEvaluationService.onPlayerLevelChanged (real PG)', () => {
           isNull(playerTag.removedAt),
         ),
       );
+
     expect(rows).toHaveLength(1);
   });
 
@@ -1294,9 +1353,11 @@ describe('TagEvaluationService.onPlayerLevelChanged (real PG)', () => {
 
   it('is a no-op when the playerId is unknown to the identity reader', async () => {
     const userId = randomUUID();
+
     const { service, tagService } = makeServices({
       identityReader: { getPlayerIdByUserId: vi.fn().mockResolvedValue(null) },
     });
+
     const replaceSpy = vi.spyOn(tagService, 'replacePlayerTag');
 
     await expect(
@@ -1325,6 +1386,7 @@ describe('TagEvaluationService idempotency (real PG)', () => {
       .select()
       .from(playerTag)
       .where(eq(playerTag.tagId, largeDepositorTag.id));
+
     expect(rows).toHaveLength(1);
   });
 

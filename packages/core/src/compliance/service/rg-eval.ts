@@ -12,6 +12,7 @@ export function periodWindow(period: LimitPeriod, now: Date): { from: Date; to: 
   if (period === 'session') {
     return { from: now, to: now };
   }
+
   return { from: new Date(now.getTime() - PERIOD_MS[period]), to: now };
 }
 
@@ -19,6 +20,7 @@ export function thresholdPct(actual: number, limit: number): number {
   if (limit <= 0) {
     return 0;
   }
+
   return (actual / limit) * 100;
 }
 
@@ -39,8 +41,10 @@ export function pendingChangeStatus(
   if (row.pendingKind === null || row.pendingEffectiveAt === null) {
     return null;
   }
+
   if (row.pendingExpiresAt !== null && now >= row.pendingExpiresAt) {
     return 'expired';
   }
+
   return now >= row.pendingEffectiveAt ? 'ready' : 'waiting';
 }

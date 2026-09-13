@@ -75,21 +75,33 @@ export const WALLET_RECONCILIATION_FINDING_KINDS = [
 export const WALLET_RECONCILIATION_FINDING_STATUSES = ['open', 'resolved'] as const;
 
 export const WalletTransactionTypeSchema = z.enum(WALLET_TRANSACTION_TYPES);
+
 export const WalletTransactionStatusSchema = z.enum(WALLET_TRANSACTION_STATUSES);
+
 export const WalletRailSchema = z.enum(WALLET_RAILS);
+
 export const WalletCustodySweepStatusSchema = z.enum(WALLET_CUSTODY_SWEEP_STATUSES);
+
 export const WalletJobRunStatusSchema = z.enum(WALLET_JOB_RUN_STATUSES);
+
 export const WalletReconciliationFindingKindSchema = z.enum(WALLET_RECONCILIATION_FINDING_KINDS);
+
 export const WalletReconciliationFindingStatusSchema = z.enum(
   WALLET_RECONCILIATION_FINDING_STATUSES,
 );
 
 export type WalletTransactionType = z.infer<typeof WalletTransactionTypeSchema>;
+
 export type WalletTransactionStatus = z.infer<typeof WalletTransactionStatusSchema>;
+
 export type WalletRail = z.infer<typeof WalletRailSchema>;
+
 export type WalletCustodySweepStatus = z.infer<typeof WalletCustodySweepStatusSchema>;
+
 export type WalletJobRunStatus = z.infer<typeof WalletJobRunStatusSchema>;
+
 export type WalletReconciliationFindingKind = z.infer<typeof WalletReconciliationFindingKindSchema>;
+
 export type WalletReconciliationFindingStatus = z.infer<
   typeof WalletReconciliationFindingStatusSchema
 >;
@@ -98,5 +110,6 @@ export const DEFAULT_CRYPTO_CURRENCIES = ['BTC', 'ETH', 'USDT', 'USDC'] as const
 
 export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
   const set = new Set((cryptoCurrencies ?? DEFAULT_CRYPTO_CURRENCIES).map((c) => c.toUpperCase()));
+
   return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
 }

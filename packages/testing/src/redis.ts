@@ -1,6 +1,7 @@
 import { createClient } from 'redis';
 
 const BASE_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
+
 const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
 
 /**
@@ -15,13 +16,17 @@ const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
  * `maxWorkers` at 2 in vitest.config.ts. Raising one without the other collides.
  */
 const HIGHEST_DATABASE = 15;
+
 const LOWEST_DATABASE = 8;
+
 const DATABASES_PER_WORKER = 4;
 
 const workerSlice = Math.max(0, Number(process.env['VITEST_POOL_ID'] ?? 1) - 1);
+
 const sliceTop =
   HIGHEST_DATABASE -
   ((workerSlice * DATABASES_PER_WORKER) % (HIGHEST_DATABASE - LOWEST_DATABASE + 1));
+
 const sliceBottom = sliceTop - DATABASES_PER_WORKER + 1;
 
 let nextDatabase = sliceTop;
@@ -29,6 +34,7 @@ let nextDatabase = sliceTop;
 function urlFor(database: number): string {
   const url = new URL(BASE_URL);
   url.pathname = `/${database}`;
+
   return url.toString();
 }
 
@@ -53,7 +59,9 @@ export async function acquireTestRedisDatabase(): Promise<TestRedisDatabase> {
     database,
     socket: { reconnectStrategy: false, connectTimeout: 3000 },
   });
+
   client.on('error', () => undefined);
+
   try {
     await client.connect();
     await client.flushDb();

@@ -31,9 +31,11 @@ import { UnsupportedLanguageError } from '../../shared/language.js';
 
 function requireSessionId(context: OssContext) {
   const sessionId = getSessionId(context);
+
   if (!sessionId) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
   }
+
   return sessionId;
 }
 
@@ -88,6 +90,7 @@ export function createIdentityRouter(
         context.resHeaders.set('Pragma', 'no-cache');
         context.resHeaders.set('Expires', '0');
       }
+
       return identity.me(context.request.headers);
     }),
 
@@ -132,6 +135,7 @@ export function createIdentityRouter(
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
       const userId = getUserId(context);
+
       return createEventStreamGenerator(
         (push) => {
           const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
@@ -139,11 +143,13 @@ export function createIdentityRouter(
               push({ type: 'revoked' });
             }
           });
+
           const unsubscribeUnlocked = eventBus.on('identity.user.unlocked', (event) => {
             if (event.userId === userId) {
               push({ type: 'unlocked' });
             }
           });
+
           return () => {
             unsubscribeRevoked();
             unsubscribeUnlocked();
@@ -219,6 +225,7 @@ export function createIdentityRouter(
 
     unlockUser: os.unlockUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
+
       return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         identity.unlockUser(input.userId, caller.userId, {
           ip: caller.ip,
@@ -229,6 +236,7 @@ export function createIdentityRouter(
 
     adminRequestPasswordReset: os.adminRequestPasswordReset.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
+
       return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         identity.adminRequestPasswordReset(input.userId, caller.userId, {
           ip: caller.ip,
@@ -240,6 +248,7 @@ export function createIdentityRouter(
     sessions: {
       list: os.sessions.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'sessions', 'view');
+
         return sessionSvc.listSessions({
           userId: input.userId,
           currentSessionId: getSessionId(context),
@@ -251,6 +260,7 @@ export function createIdentityRouter(
       }),
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
+
         return mapErrors({ NOT_FOUND: SessionNotFoundError }, () =>
           sessionSvc.revokeSession(input.userId, input.id, caller.userId, {
             ip: caller.ip,
@@ -260,6 +270,7 @@ export function createIdentityRouter(
       }),
       revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
+
         return sessionSvc.revokeAllSessions(input.userId, caller.userId, {
           ip: caller.ip,
           userAgent: caller.userAgent,
@@ -282,6 +293,7 @@ export function createIdentityRouter(
       // else's device - a miss is a 404, not a cross-user revoke.
       revokeMine: os.sessions.revokeMine.handler(({ input, context }) => {
         const userId = getUserId(context);
+
         return mapErrors(
           { NOT_FOUND: SessionNotFoundError, CONFLICT: CurrentSessionRevokeError },
           () =>
@@ -299,6 +311,7 @@ export function createIdentityRouter(
         // The cross-user list returns player email/role/IP with free-text email
         // search, so it needs the player-data permission on top of session hygiene.
         await adminGuard.assert(context, 'player', 'view');
+
         return sessionSvc.listAllActiveSessions({
           role: input.role,
           query: input.query,
@@ -330,6 +343,7 @@ export function createIdentityRouter(
 
       revokeTrustedDevice: os.adminSecurity.revokeTrustedDevice.handler(({ input, context }) => {
         const userId = getUserId(context);
+
         return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
           adminSecurity.revokeTrustedDevice(
             userId,
@@ -344,6 +358,7 @@ export function createIdentityRouter(
       resetUserTwoFactor: os.adminSecurity.resetUserTwoFactor.handler(
         async ({ input, context }) => {
           const caller = await adminGuard.assertSuperAdmin(context);
+
           return mapErrors(
             { NOT_FOUND: UserNotFoundError, CONFLICT: SelfTwoFactorResetError },
             () =>
@@ -358,6 +373,7 @@ export function createIdentityRouter(
       revokeUserTrustedDevice: os.adminSecurity.revokeUserTrustedDevice.handler(
         async ({ input, context }) => {
           const caller = await adminGuard.assertSuperAdmin(context);
+
           return mapErrors({ NOT_FOUND: TrustedDeviceNotFoundError }, () =>
             adminSecurity.revokeTrustedDevice(input.userId, input.id, caller.userId, {
               ip: caller.ip,

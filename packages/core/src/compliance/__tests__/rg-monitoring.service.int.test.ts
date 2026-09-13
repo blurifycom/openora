@@ -57,6 +57,7 @@ async function seedUnresolvedDepositLimit(
     .insert(userLimit)
     .values({ userId, type: 'deposit', amount, minutes: null, currency: null, period })
     .returning();
+
   return row!;
 }
 
@@ -72,6 +73,7 @@ async function seedBet(userId: string, betAmount: string, winAmount = '0') {
     .insert(game)
     .values({ name: 'Slot', provider: 'mock', category: 'slots' })
     .returning();
+
   await db.drizzle.db
     .insert(gameRound)
     .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD' });
@@ -88,6 +90,7 @@ async function seedSession(userId: string, startedMinutesAgo: number) {
       emailVerified: true,
     })
     .returning();
+
   await db.drizzle.db.insert(session).values({
     userId: u!.id,
     token: randomUUID(),
@@ -328,9 +331,11 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
         if (from === to) {
           return amount;
         }
+
         if (from === 'BTC' && to === 'USD') {
           return (Number(amount) * rate).toFixed(18);
         }
+
         return null;
       }),
     });
@@ -360,10 +365,12 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
   it('refuses (fails closed) when no rate is available to convert the attempted amount', async () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
+
     const noRates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
       convert: vi.fn(async () => null),
     });
+
     const gate = new RgLimitGate(makeService(undefined, noRates), noRates);
 
     const decision = await gate.checkDeposit(db.drizzle.db, userId, '0.001', 'BTC');
@@ -375,10 +382,12 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
     const userId = randomUUID();
     await seedDepositLimit(userId, '100');
     await seedCompletedDeposit(db, userId, '0.001', { currency: 'BTC' });
+
     const noRates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
       convert: vi.fn(async () => null),
     });
+
     const gate = new RgLimitGate(makeService(undefined, noRates), noRates);
 
     const decision = await gate.checkDeposit(db.drizzle.db, userId, '1', 'USD');
@@ -389,6 +398,7 @@ describe('RgLimitGate multi-currency enforcement (real PG)', () => {
   it('spendFor itself throws RgRateUnavailableError rather than silently treating a foreign-currency group as zero', async () => {
     const userId = randomUUID();
     await seedCompletedDeposit(db, userId, '0.001', { currency: 'BTC' });
+
     const noRates = mock<ExchangeRateReader>({
       getRate: vi.fn(async () => null),
       convert: vi.fn(async () => null),
@@ -552,6 +562,7 @@ describe('RgMonitoringService.listFlags (real PG)', () => {
     await db.drizzle.db
       .insert(rgFlag)
       .values({ userId, flagType: 'session_time', limitType: null, detail: SESSION_DETAIL });
+
     const directory = mock<AdminUserDirectory>({
       lookupPlayers: vi.fn(async (ids: string[]) =>
         ids.map((id) =>

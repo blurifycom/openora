@@ -10,12 +10,14 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const ossRoot = resolve(here, '../..');
 
 function readJson<T>(p: string, fallback: T): T {
   if (!existsSync(p)) {
     return fallback;
   }
+
   try {
     return JSON.parse(readFileSync(p, 'utf8')) as T;
   } catch {
@@ -43,6 +45,7 @@ function main(): void {
 
   const mcpPath = join(ossRoot, '.mcp.json');
   let mcp = readJson<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
+
   if (!mcp.mcpServers || Object.keys(mcp.mcpServers).length === 0) {
     mcp = OSS_MCP;
     writeJson(mcpPath, mcp);
@@ -50,23 +53,28 @@ function main(): void {
   } else {
     log.push(`.mcp.json present (servers: ${Object.keys(mcp.mcpServers).join(', ')})`);
   }
+
   const serverNames = Object.keys(mcp.mcpServers ?? {});
 
   const settingsPath = join(ossRoot, '.claude', 'settings.json');
+
   const settings = readJson<{
     enabledMcpjsonServers?: string[];
     enableAllProjectMcpServers?: boolean;
     [k: string]: unknown;
   }>(settingsPath, {});
+
   let changed = false;
 
   const enabled = new Set(settings.enabledMcpjsonServers ?? []);
+
   for (const name of serverNames) {
     if (!enabled.has(name)) {
       enabled.add(name);
       changed = true;
     }
   }
+
   if (settings.enableAllProjectMcpServers === undefined) {
     settings.enableAllProjectMcpServers = false;
     changed = true;
@@ -81,9 +89,11 @@ function main(): void {
   }
 
   console.log('\n  MCP setup');
+
   for (const l of log) {
     console.log(`  - ${l}`);
   }
+
   console.log(`
   Next:
     1. Restart your editor (or run /mcp) so it picks up .mcp.json.

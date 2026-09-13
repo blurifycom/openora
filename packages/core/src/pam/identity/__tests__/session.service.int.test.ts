@@ -71,6 +71,7 @@ describe('SessionService', () => {
       page: 1,
       limit: 20,
     });
+
     expect(active.total).toBe(1);
     expect(active.items.map((s) => s.id)).not.toContain(target.id);
   });

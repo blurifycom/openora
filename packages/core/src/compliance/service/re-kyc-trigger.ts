@@ -25,12 +25,15 @@ export type ReKycTrigger = {
 export class CumulativeDepositReKycTrigger implements ReKycTrigger {
   requiresReverify(player: ReKycPlayerSnapshot, thresholds: Record<string, string> | undefined) {
     const threshold = thresholds?.[player.currency];
+
     if (threshold === undefined || moneyToNumber(threshold) <= 0) {
       return false;
     }
+
     // Band-crossing check is a decision, not a ledger write - moneyToNumber is the
     // documented single conversion point.
     const bandSize = moneyToNumber(threshold);
+
     return (
       Math.floor(moneyToNumber(player.totalDeposits) / bandSize) >
       Math.floor(moneyToNumber(player.lastTriggeredDeposits) / bandSize)

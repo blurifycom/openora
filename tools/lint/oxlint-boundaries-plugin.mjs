@@ -24,10 +24,12 @@ function inPath(file, segment) {
 function sourceVisitors(check) {
   const visit = (node) => {
     const spec = node.source?.value;
+
     if (typeof spec === 'string') {
       check(node, spec);
     }
   };
+
   return {
     ImportDeclaration: visit,
     ExportNamedDeclaration: visit,
@@ -44,6 +46,7 @@ function isRuntimeSpecifier(spec) {
 function isContractsZone(file) {
   return file.includes('packages/core/src/contracts');
 }
+
 function isReactZone(file) {
   return file.includes('packages/core/src/react');
 }
@@ -53,11 +56,14 @@ const noContractsToRuntime = {
     if (!isContractsZone(filename(context))) {
       return {};
     }
+
     return sourceVisitors((node, spec) => {
       const blocked = isRuntimeSpecifier(spec);
+
       if (!blocked) {
         return;
       }
+
       context.report({
         node,
         message:
@@ -86,14 +92,17 @@ const noModuleContractToRuntime = {
     if (!isModuleContractZone(filename(context))) {
       return {};
     }
+
     return sourceVisitors((node, spec) => {
       const blocked =
         CONTRACT_RUNTIME_SPECIFIERS.some((b) => spec === b || spec.startsWith(b + '/')) ||
         /(^|\/)schema(\/|$)/.test(spec) ||
         spec.startsWith('node:');
+
       if (!blocked) {
         return;
       }
+
       context.report({
         node,
         message:
@@ -146,9 +155,11 @@ const noAdhocZodInRouter = {
     if (!isRouterFile(filename(context))) {
       return {};
     }
+
     return {
       CallExpression(node) {
         const callee = node.callee;
+
         if (
           callee?.type === 'MemberExpression' &&
           callee.object?.type === 'Identifier' &&
@@ -175,10 +186,12 @@ const noReactToRuntime = {
     if (!isReactZone(filename(context))) {
       return {};
     }
+
     return sourceVisitors((node, spec) => {
       if (!isRuntimeSpecifier(spec)) {
         return;
       }
+
       context.report({
         node,
         message:
@@ -194,6 +207,7 @@ const noReactToRuntime = {
 // packages/core/src/<name>/ that is NOT one of the engine zones. Source-isolation
 // invariant (ADR-0024/0025): a domain never imports a sibling domain's internals.
 const ENGINE_ZONES = ['contracts', 'server', 'react', 'scripts'];
+
 // common/ and testing/ are cross-cutting shared zones, not folded domains - any zone may
 // import them (matches dependency-cruiser's no-cross-domain, which excludes common/). So
 // they are neither a domain-of nor a cross-domain target.
@@ -201,9 +215,11 @@ const SHARED_ZONES = [...ENGINE_ZONES, 'common', 'testing'];
 
 function coreDomainOf(file) {
   const m = file.match(/packages\/core\/src\/([a-z0-9-]+)\//);
+
   if (!m || SHARED_ZONES.includes(m[1])) {
     return null;
   }
+
   return m[1];
 }
 
@@ -213,30 +229,39 @@ function coreDomainTarget(spec) {
   if (!spec.startsWith('@openora/core/')) {
     return null;
   }
+
   const tail = spec.slice('@openora/core/'.length).split('/').filter(Boolean);
+
   if (tail.length === 0 || SHARED_ZONES.includes(tail[0])) {
     return null;
   }
+
   if (tail[0] === 'compliance' && tail.length === 1) {
     return null;
   }
+
   return { name: tail[0], isSchema: tail[1] === 'schema' };
 }
 
 const noCrossCoreDomain = {
   create(context) {
     const self = coreDomainOf(filename(context));
+
     if (!self) {
       return {};
     }
+
     return sourceVisitors((node, spec) => {
       const target = coreDomainTarget(spec);
+
       if (!target || target.name === self) {
         return;
       }
+
       if (target.isSchema) {
         return;
       }
+
       context.report({
         node,
         message:
@@ -255,11 +280,14 @@ const noEngineToDomain = {
     if (!/packages\/core\/src\/(contracts|server|react)\//.test(filename(context))) {
       return {};
     }
+
     return sourceVisitors((node, spec) => {
       const target = coreDomainTarget(spec);
+
       if (!target) {
         return;
       }
+
       context.report({
         node,
         message:

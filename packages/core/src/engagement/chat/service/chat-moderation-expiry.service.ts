@@ -22,11 +22,13 @@ export class ChatModerationExpiryService {
   /** One pass over both tables. Idempotent: a recorded row stops matching the scan. */
   async sweep() {
     const mutes = await this.recordLapsed(chatMute, 'chat.mute.expired', 'chat_mute');
+
     const bans = await this.recordLapsed(
       chatPlatformBan,
       'chat.platform_ban.expired',
       'chat_platform_ban',
     );
+
     return { mutes, bans } as const;
   }
 
@@ -36,6 +38,7 @@ export class ChatModerationExpiryService {
     resourceType: string,
   ) {
     const now = new Date();
+
     const due = await this.drizzle.db
       .select({
         id: table.id,
@@ -58,11 +61,13 @@ export class ChatModerationExpiryService {
       .limit(EXPIRY_SWEEP_BATCH_SIZE);
 
     let recorded = 0;
+
     for (const row of due) {
       if (await this.recordOne(table, action, resourceType, row)) {
         recorded += 1;
       }
     }
+
     return recorded;
   }
 
@@ -87,9 +92,11 @@ export class ChatModerationExpiryService {
         .set({ expiryRecordedAt: new Date() })
         .where(and(eq(table.id, row.id), isNull(table.expiryRecordedAt)))
         .returning({ id: table.id });
+
       if (claimed.length === 0) {
         return false;
       }
+
       await this.audit.recordInTransaction(tx, {
         actorId: null,
         actorType: 'system',
@@ -105,6 +112,7 @@ export class ChatModerationExpiryService {
           expiresAt: row.expiresAt?.toISOString() ?? null,
         },
       });
+
       return true;
     });
   }

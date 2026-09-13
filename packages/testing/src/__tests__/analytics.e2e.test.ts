@@ -21,7 +21,9 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let app: TestApp;
+
 let admin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -35,6 +37,7 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
     amount,
     currency,
   });
+
   if (res.status !== 200) {
     throw new Error(`deposit failed (${res.status}): ${await res.text()}`);
   }
@@ -49,9 +52,11 @@ async function walletIdFor(
     .db.select()
     .from(wallet)
     .where(eq(wallet.userId, userId));
+
   if (!row) {
     throw new Error(`no wallet row for user ${userId}`);
   }
+
   return row.id;
 }
 
@@ -104,6 +109,7 @@ describe('analytics e2e', () => {
     const usdDeposits = body.deposits.find(
       (d: { currency: string; rail: string | null }) => d.currency === 'USD' && d.rail === 'fiat',
     );
+
     expect(usdDeposits).toBeDefined();
     expect(Number(usdDeposits.total)).toBeGreaterThanOrEqual(620);
 
@@ -121,18 +127,22 @@ describe('analytics e2e', () => {
     await insertTransaction(app.container, walletId, 'win', '40');
 
     const today = new Date().toISOString().slice(0, 10);
+
     const res = await admin.get(
       `/analytics/financial/ggr?currency=USD&dateFrom=${today}T00:00:00.000Z&dateTo=${today}T23:59:59.999Z&granularity=day`,
     );
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
 
     const usdSeries = body.find((s: { currency: string }) => s.currency === 'USD');
     expect(usdSeries).toBeDefined();
+
     const total = usdSeries.points.reduce(
       (sum: number, p: { ggr: string }) => sum + Number(p.ggr),
       0,
     );
+
     expect(total).toBeGreaterThanOrEqual(60);
   });
 
@@ -152,6 +162,7 @@ describe('analytics e2e', () => {
     const to = new Date(Date.now() + 60_000).toISOString();
     const res = await admin.get(`/analytics/funnel/conversion?dateFrom=${from}&dateTo=${to}`);
     expect(res.status).toBe(200);
+
     const stages = (await readJson(res)) as Array<{
       stage: string;
       count: number;

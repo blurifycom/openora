@@ -8,17 +8,20 @@ const INFRA_HINT = 'real-infra tests need postgres+redis - run `docker compose u
 const ADMIN_DATABASE_URL =
   process.env['TEST_ADMIN_DATABASE_URL'] ??
   'postgresql://postgres:postgres@localhost:5432/postgres';
+
 const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
 
 // Databases 0-7 belong to this tier; `@openora/testing` claims 8-15 (see its redis.ts).
 // The split is what lets both integration suites run concurrently without flushing
 // each other's keys - do not widen it without moving the other tier too.
 const REDIS_LOGICAL_DATABASE_COUNT = 8;
+
 const REDIS_DATABASE = Number(process.env['VITEST_POOL_ID'] ?? 1) % REDIS_LOGICAL_DATABASE_COUNT;
 
 function withRedisDatabase(baseUrl: string, database: number): string {
   const url = new URL(baseUrl);
   url.pathname = `/${database}`;
+
   return url.toString();
 }
 
@@ -41,24 +44,29 @@ export async function waitForConsumerGroup(
   { stream, group, timeoutMs = 3000 }: { stream: string; group: string; timeoutMs?: number },
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+
   for (;;) {
     try {
       const groups = await client.xInfoGroups(stream);
+
       if (groups.some((g) => g.name === group)) {
         return;
       }
     } catch {
       // stream not created yet (MKSTREAM happens with the group) - keep polling
     }
+
     if (Date.now() > deadline) {
       throw new Error(`consumer group '${group}' on '${stream}' not ready within ${timeoutMs}ms`);
     }
+
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
 function isConnectionError(err: unknown): boolean {
   const code = (err as { code?: string }).code;
+
   return (
     code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' || code === 'EAI_AGAIN'
   );
@@ -67,6 +75,7 @@ function isConnectionError(err: unknown): boolean {
 function withDatabase(adminUrl: string, database: string): string {
   const url = new URL(adminUrl);
   url.pathname = `/${database}`;
+
   return url.toString();
 }
 
@@ -81,9 +90,11 @@ function withDatabase(adminUrl: string, database: string): string {
  */
 export function testDatabasePrefix(): string {
   const runId = process.env['OPENORA_TEST_RUN_ID'];
+
   if (!runId) {
     throw new Error('OPENORA_TEST_RUN_ID is not set - this tier requires its global setup');
   }
+
   return `test_${runId}_`;
 }
 
@@ -119,18 +130,21 @@ export type TestDb = {
 export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
   const database = `${testDatabasePrefix()}${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: ADMIN_DATABASE_URL, connectionTimeoutMillis: 5000 });
+
   try {
     await admin.query(`CREATE DATABASE "${database}"`);
   } catch (err) {
     if (isConnectionError(err)) {
       throw new Error(INFRA_HINT, { cause: err });
     }
+
     throw err;
   } finally {
     await admin.end();
   }
 
   const url = withDatabase(ADMIN_DATABASE_URL, database);
+
   for (const migrate of migrations) {
     await migrate(url);
   }
@@ -165,12 +179,15 @@ export async function createTestRedis(): Promise<TestRedis> {
     database: REDIS_DATABASE,
     socket: { reconnectStrategy: false, connectTimeout: 3000 },
   });
+
   client.on('error', () => undefined);
+
   try {
     await client.connect();
   } catch (err) {
     throw new Error(INFRA_HINT, { cause: err });
   }
+
   return {
     client,
     async flush(): Promise<void> {

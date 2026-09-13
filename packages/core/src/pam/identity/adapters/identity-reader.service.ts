@@ -14,6 +14,7 @@ export class IdentityReaderService implements IdentityReader {
       .select({ lastAt: max(session.createdAt) })
       .from(session)
       .where(eq(session.userId, userId));
+
     return row?.lastAt ?? null;
   }
 
@@ -42,6 +43,7 @@ export class IdentityReaderService implements IdentityReader {
           ),
         ),
       );
+
     return rows.map((r) => r.userId);
   }
 
@@ -51,6 +53,7 @@ export class IdentityReaderService implements IdentityReader {
       .from(player)
       .where(eq(player.userId, userId))
       .limit(1);
+
     return row?.id ?? null;
   }
 
@@ -59,6 +62,7 @@ export class IdentityReaderService implements IdentityReader {
       return await this.getPlayerIdByUserId(userId);
     } catch (err) {
       logger.warn({ err, userId }, 'player id lookup failed for event enrichment');
+
       return null;
     }
   }
@@ -67,20 +71,24 @@ export class IdentityReaderService implements IdentityReader {
     userIds: User['id'][],
   ): Promise<Map<User['id'], Player['id'] | null>> {
     const result = new Map<User['id'], Player['id'] | null>(userIds.map((id) => [id, null]));
+
     if (userIds.length === 0) {
       return result;
     }
+
     try {
       const rows = await this.drizzle.db
         .select({ userId: player.userId, id: player.id })
         .from(player)
         .where(inArray(player.userId, userIds));
+
       for (const row of rows) {
         result.set(row.userId, row.id);
       }
     } catch (err) {
       logger.warn({ err, userIds }, 'batched player id lookup failed for event enrichment');
     }
+
     return result;
   }
 
@@ -90,6 +98,7 @@ export class IdentityReaderService implements IdentityReader {
       .from(player)
       .where(eq(player.userId, userId))
       .limit(1);
+
     return row?.kycStatus ?? null;
   }
 
@@ -104,6 +113,7 @@ export class IdentityReaderService implements IdentityReader {
       .innerJoin(player, eq(player.userId, user.id))
       .where(and(eq(session.ipAddress, ipAddress), ne(user.id, userId), eq(user.role, 'player')))
       .groupBy(user.id);
+
     return rows.map((r) => r.userId);
   }
 
@@ -113,6 +123,7 @@ export class IdentityReaderService implements IdentityReader {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     return row?.enabled === true && row.emailVerified === true;
   }
 }

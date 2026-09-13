@@ -24,7 +24,9 @@ import type { ReconciliationService } from '../service/reconciliation.service.js
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const PLAYER = '9a2f7c11-0000-4000-8000-00000000a001';
+
 const OTHER_PLAYER = '9a2f7c11-0000-4000-8000-00000000a002';
+
 const ctxFor = (userId: string) => testContext({ auth: { userId } });
 
 const LEDGER: CreateWithdrawalAddressInput = {
@@ -51,6 +53,7 @@ beforeEach(async () => {
 function routerWith(payment: Partial<PaymentAdapter> = {}) {
   const audit = makeAuditWriter();
   const paymentProviders = makePaymentProviderRegistry({});
+
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -59,6 +62,7 @@ function routerWith(payment: Partial<PaymentAdapter> = {}) {
     audit,
     identityReader: makeIdentityReader(),
   });
+
   const router = createWalletRouter({
     wallet: service,
     adminGuard: makeAdminGuard({ caller: { userId: PLAYER, role: 'admin' } }),
@@ -69,6 +73,7 @@ function routerWith(payment: Partial<PaymentAdapter> = {}) {
     reconciliationQueue: RECONCILIATION_QUEUE,
     realtime: makeRealtimeTransport(),
   });
+
   return { router, audit, service };
 }
 
@@ -141,6 +146,7 @@ describe('wallet withdrawal address book', () => {
     await create(router, { label: 'Not yours' }, OTHER_PLAYER);
 
     const all = await call(router.withdrawalAddresses.list, {}, { context: ctxFor(PLAYER) });
+
     const btc = await call(
       router.withdrawalAddresses.list,
       { currency: 'btc' },
@@ -179,6 +185,7 @@ describe('wallet withdrawal address book', () => {
       { id: saved.id },
       { context: ctxFor(OTHER_PLAYER) },
     );
+
     const missing = await call(
       router.withdrawalAddresses.delete,
       { id: randomUUID() },
@@ -226,9 +233,11 @@ describe('wallet withdrawal address book', () => {
 describe('provider whitelisting on the address-book write path', () => {
   it('registers the address with the provider and stores the returned id', async () => {
     const calls: unknown[] = [];
+
     const { router } = routerWith({
       whitelistWithdrawalAddress: (input) => {
         calls.push(input);
+
         return Promise.resolve({ providerWalletId: 'fb-wallet-1' });
       },
     });

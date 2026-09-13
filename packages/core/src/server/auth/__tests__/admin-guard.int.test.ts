@@ -25,15 +25,18 @@ function makeGuard({
   securityPolicy?: AdminSecurityPolicy;
 } = {}) {
   const events = makeEventBus();
+
   const sessions = mock<SessionResolver>({
     resolveSession: vi.fn(async () => (userId ? { userId, sessionId: randomUUID() } : undefined)),
   });
+
   const permissionResolver = grants
     ? mock<AdminPermissionResolver>({
         getGrants: vi.fn(async () => grants),
         isSuperAdmin: vi.fn(async () => superAdmin ?? null),
       })
     : undefined;
+
   const guard = new AdminGuard(
     db.drizzle,
     sessions,
@@ -42,12 +45,14 @@ function makeGuard({
     undefined,
     securityPolicy,
   );
+
   return { guard, events };
 }
 
 async function seedUser(role: string) {
   const id = randomUUID();
   await db.drizzle.db.execute(sql`INSERT INTO "user" (id, role) VALUES (${id}, ${role})`);
+
   return id;
 }
 
@@ -268,11 +273,13 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
 
     it('propagates a refused enrolment check, even for a caller the permission check passed', async () => {
       const userId = await seedUser('admin');
+
       const securityPolicy = policy({
         assertEnrolled: vi.fn(async () => {
           throw new Error('two-factor enrolment required');
         }),
       });
+
       const { guard } = makeGuard({
         userId,
         grants: [{ resource: 'player', action: 'view' }],
@@ -287,11 +294,13 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
 
     it('propagates a refused session-integrity check', async () => {
       const userId = await seedUser('admin');
+
       const securityPolicy = policy({
         assertSessionIntact: vi.fn(async () => {
           throw new Error('session device mismatch');
         }),
       });
+
       const { guard } = makeGuard({ userId, securityPolicy });
 
       await expect(guard.assert(requestContext(ADMIN_HEADERS))).rejects.toThrow(

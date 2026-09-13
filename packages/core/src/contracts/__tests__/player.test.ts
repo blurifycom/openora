@@ -11,6 +11,7 @@ function isoBirthday(yearsAgo: number, offsetDays = 0) {
   const d = new Date(NOW);
   d.setUTCFullYear(d.getUTCFullYear() - yearsAgo);
   d.setUTCDate(d.getUTCDate() + offsetDays);
+
   return d.toISOString().slice(0, 10);
 }
 

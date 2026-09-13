@@ -45,7 +45,9 @@ import {
 const KYC_WEBHOOK_SECRET = 'e2e-kyc-webhook-secret';
 
 let db: TestDb;
+
 let appDefault: TestApp;
+
 let appGated: TestApp;
 
 function signWebhook(rawBody: string, secret: string): string {
@@ -80,6 +82,7 @@ beforeAll(async () => {
   const fixturePath = fileURLToPath(
     new URL('./fixtures/test-kyc-config-plugin.ts', import.meta.url),
   );
+
   appGated = await bootTestApp({
     plugins: [...basePlugins, { id: 'test-kyc-config', path: fixturePath }],
     databaseUrl: db.url,
@@ -99,6 +102,7 @@ afterAll(async () => {
 describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
   it('auto-verifies via the mock vendor, is admin-readable, and is denied to non-admins', async () => {
     const email = `kyc-submit-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault, {
       email: email,
     });
@@ -107,6 +111,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
       tier: 'basic',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
+
     expect(submitRes.status).toBe(200);
     const submitted = await readJson(submitRes);
     expect(submitted.userId).toBe(userId);
@@ -133,6 +138,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.submitted`,
       );
+
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('player');
@@ -143,6 +149,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
+
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].before).toMatchObject({ kycStatus: 'pending' });
@@ -157,15 +164,18 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
 describe('KYC webhook reconcile (gated stack)', () => {
   it('a valid HMAC signature reconciles; a forged/missing one is rejected and changes nothing', async () => {
     const email = `kyc-webhook-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
       email: email,
     });
+
     const admin = await asAdmin(appGated.app);
 
     const submitRes = await client.post('/compliance/kyc', {
       tier: 'basic',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
+
     expect(submitRes.status).toBe(200);
     const submitted = await readJson(submitRes);
     // The gated stack's test adapter never auto-approves.
@@ -179,6 +189,7 @@ describe('KYC webhook reconcile (gated stack)', () => {
       headers: { 'content-type': 'application/json', 'x-kyc-signature': 'sha256=deadbeef' },
       body: payload,
     });
+
     expect(forgedRes.status).toBe(401);
 
     const missingSigRes = await appGated.app.request('/compliance/kyc/webhook', {
@@ -186,17 +197,20 @@ describe('KYC webhook reconcile (gated stack)', () => {
       headers: { 'content-type': 'application/json' },
       body: payload,
     });
+
     expect(missingSigRes.status).toBe(401);
 
     const unchanged = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
     expect(unchanged.basic.current.status).toBe('pending');
 
     const validSig = signWebhook(payload, KYC_WEBHOOK_SECRET);
+
     const validRes = await appGated.app.request('/compliance/kyc/webhook', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-kyc-signature': validSig },
       body: payload,
     });
+
     expect(validRes.status).toBe(200);
     expect(await readJson(validRes)).toEqual({ ok: true });
 
@@ -210,6 +224,7 @@ describe('KYC webhook reconcile (gated stack)', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
+
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('system');
@@ -239,6 +254,7 @@ describe('KYC tiers (gated stack)', () => {
       tier: 'advanced',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
+
     expect(advancedSubmit.status).toBe(200);
     const advanced = await readJson(advancedSubmit);
     expect(advanced.status).toBe('pending');
@@ -247,9 +263,11 @@ describe('KYC tiers (gated stack)', () => {
       tier: 'basic',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
+
     expect(basicSubmit.status).toBe(200);
 
     const payload = JSON.stringify({ referenceId: advanced.referenceId, status: 'approved' });
+
     const resolved = await appGated.app.request('/compliance/kyc/webhook', {
       method: 'POST',
       headers: {
@@ -258,6 +276,7 @@ describe('KYC tiers (gated stack)', () => {
       },
       body: payload,
     });
+
     expect(resolved.status).toBe(200);
 
     await vi.waitFor(async () => {
@@ -279,6 +298,7 @@ describe('KYC tiers (gated stack)', () => {
       tier: 'basic',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
+
     const submitted = await readJson(submitRes);
 
     // Populate the fraud-detection fields directly - the test adapter's webhook has no
@@ -323,15 +343,18 @@ describe('KYC tiers (gated stack)', () => {
 
   it('getMyKyc scopes to the session user, never another players verification', async () => {
     const submitterEmail = `kyc-scope-submitter-${randomUUID()}@e2e.test`;
+
     const { client: submitterClient } = await registerAndMaterializePlayer(appGated, {
       email: submitterEmail,
     });
+
     await submitterClient.post('/compliance/kyc', {
       tier: 'basic',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
 
     const bystanderEmail = `kyc-scope-bystander-${randomUUID()}@e2e.test`;
+
     const { client: bystanderClient } = await registerAndMaterializePlayer(appGated, {
       email: bystanderEmail,
     });
@@ -347,9 +370,11 @@ describe('KYC tiers (gated stack)', () => {
 describe('KYC withdrawal gate (gated stack)', () => {
   it('blocks an unapproved withdrawal, then allows it once an admin marks the player approved', async () => {
     const email = `kyc-withdraw-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
       email: email,
     });
+
     const admin = await asAdmin(appGated.app);
 
     const depositRes = await client.post('/wallet/deposit', {
@@ -357,6 +382,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
       amount: '2',
       currency: 'USD',
     });
+
     expect(depositRes.status).toBe(200);
 
     const blockedRes = await client.post('/wallet/withdraw', {
@@ -364,6 +390,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
       amount: '0.5',
       currency: 'USD',
     });
+
     expect(blockedRes.status).toBe(409);
 
     const overrideRes = await admin.post(`/compliance/players/${userId}/kyc/override`, {
@@ -371,6 +398,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
       status: 'approved',
       reason: 'manual review confirmed identity',
     });
+
     expect(overrideRes.status).toBe(200);
     expect((await readJson(overrideRes)).status).toBe('manually_overridden');
     expect((await readJson(await admin.get(`/players/by-user/${userId}`))).kycStatus).toBe(
@@ -382,6 +410,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
       amount: '0.5',
       currency: 'USD',
     });
+
     expect(allowedRes.status).toBe(200);
     const allowed = await readJson(allowedRes);
     expect(allowed.status).toBe('pending');
@@ -391,6 +420,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
       const res = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
+
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -414,6 +444,7 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
       tier: 'basic',
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
     });
+
     expect(submitRes.status).toBe(200);
 
     await seedLegacyVerifiedStatus(appGated.container, userId);
@@ -427,6 +458,7 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
       amount: '15',
       currency: 'USD',
     });
+
     expect(depositRes.status).toBe(200);
 
     await vi.waitFor(
@@ -443,9 +475,11 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
 describe('KYC admin actions: resubmit / override / bulk-approve (default stack)', () => {
   it('requestKycResubmission writes a manual history row, audits it, and notifies the player through the job queue', async () => {
     const email = `kyc-resubmit-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault, {
       email: email,
     });
+
     const admin = await asAdmin(appDefault.app);
 
     const anonRes = await appDefault.app.request(`/compliance/players/${userId}/kyc/resubmit`, {
@@ -453,18 +487,21 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tier: 'basic', reason: 'not authenticated' }),
     });
+
     expect(anonRes.status).toBe(401);
 
     const asSelfRes = await client.post(`/compliance/players/${userId}/kyc/resubmit`, {
       tier: 'basic',
       reason: 'not an admin',
     });
+
     expect(asSelfRes.status).toBe(403);
 
     const res = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
       tier: 'basic',
       reason: 'document photo is blurry',
     });
+
     expect(res.status).toBe(200);
     const dto = await readJson(res);
     expect(dto.status).toBe('resubmission_requested');
@@ -479,6 +516,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
+
       const body = await readJson(auditRes);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -492,18 +530,22 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     await vi.waitFor(async () => {
       const notifyRes = await client.get('/notifications');
       const { items } = await readJson(notifyRes);
+
       const found = (items as Array<{ type: string; body: string }>).find(
         (n) => n.type === 'kyc.resubmission_requested',
       );
+
       expect(found).toBeTruthy();
       expect(found?.body).toContain('document photo is blurry');
     });
 
     const historyBefore = kycView.basic.history.length;
+
     const repeatRes = await admin.post(`/compliance/players/${userId}/kyc/resubmit`, {
       tier: 'basic',
       reason: 'document photo is blurry, again',
     });
+
     expect(repeatRes.status).toBe(200);
     const kycViewAfterRepeat = await readJson(await admin.get(`/compliance/players/${userId}/kyc`));
     expect(kycViewAfterRepeat.basic.history.length).toBe(historyBefore);
@@ -519,6 +561,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       status: 'rejected',
       reason: '   ',
     });
+
     expect(emptyReasonRes.status).toBe(400);
 
     const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
@@ -526,6 +569,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       status: 'rejected',
       reason: 'document mismatch',
     });
+
     expect(res.status).toBe(200);
     expect((await readJson(res)).status).toBe('rejected');
 
@@ -533,6 +577,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
+
       const body = await readJson(auditRes);
       expect(body.items[0].after).toMatchObject({
         kycStatus: 'rejected',
@@ -545,12 +590,15 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
   it('bulkApproveKyc approves multiple players (one audit entry each) and isolates a not-found id without losing the rest of the batch', async () => {
     const emailA = `kyc-bulk-a-${randomUUID()}@e2e.test`;
     const emailB = `kyc-bulk-b-${randomUUID()}@e2e.test`;
+
     const { userId: userA, playerId: playerA } = await registerAndMaterializePlayer(appDefault, {
       email: emailA,
     });
+
     const { userId: userB, playerId: playerB } = await registerAndMaterializePlayer(appDefault, {
       email: emailB,
     });
+
     const missingUserId = randomUUID();
     const admin = await asAdmin(appDefault.app);
 
@@ -559,13 +607,16 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       tier: 'basic',
       reason: 'bulk KYC sweep',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
+
     const byUserId = new Map(
       (body.results as Array<{ userId: string; success: boolean; error: string | null }>).map(
         (r) => [r.userId, r],
       ),
     );
+
     expect(byUserId.get(userA)).toMatchObject({ success: true, error: null });
     expect(byUserId.get(userB)).toMatchObject({ success: true, error: null });
     expect(byUserId.get(missingUserId)?.success).toBe(false);
@@ -582,6 +633,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
         const auditRes = await admin.get(
           `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
         );
+
         const auditBody = await readJson(auditRes);
         expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
         expect(auditBody.items[0].after).toMatchObject({
@@ -597,6 +649,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
       tier: 'basic',
       reason: 'duplicate ids should be rejected',
     });
+
     expect(rejectedRes.status).toBe(400);
   });
 });
@@ -646,6 +699,7 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
         reason: 'concurrent review B',
       }),
     ]);
+
     expect(resA.status).toBe(200);
     expect(resB.status).toBe(200);
 
@@ -657,6 +711,7 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
+
       const auditBody = await readJson(auditRes);
       expect(auditBody.items).toHaveLength(1);
     });

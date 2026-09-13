@@ -45,4 +45,5 @@ export const auditLog = pgTable(
 );
 
 export type AuditLog = typeof auditLog.$inferSelect;
+
 export type AuditLogInsert = typeof auditLog.$inferInsert;

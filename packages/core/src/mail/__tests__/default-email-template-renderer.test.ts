@@ -128,6 +128,7 @@ describe('DefaultEmailTemplateRenderer', () => {
       },
       'en',
     );
+
     expect(money.text).toContain('10,000 EUR');
 
     const session = renderer.render(
@@ -137,6 +138,7 @@ describe('DefaultEmailTemplateRenderer', () => {
       },
       'en',
     );
+
     expect(session.text).toContain('60 minutes');
   });
 
@@ -156,6 +158,7 @@ describe('DefaultEmailTemplateRenderer', () => {
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
       'en-GB',
     );
+
     const de = renderer.render(
       { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
       'de-DE',

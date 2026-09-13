@@ -34,8 +34,10 @@ function declaredRoutes(): Route[] {
     'packages/core/src',
     (file) => file.includes('/contract/') && file.endsWith('.ts') && !file.includes('__tests__'),
   );
+
   return contracts.flatMap((file) => {
     const source = readFileSync(join(repoRoot, file), 'utf8');
+
     return [...source.matchAll(ROUTE)].map(([, name = '', method = '', path = '']) => ({
       name,
       method,
@@ -48,17 +50,21 @@ function declaredRoutes(): Route[] {
 /** The leading literal segments of a path, i.e. everything before the first `{param}`. */
 function staticPrefix(path: string): string {
   const segments: string[] = [];
+
   for (const segment of path.split('/').filter(Boolean)) {
     if (segment.startsWith('{') || segment.startsWith(':')) {
       break;
     }
+
     segments.push(segment);
   }
+
   return `/${segments.join('/')}`;
 }
 
 function main(): void {
   const routes = declaredRoutes();
+
   const tests = tracked('packages', (file) => file.endsWith('.test.ts'))
     .map((file) => readFileSync(join(repoRoot, file), 'utf8'))
     .join('\n');
@@ -69,16 +75,20 @@ function main(): void {
 
   const covered = routes.length - untouched.length;
   console.log(`[report] route coverage: ${covered}/${routes.length} routes referenced by a test`);
+
   if (untouched.length === 0) {
     return;
   }
 
   const byContract = new Map<string, Route[]>();
+
   for (const route of untouched) {
     byContract.set(route.contract, [...(byContract.get(route.contract) ?? []), route]);
   }
+
   for (const [contract, group] of [...byContract].sort((a, b) => b[1].length - a[1].length)) {
     console.log(`\n${relative('packages/core/src', contract)} (${group.length})`);
+
     for (const route of group) {
       console.log(`  ${route.method.padEnd(6)} ${route.path}`);
     }

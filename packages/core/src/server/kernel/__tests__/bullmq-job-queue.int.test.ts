@@ -6,15 +6,19 @@ import { createTestRedis, redisUrlForWorker, type TestRedis } from '@openora/cor
 import { BullMqJobQueue } from '../bullmq-job-queue.js';
 
 const Payload = z.object({ value: z.string() });
+
 const POLL = { timeout: 5000, interval: 20 };
 
 let redis: TestRedis;
+
 const instances: BullMqJobQueue[] = [];
+
 const rawQueues: Queue[] = [];
 
 function makeQueue(): BullMqJobQueue {
   const q = new BullMqJobQueue(redisUrlForWorker());
   instances.push(q);
+
   return q;
 }
 
@@ -22,7 +26,9 @@ function rawQueue(name: string): Queue {
   const q = new Queue(name, {
     connection: { url: redisUrlForWorker(), maxRetriesPerRequest: null },
   });
+
   rawQueues.push(q);
+
   return q;
 }
 
@@ -59,6 +65,7 @@ describe('BullMqJobQueue', () => {
       { value: 'hi' },
       { idempotencyKey: 'k1', meta: { correlationId: 'c1' } },
     );
+
     expect(result.id).toBe('k1');
 
     await vi.waitFor(() => expect(seen).toHaveLength(1), POLL);

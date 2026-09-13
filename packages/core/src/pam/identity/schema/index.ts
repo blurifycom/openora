@@ -13,6 +13,7 @@ import {
 import { THEMES, TWO_FACTOR_DELIVERY_METHODS } from '@openora/core/contracts';
 
 export const userThemeEnum = pgEnum('user_theme', THEMES);
+
 export const twoFactorMethodEnum = pgEnum('two_factor_method', TWO_FACTOR_DELIVERY_METHODS);
 
 export const user = pgTable(
@@ -248,10 +249,17 @@ export const adminTrustedDevice = pgTable(
 );
 
 export type User = typeof user.$inferSelect;
+
 export type Session = typeof session.$inferSelect;
+
 export type SmsOtpSession = typeof smsOtpSession.$inferSelect;
+
 export type PhoneVerificationSession = typeof phoneVerificationSession.$inferSelect;
+
 export type Account = typeof account.$inferSelect;
+
 export type Verification = typeof verification.$inferSelect;
+
 export type TwoFactor = typeof twoFactor.$inferSelect;
+
 export type AdminTrustedDevice = typeof adminTrustedDevice.$inferSelect;

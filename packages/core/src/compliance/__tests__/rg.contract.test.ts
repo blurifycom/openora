@@ -87,6 +87,7 @@ describe('RgFlagListItemSchema.detail resilience', () => {
     flaggedAt: new Date().toISOString(),
     clearedAt: null,
   };
+
   it('accepts a legacy/empty detail so one bad row cannot 500 the whole list', () => {
     expect(RgFlagListItemSchema.safeParse({ ...base, detail: {} }).success).toBe(true);
   });

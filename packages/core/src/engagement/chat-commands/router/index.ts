@@ -14,16 +14,19 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
 
     adminListCommands: os.adminListCommands.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-command', 'view');
+
       return svc.adminListCommands(input);
     }),
 
     adminUpdateCommand: os.adminUpdateCommand.handler(async ({ input, context }) => {
       const { userId } = await adminGuard.assert(context, 'chat-command', 'update');
+
       return svc.adminUpdateCommand(input, userId);
     }),
 
     mentionSearch: os.mentionSearch.handler(({ input, context }) => {
       const viewerId = getUserId(context);
+
       return svc.searchMentions({ ...input, viewerId });
     }),
   });

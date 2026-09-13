@@ -55,6 +55,7 @@ function catalogCandidates(): string[] {
   const candidates: string[] = [];
 
   const override = process.env['OSS_CATALOG'];
+
   if (override) {
     candidates.push(override);
   }
@@ -65,12 +66,15 @@ function catalogCandidates(): string[] {
   candidates.push(join(cwd, 'node_modules', '@openora', 'mcp', 'docs', 'catalog.json'));
 
   let dir = cwd;
+
   for (;;) {
     candidates.push(join(dir, 'docs', 'catalog.json'));
     const parent = parse(dir).dir;
+
     if (!parent || parent === dir) {
       break;
     }
+
     dir = parent;
   }
 
@@ -84,22 +88,27 @@ function loadCatalog(): { catalog: Catalog; path: string } | null {
     if (!candidate || !existsSync(candidate)) {
       continue;
     }
+
     try {
       const catalog = JSON.parse(readFileSync(candidate, 'utf8')) as Catalog;
+
       return { catalog, path: candidate };
     } catch {
       // corrupt file - keep probing
     }
   }
+
   return null;
 }
 
 function withCatalog(fn: (catalog: Catalog) => string) {
   return async () => {
     const loaded = loadCatalog();
+
     if (!loaded) {
       return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
+
     return { content: [{ type: 'text' as const, text: fn(loaded.catalog) }] };
   };
 }
@@ -124,11 +133,13 @@ server.registerTool(
     );
 
     lines.push('\n--- Adapter seams (implement an interface, bind to the token) ---');
+
     for (const a of c.adapters) {
       lines.push(`- ${a.category}: ${a.interface} -> ${a.token}  [${a.status}]`);
     }
 
     lines.push(`\n--- Config (${c.config.token}) ---`);
+
     for (const f of c.config.fields) {
       lines.push(`- ${f.key}${f.note ? `: ${f.note}` : ''}`);
     }
@@ -136,6 +147,7 @@ server.registerTool(
     lines.push(
       '\nNext: list-adapters | list-routes | list-events | describe-module <name> | schema-get <name> | get-config-schema',
     );
+
     return lines.join('\n');
   }),
 );
@@ -151,17 +163,21 @@ server.registerTool(
     if (c.adapters.length === 0) {
       return 'No adapters in the catalog.';
     }
+
     const lines: string[] = ['=== Adapter seams ==='];
+
     for (const a of c.adapters) {
       lines.push(`\n${a.category}  [${a.status}]`);
       lines.push(`  interface: ${a.interface}`);
       lines.push(`  token:     ${a.token}`);
+
       if (a.boundIn.length > 0) {
         lines.push(`  boundIn:   ${a.boundIn.join(', ')}`);
       } else {
         lines.push('  boundIn:   (none - stub; bind your implementation to the token)');
       }
     }
+
     return lines.join('\n');
   }),
 );
@@ -177,11 +193,14 @@ server.registerTool(
   },
   async ({ module: mod }) => {
     const loaded = loadCatalog();
+
     if (!loaded) {
       return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
+
     const c = loaded.catalog;
     const modules = mod ? c.modules.filter((m) => m.id === mod) : c.modules;
+
     if (mod && modules.length === 0) {
       return {
         content: [
@@ -192,13 +211,17 @@ server.registerTool(
         ],
       };
     }
+
     const lines: string[] = [];
+
     for (const m of modules) {
       if (m.routes.length > 0) {
         lines.push(`${m.id}:\n${m.routes.map((r) => `  ${r}`).join('\n')}`);
       }
     }
+
     const text = lines.join('\n\n') || 'No routes defined in the catalog yet.';
+
     return { content: [{ type: 'text' as const, text }] };
   },
 );
@@ -214,6 +237,7 @@ server.registerTool(
     if (c.events.length === 0) {
       return 'No events in the catalog.';
     }
+
     return `=== Domain events (${c.events.length}) ===\n${c.events.map((e) => `- ${e}`).join('\n')}`;
   }),
 );
@@ -227,13 +251,17 @@ server.registerTool(
   },
   async ({ name }) => {
     const loaded = loadCatalog();
+
     if (!loaded) {
       return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
+
     const c = loaded.catalog;
     const m = c.modules.find((x) => x.id === name);
+
     if (!m) {
       const ids = c.modules.map((x) => x.id).join(', ');
+
       return {
         content: [
           {
@@ -243,6 +271,7 @@ server.registerTool(
         ],
       };
     }
+
     const lines: string[] = [`=== Module: ${m.id} (${m.group}) ===`];
     lines.push(
       `\n--- Tables ---\n${m.tables.length > 0 ? m.tables.map((t) => `- ${t}`).join('\n') : '(none)'}`,
@@ -250,6 +279,7 @@ server.registerTool(
     lines.push(
       `\n--- Routes ---\n${m.routes.length > 0 ? m.routes.map((r) => `- ${r}`).join('\n') : '(none)'}`,
     );
+
     return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
   },
 );
@@ -265,19 +295,24 @@ server.registerTool(
   },
   async ({ name }) => {
     const loaded = loadCatalog();
+
     if (!loaded) {
       return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
     }
+
     const c = loaded.catalog;
     const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
     const hit = c.schemas.find((s) => candidates.includes(s.name));
+
     if (hit) {
       return { content: [{ type: 'text' as const, text: `${hit.name}\n${hit.file}` }] };
     }
+
     const list = c.schemas
       .map((s) => s.name)
       .sort()
       .join(', ');
+
     return {
       content: [
         {
@@ -301,9 +336,11 @@ server.registerTool(
     lines.push(`token:  ${c.config.token}`);
     lines.push(`source: ${c.config.source}`);
     lines.push('\n--- Fields ---');
+
     for (const f of c.config.fields) {
       lines.push(`- ${f.key}${f.note ? `: ${f.note}` : ''}`);
     }
+
     return lines.join('\n');
   }),
 );
@@ -313,22 +350,27 @@ type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'unsure';
 function classifyIntent(ask: string): IntentKind {
   const a = ` ${ask.toLowerCase()} `;
   const has = (re: RegExp) => re.test(a);
+
   if (
     has(/\b(payment|psp|stripe|adyen|kyc|onfido|sms|email|notification|vendor|adapter|gateway)\b/)
   ) {
     return 'adapter';
   }
+
   if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/)) {
     return 'ui-page';
   }
+
   if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) {
     return 'route';
   }
+
   if (
     has(/\b(feature|module|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|reward)\b/)
   ) {
     return 'feature';
   }
+
   return 'unsure';
 }
 
@@ -339,6 +381,7 @@ function buildConsumerPlaybook(
   const moduleList = ctx.modules.length
     ? ctx.modules.map((m) => `- ${m}`).join('\n')
     : '- (none yet)';
+
   switch (kind) {
     case 'feature':
       return [
@@ -430,9 +473,11 @@ function buildConsumerPlaybook(
 function runShell(cmd: string): { ok: boolean; output: string } {
   try {
     const output = execSync(cmd, { encoding: 'utf8', stdio: 'pipe', timeout: 120_000 });
+
     return { ok: true, output };
   } catch (e: unknown) {
     const err = e as { stdout?: Buffer; stderr?: Buffer; message: string };
+
     return {
       ok: false,
       output: (err.stdout?.toString() ?? '') + (err.stderr?.toString() ?? '') + err.message,
@@ -478,11 +523,14 @@ server.registerTool(
     const loaded = loadCatalog();
     const catalog = loaded?.catalog;
     const resolved = kind && kind !== 'unsure' ? kind : classifyIntent(ask);
+
     const ctx = {
       modules: catalog?.modules.map((m) => `${m.group}/${m.id}`) ?? [],
       tokens: catalog?.adapters.map((a) => a.token) ?? [],
     };
+
     const detected = kind && kind !== 'unsure' ? '' : ' (auto-detected)';
+
     const text = [
       '# Enhanced brief',
       '',
@@ -503,6 +551,7 @@ server.registerTool(
       '- [ ] Edge cases handled',
       '- [ ] `pnpm check:types && pnpm check:lint` is green',
     ].join('\n');
+
     return { content: [{ type: 'text' as const, text }] };
   },
 );
@@ -534,10 +583,12 @@ server.registerTool(
 
     if (ask) {
       const resolved = classifyIntent(ask);
+
       const playbook = buildConsumerPlaybook(resolved, {
         modules,
         tokens,
       });
+
       return {
         content: [
           {
@@ -616,13 +667,18 @@ server.registerTool(
   async ({ action = 'up' }) => {
     if (action === 'status') {
       const r = runShell('docker compose ps');
+
       return { content: [{ type: 'text' as const, text: r.output || '(no output)' }] };
     }
+
     if (action === 'down') {
       const r = runShell('docker compose down');
+
       return { content: [{ type: 'text' as const, text: r.ok ? 'Stopped.' : r.output }] };
     }
+
     const up = runShell('docker compose up -d');
+
     if (!up.ok) {
       return {
         content: [{ type: 'text' as const, text: `docker compose up failed:\n${up.output}` }],
@@ -631,19 +687,24 @@ server.registerTool(
 
     const deadline = Date.now() + 30_000;
     let ready = false;
+
     while (Date.now() < deadline) {
       if (runShell('docker compose exec -T postgres pg_isready -U postgres').ok) {
         ready = true;
         break;
       }
+
       await new Promise((r) => setTimeout(r, 1_500));
     }
+
     const text = ready
       ? 'Postgres is ready on :5432.\n\nNext: pnpm db:migrate then pnpm dev.'
       : 'Containers started but postgres did not become ready within 30s.\nRun `docker compose logs postgres` to investigate.';
+
     return { content: [{ type: 'text' as const, text: text }] };
   },
 );
 
 const transport = new StdioServerTransport();
+
 await server.connect(transport);

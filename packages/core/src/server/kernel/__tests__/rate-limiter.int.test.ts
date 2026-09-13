@@ -7,6 +7,7 @@ import { createTestRedis, type TestRedis } from '@openora/core/testing';
 const OPTS = { limit: 3, windowMs: 1000 };
 
 let redis: TestRedis;
+
 let limiter: RedisRateLimiter;
 
 beforeAll(async () => {
@@ -36,6 +37,7 @@ describe('assertRateLimit / makeRateLimitError', () => {
       () => undefined,
       (e: unknown) => e,
     );
+
     expect(err).toBeInstanceOf(ORPCError);
     expect((err as ORPCError<string, { retryAfterMs: number }>).code).toBe('TOO_MANY_REQUESTS');
     const retryAfterMs = (err as ORPCError<string, { retryAfterMs: number }>).data.retryAfterMs;

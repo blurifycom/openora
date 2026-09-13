@@ -51,6 +51,7 @@ async function getRow(base: string, quote: string) {
     .where(
       and(eq(exchangeRateQuote.baseCurrency, base), eq(exchangeRateQuote.quoteCurrency, quote)),
     );
+
   return row ?? null;
 }
 
@@ -61,6 +62,7 @@ function delayedProvider(rate: string, delayMs: number, asOf?: string) {
         setTimeout(() => resolve({ rate, asOf: asOf ?? new Date().toISOString() }), delayMs);
       }),
   );
+
   return mock<ExchangeRateProvider>({ getRate });
 }
 
@@ -82,7 +84,9 @@ async function wait(ms: number) {
 }
 
 const SOFT_STALE_AGE_MS = 400;
+
 const HARD_STALE_AGE_MS = 1_000;
+
 const PROVIDER_DELAY_PAST_TIMEOUT_MS = 500;
 
 describe('ExchangeRateReaderService.getRate - identity and cross-pair derivation', () => {
@@ -201,11 +205,13 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 
   it('hard-stale + provider failure (throw) returns null and fails closed, without touching a stored row', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: HARD_STALE_AGE_MS });
+
     const fiatProvider = mock<ExchangeRateProvider>({
       getRate: vi.fn(async () => {
         throw new Error('vendor unreachable');
       }),
     });
+
     const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
 
     expect(await reader.getRate('EUR', 'USD')).toBeNull();
@@ -257,6 +263,7 @@ describe('ExchangeRateReaderService.getRate - single-flight', () => {
 
   it('a settled in-flight call is removed from the single-flight map so a later call fetches again', async () => {
     const fiatProvider = delayedProvider('1.200000000000000000', 5);
+
     const reader = new ExchangeRateReaderService(
       baseDeps({ fiatProvider, freshTtlMs: 0, hardMaxAgeMs: 50 }),
     );

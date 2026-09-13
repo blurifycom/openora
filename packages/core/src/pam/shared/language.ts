@@ -14,6 +14,7 @@ export function assertSupportedLanguage(language: string, platformConfig?: Platf
   }
 
   const supportedLanguages = platformConfig?.supportedLanguages;
+
   if (
     supportedLanguages &&
     supportedLanguages.length > 0 &&

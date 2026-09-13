@@ -7,6 +7,7 @@ import { user } from '../schema/index.js';
 
 function isUsernameCollision(error: unknown): boolean {
   const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
+
   return (
     cause instanceof DatabaseError &&
     cause.code === '23505' &&
@@ -27,8 +28,10 @@ export class DrizzleUserCommands implements UserCommands {
         // sibling modules and cannot import identity's internals to map it.
         throw new ORPCError('CONFLICT', { message: 'Username is already in use' });
       }
+
       throw error;
     }
+
     return { success: true };
   }
 }

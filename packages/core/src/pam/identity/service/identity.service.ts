@@ -78,12 +78,15 @@ import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challe
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
+
   for (const [key, value] of Object.entries(nodeHeaders)) {
     if (value === undefined) {
       continue;
     }
+
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
+
   return headers;
 }
 
@@ -113,6 +116,7 @@ function toUser(u: BetterAuthUser) {
     createdAt: toIso(u.createdAt),
     updatedAt: toIso(u.updatedAt),
   };
+
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
@@ -124,14 +128,17 @@ function makeLoginRateLimitKey(email: string): `login:${string}` {
 // otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   const cookieHeader = headers.get('cookie');
+
   if (!cookieHeader) {
     return undefined;
   }
+
   for (const [name, value] of parseCookies(cookieHeader)) {
     if (name.endsWith('.two_factor')) {
       return value;
     }
   }
+
   return undefined;
 }
 
@@ -141,6 +148,7 @@ function requestCookieHeader(res: globalThis.Response): string {
   return (res.headers.getSetCookie?.() ?? [])
     .map((cookie) => {
       const [pair = ''] = cookie.split(';');
+
       return pair.trim();
     })
     .filter((pair) => pair.length > 0)
@@ -149,14 +157,17 @@ function requestCookieHeader(res: globalThis.Response): string {
 
 function hasTrustDeviceCookie(headers: Headers): boolean {
   const cookieHeader = headers.get('cookie');
+
   if (!cookieHeader) {
     return false;
   }
+
   for (const [name] of parseCookies(cookieHeader)) {
     if (name.endsWith('.trust_device')) {
       return true;
     }
   }
+
   return false;
 }
 
@@ -164,22 +175,28 @@ function hasTrustDeviceCookie(headers: Headers): boolean {
 // signed, percent-encoded values better-auth re-verifies exactly as the browser sent them.
 function withoutTrustDeviceCookie(headers: Headers): Headers {
   const cookieHeader = headers.get('cookie');
+
   if (!cookieHeader) {
     return headers;
   }
+
   const kept = cookieHeader
     .split(';')
     .map((pair) => pair.trim())
     .filter((pair) => {
       const [name = ''] = pair.split('=');
+
       return !name.endsWith('.trust_device');
     });
+
   const next = new Headers(headers);
+
   if (kept.length === 0) {
     next.delete('cookie');
   } else {
     next.set('cookie', kept.join('; '));
   }
+
   return next;
 }
 
@@ -221,6 +238,7 @@ type ExtendedAuthApi = {
 const SUCCESS = { success: true as const };
 
 export const UserNotFoundError = makeNotFoundError('User');
+
 export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
 
 const BetterAuthErrorBodySchema = z.object({
@@ -243,24 +261,30 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   if (res.ok) {
     return;
   }
+
   const code =
     res.status === 401 ? 'UNAUTHORIZED' : res.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST';
+
   if ((code === 'BAD_REQUEST' || code === 'FORBIDDEN') && opts?.genericMessage) {
     throw new ORPCError(code === 'FORBIDDEN' ? 'BAD_REQUEST' : code, {
       message: opts.genericMessage,
     });
   }
+
   let message = `Request failed (${res.status})`;
   let betterAuthCode: string | undefined;
   const body = BetterAuthErrorBodySchema.safeParse(await res.json().catch(() => null));
+
   if (body.success) {
     if (body.data.message) {
       message = body.data.message;
     }
+
     if (body.data.code) {
       betterAuthCode = body.data.code;
     }
   }
+
   throw new ORPCError(code, {
     message,
     ...(betterAuthCode ? { data: { code: betterAuthCode } } : {}),
@@ -268,7 +292,9 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
 }
 
 const MINUTE_MS = 60 * 1000;
+
 export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
+
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
 // token/session), NOT IP. The lockout above is a per-account credential-failure
 // counter; these bound raw request volume on each brute-force surface. An overlay
@@ -277,22 +303,29 @@ export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // unthrottled login/2fa/reset window is worse than a transient 429. The volume
 // throttles (register/resend/etc.) keep the default fail-open.
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
+
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+
 // Keyed on the caller, not the handle: the abuse shape here is enumerating many
 // usernames from one client, not probing one username repeatedly.
 const USERNAME_AVAILABILITY_RATE_LIMIT = { limit: 30, windowMs: MINUTE_MS };
+
 const PASSWORD_RESET_REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
+
 const PASSWORD_RESET_RATE_LIMIT = {
   limit: 5,
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+
 const PASSWORD_RESET_VERIFY_RATE_LIMIT = {
   limit: 5,
   windowMs: 5 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+
 const VERIFY_2FA_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
+
 // Fails closed with the verify budget below: better-auth issues a fresh code (and a fresh
 // 3-attempt counter) per resend, so an unbounded resend loop is an unbounded guess budget.
 const EMAIL_VERIFICATION_RATE_LIMIT = {
@@ -300,6 +333,7 @@ const EMAIL_VERIFICATION_RATE_LIMIT = {
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+
 // Fails closed like the other secret-guessing budgets: the emailed code is six digits,
 // so an unthrottled window is a brute-force window, not a degraded-UX window.
 const VERIFY_EMAIL_RATE_LIMIT = {
@@ -307,8 +341,11 @@ const VERIFY_EMAIL_RATE_LIMIT = {
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
+
 // Fails closed: every call spends real money on an `sms` enrolment and fills a mailbox
 // on an `email` one, and better-auth issues a fresh code per send, so an unbounded
 // resend loop is both a toll-fraud channel and an unbounded guess budget.
@@ -317,6 +354,7 @@ const SEND_2FA_OTP_RATE_LIMIT = {
   windowMs: 5 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+
 const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FakeLoginShadow = {
@@ -332,6 +370,7 @@ function loginShadowKey(email: string): string {
 }
 
 const loginShadowLogger = createLogger('login-shadow');
+
 const identityLogger = createLogger('identity');
 
 function hasErrorCode(error: unknown, code: string) {
@@ -340,6 +379,7 @@ function hasErrorCode(error: unknown, code: string) {
   }
 
   const data = error.data;
+
   return typeof data === 'object' && data !== null && 'code' in data && data.code === code;
 }
 
@@ -355,6 +395,7 @@ function computeLockoutState({
   nowMs: number;
 }) {
   const isLocking = attempts >= maxAttempts;
+
   return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
 }
 
@@ -450,10 +491,13 @@ export class IdentityService {
             dispatchOtpMail: async ({ to, template }) => {
               const idempotencyKey = `otp:${template.key}:${randomUUID()}`;
               const recipient = await this.findUserByEmail(to);
+
               if (recipient) {
                 await mailDispatch.toUser({ userId: recipient.id, template, idempotencyKey });
+
                 return;
               }
+
               await mailDispatch.toAddress({ email: to, template, idempotencyKey });
             },
           }
@@ -469,12 +513,14 @@ export class IdentityService {
       onExistingUserSignUp: async (existing) => {
         const key = existing.email.toLowerCase();
         this.existingAccountSignUps.add(key);
+
         try {
           const response = await this.api.requestPasswordResetEmailOTP({
             body: { email: existing.email },
             headers: new Headers(),
             asResponse: true,
           });
+
           await ensureOk(response);
         } finally {
           this.existingAccountSignUps.delete(key);
@@ -501,6 +547,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.email, email.toLowerCase()))
       .limit(1);
+
     return row;
   }
 
@@ -512,6 +559,7 @@ export class IdentityService {
 
   private forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
     const cookies = authResponse.headers.getSetCookie?.() ?? [];
+
     for (const cookie of cookies) {
       resHeaders.append('set-cookie', cookie);
     }
@@ -519,14 +567,17 @@ export class IdentityService {
 
   private async currentUserId(headers: Headers) {
     const session = await this.auth.api.getSession({ headers });
+
     return session?.user?.id ?? null;
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
     const controls = await getSecurityControls(this.drizzle, userId);
+
     if (!controls) {
       throw new UserNotFoundError(userId);
     }
+
     return controls;
   }
 
@@ -567,10 +618,12 @@ export class IdentityService {
     const meta = { ip, userAgent };
     const registration = this.platformConfig?.registration;
     const provisioning = this.playerProvisioning;
+
     if (!registration || !provisioning) {
       this.emitRegistrationFailed('registration_disabled', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
+
     // `assertRateLimit` throws and is shared by a dozen call sites, so the emit wraps it
     // here rather than moving into it.
     try {
@@ -584,11 +637,14 @@ export class IdentityService {
       this.emitRegistrationFailed('rate_limited', input, meta);
       throw err;
     }
+
     if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
+
     const headers = nodeHeadersToHeaders(reqHeaders);
+
     const authResponse = await this.api.signUpEmail({
       body: {
         email: input.email,
@@ -599,6 +655,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
+
     if (!authResponse.ok) {
       // The `lower(username)` unique index is the only arbiter - a pre-flight check
       // could not close the race anyway, so the taken handle is read off the failure.
@@ -606,24 +663,30 @@ export class IdentityService {
         this.emitRegistrationFailed('username_taken', input, meta);
         throw new UsernameConflictError();
       }
+
       // `ensureOk` always throws on a non-ok response, so emitting first needs no catch.
       this.emitRegistrationFailed('error', input, meta);
       await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
     }
+
     const body = (await authResponse.json()) as { user: BetterAuthUser };
+
     // A known address gets an indistinguishable success response (and a reset mail)
     // rather than a new account, so only a genuinely new user is provisioned.
     if ((await this.findUserIdByEmail(input.email)) !== body.user.id) {
       // The known-address branch: no account was created, so the attempt failed even
       // though the caller is told it succeeded. Only the audit trail says so.
       this.emitRegistrationFailed('email_already_registered', input, meta);
+
       return { status: 'check-email' as const };
     }
+
     await this.drizzle.db
       .update(user)
       .set({ passwordMeetsPolicy: true })
       .where(eq(user.id, body.user.id));
     let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
+
     try {
       consent = await this.recordRegistrationConsent(
         provisioning,
@@ -635,6 +698,7 @@ export class IdentityService {
       this.emitRegistrationFailed('error', input, meta);
       throw err;
     }
+
     const { playerId, consentStored } = consent;
     // After the consent write, which is what materialises the player row the zone lands on.
     // No session yet, but the browser is here now and a first login may be days away.
@@ -654,6 +718,7 @@ export class IdentityService {
       ip,
       userAgent,
     });
+
     // Sent here rather than by better-auth's sendOnSignUp hook: that hook also fires on
     // the synthetic duplicate-email response, mailing a live code to an address whose
     // owner never asked for it - and `verifyEmail` signs that code's bearer in.
@@ -664,12 +729,14 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
+
     if (!otpResponse.ok) {
       identityLogger.error(
         { userId: body.user.id, status: otpResponse.status },
         'verification code could not be sent - player must request a new one',
       );
     }
+
     return { status: 'check-email' as const };
   }
 
@@ -679,6 +746,7 @@ export class IdentityService {
       .from(user)
       .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
       .limit(1);
+
     return row?.id ?? null;
   }
 
@@ -688,6 +756,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.email, email.toLowerCase()))
       .limit(1);
+
     return row?.id ?? null;
   }
 
@@ -704,6 +773,7 @@ export class IdentityService {
   ) {
     const now = new Date();
     let outcome: Awaited<ReturnType<PlayerProvisioning['createForRegistration']>>;
+
     try {
       outcome = await provisioning.createForRegistration({
         userId,
@@ -721,6 +791,7 @@ export class IdentityService {
       await this.drizzle.db.delete(user).where(eq(user.id, userId));
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Registration is unavailable' });
     }
+
     if (!outcome.created) {
       // A player row already existed, so this consent capture was discarded. Never
       // silent: the acceptance evidence is a compliance record.
@@ -729,6 +800,7 @@ export class IdentityService {
         'registration consent not stored - player row already existed',
       );
     }
+
     return { playerId: outcome.playerId ?? null, consentStored: outcome.created };
   }
 
@@ -739,6 +811,7 @@ export class IdentityService {
       `check-username:${ip ?? 'unknown'}`,
       USERNAME_AVAILABILITY_RATE_LIMIT,
     );
+
     return { available: !(await this.findUserIdByUsername(username)) };
   }
 
@@ -763,6 +836,7 @@ export class IdentityService {
     await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
+
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate
     // (indexed email lookup). Read unconditionally - the RG gate runs even when lockout
     // is disabled.
@@ -781,6 +855,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.email, email))
       .limit(1);
+
     let existingUser:
       | Pick<
           typeof user.$inferSelect,
@@ -801,10 +876,12 @@ export class IdentityService {
     const lockoutEnabled = configLockoutEnabled && !(isAdmin && bypassForAdmins);
 
     const nowMs = Date.now();
+
     if (lockoutEnabled && existingUser?.lockoutUntil) {
       if (new Date(existingUser.lockoutUntil) > new Date(nowMs)) {
         throw createAccountLockedError(new Date(existingUser.lockoutUntil));
       }
+
       // Lock window elapsed: clear it so the next failure starts from a fresh budget
       // instead of one more wrong password immediately re-locking the account.
       await this.clearLockout(existingUser.id);
@@ -828,10 +905,13 @@ export class IdentityService {
     }
 
     let fakeLoginShadow: FakeLoginShadow | undefined;
+
     if (lockoutEnabled && !existingUser) {
       fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
+
       if (fakeLoginShadow?.lastFailedLoginAt) {
         const lastFailedLoginAt = new Date(fakeLoginShadow.lastFailedLoginAt);
+
         if (hasFailedLoginWindowExpired(lastFailedLoginAt, null, nowMs)) {
           fakeLoginShadow = {
             failedAttempts: 0,
@@ -842,10 +922,12 @@ export class IdentityService {
           };
         }
       }
+
       if (fakeLoginShadow?.lockoutUntil) {
         if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
           throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
         }
+
         fakeLoginShadow = { ...fakeLoginShadow, failedAttempts: 0, lockoutUntil: null };
       }
     }
@@ -854,8 +936,10 @@ export class IdentityService {
     // one. The revocable half of a trusted device is the row this module keeps, so a login
     // presenting the cookie without a live row has to fall back to the full challenge.
     let signInHeaders = headers;
+
     if (existingUser && this.trustedDevices && hasTrustDeviceCookie(headers)) {
       const trusted = await this.trustedDevices.isTrusted(existingUser.id, userAgent);
+
       if (!trusted) {
         signInHeaders = withoutTrustDeviceCookie(headers);
       }
@@ -867,6 +951,7 @@ export class IdentityService {
         headers: signInHeaders,
         asResponse: true,
       });
+
       await ensureOk(authResponse);
 
       // RG and backoffice blocks, applied only AFTER credentials verify so a pre-auth
@@ -919,11 +1004,14 @@ export class IdentityService {
         userAgent,
       });
       await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
+
       const sessionDurationSeconds =
         this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
+
       const expiresAt = body.session?.expiresAt
         ? toIso(body.session.expiresAt)
         : new Date(Date.now() + sessionDurationSeconds * 1000).toISOString();
+
       return {
         user: toUser(body.user),
         session: { token: body.token, expiresAt },
@@ -946,19 +1034,23 @@ export class IdentityService {
       ) {
         throw error;
       }
+
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
       const isAccountLocked =
         error instanceof ORPCError &&
         error.code === 'UNAUTHORIZED' &&
         hasErrorCode(error, 'ACCOUNT_LOCKED');
+
       const isCredentialFailure =
         error instanceof ORPCError && error.code === 'UNAUTHORIZED' && !isAccountLocked;
 
       let attemptsRemaining: number | undefined;
+
       if (lockoutEnabled && existingUser && isCredentialFailure) {
         const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
         const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+
         // Atomic increment: concurrent failures can't each read a stale count and slip past
         // the threshold (the read-modify-write this replaces was bypassable under load).
         const [row] = await this.drizzle.db
@@ -969,8 +1061,10 @@ export class IdentityService {
           })
           .where(eq(user.id, existingUser.id))
           .returning({ failedLoginAttempts: user.failedLoginAttempts });
+
         const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
         attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+
         const { isLocking } = computeLockoutState({
           attempts: newAttempts,
           maxAttempts,
@@ -980,6 +1074,7 @@ export class IdentityService {
 
         if (isLocking) {
           const nowMs = Date.now();
+
           // Escalate the lockout duration for repeat offenders inside the 24h window.
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: existingUser.lockoutCount ?? 0,
@@ -988,7 +1083,9 @@ export class IdentityService {
             nowMs,
             fallbackDurationMs,
           });
+
           const lockoutUntil = new Date(nowMs + durationMs);
+
           const [lockoutRow] = await this.drizzle.db
             .update(user)
             .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
@@ -1004,9 +1101,11 @@ export class IdentityService {
               .from(user)
               .where(eq(user.id, existingUser.id))
               .limit(1);
+
             if (current?.lockoutUntil) {
               throw createAccountLockedError(current.lockoutUntil);
             }
+
             throw new ORPCError('INTERNAL_SERVER_ERROR', {
               message: 'Unable to establish account lockout.',
             });
@@ -1030,6 +1129,7 @@ export class IdentityService {
         const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
         const newAttempts = (fakeLoginShadow?.failedAttempts ?? 0) + 1;
         attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+
         const { isLocking } = computeLockoutState({
           attempts: newAttempts,
           maxAttempts,
@@ -1039,6 +1139,7 @@ export class IdentityService {
 
         if (isLocking) {
           const nowMs = Date.now();
+
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
             lastFailedLoginAt: fakeLoginShadow?.lastFailedLoginAt
@@ -1050,6 +1151,7 @@ export class IdentityService {
             nowMs,
             fallbackDurationMs,
           });
+
           const lockoutUntil = new Date(nowMs + durationMs);
           await this.loginShadowSet(loginShadowKey(email), {
             failedAttempts: newAttempts,
@@ -1081,19 +1183,23 @@ export class IdentityService {
         userAgent,
         ...(attemptsRemaining !== undefined ? { attemptsRemaining } : {}),
       });
+
       if (isCredentialFailure && error instanceof ORPCError && attemptsRemaining !== undefined) {
         const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+
         const security = makeLoginSecurityState({
           failedLoginAttempts:
             attemptsRemaining === undefined ? 0 : maxAttempts - attemptsRemaining,
           maxAttempts,
           lockoutUntil: null,
         });
+
         throw new ORPCError('UNAUTHORIZED', {
           message: error.message,
           data: { ...error.data, ...security },
         });
       }
+
       throw error;
     }
   }
@@ -1122,10 +1228,12 @@ export class IdentityService {
     if (!this.cache) {
       return undefined;
     }
+
     try {
       return await this.cache.get<FakeLoginShadow>(key);
     } catch (err) {
       loginShadowLogger.warn({ key, err }, 'login shadow cache read failed');
+
       return undefined;
     }
   }
@@ -1134,6 +1242,7 @@ export class IdentityService {
     if (!this.cache) {
       return;
     }
+
     try {
       await this.cache.set(key, value, { ttlMs: FAKE_LOGIN_SHADOW_TTL_MS });
     } catch (err) {
@@ -1149,15 +1258,20 @@ export class IdentityService {
     if (!this.cache) {
       return false;
     }
+
     const key = this.adminPasswordResetMarkerKey(email);
+
     try {
       const isAdmin = (await this.cache.get<boolean>(key)) === true;
+
       if (isAdmin) {
         await this.cache.delete(key);
       }
+
       return isAdmin;
     } catch (err) {
       identityLogger.warn({ err }, 'admin password reset marker cache read failed');
+
       return false;
     }
   }
@@ -1171,6 +1285,7 @@ export class IdentityService {
         .limit(1),
       new UserNotFoundError(userId),
     );
+
     const email = existingUser.email.toLowerCase();
 
     try {
@@ -1242,6 +1357,7 @@ export class IdentityService {
     const userId = (session?.user as BetterAuthUser | undefined)?.id;
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     this.forwardCookies(authResponse, resHeaders);
+
     if (userId) {
       this.events.emit('identity.user.logout', {
         userId,
@@ -1250,15 +1366,18 @@ export class IdentityService {
         userAgent,
       });
     }
+
     return SUCCESS;
   }
 
   async me(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
+
     if (!session?.user) {
       return null;
     }
+
     return toUser(session.user as BetterAuthUser);
   }
 
@@ -1288,9 +1407,11 @@ export class IdentityService {
       `enable2fa:${userId ?? 'anonymous'}`,
       TWO_FACTOR_PASSWORD_RATE_LIMIT,
     );
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
+
     await this.assertMethodAvailable(userId, input.method);
 
     // There is no switch-in-place: a player changes method by disabling and enrolling
@@ -1310,11 +1431,13 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
+
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { totpURI: string; backupCodes: string[] };
 
     await this.setTwoFactorMethod(userId, input.method);
+
     if (input.method === 'app') {
       return { totpUri: body.totpURI, backupCodes: body.backupCodes };
     }
@@ -1323,6 +1446,7 @@ export class IdentityService {
     // the send belongs to enrolment rather than a separate call the client must know
     // to make. "Resend code" then replays it through sendTwoFactorOtp.
     const masked = await this.sendOtpForCurrentMethod(userId, headers, resHeaders);
+
     return { backupCodes: body.backupCodes, maskedDestination: masked };
   }
 
@@ -1335,16 +1459,20 @@ export class IdentityService {
   async sendTwoFactorOtp(reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const pendingCookie = twoFactorPendingCookieValue(headers);
+
     const userId =
       (await this.currentUserId(headers)) ??
       (await this.twoFactorLockout?.resolvePendingUserId(pendingCookie));
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
+
     await assertRateLimit(this.limiter, `send2faOtp:${userId}`, SEND_2FA_OTP_RATE_LIMIT);
     // An account inside a lockout window cannot spend a code, so minting one only
     // hands out fresh guesses - and, on `sms`, bills the operator for them.
     await this.twoFactorLockout?.assertNotLocked(userId);
+
     return { maskedDestination: await this.sendOtpForCurrentMethod(userId, headers, resHeaders) };
   }
 
@@ -1352,9 +1480,11 @@ export class IdentityService {
   async twoFactorStatus(reqHeaders: NodeHeaders): Promise<TwoFactorStatus> {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
+
     const [row] = await this.drizzle.db
       .select({
         email: user.email,
@@ -1366,10 +1496,13 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (!row) {
       throw new UserNotFoundError(userId);
     }
+
     const enabled = row.twoFactorEnabled ?? false;
+
     return {
       enabled,
       // The column outlives an abandoned enrolment, so an account that never cleared
@@ -1392,6 +1525,7 @@ export class IdentityService {
     if (method === 'app') {
       return;
     }
+
     const [row] = await this.drizzle.db
       .select({
         emailVerified: user.emailVerified,
@@ -1401,6 +1535,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     // A code can only guard the account if the address it goes to is one the account
     // has proven it holds. `registration.requireEmailVerification` is off by default,
     // so an unverified or mistyped address would otherwise enrol and lock the player
@@ -1410,6 +1545,7 @@ export class IdentityService {
         message: 'Verify your email address before using email for two-factor authentication',
       });
     }
+
     if (method === 'sms' && (!row?.phoneNumber || !row.phoneVerified)) {
       throw new ORPCError('BAD_REQUEST', {
         message: 'Add and verify a phone number before using SMS for two-factor authentication',
@@ -1427,6 +1563,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     return row?.twoFactorMethod ?? 'app';
   }
 
@@ -1436,6 +1573,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     return row?.twoFactorEnabled ?? false;
   }
 
@@ -1460,11 +1598,13 @@ export class IdentityService {
     resHeaders: Headers,
   ): Promise<string> {
     const destination = await this.twoFactorDelivery.describeDestination(userId);
+
     if (!destination) {
       throw new ORPCError('BAD_REQUEST', {
         message: 'This account does not receive two-factor codes by email or SMS',
       });
     }
+
     const res = await this.api.sendTwoFactorOTP({ body: {}, headers, asResponse: true });
     await ensureOk(res);
     // A 200 here means the code was minted, not that it left the building: the send
@@ -1472,13 +1612,16 @@ export class IdentityService {
     // on its way when the transport just failed strands them on a screen waiting for
     // something that is never coming.
     const failure = this.twoFactorDelivery.takeFailure(userId);
+
     if (failure) {
       throw new ORPCError('SERVICE_UNAVAILABLE', {
         message: 'Could not send your verification code. Please try again.',
         cause: failure,
       });
     }
+
     this.forwardCookies(res, resHeaders);
+
     return destination.masked;
   }
 
@@ -1492,6 +1635,7 @@ export class IdentityService {
 
     const challengedUserId =
       sessionUserId ?? (await this.twoFactorLockout?.resolvePendingUserId(pendingCookie));
+
     if (challengedUserId) {
       await this.twoFactorLockout?.assertNotLocked(challengedUserId);
     }
@@ -1501,21 +1645,28 @@ export class IdentityService {
     // `otp` is a real factor and does, the same as a live authenticator code.
     const trustDevice =
       input.trustDevice && input.method !== 'backup_code' && this.trustedDevices !== undefined;
+
     const body = { code: input.code, trustDevice };
     const res = await this.verifyChallengeCode(input.method, body, headers);
+
     if (!res.ok && challengedUserId) {
       await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
     }
+
     await ensureOk(res);
+
     if (challengedUserId) {
       await this.twoFactorLockout?.reset(challengedUserId);
     }
+
     this.forwardCookies(res, resHeaders);
     // better-auth rotates the session on a successful challenge, so the request cookie is
     // already dead here - the actor is the identity resolved before the call.
     const userId = challengedUserId ?? (await this.currentUserId(headers));
+
     if (userId) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
       // A challenge answered from a live session is the enrolment step: better-auth only
       // flips twoFactorEnabled once the first code clears. Every later verification is a
       // sign-in, which carries the pending cookie instead and must not re-announce setup.
@@ -1528,6 +1679,7 @@ export class IdentityService {
           userAgent,
         });
       }
+
       this.events.emit('identity.2fa.verified', {
         userId,
         playerId,
@@ -1536,6 +1688,7 @@ export class IdentityService {
         ip,
         userAgent,
       });
+
       if (!sessionUserId) {
         this.events.emit('identity.authentication.succeeded', {
           userId,
@@ -1545,11 +1698,14 @@ export class IdentityService {
           userAgent,
         });
       }
+
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
       }
+
       await captureTimezone(this.playerProvisioning, userId, input.timezone);
     }
+
     return SUCCESS;
   }
 
@@ -1567,9 +1723,11 @@ export class IdentityService {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
+
     await assertRateLimit(this.limiter, `trustDevice:${userId}`, TWO_FACTOR_PASSWORD_RATE_LIMIT);
 
     const [account] = await this.drizzle.db
@@ -1577,6 +1735,7 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (!account) {
       throw new UserNotFoundError(userId);
     }
@@ -1586,8 +1745,10 @@ export class IdentityService {
       headers: withoutTrustDeviceCookie(headers),
       asResponse: true,
     });
+
     await ensureOk(signIn);
     const signInBody = (await signIn.json()) as { twoFactorRedirect?: boolean };
+
     if (signInBody.twoFactorRedirect !== true) {
       throw new ORPCError('BAD_REQUEST', {
         message: 'Two-factor authentication is not enabled for this account',
@@ -1607,19 +1768,23 @@ export class IdentityService {
     // letting the call through would only spend its lockout budget on a credential it
     // is impossible to present. Refusing says so instead of failing as a wrong code.
     const challengeMethod = await resolveChallengeMethod(this.drizzle, userId);
+
     if (challengeMethod !== 'totp') {
       throw new ORPCError('CONFLICT', {
         message: 'Trusting this device requires an authenticator app.',
       });
     }
+
     const verified = await this.verifyChallengeCode(
       challengeMethod,
       { code: input.code, trustDevice: true },
       challengeHeaders,
     );
+
     if (!verified.ok) {
       await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
     }
+
     await ensureOk(verified);
     await this.twoFactorLockout?.reset(userId);
 
@@ -1644,6 +1809,7 @@ export class IdentityService {
       ip,
       userAgent,
     });
+
     return SUCCESS;
   }
 
@@ -1660,14 +1826,17 @@ export class IdentityService {
     code: string,
   ): Promise<void> {
     await this.twoFactorLockout?.assertNotLocked(userId);
+
     const res = await this.verifyChallengeCode(
       await resolveChallengeMethod(this.drizzle, userId),
       { code, trustDevice: false },
       headers,
     );
+
     if (!res.ok) {
       await this.twoFactorLockout?.recordFailure(userId, meta);
     }
+
     await ensureOk(res, { genericMessage: 'Invalid authenticator code' });
     await this.twoFactorLockout?.reset(userId);
   }
@@ -1685,9 +1854,11 @@ export class IdentityService {
       `backupCodes:${userId ?? 'anonymous'}`,
       TWO_FACTOR_PASSWORD_RATE_LIMIT,
     );
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
+
     await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
 
     const res = await this.api.generateBackupCodes({
@@ -1695,6 +1866,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
+
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { backupCodes: string[] };
@@ -1709,6 +1881,7 @@ export class IdentityService {
       ip,
       userAgent,
     });
+
     return { backupCodes: body.backupCodes };
   }
 
@@ -1721,9 +1894,11 @@ export class IdentityService {
       `disable2fa:${userId ?? 'anonymous'}`,
       TWO_FACTOR_PASSWORD_RATE_LIMIT,
     );
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
+
     await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
 
     // Read before the teardown clears it, so the audit trail records which method the
@@ -1735,6 +1910,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
+
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     await this.setTwoFactorMethod(userId, null);
@@ -1751,6 +1927,7 @@ export class IdentityService {
       ip,
       userAgent,
     });
+
     return SUCCESS;
   }
 
@@ -1761,6 +1938,7 @@ export class IdentityService {
       makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
+
     // Always returns success - never reveal whether the email exists. The reset OTP
     // (if any) is enqueued through better-auth's emailOTP hook -> MAIL_DISPATCH. Any
     // underlying error is swallowed for the same anti-enumeration reason.
@@ -1773,6 +1951,7 @@ export class IdentityService {
     } catch {
       // intentionally ignored
     }
+
     return SUCCESS;
   }
 
@@ -1783,12 +1962,15 @@ export class IdentityService {
       makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_VERIFY, email),
       PASSWORD_RESET_VERIFY_RATE_LIMIT,
     );
+
     const res = await this.api.checkVerificationOTP({
       body: { email, type: 'forget-password', otp: input.otp },
       headers: new Headers(),
       asResponse: true,
     });
+
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+
     return SUCCESS;
   }
 
@@ -1799,11 +1981,13 @@ export class IdentityService {
       makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET, email),
       PASSWORD_RESET_RATE_LIMIT,
     );
+
     const res = await this.api.resetPasswordEmailOTP({
       body: { email, otp: input.otp, password: input.newPassword },
       headers: new Headers(),
       asResponse: true,
     });
+
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
 
     // better-auth's resetPasswordEmailOTP internally invokes the onPasswordReset hook
@@ -1821,27 +2005,33 @@ export class IdentityService {
       `change-password:${userId ?? 'anonymous'}`,
       CHANGE_PASSWORD_RATE_LIMIT,
     );
+
     const res = await this.api.changePassword({
       body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
       headers,
       asResponse: true,
     });
+
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
+
     if (userId) {
       await this.drizzle.db
         .update(user)
         .set({ passwordMeetsPolicy: true })
         .where(eq(user.id, userId));
     }
+
     return SUCCESS;
   }
 
   async getSecurityControls(reqHeaders: NodeHeaders): Promise<SecurityControls> {
     const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+
     return this.securityControlsFor(userId);
   }
 
@@ -1851,14 +2041,17 @@ export class IdentityService {
   ): Promise<SecurityControls> {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
+
     const [caller] = await this.drizzle.db
       .select({ role: user.role })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
+
     if (caller?.role !== 'player') {
       // A service-level denial still owes the audit log the same signal AdminGuard emits,
       // since this check rejects before any shared guard runs (docs/standards/audit.md).
@@ -1875,15 +2068,19 @@ export class IdentityService {
         message: 'Only players can set this preference.',
       });
     }
+
     const before = await this.securityControlsFor(userId);
+
     if (input.enabled && !before.emailVerified) {
       throw new ORPCError('UNPROCESSABLE_CONTENT', {
         message: 'Verify your email before enabling security alerts.',
       });
     }
+
     if (before.loginWithdrawalAlertsEnabled === input.enabled) {
       return before;
     }
+
     await this.drizzle.db
       .update(user)
       .set({ loginWithdrawalAlertsEnabled: input.enabled })
@@ -1896,6 +2093,7 @@ export class IdentityService {
       ip,
       userAgent,
     });
+
     return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
   }
 
@@ -1910,14 +2108,17 @@ export class IdentityService {
     const { ip } = extractClientMeta(reqHeaders);
     const email = input.email.toLowerCase();
     await assertRateLimit(this.limiter, `email-verify:${email}`, EMAIL_VERIFICATION_RATE_LIMIT);
+
     if (ip) {
       await assertRateLimit(this.limiter, `email-verify-ip:${ip}`, EMAIL_VERIFICATION_RATE_LIMIT);
     }
+
     const [row] = await this.drizzle.db
       .select({ emailVerified: user.emailVerified })
       .from(user)
       .where(eq(user.email, email))
       .limit(1);
+
     if (row && !row.emailVerified) {
       await this.api.sendVerificationOTP({
         body: { email, type: 'email-verification' },
@@ -1925,6 +2126,7 @@ export class IdentityService {
         asResponse: true,
       });
     }
+
     return SUCCESS;
   }
 
@@ -1942,16 +2144,19 @@ export class IdentityService {
     // Keyed on the address under attack (six digits are guessable) and on the caller, so
     // one client can neither grind a single account nor sweep many.
     await assertRateLimit(this.limiter, `verify-email:${email}`, VERIFY_EMAIL_RATE_LIMIT);
+
     // Only when the caller's IP is actually known: an `unknown` bucket would be shared by
     // every anonymous caller, letting one client stall everyone else's sign-up.
     if (ip) {
       await assertRateLimit(this.limiter, `verify-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
+
     const res = await this.api.verifyEmailOTP({
       body: { email, otp: input.otp },
       headers,
       asResponse: true,
     });
+
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
     const body = (await res.json()) as { token?: string | null; user: BetterAuthUser };
 
@@ -1971,9 +2176,11 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, body.user.id))
       .limit(1);
+
     if (account) {
       await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
+
     // Before the 2FA branch below: that path ends the session it just minted, but the zone
     // the browser reported is good either way.
     await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
@@ -1992,12 +2199,14 @@ export class IdentityService {
           .set({ expiresAt: new Date() })
           .where(eq(session.token, body.token));
       }
+
       return { twoFactorRedirect: true as const };
     }
 
     if (!body.token) {
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Verification did not sign you in' });
     }
+
     this.forwardCookies(res, resHeaders);
     await this.drizzle.db
       .update(session)
@@ -2014,6 +2223,7 @@ export class IdentityService {
 
     const sessionDurationSeconds =
       this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
+
     return {
       user: toUser(body.user),
       session: {
@@ -2027,13 +2237,16 @@ export class IdentityService {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     const newEmail = input.newEmail.toLowerCase();
+
     const res = await this.api.changeEmail({
       body: { newEmail: input.newEmail },
       headers,
       asResponse: true,
     });
+
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
+
     if (userId) {
       // better-auth's `/change-email` returns the same `{ status: true }` shape for the
       // anti-enumeration no-op (target already owned by someone else) and for a deferred
@@ -2052,6 +2265,7 @@ export class IdentityService {
           ),
         )
         .returning({ id: user.id });
+
       if (disabled) {
         const { ip, userAgent } = extractClientMeta(reqHeaders);
         this.events.emit('identity.security.login_withdrawal_alerts.updated', {
@@ -2064,6 +2278,7 @@ export class IdentityService {
         });
       }
     }
+
     return SUCCESS;
   }
 
@@ -2071,21 +2286,25 @@ export class IdentityService {
     if (input.language !== undefined) {
       assertSupportedLanguage(input.language, this.platformConfig);
     }
+
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
     // values before the SQL SET clause, so omitted fields are safely no-ops here.
     const { name, image, theme, language } = input;
+
     const res = await this.api.updateUser({
       body: { name, image, theme, language },
       headers,
       asResponse: true,
     });
+
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
+
     if (current) {
       this.events.emit('identity.profile.updated', {
         userId: current.id,
@@ -2094,9 +2313,11 @@ export class IdentityService {
         userAgent,
       });
     }
+
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');
     }
+
     return { user: toUser(current) };
   }
 }

@@ -36,11 +36,13 @@ async function withEnqueueRetry(enqueue: () => Promise<unknown>): Promise<void> 
   for (let attempt = 0; ; attempt += 1) {
     try {
       await enqueue();
+
       return;
     } catch (err) {
       if (attempt >= ENQUEUE_RETRY_DELAYS_MS.length) {
         throw err;
       }
+
       await new Promise((resolve) => setTimeout(resolve, ENQUEUE_RETRY_DELAYS_MS[attempt]));
     }
   }
@@ -102,13 +104,16 @@ export class MailService {
 
   async deliver(job: MailSendJob, attempt = 1): Promise<void> {
     const resolved = await this.resolveRecipient(job);
+
     if (!resolved) {
       await this.recordRegulatoryOutcome('mail.regulatory_delivery.failed', job, {
         reason: 'no_recipient_email',
         attempt,
       });
+
       return;
     }
+
     const rendered = await this.renderer.render(job.template, resolved.locale, resolved.name);
     await this.sender.send({
       to: resolved.email,
@@ -145,6 +150,7 @@ export class MailService {
     attempt = 1,
   ): Promise<void> {
     let decrypted: MailSendJob;
+
     try {
       decrypted = this.payloadCipher.decrypt(job);
     } catch (decryptErr) {
@@ -161,8 +167,10 @@ export class MailService {
           after: { reason: 'payload_undecryptable', queue: MAIL_SEND_QUEUE, attempt },
         })
         .catch((err) => logger.error({ err }, 'mail regulatory audit write failed'));
+
       return;
     }
+
     await this.onDeliveryExhausted(decrypted, error, attempt);
   }
 
@@ -176,6 +184,7 @@ export class MailService {
     if (!this.audit || !REGULATORY_KEYS.has(job.template.key)) {
       return;
     }
+
     await this.audit
       .record({
         actorType: 'system',
@@ -195,7 +204,9 @@ export class MailService {
     if (job.recipient.kind === 'address') {
       return job.recipient.locale ?? DEFAULT_LOCALE;
     }
+
     const row = await this.directory.get(job.recipient.userId);
+
     return row?.language ?? DEFAULT_LOCALE;
   }
 
@@ -209,14 +220,18 @@ export class MailService {
         name: null,
       };
     }
+
     const row = await this.directory.get(job.recipient.userId);
+
     if (!row?.email) {
       logger.warn(
         { userId: job.recipient.userId, key: job.template.key },
         'mail skipped: no email for user',
       );
+
       return null;
     }
+
     return { email: row.email, locale: row.language ?? DEFAULT_LOCALE, name: row.name };
   }
 }

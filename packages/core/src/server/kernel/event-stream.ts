@@ -29,10 +29,12 @@ export async function* createEventStreamGenerator<T>(
 
   let cleanedUp = false;
   let onAbort = () => {};
+
   const cleanup = () => {
     if (cleanedUp) {
       return;
     }
+
     cleanedUp = true;
     unsubscribe();
     signal?.removeEventListener('abort', onAbort);
@@ -58,7 +60,9 @@ export async function* createEventStreamGenerator<T>(
         });
         continue;
       }
+
       const next = queue.shift();
+
       if (next !== undefined) {
         yield next;
       }

@@ -77,12 +77,14 @@ function makeBalance(overrides: Partial<CustodyBalance> = {}): CustodyBalance {
 function serviceWith(adapter: PaymentAdapter, config = platformConfig()) {
   const paymentProviders = makePaymentProviderRegistry({ adapter });
   const audit = makeAuditWriter();
+
   const service = new CustodySweepService({
     drizzle: db.drizzle,
     paymentProviders,
     audit,
     platformConfig: config,
   });
+
   return { service, audit };
 }
 
@@ -96,6 +98,7 @@ async function sweepRows(userId: string) {
 describe('CustodySweepService (real PG)', () => {
   it('no-ops without touching the database when sweep policy is unconfigured', async () => {
     const listSweepableBalances = vi.fn().mockResolvedValue([makeBalance()]);
+
     const { service } = serviceWith(
       mock<PaymentAdapter>({ listSweepableBalances, sweepToPool: vi.fn() }),
       definePlatformConfig({}),
@@ -113,9 +116,11 @@ describe('CustodySweepService (real PG)', () => {
     await seedAsset();
     const b = makeBalance();
     const listSweepableBalances = vi.fn().mockResolvedValue([b]);
+
     const sweepToPool = vi
       .fn()
       .mockResolvedValue({ externalId: 'vendor-ref-1', poolRef: 'pool-players-1' });
+
     const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }));
 
     const first = await service.runCycle();
@@ -144,6 +149,7 @@ describe('CustodySweepService (real PG)', () => {
       ...config.wallet,
       treasuryRefs: { default: 'treasury-default', 'vendor-b': 'treasury-vendor-b' },
     };
+
     const { service } = serviceWith(
       mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }),
       config,
@@ -189,10 +195,12 @@ describe('CustodySweepService (real PG)', () => {
   it('a swept balance changes no wallet_balance row and creates no wallet_transaction', async () => {
     await seedAsset();
     const b = makeBalance();
+
     const adapter = mock<PaymentAdapter>({
       listSweepableBalances: vi.fn().mockResolvedValue([b]),
       sweepToPool: vi.fn().mockResolvedValue({ externalId: 'vendor-ref-2' }),
     });
+
     const { service } = serviceWith(adapter);
 
     const result = await service.runCycle();
@@ -217,11 +225,14 @@ describe('CustodySweepService (real PG)', () => {
     let releaseFirstCycle!: () => void;
     const claimHeld = new Promise<void>((resolve) => (firstCycleHoldsClaim = resolve));
     const vendorCall = new Promise<void>((resolve) => (releaseFirstCycle = resolve));
+
     const listSweepableBalances = vi.fn(async () => {
       firstCycleHoldsClaim();
       await vendorCall;
+
       return balances;
     });
+
     const sweepToPool = vi.fn().mockResolvedValue({ externalId: randomUUID() });
     const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }));
 
@@ -263,10 +274,12 @@ describe('CustodySweepService (real PG)', () => {
   it('writes one audit entry per swept balance plus one for the cycle', async () => {
     await seedAsset();
     const balances = [makeBalance(), makeBalance(), makeBalance()];
+
     const adapter = mock<PaymentAdapter>({
       listSweepableBalances: vi.fn().mockResolvedValue(balances),
       sweepToPool: vi.fn().mockImplementation(async () => ({ externalId: randomUUID() })),
     });
+
     const { service, audit } = serviceWith(adapter);
 
     const result = await service.runCycle();
@@ -276,6 +289,7 @@ describe('CustodySweepService (real PG)', () => {
       unknown,
       { action: string; after: Record<string, unknown> },
     ][];
+
     const entries = calls.map(([, entry]) => entry);
 
     expect(entries.filter((e) => e.action === 'wallet.custody.sweep')).toHaveLength(3);
@@ -302,10 +316,12 @@ describe('CustodySweepService (real PG)', () => {
 
   it('a throwing adapter fails the run and frees the claim for the next cycle', async () => {
     await seedAsset();
+
     const listSweepableBalances = vi
       .fn()
       .mockRejectedValueOnce(new Error('vendor 503'))
       .mockResolvedValue([]);
+
     const { service } = serviceWith(
       mock<PaymentAdapter>({ listSweepableBalances, sweepToPool: vi.fn() }),
     );
@@ -316,6 +332,7 @@ describe('CustodySweepService (real PG)', () => {
       .select()
       .from(walletJobRun)
       .where(eq(walletJobRun.status, 'failed'));
+
     expect(failed?.finishedAt).not.toBeNull();
 
     // The whole point: a vendor blip must not hold the single live-run slot until the
@@ -332,6 +349,7 @@ describe('CustodySweepService (real PG)', () => {
       startedAt: new Date(Date.now() - 2 * 60_000),
     });
     const listSweepableBalances = vi.fn().mockResolvedValue([]);
+
     const { service } = serviceWith(
       mock<PaymentAdapter>({ listSweepableBalances, sweepToPool: vi.fn() }),
       platformConfig({ staleRunAfterMinutes: 1 }),
@@ -341,10 +359,12 @@ describe('CustodySweepService (real PG)', () => {
 
     expect(result).not.toBeNull();
     expect(result?.runId).not.toBe(staleRunId);
+
     const runs = await db.drizzle.db
       .select()
       .from(walletJobRun)
       .where(eq(walletJobRun.jobName, CUSTODY_SWEEP_JOB_NAME));
+
     const stale = runs.find((r) => r.runId === staleRunId);
     const fresh = runs.find((r) => r.runId === result?.runId);
     expect(stale?.status).toBe('abandoned');

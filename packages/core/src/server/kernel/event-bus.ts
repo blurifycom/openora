@@ -51,6 +51,7 @@ function isKnownEvent(event: string): event is DomainEventName {
 
 function buildEnvelope(event: string, payload: unknown): EventEnvelope {
   const traceId = getCurrentTraceId();
+
   return {
     eventId: crypto.randomUUID(),
     topic: event,
@@ -71,6 +72,7 @@ export function createEventBus(
     if (isKnownEvent(event)) {
       const schema = domainEventSchemas[event] as ZodType<unknown>;
       const result = schema.safeParse(payload);
+
       if (!result.success) {
         // Log loudly but still deliver - a schema lag must not silently drop events.
         logger.error({ event, issues: result.error.issues }, 'event payload failed validation');
@@ -103,6 +105,7 @@ export function createEventBus(
             `for best-effort post-commit delivery.`,
         );
       }
+
       validate(event, payload);
       await outbox.write(tx, buildEnvelope(event, payload));
     },

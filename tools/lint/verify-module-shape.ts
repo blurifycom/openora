@@ -24,18 +24,23 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+
 // Domains fold into @openora/core as subpaths. See ADR-0025.
 const coreSrc = join(repoRoot, 'packages', 'core', 'src');
+
 const engineDirs = new Set(['contracts', 'server', 'react', 'scripts', 'common', 'testing']);
 
 type Check = { label: string; ok: boolean; hint: string };
+
 type Pkg = { exports?: Record<string, unknown> };
 
 const readPkg = (dir: string): Pkg | null => {
   const p = join(dir, 'package.json');
+
   if (!existsSync(p)) {
     return null;
   }
+
   try {
     return JSON.parse(readFileSync(p, 'utf8')) as Pkg;
   } catch {
@@ -51,12 +56,15 @@ const coreExports = (readPkg(join(repoRoot, 'packages', 'core'))?.exports ?? {})
 function checkDomain(dir: string, id: string): Check[] {
   const has = (rel: string) => existsSync(join(dir, rel));
   const keys = Object.keys(coreExports);
+
   const hasContract = keys.some(
     (k) => k === `./${id}/contract` || k.startsWith(`./${id}/contract`),
   );
+
   const hasRuntime = keys.some(
     (k) => k === `./${id}/plugin` || k === `./${id}/server` || k.startsWith(`./${id}/plugins/`),
   );
+
   return [
     {
       label: 'index.ts (slice root)',
@@ -113,6 +121,7 @@ if (failures.length > 0) {
 }
 
 const domains = results.filter((r) => r.kind === 'core/src').map((r) => r.name);
+
 console.log(
   `[PASS] module-shape: ${domains.length} domains match the canonical shape ` +
     `(${domains.join(', ')}).`,

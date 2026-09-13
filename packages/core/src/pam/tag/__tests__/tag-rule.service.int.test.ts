@@ -12,11 +12,13 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
+
   return { svc: new TagRuleService(db.drizzle, events), events };
 }
 
 async function seedTag(key: TagKey) {
   const [row] = await db.drizzle.db.insert(tag).values({ key }).returning();
+
   return row!;
 }
 
@@ -61,6 +63,7 @@ describe('TagRuleService.upsertTagRule (real PG)', () => {
     const { svc } = makeService();
     await seedTag('high_roller');
     const actorId = randomUUID();
+
     const first = await svc.upsertTagRule(
       {
         tagKey: 'high_roller',
@@ -163,6 +166,7 @@ describe('TagRuleService.listTagRules (real PG)', () => {
   it('returns every rule ordered by the tag_key enum position, not alphabetically', async () => {
     const { svc } = makeService();
     const actorId = randomUUID();
+
     for (const tagKey of ['vip', 'high_roller', 'inactive'] as const) {
       await seedTag(tagKey);
       await svc.upsertTagRule(

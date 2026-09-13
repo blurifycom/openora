@@ -52,6 +52,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
 
   async count() {
     const [r] = await this.drizzle.db.select({ n: count() }).from(user);
+
     return Number(r?.n ?? 0);
   }
 
@@ -59,6 +60,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     const db = this.drizzle.db;
     const where = search ? ilike(user.email, `%${search}%`) : undefined;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+
     const USER_SORT_COLS = {
       createdAt: user.createdAt,
       email: user.email,
@@ -67,6 +69,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       isActive: user.isActive,
       lastLockoutAt: user.lastLockoutAt,
     } as const;
+
     const col =
       USER_SORT_COLS[
         sortBy === 'email' ||
@@ -77,6 +80,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
           ? sortBy
           : 'createdAt'
       ];
+
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
@@ -87,11 +91,13 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(user).where(where),
     ]);
+
     return { rows: rows.map(toRow), total: Number(n) };
   }
 
   async get(id: string) {
     const [r] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
+
     return r ? toRow(r) : null;
   }
 
@@ -99,10 +105,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     if (userIds.length === 0) {
       return [];
     }
+
     const rows = await this.drizzle.db
       .select()
       .from(user)
       .where(inArray(user.id, [...userIds]));
+
     return rows.map(toRow);
   }
 
@@ -113,17 +121,23 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     meta?: ClientMeta,
   ) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
+
     if (!existing) {
       return null;
     }
+
     const set: Partial<typeof user.$inferInsert> = {};
+
     if (patch.isActive !== undefined) {
       set.isActive = patch.isActive;
     }
+
     if (patch.role !== undefined) {
       set.role = patch.role;
     }
+
     const [r] = await this.drizzle.db.update(user).set(set).where(eq(user.id, id)).returning();
+
     if (!r) {
       return null;
     }
@@ -133,12 +147,14 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
       const ip = meta?.ip ?? null;
       const userAgent = meta?.userAgent ?? null;
+
       if (patch.isActive) {
         this.events.emit('identity.user.reactivated', { userId: id, actorId, ip, userAgent });
       } else {
         this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
     }
+
     return toRow(r);
   }
 
@@ -146,6 +162,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     if (userIds.length === 0) {
       return [];
     }
+
     const rows = await this.drizzle.db
       .select({
         playerId: player.id,
@@ -162,6 +179,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
       .where(and(inArray(player.userId, [...userIds]), eq(user.role, 'player')));
+
     return rows.map((r) => {
       // The player table stores kycStatus as free text; coerce unknown values to null
       // so the port's KycStatus contract holds without a cast. Normalize the deprecated
@@ -169,6 +187,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       // consumer (wallet queue filter, tag evaluation, admin-console) goes through -
       // so a legacy row is indistinguishable from a fresh one downstream.
       const kyc = KycStatusSchema.safeParse(r.kycStatus);
+
       return {
         ...r,
         kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
@@ -196,20 +215,26 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       // wildcards, letting a caller-supplied pattern select an arbitrary matching player.
       .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
       .limit(1);
+
     const [row] = rows;
+
     if (!row) {
       return null;
     }
+
     const kyc = KycStatusSchema.safeParse(row.kycStatus);
+
     return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
   }
 
   async findPlayerIds(query: string, limit = 1000, options?: PlayerIdSearchOptions) {
     const term = `%${escapeLikePattern(query)}%`;
     const conditions = [ilike(user.email, term), ilike(user.username, term)];
+
     if (UuidSchema.safeParse(query).success) {
       conditions.push(eq(player.id, query), eq(player.userId, query));
     }
+
     const rows = await this.drizzle.db
       .selectDistinct({ id: user.id })
       .from(user)
@@ -224,6 +249,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         ),
       )
       .limit(limit);
+
     return rows.map((r) => r.id);
   }
 }

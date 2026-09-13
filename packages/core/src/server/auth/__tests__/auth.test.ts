@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAuth } from '../auth.js';
 
 const betterAuthMock = vi.hoisted(() => vi.fn());
+
 const emailOTPMock = vi.hoisted(() => vi.fn((opts) => ({ id: 'email-otp', ...opts })));
 
 vi.mock('better-auth', async (importOriginal) => {
   const actual = await importOriginal<object>();
+
   return {
     ...actual,
     betterAuth: betterAuthMock,
@@ -14,6 +16,7 @@ vi.mock('better-auth', async (importOriginal) => {
 
 vi.mock('better-auth/plugins', async (importOriginal) => {
   const actual = await importOriginal<object>();
+
   return {
     ...actual,
     emailOTP: emailOTPMock,

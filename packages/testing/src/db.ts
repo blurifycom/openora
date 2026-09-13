@@ -60,9 +60,11 @@ const TEMPLATE_PREFIX = 'oss_igaming_test_tpl';
  */
 export function testRunId(): string {
   const id = process.env['OPENORA_TEST_RUN_ID'];
+
   if (!id) {
     throw new Error('OPENORA_TEST_RUN_ID is not set - this tier requires its global setup');
   }
+
   return id;
 }
 
@@ -75,6 +77,7 @@ const testUrl = () => process.env['TEST_DATABASE_URL'] ?? DEFAULT_TEST_URL;
 export function urlForDatabase(database: string): string {
   const url = new URL(testUrl());
   url.pathname = `/${database}`;
+
   return url.toString();
 }
 
@@ -103,6 +106,7 @@ export async function setupTestDb(): Promise<TestDb> {
   const template = templateDatabase();
   const database = `${template}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const admin = new Pool({ connectionString: adminUrl(), connectionTimeoutMillis: 5000 });
+
   try {
     await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${template}"`);
   } finally {

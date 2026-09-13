@@ -12,7 +12,9 @@ import { MailService } from '../service/mail.service.js';
 import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from '../contract/index.js';
 
 const verify: MailTemplate = { key: 'verifyEmail', data: { otp: '123456' } };
+
 const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: {} };
+
 const withdrawal: MailTemplate = {
   key: 'withdrawalApproved',
   data: {
@@ -33,22 +35,27 @@ function build(
   } = {},
 ) {
   const sender = mock<EmailSenderPort>({ send: vi.fn(async () => undefined), ...over.sender });
+
   const renderer = mock<EmailTemplateRenderer>({
     render: vi.fn(() => ({ subject: 's', html: '<p>h</p>', text: 't' })),
     ...over.renderer,
   });
+
   const directory = mock<AdminUserDirectory>({
     get: vi.fn(async () => null),
     ...over.directory,
   });
+
   const jobQueue = mock<JobQueueAdapter>({
     enqueue: vi.fn(async () => ({ id: 'job-1' })),
     ...over.jobQueue,
   });
+
   const audit =
     over.audit === undefined
       ? mock<AuditWritePort>({ record: vi.fn(async () => undefined) })
       : over.audit;
+
   const svc = new MailService({
     sender,
     renderer,
@@ -57,6 +64,7 @@ function build(
     audit,
     encryptionSecret: 'test-mail-encryption-secret-32chars',
   });
+
   return { svc, sender, renderer, directory, jobQueue, audit };
 }
 
@@ -82,6 +90,7 @@ describe('MailService', () => {
       .fn()
       .mockRejectedValueOnce(new Error('queue down'))
       .mockResolvedValueOnce({ id: 'job-1' });
+
     const { svc } = build({ jobQueue: { enqueue } });
 
     await svc.enqueueToAddress({ email: 'a@b.com', template: verify, idempotencyKey: 'k-2' });
@@ -100,9 +109,11 @@ describe('MailService', () => {
     });
 
     const encrypted = vi.mocked(jobQueue.enqueue).mock.calls[0]?.[1];
+
     if (!encrypted) {
       throw new Error('mail job was not queued');
     }
+
     await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
 
     expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);

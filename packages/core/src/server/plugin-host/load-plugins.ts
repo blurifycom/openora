@@ -19,24 +19,31 @@ function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
       `extensions.config.ts must export \`extensions\` as an array of { id, path }. Got ${typeof entries}.`,
     );
   }
+
   const seen = new Set<string>();
   entries.forEach((entry, i) => {
     const at = `extensions[${i}]`;
+
     if (typeof entry !== 'object' || entry === null) {
       throw new Error(`${at} must be an object { id, path }. Got ${JSON.stringify(entry)}.`);
     }
+
     const { id, path } = entry as Record<string, unknown>;
+
     if (typeof id !== 'string' || id.length === 0) {
       throw new Error(`${at} is missing a non-empty string \`id\`. Got ${JSON.stringify(entry)}.`);
     }
+
     if (typeof path !== 'string' || path.length === 0) {
       throw new Error(`${at} (id "${id}") is missing a non-empty string \`path\`.`);
     }
+
     if (seen.has(id)) {
       throw new Error(
         `Duplicate plugin id "${id}" in extensions.config.ts - each id must be unique.`,
       );
     }
+
     seen.add(id);
   });
 }
@@ -63,17 +70,23 @@ export function topoSort<C extends TokenCatalog>(plugins: Plugin<C>[]): Plugin<C
     if (visited.has(plugin.id)) {
       return;
     }
+
     if (stack.has(plugin.id)) {
       throw new Error(`Circular plugin dependency: ${[...stack, plugin.id].join(' -> ')}`);
     }
+
     stack.add(plugin.id);
+
     for (const dep of plugin.dependsOn ?? []) {
       const depPlugin = byId.get(dep);
+
       if (!depPlugin) {
         throw new Error(`Plugin "${plugin.id}" depends on "${dep}" which is not registered`);
       }
+
       visit(depPlugin, stack);
     }
+
     stack.delete(plugin.id);
     visited.add(plugin.id);
     sorted.push(plugin);
@@ -96,9 +109,11 @@ export async function loadPlugins<C extends TokenCatalog>(
   for (const entry of entries) {
     const mod = (await import(entry.path)) as { default?: Plugin<C> };
     const plugin = mod.default;
+
     if (!plugin || typeof plugin.register !== 'function') {
       throw new Error(`Plugin at "${entry.path}" does not default-export a valid plugin`);
     }
+
     assertEntryMatchesPlugin(entry, plugin);
     plugins.push(plugin);
   }
@@ -136,6 +151,7 @@ export function assertRequiredPorts<C extends TokenCatalog>(
         (token) => `  - plugin "${plugin.id}" requires port ${String(token.description ?? token)}`,
       ),
   );
+
   if (unbound.length > 0) {
     throw new Error(
       `[plugin-host] Required ports are unbound at boot:\n${unbound.join('\n')}\n` +

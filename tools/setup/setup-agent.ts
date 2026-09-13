@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const root = join(here, '../..');
 
 function run(cmd: string, opts?: { cwd?: string; silent?: boolean }): string {
@@ -28,6 +29,7 @@ function check(label: string, cmd: string) {
   try {
     const out = execSync(cmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
     console.log(`  [ok] ${label}: ${out}`);
+
     return out;
   } catch {
     console.error(`  [fail] ${label} not found. Required.`);
@@ -58,8 +60,10 @@ async function main() {
 
   await new Promise<void>((resolve) => {
     let attempts = 0;
+
     const poll = setInterval(() => {
       attempts++;
+
       try {
         execSync('docker compose exec -T postgres pg_isready -U postgres', { stdio: 'pipe' });
         clearInterval(poll);
@@ -74,6 +78,7 @@ async function main() {
   });
 
   console.log('\n--- Running Drizzle migrations ---');
+
   try {
     run('pnpm gen:drizzle');
     run('pnpm db:migrate');
@@ -85,8 +90,10 @@ async function main() {
   const envExamplePath = join(root, 'packages', 'core', '.env.example');
   const envExample = existsSync(envExamplePath) ? readFileSync(envExamplePath, 'utf8') : '';
   const ports: Record<string, string> = {};
+
   for (const line of envExample.split('\n')) {
     const m = line.match(/^(PORT_\w+)=(\d+)/);
+
     if (m) {
       ports[m[1]] = m[2];
     }

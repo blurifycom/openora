@@ -5,6 +5,7 @@ import { chatChannel } from '@openora/core/contracts';
 import type { ChatMessage } from '../contract/index.js';
 import { chatMessage } from '../schema/index.js';
 import { ChatMessageNotFoundError } from './errors/chat-moderation.errors.js';
+
 export { ChatMessageNotFoundError } from './errors/chat-moderation.errors.js';
 
 function toMessage(record: typeof chatMessage.$inferSelect) {
@@ -32,6 +33,7 @@ export class ChatMessageModerationService {
       await this.drizzle.db.select().from(chatMessage).where(eq(chatMessage.id, id)),
       new ChatMessageNotFoundError(id),
     );
+
     if (!message.isDeleted) {
       await this.drizzle.db
         .update(chatMessage)
@@ -44,6 +46,7 @@ export class ChatMessageModerationService {
         }),
       );
     }
+
     await this.audit.record({
       actorId,
       actorType,
@@ -55,6 +58,7 @@ export class ChatMessageModerationService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true } as const;
   }
 }

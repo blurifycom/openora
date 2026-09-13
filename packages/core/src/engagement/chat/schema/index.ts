@@ -21,8 +21,11 @@ import type { CommandMetadata } from '@openora/core/contracts';
 import { zodJsonb } from '@openora/core/server';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
+
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
+
 export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
+
 export const chatModerationScope = pgEnum('chat_moderation_scope', CHAT_MODERATION_SCOPE_VALUES);
 
 export const chatRoom = pgTable(
@@ -296,14 +299,25 @@ export const chatMute = pgTable(
 );
 
 export type ChatRoom = typeof chatRoom.$inferSelect;
+
 export type ChatMessage = typeof chatMessage.$inferSelect;
+
 export type ChatUserBlock = typeof chatUserBlock.$inferSelect;
+
 export type ChatUserIgnore = typeof chatUserIgnore.$inferSelect;
+
 export type ChatRoomMember = typeof chatRoomMember.$inferSelect;
+
 export type ChatRoomRule = typeof chatRoomRule.$inferSelect;
+
 export type ChatRoomConfiguration = typeof chatRoomConfiguration.$inferSelect;
+
 export type ChatRoomBan = typeof chatRoomBan.$inferSelect;
+
 export type ChatRoomMute = typeof chatRoomMute.$inferSelect;
+
 export type ChatRoomRemove = typeof chatRoomRemove.$inferSelect;
+
 export type ChatPlatformBan = typeof chatPlatformBan.$inferSelect;
+
 export type ChatMute = typeof chatMute.$inferSelect;

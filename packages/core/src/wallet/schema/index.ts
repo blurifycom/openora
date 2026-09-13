@@ -497,14 +497,25 @@ export const walletReconciliationFinding = pgTable(
 );
 
 export type Wallet = typeof wallet.$inferSelect;
+
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
+
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
+
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
+
 export type WalletWithdrawalAddressRow = typeof walletWithdrawalAddress.$inferSelect;
+
 export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;
+
 export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
+
 export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
+
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
+
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
+
 export type WalletJobRun = typeof walletJobRun.$inferSelect;
+
 export type WalletReconciliationFinding = typeof walletReconciliationFinding.$inferSelect;

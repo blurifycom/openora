@@ -52,8 +52,10 @@ export type SeedResult = {
 
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
+
   return () => {
     s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+
     return s / 0x100000000;
   };
 }
@@ -67,26 +69,33 @@ const SEED_JOIN_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function seedJoinCode(index: number): string {
   let value = index + 1;
   let code = '';
+
   for (let position = 0; position < 6; position += 1) {
     code = SEED_JOIN_CODE_ALPHABET[value % SEED_JOIN_CODE_ALPHABET.length] + code;
     value = Math.floor(value / SEED_JOIN_CODE_ALPHABET.length);
   }
+
   return code;
 }
 
 function weighted<T>(rng: () => number, table: readonly (readonly [T, number])[]): T {
   const total = table.reduce((sum, [, w]) => sum + w, 0);
   let roll = rng() * total;
+
   for (const [value, w] of table) {
     roll -= w;
+
     if (roll <= 0) {
       return value;
     }
   }
+
   const last = table.at(-1);
+
   if (!last) {
     throw new Error('weighted: table must not be empty');
   }
+
   return last[0];
 }
 
@@ -406,11 +415,13 @@ const GLOBAL_CHAT = [
 
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
+
   const admin = options.admin ?? {
     email: 'admin@oss.dev',
     password: 'password1234',
     name: 'Platform Admin',
   };
+
   const playerPassword = options.password ?? 'password1234';
   const rng = makeRng(0x5eed);
 
@@ -434,6 +445,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     role: 'admin',
     isActive: true,
   });
+
   if (adminUser) {
     log(`Admin ready: ${admin.email} / ${admin.password}`);
   }
@@ -443,11 +455,13 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     password: 'password1234',
     name: 'Chat Moderator',
   };
+
   const moderatorUser = await ensureUser(db, auth, {
     ...moderator,
     role: 'admin',
     isActive: true,
   });
+
   if (moderatorUser) {
     log(`Chat moderator ready: ${moderator.email} / ${moderator.password}`);
   }
@@ -463,9 +477,11 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   log(`Created ${GAMES.length} games.`);
 
   let userCount = adminUser ? 1 : 0;
+
   if (moderatorUser && moderatorUser.id !== adminUser?.id) {
     userCount += 1;
   }
+
   let txCount = 0;
   const now = Date.now();
   const dayMs = 86_400_000;
@@ -485,6 +501,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const isActive = status !== 'suspended' && status !== 'closed';
     const phoneNumber = PHONE_NUMBERS[i % PHONE_NUMBERS.length] ?? null;
     const phoneVerified = phoneNumber !== null && rng() > 0.25;
+
     const phoneVerifiedAt = phoneVerified
       ? new Date(createdAt.getTime() + Math.floor(rng() * 7) * dayMs)
       : null;
@@ -500,17 +517,22 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       phoneVerified,
       phoneVerifiedAt,
     });
+
     if (!playerUser) {
       continue;
     }
+
     userCount++;
+
     /* Restricted USD and 1 EUR currency picks due to not ready currency conversion */
     const currency =
       playerUser.role === 'admin' || players.some((p) => p.currency === 'EUR') ? 'USD' : 'EUR';
+
     players.push({ id: playerUser.id, displayName, role: playerUser.role, currency });
 
     const totalDeposits = round2(rng() * 8000 + (level - 1) * 400);
     const totalWagered = round2(totalDeposits * (1.5 + rng() * 4));
+
     const lastSeenAt =
       status === 'active'
         ? new Date(now - Math.floor(rng() * 7) * dayMs)
@@ -547,6 +569,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       await db.insert(wallet).values({ userId: playerUser.id, currency }).returning(),
       new Error('seed: expected the wallet insert to return a row'),
     );
+
     await db
       .insert(walletBalance)
       .values({ walletId: walletRow.id, currency, amount: String(round2(rng() * 1500)) });
@@ -554,6 +577,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;
     const txRows: (typeof walletTransaction.$inferInsert)[] = [];
+
     for (let d = 0; d < deposits; d++) {
       const amount = round2(20 + rng() * 600);
       depositSum += amount;
@@ -566,6 +590,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         createdAt: new Date(createdAt.getTime() + (d + 1) * dayMs),
       });
     }
+
     if (kycStatus === 'approved' && rng() > 0.5) {
       txRows.push({
         walletId: walletRow.id,
@@ -576,6 +601,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         createdAt: new Date(now - Math.floor(rng() * 14) * dayMs),
       });
     }
+
     if (txRows.length > 0) {
       await db.insert(walletTransaction).values(txRows);
       txCount += txRows.length;
@@ -591,6 +617,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
 
   let roomCount = 0;
   let chatMessageCount = 0;
+
   if (adminUser) {
     const insertedRooms = await db
       .insert(chatRoom)
@@ -605,6 +632,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         })),
       )
       .returning();
+
     roomCount = insertedRooms.length;
 
     await db.insert(chatRoomConfiguration).values(
@@ -622,6 +650,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     await db.insert(chatRoomRule).values(
       insertedRooms.flatMap((room) => {
         const ruleCount = room.isPublic ? CHAT_RULES.length : 3;
+
         return CHAT_RULES.slice(0, ruleCount).map((content, index) => ({
           roomId: room.id,
           createdBy: adminUser.id,
@@ -634,6 +663,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const adminOwnedRooms = insertedRooms
       .filter((room) => room.isPublic || room.creatorId === adminUser.id)
       .map((room) => ({ roomId: room.id, userId: adminUser.id, role: 'owner' as const }));
+
     if (adminOwnedRooms.length > 0) {
       await db.insert(chatRoomMember).values(adminOwnedRooms);
     }
@@ -642,8 +672,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       const roomMessageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {
         const def = CHAT_ROOMS.find((r) => r.slug === room.slug);
         const messages = def?.messages ?? [];
+
         return messages.map((content, idx) => {
           const author = pick(rng, chatAuthors);
+
           return {
             roomId: room.id,
             userId: author.id,
@@ -657,6 +689,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       const globalMessageRows: (typeof chatMessage.$inferInsert)[] = GLOBAL_CHAT.map(
         (content, idx) => {
           const author = pick(rng, chatAuthors);
+
           return {
             roomId: null,
             userId: author.id,
@@ -668,6 +701,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       );
 
       const messageRows = [...roomMessageRows, ...globalMessageRows];
+
       if (messageRows.length > 0) {
         await db.insert(chatMessage).values(messageRows);
         chatMessageCount = messageRows.length;
@@ -685,6 +719,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const ignoredIndex = (blockedIndex + offset) % players.length;
     const blocked = players[blockedIndex];
     const ignored = players[ignoredIndex];
+
     if (blocked && ignored) {
       await db.insert(chatUserBlock).values({ blockerId: adminUser.id, blockedId: blocked.id });
       await db.insert(chatUserIgnore).values({ ignorerId: adminUser.id, ignoredId: ignored.id });
@@ -723,6 +758,7 @@ function usernameFor(email: string): string {
       .split('@')[0]
       ?.toLowerCase()
       .replaceAll(/[^a-z0-9_]+/g, '_') ?? 'seed';
+
   return base.length < 3 ? `seed_${base}` : base.slice(0, 20);
 }
 
@@ -735,6 +771,7 @@ async function ensureUser(
     .select({ id: user.id, role: user.role })
     .from(user)
     .where(eq(user.email, input.email));
+
   if (!existing) {
     await auth.api.signUpEmail({
       body: {
@@ -749,10 +786,13 @@ async function ensureUser(
       .from(user)
       .where(eq(user.email, input.email));
   }
+
   if (!existing) {
     return null;
   }
+
   const role = existing.role === 'admin' || input.role === 'admin' ? 'admin' : input.role;
+
   const patch: Partial<typeof user.$inferInsert> = {
     name: input.name,
     role,
@@ -760,18 +800,24 @@ async function ensureUser(
     // Sign-in requires a verified address; seeded fixtures skip the email round trip.
     emailVerified: true,
   };
+
   if (input.createdAt) {
     patch.createdAt = input.createdAt;
   }
+
   if (input.phoneNumber !== undefined) {
     patch.phoneNumber = input.phoneNumber;
   }
+
   if (input.phoneVerified !== undefined) {
     patch.phoneVerified = input.phoneVerified;
   }
+
   if (input.phoneVerifiedAt !== undefined) {
     patch.phoneVerifiedAt = input.phoneVerifiedAt;
   }
+
   await db.update(user).set(patch).where(eq(user.id, existing.id));
+
   return { id: existing.id, role };
 }

@@ -26,11 +26,13 @@ export type SealedContainerView = {
 
 export function assertSealedServicesBound(container: SealedContainerView): void {
   const missing: string[] = [];
+
   for (const token of IMPLEMENTED_SEALED_TOKENS) {
     if (!container.has(token)) {
       missing.push(token.description ?? '(unnamed)');
     }
   }
+
   if (missing.length > 0) {
     throw new Error(
       `[compliance-invariants] sealed services must be bound by their owning module:\n` +

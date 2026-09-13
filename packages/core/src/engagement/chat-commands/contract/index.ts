@@ -20,7 +20,9 @@ export const CHAT_COMMAND_TYPES = [
   'ignore',
   'unignore',
 ] as const;
+
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
+
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
 const CurrencyAmountSchema = z.object({
@@ -33,6 +35,7 @@ export const CommandConfigSchema = z.object({
   minAmount: CurrencyAmountSchema.optional(),
   maxRecipients: z.number().int().positive().optional(),
 });
+
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;
 
 export const ChatCommandDescriptorSchema = z.object({
@@ -43,16 +46,20 @@ export const ChatCommandDescriptorSchema = z.object({
   config: CommandConfigSchema.nullable(),
   updatedAt: TimestampSchema,
 });
+
 export type ChatCommandDescriptor = z.infer<typeof ChatCommandDescriptorSchema>;
 
 export const AdminCommandSortByValues = ['key', 'updatedAt'] as const;
+
 export const AdminCommandSortBySchema = z.enum(AdminCommandSortByValues).default('key');
+
 export type AdminCommandSortBy = z.infer<typeof AdminCommandSortBySchema>;
 
 export const MentionResultSchema = z.object({
   userId: UuidSchema,
   username: z.string(),
 });
+
 export type MentionResult = z.infer<typeof MentionResultSchema>;
 
 export const chatCommandsContract = {

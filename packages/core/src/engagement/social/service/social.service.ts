@@ -59,14 +59,17 @@ export const BlockedBySelfError = makeConflictError(
   'BLOCKED_BY_SELF',
   'You have blocked this player - unblock them first',
 );
+
 export const AlreadyFriendsError = makeConflictError(
   'ALREADY_FRIENDS',
   'You are already friends with this player',
 );
+
 export const RequestAlreadyPendingError = makeConflictError(
   'REQUEST_ALREADY_PENDING',
   'A friend request to this player is already pending',
 );
+
 export const FriendRequestRefusedError = makeConflictError(
   'FRIEND_REQUEST_REFUSED',
   'This friend request was refused',
@@ -80,12 +83,15 @@ function pgErrorCode(e: unknown): string | undefined {
   if (typeof e !== 'object' || e === null) {
     return undefined;
   }
+
   if ('code' in e && typeof e.code === 'string') {
     return e.code;
   }
+
   if ('cause' in e) {
     return pgErrorCode(e.cause);
   }
+
   return undefined;
 }
 
@@ -138,15 +144,18 @@ export class SocialService {
     const players = await this.playersWithUsername(
       inArray(player.userId, [callerId, targetUserId]),
     );
+
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
 
     if (!targetPlayer) {
       throw new FriendRequestTargetNotFoundError(targetUserId);
     }
+
     if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
       throw new FriendRequestUnavailableError();
     }
+
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row. Not a domain
       // error (nothing the caller can act on) - fail loudly instead of masking it.
@@ -158,20 +167,24 @@ export class SocialService {
       .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
       .where(and(isNull(chatUserBlock.removedAt), pairBlockCondition(callerId, targetUserId)));
+
     if (blocks.some((b) => b.blockerId === targetUserId && b.blockedId === callerId)) {
       // Target has blocked the caller - never disclosed, same error as "suspended".
       throw new FriendRequestUnavailableError();
     }
+
     if (blocks.some((b) => b.blockerId === callerId && b.blockedId === targetUserId)) {
       throw new BlockedBySelfError();
     }
 
     let inserted: FriendshipRow | undefined;
+
     try {
       const rows = await this.drizzle.db
         .insert(friendship)
         .values({ requesterId: callerId, addresseeId: targetUserId })
         .returning();
+
       inserted = rows[0];
     } catch (error) {
       if (!isUniqueConstraintViolation(error)) {
@@ -186,6 +199,7 @@ export class SocialService {
         addresseeId: inserted.addresseeId,
         requesterUsername: callerPlayer.username,
       });
+
       return toFriendshipDto(inserted);
     }
 
@@ -197,6 +211,7 @@ export class SocialService {
       accepterId: callerId,
       accepterUsername: callerPlayer.username,
     });
+
     return toFriendshipDto(accepted);
   }
 
@@ -208,18 +223,23 @@ export class SocialService {
         .where(and(pairCondition(callerId, targetUserId), isNull(friendship.removedAt)))
         .for('update')
         .limit(1);
+
       const existing = rows[0];
+
       if (!existing) {
         // The row that caused the violation is gone (eg concurrently removed) -
         // safe to surface as "no longer pending", the caller can retry.
         throw new RequestAlreadyPendingError();
       }
+
       if (existing.refusedAt !== null) {
         throw new FriendRequestRefusedError();
       }
+
       if (existing.acceptedAt !== null) {
         throw new AlreadyFriendsError();
       }
+
       if (existing.requesterId === callerId) {
         throw new RequestAlreadyPendingError();
       }
@@ -231,10 +251,13 @@ export class SocialService {
         .set({ acceptedAt: new Date(), refusedAt: null })
         .where(eq(friendship.id, existing.id))
         .returning();
+
       const updated = updatedRows[0];
+
       if (!updated) {
         throw new RequestAlreadyPendingError();
       }
+
       return updated;
     });
   }
@@ -251,6 +274,7 @@ export class SocialService {
       .select({ userId: player.userId, status: player.status })
       .from(player)
       .where(inArray(player.userId, uniqueTargetIds));
+
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
 
     const friendships = await this.drizzle.db
@@ -271,7 +295,9 @@ export class SocialService {
           isNull(friendship.removedAt),
         ),
       );
+
     const friendshipByTargetId = new Map<string, FriendshipRow>();
+
     for (const row of friendships) {
       const targetId = row.requesterId === callerId ? row.addresseeId : row.requesterId;
       friendshipByTargetId.set(targetId, row);
@@ -295,15 +321,18 @@ export class SocialService {
           ),
         ),
       );
+
     const blockedByMe = new Set(
       blocks.filter((b) => b.blockerId === callerId).map((b) => b.blockedId),
     );
+
     const blockedByTarget = new Set(
       blocks.filter((b) => b.blockedId === callerId).map((b) => b.blockerId),
     );
 
     return targetUserIds.map((userId): Relationship => {
       const targetPlayer = playerByUserId.get(userId);
+
       if (
         !targetPlayer ||
         targetPlayer.status === 'suspended' ||
@@ -312,21 +341,27 @@ export class SocialService {
       ) {
         return { userId, status: 'unavailable', friendshipId: null, canSendRequest: false };
       }
+
       if (blockedByMe.has(userId)) {
         return { userId, status: 'blocked_by_me', friendshipId: null, canSendRequest: false };
       }
 
       const existing = friendshipByTargetId.get(userId);
+
       if (!existing) {
         return { userId, status: 'none', friendshipId: null, canSendRequest: true };
       }
+
       if (existing.refusedAt !== null) {
         return { userId, status: 'refused', friendshipId: existing.id, canSendRequest: false };
       }
+
       if (existing.acceptedAt !== null) {
         return { userId, status: 'friends', friendshipId: existing.id, canSendRequest: false };
       }
+
       const status = existing.requesterId === callerId ? 'pending_outgoing' : 'pending_incoming';
+
       return { userId, status, friendshipId: existing.id, canSendRequest: false };
     });
   }
@@ -349,7 +384,9 @@ export class SocialService {
         ),
       )
       .returning();
+
     const removed = rows[0];
+
     if (!removed) {
       return undefined;
     }
@@ -371,9 +408,11 @@ export class SocialService {
       callerId,
       'removed_by_player',
     );
+
     if (!dissolved) {
       throw new FriendshipNotFoundError(targetUserId);
     }
+
     this.events.emit('social.friendship.removed', dissolved);
   }
 
@@ -389,6 +428,7 @@ export class SocialService {
       blockerId,
       'blocked',
     );
+
     return dissolved ?? null;
   }
 
@@ -421,6 +461,7 @@ export class SocialService {
     const otherUserIds = rows.map((row) =>
       row.requesterId === callerId ? row.addresseeId : row.requesterId,
     );
+
     const [players, ignores] =
       otherUserIds.length > 0
         ? await Promise.all([
@@ -437,6 +478,7 @@ export class SocialService {
               ),
           ])
         : [[], []];
+
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
     const ignoredIds = new Set(ignores.map((i) => i.ignoredId));
 
@@ -445,19 +487,24 @@ export class SocialService {
     const items = rows.flatMap((row) => {
       const userId = row.requesterId === callerId ? row.addresseeId : row.requesterId;
       const targetPlayer = playerByUserId.get(userId);
+
       if (!targetPlayer) {
         logger.error(
           { friendshipId: row.id, userId },
           'listFriends: no player+user pair for friend',
         );
+
         return [];
       }
+
       if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
         return [];
       }
+
       const isOnline =
         targetPlayer.lastSeenAt !== null &&
         now - targetPlayer.lastSeenAt.getTime() <= ONLINE_STATUS_WINDOW_MS;
+
       return [
         serializeRow(
           {
@@ -489,6 +536,7 @@ export class SocialService {
           isNull(friendship.removedAt),
         ),
       );
+
     if (!pending) {
       throw new FriendRequestNotFoundError(friendshipId);
     }
@@ -499,6 +547,7 @@ export class SocialService {
       .where(
         and(isNull(chatUserBlock.removedAt), pairBlockCondition(callerId, pending.requesterId)),
       );
+
     if (blocks.length > 0) {
       throw new FriendRequestUnavailableError();
     }
@@ -516,12 +565,15 @@ export class SocialService {
         ),
       )
       .returning();
+
     const updated = rows[0];
+
     if (!updated) {
       throw new FriendRequestNotFoundError(friendshipId);
     }
 
     const [callerPlayer] = await this.playersWithUsername(eq(player.userId, callerId));
+
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row (see
       // sendFriendRequest's same guard).
@@ -535,6 +587,7 @@ export class SocialService {
       accepterId: callerId,
       accepterUsername: callerPlayer.username,
     });
+
     return toFriendshipDto(updated);
   }
 
@@ -556,7 +609,9 @@ export class SocialService {
         ),
       )
       .returning();
+
     const updated = rows[0];
+
     if (!updated) {
       throw new FriendRequestNotFoundError(friendshipId);
     }
@@ -582,7 +637,9 @@ export class SocialService {
         ),
       )
       .returning();
+
     const updated = rows[0];
+
     if (!updated) {
       throw new FriendRequestNotFoundError(friendshipId);
     }
@@ -600,6 +657,7 @@ export class SocialService {
   ): Promise<{ items: FriendRequestEntry[]; total: number; page: number; limit: number }> {
     const directionColumn =
       direction === 'incoming' ? friendship.addresseeId : friendship.requesterId;
+
     const where = and(
       eq(directionColumn, callerId),
       isNull(friendship.acceptedAt),
@@ -655,7 +713,9 @@ export class SocialService {
             )
         : Promise.resolve([]),
     ]);
+
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
+
     // Either direction hides the pair - a blocked player never appears in requests on both sides
     const blockedCounterpartIds = new Set(
       blocks.map((b) => (b.blockerId === callerId ? b.blockedId : b.blockerId)),
@@ -664,19 +724,24 @@ export class SocialService {
     const items = rows.flatMap((row) => {
       const counterpartId = direction === 'incoming' ? row.requesterId : row.addresseeId;
       const counterpartPlayer = playerByUserId.get(counterpartId);
+
       if (!counterpartPlayer) {
         logger.error(
           { friendshipId: row.id, counterpartId },
           'listFriendRequests: no player+user pair for counterpart',
         );
+
         return [];
       }
+
       if (counterpartPlayer.status === 'suspended' || counterpartPlayer.status === 'closed') {
         return [];
       }
+
       if (blockedCounterpartIds.has(counterpartId)) {
         return [];
       }
+
       return [
         serializeRow(
           {

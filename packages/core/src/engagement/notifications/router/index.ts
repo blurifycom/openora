@@ -25,14 +25,18 @@ export function notificationsChannel(userId: User['id']): string {
 
 export function toNotificationDto(row: NotificationRow): Notification | null {
   const type = NotificationTypeSchema.safeParse(row.type);
+
   if (!type.success) {
     return null;
   }
+
   const data =
     row.data === null || row.data === undefined ? null : NotificationDataSchema.safeParse(row.data);
+
   if (data && !data.success) {
     return null;
   }
+
   return {
     id: row.id,
     userId: row.userId,
@@ -71,6 +75,7 @@ export function createNotificationsRouter({
         ...page,
         items: page.items.flatMap((row) => {
           const dto = toNotificationDto(row);
+
           return dto ? [dto] : [];
         }),
       })),
@@ -89,6 +94,7 @@ export function createNotificationsRouter({
         { NOT_FOUND: NotificationNotFoundError, FORBIDDEN: NotificationOwnershipError },
         () => notifications.markRead(input.id, getUserId(context)),
       );
+
       return { success: true as const };
     }),
 

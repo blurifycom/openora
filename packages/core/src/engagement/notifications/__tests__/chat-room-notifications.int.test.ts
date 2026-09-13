@@ -30,15 +30,19 @@ function bootPlugin() {
   let routerFactory: ((c: unknown) => unknown) | null = null;
 
   const pending: Promise<unknown>[] = [];
+
   const jobQueue = mock<JobQueueAdapter>({
     enqueue: (name: QueueName, payload: unknown, opts?: EnqueueOptions) => {
       enqueued.push({ queue: name, key: opts?.idempotencyKey });
       const duplicate = Boolean(opts?.idempotencyKey && seenKeys.has(opts.idempotencyKey));
+
       if (opts?.idempotencyKey) {
         seenKeys.add(opts.idempotencyKey);
       }
+
       const run = (async () => {
         const worker = workers.get(name);
+
         if (!duplicate && worker) {
           await worker.handler({
             id: randomUUID(),
@@ -49,9 +53,12 @@ function bootPlugin() {
             meta: {},
           });
         }
+
         return { id: randomUUID() };
       })();
+
       pending.push(run);
+
       return run;
     },
     schedule: async () => undefined,
@@ -75,10 +82,12 @@ function bootPlugin() {
       },
     },
   });
+
   notificationsPlugin.register(ctx);
 
   const directory = mock<AdminUserDirectory>({ get: async () => null });
   const realtime = makeRealtimeTransport();
+
   const container = {
     get: (token: unknown) =>
       token === DRIZZLE
@@ -95,17 +104,21 @@ function bootPlugin() {
     has: (token: unknown) => token !== PLATFORM_CONFIG,
     onDispose: () => undefined,
   };
+
   routerFactory!(container);
 
   const fire = async (event: string, payload: unknown, eventId = randomUUID()) => {
     for (const handler of handlers.get(event) ?? []) {
       await handler(payload, { eventId } as never);
     }
+
     while (pending.length > 0) {
       await Promise.all(pending.splice(0));
     }
+
     return eventId;
   };
+
   return { fire, enqueued };
 }
 
@@ -196,6 +209,7 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
     const { fire, enqueued } = bootPlugin();
     const previousOwnerId = randomUUID();
     const memberIds = [randomUUID(), randomUUID()];
+
     const payload = {
       roomId: randomUUID(),
       roomName: 'Wheel Spin',
@@ -206,6 +220,7 @@ describe('notifications plugin - chat room ownership (real PG)', () => {
 
     const eventId = await fire('chat.room.scheduled_for_deletion', payload);
     expect(new Set(enqueued.map((e) => e.key)).size).toBe(memberIds.length);
+
     for (const userId of memberIds) {
       expect(enqueued.map((e) => e.key)).toContain(`notifications-dispatch:${eventId}:${userId}`);
     }

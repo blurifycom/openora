@@ -26,6 +26,7 @@ export default async function setup(): Promise<() => Promise<void>> {
         `SELECT datname FROM pg_database WHERE datname LIKE $1`,
         [`${prefix.replaceAll('_', '\\_')}%`],
       );
+
       for (const { datname } of rows) {
         await admin.query(`DROP DATABASE IF EXISTS "${datname}" WITH (FORCE)`);
       }

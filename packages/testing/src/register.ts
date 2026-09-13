@@ -33,14 +33,18 @@ export async function waitForEmail(
   { timeoutMs = 5000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<CapturedEmail> {
   const deadline = Date.now() + timeoutMs;
+
   for (;;) {
     const hit = capturedEmailsFor(email).find(match);
+
     if (hit) {
       return hit;
     }
+
     if (Date.now() >= deadline) {
       throw new Error(`no email captured for ${email} within ${timeoutMs}ms`);
     }
+
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
@@ -53,9 +57,11 @@ export async function waitForEmail(
 export async function verificationOtpFor(email: string): Promise<string> {
   const sent = await waitForEmail(email, (mail) => /verify/i.test(mail.subject));
   const otp = /\b(\d{6})\b/.exec(sent.text)?.[1];
+
   if (!otp) {
     throw new Error(`no verification code in email for ${email}: ${sent.text}`);
   }
+
   return otp;
 }
 
@@ -71,9 +77,11 @@ export async function verifyEmailByOtp(app: TestApp, email: string) {
     headers: registrationRequestHeaders(),
     body: JSON.stringify({ email, otp: await verificationOtpFor(email) }),
   });
+
   if (!res.ok) {
     throw new Error(`verify email failed (${res.status}): ${await res.text()}`);
   }
+
   return res;
 }
 
@@ -95,20 +103,25 @@ export async function registerPlayer(
   input: RegisterPlayerInput & { verifyEmail?: boolean },
 ): Promise<string> {
   const res = await submitRegistration(app, input);
+
   if (!res.ok) {
     throw new Error(`register failed (${res.status}): ${await res.text()}`);
   }
+
   const [registered] = await app.container
     .get(DRIZZLE)
     .db.select({ id: user.id })
     .from(user)
     .where(eq(user.email, input.email.toLowerCase()));
+
   if (!registered) {
     throw new Error('registered user was not persisted');
   }
+
   if (input.verifyEmail !== false) {
     await verifyEmailByOtp(app, input.email);
   }
+
   return registered.id;
 }
 
@@ -122,16 +135,21 @@ export async function registerAndMaterializePlayer(
   input: RegisterPlayerInput,
 ): Promise<{ client: TestClient; userId: string; playerId: string }> {
   const userId = await registerPlayer(app, input);
+
   const client = await asPlayer(app.app, {
     email: input.email,
     ...(input.password ? { password: input.password } : {}),
   });
+
   const profileRes = await client.get('/profile');
+
   if (!profileRes.ok) {
     throw new Error(
       `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
     );
   }
+
   const { id: playerId } = (await profileRes.json()) as { id: string };
+
   return { client, userId, playerId };
 }

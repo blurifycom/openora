@@ -171,6 +171,7 @@ describe('event currency fields accept a wallet/gaming money ticker', () => {
     currency: 'USDT',
     transactionId: crypto.randomUUID(),
   };
+
   const gamingRoundStarted = {
     roundId: crypto.randomUUID(),
     gameId: crypto.randomUUID(),
@@ -178,6 +179,7 @@ describe('event currency fields accept a wallet/gaming money ticker', () => {
     playerId: null,
     currency: 'USDT',
   };
+
   const bonusRolloverCompleted = {
     userId: crypto.randomUUID(),
     creditId: crypto.randomUUID(),

@@ -64,6 +64,7 @@ export class AdminGuard {
     action?: ActionOf<R>,
   ): Promise<AdminCaller> {
     const request = (context as { request?: OssContext['request'] }).request;
+
     if (!request || typeof request.headers !== 'object') {
       throw new ORPCError('UNAUTHORIZED', {
         message: 'Missing request context',
@@ -74,14 +75,18 @@ export class AdminGuard {
     const { ip, userAgent } = extractClientMeta(request.headers);
 
     const headers = new Headers();
+
     for (const [k, v] of Object.entries(request.headers)) {
       if (v === undefined) {
         continue;
       }
+
       headers.set(k, Array.isArray(v) ? v.join(', ') : v);
     }
+
     const resolvedSession = await this.sessions.resolveSession(headers);
     const userId = resolvedSession?.userId;
+
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', {
         message: 'Authentication required',
@@ -92,13 +97,16 @@ export class AdminGuard {
     const result = await this.drizzle.db.execute(
       sql`SELECT id, role FROM "user" WHERE id = ${userId} LIMIT 1`,
     );
+
     const userRecord = result.rows[0] as { id: string; role: string } | undefined;
+
     if (!userRecord) {
       if (resource !== undefined && action !== undefined) {
         this.emitUnauthorized(userId, undefined, resource, action, ip, userAgent);
       } else {
         this.emitUnauthorized(userId, undefined, 'admin', 'access', ip, userAgent);
       }
+
       throw new ORPCError('FORBIDDEN', {
         message: 'Admin access required',
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
@@ -106,12 +114,14 @@ export class AdminGuard {
     }
 
     const userRole = roles[userRecord.role as keyof typeof roles];
+
     if (!userRole) {
       if (resource !== undefined && action !== undefined) {
         this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
       } else {
         this.emitUnauthorized(userId, userRecord.role, 'admin', 'access', ip, userAgent);
       }
+
       throw new ORPCError('FORBIDDEN', {
         message: 'Admin access required',
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
@@ -121,6 +131,7 @@ export class AdminGuard {
     if (resource !== undefined && action !== undefined) {
       const grants = await this.resolveGrants(userId);
       const allowed = this.checkGrant(grants, userRole, resource, action);
+
       if (!allowed) {
         this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
         throw new ORPCError('FORBIDDEN', {
@@ -141,6 +152,7 @@ export class AdminGuard {
         ip,
         userAgent,
       };
+
       await this.securityPolicy.assertEnrolled(securityContext);
       await this.securityPolicy.assertSessionIntact(securityContext);
     }
@@ -167,6 +179,7 @@ export class AdminGuard {
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
       });
     }
+
     return caller;
   }
 
@@ -185,6 +198,7 @@ export class AdminGuard {
     if (grants !== null) {
       return grants.some((g) => g.resource === resource && g.action === action);
     }
+
     return userRole?.authorize({ [resource]: [action] }).success ?? false;
   }
 
@@ -201,6 +215,7 @@ export class AdminGuard {
         role === 'player'
           ? ((await this.identityReader?.getPlayerIdByUserIdSafe(userId)) ?? null)
           : null;
+
       try {
         this.events?.emit('identity.user.unauthorized_access', {
           userId,

@@ -6,12 +6,14 @@ import { identityContract } from '../contract/index.js';
 
 export function useCurrentUser() {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useQuery({ ...utils.me.queryOptions(), retry: false });
 }
 
 export function useLogin() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.login.mutationOptions(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.me.key() }),
@@ -21,6 +23,7 @@ export function useLogin() {
 export function useLogout() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.logout.mutationOptions(),
     onSuccess: () => queryClient.setQueryData(utils.me.queryKey(), null),
@@ -30,6 +33,7 @@ export function useLogout() {
 export function useRegister() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.register.mutationOptions(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.me.key() }),
@@ -38,6 +42,7 @@ export function useRegister() {
 
 export function useRequestPasswordReset() {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useMutation({
     ...utils.requestPasswordReset.mutationOptions(),
   });
@@ -45,6 +50,7 @@ export function useRequestPasswordReset() {
 
 export function useResetPassword() {
   const utils = useOrpcQueryUtils(identityContract);
+
   return useMutation({
     ...utils.resetPassword.mutationOptions(),
   });

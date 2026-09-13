@@ -96,6 +96,7 @@ describe('BackofficeService.listUsers', () => {
   it('returns an empty assignedRoles array for a user with no role assignments', async () => {
     const listByUserIds = vi.fn().mockResolvedValue([]);
     const list = vi.fn().mockResolvedValue({ rows: [userRow({ id: 'u-1' })], total: 1 });
+
     const svc = new BackofficeService(
       makeUsers({ list }),
       makeReporting(),
@@ -103,6 +104,7 @@ describe('BackofficeService.listUsers', () => {
       makePlayerActivity(),
       makeRoleAssignments({ listByUserIds }),
     );
+
     const res = await svc.listUsers({ page: 1, limit: 20 });
     expect(res.items[0]).toMatchObject({ assignedRoles: [] });
   });
@@ -112,7 +114,9 @@ describe('BackofficeService.listUsers', () => {
       { userId: 'u-1', roleId: 'r-1', roleName: 'support' },
       { userId: 'u-1', roleId: 'r-2', roleName: 'compliance' },
     ]);
+
     const list = vi.fn().mockResolvedValue({ rows: [userRow({ id: 'u-1' })], total: 1 });
+
     const svc = new BackofficeService(
       makeUsers({ list }),
       makeReporting(),
@@ -120,6 +124,7 @@ describe('BackofficeService.listUsers', () => {
       makePlayerActivity(),
       makeRoleAssignments({ listByUserIds }),
     );
+
     const res = await svc.listUsers({ page: 1, limit: 20 });
     expect(res.items[0]?.assignedRoles).toEqual([
       { roleId: 'r-1', roleName: 'support' },
@@ -129,10 +134,12 @@ describe('BackofficeService.listUsers', () => {
 
   it('batches the role assignment lookup once per listUsers call, not once per row', async () => {
     const listByUserIds = vi.fn().mockResolvedValue([]);
+
     const list = vi.fn().mockResolvedValue({
       rows: [userRow({ id: 'u-1' }), userRow({ id: 'u-2' })],
       total: 2,
     });
+
     const svc = new BackofficeService(
       makeUsers({ list }),
       makeReporting(),
@@ -140,6 +147,7 @@ describe('BackofficeService.listUsers', () => {
       makePlayerActivity(),
       makeRoleAssignments({ listByUserIds }),
     );
+
     await svc.listUsers({ page: 1, limit: 20 });
     expect(listByUserIds).toHaveBeenCalledTimes(1);
     expect(listByUserIds).toHaveBeenCalledWith(['u-1', 'u-2']);
@@ -152,9 +160,11 @@ describe('BackofficeService.listTransactions', () => {
     const userId = randomUUID();
     const playerId = randomUUID();
     const findPlayerIds = vi.fn().mockResolvedValue([userId]);
+
     const listTransactions = vi
       .fn()
       .mockResolvedValue({ rows: [txRow({ id: txId, userId })], total: 1 });
+
     const lookupPlayers = vi.fn().mockResolvedValue([
       {
         playerId,
@@ -164,6 +174,7 @@ describe('BackofficeService.listTransactions', () => {
         kycStatus: 'verified',
       },
     ]);
+
     const svc = new BackofficeService(
       makeUsers({ findPlayerIds, lookupPlayers }),
       makeReporting({ listTransactions }),
@@ -171,6 +182,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     const res = await svc.listTransactions({ page: 1, limit: 20, player: 'alice' });
     expect(findPlayerIds).toHaveBeenCalledWith('alice');
     expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ userIds: [userId] }));
@@ -185,6 +197,7 @@ describe('BackofficeService.listTransactions', () => {
   it('uses an explicit userId directly when no player query is given', async () => {
     const findPlayerIds = vi.fn();
     const listTransactions = vi.fn().mockResolvedValue({ rows: [], total: 0 });
+
     const svc = new BackofficeService(
       makeUsers({ findPlayerIds }),
       makeReporting({ listTransactions }),
@@ -192,6 +205,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     await svc.listTransactions({ page: 1, limit: 20, userId: 'u-1' });
     expect(findPlayerIds).not.toHaveBeenCalled();
     expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-1'] }));
@@ -200,6 +214,7 @@ describe('BackofficeService.listTransactions', () => {
   it('intersects an explicit userId with the resolved player ids', async () => {
     const findPlayerIds = vi.fn().mockResolvedValue(['u-1', 'u-2']);
     const listTransactions = vi.fn().mockResolvedValue({ rows: [], total: 0 });
+
     const svc = new BackofficeService(
       makeUsers({ findPlayerIds }),
       makeReporting({ listTransactions }),
@@ -207,6 +222,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     await svc.listTransactions({ page: 1, limit: 20, userId: 'u-2', player: 'al' });
     expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-2'] }));
   });
@@ -214,6 +230,7 @@ describe('BackofficeService.listTransactions', () => {
   it('short-circuits when userId is not in the resolved player set', async () => {
     const findPlayerIds = vi.fn().mockResolvedValue(['u-1', 'u-2']);
     const listTransactions = vi.fn();
+
     const svc = new BackofficeService(
       makeUsers({ findPlayerIds }),
       makeReporting({ listTransactions }),
@@ -221,6 +238,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     const res = await svc.listTransactions({ page: 1, limit: 20, userId: 'u-9', player: 'al' });
     expect(res).toEqual({ items: [], total: 0, page: 1, limit: 20 });
     expect(listTransactions).not.toHaveBeenCalled();
@@ -229,6 +247,7 @@ describe('BackofficeService.listTransactions', () => {
   it('short-circuits when the player query resolves to no ids', async () => {
     const findPlayerIds = vi.fn().mockResolvedValue([]);
     const listTransactions = vi.fn();
+
     const svc = new BackofficeService(
       makeUsers({ findPlayerIds }),
       makeReporting({ listTransactions }),
@@ -236,6 +255,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     const res = await svc.listTransactions({ page: 1, limit: 20, player: 'ghost' });
     expect(res).toEqual({ items: [], total: 0, page: 1, limit: 20 });
     expect(listTransactions).not.toHaveBeenCalled();
@@ -243,6 +263,7 @@ describe('BackofficeService.listTransactions', () => {
 
   it('leaves player fields null when enrichment does not resolve a row', async () => {
     const listTransactions = vi.fn().mockResolvedValue({ rows: [txRow()], total: 1 });
+
     const svc = new BackofficeService(
       makeUsers(),
       makeReporting({ listTransactions }),
@@ -250,12 +271,14 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     const res = await svc.listTransactions({ page: 1, limit: 20 });
     expect(res.items[0]).toMatchObject({ playerId: null, playerEmail: null });
   });
 
   it('converts ISO date filters to Date for the port', async () => {
     const listTransactions = vi.fn().mockResolvedValue({ rows: [], total: 0 });
+
     const svc = new BackofficeService(
       makeUsers(),
       makeReporting({ listTransactions }),
@@ -263,6 +286,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     await svc.listTransactions({
       page: 1,
       limit: 20,
@@ -296,11 +320,13 @@ describe('BackofficeService.getTransaction', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     await expect(svc.getTransaction('missing')).rejects.toBeInstanceOf(TransactionNotFoundError);
   });
 
   it('maps the detail incl. ISO reviewedAt and enriched player', async () => {
     const playerId = randomUUID();
+
     const lookupPlayers = vi.fn().mockResolvedValue([
       {
         playerId,
@@ -310,6 +336,7 @@ describe('BackofficeService.getTransaction', () => {
         kycStatus: 'verified',
       },
     ]);
+
     const svc = new BackofficeService(
       makeUsers({ lookupPlayers }),
       makeReporting({ getTransaction: vi.fn().mockResolvedValue(detail()) }),
@@ -317,6 +344,7 @@ describe('BackofficeService.getTransaction', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     const res = await svc.getTransaction('tx-1');
     expect(res).toMatchObject({
       providerName: 'stripe',
@@ -337,6 +365,7 @@ describe('BackofficeService.getTransaction', () => {
       makePlayerActivity(),
       makeRoleAssignments(),
     );
+
     const res = await svc.getTransaction('tx-1');
     expect(res.reviewedAt).toBeNull();
   });
@@ -374,6 +403,7 @@ describe('BackofficeService.getGamePerformance (real PG)', () => {
       .insert(game)
       .values({ name: 'Aces', provider: 'p', category: 'slots', ...overrides })
       .returning();
+
     return row!;
   }
 
@@ -431,19 +461,24 @@ describe('BackofficeService.getPlayerActivity', () => {
     const getRegistrationsOverTime = vi
       .fn()
       .mockResolvedValue([{ date: '2026-01-01', registrations: 3 }]);
+
     const getActiveUsersTrend = vi
       .fn()
       .mockResolvedValue([{ date: '2026-01-01', dau: 1, wau: 2, mau: 3 }]);
+
     const sevenDay = [
       { cohortDate: '2026-01-01', cohortSize: 10, returned: 4, returnRate: 0.4, isComplete: true },
     ];
+
     const thirtyDay = [
       { cohortDate: '2026-01-01', cohortSize: 10, returned: 2, returnRate: 0.2, isComplete: false },
     ];
+
     const getRetentionCohorts = vi
       .fn()
       .mockResolvedValueOnce(sevenDay)
       .mockResolvedValueOnce(thirtyDay);
+
     const svc = new BackofficeService(
       makeUsers(),
       makeReporting(),
@@ -461,6 +496,7 @@ describe('BackofficeService.getPlayerActivity', () => {
       dateFrom: new Date('2026-01-01T00:00:00.000Z'),
       dateTo: new Date('2026-02-01T00:00:00.000Z'),
     };
+
     expect(getRegistrationsOverTime).toHaveBeenCalledWith(expectedFilter);
     expect(getActiveUsersTrend).toHaveBeenCalledWith(expectedFilter);
     expect(getRetentionCohorts).toHaveBeenNthCalledWith(1, expectedFilter, 7);

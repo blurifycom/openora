@@ -1,7 +1,9 @@
 import * as z from 'zod';
 
 export const CHAT_ATTACHMENT_KINDS = ['gif'] as const;
+
 export const ChatAttachmentKindSchema = z.enum(CHAT_ATTACHMENT_KINDS);
+
 export type ChatAttachmentKind = z.infer<typeof ChatAttachmentKindSchema>;
 
 export const ChatAttachmentSchema = z.object({
@@ -14,4 +16,5 @@ export const ChatAttachmentSchema = z.object({
   height: z.number().int().positive().max(4096),
   title: z.string().trim().max(200),
 });
+
 export type ChatAttachment = z.infer<typeof ChatAttachmentSchema>;

@@ -22,8 +22,10 @@ describe('assertSealedServicesBound', () => {
       for (const token of IMPLEMENTED_SEALED_TOKENS) {
         expect((err as Error).message).toContain(token.description);
       }
+
       return;
     }
+
     throw new Error('expected assertSealedServicesBound to throw');
   });
 

@@ -54,6 +54,7 @@ type OwnershipHandover =
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
   const { deletedAt: _deletedAt, ...room } = record;
+
   return serializeRow(
     { ...room, isBanned: false, bannedUntil: null },
     { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
@@ -78,9 +79,11 @@ export class ChatRoomMembershipService {
     const { room, inserted } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t.select().from(chatRoom).where(predicate).limit(1);
+
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
         }
+
         const [ban] = await t
           .select({ id: chatRoomBan.id })
           .from(chatRoomBan)
@@ -93,17 +96,21 @@ export class ChatRoomMembershipService {
             ),
           )
           .limit(1);
+
         if (ban) {
           throw new ChatRoomBannedError(roomId);
         }
+
         const inserted = await t
           .insert(chatRoomMember)
           .values({ roomId, userId })
           .onConflictDoNothing()
           .returning();
+
         return { room, inserted };
       }),
     );
+
     if (inserted.length > 0) {
       this.events.emit('chat.room.member.joined', {
         roomId,
@@ -113,6 +120,7 @@ export class ChatRoomMembershipService {
         userAgent: meta.userAgent ?? null,
       });
     }
+
     return toRoom(room);
   }
 
@@ -126,6 +134,7 @@ export class ChatRoomMembershipService {
         if (!candidate) {
           throw new ChatRoomJoinCodeNotFoundError(joinCode);
         }
+
         return this.join(
           candidate.id,
           userId,
@@ -165,17 +174,21 @@ export class ChatRoomMembershipService {
           .from(chatRoom)
           .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
           .limit(1);
+
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
         }
+
         const [member] = await t
           .select({ role: chatRoomMember.role })
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .limit(1);
+
         if (!room.isPublic && !member) {
           throw new ChatRoomNotMemberError(roomId);
         }
+
         // The owner is the only member who can manage or delete the room, and `creatorId`
         // keeps pointing at them once their membership row is gone - so letting them walk
         // out strands the room with no one able to administer it. Promoting a moderator
@@ -183,6 +196,7 @@ export class ChatRoomMembershipService {
         if (member?.role === 'owner') {
           throw new ChatRoomOwnerCannotLeaveError();
         }
+
         // An owner can no longer be here, so this is the moderator case alone. The count
         // still spans both roles: what must not drop to zero is anyone able to moderate.
         if (member?.role === 'moderator') {
@@ -192,16 +206,19 @@ export class ChatRoomMembershipService {
             .where(
               and(eq(chatRoomMember.roomId, roomId), inArray(chatRoomMember.role, MODERATOR_ROLES)),
             );
+
           if (Number(modCount) <= 1) {
             throw new ChatRoomLastModeratorError();
           }
         }
+
         return t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning();
       }),
     );
+
     if (removed.length > 0) {
       this.events.emit('chat.room.member.left', {
         roomId,
@@ -211,6 +228,7 @@ export class ChatRoomMembershipService {
         userAgent: userAgent ?? null,
       });
     }
+
     return { success: true } as const;
   }
 
@@ -225,6 +243,7 @@ export class ChatRoomMembershipService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
+
     const removed = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [moderator] = await t
@@ -232,30 +251,38 @@ export class ChatRoomMembershipService {
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
           .limit(1);
+
         if (!moderator) {
           throw new ChatRoomNotMemberError(roomId);
         }
+
         if (moderator.role !== 'moderator' && moderator.role !== 'owner') {
           throw new ChatRoomNotModeratorError(roomId);
         }
+
         const [target] = await t
           .select({ role: chatRoomMember.role })
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .limit(1);
+
         if (moderator.role !== 'owner' && target && target.role !== 'member') {
           throw new ChatRoomNotModeratorError(roomId);
         }
+
         const removed = await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning();
+
         if (removed.length > 0) {
           await t.insert(chatRoomRemove).values({ roomId, userId, removedBy: moderatorId, reason });
         }
+
         return removed;
       }),
     );
+
     if (removed.length > 0) {
       await this.audit?.record({
         actorId: moderatorId,
@@ -275,9 +302,11 @@ export class ChatRoomMembershipService {
         userAgent: userAgent ?? null,
       });
     }
+
     if (removed.length > 0) {
       await this.transport?.revokeUserFromChannel?.(userId, chatChannel(roomId));
     }
+
     return { success: true } as const;
   }
 
@@ -310,45 +339,57 @@ export class ChatRoomMembershipService {
             and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
           )
           .limit(1);
+
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
         }
+
         const [actor] = await t
           .select({ role: chatRoomMember.role })
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
           .limit(1);
+
         if (!actor) {
           throw new ChatRoomNotMemberError(roomId);
         }
+
         if (actor.role !== 'owner') {
           throw new ChatRoomNotModeratorError(roomId);
         }
+
         const [target] = await t
           .select({ role: chatRoomMember.role })
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .limit(1);
+
         if (!target) {
           throw new ChatRoomNotMemberError(roomId);
         }
+
         if (actorId === userId) {
           throw new ChatRoomSelfModerationError();
         }
+
         if (target.role === 'owner') {
           throw new ChatRoomNotModeratorError(roomId);
         }
+
         if (target.role === role) {
           return null;
         }
+
         const updated = await t
           .update(chatRoomMember)
           .set({ role, roleAssignedAt: role === 'member' ? null : new Date() })
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning({ id: chatRoomMember.id });
+
         return updated.length === 1 ? target.role : null;
       }),
     );
+
     if (changed) {
       this.events.emit('chat.room.member.role-changed', {
         roomId,
@@ -368,11 +409,13 @@ export class ChatRoomMembershipService {
       // a write that happened and that a retry would no-op.
       await this.signalRoleChange(roomId, userId, role);
     }
+
     return { success: true } as const;
   }
 
   private async signalRoleChange(roomId: Uuid, userId: Uuid, role: ChatRoomRole) {
     const payload: ChatMemberRoleChangedSignal = { roomId, userId, role };
+
     try {
       await this.transport?.signal?.(chatChannel(roomId), CHAT_MEMBER_ROLE_CHANGED_SIGNAL, payload);
     } catch (err: unknown) {
@@ -392,12 +435,15 @@ export class ChatRoomMembershipService {
           isNull(chatRoom.deletedAt),
         ),
       );
+
     for (const { id: roomId } of rooms) {
       const result = await this.closeAccountInRoom(roomId, userId, closedAt);
+
       if (result) {
         await this.announceAccountClosed(roomId, userId, result.handover);
       }
     }
+
     return { success: true } as const;
   }
 
@@ -415,12 +461,15 @@ export class ChatRoomMembershipService {
             ),
           )
           .returning({ role: chatRoomMember.role });
+
         if (!stamped) {
           return this.rederiveHandover(t, roomId, userId, closedAt);
         }
+
         if (stamped.role !== 'owner') {
           return { handover: null };
         }
+
         const [room] = await t
           .select({ name: chatRoom.name })
           .from(chatRoom)
@@ -428,9 +477,11 @@ export class ChatRoomMembershipService {
             and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
           )
           .limit(1);
+
         if (!room) {
           return { handover: null };
         }
+
         const candidates = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
@@ -445,6 +496,7 @@ export class ChatRoomMembershipService {
             sql`${chatRoomMember.roleAssignedAt} asc nulls last`,
             asc(chatRoomMember.joinedAt),
           );
+
         const demoteClosedOwner = () =>
           t
             .update(chatRoomMember)
@@ -452,6 +504,7 @@ export class ChatRoomMembershipService {
             .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
 
         let newOwnerId: Uuid | null = null;
+
         for (const candidate of candidates) {
           const promoted = await t
             .update(chatRoomMember)
@@ -464,6 +517,7 @@ export class ChatRoomMembershipService {
               ),
             )
             .returning({ id: chatRoomMember.id });
+
           if (promoted.length === 1) {
             newOwnerId = candidate.userId;
             break;
@@ -473,6 +527,7 @@ export class ChatRoomMembershipService {
         if (newOwnerId) {
           await t.update(chatRoom).set({ creatorId: newOwnerId }).where(eq(chatRoom.id, roomId));
           await demoteClosedOwner();
+
           return {
             handover: {
               kind: 'transferred',
@@ -492,14 +547,18 @@ export class ChatRoomMembershipService {
           })
           .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.scheduledDeletionAt)))
           .returning({ scheduledDeletionAt: chatRoom.scheduledDeletionAt });
+
         await demoteClosedOwner();
+
         if (!scheduled?.scheduledDeletionAt) {
           return { handover: null };
         }
+
         const recipients = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+
         return {
           handover: {
             kind: 'scheduled',
@@ -518,9 +577,11 @@ export class ChatRoomMembershipService {
       .from(chatRoomMember)
       .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
       .limit(1);
+
     if (member?.accountClosedAt?.getTime() !== closedAt.getTime()) {
       return null;
     }
+
     const [room] = await t
       .select({
         name: chatRoom.name,
@@ -530,9 +591,11 @@ export class ChatRoomMembershipService {
       .from(chatRoom)
       .where(and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)))
       .limit(1);
+
     if (!room) {
       return null;
     }
+
     if (room.creatorId) {
       const [successor] = await t
         .select({ userId: chatRoomMember.userId })
@@ -547,23 +610,28 @@ export class ChatRoomMembershipService {
           ),
         )
         .limit(1);
+
       if (!successor) {
         return null;
       }
+
       return {
         handover: { kind: 'transferred', roomName: room.name, newOwnerId: successor.userId },
       } as const;
     }
+
     if (
       room.scheduledDeletionAt?.getTime() !==
       closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS
     ) {
       return null;
     }
+
     const recipients = await t
       .select({ userId: chatRoomMember.userId })
       .from(chatRoomMember)
       .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+
     return {
       handover: {
         kind: 'scheduled',
@@ -587,12 +655,15 @@ export class ChatRoomMembershipService {
           isNull(chatRoom.deletedAt),
         ),
       );
+
     for (const { id: roomId } of rooms) {
       const restored = await this.reopenAccountInRoom(roomId, userId);
+
       if (restored) {
         await this.announceDeletionCancelled(roomId, userId, restored);
       }
     }
+
     return { success: true } as const;
   }
 
@@ -604,6 +675,7 @@ export class ChatRoomMembershipService {
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .limit(1);
+
         const cleared = await t
           .update(chatRoomMember)
           .set({ accountClosedAt: null })
@@ -615,10 +687,13 @@ export class ChatRoomMembershipService {
             ),
           )
           .returning({ id: chatRoomMember.id });
+
         const closedAt = member?.accountClosedAt;
+
         if (cleared.length !== 1 || !closedAt) {
           return null;
         }
+
         const [room] = await t
           .select({
             name: chatRoom.name,
@@ -628,31 +703,38 @@ export class ChatRoomMembershipService {
           .from(chatRoom)
           .where(eq(chatRoom.id, roomId))
           .limit(1);
+
         if (!room || room.creatorId || !room.scheduledDeletionAt) {
           return null;
         }
+
         if (
           room.scheduledDeletionAt.getTime() !==
           closedAt.getTime() + OWNERLESS_ROOM_RETENTION_DAYS * DAY_MS
         ) {
           return null;
         }
+
         const [uncancelled] = await t
           .update(chatRoom)
           .set({ creatorId: userId, scheduledDeletionAt: null })
           .where(and(eq(chatRoom.id, roomId), isNotNull(chatRoom.scheduledDeletionAt)))
           .returning({ id: chatRoom.id });
+
         if (!uncancelled) {
           return null;
         }
+
         await t
           .update(chatRoomMember)
           .set({ role: 'owner', roleAssignedAt: new Date() })
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+
         const recipients = await t
           .select({ userId: chatRoomMember.userId })
           .from(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), isNull(chatRoomMember.accountClosedAt)));
+
         return { roomName: room.name, memberIds: recipients.map((m) => m.userId) };
       }),
     );
@@ -671,6 +753,7 @@ export class ChatRoomMembershipService {
     });
     await this.signalRoleChange(roomId, userId, 'owner');
     const payload: ChatRoomScheduledForDeletionSignal = { roomId, scheduledDeletionAt: null };
+
     try {
       await this.transport?.signal?.(
         chatChannel(roomId),
@@ -692,9 +775,11 @@ export class ChatRoomMembershipService {
     } catch (err: unknown) {
       logger.error({ err, roomId, userId }, 'chat room channel revoke failed');
     }
+
     if (!handover) {
       return;
     }
+
     if (handover.kind === 'transferred') {
       this.events.emit('chat.room.ownership.transferred', {
         roomId,
@@ -705,8 +790,10 @@ export class ChatRoomMembershipService {
       });
       await this.signalRoleChange(roomId, handover.newOwnerId, 'owner');
       await this.signalRoleChange(roomId, userId, 'member');
+
       return;
     }
+
     this.events.emit('chat.room.scheduled_for_deletion', {
       roomId,
       roomName: handover.roomName,
@@ -715,10 +802,12 @@ export class ChatRoomMembershipService {
       scheduledDeletionAt: handover.scheduledDeletionAt.toISOString(),
     });
     await this.signalRoleChange(roomId, userId, 'member');
+
     const payload: ChatRoomScheduledForDeletionSignal = {
       roomId,
       scheduledDeletionAt: handover.scheduledDeletionAt.toISOString(),
     };
+
     try {
       await this.transport?.signal?.(
         chatChannel(roomId),

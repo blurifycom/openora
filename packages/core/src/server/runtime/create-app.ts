@@ -68,6 +68,7 @@ export const PUBLIC_HTTP_CACHE_PATHS = [
 ] as const;
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
+
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
 
 // Redis Streams consumer group name for MESSAGE_BROKER. Distinct deployments/services
@@ -79,9 +80,11 @@ const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
 // A split deployment must therefore name itself explicitly.
 function resolveServiceName(): string {
   const serviceName = process.env['SERVICE_NAME'];
+
   if (serviceName) {
     return serviceName;
   }
+
   if (process.env['SERVICE_MANIFEST']) {
     throw new Error(
       '[create-app] SERVICE_MANIFEST is set but SERVICE_NAME is not. A split service needs a stable ' +
@@ -90,6 +93,7 @@ function resolveServiceName(): string {
         'stable identifier for this deployment (eg SERVICE_NAME=wallet).',
     );
   }
+
   return 'monolith';
 }
 
@@ -132,6 +136,7 @@ function headersToRecord(headers: Headers): Record<string, string> {
   headers.forEach((value, key) => {
     out[key] = value;
   });
+
   return out;
 }
 
@@ -145,36 +150,48 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
   if (!req.body) {
     return undefined;
   }
+
   const declaredLength = req.headers.get('content-length');
+
   if (declaredLength && Number(declaredLength) > MAX_CAPTURED_BODY_BYTES) {
     return undefined;
   }
+
   // content-length can be absent (chunked) or lie, so bound the actual stream rather
   // than trusting the header: stop and bail past the cap so memory stays bounded and
   // the signature check fails closed.
   const clonedBody = req.clone().body;
+
   if (!clonedBody) {
     return undefined;
   }
+
   const reader = clonedBody.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
+
       if (done) {
         break;
       }
+
       total += value.byteLength;
+
       if (total > MAX_CAPTURED_BODY_BYTES) {
         await reader.cancel();
+
         return undefined;
       }
+
       chunks.push(value);
     }
   } finally {
     reader.releaseLock();
   }
+
   return Buffer.concat(chunks).toString('utf8');
 }
 
@@ -208,8 +225,10 @@ export async function createApp(
   container.register(DRIZZLE, () => {
     const svc = new DrizzleService();
     container.onDispose(() => svc.dispose());
+
     return svc;
   });
+
   // A distributed deployment wants events that survive a crash between commit and
   // publish. Off by default: emit() keeps its best-effort fan-out and
   // emitInTransaction() throws a guiding error until this is enabled.
@@ -219,9 +238,11 @@ export async function createApp(
   // unless an overlay replaced it); set OUTBOX_ENABLED directly when that is the aim.
   const outboxEnabled =
     !!process.env['OUTBOX_ENABLED'] || !!process.env['AMQP_URL'] || !!process.env['RABBITMQ_URL'];
+
   if (outboxEnabled) {
     container.register(OUTBOX, () => new DrizzleOutboxWriter());
   }
+
   container.register(EVENT_BUS, (c) =>
     createEventBus(
       c.get(MESSAGE_BROKER),
@@ -230,6 +251,7 @@ export async function createApp(
     ),
   );
   const redisUrl = process.env['REDIS_URL'];
+
   if (redisUrl) {
     // Resolved eagerly, before any client is opened: a misconfigured service name is
     // a boot error, not a surprise on whichever code path resolves the broker first.
@@ -237,6 +259,7 @@ export async function createApp(
     container.register(JOB_QUEUE, () => {
       const q = new BullMqJobQueue(redisUrl);
       container.onDispose(() => q.close());
+
       return q;
     });
     const redis = createRedisClient(redisUrl);
@@ -246,14 +269,17 @@ export async function createApp(
     container.register(MESSAGE_BROKER, () => {
       const broker = new RedisStreamsBroker(redis, { serviceName });
       container.onDispose(() => broker.close());
+
       return broker;
     });
     container.register(REALTIME_TRANSPORT, () => {
       const transport = new RedisPubSubRealtimeTransport(redis, serviceName);
       container.onDispose(() => transport.close());
+
       return transport;
     });
   }
+
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
   // the engine is domain-agnostic (ADR-0019/0025).
@@ -272,10 +298,12 @@ export async function createApp(
         c.has(ADMIN_SECURITY_POLICY) ? c.get(ADMIN_SECURITY_POLICY) : undefined,
       ),
   );
+
   if (config.igaming) {
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);
   }
+
   // Always bound: loadPlatformConfig() falls back to an empty-but-valid config
   // when no platform-config.{yaml,yml,json} file is present (PLATFORM_CONFIG_PATH
   // or cwd discovery). See platform-config-loader.ts.
@@ -293,6 +321,7 @@ export async function createApp(
   }
 
   const bus = container.get(EVENT_BUS);
+
   for (const [event, handlers] of registry.events.getAll()) {
     for (const handler of handlers) {
       bus.on(event, handler);
@@ -305,10 +334,12 @@ export async function createApp(
   const jobQueue = container.get(JOB_QUEUE);
 
   const router: Record<string, AnyRouter> = {};
+
   for (const [namespace, factory] of registry.routers.getAll()) {
     if (namespace in router) {
       throw new Error(`Router namespace "${namespace}" is registered by more than one plugin`);
     }
+
     router[namespace] = factory(container) as AnyRouter;
   }
 
@@ -320,6 +351,7 @@ export async function createApp(
     const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
       onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
     });
+
     relay.start();
     container.onDispose(() => relay.stop());
   }
@@ -351,6 +383,7 @@ export async function createApp(
         if (error instanceof ORPCError && error.status < 500) {
           return;
         }
+
         const err = error instanceof ORPCError ? (error.cause ?? error) : error;
         createLogger('orpc').error({ err }, 'unhandled error');
       }),
@@ -368,16 +401,19 @@ export async function createApp(
     if (err instanceof HTTPException) {
       return err.getResponse();
     }
+
     createLogger('http').error(
       { err, method: c.req.method, path: c.req.path },
       'unhandled request error',
     );
+
     return c.json({ error: 'Internal Server Error' }, 500);
   });
 
   if (config.cors !== false) {
     const origins =
       config.cors === true || config.cors === undefined ? undefined : config.cors.origins;
+
     app.use('/*', cors({ origin: origins ?? ((origin) => origin), credentials: true }));
   }
 
@@ -386,10 +422,13 @@ export async function createApp(
       ...PUBLIC_HTTP_CACHE_PATHS,
       ...(config.httpCache?.additionalPaths ?? []),
     ];
+
     const maxAgeSeconds = config.httpCache?.maxAgeSeconds ?? DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS;
+
     const staleWhileRevalidateSeconds = config.httpCache?.maxAgeSeconds
       ? maxAgeSeconds * 2
       : DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS;
+
     // GET/HEAD only - the etag middleware short-circuits with a 304 on a matching
     // If-None-Match, which would swallow a PUT/DELETE's response after it already
     // ran the mutation (eg PUT /cms/pages/{id} under the /cms/pages cache prefix).
@@ -398,13 +437,16 @@ export async function createApp(
       const isCacheablePath = cachePaths.some(
         (path) => c.req.path === path || c.req.path.startsWith(`${path}/`),
       );
+
       const isCacheableMethod = c.req.method === 'GET' || c.req.method === 'HEAD';
       const isCacheable = isCacheableMethod && isCacheablePath;
+
       if (isCacheable) {
         await etagMiddleware(c, next);
       } else {
         await next();
       }
+
       // An SSE body is a sequence of small frames that only mean anything on arrival, so any
       // intermediary that compresses or buffers it holds every event until its own flush
       // threshold. That is not hypothetical: Next's built-in gzip (and nginx's, and a CDN's)
@@ -412,9 +454,11 @@ export async function createApp(
       // batches. `no-transform` is the standards-defined opt-out every one of them honours,
       // and `X-Accel-Buffering` covers nginx's separate proxy-buffering stage.
       const isEventStream = (c.res.headers.get('content-type') ?? '').includes('text/event-stream');
+
       if (isEventStream) {
         c.res.headers.set('X-Accel-Buffering', 'no');
       }
+
       c.res.headers.set(
         'Cache-Control',
         isCacheable
@@ -430,13 +474,16 @@ export async function createApp(
 
   app.use('/*', async (c, next) => {
     const headers = headersToRecord(c.req.raw.headers);
+
     if (!headers['x-real-ip'] && !headers['x-forwarded-for']) {
       const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
         ?.incoming?.socket?.remoteAddress;
+
       if (remoteAddress) {
         headers['x-real-ip'] = remoteAddress;
       }
     }
+
     const context: OssContext = {
       request: { headers },
       clientMeta: extractClientMeta(headers),
@@ -448,10 +495,13 @@ export async function createApp(
 
     const runHandler = async (): Promise<Response> => {
       const { matched, response } = await handler.handle(c.req.raw, { context });
+
       if (matched) {
         return c.newResponse(response.body, response);
       }
+
       await next();
+
       return c.res;
     };
 

@@ -45,6 +45,7 @@ import {
 } from '../service/iam.service.js';
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 const makeMailDispatch = () =>
@@ -52,6 +53,7 @@ const makeMailDispatch = () =>
     toUser: vi.fn().mockResolvedValue(undefined),
     toAddress: vi.fn().mockResolvedValue(undefined),
   });
+
 const identityReader = makeIdentityReader();
 
 function makeIamService(
@@ -73,6 +75,7 @@ function makeIamService(
 
 // Bootstrap super-admin: no DB assignment row + user.role === 'admin' passes the static fallback.
 const ADMIN_CALLER = { userId: randomUUID(), role: 'admin', ...NO_CLIENT_META };
+
 const SUPPORT_CALLER = { userId: randomUUID(), role: 'support', ...NO_CLIENT_META };
 
 const TOTAL_GRANTS = (Object.keys(statement) as ResourceName[]).reduce(
@@ -92,6 +95,7 @@ async function seedRole(
       isSuperAdmin: overrides.isSuperAdmin ?? false,
     })
     .returning();
+
   return row;
 }
 
@@ -300,17 +304,20 @@ describe('IamService.setRolePermissions', () => {
   it('a super caller may grant any level and the rows are persisted', async () => {
     const role = await seedRole();
     const svc = makeIamService(db.drizzle, makeEventBus(), makeMailDispatch());
+
     const result = await svc.setRolePermissions({
       roleId: role.id,
       grants: [{ resource: 'withdrawal', level: 'read_write' }],
       caller: ADMIN_CALLER,
     });
+
     expect(result.permissions).toContainEqual({ resource: 'withdrawal', level: 'read_write' });
 
     const rows = await db.drizzle.db
       .select()
       .from(adminRolePermission)
       .where(eq(adminRolePermission.roleId, role.id));
+
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ resource: 'withdrawal', level: 'read_write' });
   });
@@ -413,9 +420,11 @@ describe('IamService.deleteRole', () => {
       actorId: ADMIN_CALLER.userId,
       ...NO_CLIENT_META,
     });
+
     const revokeCalls = (events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => c[0] === 'iam.role.revoked',
     );
+
     expect(revokeCalls).toHaveLength(2);
     expect(events.emit).toHaveBeenCalledWith(
       'iam.role.deleted',
@@ -439,6 +448,7 @@ describe('IamService.assignRole', () => {
       roleId: role.id,
       caller: ADMIN_CALLER,
     });
+
     expect(events.emit).not.toHaveBeenCalledWith('iam.role.assigned', expect.anything());
     // Still exactly one assignment row, and the existing one was returned.
     const rows = await db.drizzle.db.select().from(adminRoleAssignment);
@@ -477,6 +487,7 @@ describe('IamService.assignRole', () => {
       .select()
       .from(adminRoleAssignment)
       .where(eq(adminRoleAssignment.userId, target.id));
+
     expect(rows).toHaveLength(1);
   });
 });
@@ -499,11 +510,13 @@ describe('IamService.unassignRole', () => {
     const role = await seedRole();
     const events = makeEventBus();
     const svc = makeIamService(db.drizzle, events, makeMailDispatch());
+
     const result = await svc.unassignRole({
       userId: randomUUID(),
       roleId: role.id,
       caller: ADMIN_CALLER,
     });
+
     expect(result).toEqual({ success: true });
     expect(events.emit).not.toHaveBeenCalledWith('iam.role.revoked', expect.anything());
   });
@@ -587,6 +600,7 @@ describe('IamService.acceptInvitation', () => {
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
+
     return token;
   }
 
@@ -610,6 +624,7 @@ describe('IamService.acceptInvitation', () => {
       svc.acceptInvitation(token),
       svc.acceptInvitation(token),
     ]);
+
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
     expect(fulfilled).toHaveLength(1);
@@ -624,11 +639,13 @@ describe('IamService.inviteAdmin', () => {
     const role = await seedRole();
     const mailDispatch = makeMailDispatch();
     const svc = makeIamService(db.drizzle, makeEventBus(), mailDispatch);
+
     const result = await svc.inviteAdmin({
       email: 'new@admin.com',
       roleId: role.id,
       caller: ADMIN_CALLER,
     });
+
     expect(result.status).toBe('pending');
     expect(result.email).toBe('new@admin.com');
     expect(mailDispatch.toAddress).toHaveBeenCalledOnce();
@@ -742,6 +759,7 @@ describe('IamService.reportAccessDenied', () => {
       level: 'read',
       caller: SUPPORT_CALLER,
     });
+
     const second = await svc.reportAccessDenied({
       resource: 'withdrawal',
       level: 'read',
@@ -750,9 +768,11 @@ describe('IamService.reportAccessDenied', () => {
 
     expect(first).toEqual({ recorded: true });
     expect(second).toEqual({ recorded: false });
+
     const denialCalls = (events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => c[0] === 'identity.user.unauthorized_access',
     );
+
     expect(denialCalls).toHaveLength(1);
   });
 });
@@ -767,9 +787,11 @@ describe('IamService.forceLogout', () => {
 
   it('allows a super-admin caller to delete sessions for a user via SessionCommands', async () => {
     const events = makeEventBus();
+
     const sessionCommands = mock<SessionCommands>({
       revokeAll: vi.fn().mockResolvedValue({ success: true }),
     });
+
     const svc = makeIamService(db.drizzle, events, makeMailDispatch(), sessionCommands);
     const targetUserId = randomUUID();
     const result = await svc.forceLogout({ userId: targetUserId, caller: ADMIN_CALLER });

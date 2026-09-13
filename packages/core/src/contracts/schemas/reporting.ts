@@ -5,6 +5,7 @@ const DateRangeShapeSchema = z.object({
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
 });
+
 export type DateRange = z.infer<typeof DateRangeShapeSchema>;
 
 export function isDateRangeOrdered(range: DateRange): boolean {
@@ -17,5 +18,7 @@ export const DateRangeSchema = DateRangeShapeSchema.refine(
 );
 
 export const GRANULARITIES = ['day', 'week', 'month'] as const;
+
 export const GranularitySchema = z.enum(GRANULARITIES);
+
 export type Granularity = z.infer<typeof GranularitySchema>;

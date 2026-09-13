@@ -28,6 +28,7 @@ import { user, session, account, verification, twoFactor } from '@openora/core/p
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
+
   return hit ? hit.slice(name.length + 3) : undefined;
 }
 
@@ -36,6 +37,7 @@ async function main() {
     process.env['DATABASE_ADMIN_URL'] ??
     process.env['DATABASE_URL'] ??
     'postgresql://postgres:postgres@localhost:5432/oss_igaming';
+
   const db = createDrizzleDb(databaseUrl);
   // better-auth's drizzle adapter needs the auth tables passed as schema, else
   // user creation throws "model user not found". See @openora/core/server createAuth().

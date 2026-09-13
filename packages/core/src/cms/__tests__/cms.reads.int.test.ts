@@ -8,11 +8,13 @@ import { page as pageTable } from '../schema/index.js';
 import { CmsService, PageNotFoundError } from '../service/cms.service.js';
 
 let db: TestDb;
+
 let redis: TestRedis;
 
 function makeService() {
   const events = makeEventBus();
   const cache = new RedisCache(redis.client);
+
   return { svc: new CmsService(db.drizzle, events, cache), events };
 }
 
@@ -34,6 +36,7 @@ beforeEach(async () => {
 describe('CmsService page cache invalidation (real PG + real Redis)', () => {
   it('serves the next getPage from cache, then updatePage invalidates so the reload sees the new row', async () => {
     const { svc } = makeService();
+
     const created = await svc.createPage(
       { slug: 'about', title: 'About v1', publishedAt: '2024-01-01T00:00:00.000Z' },
       'admin-1',

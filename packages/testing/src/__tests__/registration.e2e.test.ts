@@ -20,6 +20,7 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let app: TestApp;
 
 const login = (email: string, password = 'password1234') =>
@@ -35,6 +36,7 @@ const userIdFor = async (email: string) => {
     .db.select({ id: user.id })
     .from(user)
     .where(eq(user.email, email.toLowerCase()));
+
   return row?.id;
 };
 
@@ -93,11 +95,13 @@ describe('registration email verification', () => {
     });
 
     expect(res.status).toBe(200);
+
     const [row] = await app.container
       .get(DRIZZLE)
       .db.select()
       .from(player)
       .where(eq(player.userId, (await userIdFor(email)) ?? ''));
+
     expect(row).toMatchObject({
       firstName: 'Ada',
       lastName: 'Lovelace',
@@ -145,10 +149,12 @@ describe('registration email verification', () => {
 
     expect(res.status).toBe(403);
     expect(res.headers.get('set-cookie')).toBeNull();
+
     const [row] = await db
       .select({ emailVerified: user.emailVerified })
       .from(user)
       .where(eq(user.id, userId!));
+
     expect(row?.emailVerified).toBe(true);
   });
 
@@ -185,6 +191,7 @@ describe('registration email verification', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email, otp: '000000' }),
     });
+
     expect(res.ok).toBe(false);
     expect(res.headers.get('set-cookie')).toBeNull();
   });
@@ -218,6 +225,7 @@ describe('registration email verification', () => {
       .db.select()
       .from(player)
       .where(eq(player.userId, (await userIdFor(email)) ?? ''));
+
     expect(players).toHaveLength(1);
     // The mail must say why it arrived. A bare "Reset your password" reaches someone who
     // never asked to reset anything and explains nothing about the sign-up they just tried.
@@ -254,6 +262,7 @@ describe('registration email verification', () => {
         acceptedAge: true,
       }),
     });
+
     expect(res.status).toBe(409);
 
     await vi.waitFor(async () => {
@@ -262,6 +271,7 @@ describe('registration email verification', () => {
         .db.select()
         .from(auditLog)
         .where(eq(auditLog.action, 'identity.user.registration.failed'));
+
       const row = rows.find((r) => (r.after as { email?: string })?.email === email);
       expect(row).toMatchObject({
         result: 'failure',
@@ -298,6 +308,7 @@ describe('registration email verification', () => {
       email: `reg-dup-b-${randomUUID()}@e2e.test`,
       username: username.toUpperCase(),
     });
+
     expect(res.status).toBe(409);
   });
 
@@ -311,6 +322,7 @@ describe('registration email verification', () => {
     const taken = await app.app.request(
       `/identity/username-available?username=${username.toUpperCase()}`,
     );
+
     expect(await taken.json()).toEqual({ available: false });
   });
 });

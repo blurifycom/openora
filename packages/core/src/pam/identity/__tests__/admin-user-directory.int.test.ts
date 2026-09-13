@@ -14,6 +14,7 @@ let db: TestDb;
 
 function makeDirectory() {
   const emit = vi.fn();
+
   return {
     dir: new DrizzleAdminUserDirectory(db.drizzle, mock<EventBus>({ emit, on: vi.fn() })),
     emit,
@@ -26,10 +27,12 @@ async function seedPlayer(
 ) {
   const { username = 'alice', ...playerOverrides } = overrides;
   await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+
   const [row] = await db.drizzle.db
     .insert(player)
     .values({ userId, ...playerOverrides })
     .returning();
+
   return row!;
 }
 
@@ -167,6 +170,7 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
   it('joins the email from the user table onto the player summary', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser(db, { email: 'alice@example.com' });
+
     const seededPlayer = await seedPlayer(account.id, {
       username: 'alice',
       kycStatus: 'verified',

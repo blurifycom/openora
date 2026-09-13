@@ -13,6 +13,7 @@ import { createBackofficeRouter } from '../router/index.js';
 import { BackofficeService } from '../service/backoffice.service.js';
 
 const CTX = testContext();
+
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
 function userRow(over: Partial<AdminUserRow> = {}): AdminUserRow {
@@ -29,6 +30,7 @@ function userRow(over: Partial<AdminUserRow> = {}): AdminUserRow {
 
 function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
   const stored = { row: userRow() };
+
   const users = mock<AdminUserDirectory>({
     count: vi.fn().mockResolvedValue(0),
     list: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
@@ -36,28 +38,34 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
     update: vi.fn(async (_id: string, data: Partial<AdminUserRow>) => {
       const set = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
       stored.row = { ...stored.row, ...set };
+
       return stored.row;
     }),
     lookupPlayers: vi.fn().mockResolvedValue([]),
     findPlayerIds: vi.fn().mockResolvedValue([]),
     ...over.directory,
   });
+
   const reporting = mock<AdminWalletReporting>({
     totals: vi.fn().mockResolvedValue({ deposits: '0', withdrawals: '0' }),
     listTransactions: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
     getTransaction: vi.fn().mockResolvedValue(null),
   });
+
   const gameReporting = mock<AdminGameReporting>({
     listGamePerformance: vi.fn().mockResolvedValue([]),
   });
+
   const playerActivity = mock<AdminPlayerActivity>({
     getRegistrationsOverTime: vi.fn().mockResolvedValue([]),
     getActiveUsersTrend: vi.fn().mockResolvedValue([]),
     getRetentionCohorts: vi.fn().mockResolvedValue([]),
   });
+
   const roleAssignments = mock<AdminRoleAssignmentDirectory>({
     listByUserIds: vi.fn().mockResolvedValue([]),
   });
+
   return {
     service: new BackofficeService(
       users,
@@ -85,6 +93,7 @@ const audit = makeAuditWriter;
 describe('backoffice router updateUser authz', () => {
   it('rejects a role change from a non-super-admin and leaves the user untouched', async () => {
     const { service, users } = realService();
+
     const router = createBackofficeRouter(
       service,
       guardWhereOnlySuperAdminClearsAdmin(false),
@@ -100,6 +109,7 @@ describe('backoffice router updateUser authz', () => {
   it('allows a super-admin to change a role and writes the before/after audit entry', async () => {
     const { service } = realService();
     const writer = audit();
+
     const router = createBackofficeRouter(
       service,
       guardWhereOnlySuperAdminClearsAdmin(true),
@@ -128,6 +138,7 @@ describe('backoffice router updateUser authz', () => {
   it('allows an isActive-only change without the super-admin gate and audits it', async () => {
     const { service } = realService();
     const writer = audit();
+
     const router = createBackofficeRouter(
       service,
       guardWhereOnlySuperAdminClearsAdmin(false),
@@ -146,6 +157,7 @@ describe('backoffice router updateUser authz', () => {
 
   it('maps an unknown user to NOT_FOUND rather than a raw throw', async () => {
     const { service } = realService({ directory: { get: vi.fn().mockResolvedValue(null) } });
+
     const router = createBackofficeRouter(
       service,
       guardWhereOnlySuperAdminClearsAdmin(true),
@@ -159,6 +171,7 @@ describe('backoffice router updateUser authz', () => {
 
   it('serializes createdAt to an ISO string on the wire', async () => {
     const { service } = realService();
+
     const router = createBackofficeRouter(
       service,
       guardWhereOnlySuperAdminClearsAdmin(false),

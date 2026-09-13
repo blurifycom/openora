@@ -21,18 +21,24 @@
 // paths from packages/core/tsconfig.json (rebased onto the repo root, extends dropped -
 // the ts parser can't follow it from here) via a flat tsconfig generated at load time.
 const { mkdirSync, writeFileSync } = require('node:fs');
+
 const { join } = require('node:path');
 
 const corePaths = require('./packages/core/tsconfig.json').compilerOptions.paths;
+
 const rebased = Object.fromEntries(
   Object.entries(corePaths).map(([spec, targets]) => [
     spec,
     targets.map((t) => t.replace(/^\.\//, './packages/core/')),
   ]),
 );
+
 const generatedTsConfigDir = join(__dirname, 'node_modules', '.cache');
+
 const generatedTsConfig = join(generatedTsConfigDir, 'dependency-cruiser-tsconfig.json');
+
 mkdirSync(generatedTsConfigDir, { recursive: true });
+
 writeFileSync(
   generatedTsConfig,
   // files/baseUrl are tsconfig-relative: point back at the repo root from node_modules/.cache

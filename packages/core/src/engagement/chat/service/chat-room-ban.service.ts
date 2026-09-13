@@ -34,19 +34,23 @@ export class ChatRoomBanService {
       .from(chatRoomMember)
       .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, actorId)))
       .limit(1);
+
     if (!actor || (actor.role !== 'moderator' && actor.role !== 'owner')) {
       throw new ChatRoomNotModeratorError(roomId);
     }
+
     if (targetId) {
       const [target] = await db
         .select({ role: chatRoomMember.role })
         .from(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, targetId)))
         .limit(1);
+
       if (actor.role !== 'owner' && target && target.role !== 'member') {
         throw new ChatRoomNotModeratorError(roomId);
       }
     }
+
     return actor.role;
   }
 
@@ -68,9 +72,11 @@ export class ChatRoomBanService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
+
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
+
         const [existing] = await t
           .select({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt })
           .from(chatRoomBan)
@@ -82,15 +88,18 @@ export class ChatRoomBanService {
             ),
           )
           .limit(1);
+
         if (existing && (!existing.expiresAt || existing.expiresAt > new Date())) {
           return;
         }
+
         if (existing) {
           await t
             .update(chatRoomBan)
             .set({ liftedAt: new Date(), liftedBy: moderatorId })
             .where(eq(chatRoomBan.id, existing.id));
         }
+
         await t.insert(chatRoomBan).values({
           roomId,
           userId,
@@ -120,6 +129,7 @@ export class ChatRoomBanService {
       after: { roomId, userId, durationSeconds, reason },
     });
     await this.transport.revokeUserFromChannel?.(userId, `chat:room:${roomId}`);
+
     return { success: true } as const;
   }
 
@@ -155,6 +165,7 @@ export class ChatRoomBanService {
       resourceId: null,
       after: { roomId, userId },
     });
+
     return { success: true } as const;
   }
 }

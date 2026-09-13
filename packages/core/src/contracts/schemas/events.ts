@@ -31,15 +31,19 @@ const authContextBase = ClientMetaSchema.partial();
 const iamRoleEventBase = z
   .object({ roleId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+
 const cmsPageEventBase = z
   .object({ pageId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+
 const cmsBannerConfigurationEventBase = z
   .object({ bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+
 const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+
 const cmsBannerScheduleEventBase = z
   .object({
     bannerScheduleId: UuidSchema,
@@ -50,13 +54,17 @@ const cmsBannerScheduleEventBase = z
     actorId: UuidSchema,
   })
   .extend(authContextBase.shape);
+
 const cmsBannerScheduleUpdatedEvent = cmsBannerScheduleEventBase.extend({
   before: z.object({ endsAt: TimestampSchema }),
 });
+
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
+
 const tagPlayerEventBase = actorReasonBase
   .extend({ playerId: UuidSchema, tagKey: TagKeySchema })
   .extend(authContextBase.shape);
+
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
@@ -98,7 +106,9 @@ export const KycStatusUpdatedSchema = z.object({
 });
 
 export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as const;
+
 export const TwoFactorMethodSchema = z.enum(TWO_FACTOR_METHODS);
+
 export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
 
 // A session is only authenticated after a credential-bearing flow completes. This is
@@ -114,7 +124,9 @@ export const AUTHENTICATION_METHODS = [
   'otp',
   'backup_code',
 ] as const;
+
 export const AuthenticationMethodSchema = z.enum(AUTHENTICATION_METHODS);
+
 export type AuthenticationMethod = z.infer<typeof AuthenticationMethodSchema>;
 
 export const domainEventSchemas = {
@@ -778,6 +790,7 @@ export const domainEventSchemas = {
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
+
 export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof domainEventSchemas)[K]>;
 
 // Bump an entry only when its payload shape changes in a non-additive way, in the SAME commit

@@ -10,9 +10,11 @@ export async function seedTagRules(db: DrizzleDb): Promise<void> {
 
   const rows = DEFAULT_TAG_RULES.flatMap((r) => {
     const tagId = tagIdByKey.get(r.tagKey);
+
     if (!tagId) {
       return [];
     }
+
     return [
       {
         tagId,

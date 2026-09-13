@@ -8,6 +8,7 @@ import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletReaderService } from '../adapters/wallet-reader.service.js';
 
 let db: TestDb;
+
 let svc: WalletReaderService;
 
 async function seedWallet() {

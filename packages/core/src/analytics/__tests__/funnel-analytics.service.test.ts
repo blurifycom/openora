@@ -16,6 +16,7 @@ describe('FunnelAnalyticsService.conversion', () => {
     const execute = vi.fn().mockResolvedValue({
       rows: [{ registered: '100', email_verified: '80', first_deposit: '40', first_bet: '10' }],
     });
+
     const service = new FunnelAnalyticsService(mock({ db: { execute } }), fakeCache(undefined));
 
     const result = await service.conversion({});
@@ -32,6 +33,7 @@ describe('FunnelAnalyticsService.conversion', () => {
     const execute = vi.fn().mockResolvedValue({
       rows: [{ registered: '0', email_verified: '0', first_deposit: '0', first_bet: '0' }],
     });
+
     const service = new FunnelAnalyticsService(mock({ db: { execute } }), fakeCache(undefined));
 
     const result = await service.conversion({});

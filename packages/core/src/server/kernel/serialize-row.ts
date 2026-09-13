@@ -22,6 +22,7 @@ export function serializeRow<
 
   for (const key of dateFields) {
     const val = result[key as string];
+
     if (val instanceof Date) {
       result[key as string] = val.toISOString();
     }
@@ -29,6 +30,7 @@ export function serializeRow<
 
   for (const key of decimalFields) {
     const val = result[key as string];
+
     if (val !== null && val !== undefined) {
       result[key as string] = String(val);
     }

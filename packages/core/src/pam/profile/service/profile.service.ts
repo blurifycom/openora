@@ -48,6 +48,7 @@ export class ProfileService implements PlayerProvisioning {
       .values({ userId, ...consent })
       .onConflictDoNothing({ target: player.userId })
       .returning({ id: player.id });
+
     return inserted ? { created: true, playerId: inserted.id } : { created: false };
   }
 
@@ -58,11 +59,13 @@ export class ProfileService implements PlayerProvisioning {
    */
   private async ensureProfileRow(userId: User['id']) {
     const identity = await fetchIdentityByUserId(this.drizzle, userId);
+
     if (!identity) {
       throw new ProfileUserNotFoundError(userId);
     }
 
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
+
     if (existing) {
       return { row: existing, identity };
     }
@@ -75,11 +78,13 @@ export class ProfileService implements PlayerProvisioning {
       .values({ userId })
       .onConflictDoUpdate({ target: player.userId, set: { userId } })
       .returning();
+
     return { row: created, identity };
   }
 
   private async ensureProfile(userId: User['id']) {
     const { row, identity } = await this.ensureProfileRow(userId);
+
     return toPlayer(row, identity.email, identity.username);
   }
 
@@ -95,9 +100,11 @@ export class ProfileService implements PlayerProvisioning {
    */
   async recordTimezone(userId: User['id'], timezone: string): Promise<void> {
     const resolved = resolveTimezone(timezone);
+
     if (!resolved) {
       return;
     }
+
     await this.drizzle.db
       .update(player)
       .set({ timezone: resolved, timezoneUpdatedAt: new Date() })
@@ -108,9 +115,11 @@ export class ProfileService implements PlayerProvisioning {
     // The zone has its own validation and its own timestamp, so it is written separately.
     const { timezone, ...fields } = data;
     const { email, username } = await this.ensureProfile(userId);
+
     if (timezone !== undefined) {
       await this.recordTimezone(userId, timezone);
     }
+
     // Drizzle rejects an empty `set`, so an update carrying only the zone reads the row back.
     const [record] = Object.keys(fields).length
       ? await this.drizzle.db
@@ -119,11 +128,13 @@ export class ProfileService implements PlayerProvisioning {
           .where(eq(player.userId, userId))
           .returning()
       : await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
+
     return toPlayer(record, email, username);
   }
 
   async getMyDisplayCurrency(userId: User['id']): Promise<DisplayCurrencyInfo> {
     const { row } = await this.ensureProfileRow(userId);
+
     return {
       currency: await this.resolveEffectiveDisplayCurrency(userId, row),
       supported: [...this.supportedDisplayCurrencies],
@@ -173,27 +184,33 @@ export class ProfileService implements PlayerProvisioning {
 
     const { activeCurrency, balances } = await this.walletReader.getBalances(userId);
     const mostValuable = await this.mostValuableCurrency(balances);
+
     return mostValuable ?? activeCurrency;
   }
 
   private async mostValuableCurrency(balances: WalletBalanceReading[]): Promise<string | null> {
     let best: { currency: string; value: string } | null = null;
+
     for (const balance of balances) {
       if (moneyCompare(balance.balance, '0') <= 0) {
         continue;
       }
+
       const converted = await this.exchangeRateReader.convert(
         balance.balance,
         balance.currency,
         VALUE_COMPARISON_CURRENCY,
       );
+
       if (converted === null) {
         continue;
       }
+
       if (!best || moneyCompare(converted, best.value) > 0) {
         best = { currency: balance.currency, value: converted };
       }
     }
+
     return best?.currency ?? null;
   }
 }

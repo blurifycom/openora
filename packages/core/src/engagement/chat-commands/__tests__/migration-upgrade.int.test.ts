@@ -8,6 +8,7 @@ const STRIPED_TRAUMA_HASH = 'a58ec63c81a4cbd62603a8381da61c5c6d85b57af5d56ba7983
 
 async function migratePreviousHead(databaseUrl: string) {
   const pool = new Pool({ connectionString: databaseUrl });
+
   try {
     await pool.query(`
       CREATE TABLE "chat_command_config" (
@@ -48,6 +49,7 @@ const LEGACY_ROWS = [
 
 async function seedLegacyConfigs(databaseUrl: string) {
   const pool = new Pool({ connectionString: databaseUrl });
+
   try {
     for (const [key, config] of LEGACY_ROWS) {
       await pool.query(
@@ -64,6 +66,7 @@ describe('chat-command migration upgrades', () => {
   it('accepts a database migrated by the previous striped-trauma baseline', async () => {
     const db = await createTestDb([migratePreviousHead, migrate]);
     const pool = new Pool({ connectionString: db.url });
+
     try {
       const relations = await pool.query<{ config: string | null; gift: string | null }>(
         `SELECT
@@ -81,10 +84,12 @@ describe('chat-command migration upgrades', () => {
   it('rewrites both legacy limit shapes into a single currency/amount pair', async () => {
     const db = await createTestDb([migratePreviousHead, seedLegacyConfigs, migrate]);
     const pool = new Pool({ connectionString: db.url });
+
     try {
       const rows = await pool.query<{ key: string; config: Record<string, unknown> }>(
         'SELECT key, config FROM chat_command_config ORDER BY key',
       );
+
       const byKey = Object.fromEntries(rows.rows.map((r) => [r.key, r.config]));
 
       expect(byKey['gift']).toEqual({ minAmount: { currency: 'USD', amount: '1.00000000' } });
@@ -99,6 +104,7 @@ describe('chat-command migration upgrades', () => {
       });
       // Already converted - left untouched, so re-running the migration is safe.
       expect(byKey['profile']).toEqual({ minAmount: { currency: 'USD', amount: '7' } });
+
       // The bug this migration exists for: one unparseable row failed the whole list route.
       for (const row of rows.rows) {
         expect(CommandConfigSchema.safeParse(row.config).success).toBe(true);

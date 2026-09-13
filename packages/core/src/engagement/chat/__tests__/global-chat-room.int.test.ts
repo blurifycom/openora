@@ -37,12 +37,15 @@ afterAll(async () => {
 function makeService() {
   const transport = makeRealtimeTransport();
   const events = makeEventBus();
+
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
+
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
   const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
+
   return new ChatService({
     drizzle: db.drizzle,
     events,
@@ -76,6 +79,7 @@ describe('global chat room invariant', () => {
 
   it('cannot be deleted through the admin deleteRoom path', async () => {
     const svc = makeService();
+
     const [globalRoom] = await db.drizzle.db
       .select()
       .from(chatRoom)
@@ -89,11 +93,13 @@ describe('global chat room invariant', () => {
       .select()
       .from(chatRoom)
       .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+
     expect(stillThere?.deletedAt).toBeNull();
   });
 
   it('cannot have its slug changed through the admin updateRoom path', async () => {
     const svc = makeService();
+
     const [globalRoom] = await db.drizzle.db
       .select()
       .from(chatRoom)
@@ -107,6 +113,7 @@ describe('global chat room invariant', () => {
       .select()
       .from(chatRoom)
       .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+
     expect(stillThere).toBeDefined();
   });
 
@@ -125,6 +132,7 @@ describe('global chat room invariant', () => {
       .select()
       .from(chatRoom)
       .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+
     expect(room?.deletedAt).toBeNull();
     expect(room?.isPublic).toBe(true);
   });

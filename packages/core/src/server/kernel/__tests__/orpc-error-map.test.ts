@@ -3,7 +3,9 @@ import { ORPCError } from '@orpc/server';
 import { mapErrors } from '../orpc-error-map.js';
 
 class NotFound extends Error {}
+
 class Conflict extends Error {}
+
 class SubNotFound extends NotFound {}
 
 const failWith = (err: unknown) => () => Promise.reject(err);
@@ -14,6 +16,7 @@ const caught = async (fn: () => Promise<unknown>) => {
   } catch (err) {
     return err;
   }
+
   throw new Error('expected mapErrors to reject');
 };
 

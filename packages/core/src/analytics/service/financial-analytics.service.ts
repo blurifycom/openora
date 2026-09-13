@@ -10,7 +10,9 @@ import type {
 } from '../contract/index.js';
 
 const ANALYTICS_CACHE_TTL_MS = 60_000;
+
 const DEFAULT_GGR_RANGE_DAYS = 30;
+
 const COMPLETED_STATUS = 'completed';
 
 const GRANULARITY_INTERVALS: Record<Granularity, string> = {
@@ -25,20 +27,25 @@ function toBucketKey(bucket: Date | string): string {
 
 function resolveGgrRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date } {
   const to = dateTo ? new Date(dateTo) : new Date();
+
   const from = dateFrom
     ? new Date(dateFrom)
     : new Date(to.getTime() - DEFAULT_GGR_RANGE_DAYS * 24 * 60 * 60 * 1000);
+
   return { from, to };
 }
 
 function dateRangeConditions(dateFrom?: string, dateTo?: string) {
   const conditions = [];
+
   if (dateFrom) {
     conditions.push(gte(walletTransaction.createdAt, new Date(dateFrom)));
   }
+
   if (dateTo) {
     conditions.push(lte(walletTransaction.createdAt, new Date(dateTo)));
   }
+
   return conditions;
 }
 
@@ -59,11 +66,14 @@ export class FinancialAnalyticsService {
   private async cached<T>(scope: string, query: object, compute: () => Promise<T>): Promise<T> {
     const key = `analytics:${scope}:${JSON.stringify(query, Object.keys(query).sort())}`;
     const cached = await this.cache.get<T>(key);
+
     if (cached !== undefined) {
       return cached;
     }
+
     const value = await compute();
     await this.cache.set(key, value, { ttlMs: ANALYTICS_CACHE_TTL_MS });
+
     return value;
   }
 
@@ -74,6 +84,7 @@ export class FinancialAnalyticsService {
   }: FinancialSummaryQuery): Promise<FinancialSummary> {
     const db = this.drizzle.db;
     const baseConditions = dateRangeConditions(dateFrom, dateTo);
+
     if (currency) {
       baseConditions.push(eq(walletTransaction.currency, currency));
     }
@@ -183,11 +194,13 @@ export class FinancialAnalyticsService {
     `);
 
     const seriesByCurrency = new Map<string, GgrSeries>();
+
     for (const row of result.rows) {
       const series = seriesByCurrency.get(row.currency) ?? { currency: row.currency, points: [] };
       series.points.push({ bucket: toBucketKey(row.bucket), ggr: row.ggr });
       seriesByCurrency.set(row.currency, series);
     }
+
     return Array.from(seriesByCurrency.values());
   }
 }

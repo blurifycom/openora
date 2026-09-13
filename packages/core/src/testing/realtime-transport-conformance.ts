@@ -31,6 +31,7 @@ export type RealtimeTransportHarness = {
 };
 
 const SUBSCRIBE_SETTLE_MS = 200;
+
 function settle(ms = SUBSCRIBE_SETTLE_MS): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

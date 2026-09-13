@@ -41,6 +41,7 @@ export const ADMIN_TX_SORT_BY_VALUES = [
   'rail',
   'reviewedAt',
 ] as const;
+
 export type AdminTxSortBy = (typeof ADMIN_TX_SORT_BY_VALUES)[number];
 
 export type AdminTxListOptions = {

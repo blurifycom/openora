@@ -35,9 +35,13 @@ import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import { RgSelfServiceService } from '../service/rg-self-service.service.js';
 
 const CTX = testContext();
+
 const playerCtx = (userId: string) => testContext({ auth: { userId } });
+
 const USER = '11111111-1111-4111-8111-111111111111';
+
 const CALLER = '33333333-3333-4333-8333-333333333333';
+
 const HOURS = 3600_000;
 
 let db: TestDb;
@@ -72,10 +76,12 @@ function identityRates(): ExchangeRateReader {
 
 function build(adminGuard: AdminGuard) {
   const events = makeEventBus();
+
   const enforcement = mock<LoginEnforcementPort>({
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
+
   const rg = new RgService({
     drizzle: db.drizzle,
     events,
@@ -87,7 +93,9 @@ function build(adminGuard: AdminGuard) {
     identityReader: makeIdentityReader(),
     rates: identityRates(),
   });
+
   const rgMonitoring = new RgMonitoringService({ drizzle: db.drizzle, rates: identityRates() });
+
   const rgSelfService = new RgSelfServiceService({
     drizzle: db.drizzle,
     events,
@@ -97,6 +105,7 @@ function build(adminGuard: AdminGuard) {
     config: defaultResponsibleGamingConfig,
     rates: identityRates(),
   });
+
   const router = createComplianceRouter({
     compliance: mock<ComplianceService>({}),
     adminGuard,
@@ -111,6 +120,7 @@ function build(adminGuard: AdminGuard) {
     rgMonitoring,
     rgSelfService,
   });
+
   return { router, events, enforcement };
 }
 
@@ -135,6 +145,7 @@ async function seedExclusion(overrides: Partial<typeof rgExclusion.$inferInsert>
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 
@@ -468,6 +479,7 @@ describe('compliance router - player self-service', () => {
 
   it('deleteLimit files a removal request and leaves the limit standing', async () => {
     const { router } = build(guardAllowing([]));
+
     const created = await call(
       router.upsertLimit,
       { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
@@ -487,6 +499,7 @@ describe('compliance router - player self-service', () => {
       { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
+
     const raised = await call(
       router.upsertLimit,
       { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },
@@ -505,6 +518,7 @@ describe('compliance router - player self-service', () => {
       { type: 'deposit', amount: '100', minutes: null, currency: 'USD', period: 'daily' },
       { context: playerCtx(USER) },
     );
+
     const raised = await call(
       router.upsertLimit,
       { type: 'deposit', amount: '500', minutes: null, currency: 'USD', period: 'daily' },

@@ -19,14 +19,17 @@ export async function mapErrors<T>(
   } catch (err) {
     for (const [code, classes] of Object.entries(map) as [ORPCCode, ErrorClass | ErrorClass[]][]) {
       const list = Array.isArray(classes) ? classes : [classes];
+
       if (list.some((C) => err instanceof C)) {
         const data =
           err instanceof Error && 'data' in err
             ? (err as Error & { data?: unknown }).data
             : undefined;
+
         throw new ORPCError(code, { message: (err as Error).message, data });
       }
     }
+
     throw err;
   }
 }

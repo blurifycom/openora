@@ -24,7 +24,9 @@ import type { ReconciliationService } from '../service/reconciliation.service.js
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
+
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
+
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000aa';
 
 let db: TestDb;
@@ -52,6 +54,7 @@ const autoRuleDenyingGuard = () =>
 function routerWith(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
   const paymentProviders = makePaymentProviderRegistry();
+
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -60,6 +63,7 @@ function routerWith(adminGuard: AdminGuard) {
     audit,
     identityReader: makeIdentityReader(),
   });
+
   const router = createWalletRouter({
     wallet: service,
     adminGuard,
@@ -70,6 +74,7 @@ function routerWith(adminGuard: AdminGuard) {
     reconciliationQueue: RECONCILIATION_QUEUE,
     realtime: makeRealtimeTransport(),
   });
+
   return { router, audit };
 }
 
@@ -78,6 +83,7 @@ async function storedRule(userId: string) {
     .select()
     .from(autoWithdrawalRule)
     .where(eq(autoWithdrawalRule.userId, userId));
+
   return row;
 }
 
@@ -125,6 +131,7 @@ describe('wallet auto-withdrawal-rule routes', () => {
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, USER_ID));
+
     expect(rows).toHaveLength(1);
     expect(rows[0]?.reason).toBe('raised');
   });

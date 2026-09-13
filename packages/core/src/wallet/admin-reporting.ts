@@ -9,6 +9,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
 
   async totals() {
     const db = this.drizzle.db;
+
     const [deposits, withdrawals] = await Promise.all([
       db
         .select({ total: sum(walletTransaction.amount) })
@@ -25,6 +26,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         )
         .then(([r]) => r?.total ?? '0'),
     ]);
+
     return { deposits, withdrawals };
   }
 
@@ -44,6 +46,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
     sortOrder,
   }: AdminTxListOptions) {
     const db = this.drizzle.db;
+
     const conditions = [
       userIds && userIds.length > 0 ? inArray(wallet.userId, userIds) : undefined,
       type ? eq(walletTransaction.type, type) : undefined,
@@ -55,7 +58,9 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       amountMin !== undefined ? gte(walletTransaction.amount, amountMin) : undefined,
       amountMax !== undefined ? lte(walletTransaction.amount, amountMax) : undefined,
     ].filter(Boolean);
+
     const where = conditions.length > 0 ? and(...conditions) : undefined;
+
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({ tx: walletTransaction, walletUserId: wallet.userId })
@@ -84,6 +89,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
         .where(where),
     ]);
+
     return {
       rows: rows.map(({ tx, walletUserId }) => ({
         id: tx.id,
@@ -105,10 +111,13 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(eq(walletTransaction.id, id));
+
     if (!row) {
       return null;
     }
+
     const { tx, walletUserId } = row;
+
     return {
       id: tx.id,
       userId: walletUserId,

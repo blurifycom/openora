@@ -23,6 +23,7 @@ describe('serializeRow', () => {
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       name: 'x',
     };
+
     const out = serializeRow(row, { dateFields: ['createdAt'], decimalFields: ['amount'] });
     expect(out).toEqual({
       id: 'a',
@@ -44,9 +45,11 @@ describe('createEventStreamGenerator', () => {
     const controller = new AbortController();
     const unsubscribe = vi.fn();
     let push!: (e: number) => void;
+
     const gen = createEventStreamGenerator<number>(
       (p) => {
         push = p;
+
         return unsubscribe;
       },
       { signal: controller.signal, prime: [1] },
@@ -64,6 +67,7 @@ describe('createEventStreamGenerator', () => {
   it('unsubscribes immediately when abort happens before consumption resumes', async () => {
     const controller = new AbortController();
     const unsubscribe = vi.fn();
+
     const gen = createEventStreamGenerator<number>(() => unsubscribe, {
       signal: controller.signal,
     });
@@ -80,9 +84,11 @@ describe('createEventStreamGenerator', () => {
   it('unsubscribes immediately when abort happens while paused at a yield', async () => {
     const controller = new AbortController();
     const unsubscribe = vi.fn();
+
     const gen = createEventStreamGenerator<number>(
       (push) => {
         queueMicrotask(() => push(1));
+
         return unsubscribe;
       },
       { signal: controller.signal },

@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { HmacPaymentWebhookVerifier } from '../adapters/hmac-payment-webhook-verifier.js';
 
 const SECRET = 'shh';
+
 const BODY = '{"event":"deposit"}';
 
 function sign(body: string, secret = SECRET) {

@@ -22,12 +22,16 @@ import { BANNER_IMAGE_COUNT_BOUNDS, DEFAULT_LOCALE, type BannerLayout } from '..
 import { validateBannerImageUrl } from '../moderation/validate-banner-image-url.js';
 
 export const PageNotFoundError = makeNotFoundError('Page');
+
 export const BannerConfigurationNotFoundError = makeNotFoundError('BannerConfiguration');
+
 export const BannerImageNotFoundError = makeNotFoundError('BannerImage');
+
 export const BannerConfigurationIsDefaultError = makeConflictError(
   'BannerConfigurationIsDefaultError',
   'This configuration is currently the placement default - set a different default or unset it before deleting',
 );
+
 export const BannerConfigurationImageCountError = createDomainError<
   [layout: string, min: number, max: number, actual: number]
 >('BannerConfigurationImageCountError', (layout, min, max, actual) =>
@@ -35,20 +39,26 @@ export const BannerConfigurationImageCountError = createDomainError<
     ? `A ${layout} banner configuration needs exactly ${min} image(s) to be set as default (has ${actual})`
     : `A ${layout} banner configuration needs ${min}-${max} images to be set as default (has ${actual})`,
 );
+
 export const BannerImageHostNotAllowedError = createDomainError<[reason: string]>(
   'BannerImageHostNotAllowedError',
   (reason) => `Banner image URL rejected: ${reason}`,
 );
+
 export const BannerScheduleNotFoundError = makeNotFoundError('BannerSchedule');
+
 export const BannerConfigurationHasScheduleError = makeConflictError(
   'BannerConfigurationHasScheduleError',
   'This configuration has a banner schedule attached - it cannot be deleted or re-scheduled while one exists',
 );
+
 export const BannerScheduleInvalidRangeError = createDomainError<[reason: string]>(
   'BannerScheduleInvalidRangeError',
   (reason) => `Invalid banner schedule range: ${reason}`,
 );
+
 export type BannerScheduleOverlapData = { startsAt: string; endsAt: string };
+
 export class BannerScheduleOverlapError extends Error {
   readonly data: BannerScheduleOverlapData;
 
@@ -66,11 +76,13 @@ export class BannerScheduleOverlapError extends Error {
 const CMS_CACHE_TTL_MS = 60_000;
 
 const pageCacheKey = (slug: string) => `cms:page:${slug}`;
+
 // Keyed per requested locale, but invalidation below only targets DEFAULT_LOCALE -
 // a non-default-locale read can lag a write by up to CMS_CACHE_TTL_MS, which is
 // acceptable for this public, non-money read.
 const publicBannerCacheKey = (placement: string, locale: string) =>
   `cms:banner-placement:${placement}:${locale}`;
+
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 
 function toPage(record: {
@@ -197,6 +209,7 @@ export class CmsService {
       .from(pageTable)
       .where(isNotNull(pageTable.publishedAt))
       .orderBy(desc(pageTable.createdAt));
+
     return pages.map((p) => ({
       id: p.id,
       slug: p.slug,
@@ -217,6 +230,7 @@ export class CmsService {
           .where(and(eq(pageTable.slug, slug), isNotNull(pageTable.publishedAt))),
         new PageNotFoundError(slug),
       );
+
       return toPage(record);
     });
   }
@@ -243,6 +257,7 @@ export class CmsService {
         .returning(),
       new PageNotFoundError(input.slug),
     );
+
     await invalidate(this.cache, pageCacheKey(input.slug));
     this.events.emit('cms.page.created', {
       pageId: record.id,
@@ -250,6 +265,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     if (record.publishedAt) {
       this.events.emit('cms.page.published', {
         pageId: record.id,
@@ -258,6 +274,7 @@ export class CmsService {
         userAgent: meta?.userAgent ?? null,
       });
     }
+
     return toPage(record);
   }
 
@@ -280,15 +297,19 @@ export class CmsService {
     const wasPublished = existing.publishedAt !== null;
 
     const patch: Partial<typeof pageTable.$inferInsert> = {};
+
     if (input.slug !== undefined) {
       patch.slug = input.slug;
     }
+
     if (input.title !== undefined) {
       patch.title = input.title;
     }
+
     if (input.content !== undefined) {
       patch.content = input.content as object;
     }
+
     if (input.publishedAt !== undefined) {
       patch.publishedAt = input.publishedAt ? new Date(input.publishedAt) : null;
     }
@@ -311,6 +332,7 @@ export class CmsService {
       userAgent: meta?.userAgent ?? null,
     });
     const nowPublished = record.publishedAt !== null;
+
     if (!wasPublished && nowPublished) {
       this.events.emit('cms.page.published', {
         pageId: record.id,
@@ -328,6 +350,7 @@ export class CmsService {
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, id)),
       new PageNotFoundError(id),
     );
+
     await this.drizzle.db.delete(pageTable).where(eq(pageTable.id, id));
     await invalidate(this.cache, pageCacheKey(existing.slug));
     this.events.emit('cms.page.deleted', {
@@ -336,6 +359,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true };
   }
 
@@ -355,6 +379,7 @@ export class CmsService {
     const defaultByPlacement = new Map(defaultRows.map((r) => [r.placement, r]));
 
     const defaultIds = defaultRows.map((r) => r.id);
+
     const defaultImages = defaultIds.length
       ? await this.drizzle.db
           .select()
@@ -362,7 +387,9 @@ export class CmsService {
           .where(inArray(bannerImageTable.bannerConfigurationId, defaultIds))
           .orderBy(asc(bannerImageTable.sortOrder))
       : [];
+
     const imagesByConfig = new Map<string, typeof defaultImages>();
+
     for (const image of defaultImages) {
       const list = imagesByConfig.get(image.bannerConfigurationId) ?? [];
       list.push(image);
@@ -374,9 +401,11 @@ export class CmsService {
     const nonDefaultPlacements = placementRows
       .map((r) => r.placement)
       .filter((p) => !defaultByPlacement.has(p));
+
     // A raw sql aggregate has no column metadata for Drizzle to decode, so this comes
     // back as Postgres's text representation, not a Date - parse it explicitly.
     const latestUpdatedByPlacement = new Map<string, Date>();
+
     if (nonDefaultPlacements.length > 0) {
       const rows = await this.drizzle.db
         .select({
@@ -386,6 +415,7 @@ export class CmsService {
         .from(bannerConfigurationTable)
         .where(inArray(bannerConfigurationTable.placement, nonDefaultPlacements))
         .groupBy(bannerConfigurationTable.placement);
+
       for (const row of rows) {
         latestUpdatedByPlacement.set(row.placement, new Date(row.updatedAt));
       }
@@ -393,6 +423,7 @@ export class CmsService {
 
     return placementRows.map(({ placement }) => {
       const defaultRow = defaultByPlacement.get(placement);
+
       if (defaultRow) {
         return {
           placement,
@@ -404,7 +435,9 @@ export class CmsService {
           updatedAt: defaultRow.updatedAt.toISOString(),
         };
       }
+
       const updatedAt = latestUpdatedByPlacement.get(placement) ?? new Date(0);
+
       return {
         placement,
         defaultConfigurationId: null,
@@ -422,6 +455,7 @@ export class CmsService {
       .orderBy(desc(bannerConfigurationTable.createdAt));
 
     const ids = configs.map((c) => c.id);
+
     const counts = ids.length
       ? await this.drizzle.db
           .select({
@@ -432,6 +466,7 @@ export class CmsService {
           .where(inArray(bannerImageTable.bannerConfigurationId, ids))
           .groupBy(bannerImageTable.bannerConfigurationId)
       : [];
+
     const countByConfig = new Map(counts.map((c) => [c.bannerConfigurationId, c.count]));
 
     return configs.map((record) =>
@@ -447,11 +482,13 @@ export class CmsService {
         .where(eq(bannerConfigurationTable.id, id)),
       new BannerConfigurationNotFoundError(id),
     );
+
     const images = await this.drizzle.db
       .select()
       .from(bannerImageTable)
       .where(eq(bannerImageTable.bannerConfigurationId, id))
       .orderBy(asc(bannerImageTable.sortOrder));
+
     return toBannerConfiguration(record, images.map(toBannerImage));
   }
 
@@ -472,12 +509,14 @@ export class CmsService {
         .returning(),
       new BannerConfigurationNotFoundError(input.placement),
     );
+
     this.events.emit('cms.banner.configuration.created', {
       bannerConfigurationId: record.id,
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return toBannerConfiguration(record, []);
   }
 
@@ -491,18 +530,22 @@ export class CmsService {
         await tx.select().from(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id)),
         new BannerConfigurationNotFoundError(id),
       );
+
       if (existing.isDefault) {
         throw new BannerConfigurationIsDefaultError();
       }
+
       // Blocked unconditionally (queued, active, or expired) - no live-time
       // computation in this guard, see D4 in the scheduling design.
       const [schedule] = await tx
         .select({ id: bannerScheduleTable.id })
         .from(bannerScheduleTable)
         .where(eq(bannerScheduleTable.bannerConfigurationId, id));
+
       if (schedule) {
         throw new BannerConfigurationHasScheduleError();
       }
+
       // Cascades to banner_image rows via the FK's onDelete: 'cascade'.
       await tx.delete(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id));
     });
@@ -512,6 +555,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true };
   }
 
@@ -521,6 +565,7 @@ export class CmsService {
         await tx.select().from(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id)),
         new BannerConfigurationNotFoundError(id),
       );
+
       return withAdvisoryXactLock(tx, bannerScheduleLockKey(initialConfig.placement), async () => {
         const config = findOneOrThrow(
           await tx
@@ -529,13 +574,16 @@ export class CmsService {
             .where(eq(bannerConfigurationTable.id, id)),
           new BannerConfigurationNotFoundError(id),
         );
+
         const [schedule] = await tx
           .select({ id: bannerScheduleTable.id })
           .from(bannerScheduleTable)
           .where(eq(bannerScheduleTable.bannerConfigurationId, id));
+
         if (schedule) {
           throw new BannerConfigurationHasScheduleError();
         }
+
         await this.assertBannerConfigurationImageCount(tx, config);
 
         await tx
@@ -563,6 +611,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return this.getPlacementSummary(placement);
   }
 
@@ -577,13 +626,16 @@ export class CmsService {
             eq(bannerConfigurationTable.isDefault, true),
           ),
         );
+
       if (!current) {
         return null;
       }
+
       await tx
         .update(bannerConfigurationTable)
         .set({ isDefault: false })
         .where(eq(bannerConfigurationTable.id, current.id));
+
       return current.id;
     });
 
@@ -595,6 +647,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return this.getPlacementSummary(placement);
   }
 
@@ -612,6 +665,7 @@ export class CmsService {
   ) {
     for (const url of [input.desktopImageUrl, input.mobileImageUrl]) {
       const result = validateBannerImageUrl(url, this.allowedBannerImageHosts);
+
       if (!result.ok) {
         throw new BannerImageHostNotAllowedError(result.reason);
       }
@@ -626,6 +680,7 @@ export class CmsService {
     );
 
     const locale = input.locale ?? DEFAULT_LOCALE;
+
     const record = findOneOrThrow(
       await this.drizzle.db
         .insert(bannerImageTable)
@@ -664,6 +719,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return toBannerImage(record);
   }
 
@@ -692,6 +748,7 @@ export class CmsService {
       })
       .from(bannerConfigurationTable)
       .where(eq(bannerConfigurationTable.id, existing.bannerConfigurationId));
+
     if (configuration?.isDefault) {
       await invalidate(this.cache, publicBannerCacheKey(configuration.placement, DEFAULT_LOCALE));
     }
@@ -703,11 +760,13 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return { success: true };
   }
 
   async getPublicBanner(placement: string, locale?: string) {
     const resolvedLocale = locale ?? DEFAULT_LOCALE;
+
     return cached(
       this.cache,
       publicBannerCacheKey(placement, resolvedLocale),
@@ -719,6 +778,7 @@ export class CmsService {
         // compliance/schema/index.ts). No invalidation is needed at the schedule's
         // own start/end boundary; the pre-existing CMS_CACHE_TTL_MS bounds the lag.
         const now = new Date();
+
         const [scheduled] = await this.drizzle.db
           .select({
             id: bannerConfigurationTable.id,
@@ -768,11 +828,13 @@ export class CmsService {
         const localeRowBySlot = new Map(
           images.filter((i) => i.locale === resolvedLocale).map((i) => [i.sortOrder, i]),
         );
+
         const baseRows = images.filter((i) => i.locale === DEFAULT_LOCALE);
 
         const slots = baseRows
           .map((base) => {
             const resolved = localeRowBySlot.get(base.sortOrder) ?? base;
+
             return {
               sortOrder: base.sortOrder,
               desktopImageUrl: resolved.desktopImageUrl,
@@ -804,6 +866,7 @@ export class CmsService {
           .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
         new BannerConfigurationNotFoundError(bannerConfigurationId),
       );
+
       return withAdvisoryXactLock(tx, bannerScheduleLockKey(initialConfig.placement), async () => {
         const config = findOneOrThrow(
           await tx
@@ -812,11 +875,13 @@ export class CmsService {
             .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
           new BannerConfigurationNotFoundError(bannerConfigurationId),
         );
+
         // A schedule requires a default to layer onto, and can never target the
         // default configuration itself (it is already live).
         if (config.isDefault) {
           throw new BannerConfigurationIsDefaultError();
         }
+
         const [defaultConfig] = await tx
           .select({ id: bannerConfigurationTable.id })
           .from(bannerConfigurationTable)
@@ -826,6 +891,7 @@ export class CmsService {
               eq(bannerConfigurationTable.isDefault, true),
             ),
           );
+
         if (!defaultConfig) {
           throw new BannerConfigurationNotFoundError(config.placement);
         }
@@ -834,6 +900,7 @@ export class CmsService {
           .select({ id: bannerScheduleTable.id })
           .from(bannerScheduleTable)
           .where(eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationId));
+
         if (existingSchedule) {
           throw new BannerConfigurationHasScheduleError();
         }
@@ -841,9 +908,11 @@ export class CmsService {
         if (endsAt <= startsAt) {
           throw new BannerScheduleInvalidRangeError('endsAt must be after startsAt');
         }
+
         if (startsAt <= new Date()) {
           throw new BannerScheduleInvalidRangeError('startsAt must be in the future');
         }
+
         await this.assertBannerConfigurationImageCount(tx, config);
         await this.assertNoScheduleOverlap(tx, config.placement, bannerConfigurationId, {
           startsAt,
@@ -857,6 +926,7 @@ export class CmsService {
             .returning(),
           new BannerConfigurationNotFoundError(bannerConfigurationId),
         );
+
         return { record: inserted, placement: config.placement };
       });
     });
@@ -872,6 +942,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return toBannerSchedule(record);
   }
 
@@ -891,6 +962,7 @@ export class CmsService {
           .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
         new BannerConfigurationNotFoundError(bannerConfigurationId),
       );
+
       return withAdvisoryXactLock(tx, bannerScheduleLockKey(initialConfig.placement), async () => {
         const config = findOneOrThrow(
           await tx
@@ -899,6 +971,7 @@ export class CmsService {
             .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
           new BannerConfigurationNotFoundError(bannerConfigurationId),
         );
+
         const schedule = findOneOrThrow(
           await tx
             .select()
@@ -926,6 +999,7 @@ export class CmsService {
             .returning(),
           new BannerScheduleNotFoundError(bannerConfigurationId),
         );
+
         return { record: updated, placement: config.placement, previousEndsAt: schedule.endsAt };
       });
     });
@@ -942,6 +1016,7 @@ export class CmsService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
     return toBannerSchedule(record);
   }
 
@@ -957,6 +1032,7 @@ export class CmsService {
       .orderBy(asc(bannerScheduleTable.startsAt));
 
     const configIds = rows.map((r) => r.configuration.id);
+
     const counts = configIds.length
       ? await this.drizzle.db
           .select({
@@ -967,6 +1043,7 @@ export class CmsService {
           .where(inArray(bannerImageTable.bannerConfigurationId, configIds))
           .groupBy(bannerImageTable.bannerConfigurationId)
       : [];
+
     const countByConfig = new Map(counts.map((c) => [c.bannerConfigurationId, c.count]));
 
     return rows.map((r) => ({
@@ -1003,6 +1080,7 @@ export class CmsService {
         ),
       )
       .limit(1);
+
     if (conflict) {
       throw new BannerScheduleOverlapError(conflict.startsAt, conflict.endsAt);
     }
@@ -1023,8 +1101,10 @@ export class CmsService {
           eq(bannerImageTable.locale, DEFAULT_LOCALE),
         ),
       );
+
     const slotCount = new Set(slotRows.map((row) => row.sortOrder)).size;
     const bounds = BANNER_IMAGE_COUNT_BOUNDS[configuration.layout];
+
     if (slotCount < bounds.min || slotCount > bounds.max) {
       throw new BannerConfigurationImageCountError(
         configuration.layout,
@@ -1054,6 +1134,7 @@ export class CmsService {
         .from(bannerImageTable)
         .where(eq(bannerImageTable.bannerConfigurationId, defaultRow.id))
         .orderBy(asc(bannerImageTable.sortOrder));
+
       return {
         placement,
         defaultConfigurationId: defaultRow.id,

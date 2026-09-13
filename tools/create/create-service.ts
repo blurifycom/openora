@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const [, , rawName, rawManifest] = process.argv;
+
 if (!rawName || !rawManifest) {
   console.error('Usage: pnpm create:service <name> <module,module,...>');
   console.error('Example: pnpm create:service wallet identity,wallet');
@@ -28,24 +29,30 @@ if (!rawName || !rawManifest) {
 }
 
 const name = rawName.toLowerCase();
+
 if (!/^[a-z][a-z0-9-]*$/.test(name)) {
   console.error(`Invalid service name "${rawName}". Use lowercase letters, digits, and dashes.`);
   process.exit(1);
 }
+
 const manifest = rawManifest
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
 const configSrc = readFileSync(join(repoRoot, 'extensions.config.ts'), 'utf8');
+
 const knownIds = [...configSrc.matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1]);
+
 const unknown = manifest.filter((m) => !knownIds.includes(m));
+
 if (unknown.length > 0) {
   console.error(`Unknown module id(s): ${unknown.join(', ')}.\nKnown: ${knownIds.join(', ')}`);
   process.exit(1);
 }
 
 const appDir = join(repoRoot, 'apps', name);
+
 if (existsSync(appDir)) {
   console.error(`apps/${name} already exists.`);
   process.exit(1);
@@ -113,6 +120,7 @@ bootstrap();
 };
 
 mkdirSync(join(appDir, 'src'), { recursive: true });
+
 for (const [rel, content] of Object.entries(files)) {
   const dest = join(appDir, rel);
   mkdirSync(dirname(dest), { recursive: true });
@@ -120,11 +128,17 @@ for (const [rel, content] of Object.entries(files)) {
 }
 
 console.log(`Created apps/${name} (${pkgName}) booting modules: ${manifest.join(', ')}`);
+
 console.log('Next:');
+
 console.log('  pnpm install');
+
 console.log(`  pnpm -F ${pkgName} dev        # boots the baked-in manifest`);
+
 console.log(`  SERVICE_MANIFEST=... pnpm -F ${pkgName} dev   # override at runtime`);
+
 console.log('To exclude these modules from the monolith, drop them from extensions.config.ts');
+
 console.log(
   'and run them only via this host (set REDIS_URL or bind MESSAGE_BROKER in an overlay; AMQP_URL only enables the outbox).',
 );

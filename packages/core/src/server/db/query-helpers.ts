@@ -4,9 +4,11 @@ import type { DrizzleTx } from './drizzle.js';
 
 export function findOneOrThrow<T>(rows: T[], error: Error): T {
   const row = rows[0];
+
   if (row === undefined) {
     throw error;
   }
+
   return row;
 }
 
@@ -32,6 +34,7 @@ export function moneyEquals(a: string, b: string): boolean {
 
 function toMinorUnits(amount: string): bigint {
   const [whole, fraction = ''] = amount.split('.');
+
   return BigInt(whole + fraction.padEnd(MONEY_SCALE, '0').slice(0, MONEY_SCALE));
 }
 
@@ -40,6 +43,7 @@ function fromMinorUnits(units: bigint): string {
   const digits = (units < 0n ? -units : units).toString().padStart(MONEY_SCALE + 1, '0');
   const whole = digits.slice(0, -MONEY_SCALE);
   const fraction = digits.slice(-MONEY_SCALE);
+
   return `${sign}${whole}.${fraction}`;
 }
 
@@ -49,6 +53,7 @@ function fromMinorUnits(units: bigint): string {
 // worse, order backwards.
 export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
   const diff = toMinorUnits(a) - toMinorUnits(b);
+
   return diff < 0n ? -1 : diff > 0n ? 1 : 0;
 }
 
@@ -57,15 +62,19 @@ export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
 // non-negative decimal strings; the result is truncated (not rounded) to MONEY_SCALE.
 export function moneyScaleBy(amount: string, factor: string): string {
   const product = (toMinorUnits(amount) * toMinorUnits(factor)) / 10n ** BigInt(MONEY_SCALE);
+
   return fromMinorUnits(product);
 }
 
 export function moneyDivide(dividend: string, divisor: string): string {
   const divisorUnits = toMinorUnits(divisor);
+
   if (divisorUnits === 0n) {
     throw new RangeError('moneyDivide: division by zero');
   }
+
   const dividendUnits = toMinorUnits(dividend) * 10n ** BigInt(MONEY_SCALE);
+
   return fromMinorUnits(dividendUnits / divisorUnits);
 }
 
@@ -83,6 +92,7 @@ export function moneySubtract(a: string, b: string): string {
 
 export function moneyFloorToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
+
   return fromUnitsAtScale(toMinorUnits(amount) / divisor, scale);
 }
 
@@ -90,12 +100,14 @@ export function moneyCeilToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
   const units = toMinorUnits(amount);
   const scaledUnits = units / divisor + (units % divisor === 0n ? 0n : 1n);
+
   return fromUnitsAtScale(scaledUnits, scale);
 }
 
 function fromUnitsAtScale(units: bigint, scale: number): string {
   const digits = units.toString().padStart(scale + 1, '0');
   const whole = digits.slice(0, digits.length - scale) || '0';
+
   return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
 }
 
@@ -111,6 +123,7 @@ export async function mapConcurrent<T, R>(
 ): Promise<R[]> {
   const results = Array.from<R>({ length: items.length });
   let cursor = 0;
+
   const worker = async () => {
     while (cursor < items.length) {
       const index = cursor;
@@ -118,8 +131,10 @@ export async function mapConcurrent<T, R>(
       results[index] = await fn(items[index], index);
     }
   };
+
   const workers = Math.max(1, Math.min(concurrency, items.length));
   await Promise.all(Array.from({ length: workers }, worker));
+
   return results;
 }
 
@@ -131,5 +146,6 @@ export async function withAdvisoryXactLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   await txn.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
+
   return fn();
 }

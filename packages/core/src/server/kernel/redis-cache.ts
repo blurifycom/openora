@@ -15,10 +15,13 @@ export class RedisCache implements CacheAdapter {
     if (!this.client.isReady) {
       return undefined;
     }
+
     const raw = await this.client.get(PREFIX + key);
+
     if (raw === null) {
       return undefined;
     }
+
     return JSON.parse(raw);
   }
 
@@ -26,6 +29,7 @@ export class RedisCache implements CacheAdapter {
     if (!this.client.isReady) {
       return;
     }
+
     await this.client.set(PREFIX + key, JSON.stringify(value), {
       expiration: { type: 'PX', value: opts.ttlMs },
     });
@@ -35,10 +39,12 @@ export class RedisCache implements CacheAdapter {
     if (!this.client.isReady) {
       throw new Error('Redis is not ready');
     }
+
     const result = await this.client.set(PREFIX + key, JSON.stringify(value), {
       expiration: { type: 'PX', value: opts.ttlMs },
       NX: true,
     });
+
     return result === 'OK';
   }
 
@@ -46,10 +52,13 @@ export class RedisCache implements CacheAdapter {
     if (!this.client.isReady) {
       return;
     }
+
     const keys = (Array.isArray(key) ? key : [key]).map((k) => PREFIX + k);
+
     if (keys.length === 0) {
       return;
     }
+
     await this.client.del(keys);
   }
 }

@@ -39,6 +39,7 @@ export class PlayerKycStatusWriter implements KycStatusWriter {
       WHERE player.user_id = ${userId} AND prev.kyc_status <> ${status}
       RETURNING prev.kyc_status AS previous_status, player.id AS player_id
     `);
+
     const changed = rows[0];
 
     if (!changed) {
@@ -46,9 +47,11 @@ export class PlayerKycStatusWriter implements KycStatusWriter {
         .select({ id: player.id })
         .from(player)
         .where(eq(player.userId, userId));
+
       if (!existing) {
         throw new PlayerNotFoundError(userId);
       }
+
       return null;
     }
 

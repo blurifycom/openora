@@ -51,10 +51,12 @@ const VENDOR_EXAMPLE_EXEMPT_FILES = new Set([
   'packages/core/src/contracts/adapters/kyc.ts',
   'packages/core/src/contracts/schemas/platform-config.ts',
 ]);
+
 const isVendorExampleExempt = (file: string) =>
   VENDOR_EXAMPLE_EXEMPT_FILES.has(file) || file.startsWith('docs/adapters/');
 
 const scannedExtensions = new Set(['.ts', '.tsx', '.md', '.json']);
+
 const extname = (file: string) => file.slice(file.lastIndexOf('.'));
 
 const trackedFiles = execSync('git ls-files -z', { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 })
@@ -73,6 +75,7 @@ const explainVendorName = (token: string, where: string) =>
 
 const pathFailures = trackedFiles.flatMap((file) => {
   const match = CLIENT_TICKET_PATTERNS.map((p) => file.match(p.path)).find(Boolean);
+
   return match ? [`  ${file}: ${explainTicket(match[0].toLowerCase(), 'in filename')}`] : [];
 });
 
@@ -80,18 +83,22 @@ const contentFailures = trackedFiles
   .filter((file) => scannedExtensions.has(extname(file)))
   .flatMap((file) => {
     let text: string;
+
     try {
       text = readFileSync(join(repoRoot, file), 'utf8');
     } catch {
       return [];
     }
+
     const vendorExempt = isVendorExampleExempt(file);
+
     return text.split('\n').flatMap((line, i) => {
       const ticketHits = CLIENT_TICKET_PATTERNS.flatMap((p) =>
         [...line.matchAll(p.content)].map(
           (m) => `  ${file}:${i + 1}: ${explainTicket(m[0], `on line ${i + 1}`)}`,
         ),
       );
+
       const vendorHits = vendorExempt
         ? []
         : CLIENT_VENDOR_NAME_PATTERNS.flatMap((p) =>
@@ -99,6 +106,7 @@ const contentFailures = trackedFiles
               (m) => `  ${file}:${i + 1}: ${explainVendorName(m[0], `on line ${i + 1}`)}`,
             ),
           );
+
       return [...ticketHits, ...vendorHits];
     });
   });

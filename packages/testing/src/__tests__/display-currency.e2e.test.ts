@@ -14,8 +14,11 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let app: TestApp;
+
 let player: TestClient;
+
 let playerId: string;
 
 beforeAll(async () => {
@@ -67,6 +70,7 @@ describe('PUT /profile/display-currency', () => {
       .where(
         and(eq(auditLog.resourceId, playerId), eq(auditLog.action, 'player.display_currency.set')),
       );
+
     expect(rows.length).toBeGreaterThan(0);
   });
 

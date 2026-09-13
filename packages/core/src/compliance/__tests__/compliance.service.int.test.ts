@@ -13,11 +13,14 @@ let db: TestDb;
 
 function makeService(countryCode?: string | null) {
   const events = makeEventBus();
+
   const geoIp =
     countryCode === undefined
       ? null
       : mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode })) });
+
   const svc = new ComplianceService(db.drizzle, events, geoIp);
+
   return { svc, events };
 }
 

@@ -84,6 +84,7 @@ async function dispatchWebhook(
   headers: Record<string, string | string[] | undefined>,
 ): Promise<{ ok: true }> {
   const provider = paymentProviders.get(providerName);
+
   // A missing provider fails the exact same shape as a bad signature - the path segment
   // must never let an attacker enumerate which vendors are bound.
   if (
@@ -93,12 +94,14 @@ async function dispatchWebhook(
   ) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
   }
+
   // Always the SAME provider's adapter that verified the signature - never verify with
   // one vendor's key and parse with another's format (signature confusion).
   const event: PaymentWebhookEvent | null | undefined = provider.adapter.parseWebhook?.(
     rawBody,
     headers,
   );
+
   if (event) {
     if (event.kind === 'deposit') {
       await wallet.creditDepositByAddress(event, providerName);
@@ -106,6 +109,7 @@ async function dispatchWebhook(
       await wallet.reconcileWithdrawalStatus(event, providerName);
     }
   }
+
   return { ok: true as const };
 }
 
@@ -186,6 +190,7 @@ export function createWalletRouter({
     if (!swap) {
       throw new SwapUnavailableError();
     }
+
     return swap;
   };
 
@@ -260,6 +265,7 @@ export function createWalletRouter({
 
     manualAdjustment: os.manualAdjustment.handler(async ({ input, context }) => {
       const { userId: adminId, ip, userAgent } = await adminGuard.assertSuperAdmin(context);
+
       return mapErrors(
         {
           NOT_FOUND: PlayerNotFoundError,
@@ -282,6 +288,7 @@ export function createWalletRouter({
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
+
       return wallet.getTransactions({
         userId: input.userId,
         page: input.page,
@@ -295,6 +302,7 @@ export function createWalletRouter({
     withdrawals: {
       list: os.withdrawals.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'withdrawal', 'view');
+
         return wallet.listWithdrawals(input);
       }),
 
@@ -304,6 +312,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'withdrawal', 'approve');
+
         return mapErrors(
           { NOT_FOUND: WithdrawalNotFoundError, CONFLICT: WithdrawalNotPendingError },
           () => wallet.approveWithdrawal(adminId, input.withdrawalId, { ip, userAgent }),
@@ -316,6 +325,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'withdrawal', 'reject');
+
         return mapErrors(
           { NOT_FOUND: WithdrawalNotFoundError, CONFLICT: WithdrawalNotPendingError },
           () =>
@@ -331,13 +341,16 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+
         const before = await wallet.getAutoWithdrawalRule(input.userId);
+
         const rule = await wallet.setAutoWithdrawalRule({
           userId: input.userId,
           threshold: input.threshold,
           reason: input.reason,
           createdBy: adminId,
         });
+
         await audit.record({
           actorId: adminId,
           actorType: 'admin',
@@ -349,11 +362,13 @@ export function createWalletRouter({
           ip,
           userAgent,
         });
+
         return rule;
       }),
 
       get: os.autoWithdrawalRules.get.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+
         return wallet.getAutoWithdrawalRule(input.userId);
       }),
 
@@ -363,8 +378,10 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+
         const before = await wallet.getAutoWithdrawalRule(input.userId);
         const deleted = await wallet.deleteAutoWithdrawalRule(input.userId);
+
         if (deleted) {
           await audit.record({
             actorId: adminId,
@@ -378,6 +395,7 @@ export function createWalletRouter({
             userAgent,
           });
         }
+
         return deleted;
       }),
     },
@@ -389,6 +407,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'auto-withdrawal-config', 'update');
+
         // The before-read, upsert, and audit write all run inside one transaction in
         // the service - an audit failure rolls back the threshold change too.
         return wallet.setAutoWithdrawalConfig(adminId, input, { ip, userAgent });
@@ -396,6 +415,7 @@ export function createWalletRouter({
 
       get: os.autoWithdrawalConfig.get.handler(async ({ context }) => {
         await adminGuard.assert(context, 'auto-withdrawal-config', 'view');
+
         return mapErrors({ NOT_FOUND: AutoWithdrawalConfigNotFoundError }, () =>
           wallet.getAutoWithdrawalConfig(),
         );
@@ -407,6 +427,7 @@ export function createWalletRouter({
     assets: {
       list: os.assets.list.handler(async ({ context }) => {
         await adminGuard.assert(context, 'wallet-asset', 'view');
+
         return wallet.listWalletAssets();
       }),
 
@@ -416,6 +437,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-asset', 'create');
+
         return mapErrors(
           {
             CONFLICT: [
@@ -434,6 +456,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-asset', 'update');
+
         return mapErrors(
           {
             NOT_FOUND: WalletAssetNotFoundError,
@@ -449,6 +472,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-asset', 'delete');
+
         return mapErrors(
           {
             CONFLICT: [
@@ -500,6 +524,7 @@ export function createWalletRouter({
     bonusRolloverConfig: {
       get: os.bonusRolloverConfig.get.handler(async ({ context }) => {
         await adminGuard.assert(context, 'bonus-rollover-config', 'view');
+
         return mapErrors({ NOT_FOUND: BonusRolloverConfigNotFoundError }, () =>
           wallet.getBonusRolloverConfig(),
         );
@@ -511,6 +536,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'bonus-rollover-config', 'update');
+
         return wallet.setBonusRolloverConfig(adminId, input, { ip, userAgent });
       }),
     },
@@ -546,6 +572,7 @@ export function createWalletRouter({
         // A missing binding, a bad signature and an unparseable body all answer the same
         // way - the endpoint must never confirm which vendor is bound.
         const rawBody = context.rawBody;
+
         if (
           !swap ||
           !swapWebhook ||
@@ -554,16 +581,20 @@ export function createWalletRouter({
         ) {
           throw new ORPCError('UNAUTHORIZED', { message: 'Invalid swap webhook signature' });
         }
+
         const event = swapWebhook.parse(rawBody, context.request.headers);
+
         if (event) {
           await swap.reconcileSwapStatus(event);
         }
+
         return { ok: true as const };
       }),
     },
 
     webhook: os.webhook.handler(async ({ context }) => {
       await throttleWebhook(context);
+
       return dispatchWebhook(
         wallet,
         paymentProviders,
@@ -575,6 +606,7 @@ export function createWalletRouter({
 
     webhookForProvider: os.webhookForProvider.handler(async ({ input, context }) => {
       await throttleWebhook(context);
+
       return dispatchWebhook(
         wallet,
         paymentProviders,
@@ -594,6 +626,7 @@ export function createWalletRouter({
           // gets it back synchronously, before the job actually runs.
           const runId = randomUUID();
           await jobQueue.enqueue(CUSTODY_SWEEP_QUEUE, { runId });
+
           return { runId };
         }),
       },
@@ -602,6 +635,7 @@ export function createWalletRouter({
     reconciliation: {
       list: os.reconciliation.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'wallet-reconciliation', 'view');
+
         return reconciliation.listFindings(input);
       }),
 
@@ -611,6 +645,7 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
+
         return mapErrors(
           {
             NOT_FOUND: [
@@ -632,6 +667,7 @@ export function createWalletRouter({
         await adminGuard.assert(context, 'wallet-reconciliation', 'run');
         const runId = randomUUID();
         await jobQueue.enqueue(reconciliationQueue, { runId });
+
         return { runId };
       }),
     },

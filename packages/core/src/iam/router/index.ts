@@ -30,26 +30,31 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
   return os.router({
     listCatalog: os.listCatalog.handler(async ({ context }) => {
       await adminGuard.assert(context, 'admin', 'view');
+
       return svc.listCatalog();
     }),
 
     listRoles: os.listRoles.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'admin', 'view');
+
       return svc.listRoles(input);
     }),
 
     getRole: os.getRole.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'admin', 'view');
+
       return mapErrors({ NOT_FOUND: RoleNotFoundError }, () => svc.getRole(input.roleId));
     }),
 
     createRole: os.createRole.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'create');
+
       return mapErrors(adminMgmtErrors, () => svc.createRole({ ...input, caller }));
     }),
 
     updateRole: os.updateRole.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'update');
+
       return mapErrors(adminMgmtErrors, () =>
         svc.updateRole({ roleId: input.roleId, name: input.name, caller }),
       );
@@ -57,43 +62,51 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
 
     deleteRole: os.deleteRole.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'delete');
+
       return mapErrors(adminMgmtErrors, () => svc.deleteRole({ roleId: input.roleId, caller }));
     }),
 
     setRolePermissions: os.setRolePermissions.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'update');
+
       return mapErrors(adminMgmtErrors, () => svc.setRolePermissions({ ...input, caller }));
     }),
 
     assignRole: os.assignRole.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'update');
+
       return mapErrors(adminMgmtErrors, () => svc.assignRole({ ...input, caller }));
     }),
 
     unassignRole: os.unassignRole.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'update');
+
       return mapErrors(adminMgmtErrors, () => svc.unassignRole({ ...input, caller }));
     }),
 
     listAssignments: os.listAssignments.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'admin', 'view');
+
       return svc.listAssignments(input);
     }),
 
     previewEffectivePermissions: os.previewEffectivePermissions.handler(
       async ({ input, context }) => {
         await adminGuard.assert(context, 'admin', 'view');
+
         return svc.previewEffectivePermissions(input);
       },
     ),
 
     listInvitations: os.listInvitations.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'admin', 'view');
+
       return svc.listInvitations(input);
     }),
 
     inviteAdmin: os.inviteAdmin.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'create');
+
       return mapErrors(adminMgmtErrors, () => svc.inviteAdmin({ ...input, caller }));
     }),
 
@@ -107,16 +120,19 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
 
     forceLogout: os.forceLogout.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'delete');
+
       return mapErrors(adminMgmtErrors, () => svc.forceLogout({ userId: input.userId, caller }));
     }),
 
     getMyPermissions: os.getMyPermissions.handler(async ({ context }) => {
       const caller = await adminGuard.assert(context);
+
       return svc.previewEffectivePermissions({ userId: caller.userId });
     }),
 
     reportAccessDenied: os.reportAccessDenied.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context);
+
       return svc.reportAccessDenied({ ...input, caller });
     }),
   });

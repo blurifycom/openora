@@ -9,6 +9,7 @@ let registrationRequestCount = 0;
  */
 export function registrationRequestHeaders(): Record<string, string> {
   const count = registrationRequestCount++;
+
   return {
     'content-type': 'application/json',
     'x-real-ip': `198.18.${Math.floor(count / 254)}.${(count % 254) + 1}`,
@@ -28,11 +29,14 @@ export type TestClient = {
 function makeClient(app: Hono, baseHeaders: Record<string, string>): TestClient {
   const call = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers);
+
     for (const [k, v] of Object.entries(baseHeaders)) {
       headers.set(k, v);
     }
+
     return app.request(path, { ...init, headers });
   };
+
   const withBody = (method: string) => (path: string, body?: unknown) =>
     call(path, {
       method,
@@ -40,6 +44,7 @@ function makeClient(app: Hono, baseHeaders: Record<string, string>): TestClient 
         ? {}
         : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
     });
+
   return {
     request: call,
     get: (path) => call(path, { method: 'GET' }),
@@ -70,14 +75,18 @@ async function loginAs(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
+
   if (!res.ok) {
     throw new Error(`${label} login failed (${res.status}): ${await res.text()}`);
   }
+
   const raw = res.headers.get('set-cookie') ?? '';
   const cookie = raw.split(';')[0] ?? '';
+
   if (!cookie) {
     throw new Error(`${label}: login succeeded but no session cookie was set`);
   }
+
   return makeClient(app, { cookie });
 }
 

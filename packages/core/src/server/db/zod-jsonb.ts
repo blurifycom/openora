@@ -38,19 +38,23 @@ export function zodJsonb<S extends z.ZodType>(
     toDriver: (value) => JSON.stringify(schema.parse(value)),
     fromDriver: (value) => {
       const parsed = schema.safeParse(value);
+
       if (parsed.success) {
         return parsed.data;
       }
+
       // No row id here - the driver sees the value alone. This says a column has drifted
       // and roughly how; finding the rows is a query, not a log line.
       const context = { column: columnName, issues: parsed.error.issues.slice(0, 3) };
       const message = 'stored jsonb no longer matches its contract, read as null';
+
       if (severity === 'error') {
         // `err` is what makes createLogger forward this to the error tracker.
         logger.error({ ...context, err: parsed.error }, message);
       } else {
         logger.warn(context, message);
       }
+
       return null as z.infer<S>;
     },
   });

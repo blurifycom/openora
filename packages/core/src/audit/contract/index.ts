@@ -14,7 +14,9 @@ import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contr
 // and the Drizzle `pgEnum` in audit/schema derives the DB enum from the same tuple,
 // so the two can never drift.
 export const ACTOR_TYPES = ['player', 'admin', 'system'] as const;
+
 export const AuditActorTypeSchema = z.enum(ACTOR_TYPES);
+
 export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;
 
 // before/after are jsonb snapshots and may hold an object OR an array (eg a role's
@@ -44,6 +46,7 @@ export const AuditLogEntrySchema = z.object({
   hash: z.string(),
   createdAt: TimestampSchema,
 });
+
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 
 export const AUDIT_SORT_BY_VALUES = [
@@ -54,7 +57,9 @@ export const AUDIT_SORT_BY_VALUES = [
   'resourceType',
   'resourceId',
 ] as const;
+
 export const AuditSortBySchema = z.enum(AUDIT_SORT_BY_VALUES).default('createdAt');
+
 export type AuditSortBy = z.infer<typeof AuditSortBySchema>;
 
 export const AuditListFiltersSchema = PageQuerySchema.extend({
@@ -72,6 +77,7 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   sortBy: AuditSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
 });
+
 export type AuditListFilters = z.infer<typeof AuditListFiltersSchema>;
 
 // Export inherits sortBy/sortOrder from the list schema; override default sort order to
@@ -82,6 +88,7 @@ export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({
 }).extend({
   sortOrder: SortOrderSchema.default('asc').optional(),
 });
+
 export type AuditExportFilters = z.infer<typeof AuditExportFiltersSchema>;
 
 export const MyRgHistoryEntrySchema = z.object({
@@ -99,11 +106,13 @@ export const MyRgHistoryEntrySchema = z.object({
   effectiveAt: TimestampSchema.nullable(),
   expiresAt: TimestampSchema.nullable(),
 });
+
 export type MyRgHistoryEntry = z.infer<typeof MyRgHistoryEntrySchema>;
 
 export const MyRgHistoryFiltersSchema = PageQuerySchema.extend({
   sortOrder: SortOrderSchema.default('desc').optional(),
 });
+
 export type MyRgHistoryFilters = z.infer<typeof MyRgHistoryFiltersSchema>;
 
 export const auditContract = {

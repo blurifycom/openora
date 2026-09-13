@@ -7,6 +7,7 @@ import { game, gameRound } from '../schema/index.js';
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 
 let db: TestDb;
+
 let reporting: DrizzleAdminGameReporting;
 
 const AT = (iso: string) => new Date(iso);
@@ -16,6 +17,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
     .insert(game)
     .values({ name: 'Aces', provider: 'p', category: 'slots', ...overrides })
     .returning();
+
   return row!;
 }
 
@@ -33,6 +35,7 @@ async function seedRound(gameId: string, overrides: Partial<typeof gameRound.$in
       ...overrides,
     })
     .returning();
+
   return row!;
 }
 

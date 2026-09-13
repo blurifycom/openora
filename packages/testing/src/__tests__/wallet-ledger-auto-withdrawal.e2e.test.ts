@@ -31,8 +31,11 @@ import {
  */
 
 let db: TestDb;
+
 let appDefault: TestApp;
+
 let appGated: TestApp;
+
 let appCapGated: TestApp;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -50,6 +53,7 @@ async function verifyKyc(admin: TestClient, userId: string) {
     status: 'approved',
     reason: 'e2e fixture verification',
   });
+
   if (res.status !== 200) {
     throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
   }
@@ -61,6 +65,7 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
     assignReason: 'qa e2e fixture',
     assignActor: 'manual',
   });
+
   if (res.status !== 200) {
     throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
   }
@@ -69,6 +74,7 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
 async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {
   const res = await admin.get(`/wallet/withdrawals?status=pending&currency=${currency}&limit=100`);
   const body = await readJson(res);
+
   return new Set((body.items as Array<{ transactionId: string }>).map((i) => i.transactionId));
 }
 
@@ -86,6 +92,7 @@ beforeAll(async () => {
   const gatedFixture = fileURLToPath(
     new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
   );
+
   appGated = await bootTestApp({
     plugins: [...basePlugins, { id: 'test-wallet-auto-withdrawal-config', path: gatedFixture }],
     databaseUrl: db.url,
@@ -94,6 +101,7 @@ beforeAll(async () => {
   const capFixture = fileURLToPath(
     new URL('./fixtures/test-wallet-auto-withdrawal-cap-config-plugin.ts', import.meta.url),
   );
+
   appCapGated = await bootTestApp({
     plugins: [...basePlugins, { id: 'test-wallet-auto-withdrawal-cap-config', path: capFixture }],
     databaseUrl: db.url,
@@ -139,11 +147,13 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '5',
       currency: 'USD',
     });
+
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '0.5',
       currency: 'USD',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('completed');
@@ -158,6 +168,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${body.transactionId}&action=wallet.withdrawal.auto_approved`,
       );
+
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
       expect(auditBody.items[0].actorType).toBe('system');
@@ -182,11 +193,13 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '3',
       currency: 'USD',
     });
+
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '0.5',
       currency: 'USD',
     });
+
     // gateWithdrawals is off, so the withdraw request itself succeeds...
     expect(res.status).toBe(200);
     const body = await readJson(res);
@@ -199,9 +212,11 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('stays pending when the player carries an excluded risk tag', async () => {
     const email = `auto-risk-tag-${randomUUID()}@e2e.test`;
+
     const { client, playerId, userId } = await registerAndMaterializePlayer(appGated, {
       email: email,
     });
+
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
     await assignTag(admin, playerId, 'high_risk');
@@ -211,11 +226,13 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '3',
       currency: 'USD',
     });
+
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '0.5',
       currency: 'USD',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -235,11 +252,13 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '5',
       currency: 'USD',
     });
+
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '2.5',
       currency: 'USD',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -259,12 +278,14 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '0.1',
       currency: 'BTC',
     });
+
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '0.01',
       currency: 'BTC',
       destinationAddress: 'bc1qe2e-crypto-rail-test-address',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -283,6 +304,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       threshold: '0.1',
       reason: 'watchlist - lower ceiling',
     });
+
     expect(setRes.status).toBe(200);
 
     await client.post('/wallet/deposit', {
@@ -290,12 +312,14 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '5',
       currency: 'USD',
     });
+
     // 0.4 is well under the global 2 threshold but over the per-player rule's 0.1.
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '0.4',
       currency: 'USD',
     });
+
     const body = await readJson(res);
     expect(body.status).toBe('pending');
   });
@@ -310,6 +334,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       threshold: '3',
       reason: 'trusted long-standing player',
     });
+
     expect(setRes.status).toBe(200);
 
     await client.post('/wallet/deposit', {
@@ -317,12 +342,14 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '5',
       currency: 'USD',
     });
+
     // 2.5 exceeds the global 2 threshold but is under the per-player rule's 3.
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '2.5',
       currency: 'USD',
     });
+
     const body = await readJson(res);
     expect(body.status).toBe('completed');
 
@@ -330,6 +357,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${body.transactionId}&action=wallet.withdrawal.auto_approved`,
       );
+
       const auditBody = await readJson(auditRes);
       expect(auditBody.items[0].after).toMatchObject({
         threshold: '3.000000000000000000',
@@ -359,6 +387,7 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
         currency: 'USD',
       }),
     );
+
     expect(first.status).toBe('completed');
 
     const second = await readJson(
@@ -368,6 +397,7 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
         currency: 'USD',
       }),
     );
+
     expect(second.status).toBe('pending');
 
     const pending = await pendingWithdrawalIds(admin);
@@ -383,10 +413,12 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
     const admin = await asAdmin(appDefault.app);
 
     const staffEmail = `rule-staff-${randomUUID()}@e2e.test`;
+
     const { client: staffClient, userId: staffUserId } = await registerAndMaterializePlayer(
       appDefault,
       { email: staffEmail },
     );
+
     // `support` has other admin permissions but not `withdrawal:auto-rule`.
     await setRole(appDefault.container, staffUserId, 'support');
 
@@ -396,12 +428,15 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ threshold: '1', reason: 'no session' }),
     });
+
     expect(anonSet.status).toBe(401);
     const anonGet = await appDefault.app.request(`/wallet/auto-withdrawal-rules/${userId}`);
     expect(anonGet.status).toBe(401);
+
     const anonDel = await appDefault.app.request(`/wallet/auto-withdrawal-rules/${userId}`, {
       method: 'DELETE',
     });
+
     expect(anonDel.status).toBe(401);
 
     // 403: authenticated but missing the specific permission.
@@ -409,6 +444,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       threshold: '1',
       reason: 'should be denied',
     });
+
     expect(staffSet.status).toBe(403);
     const staffGet = await staffClient.get(`/wallet/auto-withdrawal-rules/${userId}`);
     expect(staffGet.status).toBe(403);
@@ -420,6 +456,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       threshold: '1.5',
       reason: 'admin round trip',
     });
+
     expect(setRes.status).toBe(200);
     const rule = await readJson(setRes);
     expect(rule).toMatchObject({
@@ -436,6 +473,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${userId}&action=wallet.auto_withdrawal_rule.set`,
       );
+
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
       expect(auditBody.items[0].after).toMatchObject({
@@ -455,6 +493,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       const auditRes = await admin.get(
         `/audit/logs?resourceId=${userId}&action=wallet.auto_withdrawal_rule.deleted`,
       );
+
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
     });
@@ -480,6 +519,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
         currency: 'USD',
       }),
     );
+
     expect(w1.status).toBe('pending');
     const balanceAfterHold = (await readJson(await client.get('/wallet/balance'))).balance;
     expect(balanceAfterHold).toBe('2.400000000000000000');
@@ -487,6 +527,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     const approveRes = await admin.post(`/wallet/withdrawals/${w1.transactionId}/approve`, {
       withdrawalId: w1.transactionId,
     });
+
     expect(approveRes.status).toBe(200);
     expect((await readJson(approveRes)).status).toBe('completed');
 
@@ -494,12 +535,15 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
       const items = (await readJson(await client.get('/notifications'))).items as Array<{
         type: string;
       }>;
+
       expect(items.some((n) => n.type === 'withdrawal.approved')).toBe(true);
     });
+
     const approvedMail = await waitForEmail(
       email,
       (m) => m.subject === 'Your withdrawal was approved',
     );
+
     expect(approvedMail.text).toContain(w1.transactionId);
 
     const w2 = await readJson(
@@ -509,6 +553,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
         currency: 'USD',
       }),
     );
+
     expect(w2.status).toBe('pending');
     const balanceAfterSecondHold = (await readJson(await client.get('/wallet/balance'))).balance;
     expect(balanceAfterSecondHold).toBe('2.000000000000000000');
@@ -517,6 +562,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
       withdrawalId: w2.transactionId,
       reason: 'qa regression check',
     });
+
     expect(rejectRes.status).toBe(200);
     expect((await readJson(rejectRes)).status).toBe('rejected');
 
@@ -524,6 +570,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
       email,
       (m) => m.subject === 'Your withdrawal was rejected',
     );
+
     expect(rejectedMail.text).toContain('qa regression check');
 
     const balanceAfterReject = (await readJson(await client.get('/wallet/balance'))).balance;

@@ -16,6 +16,7 @@ import { createToken, type Token } from './token.js';
  * bare string can't be passed by accident.
  */
 export type QueueName = string & { readonly __brand: 'QueueName' };
+
 export const queue = (name: string): QueueName => name as QueueName;
 
 export type BackoffStrategy = { type: 'fixed' | 'exponential'; delayMs: number };

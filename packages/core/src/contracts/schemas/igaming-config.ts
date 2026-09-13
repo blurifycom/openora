@@ -87,6 +87,7 @@ export const IgamingConfigSchema = z
   });
 
 export type IgamingConfig = z.infer<typeof IgamingConfigSchema>;
+
 export type IgamingConfigInput = z.input<typeof IgamingConfigSchema>;
 
 /**
@@ -96,12 +97,15 @@ export type IgamingConfigInput = z.input<typeof IgamingConfigSchema>;
  */
 export function defineIgamingConfig(config: IgamingConfigInput): IgamingConfig {
   const result = IgamingConfigSchema.safeParse(config);
+
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('\n');
+
     throw new Error(`Invalid igaming config:\n${issues}`);
   }
+
   return result.data;
 }
 

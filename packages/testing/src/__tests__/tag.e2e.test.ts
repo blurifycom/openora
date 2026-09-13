@@ -31,7 +31,9 @@ import {
  */
 
 let db: TestDb;
+
 let app: TestApp;
+
 let admin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -69,14 +71,17 @@ async function activeTagKeys(admin: TestClient, playerId: string): Promise<strin
   const res = await admin.get(`/player/${playerId}/player-tag?page=1&limit=50`);
   expect(res.status).toBe(200);
   const body = await readJson(res);
+
   return (body.items as Array<{ tag: { key: string } }>).map((i) => i.tag.key);
 }
 
 async function upsertRule(admin: TestClient, tagKey: string, input: Record<string, unknown>) {
   const res = await admin.put(`/tag-rule/${tagKey}`, input);
+
   if (res.status !== 200) {
     throw new Error(`upsertRule(${tagKey}) failed (${res.status}): ${await res.text()}`);
   }
+
   return res;
 }
 
@@ -86,9 +91,11 @@ async function assignTagManually(admin: TestClient, playerId: string, tagKey: st
     assignReason: 'qa e2e fixture - manual seed',
     assignActor: 'manual',
   });
+
   if (res.status !== 200) {
     throw new Error(`assignTagManually(${tagKey}) failed (${res.status}): ${await res.text()}`);
   }
+
   return readJson(res);
 }
 
@@ -134,37 +141,45 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
     });
 
     const belowEmail = `wr-below-${randomUUID()}@e2e.test`;
+
     const { client: belowClient, playerId: belowPlayerId } = await registerAndMaterializePlayer(
       app,
       { email: belowEmail },
     );
+
     await belowClient.post('/wallet/deposit', {
       idempotencyKey: randomUUID(),
       amount: '1000',
       currency: 'USD',
     });
+
     const belowRes = await belowClient.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '499',
       currency: 'USD',
     });
+
     expect(belowRes.status).toBe(200);
 
     const aboveEmail = `wr-above-${randomUUID()}@e2e.test`;
+
     const { client: aboveClient, playerId: abovePlayerId } = await registerAndMaterializePlayer(
       app,
       { email: aboveEmail },
     );
+
     await aboveClient.post('/wallet/deposit', {
       idempotencyKey: randomUUID(),
       amount: '1000',
       currency: 'USD',
     });
+
     const aboveRes = await aboveClient.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '500',
       currency: 'USD',
     });
+
     expect(aboveRes.status).toBe(200);
 
     await vi.waitFor(async () => {
@@ -187,11 +202,13 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
       amount: '1000',
       currency: 'USD',
     });
+
     const res = await client.post('/wallet/withdraw', {
       idempotencyKey: randomUUID(),
       amount: '500',
       currency: 'USD',
     });
+
     expect(res.status).toBe(200);
     const body = await readJson(res);
 
@@ -205,8 +222,10 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
       const approveRes = await admin.post(`/wallet/withdrawals/${body.transactionId}/approve`, {
         withdrawalId: body.transactionId,
       });
+
       expect(approveRes.status).toBe(200);
     }
+
     await runDailySweep(app.container);
     await new Promise((r) => setTimeout(r, 300));
     expect(await activeTagKeys(admin, playerId)).toContain('withdrawal_review');
@@ -223,19 +242,23 @@ describe('dormant_high_roller: co-occurrence sweep + login removal', () => {
     });
 
     const hrEmail = `dhr-hr-${randomUUID()}@e2e.test`;
+
     const {
       client: hrClient,
       playerId: hrPlayerId,
       userId: hrUserId,
     } = await registerAndMaterializePlayer(app, { email: hrEmail });
+
     await assignTagManually(admin, hrPlayerId, 'high_roller');
     await backdateSessions(app.container, hrUserId, 40);
 
     const plainEmail = `dhr-plain-${randomUUID()}@e2e.test`;
+
     const { playerId: plainPlayerId, userId: plainUserId } = await registerAndMaterializePlayer(
       app,
       { email: plainEmail },
     );
+
     await backdateSessions(app.container, plainUserId, 40);
 
     await runDailySweep(app.container);
@@ -330,6 +353,7 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
         currency: 'USD',
       }),
     );
+
     const w2 = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -345,6 +369,7 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
         const res = await admin.post(`/wallet/withdrawals/${w.transactionId}/approve`, {
           withdrawalId: w.transactionId,
         });
+
         expect(res.status).toBe(200);
       }
     }
@@ -379,6 +404,7 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
     const { userId, playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const eventBus = app.container.get(EVENT_BUS);
+
     const payload = {
       userId,
       playerId: null,
@@ -386,6 +412,7 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
       currency: 'USD',
       transactionId: randomUUID(),
     };
+
     eventBus.emit('wallet.withdrawal.requested', payload);
     eventBus.emit('wallet.withdrawal.requested', payload);
 
@@ -416,6 +443,7 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
         }),
       ),
     );
+
     const statuses = results.map((r) => r.status);
     const successCount = statuses.filter((s) => s === 200).length;
     const conflictCount = statuses.filter((s) => s === 409).length;
@@ -460,6 +488,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'high_roller', isSticky: false }),
     });
+
     expect(createRes.status).toBe(401);
 
     const deleteRes = await anon.request('/tag/high_roller', { method: 'DELETE' });
@@ -477,6 +506,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
         assignActor: 'manual',
       }),
     });
+
     expect(assignRes.status).toBe(401);
 
     const removeRes = await anon.request(`/player/${playerId}/player-tag/high_roller`, {
@@ -484,6 +514,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ removalReason: 'anon attempt', removalActor: 'manual' }),
     });
+
     expect(removeRes.status).toBe(401);
 
     const listAssignableRes = await anon.request(`/player/${playerId}/assignable-tags`);
@@ -509,6 +540,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
       assignReason: 'self attempt',
       assignActor: 'manual',
     });
+
     expect(assignRes.status).toBe(403);
 
     const removeRes = await client.request(`/player/${playerId}/player-tag/high_roller`, {
@@ -516,6 +548,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ removalReason: 'self attempt', removalActor: 'manual' }),
     });
+
     expect(removeRes.status).toBe(403);
 
     const listAssignableRes = await client.get(`/player/${playerId}/assignable-tags`);

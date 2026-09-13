@@ -23,7 +23,9 @@ export async function assertRateLimit<K extends string = string>(
   if (!limiter) {
     return;
   }
+
   const { allowed, retryAfterMs } = await limiter.consume(key, opts);
+
   if (!allowed) {
     throw makeRateLimitError(retryAfterMs);
   }

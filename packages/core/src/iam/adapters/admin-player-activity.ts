@@ -18,6 +18,7 @@ const DEFAULT_RANGE_DAYS = 30;
 function resolveRange(filter: PlayerActivityFilter): { from: Date; to: Date } {
   const to = filter.dateTo ?? new Date();
   const from = filter.dateFrom ?? new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+
   return { from, to };
 }
 
@@ -28,6 +29,7 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
     filter: PlayerActivityFilter,
   ): Promise<RegistrationsOverTimePoint[]> {
     const { from, to } = resolveRange(filter);
+
     const result = await this.drizzle.db.execute<{ date: string; registrations: string }>(sql`
       select gs::date::text as date, count(${user.id})::int as registrations
       from generate_series(${from}::date, ${to}::date, interval '1 day') as gs
@@ -35,6 +37,7 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
       group by gs
       order by gs
     `);
+
     return result.rows.map((r) => ({ date: r.date, registrations: Number(r.registrations) }));
   }
 
@@ -45,6 +48,7 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
   // the same "active" definition reused below for retention's "has a session row" check.
   async getActiveUsersTrend(filter: PlayerActivityFilter): Promise<ActiveUsersTrendPoint[]> {
     const { from, to } = resolveRange(filter);
+
     // A single join bounded by the widest (MAU) window, then FILTER narrows the
     // distinct-user count per day - one pass over `session` instead of three
     // correlated subqueries re-scanning it for every generated day.
@@ -74,6 +78,7 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
       group by gs
       order by gs
     `);
+
     return result.rows.map((r) => ({
       date: r.date,
       dau: Number(r.dau),
@@ -87,6 +92,7 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
     windowDays: 7 | 30,
   ): Promise<RetentionCohortRow[]> {
     const { from, to } = resolveRange(filter);
+
     const result = await this.drizzle.db.execute<{
       cohort_date: string;
       cohort_size: string;
@@ -116,9 +122,11 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
       group by cu.cohort_date
       order by cu.cohort_date
     `);
+
     return result.rows.map((r) => {
       const cohortSize = Number(r.cohort_size);
       const returned = Number(r.returned);
+
       return {
         cohortDate: r.cohort_date,
         cohortSize,

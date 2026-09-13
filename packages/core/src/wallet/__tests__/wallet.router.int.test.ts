@@ -25,6 +25,7 @@ import type { ReconciliationService } from '../service/reconciliation.service.js
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
+
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
 let db: TestDb;
@@ -82,6 +83,7 @@ async function seedLedger(userId: string, amounts: string[]) {
     await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).returning(),
     new Error('seedLedger: query returned no row'),
   );
+
   for (const amount of amounts) {
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: row.id,

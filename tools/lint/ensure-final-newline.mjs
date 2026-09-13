@@ -10,7 +10,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
 const SKIP = new Set(['pnpm-lock.yaml']);
+
 // Drizzle hashes each migration file's exact bytes to decide what is already applied,
 // so appending a newline makes an applied migration re-run and fail (ADR-0027).
 const SKIP_PATTERNS = [/\/drizzle\/migrations\/.*\.sql$/];
@@ -21,17 +23,21 @@ const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 64 * 1024 * 10
   .filter(Boolean);
 
 let fixed = 0;
+
 for (const rel of files) {
   if (SKIP.has(rel) || SKIP_PATTERNS.some((p) => p.test(rel))) {
     continue;
   }
+
   const path = join(root, rel);
 
   let buf;
+
   try {
     if (!lstatSync(path).isFile()) {
       continue;
     } // lstat, not stat: skip symlinks/submodules (don't write through a link)
+
     buf = readFileSync(path);
   } catch {
     continue; // staged-deleted or unreadable
@@ -40,6 +46,7 @@ for (const rel of files) {
   if (buf.length === 0 || buf.includes(0)) {
     continue;
   } // empty or binary (NUL byte)
+
   if (buf[buf.length - 1] === 0x0a) {
     continue;
   }

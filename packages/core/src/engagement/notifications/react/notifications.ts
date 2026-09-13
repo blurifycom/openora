@@ -25,17 +25,21 @@ import {
 } from '../contract/index.js';
 
 export type UseNotificationsResult = UseQueryResult<Paginated<Notification>, Error>;
+
 export type UseUnreadNotificationCountResult = UseQueryResult<NotificationCount, Error>;
+
 export type UseMarkNotificationReadResult = UseMutationResult<
   MarkNotificationReadOutput,
   Error,
   { id: string }
 >;
+
 export type UseMarkAllNotificationsReadResult = UseMutationResult<
   NotificationCount,
   Error,
   unknown
 >;
+
 export type UseNotificationStreamResult = UseEventStreamResult<Notification>;
 
 type NotificationsUtils = ReturnType<typeof useOrpcQueryUtils<typeof notificationsContract>>;
@@ -50,17 +54,20 @@ export function useNotifications(
   input: { page?: number; limit?: number } = {},
 ): UseNotificationsResult {
   const utils = useOrpcQueryUtils(notificationsContract);
+
   return useQuery(utils.list.queryOptions({ input }));
 }
 
 export function useUnreadNotificationCount(): UseUnreadNotificationCountResult {
   const utils = useOrpcQueryUtils(notificationsContract);
+
   return useQuery(utils.unreadCount.queryOptions({ input: {} }));
 }
 
 export function useMarkNotificationRead(): UseMarkNotificationReadResult {
   const utils = useOrpcQueryUtils(notificationsContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.markRead.mutationOptions(),
     onSuccess: invalidateNotifications(utils, queryClient),
@@ -70,6 +77,7 @@ export function useMarkNotificationRead(): UseMarkNotificationReadResult {
 export function useMarkAllNotificationsRead(): UseMarkAllNotificationsReadResult {
   const utils = useOrpcQueryUtils(notificationsContract);
   const queryClient = useQueryClient();
+
   return useMutation({
     ...utils.markAllRead.mutationOptions(),
     onSuccess: invalidateNotifications(utils, queryClient),
@@ -80,9 +88,11 @@ export function useNotificationStream(
   options?: UseEventStreamOptions<Notification>,
 ): UseNotificationStreamResult {
   const client = useOrpcClient(notificationsContract);
+
   const subscribe = useCallback(
     (signal: AbortSignal) => client.stream(undefined, { signal }),
     [client],
   );
+
   return useEventStream<Notification>(subscribe, options);
 }

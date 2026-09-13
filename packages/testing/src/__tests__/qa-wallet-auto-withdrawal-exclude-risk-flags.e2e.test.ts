@@ -37,7 +37,9 @@ import {
  */
 
 let db: TestDb;
+
 let appMain: TestApp;
+
 let superAdmin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -51,6 +53,7 @@ async function verifyKyc(admin: TestClient, userId: string) {
     status: 'approved',
     reason: 'QA fixture verification',
   });
+
   if (res.status !== 200) {
     throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
   }
@@ -62,9 +65,11 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
     assignReason: 'QA fixture - manual risk-tag seed',
     assignActor: 'manual',
   });
+
   if (res.status !== 200) {
     throw new Error(`assignTag(${tagKey}) failed (${res.status}): ${await res.text()}`);
   }
+
   return readJson(res);
 }
 
@@ -81,13 +86,16 @@ async function makeSuperAdmin(
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
+
   if (!role) {
     throw new Error("makeSuperAdmin: no seeded admin_role with key='super-admin'");
   }
+
   await drizzle
     .insert(adminRoleAssignment)
     .values({ userId, roleId: role.id })
     .onConflictDoNothing();
+
   return { client, userId };
 }
 
@@ -97,9 +105,11 @@ async function setConfig(input: {
   excludeRiskFlags: string[];
 }) {
   const res = await superAdmin.put('/wallet/auto-withdrawal-config', input);
+
   if (res.status !== 200) {
     throw new Error(`setConfig failed (${res.status}): ${await res.text()}`);
   }
+
   return readJson(res);
 }
 
@@ -170,6 +180,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
       amount: '500',
       currency: 'USD',
     });
+
     const taggedRes = await readJson(
       await tagged.client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -177,6 +188,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
         currency: 'USD',
       }),
     );
+
     expect(taggedRes.status).toBe('pending');
 
     const cleanEmail = `preexisting-clean-${randomUUID()}@e2e.test`;
@@ -187,6 +199,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
       amount: '500',
       currency: 'USD',
     });
+
     const cleanRes = await readJson(
       await clean.client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -194,6 +207,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
         currency: 'USD',
       }),
     );
+
     expect(cleanRes.status).toBe('completed');
   });
 });
@@ -205,6 +219,7 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
       cryptoThreshold: '0',
       excludeRiskFlags: ['vip'],
     });
+
     expect(set.excludeRiskFlags).toEqual(['vip']);
 
     const got = await readJson(await superAdmin.get('/wallet/auto-withdrawal-config'));
@@ -215,9 +230,11 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
     await setConfig({ fiatThreshold: '1000', cryptoThreshold: '0', excludeRiskFlags: ['vip'] });
 
     const email = `widened-tag-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
       email: email,
     });
+
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
     await client.post('/wallet/deposit', {
@@ -225,6 +242,7 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -232,6 +250,7 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('pending');
   });
 });
@@ -243,14 +262,17 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
       cryptoThreshold: '0',
       excludeRiskFlags: [],
     });
+
     expect(set.excludeRiskFlags).toEqual([]);
     const got = await readJson(await superAdmin.get('/wallet/auto-withdrawal-config'));
     expect(got.excludeRiskFlags).toEqual([]);
 
     const email = `empty-array-clears-exclusion-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
       email: email,
     });
+
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'high_risk');
     await client.post('/wallet/deposit', {
@@ -258,6 +280,7 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -265,6 +288,7 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('completed');
   });
 
@@ -280,9 +304,11 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
     });
 
     const email = `omitted-tag-no-longer-excluded-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
       email: email,
     });
+
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'kyc_rejected');
     await client.post('/wallet/deposit', {
@@ -290,6 +316,7 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -297,6 +324,7 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('completed');
   });
 });
@@ -310,9 +338,11 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
     });
 
     const email = `tiny-amount-excluded-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
       email: email,
     });
+
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
     await client.post('/wallet/deposit', {
@@ -320,6 +350,7 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -327,6 +358,7 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('pending');
   });
 });
@@ -347,6 +379,7 @@ describe('regression (no weakening): a player with no excluded tag, under thresh
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -354,6 +387,7 @@ describe('regression (no weakening): a player with no excluded tag, under thresh
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('completed');
   });
 });
@@ -367,9 +401,11 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
     });
 
     const email = `rule-override-excluded-tag-${randomUUID()}@e2e.test`;
+
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
       email: email,
     });
+
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'multi_account');
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
@@ -382,6 +418,7 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -389,6 +426,7 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('pending');
   });
 });
@@ -396,6 +434,7 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
 describe('audit trail', () => {
   it("setAutoWithdrawalConfig's audit record captures the excludeRiskFlags before/after diff", async () => {
     await setConfig({ fiatThreshold: '1000', cryptoThreshold: '0', excludeRiskFlags: ['vip'] });
+
     const set = await setConfig({
       fiatThreshold: '1000',
       cryptoThreshold: '0',
@@ -405,6 +444,7 @@ describe('audit trail', () => {
     const auditRes = await superAdmin.get(
       `/audit/logs?action=wallet.auto_withdrawal_config.set&limit=1`,
     );
+
     const audit = await readJson(auditRes);
     expect(audit.items.length).toBeGreaterThanOrEqual(1);
     const entry = audit.items[0];
@@ -428,6 +468,7 @@ describe('audit trail', () => {
       amount: '500',
       currency: 'USD',
     });
+
     const res = await readJson(
       await client.post('/wallet/withdraw', {
         idempotencyKey: randomUUID(),
@@ -435,11 +476,13 @@ describe('audit trail', () => {
         currency: 'USD',
       }),
     );
+
     expect(res.status).toBe('completed');
 
     const auditRes = await superAdmin.get(
       `/audit/logs?resourceId=${res.transactionId}&action=wallet.withdrawal.auto_approved`,
     );
+
     const audit = await readJson(auditRes);
     expect(audit.items.length).toBeGreaterThanOrEqual(1);
     const after = audit.items[0].after;
@@ -456,6 +499,7 @@ describe('validation: excludeRiskFlags is now a required input field', () => {
       fiatThreshold: '42',
       cryptoThreshold: '0',
     });
+
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
 
@@ -473,6 +517,7 @@ describe('validation: excludeRiskFlags is now a required input field', () => {
       cryptoThreshold: '1',
       excludeRiskFlags: ['not_a_real_tag_key'],
     });
+
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
   });

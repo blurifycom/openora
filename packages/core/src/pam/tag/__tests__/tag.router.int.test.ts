@@ -12,9 +12,11 @@ import { TagService } from '../service/tag.service.js';
 import { TagRuleService } from '../service/tag-rule.service.js';
 
 const UID = '11111111-1111-4111-8111-111111111111';
+
 const CALLER = '55555555-5555-4555-8555-555555555555';
 
 const CTX = testContext();
+
 const AUTHED_CTX = testContext({ auth: { userId: CALLER } });
 
 const RULE_INPUT = {
@@ -49,6 +51,7 @@ function build(adminGuard: AdminGuard) {
   const events = makeEventBus();
   const tagService = new TagService(db.drizzle, events);
   const ruleService = new TagRuleService(db.drizzle, events);
+
   return { router: createTagRouter(tagService, ruleService, adminGuard), events };
 }
 
@@ -196,12 +199,14 @@ describe('tag router error mapping', () => {
   it('maps TagAlreadyInUseError to a CONFLICT response instead of a raw 500', async () => {
     const { router } = build(allowingGuard());
     await seedTag('high_roller');
+
     const assignInput = {
       playerId: UID,
       tagKey: 'high_roller' as TagKey,
       assignReason: 'manual review',
       assignActor: 'manual' as const,
     };
+
     await call(router.assignPlayerTag, assignInput, { context: AUTHED_CTX });
 
     await expect(
@@ -250,12 +255,14 @@ describe('tag router player-tag removal', () => {
   it('normalizes the removal reason before persistence and audit emission', async () => {
     await seedTag('high_roller');
     const { router, events } = build(allowingGuard());
+
     const assignInput = {
       playerId: UID,
       tagKey: 'high_roller' as TagKey,
       assignReason: 'manual review',
       assignActor: 'manual' as const,
     };
+
     await call(router.assignPlayerTag, assignInput, { context: AUTHED_CTX });
     events.emit.mockClear();
 

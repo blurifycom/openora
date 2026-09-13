@@ -16,6 +16,7 @@ export const GAME_PERFORMANCE_SORT_FIELDS = [
   'uniquePlayers',
   'roundsPlayed',
 ] as const;
+
 export type GamePerformanceSortBy = (typeof GAME_PERFORMANCE_SORT_FIELDS)[number];
 
 export type GamePerformanceFilter = {

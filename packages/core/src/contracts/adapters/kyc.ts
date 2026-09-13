@@ -16,6 +16,7 @@ export type KycDocument = {
 };
 
 export const KYC_VENDOR_STATUSES = ['pending', 'approved', 'rejected', 'not_started'] as const;
+
 export type KycVendorStatus = (typeof KYC_VENDOR_STATUSES)[number];
 
 /**
@@ -33,7 +34,9 @@ export const KYC_CHECK_STATUSES = [
   'expired',
   'unknown',
 ] as const;
+
 export const KycCheckStatusSchema = z.enum(KYC_CHECK_STATUSES);
+
 export type KycCheckStatus = z.infer<typeof KycCheckStatusSchema>;
 
 /** One workflow step's outcome. `step` is a free-form, vendor-supplied label (eg Didit's `ID_VERIFICATION`). */
@@ -41,6 +44,7 @@ export const KycCheckResultSchema = z.object({
   step: z.string(),
   status: KycCheckStatusSchema,
 });
+
 export type KycCheckResult = z.infer<typeof KycCheckResultSchema>;
 
 export type KycResult = {

@@ -17,6 +17,7 @@ export type UseEventStreamResult<T> = {
 };
 
 const MAX_RETRY_DELAY_MS = 30_000;
+
 const STABLE_CONNECTION_MS = 5_000;
 
 /**
@@ -43,6 +44,7 @@ export function useEventStream<T>(
   useEffect(() => {
     if (!enabled) {
       setStatus('idle');
+
       return;
     }
 
@@ -59,10 +61,12 @@ export function useEventStream<T>(
       (async () => {
         let stableTimer: ReturnType<typeof setTimeout> | undefined;
         let stabilized = false;
+
         const markStable = () => {
           if (stabilized) {
             return;
           }
+
           stabilized = true;
           retryCount = 0;
           clearTimeout(stableTimer);
@@ -70,9 +74,11 @@ export function useEventStream<T>(
 
         try {
           const iterable = await subscribe(controller.signal);
+
           if (cancelled) {
             return;
           }
+
           setStatus('open');
           // Only trust this connection - and reset the backoff - once it has
           // stayed open a while or delivered something. Resetting the instant
@@ -80,10 +86,12 @@ export function useEventStream<T>(
           // immediately (idle-timeout proxy, server ending the generator
           // early) reconnects at a fixed ~1s delay forever instead of backing off.
           stableTimer = setTimeout(markStable, STABLE_CONNECTION_MS);
+
           for await (const event of iterable) {
             if (cancelled) {
               break;
             }
+
             markStable();
             onEventRef.current?.(event);
             setLast(event);
@@ -95,6 +103,7 @@ export function useEventStream<T>(
           }
         } finally {
           clearTimeout(stableTimer);
+
           if (!cancelled) {
             // Unexpected close: reconnect with exponential backoff.
             setStatus('closed');

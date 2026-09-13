@@ -19,7 +19,9 @@ import {
 } from '../index.js';
 
 let db: TestDb;
+
 let app: TestApp;
+
 let gameId: string;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -33,6 +35,7 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
     amount,
     currency,
   });
+
   if (res.status !== 200) {
     throw new Error(`deposit failed (${res.status}): ${await res.text()}`);
   }
@@ -45,6 +48,7 @@ async function balanceOf(container: Container<CoreTokenCatalog>, userId: string)
     .from(walletBalance)
     .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
     .where(eq(wallet.userId, userId));
+
   return row?.amount ?? '0';
 }
 
@@ -63,9 +67,11 @@ beforeAll(async () => {
     .db.insert(game)
     .values({ name: 'Stake Debit E2E Game', provider: 'mock', category: 'slots' })
     .returning();
+
   if (!row) {
     throw new Error('failed to seed a game row');
   }
+
   gameId = row.id;
 }, 60_000);
 
@@ -81,6 +87,7 @@ describe('gaming stake debit e2e', () => {
     const { client, userId } = await registerAndMaterializePlayer(app, {
       email: `stake-debit-${randomUUID()}@example.com`,
     });
+
     await deposit(client, '100');
 
     const res = await client.post('/gaming/rounds/start', {
@@ -88,6 +95,7 @@ describe('gaming stake debit e2e', () => {
       currency: 'USD',
       betAmount: '30',
     });
+
     expect(res.status).toBe(200);
     const body = (await readJson(res)) as { roundId: string };
 
@@ -98,6 +106,7 @@ describe('gaming stake debit e2e', () => {
       .db.select()
       .from(gameRound)
       .where(eq(gameRound.id, body.roundId));
+
     expect(round?.betAmount).toBe('30.000000000000000000');
     expect(round?.winAmount).toBe('0.000000000000000000');
 
@@ -106,11 +115,13 @@ describe('gaming stake debit e2e', () => {
       .db.select()
       .from(wallet)
       .where(eq(wallet.userId, userId));
+
     const betRows = await app.container
       .get(DRIZZLE)
       .db.select()
       .from(walletTransaction)
       .where(eq(walletTransaction.walletId, walletRow?.id ?? ''));
+
     const betRow = betRows.find((r) => r.type === 'bet');
     expect(betRow?.amount).toBe('30.000000000000000000');
     expect(betRow?.status).toBe('completed');
@@ -120,6 +131,7 @@ describe('gaming stake debit e2e', () => {
     const { client } = await registerAndMaterializePlayer(app, {
       email: `stake-debit-poor-${randomUUID()}@example.com`,
     });
+
     await deposit(client, '5');
 
     const res = await client.post('/gaming/rounds/start', {

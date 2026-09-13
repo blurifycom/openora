@@ -17,11 +17,14 @@
 import { readPayload } from './_shared.mjs';
 
 const payload = readPayload();
+
 const ti = payload.tool_input ?? {};
+
 const sub = String(ti.subagent_type ?? '').toLowerCase();
 
 // A specific subagent choice is always allowed - only police the generic ones.
 const GENERIC = new Set(['general-purpose', 'claude', '']);
+
 if (!GENERIC.has(sub)) {
   process.exit(0);
 }
@@ -67,6 +70,7 @@ const ROUTES = [
 ];
 
 const hit = ROUTES.find((r) => r.re.test(text));
+
 if (!hit) {
   process.exit(0);
 }
@@ -77,4 +81,5 @@ process.stderr.write(
     `Re-issue the Task with subagent_type: "${hit.agent}". ` +
     `If it genuinely does not fit ${hit.agent}, rephrase the description to say why.\n`,
 );
+
 process.exit(2);

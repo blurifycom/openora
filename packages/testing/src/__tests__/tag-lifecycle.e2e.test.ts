@@ -30,6 +30,7 @@ import {
 const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
 
 let db: TestDb;
+
 let app: TestApp;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
@@ -47,6 +48,7 @@ async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
     },
     body: JSON.stringify({ email, password: 'password1234' }),
   });
+
   if (!loginRes.ok) {
     throw new Error(`login failed (${loginRes.status}): ${await loginRes.text()}`);
   }
@@ -59,6 +61,7 @@ async function activeTags(
   const res = await admin.get(`/player/${playerId}/player-tag?page=1&limit=50`);
   expect(res.status).toBe(200);
   const body = await readJson(res);
+
   return (body.items as Array<{ tag: { key: string }; assignReason: string | null }>).map((i) => ({
     key: i.tag.key,
     reason: i.assignReason,
@@ -86,8 +89,10 @@ async function auditEntries(admin: TestClient, resourceId: string, action: strin
   const res = await admin.get(
     `/audit/logs?resourceId=${resourceId}&action=${encodeURIComponent(action)}`,
   );
+
   expect(res.status).toBe(200);
   const body = await readJson(res);
+
   return body.items as Array<{ actorType: string; actorId: string | null; action: string }>;
 }
 
@@ -128,6 +133,7 @@ describe('self_excluded: auto-assign/remove on rg.self_exclusion.activated/.lift
       reason: 'qa e2e - self_excluded happy path',
       confirm: true,
     });
+
     expect(activateRes.status).toBe(200);
     const exclusion = await readJson(activateRes);
 
@@ -146,6 +152,7 @@ describe('self_excluded: auto-assign/remove on rg.self_exclusion.activated/.lift
       reason: 'qa e2e - lifting for test',
       confirm: true,
     });
+
     expect(liftRes.status).toBe(200);
 
     await vi.waitFor(async () => {
@@ -236,6 +243,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
 
       expect(firstKeys).toEqual(expect.arrayContaining(['multi_account', 'bonus_abuser']));
       expect(secondKeys).toEqual(expect.arrayContaining(['multi_account', 'bonus_abuser']));
+
       for (const tag of [...firstTags, ...secondTags].filter((t) =>
         ['multi_account', 'bonus_abuser'].includes(t.key),
       )) {
@@ -257,6 +265,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
       assignReason: 'qa e2e - suspected linked accounts',
       assignActor: 'manual',
     });
+
     expect(assignRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).toContain('multi_account');
     await auditHasEntry(admin, playerId, 'tag.player.assigned');
@@ -269,6 +278,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
         removalActor: 'manual',
       }),
     });
+
     expect(removeRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).not.toContain('multi_account');
     await auditHasEntry(admin, playerId, 'tag.player.removed');
@@ -284,6 +294,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
       assignReason: 'qa e2e - first assign',
       assignActor: 'manual',
     });
+
     expect(first.status).toBe(200);
 
     const second = await admin.post(`/player/${playerId}/player-tag`, {
@@ -291,6 +302,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
       assignReason: 'qa e2e - duplicate assign',
       assignActor: 'manual',
     });
+
     expect(second.status).toBe(409);
   });
 });
@@ -306,6 +318,7 @@ describe('bonus_abuser: generic assign/remove round-trip, no restriction blocks 
       assignReason: 'qa e2e - flagged for bonus abuse pattern',
       assignActor: 'manual',
     });
+
     expect(assignRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).toContain('bonus_abuser');
 
@@ -314,6 +327,7 @@ describe('bonus_abuser: generic assign/remove round-trip, no restriction blocks 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ removalReason: 'qa e2e - cleared', removalActor: 'manual' }),
     });
+
     expect(removeRes.status).toBe(200);
     expect(await activeTagKeys(admin, playerId)).not.toContain('bonus_abuser');
   });
@@ -336,6 +350,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
         assignActor: 'manual',
       }),
     });
+
     expect(assignRes.status).toBe(401);
 
     const removeRes = await anon.request(`/player/${playerId}/player-tag/multi_account`, {
@@ -343,6 +358,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ removalReason: 'anon attempt', removalActor: 'manual' }),
     });
+
     expect(removeRes.status).toBe(401);
 
     const updateRes = await anon.request(`/players/${playerId}`, {
@@ -350,6 +366,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ level: 9 }),
     });
+
     expect(updateRes.status).toBe(401);
   });
 
@@ -365,6 +382,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
       assignReason: 'self attempt',
       assignActor: 'manual',
     });
+
     expect(assignRes.status).toBe(403);
 
     const removeRes = await client.request(`/player/${playerId}/player-tag/multi_account`, {
@@ -372,6 +390,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ removalReason: 'self attempt', removalActor: 'manual' }),
     });
+
     expect(removeRes.status).toBe(403);
 
     const updateRes = await client.patch(`/players/${playerId}`, { level: 9 });

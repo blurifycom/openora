@@ -23,6 +23,7 @@ import type { ReconciliationService } from '../service/reconciliation.service.js
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
+
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000cc';
 
 let db: TestDb;
@@ -59,6 +60,7 @@ const paymentsManagerDenyingGuard = () =>
 function routerWith(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
   const paymentProviders = makePaymentProviderRegistry();
+
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -67,6 +69,7 @@ function routerWith(adminGuard: AdminGuard) {
     audit,
     identityReader: makeIdentityReader(),
   });
+
   const router = createWalletRouter({
     wallet: service,
     adminGuard,
@@ -77,6 +80,7 @@ function routerWith(adminGuard: AdminGuard) {
     reconciliationQueue: RECONCILIATION_QUEUE,
     realtime: makeRealtimeTransport(),
   });
+
   return { router, audit, service };
 }
 

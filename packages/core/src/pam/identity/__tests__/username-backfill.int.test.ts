@@ -27,12 +27,14 @@ async function seedLegacy(legacyName: string | null, name = 'Fallback Name') {
     email: `${userId}@legacy.test`,
     role: 'player',
   });
+
   if (legacyName !== null) {
     await db.drizzle.db.insert(player).values({ userId });
     await db.drizzle.db.execute(
       sql`UPDATE player SET display_name = ${legacyName} WHERE user_id = ${userId}`,
     );
   }
+
   return userId;
 }
 
@@ -46,6 +48,7 @@ async function runBackfill() {
   await db.drizzle.db.execute(sql.raw(BACKFILL_SQL));
   await db.drizzle.db.execute(sql`ALTER TABLE "user" ALTER COLUMN username SET NOT NULL`);
   const rows = await db.drizzle.db.select({ id: user.id, username: user.username }).from(user);
+
   return new Map(rows.map((r) => [r.id, r.username]));
 }
 
@@ -98,6 +101,7 @@ describe('0007 username backfill', () => {
     ]);
 
     const byId = await runBackfill();
+
     for (const id of ids) {
       const handle = byId.get(id);
       expect(handle).toMatch(/^[a-z0-9_]{3,20}$/);

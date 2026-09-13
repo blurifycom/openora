@@ -75,11 +75,15 @@ export const EffectivePermissionsSchema = z.object({
 });
 
 export const IAM_ROLE_SORT_BY_VALUES = ['name', 'createdAt', 'key'] as const;
+
 export const IamRoleSortBySchema = z.enum(IAM_ROLE_SORT_BY_VALUES).default('name');
+
 export type IamRoleSortBy = z.infer<typeof IamRoleSortBySchema>;
 
 export const IAM_ASSIGNMENT_SORT_BY_VALUES = ['createdAt'] as const;
+
 export const IamAssignmentSortBySchema = z.enum(IAM_ASSIGNMENT_SORT_BY_VALUES).default('createdAt');
+
 export type IamAssignmentSortBy = z.infer<typeof IamAssignmentSortBySchema>;
 
 export const IAM_INVITATION_SORT_BY_VALUES = [
@@ -89,7 +93,9 @@ export const IAM_INVITATION_SORT_BY_VALUES = [
   'status',
   'acceptedAt',
 ] as const;
+
 export const IamInvitationSortBySchema = z.enum(IAM_INVITATION_SORT_BY_VALUES).default('createdAt');
+
 export type IamInvitationSortBy = z.infer<typeof IamInvitationSortBySchema>;
 
 export const iamContract = {
@@ -197,12 +203,21 @@ export const iamContract = {
 };
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;
+
 export type AdminRoleWithGrants = z.infer<typeof AdminRoleWithGrantsSchema>;
+
 export type AdminRoleAssignment = z.infer<typeof AdminRoleAssignmentSchema>;
+
 export type AdminRoleAssignmentDetail = z.infer<typeof AdminRoleAssignmentDetailSchema>;
+
 export type AdminInvitation = z.infer<typeof AdminInvitationSchema>;
+
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
+
 export type Catalog = z.infer<typeof CatalogSchema>;
+
 export type GrantInput = z.infer<typeof GrantInputSchema>;
+
 export type RolePermissionLevel = z.infer<typeof RolePermissionLevelSchema>;
+
 export type EffectivePermissions = z.infer<typeof EffectivePermissionsSchema>;
