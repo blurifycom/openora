@@ -34,7 +34,6 @@ import {
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
   type PlayerTags,
-  type RgLimitDecision,
   type RgLimitsPort,
   type ExchangeRateReader,
   type AuditWritePort,
@@ -71,8 +70,9 @@ import {
   type WalletWithdrawalAddressRow,
 } from '../schema/index.js';
 import {
-  LIVE_WEBHOOK_RUN_ID,
+  OUT_OF_CYCLE_RUN_ID,
   recordReconciliationFinding,
+  rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
 import type {
   TransactionResult,
@@ -2691,7 +2691,7 @@ export class WalletService {
       await recordReconciliationFinding(
         this.drizzle.db,
         {
-          runId: LIVE_WEBHOOK_RUN_ID,
+          runId: OUT_OF_CYCLE_RUN_ID,
           providerName,
           kind: 'unattributed_deposit',
           currency: event.currency,
@@ -2724,7 +2724,7 @@ export class WalletService {
       await recordReconciliationFinding(
         this.drizzle.db,
         {
-          runId: LIVE_WEBHOOK_RUN_ID,
+          runId: OUT_OF_CYCLE_RUN_ID,
           providerName: depositAddress.providerName,
           kind: 'currency_mismatch',
           currency: event.currency,
@@ -2813,16 +2813,28 @@ export class WalletService {
     // credit the way it refuses a PSP charge. It is asked anyway, and a breach becomes a
     // finding so a human can act on the excess.
     //
+    // Asked AFTER the credit commits, never before: the gate counts the player's window
+    // out of the database, so a pre-credit read judges every deposit against the same
+    // stale snapshot and two that land together are each allowed on their own while the
+    // window closes over the limit. The attempted move is `0` for that same reason - the
+    // committed deposit row is already inside the window, so asking with `event.amount`
+    // would count this deposit twice.
+    //
     // Deliberately NOT guarded by `replayed`: this write failing is what makes the vendor
     // retry the webhook, and the retry sees the credit as a replay. The (kind, externalId)
     // unique index is what keeps a replay from filing the finding twice, so the retry
     // fills a gap instead of duplicating a row.
-    const rgDecision = await this.rgDecisionForLandedDeposit(depositAddress.userId, event);
-    if (rgDecision && !rgDecision.allowed) {
+    const rgDecision = await rgDecisionForLandedCredit(
+      this.drizzle.db,
+      this.rgLimits,
+      { userId: depositAddress.userId, attempted: '0', currency: event.currency },
+      { externalId: event.externalId, txHash: event.txHash },
+    );
+    if (rgDecision) {
       await recordReconciliationFinding(
         this.drizzle.db,
         {
-          runId: LIVE_WEBHOOK_RUN_ID,
+          runId: OUT_OF_CYCLE_RUN_ID,
           providerName: depositAddress.providerName,
           kind: 'rg_limit_breach',
           currency: event.currency,
@@ -2837,40 +2849,6 @@ export class WalletService {
         },
         this.audit,
       );
-    }
-  }
-
-  /**
-   * Asked AFTER the credit commits, never before: the gate counts the player's window
-   * from the database, so a pre-credit read judges every deposit against the same stale
-   * snapshot and two that land together are each allowed on their own while the window
-   * closes over the limit. Post-credit, this deposit is already inside `used`, so the
-   * attempted move is `0` - the question is "is the limit passed now", not "does one
-   * more fit". Outside the credit transaction on purpose: a gate failure must never roll
-   * back a credit for funds that already arrived, and a finding is a report, so it needs
-   * no lock.
-   */
-  private async rgDecisionForLandedDeposit(
-    userId: User['id'],
-    event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
-  ): Promise<RgLimitDecision | null> {
-    if (!this.rgLimits) {
-      return null;
-    }
-    try {
-      return await this.rgLimits.checkDeposit(this.drizzle.db, userId, '0', event.currency);
-    } catch (err) {
-      logger.error(
-        {
-          err,
-          userId,
-          currency: event.currency,
-          externalId: event.externalId,
-          txHash: event.txHash,
-        },
-        'payment webhook: RG limit check failed for a deposit already on chain - crediting it unchecked',
-      );
-      return null;
     }
   }
 

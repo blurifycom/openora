@@ -7,6 +7,7 @@ import type {
   PaymentAdapter,
   PaymentWebhookEvent,
   PlatformConfig,
+  RgLimitsPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
@@ -62,6 +63,7 @@ function makeServices(
   overrides: {
     platformConfig?: Partial<PlatformConfig['wallet']>;
     identityReader?: ReturnType<typeof makeIdentityReader>;
+    rgLimits?: RgLimitsPort;
   } = {},
 ) {
   const paymentProviders = makePaymentProviderRegistry({ adapter: payment });
@@ -86,6 +88,7 @@ function makeServices(
     paymentProviders,
     audit,
     platformConfig,
+    rgLimits: overrides.rgLimits,
   });
   return { wallet, reconciliation, audit, events };
 }
@@ -509,6 +512,101 @@ describe('ReconciliationService.resolveFinding', () => {
 
     expect(resolved.status).toBe('resolved');
     expect(resolved.transactionId).toBe(creditTx.transactionId);
+  });
+
+  it('files an rg_limit_breach when an admin hand-credits a deposit past the player limit', async () => {
+    const finding = await seedFinding();
+    const w = await seedWallet('BTC', '0');
+    const rgLimits = mock<RgLimitsPort>({
+      checkDeposit: vi.fn(async () => ({
+        allowed: false as const,
+        limitType: 'deposit' as const,
+        period: 'daily' as const,
+        limit: '0.5',
+        used: '0.4',
+      })),
+    });
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: mock<IdentityReader>({
+        ...makeIdentityReader(),
+        getPlayerIdByUserId: vi.fn().mockResolvedValue(randomUUID()),
+      }),
+      rgLimits,
+    });
+    const creditTx = await walletSvc.manualAdjust({
+      adminId: randomUUID(),
+      userId: w.userId,
+      direction: 'credit',
+      amount: '1',
+      currency: 'BTC',
+      reason: 'reconciliation credit',
+      idempotencyKey: randomUUID(),
+      ip: null,
+      userAgent: null,
+    });
+
+    await reconciliation.resolveFinding(randomUUID(), finding.id, {
+      outcome: 'credited',
+      transactionId: creditTx.transactionId,
+    });
+
+    // A manual_credit is invisible to the deposit window, so the credit itself is the
+    // attempted move - the opposite of the webhook path, which asks with '0'.
+    // The stored decimal, not the admin's input string: the gate is asked with the
+    // ledger's own amount.
+    expect(rgLimits.checkDeposit).toHaveBeenCalledWith(
+      expect.anything(),
+      w.userId,
+      '1.000000000000000000',
+      'BTC',
+    );
+    const [breach] = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, finding.id));
+    expect(breach).toMatchObject({
+      kind: 'rg_limit_breach',
+      status: 'open',
+      amount: '1.000000000000000000',
+      transactionId: creditTx.transactionId,
+    });
+    expect(breach?.detail).toContain('daily deposit limit of 0.5');
+  });
+
+  it('files no breach when the hand-credited deposit stays inside the limit', async () => {
+    const finding = await seedFinding();
+    const w = await seedWallet('BTC', '0');
+    const { wallet: walletSvc, reconciliation } = makeServices(listTransactionsReturning([]), {
+      identityReader: mock<IdentityReader>({
+        ...makeIdentityReader(),
+        getPlayerIdByUserId: vi.fn().mockResolvedValue(randomUUID()),
+      }),
+      rgLimits: mock<RgLimitsPort>({
+        checkDeposit: vi.fn(async () => ({ allowed: true as const })),
+      }),
+    });
+    const creditTx = await walletSvc.manualAdjust({
+      adminId: randomUUID(),
+      userId: w.userId,
+      direction: 'credit',
+      amount: '1',
+      currency: 'BTC',
+      reason: 'reconciliation credit',
+      idempotencyKey: randomUUID(),
+      ip: null,
+      userAgent: null,
+    });
+
+    await reconciliation.resolveFinding(randomUUID(), finding.id, {
+      outcome: 'credited',
+      transactionId: creditTx.transactionId,
+    });
+
+    const breaches = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.kind, 'rg_limit_breach'));
+    expect(breaches).toHaveLength(0);
   });
 
   it('a double-resolve is a no-op: second call does not write a second audit entry', async () => {

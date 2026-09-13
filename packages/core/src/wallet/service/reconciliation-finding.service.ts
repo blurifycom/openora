@@ -1,15 +1,24 @@
-import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
-import type { AuditWritePort, WalletReconciliationFindingKind } from '@openora/core/contracts';
+import { createLogger, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
+import type {
+  AuditWritePort,
+  RgLimitDecision,
+  RgLimitsPort,
+  User,
+  WalletReconciliationFindingKind,
+} from '@openora/core/contracts';
 import { walletReconciliationFinding } from '../schema/index.js';
 
+const logger = createLogger('wallet-finding');
+
 /**
- * Sentinel `runId` for a finding produced OUTSIDE any reconciliation job cycle - the
- * live webhook path (`WalletService.creditDepositByAddress`) hits an unattributable
- * deposit in real time, not on a poll. `runId` is NOT NULL on the table, so this fixed
- * zero-uuid documents "no job run owns this row", mirroring the audit plugin's
- * SYSTEM_ACTOR sentinel for "no admin acted here".
+ * Sentinel `runId` for a finding produced OUTSIDE any reconciliation job cycle: the live
+ * webhook path (`WalletService.creditDepositByAddress`) hits an unattributable deposit in
+ * real time rather than on a poll, and an admin resolving a finding acts on their own
+ * clock. `runId` is NOT NULL on the table, so this fixed zero-uuid documents "no job run
+ * owns this row", mirroring the audit plugin's SYSTEM_ACTOR sentinel for "no admin acted
+ * here".
  */
-export const LIVE_WEBHOOK_RUN_ID = '00000000-0000-0000-0000-000000000000';
+export const OUT_OF_CYCLE_RUN_ID = '00000000-0000-0000-0000-000000000000';
 
 export type ReconciliationFindingInput = {
   runId: string;
@@ -73,4 +82,44 @@ export async function recordReconciliationFinding(
       after: auditable,
     });
   }
+}
+
+/**
+ * The deposit gate asked about money that has ALREADY reached the player: an on-chain
+ * deposit a webhook credited, or one an admin credited by hand to resolve a finding.
+ * Neither can be refused the way a PSP charge is (`docs/standards/compliance.md`: an
+ * on-chain deposit is credited and flagged, never refused), so a breach becomes an
+ * `rg_limit_breach` finding the caller files rather than an error.
+ *
+ * `attempted` is the part of the move the gate has NOT counted yet: `0` once the deposit
+ * row is committed, because the gate already reads it out of the player's window, and the
+ * credited amount for a `manual_credit`, which no deposit window counts.
+ *
+ * Returns `null` - never throws, never refuses - when the port is unbound, the limit is
+ * intact, or the gate itself fails: the money moved before this ran, so a failure here is
+ * a missed report, not a stuck deposit. `db` is a bare handle, not a transaction, for
+ * that same reason; note that this makes the gate's own `pg_advisory_xact_lock` release
+ * at statement end, which is harmless for a report and would NOT be for an enforcing
+ * caller.
+ */
+export async function rgDecisionForLandedCredit(
+  db: DrizzleDb,
+  rgLimits: RgLimitsPort | undefined,
+  move: { userId: User['id']; attempted: string; currency: string },
+  context: { externalId?: string | null; txHash?: string | null },
+): Promise<Extract<RgLimitDecision, { allowed: false }> | null> {
+  if (!rgLimits) {
+    return null;
+  }
+  let decision: RgLimitDecision;
+  try {
+    decision = await rgLimits.checkDeposit(db, move.userId, move.attempted, move.currency);
+  } catch (err) {
+    logger.error(
+      { err, ...move, ...context },
+      'RG limit check failed for money already credited - leaving the credit unchecked',
+    );
+    return null;
+  }
+  return decision.allowed ? null : decision;
 }

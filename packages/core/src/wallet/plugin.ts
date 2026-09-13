@@ -264,6 +264,7 @@ export default {
         paymentProviders: c.get(PAYMENT_PROVIDERS),
         audit: c.get(AUDIT_WRITER),
         platformConfig,
+        rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
       });
       reconciliationRef = reconciliation;
 
