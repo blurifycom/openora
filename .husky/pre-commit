@@ -1,10 +1,23 @@
-# Capture the staged set first: lint:fix/format rewrite files, and we must re-add
-# ONLY these so the fixes land in this commit without dragging in unrelated
-# unstaged changes.
+# Fast gate: format and lint only the staged files, plus the OSS hygiene scan that
+# keeps client and vendor names out of a public repo. The full `pnpm verify` is a
+# CI job and the `/pre-pr` gate - paying for it on every commit cost minutes each
+# time and caught nothing that push-time did not.
+#
+# Binaries come straight from node_modules/.bin: `pnpm exec` adds ~2.2s of
+# package-manager startup per call, the binary itself runs in ~0.12s.
+BIN="$(git rev-parse --show-toplevel)/node_modules/.bin"
+
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
 
-pnpm verify
+"$BIN/tsx" tools/lint/verify-oss-hygiene.ts || exit 1
 
-if [ -n "$staged" ]; then
+lintable=$(printf '%s\n' "$staged" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$')
+if [ -n "$lintable" ]; then
+  printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxfmt" || exit 1
+  printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxlint" --fix || exit 1
+  node tools/lint/ensure-final-newline.mjs || exit 1
+  # Re-add ONLY the staged set: the fixers rewrote files, and a blanket `git add`
+  # would drag unrelated unstaged work into this commit.
   printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
 fi
