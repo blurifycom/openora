@@ -19,6 +19,10 @@ import type {
 import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
+  CountryRuleConfirmationRequiredError,
+  CountryRuleVersionConflictError,
+  GlobalKycConfigVersionConflictError,
+  LicensedJurisdictionBlacklistError,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
@@ -108,15 +112,63 @@ export function createComplianceRouter({
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(
         context,
-        'compliance',
-        'override-limit',
+        'regulatory-overview',
+        'manage-country-rules',
       );
-      return compliance.addGeoRule(input, userId, { ip, userAgent });
+      return mapErrors(
+        {
+          CONFLICT: [
+            CountryRuleConfirmationRequiredError,
+            CountryRuleVersionConflictError,
+            LicensedJurisdictionBlacklistError,
+          ],
+        },
+        () => compliance.addGeoRule(input, userId, { ip, userAgent }),
+      );
     }),
 
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
-      await adminGuard.assert(context, 'compliance', 'view');
+      await adminGuard.assert(context, 'regulatory-overview', 'view');
       return compliance.listGeoRules();
+    }),
+
+    upsertCountryRule: os.upsertCountryRule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'regulatory-overview',
+        'manage-country-rules',
+      );
+      return mapErrors(
+        {
+          CONFLICT: [
+            CountryRuleConfirmationRequiredError,
+            CountryRuleVersionConflictError,
+            LicensedJurisdictionBlacklistError,
+          ],
+        },
+        () => compliance.upsertCountryRule(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    listCountryRules: os.listCountryRules.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'regulatory-overview', 'view');
+      return compliance.listCountryRules();
+    }),
+
+    getGlobalKycConfig: os.getGlobalKycConfig.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'regulatory-overview', 'view');
+      return compliance.getGlobalKycConfig();
+    }),
+
+    setGlobalKycConfig: os.setGlobalKycConfig.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'regulatory-overview',
+        'manage-global-kyc',
+      );
+      return mapErrors({ CONFLICT: GlobalKycConfigVersionConflictError }, () =>
+        compliance.setGlobalKycConfig(input, userId, { ip, userAgent }),
+      );
     }),
 
     getPlayerKyc: os.getPlayerKyc.handler(async ({ input, context }) => {
