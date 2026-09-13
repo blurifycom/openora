@@ -13,6 +13,14 @@ describe('getEventVersion', () => {
     expect(getEventVersion('cms.page.created')).toBe(1);
   });
 
+  it('starts new gaming catalog topics at implicit v1', () => {
+    expect(getEventVersion('gaming.provider.created')).toBe(1);
+    expect(getEventVersion('gaming.provider.updated')).toBe(1);
+    expect(getEventVersion('gaming.category.created')).toBe(1);
+    expect(getEventVersion('gaming.category.updated')).toBe(1);
+    expect(getEventVersion('gaming.game.updated')).toBe(1);
+  });
+
   it('returns the pinned version for a topic that has been bumped', () => {
     expect(getEventVersion('wallet.deposit.completed')).toBe(2);
     expect(getEventVersion('compliance.kyc.updated')).toBe(5);

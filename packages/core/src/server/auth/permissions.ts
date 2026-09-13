@@ -18,7 +18,7 @@ export const adminRole = ac.newRole({
   bonus: ['view', 'create', 'update', 'pause', 'cancel'],
   audit: ['view', 'export'],
   admin: ['view', 'create', 'update', 'disable', 'delete'],
-  'game-config': ['view', 'update', 'schedule'],
+  'game-config': ['view', 'create', 'update', 'schedule'],
   analytics: ['view'],
   sportsbook: ['view', 'configure', 'suspend'],
   affiliate: ['view', 'manage'],
