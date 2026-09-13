@@ -5,9 +5,11 @@ import {
   integer,
   boolean,
   timestamp,
-  uniqueIndex,
   index,
+  uniqueIndex,
+  jsonb,
 } from 'drizzle-orm/pg-core';
+import type { LobbySectionConfig } from '@openora/core/contracts';
 
 export const lobbyCategory = pgTable(
   'lobby_category',
@@ -44,6 +46,38 @@ export const featuredSlot = pgTable('featured_slot', {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+export const lobbyLayout = pgTable(
+  'lobby_layout',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    layoutKey: text().notNull().default('global'),
+    version: integer().notNull().default(0),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('lobby_layout_layout_key_key').on(t.layoutKey)],
+);
+
+export const lobbySection = pgTable(
+  'lobby_section',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    type: text().notNull(),
+    config: jsonb().$type<LobbySectionConfig>().notNull(),
+    sortOrder: integer().notNull().default(0),
+    isEnabled: boolean().notNull().default(true),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('lobby_section_sort_order_idx').on(t.sortOrder)],
+);
+
+export type LobbySection = typeof lobbySection.$inferSelect;
+export type LobbyLayout = typeof lobbyLayout.$inferSelect;
 export type LobbyCategory = typeof lobbyCategory.$inferSelect;
 export type LobbyCategoryGame = typeof lobbyCategoryGame.$inferSelect;
 export type FeaturedSlot = typeof featuredSlot.$inferSelect;
