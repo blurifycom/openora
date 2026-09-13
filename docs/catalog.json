@@ -306,6 +306,7 @@
         "identity.security.loginWithdrawalAlerts",
         "identity.security.me",
         "identity.security.removeWithdrawalPin",
+        "identity.security.setAntiPhishingCode",
         "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
         "identity.sendTwoFactorOtp",
@@ -559,7 +560,6 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -814,6 +814,16 @@
       ]
     },
     {
+      "category": "mail-recipient-directory",
+      "interface": "MailRecipient",
+      "token": "MAIL_RECIPIENT_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/mail/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
       "category": "outbox",
       "interface": "OutboxWriter",
       "token": "OUTBOX",
@@ -1043,6 +1053,7 @@
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.security.anti_phishing_code.set",
     "identity.security.login_withdrawal_alerts.updated",
     "identity.security.withdrawal_pin.removed",
     "identity.security.withdrawal_pin.set",
@@ -2499,6 +2510,10 @@
     {
       "name": "SetActiveCurrencyInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetAntiPhishingCodeInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "SetAutoWithdrawalRuleInputSchema",

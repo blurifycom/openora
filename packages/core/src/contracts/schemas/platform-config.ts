@@ -123,6 +123,14 @@ export const WalletConfigSchema = z
         lookbackHours: z.number().int().positive().default(24),
         batchSize: z.number().int().positive().default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
+        /**
+         * Swaps get their own cutoff because `processing` is a legitimate resting state
+         * for a swap leg: `SwapService.swap` returns it whenever the desk fills
+         * asynchronously, and the leg then waits for the desk's webhook. Measured against
+         * the withdrawal cutoff, a desk that settles slower than withdrawals would file a
+         * finding for every healthy swap. Absent falls back to `stuckAfterMinutes`.
+         */
+        stuckSwapAfterMinutes: z.number().int().positive().optional(),
         /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),
         alertThreshold: z.number().int().positive().default(10),

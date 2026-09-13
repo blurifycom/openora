@@ -70,8 +70,9 @@ import {
   type WalletWithdrawalAddressRow,
 } from '../schema/index.js';
 import {
-  LIVE_WEBHOOK_RUN_ID,
+  OUT_OF_CYCLE_RUN_ID,
   recordReconciliationFinding,
+  rgDecisionForLandedCredit,
 } from './reconciliation-finding.service.js';
 import type {
   TransactionResult,
@@ -2690,7 +2691,7 @@ export class WalletService {
       await recordReconciliationFinding(
         this.drizzle.db,
         {
-          runId: LIVE_WEBHOOK_RUN_ID,
+          runId: OUT_OF_CYCLE_RUN_ID,
           providerName,
           kind: 'unattributed_deposit',
           currency: event.currency,
@@ -2723,7 +2724,7 @@ export class WalletService {
       await recordReconciliationFinding(
         this.drizzle.db,
         {
-          runId: LIVE_WEBHOOK_RUN_ID,
+          runId: OUT_OF_CYCLE_RUN_ID,
           providerName: depositAddress.providerName,
           kind: 'currency_mismatch',
           currency: event.currency,
@@ -2806,6 +2807,48 @@ export class WalletService {
         currency: event.currency,
         transactionId,
       });
+    }
+
+    // The funds are already on chain, so the player's deposit limit cannot refuse this
+    // credit the way it refuses a PSP charge. It is asked anyway, and a breach becomes a
+    // finding so a human can act on the excess.
+    //
+    // Asked AFTER the credit commits, never before: the gate counts the player's window
+    // out of the database, so a pre-credit read judges every deposit against the same
+    // stale snapshot and two that land together are each allowed on their own while the
+    // window closes over the limit. The attempted move is `0` for that same reason - the
+    // committed deposit row is already inside the window, so asking with `event.amount`
+    // would count this deposit twice.
+    //
+    // Deliberately NOT guarded by `replayed`: this write failing is what makes the vendor
+    // retry the webhook, and the retry sees the credit as a replay. The (kind, providerName, externalId)
+    // unique index is what keeps a replay from filing the finding twice, so the retry
+    // fills a gap instead of duplicating a row.
+    const rgDecision = await rgDecisionForLandedCredit(
+      this.drizzle.db,
+      this.rgLimits,
+      { userId: depositAddress.userId, attempted: '0', currency: event.currency },
+      { externalId: event.externalId, txHash: event.txHash },
+    );
+    if (rgDecision) {
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId: OUT_OF_CYCLE_RUN_ID,
+          providerName: depositAddress.providerName,
+          kind: 'rg_limit_breach',
+          currency: event.currency,
+          network: event.network ?? depositAddress.network,
+          amount: event.amount,
+          address: event.address,
+          tag: event.tag ?? null,
+          txHash: event.txHash,
+          externalId: event.externalId,
+          transactionId,
+          detail: `credited past the player's ${rgDecision.period} ${rgDecision.limitType} limit of ${rgDecision.limit} (${rgDecision.used} in the window, this deposit included) - the funds were already on chain`,
+        },
+        this.audit,
+      );
     }
   }
 

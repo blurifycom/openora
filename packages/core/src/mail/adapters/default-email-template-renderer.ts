@@ -144,16 +144,33 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}\n\n` +
       `If this was not you, secure your account immediately.`,
   }),
+  securityAntiPhishingCodeChanged: (data) => ({
+    subject: 'Your anti-phishing code changed',
+    text:
+      data.previousAntiPhishingCode === null
+        ? 'An anti-phishing code was added to your account. If this was not you, secure your account immediately.'
+        : `Your anti-phishing code was changed. Your previous code was: ${data.previousAntiPhishingCode}\n\nIf this was not you, secure your account immediately.`,
+  }),
 };
 
-const renderDefaultEmail = (template: MailTemplate, locale: string): RenderedEmail => {
+const renderDefaultEmail = (
+  template: MailTemplate,
+  locale: string,
+  antiPhishingCode?: string | null,
+): RenderedEmail => {
   const plain = PLAIN_EMAIL_TEMPLATES[template.key] as PlainTemplate<typeof template.key>;
-  const { subject, text } = plain(template.data, locale);
+  const { subject, text: body } = plain(template.data, locale);
+  const text = antiPhishingCode ? `${body}\n\nYour anti-phishing code: ${antiPhishingCode}` : body;
   return { subject, text, html: textToHtml(text) };
 };
 
 export class DefaultEmailTemplateRenderer implements EmailTemplateRenderer {
-  render(template: MailTemplate, locale: string): RenderedEmail {
-    return renderDefaultEmail(template, locale);
+  render(
+    template: MailTemplate,
+    locale: string,
+    _recipientName?: string | null,
+    antiPhishingCode?: string | null,
+  ): RenderedEmail {
+    return renderDefaultEmail(template, locale, antiPhishingCode);
   }
 }

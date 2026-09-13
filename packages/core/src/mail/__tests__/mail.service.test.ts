@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type {
-  AdminUserDirectory,
+  MailRecipientDirectory,
   AuditWritePort,
   EmailSenderPort,
   EmailTemplateRenderer,
@@ -27,7 +27,7 @@ function build(
   over: {
     sender?: Partial<EmailSenderPort>;
     renderer?: Partial<EmailTemplateRenderer>;
-    directory?: Partial<AdminUserDirectory>;
+    directory?: Partial<MailRecipientDirectory>;
     jobQueue?: Partial<JobQueueAdapter>;
     audit?: AuditWritePort | null;
   } = {},
@@ -37,8 +37,8 @@ function build(
     render: vi.fn(() => ({ subject: 's', html: '<p>h</p>', text: 't' })),
     ...over.renderer,
   });
-  const directory = mock<AdminUserDirectory>({
-    get: vi.fn(async () => null),
+  const directory = mock<MailRecipientDirectory>({
+    getMailRecipient: vi.fn(async () => null),
     ...over.directory,
   });
   const jobQueue = mock<JobQueueAdapter>({
@@ -105,7 +105,7 @@ describe('MailService', () => {
     }
     await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'de@b.com' }));
   });
 
@@ -117,7 +117,7 @@ describe('MailService', () => {
       template: verify,
     });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
     expect(sender.send).toHaveBeenCalledWith({
       to: 'de@b.com',
       subject: 's',
@@ -129,7 +129,7 @@ describe('MailService', () => {
   it('resolves a user recipient to its address, account locale and display name', async () => {
     const { svc, renderer, sender } = build({
       directory: {
-        get: vi.fn(async () => ({
+        getMailRecipient: vi.fn(async () => ({
           id: 'u-1',
           email: 'user@b.com',
           name: 'Ada',
@@ -137,20 +137,21 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'fr',
+          antiPhishingCode: null,
         })),
       },
     });
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada');
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada', null);
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'user@b.com' }));
   });
 
   it('passes null when the directory has no name on file for the user', async () => {
     const { svc, renderer } = build({
       directory: {
-        get: vi.fn(async () => ({
+        getMailRecipient: vi.fn(async () => ({
           id: 'u-1',
           email: 'user@b.com',
           name: null,
@@ -158,17 +159,58 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'fr',
+          antiPhishingCode: null,
         })),
       },
     });
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
 
-    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null);
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'fr', null, null);
+  });
+
+  it('passes the user anti-phishing code to the renderer for localized, in-document placement', async () => {
+    const {
+      svc,
+      renderer: userRenderer,
+      sender,
+    } = build({
+      directory: {
+        getMailRecipient: vi.fn(async () => ({
+          id: 'u-1',
+          email: 'user@b.com',
+          name: 'Ada',
+          createdAt: new Date(),
+          isActive: true,
+          role: 'player',
+          language: 'fr',
+          antiPhishingCode: 'Sunny Meadow',
+        })),
+      },
+    });
+
+    await svc.deliver({ recipient: { kind: 'user', userId: 'u-1' }, template: verify });
+
+    expect(userRenderer.render).toHaveBeenCalledWith(verify, 'fr', 'Ada', 'Sunny Meadow');
+    expect(userRenderer.render).toHaveBeenCalledTimes(1);
+    expect(sender.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 't',
+        html: '<p>h</p>',
+      }),
+    );
+
+    const { svc: addressSvc, renderer: addressRenderer } = build();
+    await addressSvc.deliver({
+      recipient: { kind: 'address', email: 'de@b.com', locale: 'de' },
+      template: verify,
+    });
+
+    expect(addressRenderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
   });
 
   it('skips - without throwing - when the user has no address (nothing to retry)', async () => {
-    const { svc, sender } = build({ directory: { get: vi.fn(async () => null) } });
+    const { svc, sender } = build({ directory: { getMailRecipient: vi.fn(async () => null) } });
 
     await expect(
       svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: verify }),
@@ -177,7 +219,7 @@ describe('MailService', () => {
   });
 
   it('audits a no-recipient-email regulatory send as failed', async () => {
-    const { svc, audit } = build({ directory: { get: vi.fn(async () => null) } });
+    const { svc, audit } = build({ directory: { getMailRecipient: vi.fn(async () => null) } });
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: rgLifted }, 1);
 
@@ -191,7 +233,7 @@ describe('MailService', () => {
   });
 
   it('does not audit a no-recipient-email non-regulatory send', async () => {
-    const { svc, audit } = build({ directory: { get: vi.fn(async () => null) } });
+    const { svc, audit } = build({ directory: { getMailRecipient: vi.fn(async () => null) } });
 
     await svc.deliver({ recipient: { kind: 'user', userId: 'ghost' }, template: verify });
 
@@ -201,7 +243,7 @@ describe('MailService', () => {
   it('audits a delivered regulatory mail with its key, locale and attempt', async () => {
     const { svc, audit } = build({
       directory: {
-        get: vi.fn(async () => ({
+        getMailRecipient: vi.fn(async () => ({
           id: 'u-1',
           email: 'user@b.com',
           name: null,
@@ -209,6 +251,7 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'de',
+          antiPhishingCode: null,
         })),
       },
     });
@@ -236,7 +279,7 @@ describe('MailService', () => {
   it('audits an exhausted delivery for a regulatory key', async () => {
     const { svc, audit } = build({
       directory: {
-        get: vi.fn(async () => ({
+        getMailRecipient: vi.fn(async () => ({
           id: 'u-1',
           email: 'user@b.com',
           name: null,
@@ -244,6 +287,7 @@ describe('MailService', () => {
           isActive: true,
           role: 'player',
           language: 'de',
+          antiPhishingCode: null,
         })),
       },
     });
