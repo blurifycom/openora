@@ -23,7 +23,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # Nothing new to lint (eg up-to-date re-push) - commitlint errors on an empty range.
   [ "$from" = "$local_sha" ] && continue
 
-  pnpm exec commitlint --from "$from" --to "$local_sha" || fail=1
+  commitlint --from "$from" --to "$local_sha" || fail=1
 done
 
 exit $fail
