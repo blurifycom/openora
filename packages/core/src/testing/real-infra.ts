@@ -154,7 +154,7 @@ export type TestRedis = {
 };
 
 /**
- * Connect a node-redis client selected to a per-worker logical DB (VITEST_POOL_ID % 16),
+ * Connect a node-redis client selected to a per-worker logical DB (VITEST_POOL_ID % 8),
  * so parallel vitest workers never collide on keys. `flush()` is a `flushDb` (safe - it
  * only clears this worker's logical DB), for tearing down between tests. `reconnectStrategy`
  * is off: node-redis otherwise retries a down server forever and hangs the run.
