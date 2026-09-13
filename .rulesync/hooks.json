@@ -9,6 +9,11 @@
       },
       {
         "type": "command",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-plan.mjs\""
+      },
+      {
+        "type": "command",
         "matcher": "Task|Agent",
         "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-subagent.mjs\""
       }

@@ -12,6 +12,10 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-generated.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-plan.mjs\""
           }
         ]
       },

@@ -5,6 +5,8 @@
 Use for an OSS platform-core feature, a consumer work-order requiring `@openora/*` changes, or a standalone core feature.
 Read-only until the plan is explicitly approved.
 
+Built-in plan mode enforces that read-only phase, but it cannot be combined with `bypassPermissions`, so an unattended run has no gate. Set `OPENORA_PLAN_GATE=1` for those runs and `guard-plan.mjs` enforces it instead: writes, commits and pushes are denied until `.claude/.plan-approved` exists, and only a human can create that marker. A `PreToolUse` denial holds in every permission mode, including `--dangerously-skip-permissions` and `claude -p`. The gate is off by default.
+
 ### Workflow
 
 1. Resolve the input and collect scoped context from the ticket (read whole per `docs/agents/issue-tracker.md`: comments, images, linked spec pages), relevant ADRs, generated contract surfaces, matching standards, source, and prior design discussion.
