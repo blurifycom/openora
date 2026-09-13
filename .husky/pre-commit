@@ -12,7 +12,9 @@ staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
 "$BIN/tsx" tools/lint/verify-oss-hygiene.ts || exit 1
 
-lintable=$(printf '%s\n' "$staged" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$')
+# `|| true`: grep exits 1 when the commit touches no lintable file, and husky runs
+# this hook under `sh -e`, so an unguarded no-match would abort the commit.
+lintable=$(printf '%s\n' "$staged" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' || true)
 if [ -n "$lintable" ]; then
   printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxfmt" || exit 1
   printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxlint" --fix || exit 1
