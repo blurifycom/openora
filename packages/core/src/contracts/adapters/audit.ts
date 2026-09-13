@@ -42,6 +42,8 @@ export type DirectAuditAction =
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
   | 'wallet.reconciliation_finding.resolved'
+  | 'wallet.swap.refunded'
+  | 'wallet.swap.fill_rejected'
   | 'wallet.wallet_asset.created'
   | 'wallet.wallet_asset.updated'
   | 'wallet.wallet_asset.deleted';

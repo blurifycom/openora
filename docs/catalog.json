@@ -210,14 +210,32 @@
       "group": "casino",
       "tables": [
         "game",
+        "game_category",
+        "game_category_game",
+        "game_provider",
+        "game_provider_aggregator_mapping",
         "game_round"
       ],
       "routes": [
+        "gaming.createCategory",
+        "gaming.createProvider",
         "gaming.endRound",
+        "gaming.getAdminCategory",
+        "gaming.getAdminProvider",
+        "gaming.getCategoryBySlug",
         "gaming.getGame",
+        "gaming.getProviderBySlug",
+        "gaming.listAdminCategories",
+        "gaming.listAdminGames",
+        "gaming.listAdminProviders",
+        "gaming.listCategories",
         "gaming.listGames",
+        "gaming.listProviders",
         "gaming.listRounds",
-        "gaming.startRound"
+        "gaming.startRound",
+        "gaming.updateCategory",
+        "gaming.updateGame",
+        "gaming.updateProvider"
       ]
     },
     {
@@ -288,6 +306,7 @@
         "identity.security.loginWithdrawalAlerts",
         "identity.security.me",
         "identity.security.removeWithdrawalPin",
+        "identity.security.setAntiPhishingCode",
         "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
         "identity.sendTwoFactorOtp",
@@ -546,7 +565,6 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -685,7 +703,8 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/fx/exchange-rate/plugin.ts",
-        "packages/core/src/pam/profile/plugin.ts"
+        "packages/core/src/pam/profile/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -806,6 +825,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/mail/plugin.ts"
+      ]
+    },
+    {
+      "category": "mail-recipient-directory",
+      "interface": "MailRecipient",
+      "token": "MAIL_RECIPIENT_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/mail/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -1008,6 +1037,11 @@
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
     "compliance.kyc.updated",
+    "gaming.category.created",
+    "gaming.category.updated",
+    "gaming.game.updated",
+    "gaming.provider.created",
+    "gaming.provider.updated",
     "gaming.round.ended",
     "gaming.round.started",
     "iam.invitation.accepted",
@@ -1033,6 +1067,7 @@
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.security.anti_phishing_code.set",
     "identity.security.login_withdrawal_alerts.updated",
     "identity.security.withdrawal_pin.removed",
     "identity.security.withdrawal_pin.set",
@@ -1340,6 +1375,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "CatalogSlugSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "ChangeEmailInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1504,12 +1543,20 @@
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
+      "name": "CreateCategoryInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "CreateNotificationInputSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
       "name": "CreatePlayerNoteInputSchema",
       "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
+      "name": "CreateProviderInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "createTagSchema",
@@ -1692,6 +1739,34 @@
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
+      "name": "GameCategoryDetailSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameCategoryNameSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategorySchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameCategorySummarySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategorySummaryWithTranslationsSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategoryTranslationSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategoryTranslationsSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GamePerformanceFilterSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1702,6 +1777,22 @@
     {
       "name": "GamePerformanceSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameProviderAggregatorMappingSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameProviderDetailSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameProviderSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "GameProviderSummarySchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {
       "name": "GameRoundSchema",
@@ -1932,6 +2023,10 @@
       "file": "packages/core/src/compliance/contract/limits.ts"
     },
     {
+      "name": "ListAdminGamesInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "ListBannerConfigurationsInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
@@ -1942,6 +2037,10 @@
     {
       "name": "ListFriendRequestsInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "ListGamesInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "ListReconciliationFindingsInputSchema",
@@ -2284,6 +2383,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "QueryBooleanSchema",
+      "file": "packages/core/src/contracts/kit.ts"
+    },
+    {
       "name": "RainCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
@@ -2464,6 +2567,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "SetAntiPhishingCodeInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SetAutoWithdrawalRuleInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -2624,12 +2731,24 @@
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
+      "name": "UpdateCategoryInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "UpdateGameInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "UpdatePlayerProfileInputSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
       "name": "UpdateProfileInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UpdateProviderInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "updateTagSchema",

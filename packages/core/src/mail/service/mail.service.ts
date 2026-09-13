@@ -1,6 +1,5 @@
 import { createLogger } from '@openora/core/server';
 import type {
-  AdminUserDirectory,
   AuditWritePort,
   EmailTemplateRenderer,
   EmailSenderPort,
@@ -8,6 +7,7 @@ import type {
   MailTemplate,
   MailToAddressInput,
   MailToUserInput,
+  MailRecipientDirectory,
 } from '@openora/core/contracts';
 import { MAIL_SEND_QUEUE, type EncryptedMailSendJob, type MailSendJob } from '../contract/index.js';
 import { createMailPayloadCipher, type MailPayloadCipher } from './mail-payload.service.js';
@@ -49,7 +49,7 @@ async function withEnqueueRetry(enqueue: () => Promise<unknown>): Promise<void> 
 export type MailServiceDeps = {
   sender: EmailSenderPort;
   renderer: EmailTemplateRenderer;
-  directory: AdminUserDirectory;
+  directory: MailRecipientDirectory;
   jobQueue: JobQueueAdapter;
   audit: AuditWritePort | null;
   encryptionSecret: string;
@@ -58,7 +58,7 @@ export type MailServiceDeps = {
 export class MailService {
   private readonly sender: EmailSenderPort;
   private readonly renderer: EmailTemplateRenderer;
-  private readonly directory: AdminUserDirectory;
+  private readonly directory: MailRecipientDirectory;
   private readonly jobQueue: JobQueueAdapter;
   private readonly audit: AuditWritePort | null;
   private readonly payloadCipher: MailPayloadCipher;
@@ -109,7 +109,12 @@ export class MailService {
       });
       return;
     }
-    const rendered = await this.renderer.render(job.template, resolved.locale, resolved.name);
+    const rendered = await this.renderer.render(
+      job.template,
+      resolved.locale,
+      resolved.name,
+      resolved.antiPhishingCode,
+    );
     await this.sender.send({
       to: resolved.email,
       subject: rendered.subject,
@@ -195,21 +200,27 @@ export class MailService {
     if (job.recipient.kind === 'address') {
       return job.recipient.locale ?? DEFAULT_LOCALE;
     }
-    const row = await this.directory.get(job.recipient.userId);
+    const row = await this.directory.getMailRecipient(job.recipient.userId);
     return row?.language ?? DEFAULT_LOCALE;
   }
 
-  private async resolveRecipient(
-    job: MailSendJob,
-  ): Promise<{ email: string; locale: string; name: string | null } | null> {
+  private async resolveRecipient(job: MailSendJob): Promise<{
+    email: string;
+    locale: string;
+    name: string | null;
+    antiPhishingCode: string | null;
+  } | null> {
     if (job.recipient.kind === 'address') {
+      // Pre-account emails (admin invitation, brand-new signup verification) correctly
+      // have no code yet - there is no user row to read one off.
       return {
         email: job.recipient.email,
         locale: job.recipient.locale ?? DEFAULT_LOCALE,
         name: null,
+        antiPhishingCode: null,
       };
     }
-    const row = await this.directory.get(job.recipient.userId);
+    const row = await this.directory.getMailRecipient(job.recipient.userId);
     if (!row?.email) {
       logger.warn(
         { userId: job.recipient.userId, key: job.template.key },
@@ -217,6 +228,11 @@ export class MailService {
       );
       return null;
     }
-    return { email: row.email, locale: row.language ?? DEFAULT_LOCALE, name: row.name };
+    return {
+      email: row.email,
+      locale: row.language ?? DEFAULT_LOCALE,
+      name: row.name,
+      antiPhishingCode: row.antiPhishingCode,
+    };
   }
 }
