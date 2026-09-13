@@ -49,3 +49,6 @@ docs/agents/*.local.md
 
 # QA screenshot captures - reproducible, never committed
 .qa-evidence/
+
+# Git worktrees for paired consumer changes (`pnpm oss:worktree` in a consumer repo)
+/.worktrees/

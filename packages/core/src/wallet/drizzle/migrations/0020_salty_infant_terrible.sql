@@ -1,0 +1,1 @@
+ALTER TABLE "wallet_transaction" ADD COLUMN "auto_approval_pivot_amount" numeric(38, 18);
