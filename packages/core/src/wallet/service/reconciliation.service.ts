@@ -102,6 +102,9 @@ const DEFAULT_STALE_RUN_AFTER_MINUTES = 30;
 /** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 
+// A swap leg carries no payment provider name, but a finding needs one to be filed under.
+const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
+
 const JOB_NAME = 'wallet-reconciliation';
 
 /**
@@ -413,6 +416,8 @@ export class ReconciliationService {
       withdrawalsReconciled: 0,
       unknownAtProvider: 0,
       stuckSweeps: 0,
+      stuckSwaps: 0,
+      swapFindingsClosed: 0,
       unreconciledHours: 0,
     };
 
@@ -434,6 +439,16 @@ export class ReconciliationService {
         }
 
         await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
+
+        // Close first, then file: a leg the desk settled after it was reported stops
+        // describing a situation that no longer exists before this cycle adds more.
+        await this.resolveSettledSwapFindings(counts);
+        await this.reconcileStuckSwaps(
+          runId,
+          cfg.stuckSwapAfterMinutes ?? cfg.stuckAfterMinutes,
+          cfg.batchSize,
+          counts,
+        );
 
         // Deliberately not gated on `wallet.sweep` being configured. An operator can
         // adopt reconciliation without sweeping, and a stuck sweep is real player money
@@ -622,8 +637,9 @@ export class ReconciliationService {
     return byExternalId;
   }
 
-  // Covered exactly by wallet_transaction_status_type_created_at_idx - equality on
-  // status and type, then a range on createdAt, in that column order.
+  // wallet_transaction_status_type_created_at_idx covers the WHERE - equality on status
+  // and type, then a range on createdAt, in that column order. The ORDER BY's leading
+  // correlated EXISTS is not indexable, so the matching set is sorted before LIMIT.
   private async reconcileStuckWithdrawals(
     runId: WalletJobRun['runId'],
     stuckAfterMinutes: number,
@@ -716,7 +732,113 @@ export class ReconciliationService {
     }
   }
 
-  // Covered exactly by wallet_custody_sweep_status_created_at_idx. Human resolution
+  /**
+   * Closes `stuck_swap` findings the desk settled after they were reported - a
+   * report-side write only, matching what this table is for: it never touches a balance,
+   * a transaction status, or the swap itself. Without it a slow-but-healthy swap leaves
+   * an `open` finding describing a situation that no longer exists, and since
+   * `countOpenFindings` feeds `alertThreshold`, a growing pile of them alerts on nothing.
+   */
+  private async resolveSettledSwapFindings(counts: { swapFindingsClosed: number }): Promise<void> {
+    const settled = sql`EXISTS (
+      SELECT 1 FROM ${walletTransaction}
+      WHERE ${walletTransaction.id} = ${walletReconciliationFinding.transactionId}
+        AND ${walletTransaction.status} <> 'processing'
+    )`;
+    const closed = await this.drizzle.db
+      .update(walletReconciliationFinding)
+      .set({
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolutionNote: 'the desk settled this swap after it was reported',
+      })
+      .where(
+        and(
+          eq(walletReconciliationFinding.kind, 'stuck_swap'),
+          eq(walletReconciliationFinding.status, 'open'),
+          settled,
+        ),
+      )
+      .returning({ id: walletReconciliationFinding.id });
+
+    // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is
+    // what says who did. A finding closed here never carries a `credited` outcome,
+    // because nothing on this path moves money.
+    for (const row of closed) {
+      counts.swapFindingsClosed += 1;
+      await this.audit.record({
+        actorType: 'system',
+        action: 'wallet.reconciliation_finding.resolved',
+        resourceType: 'wallet_reconciliation_finding',
+        resourceId: row.id,
+        before: { status: 'open' },
+        after: { status: 'resolved', outcome: 'settled_at_desk' },
+      });
+    }
+  }
+
+  // Human resolution only, like a stuck sweep. A swap_out held `processing` past the cutoff
+  // is money debited from the player with nothing credited back, and the desk may or may not
+  // have filled it - so neither a refund nor a credit is safe without someone looking.
+  //
+  // wallet_transaction_status_type_created_at_idx covers the WHERE, but the ORDER BY leads
+  // with the correlated EXISTS, which no index serves: every cycle sorts the whole matching
+  // set before LIMIT. That set is bounded in practice only because resolveSettledSwapFindings
+  // closes findings - not because the plan is cheap. Same shape as the sweep sibling.
+  private async reconcileStuckSwaps(
+    runId: WalletJobRun['runId'],
+    stuckSwapAfterMinutes: number,
+    batchSize: number,
+    counts: { stuckSwaps: number },
+  ): Promise<void> {
+    const cutoff = new Date(Date.now() - stuckSwapAfterMinutes * 60 * 1000);
+    // Mirrors the externalId this loop files below, which is the findings dedup key.
+    const alreadyReported = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'stuck_swap'
+        AND ${walletReconciliationFinding.providerName}
+            = coalesce(${walletTransaction.providerName}, ${SWAP_DESK_PROVIDER_LABEL})
+        AND ${walletReconciliationFinding.externalId}
+            = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
+    )`;
+    const stuck = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.status, 'processing'),
+          eq(walletTransaction.type, 'swap_out'),
+          lt(walletTransaction.createdAt, cutoff),
+        ),
+      )
+      .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
+      .limit(batchSize);
+
+    for (const tx of stuck) {
+      counts.stuckSwaps += 1;
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: tx.providerName ?? SWAP_DESK_PROVIDER_LABEL,
+          kind: 'stuck_swap',
+          currency: tx.currency,
+          amount: tx.amount,
+          transactionId: tx.id,
+          // The desk's own reference when there is one, as every other kind in this table
+          // does, so an operator can join findings to desk records. A leg that died before
+          // `execute` returned has none, and falls back to the local id - the same
+          // `providerRefId ?? id` shape the sweep sibling files.
+          externalId: tx.providerRefId ?? tx.id,
+          detail: `swap_out ${tx.id} has been processing since ${tx.createdAt.toISOString()}`,
+        },
+        this.audit,
+      );
+    }
+  }
+
+  // wallet_custody_sweep_status_created_at_idx covers the WHERE; the ORDER BY's leading
+  // correlated EXISTS is not indexable, as in the two siblings above. Human resolution
   // only - this NEVER touches the sweep row's status or releases its in-flight guard.
   private async reconcileStuckSweeps(
     runId: WalletJobRun['runId'],
