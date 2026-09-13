@@ -35,6 +35,7 @@ export const adminRole = ac.newRole({
   'swap-config': ['view', 'update'],
   'chat-command': ['view', 'update'],
   'chat-moderation': ['view', 'moderate'],
+  'regulatory-overview': ['view', 'manage-country-rules', 'manage-global-kyc'],
 });
 
 export const supportRole = ac.newRole({

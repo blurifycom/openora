@@ -289,7 +289,7 @@ flowchart TB
 
 <!-- gen:catalog-reference -->
 
-Generated from `docs/catalog.json` - 20 modules, 279 routes, 47 adapter ports, 125 events. Edit the code, then run `pnpm gen:catalog`.
+Generated from `docs/catalog.json` - 20 modules, 283 routes, 47 adapter ports, 125 events. Edit the code, then run `pnpm gen:catalog`.
 
 | Domain                        | Modules                                                    | Tables                                                                              | Routes |
 | ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------ |
@@ -298,7 +298,7 @@ Generated from `docs/catalog.json` - 20 modules, 279 routes, 47 adapter ports, 1
 | `@openora/core/audit`         | audit                                                      | audit_log                                                                           | 3      |
 | `@openora/core/casino`        | gaming · lobby                                             | featured_slot, game, game_category, game_category_game + 5 more                     | 23     |
 | `@openora/core/cms`           | cms                                                        | banner_configuration, banner_image, banner_schedule, page                           | 18     |
-| `@openora/core/compliance`    | compliance                                                 | game_geo_rule, geo_rule, kyc_verification, rg_exclusion + 2 more                    | 29     |
+| `@openora/core/compliance`    | compliance                                                 | game_geo_rule, geo_rule, global_kyc_config, kyc_verification + 3 more               | 33     |
 | `@openora/core/engagement`    | chat · chat-commands · notifications · social              | chat_command_config, chat_message, chat_mute, chat_platform_ban + 11 more           | 72     |
 | `fx`                          | exchange-rate                                              | exchange_rate_quote                                                                 | 2      |
 | `@openora/core/iam`           | iam                                                        | admin_invitation, admin_role, admin_role_assignment, admin_role_permission          | 17     |
