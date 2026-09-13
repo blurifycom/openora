@@ -8,9 +8,11 @@ import {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
+import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { userLimit, countryRule, globalKycConfig } from '../schema/index.js';
+import { userLimit, countryRule, globalKycConfig, gameGeoRule } from '../schema/index.js';
 import {
   ComplianceService,
   CountryRuleConfirmationRequiredError,
@@ -31,8 +33,23 @@ function makeService(countryCode?: string | null, igaming: IgamingConfig | null 
   return { svc, audit, events };
 }
 
+async function seedGame(id: string, name: string) {
+  const [provider] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `studio-${randomUUID()}`, name: 'Studio', isActive: true })
+    .returning();
+  await db.drizzle.db.insert(game).values({
+    id,
+    name,
+    slug: `game-${randomUUID()}`,
+    providerId: provider.id,
+    aggregator: 'mock',
+    isActive: true,
+  });
+}
+
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateGaming]);
 });
 
 afterAll(async () => {
@@ -41,7 +58,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${userLimit}, ${countryRule}, ${globalKycConfig} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${userLimit}, ${countryRule}, ${globalKycConfig}, ${gameGeoRule}, ${game}, ${gameProvider} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -61,6 +78,17 @@ describe('ComplianceService.geoCheck (real PG)', () => {
     const { svc } = makeService(null);
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: null });
+  });
+
+  it('fails closed when the lookup resolves no country and a global rule exists', async () => {
+    const { svc } = makeService(null);
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    expect(await svc.geoCheck('1.2.3.4')).toEqual({
+      allowed: false,
+      countryCode: null,
+      reason: 'Geolocation could not be determined',
+    });
   });
 
   it('allows an unresolvable address when country rules exist but none blacklists', async () => {
@@ -439,5 +467,164 @@ describe('ComplianceService global KYC config (real PG)', () => {
     );
 
     expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('ComplianceService per-game geo rules (real PG)', () => {
+  it('lets a global block win before the game-specific decision', async () => {
+    const { svc } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await expect(
+      svc.checkGame({
+        gameId: '00000000-0000-0000-0000-000000000111',
+        ipAddress: '1.2.3.4',
+      }),
+    ).resolves.toEqual({ allowed: false, countryCode: 'US', reason: 'global_block' });
+  });
+
+  it('blocks only the matching game and country', async () => {
+    const blockedGameId = '00000000-0000-0000-0000-000000000112';
+    const otherGameId = '00000000-0000-0000-0000-000000000113';
+    const { svc } = makeService('US');
+    await db.drizzle.db.insert(gameGeoRule).values({
+      gameId: blockedGameId,
+      countryCode: 'US',
+      reason: 'licence restriction',
+    });
+
+    await expect(svc.checkGame({ gameId: blockedGameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: 'US',
+      reason: 'game_block',
+    });
+    await expect(svc.checkGame({ gameId: otherGameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: true,
+      countryCode: 'US',
+      reason: null,
+    });
+  });
+
+  it('fails closed on unresolved geo when the game has a geo rule', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000114';
+    const { svc } = makeService(null);
+    await db.drizzle.db
+      .insert(gameGeoRule)
+      .values({ gameId, countryCode: 'US', reason: 'licence restriction' });
+
+    await expect(svc.checkGame({ gameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: null,
+      reason: 'geo_unresolved',
+    });
+  });
+
+  it('fails closed on unresolved geo when a global rule exists', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000119';
+    const { svc } = makeService(null);
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await expect(svc.checkGame({ gameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: null,
+      reason: 'geo_unresolved',
+    });
+  });
+
+  it('normalizes country codes returned by the geo-ip adapter', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000116';
+    const { svc } = makeService('us');
+    await db.drizzle.db.insert(gameGeoRule).values({
+      gameId,
+      countryCode: 'US',
+      reason: 'licence restriction',
+    });
+
+    await expect(svc.checkGame({ gameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: 'US',
+      reason: 'game_block',
+    });
+  });
+
+  it('fails closed when the geo-ip adapter returns an invalid country code', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000117';
+    const { svc } = makeService('USA');
+    await db.drizzle.db.insert(gameGeoRule).values({
+      gameId,
+      countryCode: 'US',
+      reason: 'licence restriction',
+    });
+
+    await expect(svc.checkGame({ gameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: null,
+      reason: 'geo_unresolved',
+    });
+  });
+
+  it('upserts and deletes an existing-game rule with auditable before and after state', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000115';
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+    await seedGame(gameId, 'Game');
+
+    const created = await svc.upsertGameGeoRule(
+      { gameId, countryCode: 'US', reason: 'licence restriction' },
+      actorId,
+      { ip: '1.2.3.4', userAgent: 'agent' },
+    );
+    await svc.upsertGameGeoRule(
+      { gameId, countryCode: 'US', reason: 'updated restriction' },
+      actorId,
+      { ip: '1.2.3.4', userAgent: 'agent' },
+    );
+    await svc.deleteGameGeoRule({ id: created.id, reason: 'licence restored' }, actorId, {
+      ip: '1.2.3.4',
+      userAgent: 'agent',
+    });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.game-geo-rule.upserted',
+      expect.objectContaining({
+        gameId,
+        actorId,
+        before: expect.objectContaining({ reason: 'licence restriction' }),
+        after: expect.objectContaining({ reason: 'updated restriction' }),
+      }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.game-geo-rule.deleted',
+      expect.objectContaining({ gameId, actorId, reason: 'licence restored', after: null }),
+    );
+    expect(await svc.listGameGeoRules({ gameId })).toEqual([]);
+  });
+
+  it('serializes concurrent upserts before emitting audit snapshots', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000118';
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+    await seedGame(gameId, 'Concurrent Game');
+
+    await Promise.all([
+      svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'first restriction' }, actorId, {
+        ip: null,
+        userAgent: null,
+      }),
+      svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'second restriction' }, actorId, {
+        ip: null,
+        userAgent: null,
+      }),
+    ]);
+
+    const upsertPayloads = events.emit.mock.calls
+      .filter(([event]) => event === 'compliance.game-geo-rule.upserted')
+      .map(([, payload]) => payload);
+    expect(upsertPayloads).toHaveLength(2);
+    expect(upsertPayloads.filter(({ before }) => before === null)).toHaveLength(1);
+
+    const initial = upsertPayloads.find(({ before }) => before === null);
+    const followup = upsertPayloads.find(({ before }) => before !== null);
+    expect(followup?.before?.reason).toBe(initial?.after.reason);
   });
 });

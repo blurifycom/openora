@@ -64,6 +64,13 @@
       "when": 1789029671622,
       "tag": "0008_omniscient_northstar",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789338982409,
+      "tag": "0009_living_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

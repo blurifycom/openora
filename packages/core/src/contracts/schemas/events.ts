@@ -14,6 +14,7 @@ import {
   LimitChangeKindSchema,
   RgInitiatorSchema,
   ExclusionKindSchema,
+  NonEmptyReasonSchema,
 } from './compliance.js';
 import { LobbyLayoutSnapshotSchema } from './lobby.js';
 import { CountryCodeSchema } from './igaming-config.js';
@@ -64,6 +65,15 @@ const tagPlayerEventBase = actorReasonBase
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
+
+const gameGeoRuleEventState = z.object({
+  id: UuidSchema,
+  gameId: UuidSchema,
+  countryCode: CountryCodeSchema,
+  reason: NonEmptyReasonSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
 
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
@@ -621,6 +631,26 @@ export const domainEventSchemas = {
     countryCode: CountryCodeSchema,
     action: GeoRuleActionSchema,
     actorId: UuidSchema.optional(),
+  }),
+
+  'compliance.game-geo-rule.upserted': authContextBase.extend({
+    ruleId: UuidSchema,
+    gameId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    before: gameGeoRuleEventState.nullable(),
+    after: gameGeoRuleEventState,
+    actorId: UuidSchema,
+  }),
+
+  'compliance.game-geo-rule.deleted': authContextBase.extend({
+    ruleId: UuidSchema,
+    gameId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    before: gameGeoRuleEventState,
+    after: z.null(),
+    actorId: UuidSchema,
   }),
 
   'compliance.limit.upserted': authContextBase.extend({

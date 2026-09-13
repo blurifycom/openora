@@ -17,6 +17,8 @@ import {
   RgLimitExceededError,
   type ClientMeta,
   type GameAdapter,
+  type GameGeoCheckPort,
+  type GameGeoDecision,
   type PlayEligibilityPort,
   type RgLimitsPort,
   type WalletCommands,
@@ -67,6 +69,21 @@ export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
   'play is restricted by an active responsible-gambling exclusion',
 );
+
+export type GameGeoRestrictedData = Pick<
+  Extract<GameGeoDecision, { allowed: false }>,
+  'reason' | 'countryCode'
+>;
+
+export class GameGeoRestrictedError extends Error {
+  readonly data: GameGeoRestrictedData;
+
+  constructor(decision: Extract<GameGeoDecision, { allowed: false }>) {
+    super(`Game cannot be started from this location (${decision.reason})`);
+    this.name = 'GameGeoRestrictedError';
+    this.data = { reason: decision.reason, countryCode: decision.countryCode };
+  }
+}
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
@@ -141,6 +158,7 @@ export class GamingService {
     private readonly walletCommands: WalletCommands,
     private readonly identityReader: IdentityReader,
     private readonly rgLimits?: RgLimitsPort,
+    private readonly gameGeoCheck?: GameGeoCheckPort,
   ) {}
 
   async listGamesPublic(input: ListGamesInput) {
@@ -245,7 +263,15 @@ export class GamingService {
     return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
   }
 
-  async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {
+  async startRound(
+    userId: User['id'],
+    gameId: Game['id'],
+    currency: string,
+    betAmount: string,
+    ipAddress: string | null = null,
+  ) {
+    await this.getGame(gameId, { activeOnly: true });
+
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
@@ -254,7 +280,13 @@ export class GamingService {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
-    await this.getGame(gameId, { activeOnly: true });
+    const geoDecision = await this.gameGeoCheck?.checkGame({
+      gameId,
+      ipAddress,
+    });
+    if (geoDecision && !geoDecision.allowed) {
+      throw new GameGeoRestrictedError(geoDecision);
+    }
 
     const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the

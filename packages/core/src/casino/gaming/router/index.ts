@@ -9,6 +9,7 @@ import {
   GameAggregatorNotMappedError,
   RgRestrictedError,
   InsufficientBalanceError,
+  GameGeoRestrictedError,
 } from '../service/gaming.service.js';
 import {
   GameCategoryService,
@@ -50,10 +51,17 @@ export function createGamingRouter({
       mapErrors(
         {
           NOT_FOUND: GameNotFoundError,
-          CONFLICT: [RgRestrictedError, RgLimitExceededError],
+          CONFLICT: [RgRestrictedError, RgLimitExceededError, GameGeoRestrictedError],
           BAD_REQUEST: InsufficientBalanceError,
         },
-        () => gaming.startRound(getUserId(context), input.gameId, input.currency, input.betAmount),
+        () =>
+          gaming.startRound(
+            getUserId(context),
+            input.gameId,
+            input.currency,
+            input.betAmount,
+            context.clientMeta.ip,
+          ),
       ),
     ),
 

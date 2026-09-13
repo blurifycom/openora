@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
+  GameGeoCheckPort,
   PlayEligibilityPort,
   RgLimitsPort,
   WalletCommands,
@@ -63,12 +64,14 @@ function makeService({
   playEligibility = unrestricted,
   walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
   rgLimits,
+  gameGeoCheck,
   events = noopEvents,
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
   walletCommands?: WalletCommands;
   rgLimits?: RgLimitsPort;
+  gameGeoCheck?: GameGeoCheckPort;
   events?: ReturnType<typeof makeEventBus>;
 } = {}) {
   return new GamingService(
@@ -79,7 +82,18 @@ function makeService({
     walletCommands,
     makeIdentityReader(),
     rgLimits,
+    gameGeoCheck,
   );
+}
+
+function startRound(
+  svc: GamingService,
+  userId: string,
+  gameId: string,
+  currency: string,
+  betAmount: string,
+) {
+  return svc.startRound(userId, gameId, currency, betAmount, '1.2.3.4');
 }
 
 async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert> = {}) {
@@ -256,7 +270,47 @@ const refusingLimits = () =>
   });
 
 describe('GamingService.startRound (real PG)', () => {
+  it('denies a blocked game before debit, round insertion, or provider launch', async () => {
+    const created = await seedGame({ name: 'Blocked' });
+    const launchGame = vi.fn();
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const gameGeoCheck = mock<GameGeoCheckPort>({
+      checkGame: vi.fn().mockResolvedValue({
+        allowed: false,
+        countryCode: 'US',
+        reason: 'game_block',
+      }),
+    });
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+      gameGeoCheck,
+    });
+
+    await expect(
+      startRound(svc, '00000000-0000-0000-0000-000000000110', created.id, 'USD', '10'),
+    ).rejects.toMatchObject({
+      name: 'GameGeoRestrictedError',
+      data: { reason: 'game_block', countryCode: 'US' },
+    });
+    expect(walletCommands.debit).not.toHaveBeenCalled();
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
+  it('does not consult geo for an inactive game', async () => {
+    const created = await seedGame({ name: 'Inactive', isActive: false });
+    const checkGame = vi.fn();
+    const svc = makeService({ gameGeoCheck: mock<GameGeoCheckPort>({ checkGame }) });
+
+    await expect(
+      startRound(svc, '00000000-0000-0000-0000-000000000110', created.id, 'USD', '10'),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+    expect(checkGame).not.toHaveBeenCalled();
+  });
+
   it('refuses a wager over the players own limit before touching the provider', async () => {
+    const created = await seedGame({ name: 'Limited' });
     const launchGame = vi.fn();
     const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
     const svc = makeService({
@@ -265,7 +319,7 @@ describe('GamingService.startRound (real PG)', () => {
       rgLimits: refusingLimits(),
     });
 
-    await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toMatchObject({
+    await expect(startRound(svc, 'user-1', created.id, 'EUR', '10')).rejects.toMatchObject({
       name: 'RgLimitExceededError',
       data: { reason: 'wager_limit_exceeded', limitType: 'wager', limit: '50', used: '45' },
     });
@@ -278,18 +332,19 @@ describe('GamingService.startRound (real PG)', () => {
     const svc = makeService();
 
     await expect(
-      svc.startRound('00000000-0000-0000-0000-000000000111', created.id, 'USD', '10'),
+      startRound(svc, '00000000-0000-0000-0000-000000000111', created.id, 'USD', '10'),
     ).resolves.toMatchObject({ launchUrl: 'https://mock/play' });
   });
 
   it('refuses a restricted player before touching the provider', async () => {
+    const created = await seedGame({ name: 'Restricted' });
     const launchGame = vi.fn();
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       playEligibility: eligibility(true),
     });
 
-    await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toBeInstanceOf(
+    await expect(startRound(svc, 'user-1', created.id, 'EUR', '10')).rejects.toBeInstanceOf(
       RgRestrictedError,
     );
     expect(launchGame).not.toHaveBeenCalled();
@@ -302,7 +357,8 @@ describe('GamingService.startRound (real PG)', () => {
     });
 
     await expect(
-      svc.startRound(
+      startRound(
+        svc,
         '00000000-0000-0000-0000-000000000111',
         '00000000-0000-0000-0000-000000000222',
         'EUR',
@@ -360,7 +416,7 @@ describe('GamingService.startRound (real PG)', () => {
     });
 
     const userId = '00000000-0000-0000-0000-000000000301';
-    const result = await svc.startRound(userId, created.id, 'USD', '10');
+    const result = await startRound(svc, userId, created.id, 'USD', '10');
 
     expect(walletCommands.debit).toHaveBeenCalledWith(expect.anything(), {
       userId,
@@ -391,7 +447,7 @@ describe('GamingService.startRound (real PG)', () => {
     });
 
     await expect(
-      svc.startRound('00000000-0000-0000-0000-000000000302', created.id, 'USD', '10'),
+      startRound(svc, '00000000-0000-0000-0000-000000000302', created.id, 'USD', '10'),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
     expect(launchGame).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
@@ -473,7 +529,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
     const userId = '00000000-0000-0000-0000-000000000401';
 
-    await svc.startRound(userId, created.id, 'USD', '40');
+    await startRound(svc, userId, created.id, 'USD', '40');
 
     expect(events.emit).toHaveBeenCalledWith('wallet.bonus_rollover.completed', {
       userId,
@@ -511,7 +567,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
     const userId = '00000000-0000-0000-0000-000000000405';
 
-    await expect(svc.startRound(userId, created.id, 'USD', '25')).rejects.toThrow(
+    await expect(startRound(svc, userId, created.id, 'USD', '25')).rejects.toThrow(
       'provider unavailable',
     );
 
@@ -541,7 +597,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
     const userId = '00000000-0000-0000-0000-000000000402';
 
-    await svc.startRound(userId, created.id, 'USD', '10');
+    await startRound(svc, userId, created.id, 'USD', '10');
 
     expect(events.emit).not.toHaveBeenCalledWith(
       'wallet.bonus_rollover.completed',
@@ -689,6 +745,26 @@ const settlingProvider = (winAmount?: string) =>
 
 describe('GamingService.endRound (real PG)', () => {
   const userId = '00000000-0000-0000-0000-000000000501';
+
+  it('settles an admitted active round without rechecking a newly blocking geo policy', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const checkGame = vi.fn().mockResolvedValue({
+      allowed: false,
+      countryCode: 'US',
+      reason: 'game_block',
+    });
+    const svc = makeService({
+      provider: settlingProvider('5'),
+      gameGeoCheck: mock<GameGeoCheckPort>({ checkGame }),
+    });
+
+    await expect(svc.endRound(userId, round.id)).resolves.toEqual({
+      success: true,
+      winAmount: '5',
+    });
+    expect(checkGame).not.toHaveBeenCalled();
+  });
 
   it('credits the provider-reported win to the round currency and records it on the round', async () => {
     const created = await seedGame();
