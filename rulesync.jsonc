@@ -15,8 +15,6 @@
   // adding a feature back:
   //   copilot: no "ignore", no "permissions".
   //   codexcli: no "ignore"; "commands" is global-mode only (we don't run --global).
-  //   antigravity-cli: only "rules"/"mcp"/"hooks"/"skills" - "subagents"/"commands"
-  //     aren't supported at all, and "permissions" is global-mode only.
   "targets": {
     "agentsmd": ["rules"],
     "claudecode": [
@@ -31,7 +29,6 @@
     ],
     "copilot": ["rules", "mcp", "subagents", "commands", "skills", "hooks"],
     "codexcli": ["rules", "mcp", "subagents", "skills", "hooks", "permissions"],
-    "antigravity-cli": ["rules", "mcp", "hooks", "skills"],
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed, and

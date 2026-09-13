@@ -6,20 +6,15 @@ import {
   EXCHANGE_RATE_READER,
   PLATFORM_CONFIG,
   resolveDisplayCurrencies,
-  type PlatformConfig,
+  resolveExchangeRatePivot,
 } from '@openora/core/contracts';
 import { ExchangeRateService } from './service/exchange-rate.service.js';
 import { createExchangeRateRouter } from './router/index.js';
 import { ExchangeRateReaderService } from './adapters/exchange-rate-reader.service.js';
 
-const DEFAULT_PIVOT = 'USD';
 const DEFAULT_FRESH_TTL_MS = 60_000;
 const DEFAULT_HARD_MAX_AGE_MS = 15 * 60_000;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 2_000;
-
-function resolvePivot(platformConfig: PlatformConfig): string {
-  return (platformConfig.exchangeRate?.pivot ?? DEFAULT_PIVOT).toUpperCase();
-}
 
 export default {
   id: 'exchange-rate',
@@ -29,7 +24,7 @@ export default {
       const exchangeRateConfig = platformConfig.exchangeRate;
       return new ExchangeRateReaderService({
         drizzle: c.get(DRIZZLE),
-        pivot: resolvePivot(platformConfig),
+        pivot: resolveExchangeRatePivot(exchangeRateConfig),
         cryptoProvider: c.has(CRYPTO_EXCHANGE_RATE_PROVIDER)
           ? c.get(CRYPTO_EXCHANGE_RATE_PROVIDER)
           : undefined,
@@ -49,7 +44,7 @@ export default {
       // every cross rate is computed through it, so a quote against it is always legitimate.
       const supported = [
         ...resolveDisplayCurrencies(platformConfig.displayCurrencies),
-        resolvePivot(platformConfig),
+        resolveExchangeRatePivot(platformConfig.exchangeRate),
       ];
       return createExchangeRateRouter(
         new ExchangeRateService(c.get(EXCHANGE_RATE_READER), supported),

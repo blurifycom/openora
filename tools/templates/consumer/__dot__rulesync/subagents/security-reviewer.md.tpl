@@ -18,6 +18,8 @@ Stance: assume every protection in the diff is broken or bypassable until you tr
 
 If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/{{mrTarget}}...HEAD --name-only`. Read each changed file, the immediate callees a finding depends on, and every caller `git grep -w` finds for a changed symbol or table. Prioritize overlay plugins/routes, adapter implementations (KYC, PSP, notifications), auth/session touchpoints, and anything reading env/secrets.
 
+An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is core money/auth logic: review it against that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and `docs/standards/`, cite those, and prefix each finding `[oss]`.
+
 ## Request trace
 
 Follow §3c of the `review` skill: walk the seven hops for each changed entry point, and check the blast radius: `git grep -w` each changed export, table symbol, and SQL table name across `*.ts`, `*.tsx`, `*.sql`, and open every caller found, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.
