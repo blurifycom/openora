@@ -11,6 +11,7 @@ import {
   JOB_QUEUE,
   KYC_ADAPTER,
   IDENTITY_READER,
+  IGAMING_CONFIG,
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
@@ -47,6 +48,8 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(DRIZZLE),
     c.get(EVENT_BUS),
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
+    c.get(AUDIT_WRITER),
+    c.has(IGAMING_CONFIG) ? c.get(IGAMING_CONFIG) : null,
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');

@@ -19,10 +19,10 @@ import {
   EXCLUSION_STATUSES,
   RG_FLAG_TYPES,
   RG_FLAG_STATUSES,
+  geoRuleActions,
   limitTypes,
   limitPeriods,
   LIMIT_CHANGE_KINDS,
-  geoRuleActions,
   MONEY_SCALE,
   MONEY_PRECISION,
   KycCheckResultSchema,
@@ -82,11 +82,26 @@ export const userLimit = pgTable(
   ],
 );
 
-export const geoRule = pgTable('geo_rule', {
+export const countryRule = pgTable('geo_rule', {
   id: uuid().primaryKey().defaultRandom(),
   countryCode: text().notNull().unique('geo_rule_country_code_unique'),
   action: text({ enum: geoRuleActions }).notNull(),
+  redirectIp: boolean().notNull().default(false),
+  kycRequired: boolean().notNull().default(true),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true }),
+  updatedBy: uuid(),
+});
+
+export const GLOBAL_KYC_ENABLED_DEFAULT = true;
+
+export const globalKycConfig = pgTable('global_kyc_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique('global_kyc_config_singleton_key_unique').default('global'),
+  enabled: boolean().notNull().default(GLOBAL_KYC_ENABLED_DEFAULT),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true }),
+  updatedBy: uuid(),
 });
 
 // Append-only history: the player's current verification is the latest row by createdAt.
@@ -198,7 +213,8 @@ export const rgFlag = pgTable(
 );
 
 export type UserLimit = typeof userLimit.$inferSelect;
-export type GeoRule = typeof geoRule.$inferSelect;
+export type CountryRule = typeof countryRule.$inferSelect;
+export type GlobalKycConfig = typeof globalKycConfig.$inferSelect;
 export type KycVerification = typeof kycVerification.$inferSelect;
 export type RgExclusion = typeof rgExclusion.$inferSelect;
 export type RgFlag = typeof rgFlag.$inferSelect;

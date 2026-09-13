@@ -160,6 +160,7 @@
       "group": "compliance",
       "tables": [
         "geo_rule",
+        "global_kyc_config",
         "kyc_verification",
         "rg_exclusion",
         "rg_flag",
@@ -174,6 +175,7 @@
         "compliance.confirmPendingLimitChange",
         "compliance.deleteLimit",
         "compliance.geoCheck",
+        "compliance.getGlobalKycConfig",
         "compliance.getLimits",
         "compliance.getMyKyc",
         "compliance.getMyRgSection",
@@ -182,15 +184,18 @@
         "compliance.kycWebhook",
         "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
+        "compliance.listCountryRules",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
         "compliance.overrideKycStatus",
         "compliance.requestCoolingOff",
         "compliance.requestKycResubmission",
         "compliance.requestSelfExclusion",
+        "compliance.setGlobalKycConfig",
         "compliance.setPlayerLimit",
         "compliance.streamKycStatus",
         "compliance.submitKyc",
+        "compliance.upsertCountryRule",
         "compliance.upsertLimit"
       ]
     },
@@ -1520,6 +1525,10 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "CountryRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "CreateBannerConfigurationInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
@@ -1838,6 +1847,10 @@
     {
       "name": "GiftCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "GlobalKycConfigSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",
@@ -2536,6 +2549,10 @@
       "file": "packages/core/src/pam/profile/contract/index.ts"
     },
     {
+      "name": "SetGlobalKycConfigInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "SetLoginWithdrawalAlertsInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -2702,6 +2719,10 @@
     {
       "name": "UpdateWalletAssetInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "UpsertCountryRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "UpsertLimitInputSchema",
