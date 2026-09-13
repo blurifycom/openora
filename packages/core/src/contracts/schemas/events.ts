@@ -6,6 +6,7 @@ import {
   TimestampSchema,
   UuidSchema,
 } from './common.js';
+import { GameCategoryTranslationsSchema, GameProviderAggregatorMappingSchema } from './game.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -41,6 +42,7 @@ const cmsBannerConfigurationEventBase = z
 const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+const droppedImageUrlsSchema = z.array(z.url()).default([]);
 const cmsBannerScheduleEventBase = z
   .object({
     bannerScheduleId: UuidSchema,
@@ -283,6 +285,13 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The code itself never travels here - audit/event streams are broader-read than
+  // security.me, which is the only place the raw value is returned.
+  'identity.security.anti_phishing_code.set': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    wasAlreadySet: z.boolean(),
+  }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -374,6 +383,91 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  // Backoffice game-catalog management (actorId = acting admin UUID).
+  'gaming.provider.created': authContextBase.extend({
+    providerId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+    logoUrl: z.string().nullable(),
+    metadata: z.unknown().nullable(),
+    isActive: z.boolean(),
+    actorId: UuidSchema,
+  }),
+  'gaming.provider.updated': authContextBase.extend({
+    providerId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+      logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+      logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.category.created': authContextBase.extend({
+    categoryId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    translations: GameCategoryTranslationsSchema.optional(),
+    icon: z.string().nullable(),
+    sortOrder: z.number().int(),
+    isActive: z.boolean(),
+    actorId: UuidSchema,
+  }),
+  'gaming.category.updated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.game.updated': authContextBase.extend({
+    gameId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+  }),
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.
@@ -690,7 +784,9 @@ export const domainEventSchemas = {
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
   'cms.banner.configuration.created': cmsBannerConfigurationEventBase,
-  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.configuration.set_default': cmsBannerConfigurationEventBase,
   'cms.banner.configuration.unset_default': z
     .object({
@@ -699,8 +795,12 @@ export const domainEventSchemas = {
       actorId: UuidSchema,
     })
     .extend(authContextBase.shape),
-  'cms.banner.image.set': cmsBannerImageEventBase,
-  'cms.banner.image.deleted': cmsBannerImageEventBase,
+  'cms.banner.image.set': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
+  'cms.banner.image.deleted': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
   'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 

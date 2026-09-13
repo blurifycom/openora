@@ -5,7 +5,7 @@ import type { GeoIpAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
-import { game } from '@openora/core/casino/schema/gaming';
+import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import { mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, geoRule, gameGeoRule } from '../schema/index.js';
@@ -23,6 +23,21 @@ function makeService(countryCode?: string | null) {
   return { svc, events };
 }
 
+async function seedGame(id: string, name: string) {
+  const [provider] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `studio-${randomUUID()}`, name: 'Studio', isActive: true })
+    .returning();
+  await db.drizzle.db.insert(game).values({
+    id,
+    name,
+    slug: `game-${randomUUID()}`,
+    providerId: provider.id,
+    aggregator: 'mock',
+    isActive: true,
+  });
+}
+
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile, migrateGaming]);
 });
@@ -33,7 +48,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${userLimit}, ${geoRule}, ${gameGeoRule}, ${game} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${userLimit}, ${geoRule}, ${gameGeoRule}, ${game}, ${gameProvider} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -221,9 +236,7 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     const gameId = '00000000-0000-0000-0000-000000000115';
     const actorId = randomUUID();
     const { svc, events } = makeService();
-    await db.drizzle.db
-      .insert(game)
-      .values({ id: gameId, name: 'Game', provider: 'mock', category: 'slots' });
+    await seedGame(gameId, 'Game');
 
     const created = await svc.upsertGameGeoRule(
       { gameId, countryCode: 'US', reason: 'licence restriction' },
@@ -260,12 +273,7 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     const gameId = '00000000-0000-0000-0000-000000000118';
     const actorId = randomUUID();
     const { svc, events } = makeService();
-    await db.drizzle.db.insert(game).values({
-      id: gameId,
-      name: 'Concurrent Game',
-      provider: 'mock',
-      category: 'slots',
-    });
+    await seedGame(gameId, 'Concurrent Game');
 
     await Promise.all([
       svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'first restriction' }, actorId, {

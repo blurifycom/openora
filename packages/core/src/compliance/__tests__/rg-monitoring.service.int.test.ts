@@ -8,7 +8,13 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, seedCompletedDeposit, type TestDb } from '@openora/core/testing';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameRound,
+} from '@openora/core/casino/schema/gaming';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
@@ -68,10 +74,24 @@ const seedDeposit = (userId: string, amount: string, backdatedTo?: Date) =>
   seedCompletedDeposit(db, userId, amount, backdatedTo ? { createdAt: backdatedTo } : {});
 
 async function seedBet(userId: string, betAmount: string, winAmount = '0') {
+  const [provider] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio' })
+    .returning();
+  const [category] = await db.drizzle.db
+    .insert(gameCategory)
+    .values({ slug: `category-${randomUUID()}`, name: 'Slots' })
+    .returning();
   const [g] = await db.drizzle.db
     .insert(game)
-    .values({ name: 'Slot', provider: 'mock', category: 'slots' })
+    .values({
+      name: 'Slot',
+      slug: `slot-${randomUUID()}`,
+      providerId: provider!.id,
+      aggregator: 'direct',
+    })
     .returning();
+  await db.drizzle.db.insert(gameCategoryGame).values({ gameId: g!.id, categoryId: category!.id });
   await db.drizzle.db
     .insert(gameRound)
     .values({ gameId: g!.id, userId, betAmount, winAmount, currency: 'USD' });
@@ -112,7 +132,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${rgFlag}, ${rgExclusion}, ${userLimit}, ${walletTransaction}, ${wallet}, ${gameRound}, ${game}, ${session}, ${user}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${rgFlag}, ${rgExclusion}, ${userLimit}, ${walletTransaction}, ${wallet}, ${gameRound}, ${gameCategoryGame}, ${game}, ${gameProvider}, ${gameCategory}, ${session}, ${user}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 

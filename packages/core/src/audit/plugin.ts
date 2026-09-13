@@ -732,6 +732,80 @@ export async function mapEventToRecord(
     };
   }
 
+  // Backoffice game-catalog mutations. actorId = the acting admin; resource = the
+  // catalog row; before/after carry the config snapshot so visibility flips are diffable.
+  if (topic === 'gaming.provider.created') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_provider',
+      resourceId: str(p['providerId']),
+      after: {
+        slug: p['slug'] ?? null,
+        name: p['name'] ?? null,
+        aggregatorMappings: p['aggregatorMappings'] ?? [],
+        logoUrl: p['logoUrl'] ?? null,
+        metadata: p['metadata'] ?? null,
+        isActive: p['isActive'] ?? null,
+      },
+    };
+  }
+
+  if (topic === 'gaming.provider.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_provider',
+      resourceId: str(p['providerId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.category.created') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      after: {
+        slug: p['slug'] ?? null,
+        name: p['name'] ?? null,
+        translations: p['translations'] ?? {},
+        icon: p['icon'] ?? null,
+        sortOrder: p['sortOrder'] ?? null,
+        isActive: p['isActive'] ?? null,
+      },
+    };
+  }
+
+  if (topic === 'gaming.category.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.game.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game',
+      resourceId: str(p['gameId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
   // Wallet events carry the txn ref in transactionId; surface it as resourceId so
   // a transaction reference is searchable (it otherwise stays buried in `after`).
   // actorId = the resolved playerId (the wallet owner).
@@ -834,6 +908,20 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.anti_phishing_code.set') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      // The code value never reaches the audit trail, only that it was set.
+      before: { antiPhishingCodeSet: p['wasAlreadySet'] ?? null },
+      after: { antiPhishingCodeSet: true },
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -898,6 +986,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.security.login_withdrawal_alerts.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
+  'identity.security.anti_phishing_code.set',
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',
@@ -913,6 +1002,11 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',
+  'gaming.provider.created',
+  'gaming.provider.updated',
+  'gaming.category.created',
+  'gaming.category.updated',
+  'gaming.game.updated',
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.user.ignored',

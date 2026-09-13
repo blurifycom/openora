@@ -1,8 +1,19 @@
-import { createDomainError, DrizzleService, findOneOrThrow, cached } from '@openora/core/server';
+import {
+  createDomainError,
+  DrizzleService,
+  findOneOrThrow,
+  cached,
+  likeContains,
+} from '@openora/core/server';
 import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
-import { game } from '@openora/core/casino/schema/gaming';
+import { game, gameProvider, type GameCategory } from '@openora/core/casino/schema/gaming';
+import {
+  categoriesByGameIds,
+  playableGameCondition,
+  toCategorySummary,
+} from '../../shared/game-catalog.js';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
@@ -14,19 +25,23 @@ const LOBBY_CACHE_TTL_MS = 30_000;
 const CATEGORIES_CACHE_KEY = 'lobby:categories';
 const FEATURED_CACHE_KEY = 'lobby:featured';
 
-function toGameSummary(record: {
-  id: string;
-  name: string;
-  provider: string;
-  category: string;
-  thumbnailUrl: string | null;
+function toGameSummary(row: {
+  game: typeof game.$inferSelect;
+  provider: typeof gameProvider.$inferSelect;
+  categories: GameCategory[];
 }) {
   return {
-    id: record.id,
-    name: record.name,
-    provider: record.provider,
-    category: record.category,
-    thumbnailUrl: record.thumbnailUrl,
+    id: row.game.id,
+    name: row.game.name,
+    slug: row.game.slug,
+    provider: {
+      id: row.provider.id,
+      slug: row.provider.slug,
+      name: row.provider.name,
+      logoUrl: row.provider.logoUrl,
+    },
+    categories: row.categories.map(toCategorySummary),
+    thumbnailUrl: row.game.thumbnailUrl,
   };
 }
 
@@ -44,6 +59,9 @@ export class LobbyService {
         db
           .select({ categoryId: lobbyCategoryGame.categoryId, n: count() })
           .from(lobbyCategoryGame)
+          .innerJoin(game, eq(lobbyCategoryGame.gameId, game.id))
+          .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+          .where(playableGameCondition())
           .groupBy(lobbyCategoryGame.categoryId),
       ]);
 
@@ -75,10 +93,17 @@ export class LobbyService {
 
     const gameIds = links.map((l) => l.gameId);
 
-    const games =
-      gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
+    const rows =
+      gameIds.length > 0
+        ? await db
+            .select({ game, provider: gameProvider })
+            .from(game)
+            .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+            .where(and(inArray(game.id, gameIds), playableGameCondition()))
+        : [];
+    const categories = await categoriesByGameIds(db, gameIds, true);
 
-    const gameMap = new Map(games.map((g) => [g.id, g]));
+    const gameMap = new Map(rows.map((r) => [r.game.id, r]));
 
     return {
       id: category.id,
@@ -86,8 +111,15 @@ export class LobbyService {
       slug: category.slug,
       games: gameIds
         .map((id) => gameMap.get(id))
-        .filter((g): g is typeof game.$inferSelect => g !== undefined)
-        .map(toGameSummary),
+        .filter(
+          (
+            g,
+          ): g is {
+            game: typeof game.$inferSelect;
+            provider: typeof gameProvider.$inferSelect;
+          } => g !== undefined,
+        )
+        .map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] })),
     };
   }
 
@@ -103,31 +135,52 @@ export class LobbyService {
 
       const gameIds = [...new Set(slots.map((s) => s.gameId))];
       const games =
-        gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
+        gameIds.length > 0
+          ? await db
+              .select({ game })
+              .from(game)
+              .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+              .where(and(inArray(game.id, gameIds), playableGameCondition()))
+          : [];
 
-      const gameMap = new Map(games.map((g) => [g.id, g]));
+      const gameMap = new Map(games.map(({ game: row }) => [row.id, row]));
 
-      return slots.map((slot) => {
+      return slots.flatMap((slot) => {
         const g = gameMap.get(slot.gameId);
-        return {
-          id: slot.id,
-          title: slot.title,
-          gameId: slot.gameId,
-          gameName: g?.name ?? '',
-          thumbnailUrl: g?.thumbnailUrl ?? null,
-          placement: slot.placement,
-          sortOrder: slot.sortOrder,
-        };
+        return g
+          ? [
+              {
+                id: slot.id,
+                title: slot.title,
+                gameId: slot.gameId,
+                gameName: g.name,
+                thumbnailUrl: g.thumbnailUrl,
+                placement: slot.placement,
+                sortOrder: slot.sortOrder,
+              },
+            ]
+          : [];
       });
     });
   }
 
   async search(query: string) {
     const db = this.drizzle.db;
-    const whereClause = and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
+    const whereClause = and(ilike(game.name, likeContains(query)), playableGameCondition());
 
-    const games = await db.select().from(game).where(whereClause).orderBy(asc(game.name)).limit(50);
+    const rows = await db
+      .select({ game, provider: gameProvider })
+      .from(game)
+      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+      .where(whereClause)
+      .orderBy(asc(game.name))
+      .limit(50);
+    const categories = await categoriesByGameIds(
+      db,
+      rows.map((r) => r.game.id),
+      true,
+    );
 
-    return games.map(toGameSummary);
+    return rows.map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] }));
   }
 }

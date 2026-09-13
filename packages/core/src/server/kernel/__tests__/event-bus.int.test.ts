@@ -19,11 +19,15 @@ const brokers: RedisStreamsBroker[] = [];
 
 // Each test gets a unique service name (= consumer group) so the fixed domain topics
 // don't collide across tests sharing the per-worker Redis.
-function realBus(logger: Logger): { bus: ReturnType<typeof createEventBus>; serviceName: string } {
+function realBus(logger: Logger): {
+  bus: ReturnType<typeof createEventBus>;
+  serviceName: string;
+  broker: RedisStreamsBroker;
+} {
   const serviceName = `evt-${randomUUID()}`;
   const broker = new RedisStreamsBroker(redis.client, { serviceName });
   brokers.push(broker);
-  return { bus: createEventBus(broker, logger), serviceName };
+  return { bus: createEventBus(broker, logger), serviceName, broker };
 }
 
 const streamOf = (topic: string): string => `oss:evt:${topic}`;
@@ -175,6 +179,37 @@ describe('createEventBus over Redis Streams', () => {
       expect.objectContaining({ event: 'identity.user.registered' }),
       'event payload failed validation',
     );
+  });
+
+  it('applies schema defaults to a legacy backlog payload before the handler runs', async () => {
+    const { bus, serviceName, broker } = realBus(fakeLogger());
+    const received: Array<Record<string, unknown>> = [];
+    const envelopePayloads: unknown[] = [];
+    bus.on('cms.banner.image.deleted', (payload, envelope) => {
+      received.push(payload as Record<string, unknown>);
+      envelopePayloads.push(envelope?.payload);
+    });
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('cms.banner.image.deleted'),
+      group: serviceName,
+    });
+
+    const legacyPayload = {
+      bannerImageId: randomUUID(),
+      bannerConfigurationId: randomUUID(),
+      actorId: randomUUID(),
+    };
+    await broker.publish({
+      eventId: randomUUID(),
+      topic: 'cms.banner.image.deleted',
+      payload: legacyPayload,
+      occurredAt: new Date().toISOString(),
+      schemaVersion: 1,
+    });
+
+    await vi.waitFor(() => expect(received).toHaveLength(1), DELIVERY);
+    expect(received[0]).toEqual({ ...legacyPayload, droppedImageUrls: [] });
+    expect(envelopePayloads[0]).toEqual({ ...legacyPayload, droppedImageUrls: [] });
   });
 
   it('logs a rejected async publish instead of an unhandled rejection', async () => {

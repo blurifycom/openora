@@ -1,16 +1,21 @@
 import {
   type EventBus,
   type DrizzleDb,
+  type DrizzleTx,
   createDomainError,
   makeNotFoundError,
   makeConflictError,
   DrizzleService,
   findOneOrThrow,
+  likeContains,
+  pageToOffset,
   serializeRow,
+  uniqueConstraintName,
 } from '@openora/core/server';
-import { eq, and, asc, desc, sql } from 'drizzle-orm';
+import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   RgLimitExceededError,
+  type ClientMeta,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -20,11 +25,45 @@ import {
   type IdentityReader,
   type User,
 } from '@openora/core/contracts';
-import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameProviderAggregatorMapping,
+  gameRound,
+  type Game,
+  type GameRound,
+} from '../schema/index.js';
+import { GameProviderNotFoundError } from './game-provider.service.js';
+import { GameCategoryNotFoundError } from './game-category.service.js';
+import {
+  categoriesByGameIds,
+  isGamePlayable,
+  playableGameCondition,
+  toCategorySummary,
+} from '../../shared/game-catalog.js';
+import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
 export const GameRoundNotFoundError = makeNotFoundError('GameRound');
+
+export const GameSlugTakenError = makeConflictError(
+  'GameSlugTakenError',
+  'A game with this slug already exists',
+);
+
+export const GameAggregatorNotMappedError = createDomainError<
+  [providerId: string, aggregator: string]
+>(
+  'GameAggregatorNotMappedError',
+  (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
+);
+
+type Actor = {
+  actorId: User['id'];
+} & ClientMeta;
 
 export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
@@ -62,16 +101,47 @@ export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundI
     `externalRoundId ${externalRoundId} is already tagged to a different game/user`,
 );
 
-function toGame(record: typeof game.$inferSelect) {
+function toGame(row: {
+  game: typeof game.$inferSelect;
+  provider: typeof gameProvider.$inferSelect;
+  categories: (typeof gameCategory.$inferSelect)[];
+}) {
   return {
-    id: record.id,
-    name: record.name,
-    provider: record.provider,
-    category: record.category,
-    gameType: record.gameType,
-    thumbnailUrl: record.thumbnailUrl,
-    isActive: record.isActive,
-    metadata: record.metadata,
+    id: row.game.id,
+    name: row.game.name,
+    slug: row.game.slug,
+    provider: {
+      id: row.provider.id,
+      slug: row.provider.slug,
+      name: row.provider.name,
+      logoUrl: row.provider.logoUrl,
+    },
+    aggregator: row.game.aggregator,
+    categories: row.categories.map(toCategorySummary),
+    gameType: row.game.gameType,
+    thumbnailUrl: row.game.thumbnailUrl,
+    isActive: row.game.isActive,
+    metadata: row.game.metadata,
+  };
+}
+
+// Reads the links through the caller's transaction so the snapshot matches the
+// locked row; ordered so identical link sets always serialize identically.
+async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
+  const links = await tx
+    .select({ categoryId: gameCategoryGame.categoryId })
+    .from(gameCategoryGame)
+    .where(eq(gameCategoryGame.gameId, row.id))
+    .orderBy(asc(gameCategoryGame.categoryId));
+  return {
+    slug: row.slug,
+    name: row.name,
+    providerId: row.providerId,
+    aggregator: row.aggregator,
+    thumbnailUrl: row.thumbnailUrl,
+    isActive: row.isActive,
+    categoryIds: links.map((link) => link.categoryId),
+    metadata: row.metadata ?? null,
   };
 }
 
@@ -91,21 +161,106 @@ export class GamingService {
     private readonly gameGeoCheck?: GameGeoCheckPort,
   ) {}
 
-  async listGames() {
-    const games = await this.drizzle.db
-      .select()
-      .from(game)
-      .where(eq(game.isActive, true))
-      .orderBy(asc(game.name));
-    return games.map(toGame);
+  async listGamesPublic(input: ListGamesInput) {
+    return this.listGames({ ...input, playableOnly: true, sort: 'public' });
   }
 
-  async getGame(id: string) {
-    const record = findOneOrThrow(
-      await this.drizzle.db.select().from(game).where(eq(game.id, id)),
+  async listGamesAdmin(input: ListAdminGamesInput) {
+    return this.listGames({ ...input, playableOnly: false, sort: 'admin' });
+  }
+
+  private async listGames({
+    page,
+    limit,
+    q,
+    providerId,
+    categoryId,
+    isActive,
+    playableOnly,
+    sort,
+  }: ListGamesInput & {
+    isActive?: boolean;
+    playableOnly: boolean;
+    sort: 'admin' | 'public';
+  }) {
+    const where = and(
+      q
+        ? or(
+            ilike(game.name, likeContains(q)),
+            ilike(game.slug, likeContains(q)),
+            ilike(gameProvider.name, likeContains(q)),
+          )
+        : undefined,
+      providerId ? eq(game.providerId, providerId) : undefined,
+      playableOnly
+        ? playableGameCondition()
+        : isActive === undefined
+          ? undefined
+          : eq(game.isActive, isActive),
+      categoryId
+        ? exists(
+            this.drizzle.db
+              .select({ gameId: gameCategoryGame.gameId })
+              .from(gameCategoryGame)
+              .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
+              .where(
+                and(
+                  eq(gameCategoryGame.gameId, game.id),
+                  eq(gameCategoryGame.categoryId, categoryId),
+                  playableOnly ? eq(gameCategory.isActive, true) : undefined,
+                ),
+              ),
+          )
+        : undefined,
+    );
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({ game, provider: gameProvider })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(where)
+        .orderBy(
+          ...(sort === 'admin'
+            ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
+            : [asc(game.name)]),
+        )
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db
+        .select({ n: count() })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(where),
+    ]);
+    const categories = await categoriesByGameIds(
+      this.drizzle.db,
+      rows.map((r) => r.game.id),
+      playableOnly,
+    );
+    return {
+      items: rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] })),
+      total: Number(n),
+      page,
+      limit,
+    };
+  }
+
+  async getGame(id: string, opts: { activeOnly?: boolean } = {}) {
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .select({ game, provider: gameProvider })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(eq(game.id, id)),
       new GameNotFoundError(id),
     );
-    return toGame(record);
+    // The public detail route passes activeOnly: internal callers (updateGame's
+    // return value) keep the unfiltered row so an admin still sees what they wrote.
+    if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
+      throw new GameNotFoundError(id);
+    }
+    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly);
+    return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
   }
 
   async startRound(
@@ -115,10 +270,7 @@ export class GamingService {
     betAmount: string,
     ipAddress: string | null = null,
   ) {
-    const selectedGame = await this.getGame(gameId);
-    if (!selectedGame.isActive) {
-      throw new GameNotFoundError(gameId);
-    }
+    await this.getGame(gameId, { activeOnly: true });
 
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
@@ -317,5 +469,116 @@ export class GamingService {
       .orderBy(desc(gameRound.startedAt))
       .limit(50);
     return rounds.map(toGameRound);
+  }
+
+  async updateGame({
+    id,
+    categoryIds,
+    actorId,
+    ip,
+    userAgent,
+    ...patchInput
+  }: UpdateGameInput & Actor) {
+    const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
+    const patch: Partial<typeof game.$inferInsert> = { ...patchInput };
+    const hasScalarChanges = Object.values(patch).some((value) => value !== undefined);
+    if (!hasScalarChanges && uniqueCategoryIds === undefined) {
+      return this.getGame(id);
+    }
+    const transition = await this.drizzle.db
+      .transaction(async (tx) => {
+        // The row lock serializes concurrent PATCHes, so the audited `before` is the
+        // state this write replaced and `after` is what it persisted (docs/standards/audit.md).
+        const beforeRow = findOneOrThrow(
+          await tx.select().from(game).where(eq(game.id, id)).limit(1).for('update'),
+          new GameNotFoundError(id),
+        );
+        const before = await gameAuditSnapshot(tx, beforeRow);
+        if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
+          const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
+          const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
+          // FOR SHARE conflicts with updateProvider's FOR UPDATE, so the mapping checked
+          // below cannot be removed until this game has committed against it.
+          findOneOrThrow(
+            await tx
+              .select({ id: gameProvider.id })
+              .from(gameProvider)
+              .where(eq(gameProvider.id, nextProviderId))
+              .limit(1)
+              .for('share'),
+            new GameProviderNotFoundError(nextProviderId),
+          );
+          const [mapping] = await tx
+            .select({ id: gameProviderAggregatorMapping.id })
+            .from(gameProviderAggregatorMapping)
+            .where(
+              and(
+                eq(gameProviderAggregatorMapping.providerId, nextProviderId),
+                eq(gameProviderAggregatorMapping.aggregator, nextAggregator),
+              ),
+            )
+            .limit(1);
+          if (!mapping) {
+            throw new GameAggregatorNotMappedError(nextProviderId, nextAggregator);
+          }
+        }
+        if (patchInput.slug !== undefined) {
+          const [clash] = await tx
+            .select({ id: game.id })
+            .from(game)
+            .where(and(eq(game.slug, patchInput.slug), ne(game.id, id)))
+            .limit(1);
+          if (clash) {
+            throw new GameSlugTakenError();
+          }
+        }
+        if (uniqueCategoryIds !== undefined) {
+          const rows =
+            uniqueCategoryIds.length > 0
+              ? await tx
+                  .select({ id: gameCategory.id })
+                  .from(gameCategory)
+                  .where(inArray(gameCategory.id, uniqueCategoryIds))
+              : [];
+          const found = new Set(rows.map((r) => r.id));
+          const missing = uniqueCategoryIds.find((categoryId) => !found.has(categoryId));
+          if (missing) {
+            throw new GameCategoryNotFoundError(missing);
+          }
+        }
+        if (hasScalarChanges) {
+          await tx.update(game).set(patch).where(eq(game.id, id));
+        }
+        if (uniqueCategoryIds !== undefined) {
+          await tx.delete(gameCategoryGame).where(eq(gameCategoryGame.gameId, id));
+          if (uniqueCategoryIds.length > 0) {
+            await tx
+              .insert(gameCategoryGame)
+              .values(uniqueCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
+          }
+        }
+        const afterRow = findOneOrThrow(
+          await tx.select().from(game).where(eq(game.id, id)).limit(1),
+          new GameNotFoundError(id),
+        );
+        return { before, after: await gameAuditSnapshot(tx, afterRow) };
+      })
+      .catch((error: unknown) => {
+        // The transaction also writes category links: only a slug collision maps
+        // to GameSlugTakenError, a link race must not masquerade as one.
+        if (uniqueConstraintName(error) === 'game_slug_key') {
+          throw new GameSlugTakenError();
+        }
+        throw error;
+      });
+    this.events.emit('gaming.game.updated', {
+      gameId: id,
+      actorId,
+      before: transition.before,
+      after: transition.after,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    return this.getGame(id);
   }
 }

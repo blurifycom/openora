@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
-import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import { gameGeoRule } from '@openora/core/compliance/schema';
 import {
   asAdmin,
@@ -21,6 +21,7 @@ let app: TestApp;
 let admin: TestClient;
 let player: TestClient;
 let gameId: string;
+let providerId: string;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
@@ -71,10 +72,25 @@ beforeAll(async () => {
   });
   player = registered.client;
 
+  const [createdProvider] = await app.container
+    .get(DRIZZLE)
+    .db.insert(gameProvider)
+    .values({ slug: `game-geo-e2e-${randomUUID()}`, name: 'Game Geo E2E Studio', isActive: true })
+    .returning();
+  if (!createdProvider) {
+    throw new Error('failed to seed a provider for the per-game geo E2E flow');
+  }
+  providerId = createdProvider.id;
   const [createdGame] = await app.container
     .get(DRIZZLE)
     .db.insert(game)
-    .values({ name: 'Game Geo E2E Game', provider: 'mock', category: 'slots' })
+    .values({
+      name: 'Game Geo E2E Game',
+      slug: `game-geo-e2e-${randomUUID()}`,
+      providerId,
+      aggregator: 'direct',
+      isActive: true,
+    })
     .returning();
   if (!createdGame) {
     throw new Error('failed to seed a game for the per-game geo E2E flow');
@@ -88,6 +104,9 @@ afterAll(async () => {
     await app.container.get(DRIZZLE).db.delete(gameRound).where(eq(gameRound.gameId, gameId));
     await app.container.get(DRIZZLE).db.delete(gameGeoRule).where(eq(gameGeoRule.gameId, gameId));
     await app.container.get(DRIZZLE).db.delete(game).where(eq(game.id, gameId));
+  }
+  if (app && providerId) {
+    await app.container.get(DRIZZLE).db.delete(gameProvider).where(eq(gameProvider.id, providerId));
   }
   await app?.close();
   await db?.dispose();

@@ -1,10 +1,10 @@
 import {
-  ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   EMAIL_SENDER,
   EMAIL_TEMPLATE_RENDERER,
   JOB_QUEUE,
   MAIL_DISPATCH,
+  MAIL_RECIPIENT_DIRECTORY,
 } from '@openora/core/contracts';
 import { createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -31,7 +31,7 @@ export default {
       (svcRef ??= new MailService({
         sender: c.get(EMAIL_SENDER),
         renderer: c.get(EMAIL_TEMPLATE_RENDERER),
-        directory: c.get(ADMIN_USER_DIRECTORY),
+        directory: c.get(MAIL_RECIPIENT_DIRECTORY),
         jobQueue: c.get(JOB_QUEUE),
         audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
         encryptionSecret,

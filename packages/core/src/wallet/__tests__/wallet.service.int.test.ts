@@ -1755,10 +1755,16 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
 });
 
 describe('WalletService.creditDepositByAddress (real PG)', () => {
-  async function seedAddress(userId: string, address: string, currency = 'BTC', network?: string) {
+  async function seedAddress(
+    userId: string,
+    address: string,
+    currency = 'BTC',
+    network?: string,
+    providerName = 'custody',
+  ) {
     await db.drizzle.db
       .insert(walletDepositAddress)
-      .values({ userId, currency, address, network, providerName: 'custody' });
+      .values({ userId, currency, address, network, providerName });
   }
 
   it('resolves the address, credits the wallet, and emits deposit.completed', async () => {
@@ -1806,6 +1812,194 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
       providerName: 'default',
       status: 'open',
     });
+  });
+
+  function gateDeciding(checkDeposit: NonNullable<WalletServiceDeps['rgLimits']>['checkDeposit']) {
+    return mock<NonNullable<WalletServiceDeps['rgLimits']>>({ checkDeposit: vi.fn(checkDeposit) });
+  }
+
+  async function findingsFor(externalId: string) {
+    return db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+  }
+
+  it('credits a deposit over the RG limit and files a finding for the excess', async () => {
+    const rgLimits = gateDeciding(async () => ({
+      allowed: false,
+      limitType: 'deposit',
+      period: 'daily',
+      limit: '1',
+      used: '0.5',
+    }));
+    const { svc, events } = makeService({ rgLimits });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qoverlimit');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qoverlimit',
+      amount: '2',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xoverlimit',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(2);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
+    // '0' as the attempted move: the credit is already committed and counted in the
+    // player's window, so the gate is asked whether that window now passes the limit.
+    expect(rgLimits.checkDeposit).toHaveBeenCalledWith(expect.anything(), w.userId, '0', 'BTC');
+    const findings = await findingsFor(externalId);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'rg_limit_breach', status: 'open' });
+    expect(findings[0]?.detail).toContain('daily deposit limit of 1');
+  });
+
+  it('files a second finding for a second over-limit deposit under its own externalId', async () => {
+    const { svc } = makeService({
+      rgLimits: gateDeciding(async () => ({
+        allowed: false,
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '1',
+        used: '2',
+      })),
+    });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qoverlimittwice');
+    const first = randomUUID();
+    const second = randomUUID();
+
+    for (const externalId of [first, second]) {
+      await svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: 'bc1qoverlimittwice',
+        amount: '2',
+        currency: 'BTC',
+        externalId,
+        txHash: `0x${externalId}`,
+      });
+    }
+
+    // The dedup key makes a replayed webhook safe; it must not also swallow a genuinely
+    // new breach under a different vendor id.
+    expect(await findingsFor(first)).toHaveLength(1);
+    expect(await findingsFor(second)).toHaveLength(1);
+  });
+
+  it('files a finding per provider when two vendors reuse the same externalId', async () => {
+    const { svc } = makeService({
+      rgLimits: gateDeciding(async () => ({
+        allowed: false,
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '1',
+        used: '2',
+      })),
+    });
+    // A player holds one deposit address per currency, so two vendors means two players.
+    const one = await seedWallet({ currency: 'BTC', balance: '0' });
+    const two = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(one.userId, 'bc1qvendorone', 'BTC', undefined, 'custody');
+    await seedAddress(two.userId, 'bc1qvendortwo', 'BTC', undefined, 'other-custody');
+    // An externalId is only unique WITHIN a vendor, so a key of (kind, externalId) alone
+    // would treat the second vendor's breach as a duplicate and silently drop it.
+    const shared = randomUUID();
+
+    for (const address of ['bc1qvendorone', 'bc1qvendortwo']) {
+      await svc.creditDepositByAddress({
+        kind: 'deposit',
+        address,
+        amount: '2',
+        currency: 'BTC',
+        externalId: shared,
+        txHash: `0x${address}`,
+      });
+    }
+
+    expect(await balanceOf(one.userId)).toBe(2);
+    expect(await balanceOf(two.userId)).toBe(2);
+    const findings = await findingsFor(shared);
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => f.providerName).sort()).toEqual(['custody', 'other-custody']);
+  });
+
+  it('files the finding on a replayed webhook whose first attempt never recorded one', async () => {
+    const { svc } = makeService({
+      rgLimits: gateDeciding(async () => ({
+        allowed: false,
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '1',
+        used: '3',
+      })),
+    });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qreplayfinding');
+    const externalId = randomUUID();
+    const event = {
+      kind: 'deposit',
+      address: 'bc1qreplayfinding',
+      amount: '3',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xreplayfinding',
+    } as const;
+
+    await svc.creditDepositByAddress(event);
+    await db.drizzle.db
+      .delete(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+
+    await svc.creditDepositByAddress(event);
+
+    expect(await balanceOf(w.userId)).toBe(3);
+    expect(await findingsFor(externalId)).toHaveLength(1);
+  });
+
+  it('files no finding for a deposit inside the RG limit', async () => {
+    const { svc } = makeService({ rgLimits: gateDeciding(async () => ({ allowed: true })) });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qinlimit');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qinlimit',
+      amount: '0.1',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xinlimit',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(0.1);
+    expect(await findingsFor(externalId)).toHaveLength(0);
+  });
+
+  it('still credits a deposit already on chain when the RG check itself fails', async () => {
+    const { svc } = makeService({
+      rgLimits: gateDeciding(async () => {
+        throw new Error('rate reader down');
+      }),
+    });
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qgatedown');
+    const externalId = randomUUID();
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qgatedown',
+      amount: '0.3',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xgatedown',
+    });
+
+    expect(await balanceOf(w.userId)).toBe(0.3);
+    expect(await findingsFor(externalId)).toHaveLength(0);
   });
 
   it('is idempotent on a replayed externalId', async () => {
