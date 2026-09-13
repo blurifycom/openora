@@ -80,7 +80,7 @@ describe('GameCategoryService (real PG)', () => {
     const { svc } = makeService();
 
     await expect(
-      svc.createCategory({ slug: 'slots', name: 'Slots 2', ...NO_CLIENT_META }),
+      svc.createCategory({ slug: 'slots', name: 'Slots 2', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameCategorySlugTakenError);
   });
 
@@ -100,13 +100,13 @@ describe('GameCategoryService (real PG)', () => {
     expect(updated).toMatchObject({ slug: 'slots', name: 'Slot Machines', sortOrder: 3 });
     expect(emittedTopics(events)).toContain('gaming.category.updated');
     await expect(
-      svc.updateCategory({ id: created.id, slug: 'live', ...NO_CLIENT_META }),
+      svc.updateCategory({ id: created.id, slug: 'live', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameCategorySlugTakenError);
     await expect(
       svc.updateCategory({
         id: '00000000-0000-4000-8000-000000000000',
         name: 'X',
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
   });
@@ -122,21 +122,21 @@ describe('GameCategoryService (real PG)', () => {
     const replaced = await svc.updateCategory({
       id: created.id,
       translations: { DE: { name: 'Spielautomaten' } },
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(replaced.translations).toEqual({ DE: { name: 'Spielautomaten' } });
 
     const renamed = await svc.updateCategory({
       id: created.id,
       name: 'Slot Machines',
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(renamed.translations).toEqual({ DE: { name: 'Spielautomaten' } });
 
     const cleared = await svc.updateCategory({
       id: created.id,
       translations: {},
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(cleared.translations).toEqual({});
 

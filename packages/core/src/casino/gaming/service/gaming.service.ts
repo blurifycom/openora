@@ -1,6 +1,7 @@
 import {
   type EventBus,
   type DrizzleDb,
+  type DrizzleTx,
   createDomainError,
   makeNotFoundError,
   makeConflictError,
@@ -59,7 +60,7 @@ export const GameAggregatorNotMappedError = createDomainError<
 );
 
 type Actor = {
-  actorId?: User['id'];
+  actorId: User['id'];
 } & ClientMeta;
 
 export const RgRestrictedError = makeConflictError(
@@ -104,6 +105,26 @@ function toGame(row: {
     thumbnailUrl: row.game.thumbnailUrl,
     isActive: row.game.isActive,
     metadata: row.game.metadata,
+  };
+}
+
+// Reads the links through the caller's transaction so the snapshot matches the
+// locked row; ordered so identical link sets always serialize identically.
+async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
+  const links = await tx
+    .select({ categoryId: gameCategoryGame.categoryId })
+    .from(gameCategoryGame)
+    .where(eq(gameCategoryGame.gameId, row.id))
+    .orderBy(asc(gameCategoryGame.categoryId));
+  return {
+    slug: row.slug,
+    name: row.name,
+    providerId: row.providerId,
+    aggregator: row.aggregator,
+    thumbnailUrl: row.thumbnailUrl,
+    isActive: row.isActive,
+    categoryIds: links.map((link) => link.categoryId),
+    metadata: row.metadata ?? null,
   };
 }
 
@@ -432,72 +453,67 @@ export class GamingService {
     if (!hasScalarChanges && uniqueCategoryIds === undefined) {
       return this.getGame(id);
     }
-    const [beforeRow] = await this.drizzle.db.select().from(game).where(eq(game.id, id)).limit(1);
-    if (!beforeRow) {
-      throw new GameNotFoundError(id);
-    }
-    const beforeLinks = await this.drizzle.db
-      .select({ categoryId: gameCategoryGame.categoryId })
-      .from(gameCategoryGame)
-      .where(eq(gameCategoryGame.gameId, id));
-    const beforeCategoryIds = beforeLinks.map((r) => r.categoryId);
-    if (patchInput.providerId !== undefined) {
-      findOneOrThrow(
-        await this.drizzle.db
-          .select({ id: gameProvider.id })
-          .from(gameProvider)
-          .where(eq(gameProvider.id, patchInput.providerId))
-          .limit(1),
-        new GameProviderNotFoundError(patchInput.providerId),
-      );
-    }
-    if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
-      const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
-      const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
-      const [mapping] = await this.drizzle.db
-        .select({ id: gameProviderAggregatorMapping.id })
-        .from(gameProviderAggregatorMapping)
-        .where(
-          and(
-            eq(gameProviderAggregatorMapping.providerId, nextProviderId),
-            eq(gameProviderAggregatorMapping.aggregator, nextAggregator),
-          ),
-        )
-        .limit(1);
-      if (!mapping) {
-        throw new GameAggregatorNotMappedError(nextProviderId, nextAggregator);
-      }
-    }
-    if (patchInput.slug !== undefined) {
-      const [clash] = await this.drizzle.db
-        .select({ id: game.id })
-        .from(game)
-        .where(and(eq(game.slug, patchInput.slug), ne(game.id, id)))
-        .limit(1);
-      if (clash) {
-        throw new GameSlugTakenError();
-      }
-    }
-    if (uniqueCategoryIds !== undefined) {
-      const rows =
-        uniqueCategoryIds.length > 0
-          ? await this.drizzle.db
-              .select()
-              .from(gameCategory)
-              .where(inArray(gameCategory.id, uniqueCategoryIds))
-          : [];
-      const found = new Set(rows.map((r) => r.id));
-      const missing = uniqueCategoryIds.find((categoryId) => !found.has(categoryId));
-      if (missing) {
-        throw new GameCategoryNotFoundError(missing);
-      }
-    }
-    try {
-      await this.drizzle.db.transaction(async (tx) => {
-        findOneOrThrow(
-          await tx.select({ id: game.id }).from(game).where(eq(game.id, id)).limit(1),
+    const transition = await this.drizzle.db
+      .transaction(async (tx) => {
+        // The row lock serializes concurrent PATCHes, so the audited `before` is the
+        // state this write replaced and `after` is what it persisted (docs/standards/audit.md).
+        const beforeRow = findOneOrThrow(
+          await tx.select().from(game).where(eq(game.id, id)).limit(1).for('update'),
           new GameNotFoundError(id),
         );
+        const before = await gameAuditSnapshot(tx, beforeRow);
+        if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
+          const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
+          const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
+          // FOR SHARE conflicts with updateProvider's FOR UPDATE, so the mapping checked
+          // below cannot be removed until this game has committed against it.
+          findOneOrThrow(
+            await tx
+              .select({ id: gameProvider.id })
+              .from(gameProvider)
+              .where(eq(gameProvider.id, nextProviderId))
+              .limit(1)
+              .for('share'),
+            new GameProviderNotFoundError(nextProviderId),
+          );
+          const [mapping] = await tx
+            .select({ id: gameProviderAggregatorMapping.id })
+            .from(gameProviderAggregatorMapping)
+            .where(
+              and(
+                eq(gameProviderAggregatorMapping.providerId, nextProviderId),
+                eq(gameProviderAggregatorMapping.aggregator, nextAggregator),
+              ),
+            )
+            .limit(1);
+          if (!mapping) {
+            throw new GameAggregatorNotMappedError(nextProviderId, nextAggregator);
+          }
+        }
+        if (patchInput.slug !== undefined) {
+          const [clash] = await tx
+            .select({ id: game.id })
+            .from(game)
+            .where(and(eq(game.slug, patchInput.slug), ne(game.id, id)))
+            .limit(1);
+          if (clash) {
+            throw new GameSlugTakenError();
+          }
+        }
+        if (uniqueCategoryIds !== undefined) {
+          const rows =
+            uniqueCategoryIds.length > 0
+              ? await tx
+                  .select({ id: gameCategory.id })
+                  .from(gameCategory)
+                  .where(inArray(gameCategory.id, uniqueCategoryIds))
+              : [];
+          const found = new Set(rows.map((r) => r.id));
+          const missing = uniqueCategoryIds.find((categoryId) => !found.has(categoryId));
+          if (missing) {
+            throw new GameCategoryNotFoundError(missing);
+          }
+        }
         if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
@@ -509,43 +525,25 @@ export class GamingService {
               .values(uniqueCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
           }
         }
+        const afterRow = findOneOrThrow(
+          await tx.select().from(game).where(eq(game.id, id)).limit(1),
+          new GameNotFoundError(id),
+        );
+        return { before, after: await gameAuditSnapshot(tx, afterRow) };
+      })
+      .catch((error: unknown) => {
+        // The transaction also writes category links: only a slug collision maps
+        // to GameSlugTakenError, a link race must not masquerade as one.
+        if (uniqueConstraintName(error) === 'game_slug_key') {
+          throw new GameSlugTakenError();
+        }
+        throw error;
       });
-    } catch (error) {
-      // The transaction also writes category links: only a slug collision maps
-      // to GameSlugTakenError, a link race must not masquerade as one.
-      if (uniqueConstraintName(error) === 'game_slug_key') {
-        throw new GameSlugTakenError();
-      }
-      throw error;
-    }
-    const [afterRow] = await this.drizzle.db.select().from(game).where(eq(game.id, id)).limit(1);
-    if (!afterRow) {
-      throw new GameNotFoundError(id);
-    }
-    const afterCategoryIds = uniqueCategoryIds ?? beforeCategoryIds;
     this.events.emit('gaming.game.updated', {
       gameId: id,
       actorId,
-      before: {
-        slug: beforeRow.slug,
-        name: beforeRow.name,
-        providerId: beforeRow.providerId,
-        aggregator: beforeRow.aggregator,
-        thumbnailUrl: beforeRow.thumbnailUrl,
-        isActive: beforeRow.isActive,
-        categoryIds: beforeCategoryIds,
-        metadata: beforeRow.metadata ?? null,
-      },
-      after: {
-        slug: afterRow.slug,
-        name: afterRow.name,
-        providerId: afterRow.providerId,
-        aggregator: afterRow.aggregator,
-        thumbnailUrl: afterRow.thumbnailUrl,
-        isActive: afterRow.isActive,
-        categoryIds: afterCategoryIds,
-        metadata: afterRow.metadata ?? null,
-      },
+      before: transition.before,
+      after: transition.after,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });

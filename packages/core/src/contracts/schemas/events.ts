@@ -374,11 +374,11 @@ export const domainEventSchemas = {
     logoUrl: z.string().nullable(),
     metadata: z.unknown().nullable(),
     isActive: z.boolean(),
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
   }),
   'gaming.provider.updated': authContextBase.extend({
     providerId: UuidSchema,
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
     before: z.object({
       slug: z.string(),
       name: z.string(),
@@ -404,11 +404,11 @@ export const domainEventSchemas = {
     icon: z.string().nullable(),
     sortOrder: z.number().int(),
     isActive: z.boolean(),
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
   }),
   'gaming.category.updated': authContextBase.extend({
     categoryId: UuidSchema,
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
     before: z.object({
       slug: z.string(),
       name: z.string(),
@@ -428,7 +428,7 @@ export const domainEventSchemas = {
   }),
   'gaming.game.updated': authContextBase.extend({
     gameId: UuidSchema,
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
     before: z.object({
       slug: z.string(),
       name: z.string(),

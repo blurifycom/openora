@@ -56,15 +56,15 @@ CREATE INDEX "game_aggregator_idx" ON "game" USING btree ("aggregator");
 --> statement-breakpoint
 -- Backfill (previously standalone 0004): the DDL above added game.slug /
 -- game.provider_id / game.aggregator as nullable and left the legacy
--- game.provider / game.category text columns in place (expand-only, so old
--- releases keep working). The statements below resolve every pre-existing row
--- into the new shape; the trailing ALTERs enforce NOT NULL once no NULL
--- remains (see schema/index.ts).
+-- game.provider / game.category text columns in place. The statements below
+-- resolve every pre-existing row into the new shape, install the legacy-insert
+-- triggers so the previous release can keep writing during a rolling deploy,
+-- and only then enforce NOT NULL (see schema/index.ts).
 --
 -- Truncating after the trim would let a name longer than max_length end the
 -- slug on a '-', which CatalogSlugSchema rejects. Returns NULL when the source
 -- has no alphanumerics; every caller supplies its own fallback.
-CREATE OR REPLACE FUNCTION pg_temp.openora_slugify(source text, max_length int)
+CREATE OR REPLACE FUNCTION "game_catalog_slugify"(source text, max_length int)
 RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
 	SELECT NULLIF(
 		regexp_replace(
@@ -77,55 +77,56 @@ $fn$;--> statement-breakpoint
 -- The dedupe suffix is probed rather than taken from a window function:
 -- 'book-of-ra-2' is itself the natural slug of "Book of Ra 2", so a blind
 -- suffix collides with the already-live unique index and aborts the migration.
+-- Each probe is its own statement, so it sees the rows the caller inserted before it.
+CREATE OR REPLACE FUNCTION "game_catalog_unique_slug"(target regclass, source text, fallback text)
+RETURNS text LANGUAGE plpgsql AS $fn$
+DECLARE
+	base text := COALESCE("game_catalog_slugify"(source, 60), fallback);
+	candidate text := base;
+	attempt int := 1;
+	taken boolean;
+BEGIN
+	LOOP
+		EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s WHERE "slug" = $1)', target)
+			INTO taken USING candidate;
+		EXIT WHEN NOT taken;
+		attempt := attempt + 1;
+		candidate := "game_catalog_slugify"(base, greatest(1, 63 - length(attempt::text)))
+			|| '-' || attempt;
+	END LOOP;
+	RETURN candidate;
+END
+$fn$;--> statement-breakpoint
 DO $do$
 DECLARE
 	source record;
-	base text;
-	candidate text;
-	attempt int;
 BEGIN
 	FOR source IN
 		SELECT DISTINCT COALESCE("provider", 'Unknown') AS "name" FROM "game" ORDER BY 1
 	LOOP
-		base := COALESCE(
-			pg_temp.openora_slugify(source."name", 60),
-			'provider-' || left(md5(source."name"), 8)
-		);
-		candidate := base;
-		attempt := 1;
-		WHILE EXISTS (SELECT 1 FROM "game_provider" WHERE "slug" = candidate) LOOP
-			attempt := attempt + 1;
-			candidate := pg_temp.openora_slugify(base, greatest(1, 63 - length(attempt::text)))
-				|| '-' || attempt;
-		END LOOP;
 		INSERT INTO "game_provider" ("slug", "name", "is_active", "updated_at")
-		VALUES (candidate, source."name", true, now());
+		VALUES (
+			"game_catalog_unique_slug"('game_provider', source."name", 'provider-' || left(md5(source."name"), 8)),
+			source."name",
+			true,
+			now()
+		);
 	END LOOP;
 END
 $do$;--> statement-breakpoint
 DO $do$
 DECLARE
 	source record;
-	base text;
-	candidate text;
-	attempt int;
 BEGIN
 	FOR source IN
 		SELECT DISTINCT COALESCE("category", 'Uncategorized') AS "name" FROM "game" ORDER BY 1
 	LOOP
-		base := COALESCE(
-			pg_temp.openora_slugify(source."name", 60),
-			'category-' || left(md5(source."name"), 8)
-		);
-		candidate := base;
-		attempt := 1;
-		WHILE EXISTS (SELECT 1 FROM "game_category" WHERE "slug" = candidate) LOOP
-			attempt := attempt + 1;
-			candidate := pg_temp.openora_slugify(base, greatest(1, 63 - length(attempt::text)))
-				|| '-' || attempt;
-		END LOOP;
 		INSERT INTO "game_category" ("slug", "name", "updated_at")
-		VALUES (candidate, source."name", now());
+		VALUES (
+			"game_catalog_unique_slug"('game_category', source."name", 'category-' || left(md5(source."name"), 8)),
+			source."name",
+			now()
+		);
 	END LOOP;
 END
 $do$;--> statement-breakpoint
@@ -135,27 +136,13 @@ JOIN "game_category" "c" ON "c"."name" = COALESCE("g"."category", 'Uncategorized
 DO $do$
 DECLARE
 	source record;
-	base text;
-	candidate text;
-	attempt int;
 BEGIN
 	FOR source IN
 		SELECT "id", "name", COALESCE("provider", 'Unknown') AS "provider_name"
 		FROM "game" ORDER BY "id"
 	LOOP
-		base := COALESCE(
-			pg_temp.openora_slugify(source."name", 60),
-			'game-' || left(source."id"::text, 8)
-		);
-		candidate := base;
-		attempt := 1;
-		WHILE EXISTS (SELECT 1 FROM "game" WHERE "slug" = candidate) LOOP
-			attempt := attempt + 1;
-			candidate := pg_temp.openora_slugify(base, greatest(1, 63 - length(attempt::text)))
-				|| '-' || attempt;
-		END LOOP;
 		UPDATE "game" SET
-			"slug" = candidate,
+			"slug" = "game_catalog_unique_slug"('game', source."name", 'game-' || left(source."id"::text, 8)),
 			"provider_id" = (SELECT "id" FROM "game_provider" WHERE "name" = source."provider_name"),
 			"aggregator" = 'direct'
 		WHERE "id" = source."id";
@@ -165,7 +152,72 @@ $do$;--> statement-breakpoint
 INSERT INTO "game_provider_aggregator_mapping" ("provider_id", "aggregator", "vendor_id")
 SELECT "p"."id", 'direct', "p"."slug" FROM "game_provider" "p"
 ON CONFLICT DO NOTHING;--> statement-breakpoint
-DROP FUNCTION pg_temp.openora_slugify(text, int);--> statement-breakpoint
+-- Rolling-deploy compatibility: an instance still on the previous release inserts
+-- the legacy shape (name, provider, category) and cannot populate slug, provider_id
+-- or aggregator. BEFORE INSERT derives them exactly as the backfill above does, so
+-- the NOT NULL below holds for old writers too. New code always sets all three, so
+-- the WHEN clause keeps these triggers off its path. Drop both triggers and the
+-- three functions together with the legacy columns in the follow-up contract migration.
+CREATE OR REPLACE FUNCTION "game_legacy_insert"()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+	provider_name text := COALESCE(NEW."provider", 'Unknown');
+BEGIN
+	IF NEW."provider_id" IS NULL THEN
+		SELECT "id" INTO NEW."provider_id" FROM "game_provider"
+		WHERE "name" = provider_name ORDER BY "created_at", "id" LIMIT 1;
+	END IF;
+	IF NEW."provider_id" IS NULL THEN
+		INSERT INTO "game_provider" ("slug", "name", "is_active", "updated_at")
+		VALUES (
+			"game_catalog_unique_slug"('game_provider', provider_name, 'provider-' || left(md5(provider_name), 8)),
+			provider_name,
+			true,
+			now()
+		)
+		RETURNING "id" INTO NEW."provider_id";
+	END IF;
+	NEW."aggregator" := COALESCE(NEW."aggregator", 'direct');
+	NEW."slug" := COALESCE(
+		NEW."slug",
+		"game_catalog_unique_slug"('game', NEW."name", 'game-' || left(NEW."id"::text, 8))
+	);
+	INSERT INTO "game_provider_aggregator_mapping" ("provider_id", "aggregator", "vendor_id")
+	SELECT "id", NEW."aggregator", "slug" FROM "game_provider" WHERE "id" = NEW."provider_id"
+	ON CONFLICT DO NOTHING;
+	RETURN NEW;
+END
+$fn$;--> statement-breakpoint
+CREATE TRIGGER "game_legacy_insert" BEFORE INSERT ON "game"
+FOR EACH ROW WHEN (NEW."slug" IS NULL OR NEW."provider_id" IS NULL OR NEW."aggregator" IS NULL)
+EXECUTE FUNCTION "game_legacy_insert"();--> statement-breakpoint
+-- The category link needs the committed game id for its foreign key, so it runs
+-- AFTER INSERT. Only the previous release writes game.category.
+CREATE OR REPLACE FUNCTION "game_legacy_category_link"()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+	linked_category_id uuid;
+BEGIN
+	SELECT "id" INTO linked_category_id FROM "game_category"
+	WHERE "name" = NEW."category" ORDER BY "created_at", "id" LIMIT 1;
+	IF linked_category_id IS NULL THEN
+		INSERT INTO "game_category" ("slug", "name", "updated_at")
+		VALUES (
+			"game_catalog_unique_slug"('game_category', NEW."category", 'category-' || left(md5(NEW."category"), 8)),
+			NEW."category",
+			now()
+		)
+		RETURNING "id" INTO linked_category_id;
+	END IF;
+	INSERT INTO "game_category_game" ("game_id", "category_id")
+	VALUES (NEW."id", linked_category_id)
+	ON CONFLICT DO NOTHING;
+	RETURN NULL;
+END
+$fn$;--> statement-breakpoint
+CREATE TRIGGER "game_legacy_category_link" AFTER INSERT ON "game"
+FOR EACH ROW WHEN (NEW."category" IS NOT NULL)
+EXECUTE FUNCTION "game_legacy_category_link"();--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "slug" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "provider_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "game" ALTER COLUMN "aggregator" SET NOT NULL;

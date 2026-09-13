@@ -22,8 +22,19 @@ export const GameCategorySlugTakenError = makeConflictError(
 );
 
 type Actor = {
-  actorId?: User['id'];
+  actorId: User['id'];
 } & ClientMeta;
+
+function categorySnapshot(record: typeof gameCategory.$inferSelect) {
+  return {
+    slug: record.slug,
+    name: record.name,
+    translations: record.translations ?? {},
+    icon: record.icon,
+    sortOrder: record.sortOrder,
+    isActive: record.isActive,
+  };
+}
 
 function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
   const dates = serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
@@ -148,12 +159,7 @@ export class GameCategoryService {
     }
     this.events.emit('gaming.category.created', {
       categoryId: record.id,
-      slug: record.slug,
-      name: record.name,
-      translations: record.translations ?? {},
-      icon: record.icon,
-      sortOrder: record.sortOrder,
-      isActive: record.isActive,
+      ...categorySnapshot(record),
       actorId,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
@@ -162,63 +168,57 @@ export class GameCategoryService {
   }
 
   async updateCategory({ id, actorId, ip, userAgent, ...patchInput }: UpdateCategoryInput & Actor) {
-    const existing = findOneOrThrow(
-      await this.drizzle.db.select().from(gameCategory).where(eq(gameCategory.id, id)).limit(1),
-      new GameCategoryNotFoundError(id),
-    );
-    if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
-      const [clash] = await this.drizzle.db
-        .select({ id: gameCategory.id })
-        .from(gameCategory)
-        .where(and(eq(gameCategory.slug, patchInput.slug), ne(gameCategory.id, id)))
-        .limit(1);
-      if (clash) {
-        throw new GameCategorySlugTakenError();
-      }
-    }
     const patch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
     const hasChanges = Object.values(patch).some((value) => value !== undefined);
-    if (!hasChanges) {
-      return toCategoryDetail(existing);
-    }
-    let updated: typeof gameCategory.$inferSelect;
-    try {
-      updated = findOneOrThrow(
-        await this.drizzle.db
-          .update(gameCategory)
-          .set(patch)
-          .where(eq(gameCategory.id, id))
-          .returning(),
-        new GameCategoryNotFoundError(id),
-      );
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
-        throw new GameCategorySlugTakenError();
-      }
-      throw error;
+    const outcome = await this.drizzle.db
+      .transaction(async (tx) => {
+        // The row lock serializes concurrent PATCHes, so the audited `before` is the
+        // state this write replaced, never a snapshot another request already changed.
+        const existing = findOneOrThrow(
+          await tx
+            .select()
+            .from(gameCategory)
+            .where(eq(gameCategory.id, id))
+            .limit(1)
+            .for('update'),
+          new GameCategoryNotFoundError(id),
+        );
+        if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
+          const [clash] = await tx
+            .select({ id: gameCategory.id })
+            .from(gameCategory)
+            .where(and(eq(gameCategory.slug, patchInput.slug), ne(gameCategory.id, id)))
+            .limit(1);
+          if (clash) {
+            throw new GameCategorySlugTakenError();
+          }
+        }
+        if (!hasChanges) {
+          return { changed: false, before: existing, after: existing };
+        }
+        const updated = findOneOrThrow(
+          await tx.update(gameCategory).set(patch).where(eq(gameCategory.id, id)).returning(),
+          new GameCategoryNotFoundError(id),
+        );
+        return { changed: true, before: existing, after: updated };
+      })
+      .catch((error: unknown) => {
+        if (isUniqueConstraintViolation(error)) {
+          throw new GameCategorySlugTakenError();
+        }
+        throw error;
+      });
+    if (!outcome.changed) {
+      return toCategoryDetail(outcome.after);
     }
     this.events.emit('gaming.category.updated', {
-      categoryId: updated.id,
+      categoryId: id,
       actorId,
-      before: {
-        slug: existing.slug,
-        name: existing.name,
-        translations: existing.translations ?? {},
-        icon: existing.icon,
-        sortOrder: existing.sortOrder,
-        isActive: existing.isActive,
-      },
-      after: {
-        slug: updated.slug,
-        name: updated.name,
-        translations: updated.translations ?? {},
-        icon: updated.icon,
-        sortOrder: updated.sortOrder,
-        isActive: updated.isActive,
-      },
+      before: categorySnapshot(outcome.before),
+      after: categorySnapshot(outcome.after),
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    return toCategoryDetail(updated);
+    return toCategoryDetail(outcome.after);
   }
 }

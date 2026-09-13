@@ -1,5 +1,6 @@
 import {
   type EventBus,
+  createDomainError,
   makeNotFoundError,
   makeConflictError,
   DrizzleService,
@@ -9,9 +10,9 @@ import {
   pageToOffset,
   uniqueConstraintName,
 } from '@openora/core/server';
-import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
+import { eq, and, asc, count, ilike, inArray, ne, or } from 'drizzle-orm';
 import type { ClientMeta, GameProviderAggregatorMapping, User } from '@openora/core/contracts';
-import { gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
+import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
 import type { CreateProviderInput, UpdateProviderInput } from '../contract/index.js';
 import { mappingsByProviderIds } from '../../shared/game-catalog.js';
 
@@ -24,9 +25,16 @@ export const GameProviderVendorIdTakenError = makeConflictError(
   'GameProviderVendorIdTakenError',
   'A provider with this vendor ID already exists for the aggregator',
 );
+export const GameProviderMappingInUseError = createDomainError<
+  [providerId: string, aggregator: string]
+>(
+  'GameProviderMappingInUseError',
+  (providerId, aggregator) =>
+    `Provider ${providerId} still has games on aggregator ${aggregator}; move them before removing the mapping`,
+);
 
 type Actor = {
-  actorId?: User['id'];
+  actorId: User['id'];
 } & ClientMeta;
 
 export function toProviderSummary(record: typeof gameProvider.$inferSelect) {
@@ -258,6 +266,25 @@ export class GameProviderService {
             after: snapshot,
             result: toProviderDetail(existing, existingMappings),
           };
+        }
+        if (replaceMappings) {
+          // A game on a dropped aggregator would stay playable yet sit in the unmapped
+          // state updateGame rejects. The provider row lock above conflicts with the
+          // FOR SHARE updateGame takes, so no game can move onto the pair mid-check.
+          const retained = new Set(aggregatorMappings.map((mapping) => mapping.aggregator));
+          const removed = existingMappings
+            .map((mapping) => mapping.aggregator)
+            .filter((aggregator) => !retained.has(aggregator));
+          if (removed.length > 0) {
+            const [inUse] = await tx
+              .select({ aggregator: game.aggregator })
+              .from(game)
+              .where(and(eq(game.providerId, id), inArray(game.aggregator, removed)))
+              .limit(1);
+            if (inUse) {
+              throw new GameProviderMappingInUseError(id, inUse.aggregator);
+            }
+          }
         }
         const next = findOneOrThrow(
           await tx

@@ -20,6 +20,7 @@ import {
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
   GameProviderVendorIdTakenError,
+  GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
 import { RgLimitExceededError } from '@openora/core/contracts';
 
@@ -105,7 +106,11 @@ export function createGamingRouter({
       return mapErrors(
         {
           NOT_FOUND: GameProviderNotFoundError,
-          CONFLICT: [GameProviderSlugTakenError, GameProviderVendorIdTakenError],
+          CONFLICT: [
+            GameProviderSlugTakenError,
+            GameProviderVendorIdTakenError,
+            GameProviderMappingInUseError,
+          ],
         },
         () => providers.updateProvider({ ...input, actorId: userId, ip, userAgent }),
       );

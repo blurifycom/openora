@@ -579,11 +579,11 @@ describe('GamingService updateGame (real PG)', () => {
     const replaced = await svc.updateGame({
       id: created.id,
       categoryIds: [blackjack.id],
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(replaced.categories.map((c) => c.slug)).toEqual(['blackjack']);
 
-    const cleared = await svc.updateGame({ id: created.id, categoryIds: [], ...NO_CLIENT_META });
+    const cleared = await svc.updateGame({ id: created.id, categoryIds: [], ...ACTOR });
     expect(cleared.categories).toEqual([]);
   });
 
@@ -592,7 +592,7 @@ describe('GamingService updateGame (real PG)', () => {
     const created = await seedGame({}, [table.id]);
     const svc = makeService();
 
-    const updated = await svc.updateGame({ id: created.id, name: 'Renamed', ...NO_CLIENT_META });
+    const updated = await svc.updateGame({ id: created.id, name: 'Renamed', ...ACTOR });
     expect(updated.categories.map((c) => c.slug)).toEqual(['table-games']);
   });
 
@@ -604,7 +604,7 @@ describe('GamingService updateGame (real PG)', () => {
     const updated = await svc.updateGame({
       id: created.id,
       providerId: other.id,
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(updated.provider).toMatchObject({ slug: 'other-studio' });
 
@@ -612,21 +612,21 @@ describe('GamingService updateGame (real PG)', () => {
       svc.updateGame({
         id: created.id,
         providerId: '00000000-0000-4000-8000-000000000000',
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameProviderNotFoundError);
     await expect(
       svc.updateGame({
         id: created.id,
         categoryIds: ['00000000-0000-4000-8000-000000000000'],
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
     await expect(
       svc.updateGame({
         id: '00000000-0000-4000-8000-000000000000',
         name: 'X',
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameNotFoundError);
   });
@@ -640,11 +640,11 @@ describe('GamingService updateGame (real PG)', () => {
     const svc = makeService();
 
     await expect(
-      svc.updateGame({ id: created.id, providerId: unmapped.id, ...NO_CLIENT_META }),
+      svc.updateGame({ id: created.id, providerId: unmapped.id, ...ACTOR }),
     ).rejects.toBeInstanceOf(GameAggregatorNotMappedError);
 
     await expect(
-      svc.updateGame({ id: created.id, aggregator: 'everymatrix', ...NO_CLIENT_META }),
+      svc.updateGame({ id: created.id, aggregator: 'everymatrix', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameAggregatorNotMappedError);
 
     await db.drizzle.db
@@ -654,7 +654,7 @@ describe('GamingService updateGame (real PG)', () => {
       id: created.id,
       providerId: unmapped.id,
       aggregator: 'everymatrix',
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(moved).toMatchObject({
       provider: { slug: 'unmapped-studio' },
@@ -668,7 +668,7 @@ describe('GamingService updateGame (real PG)', () => {
     const svc = makeService();
 
     await expect(
-      svc.updateGame({ id: created.id, slug: 'game-two', ...NO_CLIENT_META }),
+      svc.updateGame({ id: created.id, slug: 'game-two', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameSlugTakenError);
   });
 });

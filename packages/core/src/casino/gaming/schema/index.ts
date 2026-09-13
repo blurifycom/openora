@@ -103,7 +103,9 @@ export const game = pgTable(
     metadata: jsonb(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
-    // so old releases keep working until a follow-up drop migration lands.
+    // so old releases keep working until a follow-up drop migration lands; the
+    // game_legacy_* triggers in migration 0005 derive slug/providerId/aggregator
+    // and the category link for their inserts, and drop with these columns.
     // Never read or write from new code.
     provider: text(),
     category: text(),
