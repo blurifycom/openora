@@ -31,7 +31,7 @@ export type ReconciliationFindingInput = {
   tag?: string | null;
   txHash?: string | null;
   /**
-   * The dedup key: a partial unique index on (kind, externalId) makes a duplicate
+   * The dedup key: a partial unique index on (kind, providerName, externalId) makes a duplicate
    * insert for the same underlying vendor event or job re-run a silent no-op. Pass a
    * stable stand-in (eg the source row's own id) when no vendor externalId exists, so
    * a finding with no natural external reference still dedupes across re-runs.

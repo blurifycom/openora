@@ -1755,10 +1755,16 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
 });
 
 describe('WalletService.creditDepositByAddress (real PG)', () => {
-  async function seedAddress(userId: string, address: string, currency = 'BTC', network?: string) {
+  async function seedAddress(
+    userId: string,
+    address: string,
+    currency = 'BTC',
+    network?: string,
+    providerName = 'custody',
+  ) {
     await db.drizzle.db
       .insert(walletDepositAddress)
-      .values({ userId, currency, address, network, providerName: 'custody' });
+      .values({ userId, currency, address, network, providerName });
   }
 
   it('resolves the address, credits the wallet, and emits deposit.completed', async () => {
@@ -1878,10 +1884,47 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
       });
     }
 
-    // The (kind, externalId) dedup key makes a replayed webhook safe; it must not also
-    // swallow a genuinely new breach under a different vendor id.
+    // The dedup key makes a replayed webhook safe; it must not also swallow a genuinely
+    // new breach under a different vendor id.
     expect(await findingsFor(first)).toHaveLength(1);
     expect(await findingsFor(second)).toHaveLength(1);
+  });
+
+  it('files a finding per provider when two vendors reuse the same externalId', async () => {
+    const { svc } = makeService({
+      rgLimits: gateDeciding(async () => ({
+        allowed: false,
+        limitType: 'deposit',
+        period: 'daily',
+        limit: '1',
+        used: '2',
+      })),
+    });
+    // A player holds one deposit address per currency, so two vendors means two players.
+    const one = await seedWallet({ currency: 'BTC', balance: '0' });
+    const two = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(one.userId, 'bc1qvendorone', 'BTC', undefined, 'custody');
+    await seedAddress(two.userId, 'bc1qvendortwo', 'BTC', undefined, 'other-custody');
+    // An externalId is only unique WITHIN a vendor, so a key of (kind, externalId) alone
+    // would treat the second vendor's breach as a duplicate and silently drop it.
+    const shared = randomUUID();
+
+    for (const address of ['bc1qvendorone', 'bc1qvendortwo']) {
+      await svc.creditDepositByAddress({
+        kind: 'deposit',
+        address,
+        amount: '2',
+        currency: 'BTC',
+        externalId: shared,
+        txHash: `0x${address}`,
+      });
+    }
+
+    expect(await balanceOf(one.userId)).toBe(2);
+    expect(await balanceOf(two.userId)).toBe(2);
+    const findings = await findingsFor(shared);
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => f.providerName).sort()).toEqual(['custody', 'other-custody']);
   });
 
   it('files the finding on a replayed webhook whose first attempt never recorded one', async () => {

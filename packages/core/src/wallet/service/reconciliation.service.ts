@@ -635,6 +635,8 @@ export class ReconciliationService {
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'unknown_at_provider'
+        AND ${walletReconciliationFinding.providerName}
+            = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
     )`;
@@ -648,7 +650,7 @@ export class ReconciliationService {
           lt(walletTransaction.createdAt, cutoff),
         ),
       )
-      // Unreported first, then oldest. Findings dedupe on (kind, externalId), so a row
+      // Unreported first, then oldest. Findings dedupe on (kind, providerName, externalId), so a row
       // already reported produces nothing on a re-run: ordering it last stops a
       // permanent backlog from filling the batch and hiding newer stuck withdrawals,
       // while still re-checking it at the vendor whenever the batch has room.
@@ -726,6 +728,7 @@ export class ReconciliationService {
     const alreadyReportedSweep = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_sweep'
+        AND ${walletReconciliationFinding.providerName} = ${walletCustodySweep.providerName}
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletCustodySweep.externalId}, ${walletCustodySweep.id}::text)
     )`;

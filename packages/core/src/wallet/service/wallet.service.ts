@@ -2821,7 +2821,7 @@ export class WalletService {
     // would count this deposit twice.
     //
     // Deliberately NOT guarded by `replayed`: this write failing is what makes the vendor
-    // retry the webhook, and the retry sees the credit as a replay. The (kind, externalId)
+    // retry the webhook, and the retry sees the credit as a replay. The (kind, providerName, externalId)
     // unique index is what keeps a replay from filing the finding twice, so the retry
     // fills a gap instead of duplicating a row.
     const rgDecision = await rgDecisionForLandedCredit(
