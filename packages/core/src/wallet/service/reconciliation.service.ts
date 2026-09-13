@@ -796,6 +796,8 @@ export class ReconciliationService {
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_swap'
+        AND ${walletReconciliationFinding.providerName}
+            = coalesce(${walletTransaction.providerName}, ${SWAP_DESK_PROVIDER_LABEL})
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
     )`;
