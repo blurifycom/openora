@@ -1478,6 +1478,25 @@ describe('IdentityService.setAntiPhishingCode', () => {
     );
   });
 
+  it('keeps the committed change when the notification enqueue fails', async () => {
+    const account = await seedUser({ emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => {
+        throw new Error('queue down');
+      }),
+      toUser: vi.fn(async () => undefined),
+    });
+
+    const result = await buildService({ mailDispatch }).setAntiPhishingCode(
+      { code: 'Sunny Meadow-42!' },
+      {},
+    );
+
+    expect(result.antiPhishingCode).toBe('Sunny Meadow-42!');
+    expect((await readUser(account.id))?.antiPhishingCode).toBe('Sunny Meadow-42!');
+  });
+
   it('does not write, audit, or notify when the submitted code is unchanged', async () => {
     const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Same Code' });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });

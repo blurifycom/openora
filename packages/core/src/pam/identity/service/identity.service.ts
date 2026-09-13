@@ -1965,15 +1965,22 @@ export class IdentityService {
     // Deliberately address-only: resolving a user recipient later would stamp the email with
     // the replacement code. This notice instead carries the prior code, which lets the owner
     // recognise it even if a stolen session changed the current value.
-    await this.mailDispatch?.toAddress({
-      email: caller.email,
-      locale: caller.language,
-      template: {
-        key: 'securityAntiPhishingCodeChanged',
-        data: { previousAntiPhishingCode: before.antiPhishingCode },
-      },
-      idempotencyKey: `anti-phishing-code-changed:${userId}:${randomUUID()}`,
-    });
+    // The row is already committed, so a failed enqueue must not fail the mutation: the
+    // caller would see an error for a change that landed, and retrying the same value exits
+    // at the no-op branch above without ever re-sending the notice.
+    try {
+      await this.mailDispatch?.toAddress({
+        email: caller.email,
+        locale: caller.language,
+        template: {
+          key: 'securityAntiPhishingCodeChanged',
+          data: { previousAntiPhishingCode: before.antiPhishingCode },
+        },
+        idempotencyKey: `anti-phishing-code-changed:${userId}:${randomUUID()}`,
+      });
+    } catch (err) {
+      identityLogger.error({ err, userId }, 'anti-phishing code change notice enqueue failed');
+    }
     return { ...before, antiPhishingCode: input.code };
   }
 
