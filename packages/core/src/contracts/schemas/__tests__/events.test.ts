@@ -109,6 +109,31 @@ describe('identity security event contracts', () => {
   });
 });
 
+describe('cms banner dropped-image URL compatibility', () => {
+  it('defaults payloads from older producers to an empty dropped-URL list', () => {
+    const bannerConfigurationId = randomUUID();
+    const actorId = randomUUID();
+    const payloads = [
+      domainEventSchemas['cms.banner.configuration.deleted'].parse({
+        bannerConfigurationId,
+        actorId,
+      }),
+      domainEventSchemas['cms.banner.image.set'].parse({
+        bannerImageId: randomUUID(),
+        bannerConfigurationId,
+        actorId,
+      }),
+      domainEventSchemas['cms.banner.image.deleted'].parse({
+        bannerImageId: randomUUID(),
+        bannerConfigurationId,
+        actorId,
+      }),
+    ];
+
+    expect(payloads.map((payload) => payload.droppedImageUrls)).toEqual([[], [], []]);
+  });
+});
+
 // ADR-0016 requires forward-compatible payload evolution, and every deployment binds a
 // durable broker (ADR-0030/0032) - a pre-tiering (v4) compliance.kyc.* payload with no
 // `tier` at all can still be sitting in the backlog at rollout. Basic-tier is what every

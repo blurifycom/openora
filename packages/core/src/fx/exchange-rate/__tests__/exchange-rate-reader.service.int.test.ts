@@ -64,14 +64,29 @@ function delayedProvider(rate: string, delayMs: number, asOf?: string) {
   return mock<ExchangeRateProvider>({ getRate });
 }
 
+/** A provider whose quote is held until the test calls `release`, so no assertion races it. */
+function gatedProvider(rate: string) {
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const getRate = vi.fn(async (): Promise<ExchangeRateQuote> => {
+    await gate;
+    return { rate, asOf: new Date().toISOString() };
+  });
+  return { provider: mock<ExchangeRateProvider>({ getRate }), release };
+}
+
 function baseDeps(
   over: Partial<ExchangeRateReaderServiceDeps> = {},
 ): ExchangeRateReaderServiceDeps {
   return {
     drizzle: db.drizzle,
     pivot: 'USD',
-    freshTtlMs: 200,
-    hardMaxAgeMs: 800,
+    // Bands in minutes, not milliseconds: a quote's age is seeded in the past, so a wide band
+    // costs no wall time, while a narrow one let a loaded runner age a fresh seed into soft-stale.
+    freshTtlMs: 60_000,
+    hardMaxAgeMs: 120_000,
     providerTimeoutMs: 150,
     ...over,
   };
@@ -81,8 +96,8 @@ async function wait(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const SOFT_STALE_AGE_MS = 400;
-const HARD_STALE_AGE_MS = 1_000;
+const SOFT_STALE_AGE_MS = 90_000;
+const HARD_STALE_AGE_MS = 180_000;
 const PROVIDER_DELAY_PAST_TIMEOUT_MS = 500;
 
 describe('ExchangeRateReaderService.getRate - identity and cross-pair derivation', () => {
@@ -143,23 +158,23 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 
   it('soft-stale: returns the cached value immediately and refreshes in the background', async () => {
     await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: SOFT_STALE_AGE_MS });
-    const fiatProvider = delayedProvider('1.500000000000000000', 30);
-    const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
+    const { provider: fiatProvider, release } = gatedProvider('1.500000000000000000');
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider, providerTimeoutMs: 10_000 }),
+    );
 
-    const start = Date.now();
+    // The provider is held for the whole call, so a reader that awaited the refresh would
+    // never return here: returning at all proves the refresh stayed in the background.
     const quote = await reader.getRate('EUR', 'USD');
-    const elapsed = Date.now() - start;
 
     expect(quote?.rate).toBe('1.100000000000000000');
-    expect(elapsed).toBeLessThan(30);
+    expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
 
-    // Polled, not slept: the provider resolves after 30ms but the write behind it lands
-    // whenever the pool hands back a connection, which on a loaded runner is well past any
-    // fixed deadline. Same idiom as the cross-leg refresh test below.
+    release();
+    // Polled, not slept: the write lands whenever the pool hands back a connection.
     await vi.waitFor(async () =>
       expect((await getRow('EUR', 'USD'))?.rate).toBe('1.500000000000000000'),
     );
-    expect(fiatProvider.getRate).toHaveBeenCalledTimes(1);
   });
 
   it('soft-stale: a background refresh timeout is completely invisible to the caller', async () => {
@@ -240,8 +255,12 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 describe('ExchangeRateReaderService.getRate - single-flight', () => {
   it('collapses concurrent hard-stale callers for the same leg into one provider call', async () => {
     const providerAsOf = agedIso(0);
-    const fiatProvider = delayedProvider('1.200000000000000000', 40, providerAsOf);
-    const reader = new ExchangeRateReaderService(baseDeps({ fiatProvider }));
+    // Every caller reads the row before it can join the in-flight call, so the provider must
+    // outlast the slowest of three concurrent reads; 40ms did not on a loaded runner.
+    const fiatProvider = delayedProvider('1.200000000000000000', 500, providerAsOf);
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider, providerTimeoutMs: 5_000 }),
+    );
 
     const [a, b, c] = await Promise.all([
       reader.getRate('EUR', 'USD'),
