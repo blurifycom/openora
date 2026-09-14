@@ -12,7 +12,20 @@ import {
   serializeRow,
   uniqueConstraintName,
 } from '@openora/core/server';
-import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or, sql } from 'drizzle-orm';
+import {
+  type SQL,
+  eq,
+  and,
+  asc,
+  count,
+  desc,
+  exists,
+  ilike,
+  inArray,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 import {
   RgLimitExceededError,
   type ClientMeta,
@@ -149,6 +162,14 @@ function toGameRound(record: typeof gameRound.$inferSelect) {
   return serializeRow(record, { dateFields: ['startedAt', 'endedAt'] });
 }
 
+function countWhere(condition: SQL | undefined) {
+  return sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
+}
+
+function withInactive<T extends { total: number; active: number }>(counts: T) {
+  return { ...counts, inactive: counts.total - counts.active };
+}
+
 export class GamingService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -167,6 +188,31 @@ export class GamingService {
 
   async listGamesAdmin(input: ListAdminGamesInput) {
     return this.listGames({ ...input, playableOnly: false, sort: 'admin' });
+  }
+
+  async getCatalogStats() {
+    const db = this.drizzle.db;
+    const [[providers], [categories], [games]] = await Promise.all([
+      db
+        .select({ total: count(), active: countWhere(eq(gameProvider.isActive, true)) })
+        .from(gameProvider),
+      db
+        .select({ total: count(), active: countWhere(eq(gameCategory.isActive, true)) })
+        .from(gameCategory),
+      db
+        .select({
+          total: count(),
+          active: countWhere(eq(game.isActive, true)),
+          playable: countWhere(playableGameCondition()),
+        })
+        .from(game)
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id)),
+    ]);
+    return {
+      providers: withInactive(providers),
+      categories: withInactive(categories),
+      games: withInactive(games),
+    };
   }
 
   private async listGames({
