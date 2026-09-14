@@ -77,6 +77,16 @@
       "inputs": ["**/*", "!.turbo/**", "!**/node_modules/**", "!**/dist/**", "!**/.next/**"],
       "outputs": []
     },
+    "//#check:refs": {
+      "inputs": [
+        "**/*.md",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "package.json",
+        "tools/lint/verify-references.ts"
+      ],
+      "outputs": []
+    },
     "//#check:deprecations": {
       "inputs": ["apps/*/src/**", "packages/*/src/**", "tools/**", "extensions.config.ts"],
       "outputs": []
