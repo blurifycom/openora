@@ -24,7 +24,7 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 - State the user-facing change and its reason briefly.
 - Add short, reproducible local test steps for the changed behavior (for example, `pnpm dev` then the relevant URLs or user flow).
 - Do not include a generic verification-command list: CI already reports those checks.
-- **Attach the manual-verification evidence.** A feature PR ships no Playwright spec, so the screenshots are what a reviewer reads as proof: one per changed screen, the before/after pair on a fix. Embed them, don't just name the file paths. An API-only change attaches the request/response trace instead. Skip this only when nothing user-visible changed.
+- **Attach the manual-verification evidence.** A feature PR ships no Playwright spec, so the screenshots are what a reviewer reads as proof: one per changed screen, the before/after pair on a fix. Upload each image to the forge and embed the markdown it returns - `docs/agents/forge.md` has the command. A local path under `apps/e2e/test-results/` shows a reviewer nothing; never put one in a description. An API-only change attaches the request/response trace instead. Skip this only when nothing user-visible changed.
 - **End with an "E2E to add" list** - one line per scenario the manual pass exercised (happy path, one hostile path, the authz negative), naming the tier and the path the spec would live at. Prose only, never spec code. It is what the follow-up stacked test PR is written from.
 - A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
 
@@ -33,3 +33,4 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 - NEVER push without an explicit per-action "yes push" from the user. Invoking this skill does NOT authorize a push. Report the commit SHA, ask, then push only on yes.
 - The repo check must pass before the push.
 - Keep the pull request scoped to one concern; split unrelated changes into separate ones.
+- No AI-attribution trailers anywhere - not in the commit, not in the pull-request title or description. No "Generated with", no "Co-Authored-By: Claude", no robot-emoji footer.
