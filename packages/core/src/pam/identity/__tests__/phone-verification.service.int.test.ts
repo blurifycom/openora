@@ -36,6 +36,7 @@ function build({ passwordMatches = true }: { passwordMatches?: boolean } = {}) {
     limiter: allowLimiter(),
     auth,
     identityReader: makeIdentityReader(),
+    trustedDeviceDays: 30,
   });
   return { svc, events, sms };
 }

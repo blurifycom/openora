@@ -319,9 +319,11 @@
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
+        "identity.security.autoLogout",
         "identity.security.loginWithdrawalAlerts",
         "identity.security.me",
         "identity.security.removeWithdrawalPin",
+        "identity.security.requireTwoFactorOnLogin",
         "identity.security.setAntiPhishingCode",
         "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
@@ -931,6 +933,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -952,6 +955,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
+      "category": "session-idle-policy",
+      "interface": "SessionIdlePolicy",
+      "token": "SESSION_IDLE_POLICY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
       ]
     },
     {
@@ -1093,13 +1106,16 @@
     "identity.authentication.succeeded",
     "identity.email.verified",
     "identity.password.admin_reset_requested",
+    "identity.password.changed",
     "identity.password.reset",
     "identity.phone.verified",
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
     "identity.security.anti_phishing_code.set",
+    "identity.security.auto_logout.updated",
     "identity.security.login_withdrawal_alerts.updated",
+    "identity.security.require_two_factor.updated",
     "identity.security.withdrawal_pin.removed",
     "identity.security.withdrawal_pin.set",
     "identity.session.fingerprint_mismatch",
@@ -1292,6 +1308,10 @@
     {
       "name": "AuthGuardReasonSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "AutoLogoutDurationSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "AutoWithdrawalConfigSchema",
@@ -2678,6 +2698,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "SetAutoLogoutInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SetAutoWithdrawalRuleInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -2708,6 +2732,10 @@
     {
       "name": "SetPlayerLimitInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SetRequireTwoFactorOnLoginInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "SetWalletAutoWithdrawalConfigInputSchema",
@@ -2919,6 +2947,10 @@
     },
     {
       "name": "Verify2faInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "Verify2faOutputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {

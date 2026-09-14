@@ -2,8 +2,8 @@
 
 The whole platform in one place: the single `@openora/core` package and its domains, the
 contract spine, the plugin host, the adapter ports, the three async seams, and how a
-downstream consumer overlays proprietary code. The reference table at the bottom is generated
-from `docs/catalog.json` and carries the current counts; the prose here does not repeat them.
+downstream consumer overlays proprietary code. Current counts live in the generated
+`docs/catalog.json`, not in this prose.
 
 > **Packaging note (ADR-0025, 2026-06-16):** the foundation + engine + free domains
 > now ship as ONE published package, `@openora/core`, with subpaths (`@openora/core/contracts`,
@@ -287,6 +287,7 @@ flowchart TB
 
 ## Reference - domain -> modules -> tables -> routes
 
+<<<<<<< HEAD
 <!-- gen:catalog-reference -->
 
 Generated from `docs/catalog.json` - 20 modules, 291 routes, 48 adapter ports, 129 events. Edit the code, then run `pnpm gen:catalog`.
@@ -307,6 +308,12 @@ Generated from `docs/catalog.json` - 20 modules, 291 routes, 48 adapter ports, 1
 | `@openora/core/wallet`        | wallet                                                     | auto_withdrawal_rule, wallet, wallet_asset, wallet_auto_withdrawal_config + 10 more | 38     |
 
 <!-- /gen:catalog-reference -->
+=======
+`docs/catalog.json` is the generated surface: every module, table, route, adapter port and
+event. It is written by `pnpm gen:catalog` on install and by the `post-merge` / `post-checkout`
+hooks, so it is always current. Query it directly, or use the `oss-dev` MCP tools
+(`catalog-overview`, `list-modules`, `describe-module`, `list-routes`, `list-adapters`).
+>>>>>>> dev
 
 ## Cross-domain edges (lint-enforced — ADR-0015)
 

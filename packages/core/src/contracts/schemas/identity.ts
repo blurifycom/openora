@@ -92,7 +92,9 @@ export const MemberSchema = z.object({
 });
 
 /**
- * The rule for every password the platform *sets*. Upper-bounded to better-auth's own
+ * The rule for every password the platform *sets* (register, reset, and the new
+ * password on change): minimum 12 characters, the platform password policy.
+ * Upper-bounded to better-auth's own
  * `maxPasswordLength` default (128), which it enforces itself but only after the fact -
  * on sign-up that surfaces as a generic "Registration is unavailable", and on reset it
  * burns a valid one-time code before rejecting. Bounding it here fails the caller with
@@ -217,6 +219,22 @@ export const Disable2faInputSchema = z.object({
   code: TotpStepUpCodeSchema,
 });
 
+// How long a session may sit idle before it is cut. Every account has a window - there
+// is deliberately no "off": the longest option already coincides with better-auth's
+// absolute 30-day expiry, which this setting does not touch.
+export const AUTO_LOGOUT_DURATIONS = ['15m', '1h', '24h', '7d', '30d'] as const;
+export const AutoLogoutDurationSchema = z.enum(AUTO_LOGOUT_DURATIONS);
+export type AutoLogoutDuration = z.infer<typeof AutoLogoutDurationSchema>;
+
+// The window behind each option, in minutes.
+export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
+  '15m': 15,
+  '1h': 60,
+  '24h': 24 * 60,
+  '7d': 7 * 24 * 60,
+  '30d': 30 * 24 * 60,
+};
+
 export const SecurityControlsSchema = z.object({
   passwordMeetsPolicy: z.boolean(),
   emailVerified: z.boolean(),
@@ -225,6 +243,15 @@ export const SecurityControlsSchema = z.object({
   twoFactorEnabled: z.boolean(),
   loginWithdrawalAlertsEnabled: z.boolean(),
   withdrawalPinSet: z.boolean(),
+  autoLogoutDuration: AutoLogoutDurationSchema,
+  // When set, a trusted device buys nothing: the second factor is asked for on every
+  // login regardless of how recently this browser cleared one.
+  requireTwoFactorOnLogin: z.boolean(),
+  // The operator-configured trust window (`adminSecurityConfig.trustedDeviceDays`), so a
+  // client's "trust this device for N days" copy names the real value instead of a
+  // hardcoded guess that goes stale the moment an operator changes it. Zero means
+  // trusting a device is disabled platform-wide.
+  trustedDeviceDays: z.number().int().nonnegative(),
   // Raw value, not a boolean - this code authorizes nothing (unlike the withdrawal PIN), it's
   // a recognition signal readable only by the authenticated player it belongs to, same gate as
   // the rest of this schema.
@@ -232,6 +259,10 @@ export const SecurityControlsSchema = z.object({
 });
 
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
+
+export const SetAutoLogoutInputSchema = z.object({ duration: AutoLogoutDurationSchema });
+
+export const SetRequireTwoFactorOnLoginInputSchema = z.object({ enabled: z.boolean() });
 
 // Non-empty after trimming incidental leading/trailing whitespace (eg from copy-paste),
 // case-sensitive, and capped to keep every delivered email bounded - no reauth, set/overwrite only.
@@ -318,7 +349,16 @@ export const ChangeEmailInputSchema = z.object({
 
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
 
+// The caller may have asked to trust this device and not gotten it: a backup code, an
+// account requiring 2FA on every login, or a challenge that never resolved to a session
+// all suppress the grant while the challenge itself still succeeds. `trustGranted` is
+// the one field client copy promising "you won't be asked again" can trust.
+export const Verify2faOutputSchema = IdentitySuccessSchema.extend({
+  trustGranted: z.boolean(),
+});
+
 export type IdentitySuccess = z.infer<typeof IdentitySuccessSchema>;
+export type Verify2faOutput = z.infer<typeof Verify2faOutputSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Organization = z.infer<typeof OrganizationSchema>;
 export type Member = z.infer<typeof MemberSchema>;
@@ -352,6 +392,8 @@ export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSche
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
 export type SecurityControls = z.infer<typeof SecurityControlsSchema>;
 export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAlertsInputSchema>;
+export type SetAutoLogoutInput = z.infer<typeof SetAutoLogoutInputSchema>;
+export type SetRequireTwoFactorOnLoginInput = z.infer<typeof SetRequireTwoFactorOnLoginInputSchema>;
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
 export type SetAntiPhishingCodeInput = z.infer<typeof SetAntiPhishingCodeInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;

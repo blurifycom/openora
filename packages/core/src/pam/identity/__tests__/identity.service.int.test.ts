@@ -21,6 +21,7 @@ import type {
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
+  sweepRacedSessionsAfterPasswordChange,
   type IdentityServiceDeps,
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
@@ -45,6 +46,7 @@ const {
   checkVerificationOTPMock,
   resetPasswordEmailOTPMock,
   changeEmailMock,
+  changePasswordMock,
   capturedAuthOptions,
 } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
@@ -60,6 +62,7 @@ const {
   checkVerificationOTPMock: vi.fn(),
   resetPasswordEmailOTPMock: vi.fn(),
   changeEmailMock: vi.fn(),
+  changePasswordMock: vi.fn(),
   capturedAuthOptions: {
     current: undefined as
       | {
@@ -96,6 +99,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         checkVerificationOTP: checkVerificationOTPMock,
         resetPasswordEmailOTP: resetPasswordEmailOTPMock,
         changeEmail: changeEmailMock,
+        changePassword: changePasswordMock,
       },
     };
   }),
@@ -177,6 +181,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(null);
   changeEmailMock.mockReset();
+  changePasswordMock.mockReset();
   await db.drizzle.db.execute(
     sql`TRUNCATE ${user}, ${session}, ${player} RESTART IDENTITY CASCADE`,
   );
@@ -727,7 +732,31 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
+  });
+
+  it('challenges a live trusted device while the account requires 2FA every login', async () => {
+    const account = await seedUser({ requireTwoFactorOnLogin: true });
+    const trustedDevices = makeTrustedDevices();
+    await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+    honourTrustCookie(account.id);
+    const svc = buildService({ trustedDevices });
+
+    const result = await svc.login(
+      { email: EMAIL, password: 'rightpass1' },
+      trustedHeaders,
+      new Headers(),
+    );
+
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 
   it('challenges a device whose cookie was replayed from another browser', async () => {
@@ -743,7 +772,11 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 });
 
@@ -949,6 +982,189 @@ describe('IdentityService.resetPassword', () => {
   });
 });
 
+describe('IdentityService.changePassword revokes other sessions', () => {
+  const seedChangePwSession = (
+    userId: string,
+    overrides: Partial<typeof session.$inferInsert> = {},
+  ) =>
+    db.drizzle.db
+      .insert(session)
+      .values({
+        userId,
+        token: randomUUID(),
+        expiresAt: new Date(Date.now() + 86_400_000),
+        updatedAt: new Date(),
+        ...overrides,
+      })
+      .returning({ id: session.id, token: session.token })
+      .then(([row]) => row!);
+
+  const seedOldPasswordSignInRacingIn = (userId: string) =>
+    seedChangePwSession(userId, { createdAt: new Date() });
+
+  const stubBetterAuthDeletingEverySessionAndMintingOne = (
+    userId: string,
+    rotatedToken: string,
+    duringRotation?: () => Promise<unknown>,
+  ) =>
+    changePasswordMock.mockImplementation(async () => {
+      await db.drizzle.db.delete(session).where(eq(session.userId, userId));
+      await seedChangePwSession(userId, { token: rotatedToken });
+      await duringRotation?.();
+      return jsonResponse({ token: rotatedToken, user: betterAuthUser }, 200);
+    });
+
+  it('delegates the session revoke to better-auth and emits identity.sessions.revoked_all', async () => {
+    const account = await seedUser();
+    const current = await seedChangePwSession(account.id);
+    const otherA = await seedChangePwSession(account.id);
+    const otherB = await seedChangePwSession(account.id);
+
+    const rotatedToken = randomUUID();
+    stubBetterAuthDeletingEverySessionAndMintingOne(account.id, rotatedToken);
+    const events = makeEventBus();
+
+    const result = await buildService({ events }).changePassword(
+      { currentPassword: 'password1234', newPassword: 'brand-new-secret-123' },
+      { 'x-forwarded-for': '203.0.113.7' },
+      new Headers(),
+      { userId: account.id, sessionId: current.id },
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(changePasswordMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ revokeOtherSessions: true }),
+      }),
+    );
+    const rowsLeftByTheBetterAuthStub = await db.drizzle.db
+      .select({ id: session.id, token: session.token })
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(rowsLeftByTheBetterAuthStub).toHaveLength(1);
+    expect(rowsLeftByTheBetterAuthStub[0]!.token).toBe(rotatedToken);
+    expect([current.id, otherA.id, otherB.id]).not.toContain(rowsLeftByTheBetterAuthStub[0]!.id);
+    // exceptSessionId is the caller's PRE-rotation session id - the value the
+    // already-open streamSession connection still holds, so the handler suppresses
+    // the { type: 'revoked' } push for the initiating tab. NOT the freshly-minted id
+    // (which no open connection knows yet).
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({
+        userId: account.id,
+        actorId: account.id,
+        exceptSessionId: current.id,
+      }),
+    );
+    // A dedicated, accurately named audit record that the credential itself changed.
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.password.changed',
+      expect.objectContaining({ userId: account.id }),
+    );
+    expect((await readUser(account.id)).passwordMeetsPolicy).toBe(true);
+  });
+
+  it('emits a second revoked_all when the deferred sweep force-deletes a raced session', async () => {
+    const account = await seedUser();
+    const current = await seedChangePwSession(account.id);
+    const rotatedToken = randomUUID();
+    stubBetterAuthDeletingEverySessionAndMintingOne(account.id, rotatedToken, () =>
+      seedOldPasswordSignInRacingIn(account.id),
+    );
+    const events = makeEventBus();
+
+    await buildService({ events }).changePassword(
+      { currentPassword: 'password1234', newPassword: 'brand-new-secret-123' },
+      {},
+      new Headers(),
+      { userId: account.id, sessionId: current.id },
+    );
+    expect(events.emit).toHaveBeenCalledTimes(2);
+
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
+
+    const remaining = await db.drizzle.db
+      .select({ id: session.id, token: session.token })
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.token).toBe(rotatedToken);
+
+    // The sweep's own deletion is no longer silent: it gets the same
+    // identity.sessions.revoked_all push and audit record as the primary revoke,
+    // sparing the acting tab by its PRE-rotation session id - the id its already-open
+    // streamSession connection captured at stream-open, and the only value the SSE
+    // compare in router/index.ts can ever match. The rotated row's own (new) id would
+    // never match that connection, so using it here would self-revoke the acting tab.
+    expect(events.emit).toHaveBeenCalledTimes(3);
+    expect(events.emit).toHaveBeenNthCalledWith(
+      3,
+      'identity.sessions.revoked_all',
+      expect.objectContaining({
+        userId: account.id,
+        actorId: account.id,
+        exceptSessionId: current.id,
+      }),
+    );
+  }, 5_000);
+
+  it('does not emit the revoke event or flag the policy when better-auth rejects', async () => {
+    const account = await seedUser();
+    const current = await seedChangePwSession(account.id);
+    changePasswordMock.mockResolvedValue(jsonResponse({ message: 'INVALID_PASSWORD' }, 400));
+    const events = makeEventBus();
+
+    await expect(
+      buildService({ events }).changePassword(
+        { currentPassword: 'wrongpassword', newPassword: 'brand-new-secret-123' },
+        {},
+        new Headers(),
+        { userId: account.id, sessionId: current.id },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.anything(),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith('identity.password.changed', expect.anything());
+    expect((await readUser(account.id)).passwordMeetsPolicy).toBe(false);
+  });
+
+  describe('sweepRacedSessionsAfterPasswordChange', () => {
+    it('deletes a session that raced in on the old password, sparing the rotated one', async () => {
+      const account = await seedUser();
+      // The caller's fresh session better-auth minted during the change.
+      const spared = await seedChangePwSession(account.id);
+      // A sign-in that verified the OLD password just before the rotation, landing its
+      // row a hair before the deadline.
+      const raced = await seedChangePwSession(account.id, {
+        createdAt: new Date(Date.now() - 10),
+      });
+      // A legitimate sign-in AFTER the change completed - must survive the sweep.
+      const later = await seedChangePwSession(account.id, {
+        createdAt: new Date(Date.now() + 60_000),
+      });
+
+      const deletedIds = await sweepRacedSessionsAfterPasswordChange(db.drizzle.db, {
+        userId: account.id,
+        sparedToken: spared.token,
+        deadline: new Date(),
+      });
+      expect(deletedIds).toEqual([raced.id]);
+
+      const remaining = await db.drizzle.db
+        .select({ id: session.id })
+        .from(session)
+        .where(eq(session.userId, account.id));
+      const ids = remaining.map((r) => r.id);
+      expect(ids).toContain(spared.id);
+      expect(ids).toContain(later.id);
+      expect(ids).not.toContain(raced.id);
+    });
+  });
+});
+
 describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
   it('clears the lockout row and emits identity.password.reset when better-auth invokes the hook', async () => {
     const account = await seedUser({
@@ -1084,6 +1300,38 @@ describe('IdentityService.verifyTwoFactor', () => {
     );
     expect(signIn.emit).not.toHaveBeenCalledWith('identity.2fa.enabled', expect.anything());
   });
+
+  it('reports trustGranted so the caller knows the checkbox it ticked actually did something', async () => {
+    const account = await seedUser();
+    verifyTotpMock.mockResolvedValue(okResponse());
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0';
+    const makeTrustedDevices = () =>
+      new TrustedDeviceService({
+        drizzle: db.drizzle,
+        events: makeEventBus(),
+        trustedDeviceDays: 30,
+      });
+
+    const granted = await buildService({
+      trustedDevices: makeTrustedDevices(),
+      twoFactorLockout: pendingChallenge(account.id),
+    }).verifyTwoFactor(
+      { code: '123456', method: 'totp', trustDevice: true },
+      { 'user-agent': userAgent },
+      new Headers(),
+    );
+    expect(granted).toEqual({ success: true, trustGranted: true });
+
+    const denied = await buildService({
+      trustedDevices: makeTrustedDevices(),
+      twoFactorLockout: pendingChallenge(account.id),
+    }).verifyTwoFactor(
+      { code: '123456', method: 'totp', trustDevice: false },
+      { 'user-agent': userAgent },
+      new Headers(),
+    );
+    expect(denied).toEqual({ success: true, trustGranted: false });
+  });
 });
 
 describe('IdentityService 2fa step-up teardown', () => {
@@ -1133,7 +1381,11 @@ describe('IdentityService 2fa step-up teardown', () => {
       reset: vi.fn(async () => undefined),
     });
 
-    await buildService({ events, trustedDevices, twoFactorLockout: lockout }).verifyTwoFactor(
+    const result = await buildService({
+      events,
+      trustedDevices,
+      twoFactorLockout: lockout,
+    }).verifyTwoFactor(
       { code: 'lH2MN-bvPJb', method: 'backup_code', trustDevice: true },
       { 'user-agent': BROWSER_UA },
       new Headers(),
@@ -1143,6 +1395,7 @@ describe('IdentityService 2fa step-up teardown', () => {
       expect.objectContaining({ body: { code: 'lH2MN-bvPJb', trustDevice: false } }),
     );
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
+    expect(result.trustGranted).toBe(false);
   });
 
   it('disableTwoFactor takes a fresh authenticator code, then drops trust and sessions', async () => {
@@ -1170,6 +1423,26 @@ describe('IdentityService 2fa step-up teardown', () => {
       .where(eq(session.id, liveSession));
     expect(row?.live).toBe(false);
     expect(events.emit).toHaveBeenCalledWith('identity.2fa.disabled', expect.anything());
+  });
+
+  it('disableTwoFactor also clears "require 2FA every login", so the account is never stranded enforcing a factor it no longer has', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, requireTwoFactorOnLogin: true });
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    verifyTotpMock.mockResolvedValue(okResponse());
+    disableTwoFactorMock.mockResolvedValue(okResponse());
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await svc.disableTwoFactor(
+      { password: 'rightpass1', code: '123456' },
+      { cookie: 'better-auth.session_token=live' },
+      new Headers(),
+    );
+
+    const [row] = await db.drizzle.db
+      .select({ requireTwoFactorOnLogin: user.requireTwoFactorOnLogin })
+      .from(user)
+      .where(eq(user.id, account.id));
+    expect(row?.requireTwoFactorOnLogin).toBe(false);
   });
 
   it('rejects disableTwoFactor when the authenticator code is wrong, before better-auth is called', async () => {

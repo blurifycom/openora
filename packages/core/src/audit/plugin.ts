@@ -932,6 +932,32 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.auto_logout.updated') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { autoLogoutDuration: p['previousDuration'] ?? null },
+      after: { autoLogoutDuration: p['duration'] ?? null },
+    };
+  }
+
+  if (topic === 'identity.security.require_two_factor.updated') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { requireTwoFactorOnLogin: p['previousEnabled'] ?? null },
+      after: { requireTwoFactorOnLogin: p['enabled'] ?? null },
+    };
+  }
+
   if (topic === 'identity.security.withdrawal_pin.set') {
     const playerId = p['playerId'];
     return {
@@ -990,6 +1016,7 @@ export async function mapEventToRecord(
     topic === 'identity.session.fingerprint_mismatch' ||
     topic === 'identity.trusted_device.added' ||
     topic === 'identity.password.reset' ||
+    topic === 'identity.password.changed' ||
     topic === 'identity.email.verified' ||
     topic === 'identity.profile.updated'
   ) {
@@ -1032,9 +1059,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.trusted_device.added',
   'identity.trusted_device.revoked',
   'identity.password.reset',
+  'identity.password.changed',
   'identity.email.verified',
   'identity.phone.verified',
   'identity.security.login_withdrawal_alerts.updated',
+  'identity.security.auto_logout.updated',
+  'identity.security.require_two_factor.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
   'identity.security.anti_phishing_code.set',

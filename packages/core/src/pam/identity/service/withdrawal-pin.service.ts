@@ -39,6 +39,7 @@ export type WithdrawalPinServiceDeps = {
   identityReader: IdentityReader;
   twoFactorLockout?: TwoFactorLockoutService;
   hmacSecret: string;
+  trustedDeviceDays: number;
 };
 
 /**
@@ -55,6 +56,7 @@ export class WithdrawalPinService {
   private readonly identityReader: IdentityReader;
   private readonly twoFactorLockout?: TwoFactorLockoutService;
   private readonly hmacSecret: string;
+  private readonly trustedDeviceDays: number;
 
   constructor({
     drizzle,
@@ -64,6 +66,7 @@ export class WithdrawalPinService {
     identityReader,
     twoFactorLockout,
     hmacSecret,
+    trustedDeviceDays,
   }: WithdrawalPinServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -72,10 +75,11 @@ export class WithdrawalPinService {
     this.identityReader = identityReader;
     this.twoFactorLockout = twoFactorLockout;
     this.hmacSecret = hmacSecret;
+    this.trustedDeviceDays = trustedDeviceDays;
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
-    const controls = await getSecurityControls(this.drizzle, userId);
+    const controls = await getSecurityControls(this.drizzle, userId, this.trustedDeviceDays);
     if (!controls) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }

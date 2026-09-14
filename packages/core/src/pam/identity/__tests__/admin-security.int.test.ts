@@ -169,4 +169,23 @@ describe('AdminSecurityService.resetTwoFactor (real PG)', () => {
       SelfTwoFactorResetError,
     );
   });
+
+  it('clears "require 2FA every login" along with the enrolment, so a reset account is not left stranded enforcing a factor it no longer has', async () => {
+    const player = await seedUser(db, { name: 'Player', email: 'player@b.dev' });
+    const superAdmin = await seedUser(db, { name: 'Boss', email: 'boss@b.dev', role: 'admin' });
+    await enrol(player.id);
+    await db.drizzle.db
+      .update(user)
+      .set({ requireTwoFactorOnLogin: true })
+      .where(eq(user.id, player.id));
+    const { service } = buildService();
+
+    await service.resetTwoFactor(player.id, superAdmin.id, 'lost authenticator');
+
+    const [row] = await db.drizzle.db
+      .select({ requireTwoFactorOnLogin: user.requireTwoFactorOnLogin })
+      .from(user)
+      .where(eq(user.id, player.id));
+    expect(row?.requireTwoFactorOnLogin).toBe(false);
+  });
 });

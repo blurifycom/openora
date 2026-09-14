@@ -5,14 +5,47 @@ import {
   makeNotFoundError,
   makeConflictError,
 } from '@openora/core/server';
-import { eq, asc, desc, and, gt, count, ilike, sql } from 'drizzle-orm';
-import type { ClientMeta, IdentityReader, User, PaginationOptions } from '@openora/core/contracts';
+import { eq, asc, desc, and, or, gt, isNull, ne, count, ilike, sql } from 'drizzle-orm';
+import {
+  AUTO_LOGOUT_MINUTES,
+  type ClientMeta,
+  type IdentityReader,
+  type User,
+  type PaginationOptions,
+} from '@openora/core/contracts';
 import { session, user, type Session } from '../schema/index.js';
 import { type ActiveSessionItem, type SessionItem, type SessionSortBy } from '../contract/index.js';
 
 import { describeDevice } from './device-fingerprint.service.js';
 
 export const SessionNotFoundError = makeNotFoundError('Session');
+
+// Idle expiry (`SessionIdleService`) is lazy: it only cuts a session when a request for
+// it arrives, so `expiresAt` alone goes stale for a session nobody has used since. Both
+// "active session" reads below need this alongside `expiresAt > now()` for a player row,
+// or a closed laptop on a 15-minute window keeps showing as logged in for up to 30 days.
+// Built from the same contract map `SessionIdleService` reads, not restated by hand, so
+// the two cannot disagree on what a window means.
+function autoLogoutMinutesCase() {
+  return sql.join(
+    [
+      sql`CASE ${user.autoLogoutDuration}`,
+      ...Object.entries(AUTO_LOGOUT_MINUTES).map(
+        ([duration, minutes]) => sql`WHEN ${duration} THEN ${minutes}`,
+      ),
+      sql`END`,
+    ],
+    sql` `,
+  );
+}
+
+function notIdledOut() {
+  return or(
+    ne(user.role, 'player'),
+    isNull(session.lastSeenAt),
+    gt(session.lastSeenAt, sql`now() - make_interval(mins => (${autoLogoutMinutesCase()})::int)`),
+  );
+}
 export const CurrentSessionRevokeError = makeConflictError(
   'CurrentSessionRevokeError',
   'The current session cannot be revoked - sign out instead',
@@ -65,7 +98,7 @@ export class SessionService {
     SessionSortBy
   >) {
     const where = activeOnly
-      ? and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`))
+      ? and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`), notIdledOut())
       : eq(session.userId, userId);
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), then user-chosen sort within each group.
@@ -79,16 +112,21 @@ export class SessionService {
           : session.createdAt;
     const [rows, [{ n }]] = await Promise.all([
       db
-        .select()
+        .select({ session })
         .from(session)
+        .innerJoin(user, eq(session.userId, user.id))
         .where(where)
         .orderBy(...(sortBy ? [dir(col)] : [activeFirst, dir(col)]))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
-      db.select({ n: count() }).from(session).where(where),
+      db
+        .select({ n: count() })
+        .from(session)
+        .innerJoin(user, eq(session.userId, user.id))
+        .where(where),
     ]);
     return {
-      items: rows.map((s) => toSessionItem(s, currentSessionId)),
+      items: rows.map((row) => toSessionItem(row.session, currentSessionId)),
       total: Number(n),
       page,
       limit,
@@ -113,7 +151,7 @@ export class SessionService {
     SessionSortBy
   >) {
     const db = this.drizzle.db;
-    const filters = [gt(session.expiresAt, sql`now()`)];
+    const filters = [gt(session.expiresAt, sql`now()`), notIdledOut()];
     if (role) {
       filters.push(eq(user.role, role));
     }

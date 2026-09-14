@@ -40,6 +40,13 @@ export class TrustedDeviceService {
     this.trustedDeviceDays = trustedDeviceDays;
   }
 
+  // Read by `securityControlsFor` so a player's own copy - "trust this device for the
+  // next N days" - names the operator's actual configured window instead of a hardcoded
+  // guess that silently lies the moment `adminSecurityConfig.trustedDeviceDays` changes.
+  getTrustedDeviceDays(): number {
+    return this.trustedDeviceDays;
+  }
+
   async trust(
     userId: User['id'],
     meta: ClientMeta,
