@@ -23,6 +23,7 @@ export {
   useSetRequireTwoFactorOnLogin,
   useSetWithdrawalPin,
   useRemoveWithdrawalPin,
+  useSetAntiPhishingCode,
   useRequestPhoneVerification,
   useConfirmPhoneVerification,
   useMySessions,
@@ -35,6 +36,7 @@ export {
   type UseSetLoginWithdrawalAlertsResult,
   type UseSetRequireTwoFactorOnLoginResult,
   type UseSetWithdrawalPinResult,
+  type UseSetAntiPhishingCodeResult,
   type UseRequestPhoneVerificationResult,
   type UseConfirmPhoneVerificationResult,
 } from './identity/react/account.js';

@@ -90,7 +90,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin added/changed a geo (country) rule. resourceId = the country code.
   if (topic === 'compliance.geo-rule.added') {
     return {
       ...base,
@@ -99,6 +98,26 @@ export async function mapEventToRecord(
       resourceType: 'geo-rule',
       resourceId: str(p['countryCode']),
       after: { action: p['action'] ?? null },
+    };
+  }
+
+  if (
+    topic === 'compliance.game-geo-rule.upserted' ||
+    topic === 'compliance.game-geo-rule.deleted'
+  ) {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game-geo-rule',
+      resourceId: str(p['ruleId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: {
+        state: isRecord(p['after']) ? p['after'] : null,
+        reason: p['reason'] ?? null,
+        gameId: p['gameId'] ?? null,
+        countryCode: p['countryCode'] ?? null,
+      },
     };
   }
 
@@ -585,6 +604,18 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'lobby.layout.updated') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'lobby-layout',
+      resourceId: null,
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
   // System-generated in-app notification (fed by a wallet withdrawal event); the
   // recipient is the notification's subject, not an acting player.
   if (topic === 'notifications.created') {
@@ -709,6 +740,80 @@ export async function mapEventToRecord(
       resourceType: 'wallet_job_run',
       resourceId: str(p['runId']),
       after: { openFindings: p['openFindings'] ?? null, threshold: p['threshold'] ?? null },
+    };
+  }
+
+  // Backoffice game-catalog mutations. actorId = the acting admin; resource = the
+  // catalog row; before/after carry the config snapshot so visibility flips are diffable.
+  if (topic === 'gaming.provider.created') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_provider',
+      resourceId: str(p['providerId']),
+      after: {
+        slug: p['slug'] ?? null,
+        name: p['name'] ?? null,
+        aggregatorMappings: p['aggregatorMappings'] ?? [],
+        logoUrl: p['logoUrl'] ?? null,
+        metadata: p['metadata'] ?? null,
+        isActive: p['isActive'] ?? null,
+      },
+    };
+  }
+
+  if (topic === 'gaming.provider.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_provider',
+      resourceId: str(p['providerId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.category.created') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      after: {
+        slug: p['slug'] ?? null,
+        name: p['name'] ?? null,
+        translations: p['translations'] ?? {},
+        icon: p['icon'] ?? null,
+        sortOrder: p['sortOrder'] ?? null,
+        isActive: p['isActive'] ?? null,
+      },
+    };
+  }
+
+  if (topic === 'gaming.category.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.game.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game',
+      resourceId: str(p['gameId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
     };
   }
 
@@ -840,6 +945,20 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'identity.security.anti_phishing_code.set') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      // The code value never reaches the audit trail, only that it was set.
+      before: { antiPhishingCodeSet: p['wasAlreadySet'] ?? null },
+      after: { antiPhishingCodeSet: true },
+    };
+  }
+
   // Shared identity self-action topics: the same `/identity/*` endpoints serve
   // both player and admin accounts, so playerId only resolves for a player. A
   // null playerId means the account has no player row - attribute to the
@@ -906,6 +1025,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.security.require_two_factor.updated',
   'identity.security.withdrawal_pin.set',
   'identity.security.withdrawal_pin.removed',
+  'identity.security.anti_phishing_code.set',
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',
@@ -921,6 +1041,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',
+  'lobby.layout.updated',
+  'gaming.provider.created',
+  'gaming.provider.updated',
+  'gaming.category.created',
+  'gaming.category.updated',
+  'gaming.game.updated',
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.user.ignored',
@@ -959,6 +1085,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.kyc.reverify_required',
   'compliance.kyc.high_risk_signal_detected',
   'compliance.geo-rule.added',
+  'compliance.game-geo-rule.upserted',
+  'compliance.game-geo-rule.deleted',
   'cms.page.published',
   'cms.page.created',
   'cms.page.updated',

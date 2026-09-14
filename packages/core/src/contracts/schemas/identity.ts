@@ -250,6 +250,10 @@ export const SecurityControlsSchema = z.object({
   // hardcoded guess that goes stale the moment an operator changes it. Zero means
   // trusting a device is disabled platform-wide.
   trustedDeviceDays: z.number().int().nonnegative(),
+  // Raw value, not a boolean - this code authorizes nothing (unlike the withdrawal PIN), it's
+  // a recognition signal readable only by the authenticated player it belongs to, same gate as
+  // the rest of this schema.
+  antiPhishingCode: z.string().nullable(),
 });
 
 export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean() });
@@ -257,6 +261,10 @@ export const SetLoginWithdrawalAlertsInputSchema = z.object({ enabled: z.boolean
 export const SetAutoLogoutInputSchema = z.object({ duration: AutoLogoutDurationSchema });
 
 export const SetRequireTwoFactorOnLoginInputSchema = z.object({ enabled: z.boolean() });
+
+// Non-empty after trimming incidental leading/trailing whitespace (eg from copy-paste),
+// case-sensitive, and capped to keep every delivered email bounded - no reauth, set/overwrite only.
+export const SetAntiPhishingCodeInputSchema = z.object({ code: z.string().trim().min(1).max(255) });
 
 export const WithdrawalPinSchema = z.string().regex(/^[0-9]{4}$/);
 
@@ -385,6 +393,7 @@ export type SetLoginWithdrawalAlertsInput = z.infer<typeof SetLoginWithdrawalAle
 export type SetAutoLogoutInput = z.infer<typeof SetAutoLogoutInputSchema>;
 export type SetRequireTwoFactorOnLoginInput = z.infer<typeof SetRequireTwoFactorOnLoginInputSchema>;
 export type SetWithdrawalPinInput = z.infer<typeof SetWithdrawalPinInputSchema>;
+export type SetAntiPhishingCodeInput = z.infer<typeof SetAntiPhishingCodeInputSchema>;
 export type PhoneVerificationRequestInput = z.infer<typeof PhoneVerificationRequestInputSchema>;
 export type PhoneVerificationRequestOutput = z.infer<typeof PhoneVerificationRequestOutputSchema>;
 export type PhoneVerificationConfirmInput = z.infer<typeof PhoneVerificationConfirmInputSchema>;

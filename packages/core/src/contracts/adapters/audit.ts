@@ -25,6 +25,9 @@ export type DirectAuditAction =
   | 'chat.platform_ban.expired'
   | 'player.display_currency.set'
   | 'compliance.kyc.bulk_approve'
+  | 'compliance.country_rule.created'
+  | 'compliance.country_rule.setting_changed'
+  | 'compliance.global_kyc.set'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted'
@@ -42,6 +45,8 @@ export type DirectAuditAction =
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
   | 'wallet.reconciliation_finding.resolved'
+  | 'wallet.swap.refunded'
+  | 'wallet.swap.fill_rejected'
   | 'wallet.wallet_asset.created'
   | 'wallet.wallet_asset.updated'
   | 'wallet.wallet_asset.deleted';

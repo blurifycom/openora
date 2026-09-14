@@ -1,5 +1,5 @@
 {
-  "id": "df85acae-ed2c-41a1-bf05-7b22e0e08dda",
+  "id": "ce3d71fa-43ee-49e1-b180-16e9ede959e5",
   "prevId": "6a0f4ff4-fa73-47c8-bf36-fc6a3230b731",
   "version": "7",
   "dialect": "postgresql",
@@ -820,21 +820,6 @@
           "notNull": true,
           "default": false
         },
-        "auto_logout_duration": {
-          "name": "auto_logout_duration",
-          "type": "auto_logout_duration",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'7d'"
-        },
-        "require_two_factor_on_login": {
-          "name": "require_two_factor_on_login",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "withdrawal_pin_hash": {
           "name": "withdrawal_pin_hash",
           "type": "text",
@@ -844,6 +829,12 @@
         "withdrawal_pin_set_at": {
           "name": "withdrawal_pin_set_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anti_phishing_code": {
+          "name": "anti_phishing_code",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -1081,11 +1072,6 @@
     }
   },
   "enums": {
-    "public.auto_logout_duration": {
-      "name": "auto_logout_duration",
-      "schema": "public",
-      "values": ["15m", "1h", "24h", "7d", "30d"]
-    },
     "public.two_factor_method": {
       "name": "two_factor_method",
       "schema": "public",

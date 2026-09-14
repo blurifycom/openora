@@ -1,8 +1,9 @@
-import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
+  GAME_GEO_CHECK,
   GAMING_COMMANDS,
   IDENTITY_READER,
   PLAY_ELIGIBILITY,
@@ -11,6 +12,8 @@ import {
   WALLET_COMMANDS,
 } from '@openora/core/contracts';
 import { GamingService } from './service/gaming.service.js';
+import { GameCategoryService } from './service/game-category.service.js';
+import { GameProviderService } from './service/game-provider.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -24,7 +27,6 @@ export default {
     ctx.provide(GAME_ADAPTER, () => new MockGameAdapter());
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());
     ctx.provide(ADMIN_GAME_REPORTING, (c) => new DrizzleAdminGameReporting(c.get(DRIZZLE)));
-
     // One memoized instance backs both the router and the GAMING_COMMANDS port.
     let svc: GamingService | null = null;
     const gamingService = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -36,9 +38,17 @@ export default {
         c.get(WALLET_COMMANDS),
         c.get(IDENTITY_READER),
         c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        c.has(GAME_GEO_CHECK) ? c.get(GAME_GEO_CHECK) : undefined,
       ));
 
-    ctx.routers.add('gaming', (c) => createGamingRouter(gamingService(c)));
+    ctx.routers.add('gaming', (c) =>
+      createGamingRouter({
+        gaming: gamingService(c),
+        providers: new GameProviderService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        categories: new GameCategoryService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        adminGuard: c.get(ADMIN_GUARD),
+      }),
+    );
     ctx.provide(GAMING_COMMANDS, (c) => ({
       accumulateExternalRound: (tx, args) => gamingService(c).accumulateExternalRound(tx, args),
     }));

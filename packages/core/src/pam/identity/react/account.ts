@@ -16,6 +16,7 @@ import type {
   PhoneVerificationRequestOutput,
   SecurityControls,
   SendTwoFactorOtpResult,
+  SetAntiPhishingCodeInput,
   SetAutoLogoutInput,
   SetLoginWithdrawalAlertsInput,
   SetRequireTwoFactorOnLoginInput,
@@ -45,6 +46,11 @@ export type UseSetWithdrawalPinResult = UseMutationResult<
   SecurityControls,
   Error,
   SetWithdrawalPinInput
+>;
+export type UseSetAntiPhishingCodeResult = UseMutationResult<
+  SecurityControls,
+  Error,
+  SetAntiPhishingCodeInput
 >;
 export type UseRequestPhoneVerificationResult = UseMutationResult<
   PhoneVerificationRequestOutput,
@@ -180,6 +186,15 @@ export function useSetWithdrawalPin(): UseSetWithdrawalPinResult {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.security.setWithdrawalPin.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useSetAntiPhishingCode(): UseSetAntiPhishingCodeResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.security.setAntiPhishingCode.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }

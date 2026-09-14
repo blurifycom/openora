@@ -19,6 +19,7 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  EXCHANGE_RATE_READER,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
   AUDIT_WRITER,
@@ -238,6 +239,15 @@ export default {
     ctx.routers.add('wallet', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+      // A licence-facing gate that is simply absent is the kind of thing an audit asks
+      // about, so say it once at bind time rather than letting every deposit pass
+      // unchecked in silence.
+      const rgLimits = c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined;
+      if (!rgLimits) {
+        logger.warn(
+          'wallet loaded without RG_LIMITS - deposit limits are not enforced on any route',
+        );
+      }
       const walletService = new WalletService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
@@ -252,7 +262,8 @@ export default {
           ? c.get(TAG_EVALUATION_COMMANDS)
           : undefined,
         audit: c.get(AUDIT_WRITER),
-        rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        rgLimits,
+        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
       });
 
       const reconciliation = new ReconciliationService({
@@ -262,6 +273,7 @@ export default {
         paymentProviders: c.get(PAYMENT_PROVIDERS),
         audit: c.get(AUDIT_WRITER),
         platformConfig,
+        rgLimits,
       });
       reconciliationRef = reconciliation;
 
@@ -297,6 +309,7 @@ export default {
             drizzle: c.get(DRIZZLE),
             events: c.get(EVENT_BUS),
             adapter: swapAdapter,
+            audit: c.get(AUDIT_WRITER),
             platformConfig,
             limiter: c.get(RATE_LIMITER),
           })

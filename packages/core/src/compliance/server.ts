@@ -1,5 +1,9 @@
 export {
   ComplianceService,
+  CountryRuleConfirmationRequiredError,
+  CountryRuleVersionConflictError,
+  GlobalKycConfigVersionConflictError,
+  LicensedJurisdictionBlacklistError,
   LimitNotFoundError,
   LimitOwnershipError,
 } from './service/compliance.service.js';

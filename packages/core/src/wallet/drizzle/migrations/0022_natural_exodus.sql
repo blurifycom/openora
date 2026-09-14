@@ -1,0 +1,1 @@
+ALTER TYPE "public"."wallet_reconciliation_finding_kind" ADD VALUE 'stuck_swap';

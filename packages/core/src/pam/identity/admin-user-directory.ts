@@ -2,6 +2,7 @@ import type {
   AdminUserDirectory,
   AdminUserListOptions,
   ClientMeta,
+  MailRecipientDirectory,
   PlayerIdSearchOptions,
 } from '@openora/core/contracts';
 import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
@@ -225,5 +226,23 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       )
       .limit(limit);
     return rows.map((r) => r.id);
+  }
+}
+
+export class DrizzleMailRecipientDirectory implements MailRecipientDirectory {
+  constructor(private readonly drizzle: DrizzleService) {}
+
+  async getMailRecipient(userId: string) {
+    const [recipient] = await this.drizzle.db
+      .select({
+        email: user.email,
+        language: user.language,
+        name: user.name,
+        antiPhishingCode: user.antiPhishingCode,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return recipient ?? null;
   }
 }

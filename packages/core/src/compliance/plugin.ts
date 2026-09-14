@@ -8,9 +8,11 @@ import {
   EXCHANGE_RATE_READER,
   GEO_IP_ADAPTER,
   GEO_CHECK_COMMANDS,
+  GAME_GEO_CHECK,
   JOB_QUEUE,
   KYC_ADAPTER,
   IDENTITY_READER,
+  IGAMING_CONFIG,
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
@@ -47,6 +49,8 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(DRIZZLE),
     c.get(EVENT_BUS),
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
+    c.get(AUDIT_WRITER),
+    c.has(IGAMING_CONFIG) ? c.get(IGAMING_CONFIG) : null,
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');
@@ -75,6 +79,7 @@ export default {
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
+    ctx.provide(GAME_GEO_CHECK, makeComplianceService);
     ctx.provide(RG_LIMITS, (c) => new RgLimitGate(monitoring(c), c.get(EXCHANGE_RATE_READER)));
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
