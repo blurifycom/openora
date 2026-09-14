@@ -4,9 +4,13 @@
 // format SQL (oxc#20724) and skips a few others; this is the catch-all. Operates on
 // `git ls-files` so gitignored paths are excluded by construction; binaries (NUL
 // byte) and the lockfile are skipped. Idempotent.
+//
+// Given path arguments it touches exactly those files instead - the pre-commit hook
+// passes the staged set, and rewriting a file outside it would commit work the author
+// never staged.
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -15,10 +19,13 @@ const SKIP = new Set(['pnpm-lock.yaml']);
 // so appending a newline makes an applied migration re-run and fail (ADR-0027).
 const SKIP_PATTERNS = [/\/drizzle\/migrations\/.*\.sql$/];
 
-const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 64 * 1024 * 1024 })
-  .toString('utf8')
-  .split('\0')
-  .filter(Boolean);
+const args = process.argv.slice(2);
+const files = args.length
+  ? args.map((arg) => relative(root, resolve(arg)))
+  : execSync('git ls-files -z', { cwd: root, maxBuffer: 64 * 1024 * 1024 })
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean);
 
 let fixed = 0;
 for (const rel of files) {
@@ -49,4 +56,5 @@ for (const rel of files) {
   fixed++;
 }
 
-console.log(fixed ? `Fixed ${fixed} file(s).` : 'All tracked files already end with a newline.');
+const scope = args.length ? `${files.length} file(s)` : 'All tracked files';
+console.log(fixed ? `Fixed ${fixed} file(s).` : `${scope} already end with a newline.`);
