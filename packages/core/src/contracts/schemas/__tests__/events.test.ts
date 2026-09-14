@@ -13,6 +13,14 @@ describe('getEventVersion', () => {
     expect(getEventVersion('cms.page.created')).toBe(1);
   });
 
+  it('starts new gaming catalog topics at implicit v1', () => {
+    expect(getEventVersion('gaming.provider.created')).toBe(1);
+    expect(getEventVersion('gaming.provider.updated')).toBe(1);
+    expect(getEventVersion('gaming.category.created')).toBe(1);
+    expect(getEventVersion('gaming.category.updated')).toBe(1);
+    expect(getEventVersion('gaming.game.updated')).toBe(1);
+  });
+
   it('returns the pinned version for a topic that has been bumped', () => {
     expect(getEventVersion('wallet.deposit.completed')).toBe(2);
     expect(getEventVersion('compliance.kyc.updated')).toBe(5);
@@ -106,6 +114,31 @@ describe('identity security event contracts', () => {
         previousEnabled: undefined,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('cms banner dropped-image URL compatibility', () => {
+  it('defaults payloads from older producers to an empty dropped-URL list', () => {
+    const bannerConfigurationId = randomUUID();
+    const actorId = randomUUID();
+    const payloads = [
+      domainEventSchemas['cms.banner.configuration.deleted'].parse({
+        bannerConfigurationId,
+        actorId,
+      }),
+      domainEventSchemas['cms.banner.image.set'].parse({
+        bannerImageId: randomUUID(),
+        bannerConfigurationId,
+        actorId,
+      }),
+      domainEventSchemas['cms.banner.image.deleted'].parse({
+        bannerImageId: randomUUID(),
+        bannerConfigurationId,
+        actorId,
+      }),
+    ];
+
+    expect(payloads.map((payload) => payload.droppedImageUrls)).toEqual([[], [], []]);
   });
 });
 
@@ -211,6 +244,52 @@ describe('event currency fields accept a wallet/gaming money ticker', () => {
   });
 });
 
+describe('game geo rule event reasons', () => {
+  const gameId = randomUUID();
+  const validPayload = {
+    ruleId: randomUUID(),
+    gameId,
+    countryCode: 'US',
+    reason: 'licence restriction',
+    before: null,
+    after: {
+      id: randomUUID(),
+      gameId,
+      countryCode: 'US',
+      reason: 'licence restriction',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    actorId: randomUUID(),
+  };
+
+  it('trims and rejects blank reasons in the event state and envelope', () => {
+    const parsed = domainEventSchemas['compliance.game-geo-rule.upserted'].safeParse({
+      ...validPayload,
+      reason: '  licence restriction  ',
+      after: { ...validPayload.after, reason: '  licence restriction  ' },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.reason).toBe('licence restriction');
+      expect(parsed.data.after.reason).toBe('licence restriction');
+    }
+
+    expect(
+      domainEventSchemas['compliance.game-geo-rule.upserted'].safeParse({
+        ...validPayload,
+        reason: '   ',
+      }).success,
+    ).toBe(false);
+    expect(
+      domainEventSchemas['compliance.game-geo-rule.upserted'].safeParse({
+        ...validPayload,
+        after: { ...validPayload.after, reason: '   ' },
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('gaming.game.updated tag forward-compat', () => {
   const gameSnapshot = {
     slug: 'demo-game',
@@ -226,6 +305,7 @@ describe('gaming.game.updated tag forward-compat', () => {
   it('defaults tagIds for game-update events emitted before game tags existed', () => {
     const result = domainEventSchemas['gaming.game.updated'].safeParse({
       gameId: randomUUID(),
+      actorId: randomUUID(),
       before: gameSnapshot,
       after: gameSnapshot,
     });

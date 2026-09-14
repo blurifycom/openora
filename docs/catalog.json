@@ -159,7 +159,9 @@
       "id": "compliance",
       "group": "compliance",
       "tables": [
+        "game_geo_rule",
         "geo_rule",
+        "global_kyc_config",
         "kyc_verification",
         "rg_exclusion",
         "rg_flag",
@@ -172,8 +174,10 @@
         "compliance.bulkApproveKyc",
         "compliance.cancelPendingLimitChange",
         "compliance.confirmPendingLimitChange",
+        "compliance.deleteGameGeoRule",
         "compliance.deleteLimit",
         "compliance.geoCheck",
+        "compliance.getGlobalKycConfig",
         "compliance.getLimits",
         "compliance.getMyKyc",
         "compliance.getMyRgSection",
@@ -182,15 +186,20 @@
         "compliance.kycWebhook",
         "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
+        "compliance.listCountryRules",
+        "compliance.listGameGeoRules",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
         "compliance.overrideKycStatus",
         "compliance.requestCoolingOff",
         "compliance.requestKycResubmission",
         "compliance.requestSelfExclusion",
+        "compliance.setGlobalKycConfig",
         "compliance.setPlayerLimit",
         "compliance.streamKycStatus",
         "compliance.submitKyc",
+        "compliance.upsertCountryRule",
+        "compliance.upsertGameGeoRule",
         "compliance.upsertLimit"
       ]
     },
@@ -213,19 +222,23 @@
         "game_category",
         "game_category_game",
         "game_provider",
+        "game_provider_aggregator_mapping",
         "game_round",
         "game_tag",
         "game_tag_game"
       ],
       "routes": [
         "gaming.createCategory",
+        "gaming.createProvider",
         "gaming.createTag",
         "gaming.deleteTag",
         "gaming.endRound",
         "gaming.getAdminCategory",
         "gaming.getAdminProvider",
         "gaming.getAdminTag",
+        "gaming.getCategoryBySlug",
         "gaming.getGame",
+        "gaming.getProviderBySlug",
         "gaming.listAdminCategories",
         "gaming.listAdminGames",
         "gaming.listAdminProviders",
@@ -309,8 +322,10 @@
         "identity.security.loginWithdrawalAlerts",
         "identity.security.me",
         "identity.security.removeWithdrawalPin",
+        "identity.security.setAntiPhishingCode",
         "identity.security.setWithdrawalPin",
         "identity.sendEmailVerification",
+        "identity.sendTwoFactorOtp",
         "identity.sessions.list",
         "identity.sessions.listAll",
         "identity.sessions.listMine",
@@ -318,6 +333,7 @@
         "identity.sessions.revokeAll",
         "identity.sessions.revokeMine",
         "identity.streamSession",
+        "identity.twoFactorStatus",
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.usernameAvailable",
@@ -332,12 +348,17 @@
       "tables": [
         "featured_slot",
         "lobby_category",
-        "lobby_category_game"
+        "lobby_category_game",
+        "lobby_layout",
+        "lobby_section"
       ],
       "routes": [
+        "lobby.getAdminLayout",
         "lobby.getCategoryBySlug",
         "lobby.getFeatured",
+        "lobby.getLayout",
         "lobby.listCategories",
+        "lobby.replaceLayout",
         "lobby.search"
       ]
     },
@@ -560,7 +581,6 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/mail/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -699,7 +719,8 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/fx/exchange-rate/plugin.ts",
-        "packages/core/src/pam/profile/plugin.ts"
+        "packages/core/src/pam/profile/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -709,6 +730,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
+      "category": "game-geo-check",
+      "interface": "GameGeoDenialReason",
+      "token": "GAME_GEO_CHECK",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts"
       ]
     },
     {
@@ -795,6 +826,15 @@
       ]
     },
     {
+      "category": "lobby-section-catalog",
+      "interface": "LobbySectionDefinitionInput",
+      "token": "LOBBY_SECTION_CATALOG",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/lobby/plugin.ts"
+      ]
+    },
+    {
       "category": "login-enforcement",
       "interface": "LoginEnforcementPort",
       "token": "LOGIN_ENFORCEMENT",
@@ -811,6 +851,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/mail/plugin.ts"
+      ]
+    },
+    {
+      "category": "mail-recipient-directory",
+      "interface": "MailRecipient",
+      "token": "MAIL_RECIPIENT_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/mail/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -1008,6 +1058,8 @@
     "cms.page.deleted",
     "cms.page.published",
     "cms.page.updated",
+    "compliance.game-geo-rule.deleted",
+    "compliance.game-geo-rule.upserted",
     "compliance.geo-rule.added",
     "compliance.kyc.high_risk_signal_detected",
     "compliance.kyc.reverify_required",
@@ -1016,6 +1068,7 @@
     "gaming.category.created",
     "gaming.category.updated",
     "gaming.game.updated",
+    "gaming.provider.created",
     "gaming.provider.updated",
     "gaming.round.ended",
     "gaming.round.started",
@@ -1045,6 +1098,7 @@
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",
     "identity.profile.updated",
+    "identity.security.anti_phishing_code.set",
     "identity.security.login_withdrawal_alerts.updated",
     "identity.security.withdrawal_pin.removed",
     "identity.security.withdrawal_pin.set",
@@ -1064,6 +1118,7 @@
     "identity.user.registration.failed",
     "identity.user.unauthorized_access",
     "identity.user.unlocked",
+    "lobby.layout.updated",
     "notifications.created",
     "player.account.closed",
     "player.account.reopened",
@@ -1511,6 +1566,10 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "CountryRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "CreateBannerConfigurationInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
     },
@@ -1533,6 +1592,10 @@
     {
       "name": "CreatePlayerNoteInputSchema",
       "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
+      "name": "CreateProviderInputSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "createTagSchema",
@@ -1573,6 +1636,10 @@
     {
       "name": "DeleteBannerImageInputSchema",
       "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "DeleteGameGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "deleteTagSchema",
@@ -1719,12 +1786,44 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "GameCategoryNameSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GameCategorySchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "GameCategorySummarySchema",
       "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategorySummaryWithTranslationsSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategoryTranslationSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameCategoryTranslationsSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
+      "name": "GameGeoCheckInputSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoDecisionSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoDenialReasonSchema",
+      "file": "packages/core/src/contracts/adapters/game-geo-check.ts"
+    },
+    {
+      "name": "GameGeoRuleSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "GamePerformanceFilterSchema",
@@ -1737,6 +1836,10 @@
     {
       "name": "GamePerformanceSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GameProviderAggregatorMappingSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {
       "name": "GameProviderDetailSchema",
@@ -1837,6 +1940,10 @@
     {
       "name": "GiftCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "GlobalKycConfigSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",
@@ -2027,6 +2134,10 @@
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
+      "name": "ListGameGeoRulesInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "ListGamesInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -2043,12 +2154,48 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "LobbyAdminLayoutSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbyAdminSectionSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
       "name": "LobbyCategoryDetailSchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
       "name": "LobbyCategorySchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbyLayoutSectionSnapshotSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbyLayoutSnapshotSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbyResolvedSectionSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbySectionConfigSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbySectionDataSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
+    },
+    {
+      "name": "LobbySectionSaveInputSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "LobbySectionTypeSchema",
+      "file": "packages/core/src/contracts/schemas/lobby.ts"
     },
     {
       "name": "LoginInputSchema",
@@ -2117,6 +2264,10 @@
     {
       "name": "MyRgHistoryFiltersSchema",
       "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "NonEmptyReasonSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
       "name": "NotificationCountSchema",
@@ -2391,6 +2542,10 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "ReplaceLobbyLayoutInputSchema",
+      "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
       "name": "replacePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -2491,6 +2646,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "SendTwoFactorOtpResultSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SessionItemSchema",
       "file": "packages/core/src/pam/identity/contract/index.ts"
     },
@@ -2511,6 +2670,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "SetAntiPhishingCodeInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "SetAutoWithdrawalRuleInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -2529,6 +2692,10 @@
     {
       "name": "SetDisplayCurrencyInputSchema",
       "file": "packages/core/src/pam/profile/contract/index.ts"
+    },
+    {
+      "name": "SetGlobalKycConfigInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "SetLoginWithdrawalAlertsInputSchema",
@@ -2643,8 +2810,16 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "TwoFactorDeliveryMethodSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TwoFactorMethodSchema",
       "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "TwoFactorStatusSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "UnblockCommandMetadataSchema",
@@ -2693,6 +2868,14 @@
     {
       "name": "UpdateWalletAssetInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "UpsertCountryRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "UpsertGameGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "UpsertLimitInputSchema",

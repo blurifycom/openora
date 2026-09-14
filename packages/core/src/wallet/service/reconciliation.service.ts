@@ -18,10 +18,12 @@ import {
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
   type PlatformConfig,
+  type RgLimitsPort,
   type User,
   type WalletJobRunStatus,
 } from '@openora/core/contracts';
 import {
+  wallet,
   walletCustodySweep,
   walletJobRun,
   walletReconciliationFinding,
@@ -36,7 +38,11 @@ import type {
   WalletReconciliationFinding as WalletReconciliationFindingDto,
 } from '../contract/index.js';
 import type { WalletService } from './wallet.service.js';
-import { recordReconciliationFinding } from './reconciliation-finding.service.js';
+import {
+  OUT_OF_CYCLE_RUN_ID,
+  recordReconciliationFinding,
+  rgDecisionForLandedCredit,
+} from './reconciliation-finding.service.js';
 
 const logger = createLogger('wallet-reconciliation');
 
@@ -96,6 +102,9 @@ const DEFAULT_STALE_RUN_AFTER_MINUTES = 30;
 /** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 
+// A swap leg carries no payment provider name, but a finding needs one to be filed under.
+const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
+
 const JOB_NAME = 'wallet-reconciliation';
 
 /**
@@ -115,6 +124,7 @@ export type ReconciliationServiceDeps = {
   paymentProviders: PaymentProviderRegistry;
   audit: AuditWritePort;
   platformConfig?: PlatformConfig;
+  rgLimits?: RgLimitsPort;
 };
 
 /**
@@ -132,6 +142,7 @@ export class ReconciliationService {
   private readonly paymentProviders: PaymentProviderRegistry;
   private readonly audit: AuditWritePort;
   private readonly platformConfig?: PlatformConfig;
+  private readonly rgLimits?: RgLimitsPort;
 
   constructor({
     drizzle,
@@ -140,6 +151,7 @@ export class ReconciliationService {
     paymentProviders,
     audit,
     platformConfig,
+    rgLimits,
   }: ReconciliationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -147,6 +159,7 @@ export class ReconciliationService {
     this.paymentProviders = paymentProviders;
     this.audit = audit;
     this.platformConfig = platformConfig;
+    this.rgLimits = rgLimits;
   }
 
   async listFindings(filter: ListReconciliationFindingsInput) {
@@ -195,9 +208,10 @@ export class ReconciliationService {
     resolution: ReconciliationResolution,
     meta?: ClientMeta,
   ): Promise<WalletReconciliationFindingDto> {
-    return this.drizzle.db.transaction(async (txn) => {
+    const { dto, creditedBy } = await this.drizzle.db.transaction(async (txn) => {
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
+      let creditTx: WalletTransaction | undefined;
 
       if (resolution.outcome === 'credited') {
         const [finding] = await txn
@@ -224,6 +238,7 @@ export class ReconciliationService {
           throw new ReconciliationCreditMismatchError();
         }
         transactionId = tx.id;
+        creditTx = tx;
       } else {
         resolutionNote = resolution.note;
       }
@@ -251,9 +266,12 @@ export class ReconciliationService {
           .from(walletReconciliationFinding)
           .where(eq(walletReconciliationFinding.id, id));
         // Already resolved by a concurrent/earlier call: return it unchanged, no audit entry.
-        return toFindingDto(
-          findOneOrThrow(existing ? [existing] : [], new ReconciliationFindingNotFoundError(id)),
-        );
+        return {
+          dto: toFindingDto(
+            findOneOrThrow(existing ? [existing] : [], new ReconciliationFindingNotFoundError(id)),
+          ),
+          creditedBy: undefined,
+        };
       }
 
       const row = findOneOrThrow(updated, new ReconciliationFindingNotFoundError(id));
@@ -272,8 +290,76 @@ export class ReconciliationService {
         },
         ...meta,
       });
-      return toFindingDto(row);
+      return { dto: toFindingDto(row), creditedBy: creditTx ? { row, tx: creditTx } : undefined };
     });
+
+    if (creditedBy) {
+      await this.recordRgBreachForHandCredit(creditedBy.row, creditedBy.tx);
+    }
+    return dto;
+  }
+
+  /**
+   * The hand-credit counterpart of the gate `WalletService.creditDepositByAddress` runs.
+   * An admin resolving a deposit finding as `credited` puts on-chain money in the player's
+   * wallet through a `manual_credit`, which no deposit window counts and no limit refuses,
+   * so without this the poll-then-credit route is the one way past a deposit limit that
+   * leaves no trace. The credit IS the attempted move here, the opposite of the webhook
+   * path's `0`, because the gate does not count a `manual_credit` row at all.
+   *
+   * Never blocks the resolution: the admin's credit has already committed, and failing
+   * their request over a report would only lose the report - a retry finds the finding
+   * resolved and returns early. A write that fails is logged and lost; the audit row for
+   * the resolution still names the admin, the amount and the transaction.
+   */
+  private async recordRgBreachForHandCredit(
+    finding: WalletReconciliationFindingRow,
+    tx: WalletTransaction,
+  ): Promise<void> {
+    try {
+      const [holder] = await this.drizzle.db
+        .select({ userId: wallet.userId })
+        .from(wallet)
+        .where(eq(wallet.id, tx.walletId));
+      if (!holder) {
+        return;
+      }
+      const decision = await rgDecisionForLandedCredit(
+        this.drizzle.db,
+        this.rgLimits,
+        { userId: holder.userId, attempted: tx.amount, currency: tx.currency },
+        { externalId: finding.externalId, txHash: finding.txHash },
+      );
+      if (!decision) {
+        return;
+      }
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId: OUT_OF_CYCLE_RUN_ID,
+          providerName: finding.providerName,
+          kind: 'rg_limit_breach',
+          currency: tx.currency,
+          network: finding.network,
+          amount: tx.amount,
+          address: finding.address,
+          tag: finding.tag,
+          txHash: finding.txHash,
+          // The resolved finding's own id, not its externalId: the vendor id already keys
+          // a breach filed for the same deposit by the webhook path, and these two are
+          // separate credits of separate money whenever both exist.
+          externalId: finding.id,
+          transactionId: tx.id,
+          detail: `credited by hand past the player's ${decision.period} ${decision.limitType} limit of ${decision.limit} (${decision.used} in the window before this credit) - resolving finding ${finding.id}`,
+        },
+        this.audit,
+      );
+    } catch (err) {
+      logger.error(
+        { err, findingId: finding.id, transactionId: tx.id },
+        'RG breach finding for a hand-credited deposit could not be recorded',
+      );
+    }
   }
 
   /**
@@ -330,6 +416,8 @@ export class ReconciliationService {
       withdrawalsReconciled: 0,
       unknownAtProvider: 0,
       stuckSweeps: 0,
+      stuckSwaps: 0,
+      swapFindingsClosed: 0,
       unreconciledHours: 0,
     };
 
@@ -351,6 +439,16 @@ export class ReconciliationService {
         }
 
         await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
+
+        // Close first, then file: a leg the desk settled after it was reported stops
+        // describing a situation that no longer exists before this cycle adds more.
+        await this.resolveSettledSwapFindings(counts);
+        await this.reconcileStuckSwaps(
+          runId,
+          cfg.stuckSwapAfterMinutes ?? cfg.stuckAfterMinutes,
+          cfg.batchSize,
+          counts,
+        );
 
         // Deliberately not gated on `wallet.sweep` being configured. An operator can
         // adopt reconciliation without sweeping, and a stuck sweep is real player money
@@ -539,8 +637,9 @@ export class ReconciliationService {
     return byExternalId;
   }
 
-  // Covered exactly by wallet_transaction_status_type_created_at_idx - equality on
-  // status and type, then a range on createdAt, in that column order.
+  // wallet_transaction_status_type_created_at_idx covers the WHERE - equality on status
+  // and type, then a range on createdAt, in that column order. The ORDER BY's leading
+  // correlated EXISTS is not indexable, so the matching set is sorted before LIMIT.
   private async reconcileStuckWithdrawals(
     runId: WalletJobRun['runId'],
     stuckAfterMinutes: number,
@@ -552,6 +651,8 @@ export class ReconciliationService {
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'unknown_at_provider'
+        AND ${walletReconciliationFinding.providerName}
+            = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
     )`;
@@ -565,7 +666,7 @@ export class ReconciliationService {
           lt(walletTransaction.createdAt, cutoff),
         ),
       )
-      // Unreported first, then oldest. Findings dedupe on (kind, externalId), so a row
+      // Unreported first, then oldest. Findings dedupe on (kind, providerName, externalId), so a row
       // already reported produces nothing on a re-run: ordering it last stops a
       // permanent backlog from filling the batch and hiding newer stuck withdrawals,
       // while still re-checking it at the vendor whenever the batch has room.
@@ -631,7 +732,113 @@ export class ReconciliationService {
     }
   }
 
-  // Covered exactly by wallet_custody_sweep_status_created_at_idx. Human resolution
+  /**
+   * Closes `stuck_swap` findings the desk settled after they were reported - a
+   * report-side write only, matching what this table is for: it never touches a balance,
+   * a transaction status, or the swap itself. Without it a slow-but-healthy swap leaves
+   * an `open` finding describing a situation that no longer exists, and since
+   * `countOpenFindings` feeds `alertThreshold`, a growing pile of them alerts on nothing.
+   */
+  private async resolveSettledSwapFindings(counts: { swapFindingsClosed: number }): Promise<void> {
+    const settled = sql`EXISTS (
+      SELECT 1 FROM ${walletTransaction}
+      WHERE ${walletTransaction.id} = ${walletReconciliationFinding.transactionId}
+        AND ${walletTransaction.status} <> 'processing'
+    )`;
+    const closed = await this.drizzle.db
+      .update(walletReconciliationFinding)
+      .set({
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolutionNote: 'the desk settled this swap after it was reported',
+      })
+      .where(
+        and(
+          eq(walletReconciliationFinding.kind, 'stuck_swap'),
+          eq(walletReconciliationFinding.status, 'open'),
+          settled,
+        ),
+      )
+      .returning({ id: walletReconciliationFinding.id });
+
+    // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is
+    // what says who did. A finding closed here never carries a `credited` outcome,
+    // because nothing on this path moves money.
+    for (const row of closed) {
+      counts.swapFindingsClosed += 1;
+      await this.audit.record({
+        actorType: 'system',
+        action: 'wallet.reconciliation_finding.resolved',
+        resourceType: 'wallet_reconciliation_finding',
+        resourceId: row.id,
+        before: { status: 'open' },
+        after: { status: 'resolved', outcome: 'settled_at_desk' },
+      });
+    }
+  }
+
+  // Human resolution only, like a stuck sweep. A swap_out held `processing` past the cutoff
+  // is money debited from the player with nothing credited back, and the desk may or may not
+  // have filled it - so neither a refund nor a credit is safe without someone looking.
+  //
+  // wallet_transaction_status_type_created_at_idx covers the WHERE, but the ORDER BY leads
+  // with the correlated EXISTS, which no index serves: every cycle sorts the whole matching
+  // set before LIMIT. That set is bounded in practice only because resolveSettledSwapFindings
+  // closes findings - not because the plan is cheap. Same shape as the sweep sibling.
+  private async reconcileStuckSwaps(
+    runId: WalletJobRun['runId'],
+    stuckSwapAfterMinutes: number,
+    batchSize: number,
+    counts: { stuckSwaps: number },
+  ): Promise<void> {
+    const cutoff = new Date(Date.now() - stuckSwapAfterMinutes * 60 * 1000);
+    // Mirrors the externalId this loop files below, which is the findings dedup key.
+    const alreadyReported = sql<boolean>`EXISTS (
+      SELECT 1 FROM ${walletReconciliationFinding}
+      WHERE ${walletReconciliationFinding.kind} = 'stuck_swap'
+        AND ${walletReconciliationFinding.providerName}
+            = coalesce(${walletTransaction.providerName}, ${SWAP_DESK_PROVIDER_LABEL})
+        AND ${walletReconciliationFinding.externalId}
+            = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
+    )`;
+    const stuck = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.status, 'processing'),
+          eq(walletTransaction.type, 'swap_out'),
+          lt(walletTransaction.createdAt, cutoff),
+        ),
+      )
+      .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
+      .limit(batchSize);
+
+    for (const tx of stuck) {
+      counts.stuckSwaps += 1;
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: tx.providerName ?? SWAP_DESK_PROVIDER_LABEL,
+          kind: 'stuck_swap',
+          currency: tx.currency,
+          amount: tx.amount,
+          transactionId: tx.id,
+          // The desk's own reference when there is one, as every other kind in this table
+          // does, so an operator can join findings to desk records. A leg that died before
+          // `execute` returned has none, and falls back to the local id - the same
+          // `providerRefId ?? id` shape the sweep sibling files.
+          externalId: tx.providerRefId ?? tx.id,
+          detail: `swap_out ${tx.id} has been processing since ${tx.createdAt.toISOString()}`,
+        },
+        this.audit,
+      );
+    }
+  }
+
+  // wallet_custody_sweep_status_created_at_idx covers the WHERE; the ORDER BY's leading
+  // correlated EXISTS is not indexable, as in the two siblings above. Human resolution
   // only - this NEVER touches the sweep row's status or releases its in-flight guard.
   private async reconcileStuckSweeps(
     runId: WalletJobRun['runId'],
@@ -643,6 +850,7 @@ export class ReconciliationService {
     const alreadyReportedSweep = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_sweep'
+        AND ${walletReconciliationFinding.providerName} = ${walletCustodySweep.providerName}
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletCustodySweep.externalId}, ${walletCustodySweep.id}::text)
     )`;

@@ -12,7 +12,7 @@ export const adminRole = ac.newRole({
   transaction: ['view', 'refund'],
   game: ['view', 'enable', 'disable'],
   content: ['create', 'update', 'delete', 'publish'],
-  compliance: ['view', 'override-limit', 'manage-rg'],
+  compliance: ['view', 'override-limit', 'manage-rg', 'manage-geo'],
   report: ['view'],
   withdrawal: ['view', 'approve', 'reject', 'hold', 'auto-rule'],
   bonus: ['view', 'create', 'update', 'pause', 'cancel'],
@@ -35,6 +35,7 @@ export const adminRole = ac.newRole({
   'swap-config': ['view', 'update'],
   'chat-command': ['view', 'update'],
   'chat-moderation': ['view', 'moderate'],
+  'regulatory-overview': ['view', 'manage-country-rules', 'manage-global-kyc'],
 });
 
 export const supportRole = ac.newRole({

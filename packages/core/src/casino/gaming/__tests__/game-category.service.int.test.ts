@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -44,15 +44,18 @@ beforeEach(async () => {
 });
 
 describe('GameCategoryService (real PG)', () => {
-  it('listActiveCategories returns only active categories ordered by sortOrder', async () => {
+  it('listActiveCategories pages only active categories ordered by sortOrder', async () => {
     await seedCategory({ slug: 'b-cat', name: 'B', sortOrder: 2 });
     await seedCategory({ slug: 'a-cat', name: 'A', sortOrder: 1 });
     await seedCategory({ slug: 'old-cat', name: 'Old', isActive: false, sortOrder: 0 });
 
     const { svc } = makeService();
-    const rows = await svc.listActiveCategories();
+    const firstPage = await svc.listActiveCategories({ page: 1, limit: 1 });
 
-    expect(rows.map((r) => r.slug)).toEqual(['a-cat', 'b-cat']);
+    expect(firstPage).toMatchObject({ total: 2, page: 1, limit: 1 });
+    expect(firstPage.items.map((r) => r.slug)).toEqual(['a-cat']);
+    const secondPage = await svc.listActiveCategories({ page: 2, limit: 1 });
+    expect(secondPage.items.map((r) => r.slug)).toEqual(['b-cat']);
   });
 
   it('createCategory stores the row with defaults and emits an event', async () => {
@@ -70,6 +73,7 @@ describe('GameCategoryService (real PG)', () => {
       icon: null,
       sortOrder: 0,
       isActive: true,
+      translations: {},
     });
     expect(emittedTopics(events)).toContain('gaming.category.created');
   });
@@ -79,7 +83,7 @@ describe('GameCategoryService (real PG)', () => {
     const { svc } = makeService();
 
     await expect(
-      svc.createCategory({ slug: 'slots', name: 'Slots 2', ...NO_CLIENT_META }),
+      svc.createCategory({ slug: 'slots', name: 'Slots 2', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameCategorySlugTakenError);
   });
 
@@ -99,20 +103,74 @@ describe('GameCategoryService (real PG)', () => {
     expect(updated).toMatchObject({ slug: 'slots', name: 'Slot Machines', sortOrder: 3 });
     expect(emittedTopics(events)).toContain('gaming.category.updated');
     await expect(
-      svc.updateCategory({ id: created.id, slug: 'live', ...NO_CLIENT_META }),
+      svc.updateCategory({ id: created.id, slug: 'live', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameCategorySlugTakenError);
     await expect(
       svc.updateCategory({
         id: '00000000-0000-4000-8000-000000000000',
         name: 'X',
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
+  });
+
+  it('replaces, preserves, and clears the full translations map', async () => {
+    const created = await seedCategory({
+      slug: 'slots',
+      name: 'Slots',
+      translations: { de: { name: 'Automaten' }, fr: { name: 'Machines à sous' } },
+    });
+    const { svc } = makeService();
+
+    const replaced = await svc.updateCategory({
+      id: created.id,
+      translations: { de: { name: 'Spielautomaten' } },
+      ...ACTOR,
+    });
+    expect(replaced.translations).toEqual({ de: { name: 'Spielautomaten' } });
+
+    const renamed = await svc.updateCategory({
+      id: created.id,
+      name: 'Slot Machines',
+      ...ACTOR,
+    });
+    expect(renamed.translations).toEqual({ de: { name: 'Spielautomaten' } });
+
+    const cleared = await svc.updateCategory({
+      id: created.id,
+      translations: {},
+      ...ACTOR,
+    });
+    expect(cleared.translations).toEqual({});
+
+    const [stored] = await db.drizzle.db
+      .select({ translations: gameCategory.translations })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, created.id));
+    expect(stored?.translations).toEqual({});
   });
 
   it('getCategory 404s an unknown id', async () => {
     const { svc } = makeService();
     await expect(svc.getCategory('00000000-0000-4000-8000-000000000000')).rejects.toBeInstanceOf(
+      GameCategoryNotFoundError,
+    );
+  });
+
+  it('getActiveCategoryBySlug resolves only an active category by slug', async () => {
+    await seedCategory({ slug: 'slots', name: 'Slots' });
+    await seedCategory({ slug: 'hidden', name: 'Hidden', isActive: false });
+    const { svc } = makeService();
+
+    await expect(svc.getActiveCategoryBySlug('slots')).resolves.toMatchObject({
+      slug: 'slots',
+      name: 'Slots',
+      translations: {},
+    });
+    await expect(svc.getActiveCategoryBySlug('hidden')).rejects.toBeInstanceOf(
+      GameCategoryNotFoundError,
+    );
+    await expect(svc.getActiveCategoryBySlug('unknown')).rejects.toBeInstanceOf(
       GameCategoryNotFoundError,
     );
   });

@@ -13,6 +13,7 @@ import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
 import type { ClientMeta, User } from '@openora/core/contracts';
 import { gameCategory } from '../schema/index.js';
 import type { CreateCategoryInput, UpdateCategoryInput } from '../contract/index.js';
+import { toCategorySummary } from '../../shared/game-catalog.js';
 
 export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
 export const GameCategorySlugTakenError = makeConflictError(
@@ -21,16 +22,17 @@ export const GameCategorySlugTakenError = makeConflictError(
 );
 
 type Actor = {
-  actorId?: User['id'];
+  actorId: User['id'];
 } & ClientMeta;
 
-export function toCategorySummary(record: typeof gameCategory.$inferSelect) {
+function categorySnapshot(record: typeof gameCategory.$inferSelect) {
   return {
-    id: record.id,
     slug: record.slug,
     name: record.name,
+    translations: record.translations ?? {},
     icon: record.icon,
     sortOrder: record.sortOrder,
+    isActive: record.isActive,
   };
 }
 
@@ -50,19 +52,31 @@ export class GameCategoryService {
     private readonly events: EventBus,
   ) {}
 
-  async listActiveCategories() {
-    const rows = await this.drizzle.db
-      .select({
-        id: gameCategory.id,
-        slug: gameCategory.slug,
-        name: gameCategory.name,
-        icon: gameCategory.icon,
-        sortOrder: gameCategory.sortOrder,
-      })
-      .from(gameCategory)
-      .where(eq(gameCategory.isActive, true))
-      .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
-    return rows;
+  async listActiveCategories({ page, limit }: { page: number; limit: number }) {
+    const where = eq(gameCategory.isActive, true);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: gameCategory.id,
+          slug: gameCategory.slug,
+          name: gameCategory.name,
+          translations: gameCategory.translations,
+          icon: gameCategory.icon,
+          sortOrder: gameCategory.sortOrder,
+        })
+        .from(gameCategory)
+        .where(where)
+        .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name), asc(gameCategory.slug))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(gameCategory).where(where),
+    ]);
+    return {
+      items: rows.map((row) => ({ ...row, translations: row.translations ?? {} })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async listCategoriesAdmin({
@@ -103,9 +117,22 @@ export class GameCategoryService {
     return toCategoryDetail(record);
   }
 
+  async getActiveCategoryBySlug(slug: string) {
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(gameCategory)
+        .where(and(eq(gameCategory.slug, slug), eq(gameCategory.isActive, true)))
+        .limit(1),
+      new GameCategoryNotFoundError(slug),
+    );
+    return toCategorySummary(record);
+  }
+
   async createCategory({
     slug,
     name,
+    translations,
     icon,
     sortOrder,
     actorId,
@@ -125,7 +152,13 @@ export class GameCategoryService {
         }
         const [created] = await tx
           .insert(gameCategory)
-          .values({ slug, name, icon: icon ?? null, sortOrder: sortOrder ?? 0 })
+          .values({
+            slug,
+            name,
+            translations: translations ?? {},
+            icon: icon ?? null,
+            sortOrder: sortOrder ?? 0,
+          })
           .returning();
         return created;
       });
@@ -137,11 +170,7 @@ export class GameCategoryService {
     }
     this.events.emit('gaming.category.created', {
       categoryId: record.id,
-      slug: record.slug,
-      name: record.name,
-      icon: record.icon,
-      sortOrder: record.sortOrder,
-      isActive: record.isActive,
+      ...categorySnapshot(record),
       actorId,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
@@ -150,61 +179,57 @@ export class GameCategoryService {
   }
 
   async updateCategory({ id, actorId, ip, userAgent, ...patchInput }: UpdateCategoryInput & Actor) {
-    const existing = findOneOrThrow(
-      await this.drizzle.db.select().from(gameCategory).where(eq(gameCategory.id, id)).limit(1),
-      new GameCategoryNotFoundError(id),
-    );
-    if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
-      const [clash] = await this.drizzle.db
-        .select({ id: gameCategory.id })
-        .from(gameCategory)
-        .where(and(eq(gameCategory.slug, patchInput.slug), ne(gameCategory.id, id)))
-        .limit(1);
-      if (clash) {
-        throw new GameCategorySlugTakenError();
-      }
-    }
     const patch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
     const hasChanges = Object.values(patch).some((value) => value !== undefined);
-    if (!hasChanges) {
-      return toCategoryDetail(existing);
-    }
-    let updated: typeof gameCategory.$inferSelect;
-    try {
-      updated = findOneOrThrow(
-        await this.drizzle.db
-          .update(gameCategory)
-          .set(patch)
-          .where(eq(gameCategory.id, id))
-          .returning(),
-        new GameCategoryNotFoundError(id),
-      );
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
-        throw new GameCategorySlugTakenError();
-      }
-      throw error;
+    const outcome = await this.drizzle.db
+      .transaction(async (tx) => {
+        // The row lock serializes concurrent PATCHes, so the audited `before` is the
+        // state this write replaced, never a snapshot another request already changed.
+        const existing = findOneOrThrow(
+          await tx
+            .select()
+            .from(gameCategory)
+            .where(eq(gameCategory.id, id))
+            .limit(1)
+            .for('update'),
+          new GameCategoryNotFoundError(id),
+        );
+        if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
+          const [clash] = await tx
+            .select({ id: gameCategory.id })
+            .from(gameCategory)
+            .where(and(eq(gameCategory.slug, patchInput.slug), ne(gameCategory.id, id)))
+            .limit(1);
+          if (clash) {
+            throw new GameCategorySlugTakenError();
+          }
+        }
+        if (!hasChanges) {
+          return { changed: false, before: existing, after: existing };
+        }
+        const updated = findOneOrThrow(
+          await tx.update(gameCategory).set(patch).where(eq(gameCategory.id, id)).returning(),
+          new GameCategoryNotFoundError(id),
+        );
+        return { changed: true, before: existing, after: updated };
+      })
+      .catch((error: unknown) => {
+        if (isUniqueConstraintViolation(error)) {
+          throw new GameCategorySlugTakenError();
+        }
+        throw error;
+      });
+    if (!outcome.changed) {
+      return toCategoryDetail(outcome.after);
     }
     this.events.emit('gaming.category.updated', {
-      categoryId: updated.id,
+      categoryId: id,
       actorId,
-      before: {
-        slug: existing.slug,
-        name: existing.name,
-        icon: existing.icon,
-        sortOrder: existing.sortOrder,
-        isActive: existing.isActive,
-      },
-      after: {
-        slug: updated.slug,
-        name: updated.name,
-        icon: updated.icon,
-        sortOrder: updated.sortOrder,
-        isActive: updated.isActive,
-      },
+      before: categorySnapshot(outcome.before),
+      after: categorySnapshot(outcome.after),
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    return toCategoryDetail(updated);
+    return toCategoryDetail(outcome.after);
   }
 }

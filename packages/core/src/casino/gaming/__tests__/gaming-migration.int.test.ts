@@ -112,4 +112,82 @@ describe('gaming catalog migration 0005 (real PG)', () => {
     expect(enforced.get('provider')).toBe('YES');
     expect(enforced.get('category')).toBe('YES');
   });
+
+  it('accepts a previous-release legacy insert during a rolling deploy', async () => {
+    // Runs on the schema the previous test migrated: the old writer only knows
+    // name/provider/category, one onto a backfilled provider and one onto new names.
+    await db.drizzle.db.execute(sql`
+      INSERT INTO "game" ("name", "provider", "category", "is_active") VALUES
+        ('Roulette', 'NetEnt', 'Slots', true),
+        ('Crash X', 'Fresh Studio', 'Crash', true)`);
+
+    const rows = await db.drizzle.db
+      .select({
+        name: game.name,
+        slug: game.slug,
+        aggregator: game.aggregator,
+        providerName: gameProvider.name,
+        providerSlug: gameProvider.slug,
+        providerActive: gameProvider.isActive,
+        categorySlug: gameCategory.slug,
+      })
+      .from(game)
+      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+      .innerJoin(gameCategoryGame, eq(gameCategoryGame.gameId, game.id))
+      .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
+      .where(sql`${game.slug} IN ('roulette-3', 'crash-x')`);
+    expect(new Map(rows.map((r) => [r.slug, r]))).toEqual(
+      new Map([
+        [
+          'roulette-3',
+          expect.objectContaining({
+            aggregator: 'direct',
+            providerSlug: 'netent',
+            categorySlug: 'slots',
+          }),
+        ],
+        [
+          'crash-x',
+          expect.objectContaining({
+            aggregator: 'direct',
+            providerName: 'Fresh Studio',
+            providerSlug: 'fresh-studio',
+            providerActive: true,
+            categorySlug: 'crash',
+          }),
+        ],
+      ]),
+    );
+
+    const mapped = (await db.drizzle.db.execute(sql`
+      SELECT 1 FROM "game_provider_aggregator_mapping" "m"
+      JOIN "game_provider" "p" ON "p"."id" = "m"."provider_id"
+      WHERE "p"."slug" = 'fresh-studio' AND "m"."aggregator" = 'direct'`)) as unknown as {
+      rows: unknown[];
+    };
+    expect(mapped.rows).toHaveLength(1);
+  });
+
+  it('keeps the legacy triggers off the new-shape insert path', async () => {
+    const [studio] = await db.drizzle.db
+      .select({ id: gameProvider.id })
+      .from(gameProvider)
+      .where(eq(gameProvider.slug, 'netent'));
+    const [inserted] = await db.drizzle.db
+      .insert(game)
+      .values({
+        name: 'Fresh Game',
+        slug: 'custom-slug',
+        providerId: studio!.id,
+        aggregator: 'hub',
+      })
+      .returning({ id: game.id, slug: game.slug, aggregator: game.aggregator });
+
+    expect(inserted).toMatchObject({ slug: 'custom-slug', aggregator: 'hub' });
+    const links = await db.drizzle.db
+      .select()
+      .from(gameCategoryGame)
+      .where(eq(gameCategoryGame.gameId, inserted!.id));
+    expect(links).toEqual([]);
+  });
 });

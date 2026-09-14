@@ -57,6 +57,14 @@ describe('uniqueConstraintName', () => {
     );
   });
 
+  it('reads the constraint from a database error wrapped by the query driver', () => {
+    expect(
+      uniqueConstraintName({
+        cause: { code: '23505', constraint: 'game_provider_aggregator_mapping_key' },
+      }),
+    ).toBe('game_provider_aggregator_mapping_key');
+  });
+
   it('returns null when no constraint travelled with the error', () => {
     expect(uniqueConstraintName({ code: '23505' })).toBeNull();
     expect(uniqueConstraintName({ code: '23505', constraint: 42 })).toBeNull();

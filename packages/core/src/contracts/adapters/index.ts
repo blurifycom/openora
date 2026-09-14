@@ -97,6 +97,18 @@ export type { CacheAdapter } from './cache.js';
 export { CACHE } from './cache.js';
 
 export type {
+  LobbySectionCatalog,
+  LobbySectionDefinition,
+  LobbySectionDefinitionInput,
+  LobbySectionValidationResult,
+} from './lobby-section-catalog.js';
+export {
+  createLobbySectionCatalog,
+  defineLobbySection,
+  LOBBY_SECTION_CATALOG,
+} from './lobby-section-catalog.js';
+
+export type {
   RealtimeTransport,
   RealtimePresence,
   RealtimeSignal,
@@ -175,9 +187,22 @@ export type {
 export { SWAP_ADAPTER, SWAP_WEBHOOK_VERIFIER } from './swap.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
-export { GEO_IP_ADAPTER } from './geo-ip.js';
+export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';
 export type { GeoCheckCommands } from './geo-check-commands.js';
 export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
+export type {
+  GameGeoCheckPort,
+  GameGeoCheckInput,
+  GameGeoDecision,
+  GameGeoDenialReason,
+} from './game-geo-check.js';
+export {
+  GAME_GEO_CHECK,
+  GAME_GEO_DENIAL_REASONS,
+  GameGeoCheckInputSchema,
+  GameGeoDecisionSchema,
+  GameGeoDenialReasonSchema,
+} from './game-geo-check.js';
 
 export type { PlayerProvisioning, PlayerRegistrationRecord } from './player-provisioning.js';
 export { PLAYER_PROVISIONING } from './player-provisioning.js';
@@ -202,6 +227,8 @@ export type { SmsAdapter } from './sms.js';
 export { SMS_ADAPTER } from './sms.js';
 export type { EmailTemplateRenderer, RenderedEmail } from './email-template.js';
 export { EMAIL_TEMPLATE_RENDERER } from './email-template.js';
+export type { MailRecipient, MailRecipientDirectory } from './mail-recipient-directory.js';
+export { MAIL_RECIPIENT_DIRECTORY } from './mail-recipient-directory.js';
 
 export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
 export { ERROR_TRACKING } from './error-tracking.js';

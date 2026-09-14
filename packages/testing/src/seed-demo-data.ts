@@ -14,6 +14,7 @@ import {
   gameCategory,
   gameCategoryGame,
   gameProvider,
+  gameProviderAggregatorMapping,
   gameRound,
 } from '@openora/core/casino/schema/gaming';
 import {
@@ -221,6 +222,8 @@ const PHONE_NUMBERS = [
   '+14165550505',
   '+46755667788',
 ] as const;
+
+const DEMO_AGGREGATOR = 'everymatrix';
 
 const GAMES = [
   ['Gates of Olympus', 'Pragmatic Play', 'slots'],
@@ -478,6 +481,13 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     )
     .returning();
   const providerByName = new Map(providerRows.map((p) => [p.name, p.id]));
+  await db.insert(gameProviderAggregatorMapping).values(
+    providerRows.map((provider) => ({
+      providerId: provider.id,
+      aggregator: DEMO_AGGREGATOR,
+      vendorId: provider.slug,
+    })),
+  );
   const categorySlugs = [...new Set(GAMES.map(([, , category]) => category))];
   const categoryRows = await db
     .insert(gameCategory)
@@ -504,7 +514,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
           name,
           slug: slugify(name),
           providerId,
-          aggregator: 'everymatrix',
+          aggregator: DEMO_AGGREGATOR,
           isActive: true,
         };
       }),

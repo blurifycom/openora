@@ -1,0 +1,2 @@
+CREATE INDEX "banner_image_desktop_image_url_idx" ON "banner_image" USING btree ("desktop_image_url");--> statement-breakpoint
+CREATE INDEX "banner_image_mobile_image_url_idx" ON "banner_image" USING btree ("mobile_image_url");

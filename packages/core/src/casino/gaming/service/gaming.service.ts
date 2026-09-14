@@ -1,6 +1,7 @@
 import {
   type EventBus,
   type DrizzleDb,
+  type DrizzleTx,
   createDomainError,
   makeNotFoundError,
   makeConflictError,
@@ -16,6 +17,8 @@ import {
   RgLimitExceededError,
   type ClientMeta,
   type GameAdapter,
+  type GameGeoCheckPort,
+  type GameGeoDecision,
   type PlayEligibilityPort,
   type RgLimitsPort,
   type WalletCommands,
@@ -29,10 +32,9 @@ import {
   gameTag,
   gameTagGame,
   gameProvider,
+  gameProviderAggregatorMapping,
   gameRound,
   type Game,
-  type GameCategory,
-  type GameProvider,
   type GameRound,
 } from '../schema/index.js';
 import { GameProviderNotFoundError } from './game-provider.service.js';
@@ -43,8 +45,9 @@ import {
   isGamePlayable,
   playableGameCondition,
   tagsByGameIds,
+  toCategorySummary,
 } from '../../shared/game-catalog.js';
-import type { UpdateGameInput } from '../contract/index.js';
+import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -55,14 +58,36 @@ export const GameSlugTakenError = makeConflictError(
   'A game with this slug already exists',
 );
 
+export const GameAggregatorNotMappedError = createDomainError<
+  [providerId: string, aggregator: string]
+>(
+  'GameAggregatorNotMappedError',
+  (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
+);
+
 type Actor = {
-  actorId?: User['id'];
+  actorId: User['id'];
 } & ClientMeta;
 
 export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
   'play is restricted by an active responsible-gambling exclusion',
 );
+
+export type GameGeoRestrictedData = Pick<
+  Extract<GameGeoDecision, { allowed: false }>,
+  'reason' | 'countryCode'
+>;
+
+export class GameGeoRestrictedError extends Error {
+  readonly data: GameGeoRestrictedData;
+
+  constructor(decision: Extract<GameGeoDecision, { allowed: false }>) {
+    super(`Game cannot be started from this location (${decision.reason})`);
+    this.name = 'GameGeoRestrictedError';
+    this.data = { reason: decision.reason, countryCode: decision.countryCode };
+  }
+}
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
@@ -97,18 +122,40 @@ function toGame(row: {
       logoUrl: row.provider.logoUrl,
     },
     aggregator: row.game.aggregator,
-    categories: row.categories.map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      name: c.name,
-      icon: c.icon,
-      sortOrder: c.sortOrder,
-    })),
+    categories: row.categories.map(toCategorySummary),
     tags: row.tags.map(toGameTagSummary),
     gameType: row.game.gameType,
     thumbnailUrl: row.game.thumbnailUrl,
     isActive: row.game.isActive,
     metadata: row.game.metadata,
+  };
+}
+
+// Reads the links through the caller's transaction so the snapshot matches the
+// locked row; ordered so identical link sets always serialize identically.
+async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
+  const [links, tagLinks] = await Promise.all([
+    tx
+      .select({ categoryId: gameCategoryGame.categoryId })
+      .from(gameCategoryGame)
+      .where(eq(gameCategoryGame.gameId, row.id))
+      .orderBy(asc(gameCategoryGame.categoryId)),
+    tx
+      .select({ tagId: gameTagGame.tagId })
+      .from(gameTagGame)
+      .where(eq(gameTagGame.gameId, row.id))
+      .orderBy(asc(gameTagGame.tagId)),
+  ]);
+  return {
+    slug: row.slug,
+    name: row.name,
+    providerId: row.providerId,
+    aggregator: row.aggregator,
+    thumbnailUrl: row.thumbnailUrl,
+    isActive: row.isActive,
+    categoryIds: links.map((link) => link.categoryId),
+    tagIds: tagLinks.map((link) => link.tagId),
+    metadata: row.metadata ?? null,
   };
 }
 
@@ -125,30 +172,53 @@ export class GamingService {
     private readonly walletCommands: WalletCommands,
     private readonly identityReader: IdentityReader,
     private readonly rgLimits?: RgLimitsPort,
+    private readonly gameGeoCheck?: GameGeoCheckPort,
   ) {}
 
-  async listGames(
-    {
-      page,
-      limit,
-      q,
-      providerId,
-      categoryId,
-      isActive,
-    }: {
-      page: number;
-      limit: number;
-      q?: string;
-      providerId?: GameProvider['id'];
-      categoryId?: GameCategory['id'];
-      isActive?: boolean;
-    },
-    { includeInvisibleTags = false }: { includeInvisibleTags?: boolean } = {},
-  ) {
+  async listGamesPublic(input: ListGamesInput) {
+    return this.listGames({
+      ...input,
+      playableOnly: true,
+      sort: 'public',
+      includeInvisibleTags: false,
+    });
+  }
+
+  async listGamesAdmin(input: ListAdminGamesInput) {
+    return this.listGames({
+      ...input,
+      playableOnly: false,
+      sort: 'admin',
+      includeInvisibleTags: true,
+    });
+  }
+
+  private async listGames({
+    page,
+    limit,
+    q,
+    providerId,
+    categoryId,
+    isActive,
+    playableOnly,
+    sort,
+    includeInvisibleTags,
+  }: ListGamesInput & {
+    isActive?: boolean;
+    playableOnly: boolean;
+    sort: 'admin' | 'public';
+    includeInvisibleTags: boolean;
+  }) {
     const where = and(
-      q ? or(ilike(game.name, likeContains(q)), ilike(game.slug, likeContains(q))) : undefined,
+      q
+        ? or(
+            ilike(game.name, likeContains(q)),
+            ilike(game.slug, likeContains(q)),
+            ilike(gameProvider.name, likeContains(q)),
+          )
+        : undefined,
       providerId ? eq(game.providerId, providerId) : undefined,
-      isActive === true
+      playableOnly
         ? playableGameCondition()
         : isActive === undefined
           ? undefined
@@ -158,10 +228,12 @@ export class GamingService {
             this.drizzle.db
               .select({ gameId: gameCategoryGame.gameId })
               .from(gameCategoryGame)
+              .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
               .where(
                 and(
                   eq(gameCategoryGame.gameId, game.id),
                   eq(gameCategoryGame.categoryId, categoryId),
+                  playableOnly ? eq(gameCategory.isActive, true) : undefined,
                 ),
               ),
           )
@@ -173,7 +245,11 @@ export class GamingService {
         .from(game)
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
         .where(where)
-        .orderBy(asc(game.name))
+        .orderBy(
+          ...(sort === 'admin'
+            ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
+            : [asc(game.name)]),
+        )
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       this.drizzle.db
@@ -185,6 +261,7 @@ export class GamingService {
     const categories = await categoriesByGameIds(
       this.drizzle.db,
       rows.map((r) => r.game.id),
+      playableOnly,
     );
     const tags = await tagsByGameIds(
       this.drizzle.db,
@@ -222,7 +299,7 @@ export class GamingService {
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
       throw new GameNotFoundError(id);
     }
-    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id]);
+    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly);
     const tags = await tagsByGameIds(this.drizzle.db, [row.game.id], {
       includeInvisible: opts.includeInvisibleTags,
     });
@@ -233,7 +310,15 @@ export class GamingService {
     });
   }
 
-  async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {
+  async startRound(
+    userId: User['id'],
+    gameId: Game['id'],
+    currency: string,
+    betAmount: string,
+    ipAddress: string | null = null,
+  ) {
+    await this.getGame(gameId, { activeOnly: true });
+
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
@@ -242,7 +327,13 @@ export class GamingService {
       throw new RgLimitExceededError('wager_limit_exceeded', decision);
     }
 
-    await this.getGame(gameId, { activeOnly: true });
+    const geoDecision = await this.gameGeoCheck?.checkGame({
+      gameId,
+      ipAddress,
+    });
+    if (geoDecision && !geoDecision.allowed) {
+      throw new GameGeoRestrictedError(geoDecision);
+    }
 
     const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the
@@ -443,30 +534,42 @@ export class GamingService {
     if (!hasScalarChanges && uniqueCategoryIds === undefined && uniqueTagIds === undefined) {
       return this.getGame(id, { includeInvisibleTags: true });
     }
-    const result = await this.drizzle.db
+    const transition = await this.drizzle.db
       .transaction(async (tx) => {
+        // The row lock serializes concurrent PATCHes, so the audited `before` is the
+        // state this write replaced and `after` is what it persisted (docs/standards/audit.md).
         const beforeRow = findOneOrThrow(
-          await tx.select().from(game).where(eq(game.id, id)).for('update'),
+          await tx.select().from(game).where(eq(game.id, id)).limit(1).for('update'),
           new GameNotFoundError(id),
         );
-        const beforeLinks = await tx
-          .select({ categoryId: gameCategoryGame.categoryId })
-          .from(gameCategoryGame)
-          .where(eq(gameCategoryGame.gameId, id));
-        const beforeTagLinks = await tx
-          .select({ tagId: gameTagGame.tagId })
-          .from(gameTagGame)
-          .where(eq(gameTagGame.gameId, id));
-
-        if (patchInput.providerId !== undefined) {
+        const before = await gameAuditSnapshot(tx, beforeRow);
+        if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
+          const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
+          const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
+          // FOR SHARE conflicts with updateProvider's FOR UPDATE, so the mapping checked
+          // below cannot be removed until this game has committed against it.
           findOneOrThrow(
             await tx
               .select({ id: gameProvider.id })
               .from(gameProvider)
-              .where(eq(gameProvider.id, patchInput.providerId))
-              .limit(1),
-            new GameProviderNotFoundError(patchInput.providerId),
+              .where(eq(gameProvider.id, nextProviderId))
+              .limit(1)
+              .for('share'),
+            new GameProviderNotFoundError(nextProviderId),
           );
+          const [mapping] = await tx
+            .select({ id: gameProviderAggregatorMapping.id })
+            .from(gameProviderAggregatorMapping)
+            .where(
+              and(
+                eq(gameProviderAggregatorMapping.providerId, nextProviderId),
+                eq(gameProviderAggregatorMapping.aggregator, nextAggregator),
+              ),
+            )
+            .limit(1);
+          if (!mapping) {
+            throw new GameAggregatorNotMappedError(nextProviderId, nextAggregator);
+          }
         }
         if (patchInput.slug !== undefined) {
           const [clash] = await tx
@@ -506,7 +609,6 @@ export class GamingService {
             throw new GameTagNotFoundError(missing);
           }
         }
-
         if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
@@ -526,62 +628,25 @@ export class GamingService {
               .values(uniqueTagIds.map((tagId) => ({ gameId: id, tagId })));
           }
         }
-
         const afterRow = findOneOrThrow(
-          await tx.select().from(game).where(eq(game.id, id)),
+          await tx.select().from(game).where(eq(game.id, id)).limit(1),
           new GameNotFoundError(id),
         );
-        const afterLinks = await tx
-          .select({ categoryId: gameCategoryGame.categoryId })
-          .from(gameCategoryGame)
-          .where(eq(gameCategoryGame.gameId, id));
-        const afterTagLinks = await tx
-          .select({ tagId: gameTagGame.tagId })
-          .from(gameTagGame)
-          .where(eq(gameTagGame.gameId, id));
-
-        return {
-          beforeRow,
-          afterRow,
-          beforeCategoryIds: beforeLinks.map((row) => row.categoryId),
-          afterCategoryIds: afterLinks.map((row) => row.categoryId),
-          beforeTagIds: beforeTagLinks.map((row) => row.tagId),
-          afterTagIds: afterTagLinks.map((row) => row.tagId),
-        };
+        return { before, after: await gameAuditSnapshot(tx, afterRow) };
       })
       .catch((error: unknown) => {
+        // The transaction also writes category and tag links: only a slug collision maps
+        // to GameSlugTakenError, a link race must not masquerade as one.
         if (uniqueConstraintName(error) === 'game_slug_key') {
           throw new GameSlugTakenError();
         }
         throw error;
       });
-    const { beforeRow, afterRow, beforeCategoryIds, afterCategoryIds, beforeTagIds, afterTagIds } =
-      result;
     this.events.emit('gaming.game.updated', {
       gameId: id,
       actorId,
-      before: {
-        slug: beforeRow.slug,
-        name: beforeRow.name,
-        providerId: beforeRow.providerId,
-        aggregator: beforeRow.aggregator,
-        thumbnailUrl: beforeRow.thumbnailUrl,
-        isActive: beforeRow.isActive,
-        categoryIds: beforeCategoryIds,
-        tagIds: beforeTagIds,
-        metadata: beforeRow.metadata ?? null,
-      },
-      after: {
-        slug: afterRow.slug,
-        name: afterRow.name,
-        providerId: afterRow.providerId,
-        aggregator: afterRow.aggregator,
-        thumbnailUrl: afterRow.thumbnailUrl,
-        isActive: afterRow.isActive,
-        categoryIds: afterCategoryIds,
-        tagIds: afterTagIds,
-        metadata: afterRow.metadata ?? null,
-      },
+      before: transition.before,
+      after: transition.after,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });

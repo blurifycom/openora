@@ -87,6 +87,10 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
         { context: CTX },
       ),
   },
+  {
+    name: 'createProvider',
+    invoke: (r) => call(r.createProvider, { slug: 'studio', name: 'Studio' }, { context: CTX }),
+  },
   { name: 'listAdminCategories', invoke: (r) => call(r.listAdminCategories, {}, { context: CTX }) },
   {
     name: 'getAdminCategory',
@@ -199,12 +203,32 @@ describe('gaming catalog router authz', () => {
       .values({ gameId: g!.id, categoryId: category!.id });
 
     const { router } = routerWith(denyingGuard());
-    await expect(call(router.listProviders, {}, { context: CTX })).resolves.toMatchObject([
-      { slug: 'acme' },
-    ]);
-    await expect(call(router.listCategories, {}, { context: CTX })).resolves.toMatchObject([
-      { slug: 'slots' },
-    ]);
+    await expect(call(router.listProviders, {}, { context: CTX })).resolves.toMatchObject({
+      items: [{ slug: 'acme' }],
+      total: 1,
+      page: 1,
+      limit: 100,
+    });
+    await expect(
+      call(router.listCategories, { page: 1, limit: 10 }, { context: CTX }),
+    ).resolves.toMatchObject({
+      items: [{ slug: 'slots', translations: {} }],
+      total: 1,
+      page: 1,
+      limit: 10,
+    });
+    await expect(
+      call(router.getProviderBySlug, { slug: 'acme' }, { context: CTX }),
+    ).resolves.toMatchObject({ slug: 'acme' });
+    await expect(
+      call(router.getCategoryBySlug, { slug: 'slots' }, { context: CTX }),
+    ).resolves.toMatchObject({ slug: 'slots', translations: {} });
+    await expect(
+      call(router.getProviderBySlug, { slug: 'ghost' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      call(router.getCategoryBySlug, { slug: 'ghost' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(call(router.getGame, { id: g!.id }, { context: CTX })).resolves.toMatchObject({
       name: 'Aces',
       isActive: true,
@@ -220,21 +244,42 @@ describe('gaming catalog router authz', () => {
 
     const created = await call(
       router.createCategory,
-      { slug: 'table-games', name: 'Table Games' },
+      {
+        slug: 'table-games',
+        name: 'Table Games',
+        translations: { de: { name: 'Tischspiele' } },
+      },
       { context: CTX },
     );
-    expect(created).toMatchObject({ slug: 'table-games', sortOrder: 0 });
+    expect(created).toMatchObject({
+      slug: 'table-games',
+      sortOrder: 0,
+      translations: { de: { name: 'Tischspiele' } },
+    });
 
-    const [provider] = await db.drizzle.db
-      .insert(gameProvider)
-      .values({ slug: 'acme', name: 'Acme' })
-      .returning();
+    await expect(
+      call(
+        router.updateCategory,
+        { id: created.id, translations: { fr: { name: 'Jeux de table' } } },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ translations: { fr: { name: 'Jeux de table' } } });
+
+    const provider = await call(
+      router.createProvider,
+      {
+        slug: 'acme',
+        name: 'Acme',
+        aggregatorMappings: [{ aggregator: 'aggregation-a', vendorId: 'studio-1' }],
+      },
+      { context: CTX },
+    );
     const [g] = await db.drizzle.db
       .insert(game)
       .values({
         name: 'Roulette',
         slug: `roulette-${randomUUID()}`,
-        providerId: provider!.id,
+        providerId: provider.id,
         aggregator: 'direct',
       })
       .returning();
@@ -251,6 +296,10 @@ describe('gaming catalog router authz', () => {
     expect(events.emit).toHaveBeenCalledWith(
       'gaming.game.updated',
       expect.objectContaining({ gameId: g!.id }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.provider.created',
+      expect.objectContaining({ providerId: provider.id }),
     );
   });
 

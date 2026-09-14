@@ -6,8 +6,10 @@ import {
   GameNotFoundError,
   GameRoundNotFoundError,
   GameSlugTakenError,
+  GameAggregatorNotMappedError,
   RgRestrictedError,
   InsufficientBalanceError,
+  GameGeoRestrictedError,
 } from '../service/gaming.service.js';
 import {
   GameCategoryService,
@@ -26,6 +28,7 @@ import {
   GameProviderNotFoundError,
   GameProviderSlugTakenError,
   GameProviderVendorIdTakenError,
+  GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
 import { RgLimitExceededError } from '@openora/core/contracts';
 
@@ -45,7 +48,7 @@ export function createGamingRouter({
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
   return os.router({
-    listGames: os.listGames.handler(({ input }) => gaming.listGames({ ...input, isActive: true })),
+    listGames: os.listGames.handler(({ input }) => gaming.listGamesPublic(input)),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
@@ -57,10 +60,17 @@ export function createGamingRouter({
       mapErrors(
         {
           NOT_FOUND: GameNotFoundError,
-          CONFLICT: [RgRestrictedError, RgLimitExceededError],
+          CONFLICT: [RgRestrictedError, RgLimitExceededError, GameGeoRestrictedError],
           BAD_REQUEST: InsufficientBalanceError,
         },
-        () => gaming.startRound(getUserId(context), input.gameId, input.currency, input.betAmount),
+        () =>
+          gaming.startRound(
+            getUserId(context),
+            input.gameId,
+            input.currency,
+            input.betAmount,
+            context.clientMeta.ip,
+          ),
       ),
     ),
 
@@ -72,9 +82,23 @@ export function createGamingRouter({
 
     listRounds: os.listRounds.handler(({ context }) => gaming.getUserRounds(getUserId(context))),
 
-    listProviders: os.listProviders.handler(() => providers.listActiveProviders()),
+    listProviders: os.listProviders.handler(({ input }) => providers.listActiveProviders(input)),
 
-    listCategories: os.listCategories.handler(() => categories.listActiveCategories()),
+    getProviderBySlug: os.getProviderBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: GameProviderNotFoundError }, () =>
+        providers.getActiveProviderBySlug(input.slug),
+      ),
+    ),
+
+    listCategories: os.listCategories.handler(({ input }) =>
+      categories.listActiveCategories(input),
+    ),
+
+    getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>
+        categories.getActiveCategoryBySlug(input.slug),
+      ),
+    ),
 
     listAdminProviders: os.listAdminProviders.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
@@ -88,12 +112,24 @@ export function createGamingRouter({
       );
     }),
 
+    createProvider: os.createProvider.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
+      return mapErrors(
+        { CONFLICT: [GameProviderSlugTakenError, GameProviderVendorIdTakenError] },
+        () => providers.createProvider({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
     updateProvider: os.updateProvider.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
         {
           NOT_FOUND: GameProviderNotFoundError,
-          CONFLICT: [GameProviderSlugTakenError, GameProviderVendorIdTakenError],
+          CONFLICT: [
+            GameProviderSlugTakenError,
+            GameProviderVendorIdTakenError,
+            GameProviderMappingInUseError,
+          ],
         },
         () => providers.updateProvider({ ...input, actorId: userId, ip, userAgent }),
       );
@@ -172,7 +208,7 @@ export function createGamingRouter({
             GameCategoryNotFoundError,
             GameTagNotFoundError,
           ],
-          CONFLICT: GameSlugTakenError,
+          CONFLICT: [GameSlugTakenError, GameAggregatorNotMappedError],
         },
         () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
       );
@@ -180,7 +216,7 @@ export function createGamingRouter({
 
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return gaming.listGames(input, { includeInvisibleTags: true });
+      return gaming.listGamesAdmin(input);
     }),
   });
 }

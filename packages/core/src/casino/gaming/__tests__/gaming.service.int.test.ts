@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
+  GameGeoCheckPort,
   PlayEligibilityPort,
   RgLimitsPort,
   WalletCommands,
@@ -18,12 +19,14 @@ import {
   gameCategory,
   gameCategoryGame,
   gameProvider,
+  gameProviderAggregatorMapping,
   gameRound,
   gameTag,
   gameTagGame,
 } from '../schema/index.js';
 import {
   GamingService,
+  GameAggregatorNotMappedError,
   GameNotFoundError,
   GameSlugTakenError,
   RgRestrictedError,
@@ -64,12 +67,14 @@ function makeService({
   playEligibility = unrestricted,
   walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
   rgLimits,
+  gameGeoCheck,
   events = noopEvents,
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
   walletCommands?: WalletCommands;
   rgLimits?: RgLimitsPort;
+  gameGeoCheck?: GameGeoCheckPort;
   events?: ReturnType<typeof makeEventBus>;
 } = {}) {
   return new GamingService(
@@ -80,7 +85,18 @@ function makeService({
     walletCommands,
     makeIdentityReader(),
     rgLimits,
+    gameGeoCheck,
   );
+}
+
+function startRound(
+  svc: GamingService,
+  userId: string,
+  gameId: string,
+  currency: string,
+  betAmount: string,
+) {
+  return svc.startRound(userId, gameId, currency, betAmount, '1.2.3.4');
 }
 
 async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert> = {}) {
@@ -88,6 +104,9 @@ async function seedProvider(overrides: Partial<typeof gameProvider.$inferInsert>
     .insert(gameProvider)
     .values({ slug: `studio-${randomUUID()}`, name: 'Studio', isActive: true, ...overrides })
     .returning();
+  await db.drizzle.db
+    .insert(gameProviderAggregatorMapping)
+    .values({ providerId: row!.id, aggregator: 'direct', vendorId: row!.slug });
   return row!;
 }
 
@@ -108,17 +127,14 @@ async function seedTag(overrides: Partial<typeof gameTag.$inferInsert> = {}) {
 }
 
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categoryIds?: string[]) {
-  const [provider] = await db.drizzle.db
-    .insert(gameProvider)
-    .values({ slug: `studio-${randomUUID()}`, name: 'Mock Studio', isActive: true })
-    .returning();
+  const provider = await seedProvider({ name: 'Mock Studio' });
   const ids = categoryIds ?? [(await seedCategory()).id];
   const [row] = await db.drizzle.db
     .insert(game)
     .values({
       name: 'Game',
       slug: `game-${randomUUID()}`,
-      providerId: provider!.id,
+      providerId: provider.id,
       aggregator: 'direct',
       isActive: true,
       ...overrides,
@@ -145,18 +161,18 @@ beforeEach(async () => {
 });
 
 describe('GamingService lobby (real PG)', () => {
-  it('listGames paginates active games ordered by name', async () => {
+  it('listGamesPublic paginates playable games ordered by name', async () => {
     await seedGame({ name: 'Baccarat', isActive: true });
     await seedGame({ name: 'Aces', isActive: true });
     await seedGame({ name: 'Retired', isActive: false });
 
-    const page = await makeService().listGames({ page: 1, limit: 10, isActive: true });
+    const page = await makeService().listGamesPublic({ page: 1, limit: 10 });
 
     expect(page.total).toBe(2);
     expect(page.items.map((g) => g.name)).toEqual(['Aces', 'Baccarat']);
   });
 
-  it('listGames searches and filters by provider and category', async () => {
+  it('listGamesPublic searches and filters by provider and category', async () => {
     const p1 = await seedProvider({ slug: 'studio-one', name: 'One' });
     const p2 = await seedProvider({ slug: 'studio-two', name: 'Two' });
     const slots = await seedCategory({ slug: 'slots', name: 'Slots' });
@@ -175,31 +191,57 @@ describe('GamingService lobby (real PG)', () => {
     ]);
     const svc = makeService();
 
-    expect((await svc.listGames({ page: 1, limit: 10, q: 'bonanza', isActive: true })).total).toBe(
-      1,
-    );
+    expect((await svc.listGamesPublic({ page: 1, limit: 10, q: 'bonanza' })).total).toBe(1);
     expect(
-      (await svc.listGames({ page: 1, limit: 10, providerId: p1.id, isActive: true })).items.map(
+      (await svc.listGamesPublic({ page: 1, limit: 10, providerId: p1.id })).items.map(
         (g) => g.slug,
       ),
     ).toEqual(['gates-of-olympus', 'sweet-bonanza']);
-    expect(
-      (await svc.listGames({ page: 1, limit: 10, categoryId: live.id, isActive: true })).total,
-    ).toBe(1);
-    expect(
-      (await svc.listGames({ page: 1, limit: 10, categoryId: slots.id, isActive: true })).total,
-    ).toBe(3);
+    expect((await svc.listGamesPublic({ page: 1, limit: 10, categoryId: live.id })).total).toBe(1);
+    expect((await svc.listGamesPublic({ page: 1, limit: 10, categoryId: slots.id })).total).toBe(3);
+  });
+
+  it('hides an inactive category from public filtering while retaining admin filtering', async () => {
+    const inactive = await seedCategory({ name: 'Hidden', isActive: false });
+    const linked = await seedGame({ name: 'Linked Game' }, [inactive.id]);
+    const svc = makeService();
+
+    const publicResult = await svc.listGamesPublic({
+      page: 1,
+      limit: 10,
+      categoryId: inactive.id,
+    });
+    expect(publicResult).toMatchObject({ items: [], total: 0 });
+
+    const adminResult = await svc.listGamesAdmin({
+      page: 1,
+      limit: 10,
+      categoryId: inactive.id,
+      isActive: true,
+    });
+    expect(adminResult.items.map((item) => item.id)).toEqual([linked.id]);
+    expect(adminResult.total).toBe(1);
   });
 
   it('getGame returns the row for a known id and 404s an unknown one', async () => {
-    const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
-    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack' });
+    const table = await seedCategory({
+      slug: 'table-games',
+      name: 'Table Games',
+      translations: { de: { name: 'Tischspiele' } },
+    });
+    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack', isActive: false });
     const created = await seedGame({ name: 'Roulette' }, [table.id, blackjack.id]);
     const svc = makeService();
 
     expect(await svc.getGame(created.id)).toMatchObject({
       name: 'Roulette',
-      categories: [{ slug: 'blackjack' }, { slug: 'table-games' }],
+      categories: [
+        { slug: 'blackjack', translations: {} },
+        { slug: 'table-games', translations: { de: { name: 'Tischspiele' } } },
+      ],
+    });
+    await expect(svc.getGame(created.id, { activeOnly: true })).resolves.toMatchObject({
+      categories: [{ slug: 'table-games' }],
     });
     await expect(svc.getGame('00000000-0000-0000-0000-000000000000')).rejects.toBeInstanceOf(
       GameNotFoundError,
@@ -260,7 +302,47 @@ const refusingLimits = () =>
   });
 
 describe('GamingService.startRound (real PG)', () => {
+  it('denies a blocked game before debit, round insertion, or provider launch', async () => {
+    const created = await seedGame({ name: 'Blocked' });
+    const launchGame = vi.fn();
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const gameGeoCheck = mock<GameGeoCheckPort>({
+      checkGame: vi.fn().mockResolvedValue({
+        allowed: false,
+        countryCode: 'US',
+        reason: 'game_block',
+      }),
+    });
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+      gameGeoCheck,
+    });
+
+    await expect(
+      startRound(svc, '00000000-0000-0000-0000-000000000110', created.id, 'USD', '10'),
+    ).rejects.toMatchObject({
+      name: 'GameGeoRestrictedError',
+      data: { reason: 'game_block', countryCode: 'US' },
+    });
+    expect(walletCommands.debit).not.toHaveBeenCalled();
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
+  it('does not consult geo for an inactive game', async () => {
+    const created = await seedGame({ name: 'Inactive', isActive: false });
+    const checkGame = vi.fn();
+    const svc = makeService({ gameGeoCheck: mock<GameGeoCheckPort>({ checkGame }) });
+
+    await expect(
+      startRound(svc, '00000000-0000-0000-0000-000000000110', created.id, 'USD', '10'),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+    expect(checkGame).not.toHaveBeenCalled();
+  });
+
   it('refuses a wager over the players own limit before touching the provider', async () => {
+    const created = await seedGame({ name: 'Limited' });
     const launchGame = vi.fn();
     const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
     const svc = makeService({
@@ -269,7 +351,7 @@ describe('GamingService.startRound (real PG)', () => {
       rgLimits: refusingLimits(),
     });
 
-    await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toMatchObject({
+    await expect(startRound(svc, 'user-1', created.id, 'EUR', '10')).rejects.toMatchObject({
       name: 'RgLimitExceededError',
       data: { reason: 'wager_limit_exceeded', limitType: 'wager', limit: '50', used: '45' },
     });
@@ -282,18 +364,19 @@ describe('GamingService.startRound (real PG)', () => {
     const svc = makeService();
 
     await expect(
-      svc.startRound('00000000-0000-0000-0000-000000000111', created.id, 'USD', '10'),
+      startRound(svc, '00000000-0000-0000-0000-000000000111', created.id, 'USD', '10'),
     ).resolves.toMatchObject({ launchUrl: 'https://mock/play' });
   });
 
   it('refuses a restricted player before touching the provider', async () => {
+    const created = await seedGame({ name: 'Restricted' });
     const launchGame = vi.fn();
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       playEligibility: eligibility(true),
     });
 
-    await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toBeInstanceOf(
+    await expect(startRound(svc, 'user-1', created.id, 'EUR', '10')).rejects.toBeInstanceOf(
       RgRestrictedError,
     );
     expect(launchGame).not.toHaveBeenCalled();
@@ -306,7 +389,8 @@ describe('GamingService.startRound (real PG)', () => {
     });
 
     await expect(
-      svc.startRound(
+      startRound(
+        svc,
         '00000000-0000-0000-0000-000000000111',
         '00000000-0000-0000-0000-000000000222',
         'EUR',
@@ -364,7 +448,7 @@ describe('GamingService.startRound (real PG)', () => {
     });
 
     const userId = '00000000-0000-0000-0000-000000000301';
-    const result = await svc.startRound(userId, created.id, 'USD', '10');
+    const result = await startRound(svc, userId, created.id, 'USD', '10');
 
     expect(walletCommands.debit).toHaveBeenCalledWith(expect.anything(), {
       userId,
@@ -395,7 +479,7 @@ describe('GamingService.startRound (real PG)', () => {
     });
 
     await expect(
-      svc.startRound('00000000-0000-0000-0000-000000000302', created.id, 'USD', '10'),
+      startRound(svc, '00000000-0000-0000-0000-000000000302', created.id, 'USD', '10'),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
     expect(launchGame).not.toHaveBeenCalled();
     expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
@@ -403,7 +487,7 @@ describe('GamingService.startRound (real PG)', () => {
 });
 
 describe('GamingService listGames provider gate (real PG)', () => {
-  it('hides games of deactivated providers from the active listing only', async () => {
+  it('separates the public playable gate from the admin game-active filter', async () => {
     const live = await seedGame({ name: 'Live Game' });
     const hidden = await seedGame({ name: 'Hidden Game' });
     await db.drizzle.db
@@ -412,12 +496,42 @@ describe('GamingService listGames provider gate (real PG)', () => {
       .where(eq(gameProvider.id, hidden.providerId));
     const svc = makeService();
 
-    const pub = await svc.listGames({ page: 1, limit: 10, isActive: true });
+    const pub = await svc.listGamesPublic({ page: 1, limit: 10 });
     expect(pub.items.map((g) => g.id)).toEqual([live.id]);
     expect(pub.total).toBe(1);
 
-    const admin = await svc.listGames({ page: 1, limit: 10 });
+    const admin = await svc.listGamesAdmin({ page: 1, limit: 10, isActive: true });
     expect(admin.total).toBe(2);
+  });
+
+  it('listGamesAdmin includes non-playable games and sorts by provider and game fields', async () => {
+    const alphaZulu = await seedProvider({ name: 'Alpha', slug: 'zulu' });
+    const alphaAlpha = await seedProvider({ name: 'Alpha', slug: 'alpha' });
+    const betaAlpha = await seedProvider({ name: 'Beta', slug: 'beta-alpha', isActive: false });
+    await seedGame({
+      id: '00000000-0000-4000-8000-000000000002',
+      name: 'Same',
+      providerId: alphaZulu.id,
+    });
+    await seedGame({
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'Same',
+      providerId: alphaZulu.id,
+    });
+    await seedGame({ name: 'Zulu', providerId: alphaAlpha.id });
+    await seedGame({ name: 'Aardvark', providerId: betaAlpha.id });
+
+    const result = await makeService().listGamesAdmin({ page: 1, limit: 10 });
+
+    expect(
+      result.items.map((item) => [item.provider.name, item.provider.slug, item.name, item.id]),
+    ).toEqual([
+      ['Alpha', 'alpha', 'Zulu', expect.any(String)],
+      ['Alpha', 'zulu', 'Same', '00000000-0000-4000-8000-000000000001'],
+      ['Alpha', 'zulu', 'Same', '00000000-0000-4000-8000-000000000002'],
+      ['Beta', 'beta-alpha', 'Aardvark', expect.any(String)],
+    ]);
+    expect(result.total).toBe(4);
   });
 });
 
@@ -447,7 +561,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
     const userId = '00000000-0000-0000-0000-000000000401';
 
-    await svc.startRound(userId, created.id, 'USD', '40');
+    await startRound(svc, userId, created.id, 'USD', '40');
 
     expect(events.emit).toHaveBeenCalledWith('wallet.bonus_rollover.completed', {
       userId,
@@ -485,7 +599,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
     const userId = '00000000-0000-0000-0000-000000000405';
 
-    await expect(svc.startRound(userId, created.id, 'USD', '25')).rejects.toThrow(
+    await expect(startRound(svc, userId, created.id, 'USD', '25')).rejects.toThrow(
       'provider unavailable',
     );
 
@@ -515,7 +629,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     );
     const userId = '00000000-0000-0000-0000-000000000402';
 
-    await svc.startRound(userId, created.id, 'USD', '10');
+    await startRound(svc, userId, created.id, 'USD', '10');
 
     expect(events.emit).not.toHaveBeenCalledWith(
       'wallet.bonus_rollover.completed',
@@ -553,11 +667,11 @@ describe('GamingService updateGame (real PG)', () => {
     const replaced = await svc.updateGame({
       id: created.id,
       categoryIds: [blackjack.id],
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(replaced.categories.map((c) => c.slug)).toEqual(['blackjack']);
 
-    const cleared = await svc.updateGame({ id: created.id, categoryIds: [], ...NO_CLIENT_META });
+    const cleared = await svc.updateGame({ id: created.id, categoryIds: [], ...ACTOR });
     expect(cleared.categories).toEqual([]);
   });
 
@@ -570,12 +684,12 @@ describe('GamingService updateGame (real PG)', () => {
     const replaced = await svc.updateGame({
       id: created.id,
       tagIds: [visible.id, invisible.id],
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(replaced.tags.map((tag) => tag.name)).toEqual(['Invisible', 'Visible']);
     expect((await svc.getGame(created.id)).tags.map((tag) => tag.name)).toEqual(['Visible']);
 
-    const cleared = await svc.updateGame({ id: created.id, tagIds: [], ...NO_CLIENT_META });
+    const cleared = await svc.updateGame({ id: created.id, tagIds: [], ...ACTOR });
     expect(cleared.tags).toEqual([]);
   });
 
@@ -584,7 +698,7 @@ describe('GamingService updateGame (real PG)', () => {
     const created = await seedGame({}, [table.id]);
     const svc = makeService();
 
-    const updated = await svc.updateGame({ id: created.id, name: 'Renamed', ...NO_CLIENT_META });
+    const updated = await svc.updateGame({ id: created.id, name: 'Renamed', ...ACTOR });
     expect(updated.categories.map((c) => c.slug)).toEqual(['table-games']);
   });
 
@@ -596,7 +710,7 @@ describe('GamingService updateGame (real PG)', () => {
     const updated = await svc.updateGame({
       id: created.id,
       providerId: other.id,
-      ...NO_CLIENT_META,
+      ...ACTOR,
     });
     expect(updated.provider).toMatchObject({ slug: 'other-studio' });
 
@@ -604,30 +718,61 @@ describe('GamingService updateGame (real PG)', () => {
       svc.updateGame({
         id: created.id,
         providerId: '00000000-0000-4000-8000-000000000000',
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameProviderNotFoundError);
     await expect(
       svc.updateGame({
         id: created.id,
         categoryIds: ['00000000-0000-4000-8000-000000000000'],
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameCategoryNotFoundError);
     await expect(
       svc.updateGame({
         id: created.id,
         tagIds: ['00000000-0000-4000-8000-000000000000'],
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameTagNotFoundError);
     await expect(
       svc.updateGame({
         id: '00000000-0000-4000-8000-000000000000',
         name: 'X',
-        ...NO_CLIENT_META,
+        ...ACTOR,
       }),
     ).rejects.toBeInstanceOf(GameNotFoundError);
+  });
+
+  it('rejects an aggregator the target provider is not mapped on', async () => {
+    const created = await seedGame();
+    const unmapped = await seedProvider({ slug: 'unmapped-studio', name: 'Unmapped' });
+    await db.drizzle.db
+      .delete(gameProviderAggregatorMapping)
+      .where(eq(gameProviderAggregatorMapping.providerId, unmapped.id));
+    const svc = makeService();
+
+    await expect(
+      svc.updateGame({ id: created.id, providerId: unmapped.id, ...ACTOR }),
+    ).rejects.toBeInstanceOf(GameAggregatorNotMappedError);
+
+    await expect(
+      svc.updateGame({ id: created.id, aggregator: 'everymatrix', ...ACTOR }),
+    ).rejects.toBeInstanceOf(GameAggregatorNotMappedError);
+
+    await db.drizzle.db
+      .insert(gameProviderAggregatorMapping)
+      .values({ providerId: unmapped.id, aggregator: 'everymatrix', vendorId: 'vendor-unmapped' });
+    const moved = await svc.updateGame({
+      id: created.id,
+      providerId: unmapped.id,
+      aggregator: 'everymatrix',
+      ...ACTOR,
+    });
+    expect(moved).toMatchObject({
+      provider: { slug: 'unmapped-studio' },
+      aggregator: 'everymatrix',
+    });
   });
 
   it('rejects a taken game slug', async () => {
@@ -636,7 +781,7 @@ describe('GamingService updateGame (real PG)', () => {
     const svc = makeService();
 
     await expect(
-      svc.updateGame({ id: created.id, slug: 'game-two', ...NO_CLIENT_META }),
+      svc.updateGame({ id: created.id, slug: 'game-two', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameSlugTakenError);
   });
 });
@@ -657,6 +802,26 @@ const settlingProvider = (winAmount?: string) =>
 
 describe('GamingService.endRound (real PG)', () => {
   const userId = '00000000-0000-0000-0000-000000000501';
+
+  it('settles an admitted active round without rechecking a newly blocking geo policy', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const checkGame = vi.fn().mockResolvedValue({
+      allowed: false,
+      countryCode: 'US',
+      reason: 'game_block',
+    });
+    const svc = makeService({
+      provider: settlingProvider('5'),
+      gameGeoCheck: mock<GameGeoCheckPort>({ checkGame }),
+    });
+
+    await expect(svc.endRound(userId, round.id)).resolves.toEqual({
+      success: true,
+      winAmount: '5',
+    });
+    expect(checkGame).not.toHaveBeenCalled();
+  });
 
   it('credits the provider-reported win to the round currency and records it on the round', async () => {
     const created = await seedGame();
