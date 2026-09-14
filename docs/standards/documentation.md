@@ -35,6 +35,28 @@ stale the moment someone renames it, and nothing fails when it happens.
   economics, key handling, and rate limits belong in prose, because no generated artifact carries
   them.
 
+## When a code change obliges a doc change
+
+The catalog regenerates itself, so a renamed route or column needs nothing from you. Prose is
+different: it only changes when someone changes it, and nothing in `pnpm verify` reads it. Five
+changes carry a doc obligation, and the delivery workflow runs `docs` scoped to the branch diff
+to discharge it:
+
+| Change                                                          | Update                                                    |
+| --------------------------------------------------------------- | --------------------------------------------------------- |
+| A module gains, loses, or redraws what it owns                  | that module's `docs/modules/` page                        |
+| An adapter port changes what a vendor must provide              | that port's `docs/adapters/` page                         |
+| A rule about money, KYC, responsible gambling, or audit changes | the owning `docs/standards/` file, before the code merges |
+| A config field appears, disappears, or changes meaning          | wherever the surrounding behaviour is described           |
+| The code stops matching an "is" claim in an accepted ADR        | a dated Update block on that ADR                          |
+
+An ADR is written, not updated, when a decision changes architecture, a boundary, a seam, or a
+convention - `/adr` scaffolds it. An ADR records why a decision was made and is never rewritten
+afterwards: supersede it, or prepend a dated Update block. Partial supersession is normal, so an
+ADR whose reasoning still holds keeps `Status: Accepted` and carries the Update block instead.
+
+A refactor that moves code without changing what it does obliges nothing.
+
 ## When a doc and the code disagree
 
 Fix the code, or change the doc deliberately and say why. Do not quietly rewrite the doc to match

@@ -5,7 +5,7 @@
 // exception is a git worktree under <oss>/.worktrees/ - the sanctioned place to change OSS
 // code from this repo (oss-boundaries rule, `pnpm oss:worktree`). Reads are always allowed.
 
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractCommand, extractFilePath, readPayload, deny } from './_shared.mjs';
@@ -16,7 +16,19 @@ const payload = readPayload();
 // absolute path - what most tools send - is caught as well as the relative form.
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OSS_RELATIVE = String.raw`{{ossFromRoot}}`;
-const OSS = resolve(ROOT, OSS_RELATIVE);
+// This repo is often checked out as a git worktree, whose `.git` is a file pointing at
+// <main>/.git/worktrees/<name>. The OSS checkout is a sibling of the MAIN checkout, so without
+// this the guard would resolve it inside the worktree, match nothing, and let core writes pass.
+const mainCheckoutOf = (dir) => {
+  try {
+    const pointer = readFileSync(join(dir, '.git'), 'utf8');
+    const gitdir = pointer.match(/^gitdir:\s*(.*[/\\]worktrees[/\\][^/\\]+?)\s*$/m)?.[1];
+    return gitdir ? resolve(dir, gitdir, '..', '..', '..') : dir;
+  } catch {
+    return dir; // `.git` is a directory (the main checkout) or missing
+  }
+};
+const OSS = resolve(mainCheckoutOf(ROOT), OSS_RELATIVE);
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const OSS_PATH = `(?:${escape(OSS)}|${escape(OSS_RELATIVE)})`;

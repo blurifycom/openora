@@ -1,8 +1,10 @@
 # ADR-0024: Domain-as-package + distribution tiers
 
 **Date**: 2026-06-14
-**Status**: Accepted + **IMPLEMENTED & PUBLISHED 2026-06-15**, supersedes the packaging decision in ADR-0022. 3 foundation packages (`packages/foundation/{contracts,runtime,react}`), 6 domain packages (`packages/domains/{pam,wallet,casino,sportsbook,cms,engagement}`), `packages/addons/` reduced to the 3 platform-internal/consumer-composed add-ons (admin-console, audit, iam). `@openora/platform` kept as a compat facade. Published at **v0.2.0** to the GitLab registry (the private registry, tag-triggered CI); the consumer migrated (account->pam, cms extracted) and verified (typecheck + build green); the 14 folded `@openora-addons/*` member packages + the `@openora/account` facade deleted from the registry.
+**Status**: **Superseded by [ADR-0025](./0025-single-core-package-with-module-subpaths.md)** (packaging only - the two-axes framing and the source-isolation rules below are kept and still in force). Was: Accepted + IMPLEMENTED & PUBLISHED 2026-06-15, supersedes the packaging decision in ADR-0022. 3 foundation packages (`packages/foundation/{contracts,runtime,react}`), 6 domain packages (`packages/domains/{pam,wallet,casino,sportsbook,cms,engagement}`), `packages/addons/` reduced to the 3 platform-internal/consumer-composed add-ons (admin-console, audit, iam). `@openora/platform` kept as a compat facade. Published at **v0.2.0** to the GitLab registry (the private registry, tag-triggered CI); the consumer migrated (account->pam, cms extracted) and verified (typecheck + build green); the 14 folded `@openora-addons/*` member packages + the `@openora/account` facade deleted from the registry.
 **Relates to**: ADR-0021 (everything is a standalone add-on), ADR-0020 (gated add-on editions), ADR-0023 (headless platform), ADR-0002/0014 (plugin + adapter/port seams), ADR-0010/0017 (events + command ports).
+
+> **Update (2026-09-13)**: the package layout described above no longer exists. `packages/foundation/*` and `packages/domains/*` were folded into the single `@openora/core` package by ADR-0025 one day later, and the GitLab registry publication is history. Read this ADR for why the domain boundaries are drawn where they are, not for where the code lives.
 
 ## Context
 
