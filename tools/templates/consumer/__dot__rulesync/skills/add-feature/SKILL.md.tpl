@@ -66,18 +66,20 @@ After approval, for **downstream** work: run the **create-plugin** skill for eac
 
 For **OSS-core** items: read `handoff.md`, write the work-order, STOP that slice, continue the rest. When implementation starts, transition Jira to In Progress (Step 7 - confirm first).
 
-### 5. Tests, then review
+### 5. Verify by hand, then review
 
 Cheap gates first, prove it works, only then spend review on working code:
 
 1. `/check` (typecheck + lint + unit). Don't proceed on red.
-2. Derive an e2e checklist from the AC (happy path, edge cases, authz negatives, error states); `qa` writes/runs Playwright specs in `apps/e2e`, drives `chrome-devtools` on failure. E2e failures go back to `builder` BEFORE any review - don't review code that doesn't work.
-3. **review** on the change set, passing what the e2e run proved so reviewers dig where tests can't reach; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
-4. After fixes: re-run `/check` always; re-run the affected e2e specs if any fix changed behavior (not needed for pure convention/style fixes).
+2. Derive a verification checklist from the AC (happy path, edge cases, authz negatives, error states) and have `qa` walk it against the running stack - Playwright CLI for the walkthrough and the screenshots, `chrome-devtools` only for a live read it cannot give. **No Playwright specs are written here** (`docs/standards/testing.md`). `qa` returns screenshot evidence plus the "E2E to add" list. A broken flow goes back to `builder` BEFORE any review - don't review code that doesn't work.
+3. **review** on the change set, passing what the manual pass proved so reviewers dig where it couldn't reach; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
+4. After fixes: re-run `/check` always; re-walk the affected screens if a fix changed behavior, and refresh the screenshots (not needed for pure convention/style fixes).
 
 ### 6. Open the MR
 
-Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Never bypass its push-consent gate.
+Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Hand it the step-5 screenshots and the "E2E to add" list - both belong in the description. Never bypass its push-consent gate.
+
+The E2E itself is a separate, stacked pull request written later from that list; it is not part of this delivery unless the user asks for it.
 
 ### 7. Jira status transition (NOT comments)
 

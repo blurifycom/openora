@@ -64,7 +64,8 @@ above) if this repo has no UI apps.
   spec constraint); a reason goes in the commit or PR, never inline. Never in tests. Detail:
   `docs/standards/comments.md`.
 - An in-process test that mocks the database, a repository, or a sibling service - found one in
-  the diff, replace it with the API E2E, do not add to it.
+  the diff, delete it and note the API E2E that replaces it on the "E2E to add" list; never add to
+  it.
 
 ## Always
 
@@ -92,20 +93,21 @@ above) if this repo has no UI apps.
   `mapErrors`.
 - **Pin exact dependency versions** (no `^`/`~`); add a dependency deliberately - std lib or a few
   lines often beat a tree.
-- **Test at the outermost tier that reaches the behaviour:** a UI journey -> browser E2E; an API
-  route, an overlay, a vendor adapter, anything with SQL -> API E2E against real Postgres with the
-  vendor stubbed at its HTTP boundary; a pure function -> a co-located unit test in `__tests__/`.
-  Never fake a query builder and never let a spy assertion be the point of a test; always cover
-  authz negatives. A new or changed route ships one API E2E spec
-  (`apps/e2e/tests/api/<domain>/<scenario>.spec.ts`): happy path plus one hostile path
-  (unauthorized, wrong owner, repeated call on a money path) - it is the acceptance artifact the
-  review's request trace reads as proof. Detail: `docs/standards/testing.md`.
+- **A feature PR ships unit tests and a manual verification pass, never a Playwright spec.**
+  Pure logic - parser, resolver, mapper, money calculation - gets a co-located unit test in
+  `__tests__/`; never fake a query builder and never let a spy assertion be the point of a test.
+  Everything else is proved by driving the running stack by hand before the PR, with a screenshot
+  per changed screen (or the request/response trace for an API-only change) attached to the PR
+  description, followed by the "E2E to add" list that pass produced. E2E lands later, in its own
+  stacked PR. Which tier a spec belongs to when you do write one, and how to run the manual pass:
+  `docs/standards/testing.md`.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`
   (adds format, boundaries, build) before the PR. Conventional commits, lowercase subject (PR
   title too - a squash merge turns it into the commit), one PR per concern. Never push without
   explicit confirmation. The description carries what / why / acceptance criteria / bare ticket
-  key - no test plan or CI checklist the pipeline already shows, no URLs, hostnames, secrets, or
-  PII. Detail: `docs/standards/git-delivery.md`.
+  key, the manual-verification evidence (screenshots of each changed screen, before and after on a
+  fix) and the "E2E to add" list - but no CI checklist the pipeline already shows, no URLs,
+  hostnames, secrets, or PII. Detail: `docs/standards/git-delivery.md`.
 - **Fix the import, never work around a lint or boundary violation.** Agent rules are generated
   from `.rulesync/` via `pnpm gen:agents` - never hand-edit a generated file. Detail:
   `docs/standards/enforcement.md`.

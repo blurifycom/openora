@@ -10,7 +10,7 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 
 ## Steps
 
-1. **Determine source + target.** `git branch --show-current`, then take the target from the "Where a change lands" section of `docs/agents/forge.md`.
+1. **Determine source + target.** `git branch --show-current`, then take the target from the "Where a change lands" section of `docs/agents/forge.md`. Exception: a stacked test branch (`test({{trackerKey}}-XXX): e2e for <feature>`) targets the feature branch it covers while that is still open, and only falls back to `{{mrTarget}}` once the feature has merged.
 2. **Land the paired OSS change first, if there is one.** It is paired when `{{ossDir}}/.worktrees/<branch, / as +>` exists or `git -C {{ossDir}} branch --list <branch>` matches. First finish step 3 of "Changing OSS core" in the `oss-boundaries` rule (verify, OSS review, no open BLOCK). Then run steps 3-7 inside that worktree under the OSS repo's own delivery rules (`<worktree>/docs/standards/skills/delivery.md`: `gh`, its PR template, `pnpm verify`, public-record rules), with its own explicit push confirmation. Reuse an open OSS PR (`gh pr list --head <branch>` in the worktree).
 3. **Scope the commit.** `git status -s`. Commit ONLY changes that belong to this unit of work. If unrelated/pre-existing edits are present, do NOT bundle them - stage your files explicitly and tell the user what you left out. Never `git add -A` blindly when foreign changes are in the tree.
 4. **Commit.** Conventional-commit message (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`); for ticket work prefix the ticket key (e.g. `feat({{trackerKey}}-123): ...`). No "Co-Authored-By" / "Generated with" trailers.
@@ -24,7 +24,8 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 - State the user-facing change and its reason briefly.
 - Add short, reproducible local test steps for the changed behavior (for example, `pnpm dev` then the relevant URLs or user flow).
 - Do not include a generic verification-command list: CI already reports those checks.
-- Include screenshots only when they materially show a UI change.
+- **Attach the manual-verification evidence.** A feature PR ships no Playwright spec, so the screenshots are what a reviewer reads as proof: one per changed screen, the before/after pair on a fix. Embed them, don't just name the file paths. An API-only change attaches the request/response trace instead. Skip this only when nothing user-visible changed.
+- **End with an "E2E to add" list** - one line per scenario the manual pass exercised (happy path, one hostile path, the authz negative), naming the tier and the path the spec would live at. Prose only, never spec code. It is what the follow-up stacked test PR is written from.
 - A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
 
 ## Rules

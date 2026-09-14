@@ -63,7 +63,7 @@ Once requirements are confirmed, **delegate the rest to the agents** via the Tas
 
 1. `expert` - formalizes the requirements into acceptance criteria, flags compliance/gaps.
 2. `builder` - implements (`pnpm gen ...`, code, wiring).
-3. `qa` - writes/runs the E2E test against the acceptance criteria.
+3. `qa` - walks the acceptance criteria against the running stack by hand, returns screenshot evidence and the "E2E to add" list; writes Playwright specs only for the stacked test PR.
 
 Only return to the user to resolve genuine decisions they alone can make.
 

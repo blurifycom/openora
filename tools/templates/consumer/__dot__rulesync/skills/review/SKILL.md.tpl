@@ -118,7 +118,9 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 **Check the migration.** For each changed `.sql` under `drizzle/migrations/`, read the SQL. A `DROP`, a `RENAME`, or a column type change breaks the instances still running the previous release - `[BLOCK]` in the same MR as the reader change; it ships in a later release, after every reader of the old shape is deployed. A new `NOT NULL` column without a default fails on existing rows - `[BLOCK]`. Expand first, contract later. A hand-edited migration is a `[BLOCK]` (`docs/standards/database.md`).
 
-**Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, or the one `apps/e2e` spec that drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one.
+**Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, plus any existing `apps/e2e` spec that already drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one.
+
+**A feature PR ships no Playwright spec** (`docs/standards/testing.md`) - a missing E2E is `[INFO]` at most, NEVER a `[BLOCK]`, and never a request to write one. What you check instead: the description carries the manual-verification evidence (a screenshot per changed screen, before/after on a fix, or the request/response trace for an API-only change) and an "E2E to add" list whose scenarios match the behaviour the diff actually changed. Missing evidence on a user-visible change is a `[WARN]`; an "E2E to add" list that contradicts the diff is a finding.
 
 **Report the trace.** One `TRACE:` line per entry point (format in §7). A missing hop, an unfiltered query, a write outside the transaction, or a caller that no longer holds is a `[BLOCK]`. A hop that could not be traced is a finding, not a silent pass.
 
