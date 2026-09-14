@@ -1,5 +1,5 @@
 {
-  "id": "7583e039-d91f-42d0-af3d-2a4c2048c1ea",
+  "id": "5e5cb720-6741-4f98-9423-9cb49c769105",
   "prevId": "9ec91909-22ed-46ac-8e01-713518e1f259",
   "version": "7",
   "dialect": "postgresql",
@@ -687,12 +687,11 @@
           "notNull": true,
           "default": "'invisible'"
         },
-        "badge_settings": {
-          "name": "badge_settings",
+        "metadata": {
+          "name": "metadata",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'{\"badgeColor\":\"#3377ff\",\"textColor\":\"#ffffff\"}'::jsonb"
+          "notNull": false
         },
         "updated_at": {
           "name": "updated_at",

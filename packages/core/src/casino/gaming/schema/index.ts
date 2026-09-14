@@ -13,12 +13,10 @@ import {
   jsonb,
 } from 'drizzle-orm/pg-core';
 import {
-  DEFAULT_GAME_TAG_BADGE_SETTINGS,
   GameCategoryTranslationsSchema,
   GAME_TAG_TYPES,
   GAME_TAG_VISIBILITIES,
   GAME_TYPES,
-  GameTagBadgeSettingsSchema,
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
@@ -130,9 +128,7 @@ export const gameTag = pgTable(
     name: text().notNull(),
     type: gameTagTypeEnum().notNull().default('custom'),
     visibility: gameTagVisibilityEnum().notNull().default('invisible'),
-    badgeSettings: zodJsonb(GameTagBadgeSettingsSchema, 'game_tag.badge_settings')()
-      .notNull()
-      .default(DEFAULT_GAME_TAG_BADGE_SETTINGS),
+    metadata: jsonb(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),

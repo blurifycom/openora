@@ -3,8 +3,6 @@ import {
   GameCategorySummarySchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
-  GameTagBadgeSettingsPatchSchema,
-  GameTagBadgeSettingsSchema,
 } from '../game.js';
 
 describe('game category translations', () => {
@@ -55,32 +53,5 @@ describe('game category translations', () => {
     if (result.success) {
       expect(result.data.translations).toEqual({});
     }
-  });
-});
-
-describe('game tag badge settings', () => {
-  it('defaults to the standard badge colors', () => {
-    expect(GameTagBadgeSettingsSchema.parse({})).toEqual({
-      badgeColor: '#3377ff',
-      textColor: '#ffffff',
-    });
-  });
-
-  it('accepts six-digit hex colors and rejects other formats', () => {
-    expect(
-      GameTagBadgeSettingsSchema.parse({ badgeColor: '#112233', textColor: '#ABCDEF' }),
-    ).toEqual({ badgeColor: '#112233', textColor: '#ABCDEF' });
-    expect(() =>
-      GameTagBadgeSettingsSchema.parse({ badgeColor: 'white', textColor: '#ffffff' }),
-    ).toThrow();
-  });
-});
-
-describe('game tag badge settings patch', () => {
-  it('leaves an omitted colour undefined instead of defaulting it', () => {
-    expect(GameTagBadgeSettingsPatchSchema.parse({ badgeColor: '#112233' })).toEqual({
-      badgeColor: '#112233',
-    });
-    expect(GameTagBadgeSettingsPatchSchema.parse({})).toEqual({});
   });
 });

@@ -5,7 +5,7 @@ CREATE TABLE "game_tag" (
 	"name" text NOT NULL,
 	"type" "game_tag_type" DEFAULT 'custom' NOT NULL,
 	"visibility" "game_tag_visibility" DEFAULT 'invisible' NOT NULL,
-	"badge_settings" jsonb DEFAULT '{"badgeColor":"#3377ff","textColor":"#ffffff"}'::jsonb NOT NULL,
+	"metadata" jsonb,
 	"updated_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );

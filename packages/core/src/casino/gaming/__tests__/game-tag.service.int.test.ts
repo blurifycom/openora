@@ -86,7 +86,7 @@ describe('GameTagService (real PG)', () => {
       name: 'Featured',
       type: 'custom',
       visibility: 'invisible',
-      badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
+      metadata: null,
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
     });
@@ -118,7 +118,7 @@ describe('GameTagService (real PG)', () => {
       id: existing.id,
       name: 'Renamed',
       visibility: 'visible',
-      badgeSettings: { badgeColor: '#112233', textColor: '#abcdef' },
+      metadata: { theme: 'promo' },
       ...ACTOR,
     });
 
@@ -127,7 +127,7 @@ describe('GameTagService (real PG)', () => {
       name: 'Renamed',
       type: 'system',
       visibility: 'visible',
-      badgeSettings: { badgeColor: '#112233', textColor: '#abcdef' },
+      metadata: { theme: 'promo' },
     });
     expect(emittedTopics(events)).toContain('gaming.tag.updated');
     await expect(svc.updateTag({ id: other.id, name: 'Renamed', ...ACTOR })).rejects.toBeInstanceOf(
@@ -135,20 +135,26 @@ describe('GameTagService (real PG)', () => {
     );
   });
 
-  it('updates one badge colour without resetting the other', async () => {
+  it('stores, replaces, and clears metadata on update', async () => {
     const existing = await seedTag({
-      name: 'Badged',
-      badgeSettings: { badgeColor: '#112233', textColor: '#445566' },
+      name: 'Metadata Tag',
+      metadata: { theme: 'original' },
     });
     const { svc } = makeService();
 
-    const updated = await svc.updateTag({
+    const replaced = await svc.updateTag({
       id: existing.id,
-      badgeSettings: { badgeColor: '#778899' },
+      metadata: { theme: 'replaced' },
       ...ACTOR,
     });
+    expect(replaced.metadata).toEqual({ theme: 'replaced' });
 
-    expect(updated.badgeSettings).toEqual({ badgeColor: '#778899', textColor: '#445566' });
+    const cleared = await svc.updateTag({
+      id: existing.id,
+      metadata: null,
+      ...ACTOR,
+    });
+    expect(cleared.metadata).toBeNull();
   });
 
   it('createTag rejects a duplicate name', async () => {

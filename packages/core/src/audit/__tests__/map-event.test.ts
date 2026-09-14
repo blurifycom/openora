@@ -114,7 +114,7 @@ describe('mapEventToRecord: gaming tag catalog mutations', () => {
     name: 'Featured',
     type: 'custom',
     visibility: 'visible',
-    badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
+    metadata: null,
   };
 
   it('audits tag creation against the game tag resource', async () => {

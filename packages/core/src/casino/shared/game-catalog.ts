@@ -44,7 +44,7 @@ export function toGameTagSummary(record: GameTag) {
     name: record.name,
     type: record.type,
     visibility: record.visibility,
-    badgeSettings: record.badgeSettings,
+    metadata: record.metadata,
   };
 }
 

@@ -363,7 +363,7 @@ describe('gaming catalog router authz', () => {
       name: 'Featured',
       type: 'custom',
       visibility: 'invisible',
-      badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
+      metadata: null,
     });
 
     await expect(call(router.listAdminTags, {}, { context: CTX })).resolves.toMatchObject({
@@ -378,7 +378,7 @@ describe('gaming catalog router authz', () => {
         {
           id: created.id,
           visibility: 'visible',
-          badgeSettings: { badgeColor: '#112233', textColor: '#ffffff' },
+          metadata: { theme: 'promo' },
         },
         { context: CTX },
       ),

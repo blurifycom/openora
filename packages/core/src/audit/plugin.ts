@@ -816,7 +816,7 @@ export async function mapEventToRecord(
         name: p['name'] ?? null,
         type: p['type'] ?? null,
         visibility: p['visibility'] ?? null,
-        badgeSettings: p['badgeSettings'] ?? null,
+        metadata: p['metadata'] ?? null,
       },
     };
   }

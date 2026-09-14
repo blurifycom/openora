@@ -82,13 +82,13 @@ describe('gaming game tags e2e', () => {
     expect(invisible).toMatchObject({
       type: 'custom',
       visibility: 'invisible',
-      badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
+      metadata: null,
     });
 
     const visibleResponse = await admin.post('/backoffice/gaming/tags', {
       name: `E2E Visible ${randomUUID()}`,
       visibility: 'visible',
-      badgeSettings: { badgeColor: '#112233', textColor: '#abcdef' },
+      metadata: { theme: 'promo' },
     });
     expect(visibleResponse.status).toBe(200);
     const visible = await readJson(visibleResponse);

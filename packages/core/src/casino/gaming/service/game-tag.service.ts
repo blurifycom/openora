@@ -1,4 +1,4 @@
-import { DEFAULT_GAME_TAG_BADGE_SETTINGS, GameTagSnapshotSchema } from '@openora/core/contracts';
+import { GameTagSnapshotSchema } from '@openora/core/contracts';
 import {
   DrizzleService,
   findOneOrThrow,
@@ -82,7 +82,7 @@ export class GameTagService {
   async createTag({
     name,
     visibility = 'invisible',
-    badgeSettings = DEFAULT_GAME_TAG_BADGE_SETTINGS,
+    metadata = null,
     actorId,
     ip,
     userAgent,
@@ -101,7 +101,7 @@ export class GameTagService {
         }
         const [created] = await tx
           .insert(gameTag)
-          .values({ name, visibility, badgeSettings })
+          .values({ name, visibility, metadata })
           .returning();
         return created;
       });
@@ -155,17 +155,7 @@ export class GameTagService {
         }
 
         const updated = findOneOrThrow(
-          await tx
-            .update(gameTag)
-            .set({
-              ...patchInput,
-              badgeSettings: patchInput.badgeSettings && {
-                ...existing.badgeSettings,
-                ...patchInput.badgeSettings,
-              },
-            })
-            .where(eq(gameTag.id, id))
-            .returning(),
+          await tx.update(gameTag).set(patchInput).where(eq(gameTag.id, id)).returning(),
           new GameTagNotFoundError(id),
         );
 
