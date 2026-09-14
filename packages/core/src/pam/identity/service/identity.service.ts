@@ -2545,6 +2545,7 @@ export class IdentityService {
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
     this.forwardCookies(res, resHeaders);
+    const changedAt = new Date().toISOString();
 
     if (before) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
@@ -2567,7 +2568,7 @@ export class IdentityService {
           email: before.email,
           locale: before.language,
           antiPhishingCode: before.antiPhishingCode,
-          template: { key: 'emailChanged', data: { newEmail } },
+          template: { key: 'emailChanged', data: { newEmail, occurredAt: changedAt } },
           idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
         })
         .catch((err: unknown) =>

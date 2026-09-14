@@ -164,10 +164,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Confirm your new email address',
     text: `Enter this code to confirm your new email address: ${data.otp}`,
   }),
-  emailChanged: (data) => ({
+  emailChanged: (data, locale) => ({
     subject: 'Your email address was changed',
     text:
-      `The email address on your account was changed to ${data.newEmail}.\n\n` +
+      `The email address on your account was changed to ${data.newEmail} on ${formatEmailDate(data.occurredAt, locale)}.\n\n` +
       `If this was not you, contact support immediately - your account may be compromised.`,
   }),
   securityAntiPhishingCodeChanged: (data) => ({

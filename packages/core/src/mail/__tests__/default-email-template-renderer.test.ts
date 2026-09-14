@@ -88,7 +88,10 @@ describe('DefaultEmailTemplateRenderer', () => {
       { key: 'adminInvitation', data: { token: 'tok', expiresAt: '2026-01-01T00:00:00.000Z' } },
       { key: 'welcome', data: {} },
       { key: 'emailChangeConfirmation', data: { otp: '111111' } },
-      { key: 'emailChanged', data: { newEmail: 'new@b.com' } },
+      {
+        key: 'emailChanged',
+        data: { newEmail: 'new@b.com', occurredAt: '2026-01-01T00:00:00.000Z' },
+      },
       {
         key: 'withdrawalCompleted',
         data: {
@@ -123,11 +126,15 @@ describe('DefaultEmailTemplateRenderer', () => {
       renderer.render({ key: 'emailChangeConfirmation', data: { otp: '424242' } }, 'en').text,
     ).toContain('424242');
     const notice = renderer.render(
-      { key: 'emailChanged', data: { newEmail: 'new@example.com' } },
+      {
+        key: 'emailChanged',
+        data: { newEmail: 'new@example.com', occurredAt: '2026-01-01T00:00:00.000Z' },
+      },
       'en',
     );
     expect(notice.text).toContain('new@example.com');
     expect(notice.text).toContain('support');
+    expect(notice.text).toContain('2026');
   });
 
   it('groups the withdrawal amount in thousands, matching the in-app notification', () => {

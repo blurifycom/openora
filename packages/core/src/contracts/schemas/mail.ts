@@ -71,7 +71,7 @@ export const EmailTemplateDataSchemas = {
   securityWithdrawalRequested: z.object({ ...WithdrawalDetailsShape }),
   welcome: z.object({}),
   emailChangeConfirmation: z.object({ otp: z.string() }),
-  emailChanged: z.object({ newEmail: z.email() }),
+  emailChanged: z.object({ newEmail: z.email(), occurredAt: TimestampSchema }),
   securityAntiPhishingCodeChanged: z.object({ previousAntiPhishingCode: z.string().nullable() }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
 

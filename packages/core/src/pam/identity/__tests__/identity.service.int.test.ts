@@ -1711,7 +1711,10 @@ describe('IdentityService security controls', () => {
       expect.objectContaining({
         email: EMAIL,
         antiPhishingCode: 'Sunny Meadow',
-        template: { key: 'emailChanged', data: { newEmail: 'new-address-2@test.dev' } },
+        template: {
+          key: 'emailChanged',
+          data: { newEmail: 'new-address-2@test.dev', occurredAt: expect.any(String) },
+        },
       }),
     );
   });
@@ -1751,7 +1754,10 @@ describe('IdentityService security controls', () => {
     expect(mailDispatch.toAddress).toHaveBeenCalledWith(
       expect.objectContaining({
         email: EMAIL,
-        template: { key: 'emailChanged', data: { newEmail: 'new-address-3@test.dev' } },
+        template: {
+          key: 'emailChanged',
+          data: { newEmail: 'new-address-3@test.dev', occurredAt: expect.any(String) },
+        },
       }),
     );
   });
