@@ -14,7 +14,20 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 // oxlint-disable no-console
 
-const OSS = resolve('{{ossFromRoot}}');
+// This repo is often checked out as a git worktree, whose `.git` is a file pointing at
+// <main>/.git/worktrees/<name>. The sibling OSS checkout sits next to the MAIN checkout, so
+// resolve from there or every path below lands inside the worktree.
+const mainCheckoutOf = (dir) => {
+  try {
+    const pointer = readFileSync(join(dir, '.git'), 'utf8');
+    const gitdir = pointer.match(/^gitdir:\s*(.*[/\\]worktrees[/\\][^/\\]+?)\s*$/m)?.[1];
+    return gitdir ? resolve(dir, gitdir, '..', '..', '..') : dir;
+  } catch {
+    return dir; // `.git` is a directory (the main checkout) or missing
+  }
+};
+
+const OSS = resolve(mainCheckoutOf(process.cwd()), '{{ossFromRoot}}');
 const USAGE = 'usage: pnpm oss:worktree <branch> [--link | --remove]';
 
 const die = (message) => {
@@ -32,11 +45,14 @@ if (!existsSync(join(OSS, '.git'))) {
 
 const worktree = join(OSS, '.worktrees', branch.replaceAll('/', '+'));
 const worktreeFromHere = relative(process.cwd(), worktree);
+// A fresh worktree has no node_modules yet, so the checkout's own post-checkout hook would run
+// against tools it cannot resolve and fail the command. The install below does that setup.
+const GIT = ['-C', OSS, '-c', 'core.hooksPath=/dev/null'];
 const git = (...args) =>
-  execFileSync('git', ['-C', OSS, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
+  execFileSync('git', [...GIT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
 const gitOrEmpty = (...args) => {
   try {
-    return execFileSync('git', ['-C', OSS, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
+    return execFileSync('git', [...GIT, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
   } catch {
     return '';
   }
