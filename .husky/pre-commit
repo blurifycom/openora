@@ -10,6 +10,20 @@ BIN="$(git rev-parse --show-toplevel)/node_modules/.bin"
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
 
+# The fixers below rewrite whole files in the working tree and the re-add at the end
+# stages whole files, so a file carrying both staged and unstaged hunks cannot go
+# through this hook without its unstaged hunk landing in the commit. Refuse instead:
+# silently committing work the author deliberately left out is the worse failure.
+unstaged=$(git diff --name-only)
+if [ -n "$unstaged" ]; then
+  partial=$(printf '%s\n' "$staged" | grep -Fx "$unstaged" || true)
+  if [ -n "$partial" ]; then
+    printf 'pre-commit: staged and unstaged changes in the same file:\n%s\n\n' "$partial" >&2
+    printf 'Stage each of them in full, or commit with --no-verify and run `pnpm verify` yourself.\n' >&2
+    exit 1
+  fi
+fi
+
 "$BIN/tsx" tools/lint/verify-oss-hygiene.ts || exit 1
 
 # `|| true`: grep exits 1 when the commit touches no lintable file, and husky runs
@@ -18,8 +32,12 @@ lintable=$(printf '%s\n' "$staged" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' || tru
 if [ -n "$lintable" ]; then
   printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxfmt" || exit 1
   printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxlint" --fix || exit 1
-  node tools/lint/ensure-final-newline.mjs || exit 1
-  # Re-add ONLY the staged set: the fixers rewrote files, and a blanket `git add`
-  # would drag unrelated unstaged work into this commit.
-  printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
 fi
+
+# Catch-all for the file types oxfmt cannot format (SQL and friends). Scoped to the
+# staged paths - with no arguments it walks every tracked file in the repository.
+printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 node tools/lint/ensure-final-newline.mjs || exit 1
+
+# Re-add ONLY the staged set: the fixers rewrote files, and a blanket `git add`
+# would drag unrelated unstaged work into this commit.
+printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
