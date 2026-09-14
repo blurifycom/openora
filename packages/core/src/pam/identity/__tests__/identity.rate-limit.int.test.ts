@@ -223,6 +223,65 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
   });
 });
 
+describe('IdentityService - email-change rate limits do not spend the target/IP budget for an anonymous caller', () => {
+  it('requestEmailChange rejects UNAUTHORIZED before touching the target or IP bucket', async () => {
+    const limiter = makeLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+    const newEmail = 'victim-request@e2e.test';
+
+    await expect(
+      svc.requestEmailChange(
+        { newEmail, currentPassword: 'whatever1' },
+        { 'x-real-ip': '203.0.113.20' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    // The real owner's budget for this address and IP must still be fully intact.
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        limiter.consume(`change-email-target:${newEmail}`, { limit: 3, windowMs: 15 * 60 * 1000 }),
+      ).resolves.toMatchObject({ allowed: true });
+    }
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        limiter.consume('change-email-ip:203.0.113.20', { limit: 3, windowMs: 15 * 60 * 1000 }),
+      ).resolves.toMatchObject({ allowed: true });
+    }
+  });
+
+  it('confirmEmailChange rejects UNAUTHORIZED before touching the target or IP bucket', async () => {
+    const limiter = makeLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+    const newEmail = 'victim-confirm@e2e.test';
+
+    await expect(
+      svc.confirmEmailChange(
+        { newEmail, otp: '000000' },
+        { 'x-real-ip': '203.0.113.21' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        limiter.consume(`confirm-email-change-target:${newEmail}`, {
+          limit: 5,
+          windowMs: 15 * 60 * 1000,
+        }),
+      ).resolves.toMatchObject({ allowed: true });
+    }
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        limiter.consume('confirm-email-change-ip:203.0.113.21', {
+          limit: 5,
+          windowMs: 15 * 60 * 1000,
+        }),
+      ).resolves.toMatchObject({ allowed: true });
+    }
+  });
+});
+
 describe('IdentityService - fail-closed limiter policy for credential-guessing keys', () => {
   // A spy limiter that always denies: consume is the first await on each of these
   // paths, so the 429 short-circuits before any auth/DB work and we can assert the

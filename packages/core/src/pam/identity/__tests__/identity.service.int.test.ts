@@ -1684,6 +1684,77 @@ describe('IdentityService security controls', () => {
       expect.anything(),
     );
   });
+
+  it('carries the caller anti-phishing code on the emailChanged notice to the old address', async () => {
+    const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address-2@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ success: true }, 200);
+    });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ mailDispatch });
+
+    await svc.confirmEmailChange(
+      { newEmail: 'new-address-2@test.dev', otp: '123456' },
+      {},
+      new Headers(),
+    );
+
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: EMAIL,
+        antiPhishingCode: 'Sunny Meadow',
+        template: { key: 'emailChanged', data: { newEmail: 'new-address-2@test.dev' } },
+      }),
+    );
+  });
+
+  it('still enqueues the emailChanged notice even when session revocation later throws', async () => {
+    const account = await seedUser({ emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address-3@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ success: true }, 200);
+    });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const sessions = new SessionService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      identityReader: makeIdentityReader(),
+    });
+    vi.spyOn(sessions, 'revokeAllSessions').mockRejectedValue(new Error('redis down'));
+    const svc = buildService({ mailDispatch, sessions });
+
+    await expect(
+      svc.confirmEmailChange(
+        { newEmail: 'new-address-3@test.dev', otp: '123456' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toThrow('redis down');
+
+    // The swap already committed by the time revocation blew up - the owner still
+    // needs the notice, so it must have gone out before the throw propagated.
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: EMAIL,
+        template: { key: 'emailChanged', data: { newEmail: 'new-address-3@test.dev' } },
+      }),
+    );
+  });
 });
 
 describe('IdentityService.setAntiPhishingCode', () => {

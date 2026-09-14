@@ -2443,22 +2443,29 @@ export class IdentityService {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const meta = extractClientMeta(reqHeaders);
     const { ip } = meta;
-    // Session resolved first so the rate limit keys on the caller, not the target
-    // address - same as `changePassword`'s `${userId ?? 'anonymous'}` key.
+    // Session resolved first so the caller-keyed bucket below still covers anonymous
+    // callers too - unlike `changePassword`'s single pre-authenticated bucket, this
+    // route also caps by target inbox and IP, which must stay unspent until we know
+    // the caller is signed in (an anonymous caller must not be able to burn a real
+    // owner's budget for their own address).
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
       this.limiter,
       `change-email:${userId ?? 'anonymous'}`,
-      VERIFY_EMAIL_RATE_LIMIT,
+      EMAIL_VERIFICATION_RATE_LIMIT,
     );
-    const newEmail = input.newEmail.toLowerCase();
-    // Separate budget caps codes per target inbox, regardless of caller.
-    await assertRateLimit(this.limiter, `change-email-target:${newEmail}`, VERIFY_EMAIL_RATE_LIMIT);
-    if (ip) {
-      await assertRateLimit(this.limiter, `change-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
-    }
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const newEmail = input.newEmail.toLowerCase();
+    // Separate budget caps codes per target inbox, regardless of caller.
+    await assertRateLimit(
+      this.limiter,
+      `change-email-target:${newEmail}`,
+      EMAIL_VERIFICATION_RATE_LIMIT,
+    );
+    if (ip) {
+      await assertRateLimit(this.limiter, `change-email-ip:${ip}`, EMAIL_VERIFICATION_RATE_LIMIT);
     }
     const [caller] = await this.drizzle.db
       .select({ twoFactorEnabled: user.twoFactorEnabled })
@@ -2509,6 +2516,9 @@ export class IdentityService {
       `confirm-email-change:${userId ?? 'anonymous'}`,
       VERIFY_EMAIL_RATE_LIMIT,
     );
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
     const newEmail = input.newEmail.toLowerCase();
     await assertRateLimit(
       this.limiter,
@@ -2518,17 +2528,16 @@ export class IdentityService {
     if (ip) {
       await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
-    const [before] = userId
-      ? await this.drizzle.db
-          .select({
-            email: user.email,
-            language: user.language,
-            loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
-          })
-          .from(user)
-          .where(eq(user.id, userId))
-          .limit(1)
-      : [];
+    const [before] = await this.drizzle.db
+      .select({
+        email: user.email,
+        language: user.language,
+        antiPhishingCode: user.antiPhishingCode,
+        loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
     const res = await this.api.changeEmailEmailOTP({
       body: { newEmail: input.newEmail, otp: input.otp },
       headers,
@@ -2537,7 +2546,7 @@ export class IdentityService {
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
     this.forwardCookies(res, resHeaders);
 
-    if (userId && before) {
+    if (before) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
       this.events.emit('identity.email.changed', {
         userId,
@@ -2547,6 +2556,23 @@ export class IdentityService {
         ip,
         userAgent,
       });
+      // To the OLD address - the row now holds the new one. Enqueued right after the
+      // emit and before the revocation calls below: if either of those throws, the
+      // swap has already committed and the owner still needs the notice. Fire-and-
+      // forget like `dispatchMail` in notifications/plugin.ts - a mail-enqueue hiccup
+      // must not turn a committed swap into a reported failure. `randomUUID()` keeps
+      // the key unique so the queue's dedupe window can't swallow a repeat notice.
+      this.mailDispatch
+        ?.toAddress({
+          email: before.email,
+          locale: before.language,
+          antiPhishingCode: before.antiPhishingCode,
+          template: { key: 'emailChanged', data: { newEmail } },
+          idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
+        })
+        .catch((err: unknown) =>
+          identityLogger.error({ err, userId }, 'email-change notice enqueue failed'),
+        );
       await this.trustedDevices?.revokeAllForUser(userId, userId);
       await this.sessions?.revokeAllSessions(userId, userId, meta);
       if (before.loginWithdrawalAlertsEnabled) {
@@ -2563,20 +2589,6 @@ export class IdentityService {
           userAgent,
         });
       }
-      // To the OLD address - the row now holds the new one. Fire-and-forget like
-      // `dispatchMail` in notifications/plugin.ts: the swap already committed, so a
-      // mail-enqueue hiccup must not turn it into a reported failure. `randomUUID()`
-      // keeps the key unique so the queue's dedupe window can't swallow a repeat notice.
-      this.mailDispatch
-        ?.toAddress({
-          email: before.email,
-          locale: before.language,
-          template: { key: 'emailChanged', data: { newEmail } },
-          idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
-        })
-        .catch((err: unknown) =>
-          identityLogger.error({ err, userId }, 'email-change notice enqueue failed'),
-        );
     }
     return SUCCESS;
   }
