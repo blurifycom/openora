@@ -999,26 +999,29 @@ describe('IdentityService.changePassword revokes other sessions', () => {
       .returning({ id: session.id, token: session.token })
       .then(([row]) => row!);
 
+  const seedOldPasswordSignInRacingIn = (userId: string) =>
+    seedChangePwSession(userId, { createdAt: new Date() });
+
+  const stubBetterAuthDeletingEverySessionAndMintingOne = (
+    userId: string,
+    rotatedToken: string,
+    duringRotation?: () => Promise<unknown>,
+  ) =>
+    changePasswordMock.mockImplementation(async () => {
+      await db.drizzle.db.delete(session).where(eq(session.userId, userId));
+      await seedChangePwSession(userId, { token: rotatedToken });
+      await duringRotation?.();
+      return jsonResponse({ token: rotatedToken, user: betterAuthUser }, 200);
+    });
+
   it('delegates the session revoke to better-auth and emits identity.sessions.revoked_all', async () => {
     const account = await seedUser();
     const current = await seedChangePwSession(account.id);
     const otherA = await seedChangePwSession(account.id);
     const otherB = await seedChangePwSession(account.id);
 
-    // createAuth is mocked in this suite, so better-auth's own revokeOtherSessions
-    // never runs - stand in for it: delete EVERY session (including the caller's,
-    // as better-auth does) and mint a fresh one, returning its token in the body.
     const rotatedToken = randomUUID();
-    changePasswordMock.mockImplementation(async () => {
-      await db.drizzle.db.delete(session).where(eq(session.userId, account.id));
-      await db.drizzle.db.insert(session).values({
-        userId: account.id,
-        token: rotatedToken,
-        expiresAt: new Date(Date.now() + 86_400_000),
-        updatedAt: new Date(),
-      });
-      return jsonResponse({ token: rotatedToken, user: betterAuthUser }, 200);
-    });
+    stubBetterAuthDeletingEverySessionAndMintingOne(account.id, rotatedToken);
     const events = makeEventBus();
 
     const result = await buildService({ events }).changePassword(
@@ -1034,17 +1037,13 @@ describe('IdentityService.changePassword revokes other sessions', () => {
         body: expect.objectContaining({ revokeOtherSessions: true }),
       }),
     );
-    // Sanity check on the stand-in only: better-auth is mocked here, so this re-reads
-    // what changePasswordMock itself wrote. The real revoke and the streamSession
-    // suppression branch are covered end to end in
-    // packages/testing/src/__tests__/change-password-session-revoke.e2e.test.ts.
-    const remaining = await db.drizzle.db
+    const rowsLeftByTheBetterAuthStub = await db.drizzle.db
       .select({ id: session.id, token: session.token })
       .from(session)
       .where(eq(session.userId, account.id));
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.token).toBe(rotatedToken);
-    expect([current.id, otherA.id, otherB.id]).not.toContain(remaining[0]!.id);
+    expect(rowsLeftByTheBetterAuthStub).toHaveLength(1);
+    expect(rowsLeftByTheBetterAuthStub[0]!.token).toBe(rotatedToken);
+    expect([current.id, otherA.id, otherB.id]).not.toContain(rowsLeftByTheBetterAuthStub[0]!.id);
     // exceptSessionId is the caller's PRE-rotation session id - the value the
     // already-open streamSession connection still holds, so the handler suppresses
     // the { type: 'revoked' } push for the initiating tab. NOT the freshly-minted id
@@ -1069,25 +1068,9 @@ describe('IdentityService.changePassword revokes other sessions', () => {
     const account = await seedUser();
     const current = await seedChangePwSession(account.id);
     const rotatedToken = randomUUID();
-    changePasswordMock.mockImplementation(async () => {
-      await db.drizzle.db.delete(session).where(eq(session.userId, account.id));
-      await db.drizzle.db.insert(session).values({
-        userId: account.id,
-        token: rotatedToken,
-        expiresAt: new Date(Date.now() + 86_400_000),
-        updatedAt: new Date(),
-      });
-      // A sign-in that verified the OLD password lands its row right after
-      // better-auth's own delete-all, just like the race this sweep exists for.
-      await db.drizzle.db.insert(session).values({
-        userId: account.id,
-        token: randomUUID(),
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 86_400_000),
-        updatedAt: new Date(),
-      });
-      return jsonResponse({ token: rotatedToken, user: betterAuthUser }, 200);
-    });
+    stubBetterAuthDeletingEverySessionAndMintingOne(account.id, rotatedToken, () =>
+      seedOldPasswordSignInRacingIn(account.id),
+    );
     const events = makeEventBus();
 
     await buildService({ events }).changePassword(

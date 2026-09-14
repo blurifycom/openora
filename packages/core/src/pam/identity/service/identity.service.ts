@@ -1973,6 +1973,8 @@ export class IdentityService {
     const sweepDeadline = new Date();
     // The token of the session better-auth just minted for the caller. `ensureOk` only
     // reads the body on failure, so this read is safe here.
+    // Library boundary: `Response.json()` resolves to `any`, and better-auth publishes no
+    // response type for this route, so its shape is asserted once here.
     const rotatedToken =
       ((await res.json().catch(() => ({}))) as { token?: string | null }).token ?? null;
     // better-auth's response only carries the token, not the row id - look the row up
@@ -1998,12 +2000,14 @@ export class IdentityService {
         .set({ expiresAt: new Date(Date.now() + DONT_REMEMBER_SESSION_TTL_MS) })
         .where(eq(session.id, rotated.id));
     }
-    await this.drizzle.db
-      .update(user)
-      .set({ passwordMeetsPolicy: true })
-      .where(eq(user.id, userId));
     const { ip, userAgent } = extractClientMeta(reqHeaders);
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    // Independent of each other and of `rotated` - one round trip instead of two on a
+    // user-facing endpoint. (The TTL clamp above does depend on `rotated`, so it stays
+    // sequential.)
+    const [, playerId] = await Promise.all([
+      this.drizzle.db.update(user).set({ passwordMeetsPolicy: true }).where(eq(user.id, userId)),
+      this.identityReader.getPlayerIdByUserIdSafe(userId),
+    ]);
     // Dedicated, non-sensitive record that the login credential itself changed -
     // the audit mapper keys the action off the topic, so a plain
     // `identity.sessions.revoked_all` alone would read as "revoked all sessions",
