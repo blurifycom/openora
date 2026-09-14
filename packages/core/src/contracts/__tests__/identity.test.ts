@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ChangePasswordInputSchema,
   LoginInputSchema,
+  PasswordSchema,
   RegisterInputSchema,
   ResetPasswordInputSchema,
 } from '../schemas/identity.js';
@@ -17,6 +18,11 @@ const registerInput = (password: string) => ({
 });
 
 describe('password rules', () => {
+  it('enforces the 12-character platform password policy on PasswordSchema', () => {
+    expect(PasswordSchema.safeParse('a'.repeat(11)).success).toBe(false);
+    expect(PasswordSchema.safeParse('a'.repeat(12)).success).toBe(true);
+  });
+
   it('holds sign-up to the same bounds as the password reset flow', () => {
     expect(RegisterInputSchema.safeParse(registerInput('short')).success).toBe(false);
     expect(RegisterInputSchema.safeParse(registerInput('password123')).success).toBe(false);

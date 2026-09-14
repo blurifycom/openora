@@ -6,9 +6,10 @@ import {
   getUserId,
   getSessionId,
   createEventStreamGenerator,
-  type EventBus,
 } from '@openora/core/server';
+import type { RealtimeTransport } from '@openora/core/contracts';
 import { identityContract } from '../contract/index.js';
+import type { User, Session } from '../schema/index.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { PhoneVerificationService } from '../service/phone-verification.service.js';
 import type { WithdrawalPinService } from '../service/withdrawal-pin.service.js';
@@ -37,13 +38,32 @@ function requireSessionId(context: OssContext) {
   return sessionId;
 }
 
+// Server-to-client push channel for a user's own session-lifecycle notices
+// (revoke-all, single-session revoke, unlock). Per
+// docs/standards/messaging-and-microservices.md, push belongs on REALTIME_TRANSPORT
+// (Redis Pub/Sub, fans out to every replica), not the domain EventBus (a Redis
+// Streams consumer group delivers each event to only ONE replica - a tab connected
+// to any other replica would never see the push). The plugin republishes here off
+// the durable `identity.sessions.revoked_all` / `identity.session.revoked` /
+// `identity.user.unlocked` domain events; see plugin.ts.
+export function sessionEventsChannel(userId: User['id']): string {
+  return `identity:session-events:${userId}`;
+}
+
+// Carries who to spare/target so each connection can decide for itself; the wire
+// contract the client sees stays { type: 'revoked' | 'unlocked' }.
+export type SessionEventsPush =
+  | { type: 'revoked-all'; exceptSessionId?: Session['id'] }
+  | { type: 'session-revoked'; sessionId: Session['id'] }
+  | { type: 'unlocked' };
+
 export function createIdentityRouter(
   identity: IdentityService,
   sessionSvc: SessionService,
   phoneLogin: PhoneLoginService,
   phoneVerification: PhoneVerificationService,
   adminGuard: AdminGuard,
-  eventBus: EventBus,
+  realtime: RealtimeTransport,
   adminSecurity: AdminSecurityService,
   withdrawalPin: WithdrawalPinService,
 ) {
@@ -144,34 +164,31 @@ export function createIdentityRouter(
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
       const userId = getUserId(context);
-      const sessionId = getSessionId(context);
+      const connectionSessionId = getSessionId(context);
       return createEventStreamGenerator(
-        (push) => {
-          const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
-            if (event.userId === userId) {
-              push({ type: 'revoked' });
-            }
-          });
-          // A single-session revoke - including the idle-timeout expiry `SessionIdleService`
-          // performs - only ever names one session. Without this, the tab it just killed
-          // gets no signal at all: the DB write and the audit row already happened, but the
-          // open tab keeps rendering as signed in until its next request happens to 401.
-          const unsubscribeSessionRevoked = eventBus.on('identity.session.revoked', (event) => {
-            if (event.userId === userId && event.sessionId === sessionId) {
-              push({ type: 'revoked' });
-            }
-          });
-          const unsubscribeUnlocked = eventBus.on('identity.user.unlocked', (event) => {
-            if (event.userId === userId) {
+        (push) =>
+          realtime.subscribe<SessionEventsPush>(sessionEventsChannel(userId), (event) => {
+            if (event.type === 'unlocked') {
               push({ type: 'unlocked' });
+              return;
             }
-          });
-          return () => {
-            unsubscribeRevoked();
-            unsubscribeSessionRevoked();
-            unsubscribeUnlocked();
-          };
-        },
+            // A single-session revoke - including the idle-timeout expiry
+            // `SessionIdleService` performs - names exactly one session, so only that tab
+            // is told. Without it the tab it just killed keeps rendering as signed in
+            // until its next request happens to 401.
+            if (event.type === 'session-revoked') {
+              if (event.sessionId === connectionSessionId) {
+                push({ type: 'revoked' });
+              }
+              return;
+            }
+            // Self-service password change spares the acting session via
+            // exceptSessionId; the admin revoke-all path leaves it unset and kicks all.
+            if (event.exceptSessionId && event.exceptSessionId === connectionSessionId) {
+              return;
+            }
+            push({ type: 'revoked' });
+          }),
         { signal },
       );
     }),
@@ -219,7 +236,10 @@ export function createIdentityRouter(
     resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
 
     changePassword: os.changePassword.handler(({ input, context }) =>
-      identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers()),
+      identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers(), {
+        userId: getUserId(context),
+        sessionId: requireSessionId(context),
+      }),
     ),
 
     sendEmailVerification: os.sendEmailVerification.handler(({ input, context }) =>
