@@ -1,1 +1,2 @@
-pnpm exec commitlint --edit "$1"
+# husky puts node_modules/.bin on PATH - calling the binary directly skips ~2.5s of pnpm startup.
+commitlint --edit "$1"

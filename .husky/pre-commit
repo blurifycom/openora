@@ -1,10 +1,43 @@
-# Capture the staged set first: lint:fix/format rewrite files, and we must re-add
-# ONLY these so the fixes land in this commit without dragging in unrelated
-# unstaged changes.
+# Fast gate: format and lint only the staged files, plus the OSS hygiene scan that
+# keeps client and vendor names out of a public repo. The full `pnpm verify` is a
+# CI job and the `/pre-pr` gate - paying for it on every commit cost minutes each
+# time and caught nothing that push-time did not.
+#
+# Binaries come straight from node_modules/.bin: `pnpm exec` adds ~2.2s of
+# package-manager startup per call, the binary itself runs in ~0.12s.
+BIN="$(git rev-parse --show-toplevel)/node_modules/.bin"
+
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
 
-pnpm verify
-
-if [ -n "$staged" ]; then
-  printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
+# The fixers below rewrite whole files in the working tree and the re-add at the end
+# stages whole files, so a file carrying both staged and unstaged hunks cannot go
+# through this hook without its unstaged hunk landing in the commit. Refuse instead:
+# silently committing work the author deliberately left out is the worse failure.
+unstaged=$(git diff --name-only)
+if [ -n "$unstaged" ]; then
+  partial=$(printf '%s\n' "$staged" | grep -Fx "$unstaged" || true)
+  if [ -n "$partial" ]; then
+    printf 'pre-commit: staged and unstaged changes in the same file:\n%s\n\n' "$partial" >&2
+    printf 'Stage each of them in full, or commit with --no-verify and run `pnpm verify` yourself.\n' >&2
+    exit 1
+  fi
 fi
+
+"$BIN/tsx" tools/lint/verify-oss-hygiene.ts || exit 1
+
+# `|| true`: grep exits 1 when the commit touches no lintable file, and husky runs
+# this hook under `sh -e`, so an unguarded no-match would abort the commit.
+lintable=$(printf '%s\n' "$staged" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' || true)
+if [ -n "$lintable" ]; then
+  printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxfmt" || exit 1
+  printf '%s\n' "$lintable" | tr '\n' '\0' | xargs -0 "$BIN/oxlint" --fix || exit 1
+fi
+
+# Catch-all for the file types oxfmt cannot format (SQL and friends). Scoped to the
+# staged paths - with no arguments it walks every tracked file in the repository.
+printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 node tools/lint/ensure-final-newline.mjs || exit 1
+
+# Re-add ONLY the staged set: the fixers rewrote files, and a blanket `git add`
+# would drag unrelated unstaged work into this commit.
+printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
