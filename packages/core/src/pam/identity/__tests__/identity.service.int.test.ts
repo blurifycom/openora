@@ -1109,7 +1109,10 @@ describe('IdentityService.changePassword revokes other sessions', () => {
 
     // The sweep's own deletion is no longer silent: it gets the same
     // identity.sessions.revoked_all push and audit record as the primary revoke,
-    // sparing the still-legitimate rotated session by id.
+    // sparing the acting tab by its PRE-rotation session id - the id its already-open
+    // streamSession connection captured at stream-open, and the only value the SSE
+    // compare in router/index.ts can ever match. The rotated row's own (new) id would
+    // never match that connection, so using it here would self-revoke the acting tab.
     expect(events.emit).toHaveBeenCalledTimes(3);
     expect(events.emit).toHaveBeenNthCalledWith(
       3,
@@ -1117,7 +1120,7 @@ describe('IdentityService.changePassword revokes other sessions', () => {
       expect.objectContaining({
         userId: account.id,
         actorId: account.id,
-        exceptSessionId: remaining[0]!.id,
+        exceptSessionId: current.id,
       }),
     );
   }, 5_000);

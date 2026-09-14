@@ -2055,7 +2055,13 @@ export class IdentityService {
               actorId: userId,
               ip: ip ?? null,
               userAgent: userAgent ?? null,
-              ...(rotated ? { exceptSessionId: rotated.id } : {}),
+              // The caller's PRE-rotation session id, same as the primary emit above -
+              // it's what the initiating tab's already-open streamSession connection
+              // captured at stream-open, and the only value its SSE compare can match.
+              // `rotated.id` (the NEW row) can never match that, so using it here would
+              // force-revoke the legitimate acting tab the moment the sweep actually
+              // deletes a raced session.
+              exceptSessionId: sessionId,
             });
           })
           .catch((err: unknown) => {

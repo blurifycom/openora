@@ -18,7 +18,10 @@ import {
   SESSION_IDLE_POLICY,
   USER_COMMANDS,
   SMS_ADAPTER,
+  REALTIME_TRANSPORT,
   AdminSecurityConfigSchema,
+  domainEventSchemas,
+  type RealtimeTransport,
 } from '@openora/core/contracts';
 import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -35,7 +38,11 @@ import {
   DrizzleMailRecipientDirectory,
 } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
-import { createIdentityRouter } from './router/index.js';
+import {
+  createIdentityRouter,
+  sessionEventsChannel,
+  type SessionEventsPush,
+} from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
 import { AdminSecurityService } from './service/admin-security.service.js';
@@ -98,6 +105,46 @@ export default {
     let adminSecurity: AdminSecurityService | undefined;
     const resolveAdminSecurity = (c: IdentityContainer) => (adminSecurity ??= makeAdminSecurity(c));
 
+    // Null at registration (subscriptions wire before the router factory below runs),
+    // set before any real event arrives - same ordering as compliance/plugin.ts's KYC
+    // status push.
+    let realtimeTransport: RealtimeTransport | null = null;
+
+    // Domain events are durable and cross-replica, but delivered to only ONE replica
+    // per Redis Streams consumer group - wrong for a live UI push. Republish onto
+    // REALTIME_TRANSPORT (Redis Pub/Sub), which every replica's SSE connections
+    // subscribe to. See docs/standards/messaging-and-microservices.md and
+    // sessionEventsChannel in router/index.ts.
+    ctx.events.on('identity.sessions.revoked_all', (raw) => {
+      const parsed = domainEventSchemas['identity.sessions.revoked_all'].safeParse(raw);
+      if (!parsed.success) {
+        return;
+      }
+      void realtimeTransport?.publish<SessionEventsPush>(sessionEventsChannel(parsed.data.userId), {
+        type: 'revoked-all',
+        ...(parsed.data.exceptSessionId ? { exceptSessionId: parsed.data.exceptSessionId } : {}),
+      });
+    });
+    ctx.events.on('identity.session.revoked', (raw) => {
+      const parsed = domainEventSchemas['identity.session.revoked'].safeParse(raw);
+      if (!parsed.success) {
+        return;
+      }
+      void realtimeTransport?.publish<SessionEventsPush>(sessionEventsChannel(parsed.data.userId), {
+        type: 'session-revoked',
+        sessionId: parsed.data.sessionId,
+      });
+    });
+    ctx.events.on('identity.user.unlocked', (raw) => {
+      const parsed = domainEventSchemas['identity.user.unlocked'].safeParse(raw);
+      if (!parsed.success) {
+        return;
+      }
+      void realtimeTransport?.publish<SessionEventsPush>(sessionEventsChannel(parsed.data.userId), {
+        type: 'unlocked',
+      });
+    });
+
     const withdrawalPinHmacSecret = process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ?? '';
     if (withdrawalPinHmacSecret.length < MIN_WITHDRAWAL_PIN_SECRET_LENGTH) {
       throw new Error(
@@ -158,6 +205,7 @@ export default {
       };
     });
     ctx.routers.add('identity', (c) => {
+      realtimeTransport = c.get(REALTIME_TRANSPORT);
       const sessions = new SessionService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
@@ -206,7 +254,7 @@ export default {
           trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
         }),
         c.get(ADMIN_GUARD),
-        c.get(EVENT_BUS),
+        realtimeTransport,
         resolveAdminSecurity(c),
         new WithdrawalPinService({
           drizzle: c.get(DRIZZLE),
