@@ -354,6 +354,10 @@ export class AdminSecurityService implements AdminSecurityPolicy {
           twoFactorMethod: null,
           failedTwoFactorAttempts: 0,
           twoFactorLockoutUntil: null,
+          // Same reason `disableTwoFactor` clears it: left set, it strands the account
+          // in an enforced-but-ungrantable state no route can undo (the setter itself
+          // requires `twoFactorEnabled`).
+          requireTwoFactorOnLogin: false,
         })
         .where(eq(user.id, userId));
     });

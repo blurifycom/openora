@@ -26,13 +26,16 @@ import {
   ChangePasswordInputSchema,
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
+  Verify2faOutputSchema,
   TimestampSchema,
   PhoneLoginRequestInputSchema,
   PhoneLoginRequestOutputSchema,
   PhoneLoginVerifyInputSchema,
   LoginSecurityStateSchema,
   SecurityControlsSchema,
+  SetAutoLogoutInputSchema,
   SetLoginWithdrawalAlertsInputSchema,
+  SetRequireTwoFactorOnLoginInputSchema,
   SetWithdrawalPinInputSchema,
   SetAntiPhishingCodeInputSchema,
   PhoneVerificationRequestInputSchema,
@@ -130,6 +133,11 @@ export const identityContract = {
         // never resolved to an account, so the client falls back to an authenticator.
         twoFactorMethod: TwoFactorDeliveryMethodSchema.optional(),
         security: LoginSecurityStateSchema.optional(),
+        // So the challenge screen's "trust this device" copy can name the operator's
+        // actual configured window - there is no session yet to read it from
+        // `security.me`. Same value `SecurityControlsSchema.trustedDeviceDays` carries
+        // post-login; present only alongside `twoFactorRedirect`.
+        trustedDeviceDays: z.number().int().nonnegative().optional(),
       }),
     ),
 
@@ -155,6 +163,19 @@ export const identityContract = {
     loginWithdrawalAlerts: oc
       .route({ method: 'POST', path: '/identity/security/login-withdrawal-alerts' })
       .input(SetLoginWithdrawalAlertsInputSchema)
+      .output(SecurityControlsSchema),
+
+    // The two halves of "Remember Device". Kept as separate routes rather than one
+    // patch so each carries its own audit event - a licence review asks when 2FA
+    // enforcement changed, not when any security preference did.
+    autoLogout: oc
+      .route({ method: 'POST', path: '/identity/security/auto-logout' })
+      .input(SetAutoLogoutInputSchema)
+      .output(SecurityControlsSchema),
+
+    requireTwoFactorOnLogin: oc
+      .route({ method: 'POST', path: '/identity/security/require-two-factor' })
+      .input(SetRequireTwoFactorOnLoginInputSchema)
       .output(SecurityControlsSchema),
 
     // Set and Change share this one upsert route (identical New PIN/Confirm PIN/Save
@@ -207,7 +228,7 @@ export const identityContract = {
   verify2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/verify' })
     .input(Verify2faInputSchema)
-    .output(IdentitySuccessSchema),
+    .output(Verify2faOutputSchema),
 
   disable2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/disable' })

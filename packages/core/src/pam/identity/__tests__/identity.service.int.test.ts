@@ -727,7 +727,31 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
+  });
+
+  it('challenges a live trusted device while the account requires 2FA every login', async () => {
+    const account = await seedUser({ requireTwoFactorOnLogin: true });
+    const trustedDevices = makeTrustedDevices();
+    await trustedDevices.trust(account.id, { ip: null, userAgent: TRUSTED_UA });
+    honourTrustCookie(account.id);
+    const svc = buildService({ trustedDevices });
+
+    const result = await svc.login(
+      { email: EMAIL, password: 'rightpass1' },
+      trustedHeaders,
+      new Headers(),
+    );
+
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 
   it('challenges a device whose cookie was replayed from another browser', async () => {
@@ -743,7 +767,11 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 });
 
@@ -1084,6 +1112,38 @@ describe('IdentityService.verifyTwoFactor', () => {
     );
     expect(signIn.emit).not.toHaveBeenCalledWith('identity.2fa.enabled', expect.anything());
   });
+
+  it('reports trustGranted so the caller knows the checkbox it ticked actually did something', async () => {
+    const account = await seedUser();
+    verifyTotpMock.mockResolvedValue(okResponse());
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0';
+    const makeTrustedDevices = () =>
+      new TrustedDeviceService({
+        drizzle: db.drizzle,
+        events: makeEventBus(),
+        trustedDeviceDays: 30,
+      });
+
+    const granted = await buildService({
+      trustedDevices: makeTrustedDevices(),
+      twoFactorLockout: pendingChallenge(account.id),
+    }).verifyTwoFactor(
+      { code: '123456', method: 'totp', trustDevice: true },
+      { 'user-agent': userAgent },
+      new Headers(),
+    );
+    expect(granted).toEqual({ success: true, trustGranted: true });
+
+    const denied = await buildService({
+      trustedDevices: makeTrustedDevices(),
+      twoFactorLockout: pendingChallenge(account.id),
+    }).verifyTwoFactor(
+      { code: '123456', method: 'totp', trustDevice: false },
+      { 'user-agent': userAgent },
+      new Headers(),
+    );
+    expect(denied).toEqual({ success: true, trustGranted: false });
+  });
 });
 
 describe('IdentityService 2fa step-up teardown', () => {
@@ -1133,7 +1193,11 @@ describe('IdentityService 2fa step-up teardown', () => {
       reset: vi.fn(async () => undefined),
     });
 
-    await buildService({ events, trustedDevices, twoFactorLockout: lockout }).verifyTwoFactor(
+    const result = await buildService({
+      events,
+      trustedDevices,
+      twoFactorLockout: lockout,
+    }).verifyTwoFactor(
       { code: 'lH2MN-bvPJb', method: 'backup_code', trustDevice: true },
       { 'user-agent': BROWSER_UA },
       new Headers(),
@@ -1143,6 +1207,7 @@ describe('IdentityService 2fa step-up teardown', () => {
       expect.objectContaining({ body: { code: 'lH2MN-bvPJb', trustDevice: false } }),
     );
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
+    expect(result.trustGranted).toBe(false);
   });
 
   it('disableTwoFactor takes a fresh authenticator code, then drops trust and sessions', async () => {
@@ -1170,6 +1235,26 @@ describe('IdentityService 2fa step-up teardown', () => {
       .where(eq(session.id, liveSession));
     expect(row?.live).toBe(false);
     expect(events.emit).toHaveBeenCalledWith('identity.2fa.disabled', expect.anything());
+  });
+
+  it('disableTwoFactor also clears "require 2FA every login", so the account is never stranded enforcing a factor it no longer has', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, requireTwoFactorOnLogin: true });
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    verifyTotpMock.mockResolvedValue(okResponse());
+    disableTwoFactorMock.mockResolvedValue(okResponse());
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await svc.disableTwoFactor(
+      { password: 'rightpass1', code: '123456' },
+      { cookie: 'better-auth.session_token=live' },
+      new Headers(),
+    );
+
+    const [row] = await db.drizzle.db
+      .select({ requireTwoFactorOnLogin: user.requireTwoFactorOnLogin })
+      .from(user)
+      .where(eq(user.id, account.id));
+    expect(row?.requireTwoFactorOnLogin).toBe(false);
   });
 
   it('rejects disableTwoFactor when the authenticator code is wrong, before better-auth is called', async () => {

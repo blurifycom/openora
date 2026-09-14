@@ -60,8 +60,10 @@ import type {
   GeoCheckCommands,
   PlayerProvisioning,
   SecurityControls,
-  SetLoginWithdrawalAlertsInput,
   SetAntiPhishingCodeInput,
+  SetAutoLogoutInput,
+  SetLoginWithdrawalAlertsInput,
+  SetRequireTwoFactorOnLoginInput,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -529,7 +531,14 @@ export class IdentityService {
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
-    const controls = await getSecurityControls(this.drizzle, userId);
+    // 0 when trusted devices are not wired at all (some deployments), matching what
+    // `trust()` itself does with a non-positive `trustedDeviceDays`: a client reading 0
+    // knows the offer is not real anywhere it might otherwise render one.
+    const controls = await getSecurityControls(
+      this.drizzle,
+      userId,
+      this.trustedDevices?.getTrustedDeviceDays() ?? 0,
+    );
     if (!controls) {
       throw new UserNotFoundError(userId);
     }
@@ -783,6 +792,7 @@ export class IdentityService {
         role: user.role,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
+        requireTwoFactorOnLogin: user.requireTwoFactorOnLogin,
       })
       .from(user)
       .where(eq(user.email, email))
@@ -799,6 +809,7 @@ export class IdentityService {
           | 'role'
           | 'rgBlocked'
           | 'rgBlockedUntil'
+          | 'requireTwoFactorOnLogin'
         >
       | undefined = existingUserRow;
 
@@ -861,7 +872,11 @@ export class IdentityService {
     // presenting the cookie without a live row has to fall back to the full challenge.
     let signInHeaders = headers;
     if (existingUser && this.trustedDevices && hasTrustDeviceCookie(headers)) {
-      const trusted = await this.trustedDevices.isTrusted(existingUser.id, userAgent);
+      // "Require 2FA every login" outranks the cookie outright, so no lookup is needed -
+      // how well this browser is trusted stops mattering while the preference holds.
+      const trusted =
+        !existingUser.requireTwoFactorOnLogin &&
+        (await this.trustedDevices.isTrusted(existingUser.id, userAgent));
       if (!trusted) {
         signInHeaders = withoutTrustDeviceCookie(headers);
       }
@@ -894,9 +909,11 @@ export class IdentityService {
       if (body.twoFactorRedirect || !body.user || !body.token) {
         // The challenge screen has to know whether to ask for an authenticator code or
         // to push one, and there is no session yet to read the account's method from.
-        // Naming it here reveals nothing the challenge would not show anyway.
+        // Naming it here reveals nothing the challenge would not show anyway. Same for
+        // the trust window: an operator's configured length is not account-specific.
         return {
           twoFactorRedirect: true,
+          trustedDeviceDays: this.trustedDevices?.getTrustedDeviceDays() ?? 0,
           ...(existingUser
             ? { twoFactorMethod: await this.resolveTwoFactorMethod(existingUser.id) }
             : {}),
@@ -1488,6 +1505,25 @@ export class IdentityService {
     return destination.masked;
   }
 
+  /**
+   * Whether the account insists on a second factor every login. Read off the row rather
+   * than passed in: mid-challenge there is no session yet, so the only handle on the
+   * account is the id the pending cookie resolved to.
+   */
+  private async requiresTwoFactorEveryLogin(
+    userId: User['id'] | null | undefined,
+  ): Promise<boolean> {
+    if (!userId) {
+      return false;
+    }
+    const [row] = await this.drizzle.db
+      .select({ requireTwoFactorOnLogin: user.requireTwoFactorOnLogin })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.requireTwoFactorOnLogin ?? false;
+  }
+
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
@@ -1506,7 +1542,10 @@ export class IdentityService {
     // browser to: it clears the challenge but never buys the trust window. A pushed
     // `otp` is a real factor and does, the same as a live authenticator code.
     const trustDevice =
-      input.trustDevice && input.method !== 'backup_code' && this.trustedDevices !== undefined;
+      input.trustDevice &&
+      input.method !== 'backup_code' &&
+      this.trustedDevices !== undefined &&
+      !(await this.requiresTwoFactorEveryLogin(challengedUserId));
     const body = { code: input.code, trustDevice };
     const res = await this.verifyChallengeCode(input.method, body, headers);
     if (!res.ok && challengedUserId) {
@@ -1520,6 +1559,11 @@ export class IdentityService {
     // better-auth rotates the session on a successful challenge, so the request cookie is
     // already dead here - the actor is the identity resolved before the call.
     const userId = challengedUserId ?? (await this.currentUserId(headers));
+    // Ground truth for the caller: `trustDevice` already reflects backup-code and
+    // require-2fa-every-login refusals, but only actually buys the cookie below, and
+    // only when `userId` resolved. The client asked to trust this device and deserves to
+    // know whether that request was honoured rather than silently dropped.
+    let trustGranted = false;
     if (userId) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
       // A challenge answered from a live session is the enrolment step: better-auth only
@@ -1553,10 +1597,11 @@ export class IdentityService {
       }
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
+        trustGranted = true;
       }
       await captureTimezone(this.playerProvisioning, userId, input.timezone);
     }
-    return SUCCESS;
+    return { ...SUCCESS, trustGranted };
   }
 
   /**
@@ -1577,6 +1622,13 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
     await assertRateLimit(this.limiter, `trustDevice:${userId}`, TWO_FACTOR_PASSWORD_RATE_LIMIT);
+    // Granting trust the login path is contractually going to ignore would leave the
+    // player with a device listed as trusted that still gets challenged every time.
+    if (await this.requiresTwoFactorEveryLogin(userId)) {
+      throw new ORPCError('UNPROCESSABLE_CONTENT', {
+        message: 'Turn off two-factor on every login before trusting this device.',
+      });
+    }
 
     const [account] = await this.drizzle.db
       .select({ email: user.email })
@@ -1749,6 +1801,14 @@ export class IdentityService {
     // a Super Admin reset performs - a browser must not keep the access 2FA was guarding.
     await this.trustedDevices?.revokeAllForUser(userId, userId);
     await this.sessions?.revokeAllSessions(userId, userId, { ip, userAgent });
+    // Must clear alongside the method: leaving it set strands the account with
+    // `twoFactorEnabled: false, requireTwoFactorOnLogin: true` - a state `trustCurrentDevice`
+    // reads as "still enforced" while `setRequireTwoFactorOnLogin` itself refuses to turn it
+    // off without `twoFactorEnabled`, so nothing in the product could ever escape it again.
+    await this.drizzle.db
+      .update(user)
+      .set({ requireTwoFactorOnLogin: false })
+      .where(eq(user.id, userId));
 
     this.events.emit('identity.2fa.disabled', {
       userId,
@@ -1851,10 +1911,16 @@ export class IdentityService {
     return this.securityControlsFor(userId);
   }
 
-  async setLoginWithdrawalAlerts(
-    input: SetLoginWithdrawalAlertsInput,
+  /**
+   * Resolves the caller of a security-preference setter and refuses anyone who is not a
+   * player. These setters reject before any shared guard runs, so a denial still owes the
+   * audit log the same signal AdminGuard emits (docs/standards/audit.md) - `resource`
+   * names which preference was attempted.
+   */
+  private async assertPlayerPreferenceCaller(
     reqHeaders: NodeHeaders,
-  ): Promise<SecurityControls> {
+    resource: string,
+  ): Promise<{ userId: string } & ClientMeta> {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
     if (!userId) {
@@ -1866,12 +1932,10 @@ export class IdentityService {
       .where(eq(user.id, userId))
       .limit(1);
     if (caller?.role !== 'player') {
-      // A service-level denial still owes the audit log the same signal AdminGuard emits,
-      // since this check rejects before any shared guard runs (docs/standards/audit.md).
       this.events.emit('identity.user.unauthorized_access', {
         userId,
         playerId: null,
-        resource: 'identity.security.login_withdrawal_alerts',
+        resource,
         action: 'set',
         ...(caller?.role ? { role: caller.role } : {}),
         ip,
@@ -1881,6 +1945,17 @@ export class IdentityService {
         message: 'Only players can set this preference.',
       });
     }
+    return { userId, ip, userAgent };
+  }
+
+  async setLoginWithdrawalAlerts(
+    input: SetLoginWithdrawalAlertsInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { userId, ip, userAgent } = await this.assertPlayerPreferenceCaller(
+      reqHeaders,
+      'identity.security.login_withdrawal_alerts',
+    );
     const before = await this.securityControlsFor(userId);
     if (input.enabled && !before.emailVerified) {
       throw new ORPCError('UNPROCESSABLE_CONTENT', {
@@ -1903,6 +1978,74 @@ export class IdentityService {
       userAgent,
     });
     return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
+  }
+
+  async setAutoLogoutDuration(
+    input: SetAutoLogoutInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { userId, ip, userAgent } = await this.assertPlayerPreferenceCaller(
+      reqHeaders,
+      'identity.security.auto_logout',
+    );
+    const before = await this.securityControlsFor(userId);
+    if (before.autoLogoutDuration === input.duration) {
+      return before;
+    }
+    await this.drizzle.db
+      .update(user)
+      .set({ autoLogoutDuration: input.duration })
+      .where(eq(user.id, userId));
+    this.events.emit('identity.security.auto_logout.updated', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      previousDuration: before.autoLogoutDuration,
+      duration: input.duration,
+      ip,
+      userAgent,
+    });
+    return { ...before, autoLogoutDuration: input.duration };
+  }
+
+  /**
+   * Turning this on also tears down the devices already trusted: stripping the trust
+   * cookie at login is enough to force the challenge, but leaving live rows behind would
+   * show a player devices that no longer buy anything, and hand them straight back the
+   * moment the toggle goes off again.
+   */
+  async setRequireTwoFactorOnLogin(
+    input: SetRequireTwoFactorOnLoginInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { userId, ip, userAgent } = await this.assertPlayerPreferenceCaller(
+      reqHeaders,
+      'identity.security.require_two_factor',
+    );
+    const before = await this.securityControlsFor(userId);
+    if (input.enabled && !before.twoFactorEnabled) {
+      throw new ORPCError('UNPROCESSABLE_CONTENT', {
+        message: 'Enable two-factor authentication before requiring it on every login.',
+      });
+    }
+    if (before.requireTwoFactorOnLogin === input.enabled) {
+      return before;
+    }
+    await this.drizzle.db
+      .update(user)
+      .set({ requireTwoFactorOnLogin: input.enabled })
+      .where(eq(user.id, userId));
+    if (input.enabled) {
+      await this.trustedDevices?.revokeAllForUser(userId, userId);
+    }
+    this.events.emit('identity.security.require_two_factor.updated', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      previousEnabled: before.requireTwoFactorOnLogin,
+      enabled: input.enabled,
+      ip,
+      userAgent,
+    });
+    return { ...before, requireTwoFactorOnLogin: input.enabled };
   }
 
   /**

@@ -17,7 +17,9 @@ import type {
   SecurityControls,
   SendTwoFactorOtpResult,
   SetAntiPhishingCodeInput,
+  SetAutoLogoutInput,
   SetLoginWithdrawalAlertsInput,
+  SetRequireTwoFactorOnLoginInput,
   SetWithdrawalPinInput,
   TwoFactorDeliveryMethod,
   TwoFactorStatus,
@@ -33,6 +35,12 @@ export type UseSetLoginWithdrawalAlertsResult = UseMutationResult<
   SecurityControls,
   Error,
   SetLoginWithdrawalAlertsInput
+>;
+export type UseSetAutoLogoutResult = UseMutationResult<SecurityControls, Error, SetAutoLogoutInput>;
+export type UseSetRequireTwoFactorOnLoginResult = UseMutationResult<
+  SecurityControls,
+  Error,
+  SetRequireTwoFactorOnLoginInput
 >;
 export type UseSetWithdrawalPinResult = UseMutationResult<
   SecurityControls,
@@ -151,6 +159,24 @@ export function useSetLoginWithdrawalAlerts(): UseSetLoginWithdrawalAlertsResult
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.security.loginWithdrawalAlerts.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useSetAutoLogout(): UseSetAutoLogoutResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.security.autoLogout.mutationOptions(),
+    onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+export function useSetRequireTwoFactorOnLogin(): UseSetRequireTwoFactorOnLoginResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.security.requireTwoFactorOnLogin.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
   });
 }

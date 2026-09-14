@@ -100,6 +100,14 @@ export function createIdentityRouter(
         identity.setLoginWithdrawalAlerts(input, context.request.headers),
       ),
 
+      autoLogout: os.security.autoLogout.handler(({ input, context }) =>
+        identity.setAutoLogoutDuration(input, context.request.headers),
+      ),
+
+      requireTwoFactorOnLogin: os.security.requireTwoFactorOnLogin.handler(({ input, context }) =>
+        identity.setRequireTwoFactorOnLogin(input, context.request.headers),
+      ),
+
       setWithdrawalPin: os.security.setWithdrawalPin.handler(({ input, context }) =>
         withdrawalPin.set(getUserId(context), input, context.request.headers, context.clientMeta),
       ),
@@ -136,10 +144,20 @@ export function createIdentityRouter(
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
       const userId = getUserId(context);
+      const sessionId = getSessionId(context);
       return createEventStreamGenerator(
         (push) => {
           const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
             if (event.userId === userId) {
+              push({ type: 'revoked' });
+            }
+          });
+          // A single-session revoke - including the idle-timeout expiry `SessionIdleService`
+          // performs - only ever names one session. Without this, the tab it just killed
+          // gets no signal at all: the DB write and the audit row already happened, but the
+          // open tab keeps rendering as signed in until its next request happens to 401.
+          const unsubscribeSessionRevoked = eventBus.on('identity.session.revoked', (event) => {
+            if (event.userId === userId && event.sessionId === sessionId) {
               push({ type: 'revoked' });
             }
           });
@@ -150,6 +168,7 @@ export function createIdentityRouter(
           });
           return () => {
             unsubscribeRevoked();
+            unsubscribeSessionRevoked();
             unsubscribeUnlocked();
           };
         },
