@@ -162,7 +162,9 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   }),
   emailChangeConfirmation: (data) => ({
     subject: 'Confirm your new email address',
-    text: `Enter this code to confirm your new email address: ${data.otp}`,
+    text:
+      `Enter this code to confirm your new email address: ${data.otp}\n\n` +
+      `Current email: ${data.oldEmail}\nNew email: ${data.newEmail}`,
   }),
   emailChanged: (data, locale) => ({
     subject: 'Your email address was changed',

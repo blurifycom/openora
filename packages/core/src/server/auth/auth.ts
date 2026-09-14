@@ -75,7 +75,11 @@ export type AuthOptions = {
 export function createAuth(options: AuthOptions): BetterAuthType {
   const dispatchOtpMail: DispatchOtpMail = options.dispatchOtpMail ?? (() => {});
   const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
-  return betterAuth({
+  // `sendVerificationOTP` below calls back into the instance it is defined on, to read
+  // the caller's still-current email before the swap lands. `auth` is assigned once
+  // betterAuth() returns and closed over by that callback, which only runs later, on a
+  // real request - never during construction.
+  const auth: BetterAuthType = betterAuth({
     database: drizzleAdapter(options.db, {
       provider: 'pg',
       schema: options.schema,
@@ -160,7 +164,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         // OTP goes to the NEW address; the current one is not re-verified (the caller
         // already holds a live session). IdentityService wraps the endpoints this unlocks.
         changeEmail: { enabled: true },
-        async sendVerificationOTP({ email, otp, type }) {
+        async sendVerificationOTP({ email, otp, type }, request) {
           // Allow-list, not a fallback: an OTP type this app never issues (sign-in)
           // must send nothing rather than borrow another template's copy.
           if (
@@ -170,16 +174,33 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           ) {
             return;
           }
+          if (type === 'change-email') {
+            // The row still carries the pre-swap address at this point - IdentityService
+            // has only asked better-auth to mail a code, nothing has changed yet - so the
+            // caller's live session is the only place left to read it from.
+            const session = await auth.api.getSession({
+              headers: request?.headers ?? new Headers(),
+            });
+            if (!session) {
+              throw new Error('change-email OTP requested without a resolvable session');
+            }
+            await dispatchOtpMail({
+              to: email,
+              template: {
+                key: 'emailChangeConfirmation',
+                data: { otp, oldEmail: session.user.email, newEmail: email },
+              },
+            });
+            return;
+          }
           const template: MailTemplate =
             type === 'email-verification'
               ? { key: 'verifyEmail', data: { otp } }
-              : type === 'change-email'
-                ? { key: 'emailChangeConfirmation', data: { otp } }
-                : options.isExistingAccountSignUp?.(email)
-                  ? { key: 'existingAccountSignUp', data: { otp, email } }
-                  : (await options.isAdminPasswordReset?.(email))
-                    ? { key: 'adminResetPasswordOtp', data: { otp, email } }
-                    : { key: 'resetPasswordOtp', data: { otp, email } };
+              : options.isExistingAccountSignUp?.(email)
+                ? { key: 'existingAccountSignUp', data: { otp, email } }
+                : (await options.isAdminPasswordReset?.(email))
+                  ? { key: 'adminResetPasswordOtp', data: { otp, email } }
+                  : { key: 'resetPasswordOtp', data: { otp, email } };
           await dispatchOtpMail({ to: email, template });
         },
       }),
@@ -188,6 +209,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     // assignable to its own exported `Auth` alias. No way to narrow without matching the
     // full generic - the one sanctioned cast, see conventions.
   }) as unknown as BetterAuthType;
+  return auth;
 }
 
 export type Auth = BetterAuthType;

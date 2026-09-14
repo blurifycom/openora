@@ -87,7 +87,10 @@ describe('DefaultEmailTemplateRenderer', () => {
       { key: 'kycResubmissionRequested', data: { reason: null } },
       { key: 'adminInvitation', data: { token: 'tok', expiresAt: '2026-01-01T00:00:00.000Z' } },
       { key: 'welcome', data: {} },
-      { key: 'emailChangeConfirmation', data: { otp: '111111' } },
+      {
+        key: 'emailChangeConfirmation',
+        data: { otp: '111111', oldEmail: 'old@example.com', newEmail: 'new@example.com' },
+      },
       {
         key: 'emailChanged',
         data: { newEmail: 'new@b.com', occurredAt: '2026-01-01T00:00:00.000Z' },
@@ -123,7 +126,13 @@ describe('DefaultEmailTemplateRenderer', () => {
 
   it('renders the email-change confirmation code and the change notice', () => {
     expect(
-      renderer.render({ key: 'emailChangeConfirmation', data: { otp: '424242' } }, 'en').text,
+      renderer.render(
+        {
+          key: 'emailChangeConfirmation',
+          data: { otp: '424242', oldEmail: 'old@example.com', newEmail: 'new@example.com' },
+        },
+        'en',
+      ).text,
     ).toContain('424242');
     const notice = renderer.render(
       {
