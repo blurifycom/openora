@@ -18,17 +18,16 @@
  * Supersession symmetry is deliberately NOT checked. This repo supersedes ADRs
  * partially - ADR-0039 voided one clause of ADR-0030 and left the rest in force -
  * so a superseded ADR legitimately keeps `Status: Accepted` and records the change
- * in a dated Update block instead. No mechanical rule separates that from real rot;
- * the scheduled docs audit judges it instead.
+ * in a dated Update block instead. No mechanical rule separates that from real rot,
+ * so it stays a judgment call for the `docs` agent rather than a gate.
  */
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Defaults to this repo; an explicit root lets the test point it at a fixture.
 const repoRoot = process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '../..');
-const selfPath = relative(repoRoot, fileURLToPath(import.meta.url));
 
 // These live in a consumer's generated repo, not here. The template's own
 // worktree helper already handles their absence.
@@ -58,7 +57,7 @@ const trackedFiles = execSync('git ls-files -z', { cwd: repoRoot, maxBuffer: 64 
   .filter(Boolean);
 
 const markdownFiles = trackedFiles.filter(
-  (file) => file.endsWith('.md') && !file.endsWith('.md.tpl') && file !== selfPath,
+  (file) => file.endsWith('.md') && !file.endsWith('.md.tpl'),
 );
 
 const packageScripts = new Set(
@@ -133,11 +132,7 @@ const checkBacktickPaths = (file: string, lines: string[]) => {
       if (!CHECKED_PATH_ROOTS.some((root) => path.startsWith(root))) {
         continue;
       }
-      if (existsSync(join(repoRoot, path))) {
-        continue;
-      }
-      // `docs/catalog.json` and the drizzle client are generated on install.
-      if (!existsSync(join(repoRoot, path.replace(/\/$/, '')))) {
+      if (!existsSync(join(repoRoot, path))) {
         report(file, index, `path does not exist: ${path}`);
       }
     }
