@@ -686,7 +686,7 @@
     "bullmq": "5.79.2",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
-    "hono": "4.12.34",
+    "hono": "4.13.5",
     "pg": "8.21.0",
     "pino": "10.3.1",
     "redis": "5.12.1",
@@ -705,7 +705,7 @@
     "jsdom": "29.1.1",
     "typescript": "6.0.3",
     "vite-tsconfig-paths": "6.1.1",
-    "vitest": "4.1.8"
+    "vitest": "4.1.11"
   },
   "peerDependencies": {
     "@tanstack/react-query": ">=5",
