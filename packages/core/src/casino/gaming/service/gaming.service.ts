@@ -166,8 +166,8 @@ function countWhere(condition: SQL | undefined) {
   return sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
 }
 
-function withInactive({ total, active }: { total: number; active: number }) {
-  return { total, active, inactive: total - active };
+function withInactive<T extends { total: number; active: number }>(counts: T) {
+  return { ...counts, inactive: counts.total - counts.active };
 }
 
 export class GamingService {
@@ -200,7 +200,11 @@ export class GamingService {
         .select({ total: count(), active: countWhere(eq(gameCategory.isActive, true)) })
         .from(gameCategory),
       db
-        .select({ total: count(), active: countWhere(playableGameCondition()) })
+        .select({
+          total: count(),
+          active: countWhere(eq(game.isActive, true)),
+          playable: countWhere(playableGameCondition()),
+        })
         .from(game)
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id)),
     ]);

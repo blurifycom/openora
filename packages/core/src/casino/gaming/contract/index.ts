@@ -171,8 +171,7 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
 });
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
-// Providers and categories count their own `isActive` flag; a game counts as active only while
-// its provider is active too.
+// `active` and `inactive` count each row's own `isActive` flag, matching the admin list filters.
 const CatalogCountsSchema = z.object({
   total: z.number().int().nonnegative(),
   active: z.number().int().nonnegative(),
@@ -182,7 +181,10 @@ const CatalogCountsSchema = z.object({
 export const CatalogStatsSchema = z.object({
   providers: CatalogCountsSchema,
   categories: CatalogCountsSchema,
-  games: CatalogCountsSchema,
+  games: CatalogCountsSchema.extend({
+    // Active games whose provider is active too: what a player can actually launch.
+    playable: z.number().int().nonnegative(),
+  }),
 });
 export type CatalogStats = z.infer<typeof CatalogStatsSchema>;
 

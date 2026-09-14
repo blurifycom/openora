@@ -213,10 +213,10 @@ describe('gaming catalog router authz', () => {
     const empty = { total: 0, active: 0, inactive: 0 };
     await expect(
       call(routerWith(allowingGuard()).router.getCatalogStats, undefined, { context: CTX }),
-    ).resolves.toEqual({ providers: empty, categories: empty, games: empty });
+    ).resolves.toEqual({ providers: empty, categories: empty, games: { ...empty, playable: 0 } });
   });
 
-  it('counts an active game under an inactive provider as inactive', async () => {
+  it('counts an active game under an inactive provider as active but not playable', async () => {
     const [activeProvider] = await db.drizzle.db
       .insert(gameProvider)
       .values({ slug: 'acme', name: 'Acme', isActive: true })
@@ -253,7 +253,7 @@ describe('gaming catalog router authz', () => {
     ).resolves.toEqual({
       providers: { total: 2, active: 1, inactive: 1 },
       categories: { total: 3, active: 2, inactive: 1 },
-      games: { total: 3, active: 1, inactive: 2 },
+      games: { total: 3, active: 2, inactive: 1, playable: 1 },
     });
   });
 
