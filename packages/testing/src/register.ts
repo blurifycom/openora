@@ -27,10 +27,21 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
+// 20s, not the 5s this started at: mail is not sent inline. `MailService.enqueueToUser`
+// puts a job on the real BullMQ queue (ADR-0039 - every tier binds the production seam),
+// so nothing reaches the capture until a worker has round-tripped through Redis. Under
+// `pnpm verify` both integration tiers run at once and oversubscribe the box, and that
+// round-trip was measured past 5s often enough to fail whole suites. Well inside the 30s
+// `testTimeout`, so a genuinely undelivered mail still fails the test rather than the file.
+const MAIL_ARRIVAL_TIMEOUT_MS = 20_000;
+
 export async function waitForEmail(
   email: string,
   match: (mail: CapturedEmail) => boolean,
-  { timeoutMs = 5000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    timeoutMs = MAIL_ARRIVAL_TIMEOUT_MS,
+    intervalMs = 50,
+  }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<CapturedEmail> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -39,7 +50,16 @@ export async function waitForEmail(
       return hit;
     }
     if (Date.now() >= deadline) {
-      throw new Error(`no email captured for ${email} within ${timeoutMs}ms`);
+      const seen = capturedEmailsFor(email);
+      const context =
+        seen.length === 0
+          ? 'nothing was captured for that address at all - the mail job never ran, so suspect the queue worker or the enqueue itself'
+          : `captured but unmatched: ${seen.map((mail) => mail.subject).join(', ')}`;
+
+      throw new Error(
+        `no email captured for ${email} within ${timeoutMs}ms (${context}). ` +
+          'Mail is enqueued on BullMQ, not sent inline, so this waits on a Redis round-trip.',
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

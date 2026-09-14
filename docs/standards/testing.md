@@ -23,7 +23,7 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
 
 - **Anything that touches the database is tested against real Postgres** - `createTestDb([migrate])` (`@openora/core/testing`) gives the file its own ephemeral database; `createTestRedis()` gives it a per-worker Redis logical DB. Never fake a query builder: a mocked chain proves a call order, not a result, so it misses the regressions that matter (unique-index dedupe, `FOR UPDATE` under concurrency, conditional atomic updates, cache invalidation).
 - **What stays mocked:** external vendors (PSP, KYC, email, SMS, better-auth) and cross-module ports (`WALLET_COMMANDS`, `IdentityReader`, `EventBus`, `Logger`) - via the shared doubles in `packages/core/src/testing/mock.ts` (`mock`, `makeEventBus`, `makeAuditWriter`, `makeAdminGuard`, `testContext`), never a hand-rolled one in the test file. Engine (`server/**`) tests cannot import a domain schema (ADR-0024/0025), so they use the in-process implementations re-exported from `@openora/core/testing`.
-- Every tier binds the drivers production binds (ADR-0032) - there are no in-process broker/queue/cache/rate-limiter doubles to fall back to.
+- Every tier binds the drivers production binds (ADR-0039) - there are no in-process broker/queue/cache/rate-limiter doubles to fall back to.
 
 ## How to write them
 
