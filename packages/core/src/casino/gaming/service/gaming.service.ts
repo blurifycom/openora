@@ -15,7 +15,6 @@ import {
 import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   RgLimitExceededError,
-  type ClientMeta,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -47,6 +46,7 @@ import {
   tagsByGameIds,
   toCategorySummary,
   toGameTagSummary,
+  type CatalogActor,
 } from '../../shared/game-catalog.js';
 import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
@@ -65,10 +65,6 @@ export const GameAggregatorNotMappedError = createDomainError<
   'GameAggregatorNotMappedError',
   (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
 );
-
-type Actor = {
-  actorId: User['id'];
-} & ClientMeta;
 
 export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
@@ -533,7 +529,7 @@ export class GamingService {
     ip,
     userAgent,
     ...patchInput
-  }: UpdateGameInput & Actor) {
+  }: UpdateGameInput & CatalogActor) {
     const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
     const uniqueTagIds = tagIds === undefined ? undefined : [...new Set(tagIds)];
     const patch: Partial<typeof game.$inferInsert> = { ...patchInput };

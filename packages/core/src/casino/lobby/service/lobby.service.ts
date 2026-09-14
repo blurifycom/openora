@@ -178,9 +178,11 @@ export class LobbyService {
             .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
             .where(and(inArray(game.id, gameIds), playableGameCondition()))
         : [];
+
+    const playableIds = rows.map((r) => r.game.id);
     const [categories, tags] = await Promise.all([
-      categoriesByGameIds(db, gameIds, true),
-      tagsByGameIds(db, gameIds),
+      categoriesByGameIds(db, playableIds, true),
+      tagsByGameIds(db, playableIds),
     ]);
 
     const gameMap = new Map(rows.map((r) => [r.game.id, r]));

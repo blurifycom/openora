@@ -1,9 +1,4 @@
-import {
-  DEFAULT_GAME_TAG_BADGE_SETTINGS,
-  GameTagSnapshotSchema,
-  type ClientMeta,
-  type User,
-} from '@openora/core/contracts';
+import { DEFAULT_GAME_TAG_BADGE_SETTINGS, GameTagSnapshotSchema } from '@openora/core/contracts';
 import {
   DrizzleService,
   findOneOrThrow,
@@ -17,7 +12,7 @@ import {
 } from '@openora/core/server';
 import { and, asc, count, eq, ilike, ne } from 'drizzle-orm';
 import { gameTag, gameTagGame, type GameTag } from '../schema/index.js';
-import { toGameTagSummary } from '../../shared/game-catalog.js';
+import { toGameTagSummary, type CatalogActor } from '../../shared/game-catalog.js';
 import type {
   CreateGameTagInput,
   ListAdminTagsInput,
@@ -33,10 +28,6 @@ export const GameTagSystemDeletionError = makeConflictError(
   'GameTagSystemDeletionError',
   'System game tags cannot be deleted',
 );
-
-type Actor = {
-  actorId: User['id'];
-} & ClientMeta;
 
 function toGameTagEventSnapshot(record: typeof gameTag.$inferSelect) {
   return GameTagSnapshotSchema.parse(toGameTagSummary(record));
@@ -95,7 +86,7 @@ export class GameTagService {
     actorId,
     ip,
     userAgent,
-  }: CreateGameTagInput & Actor) {
+  }: CreateGameTagInput & CatalogActor) {
     let record: typeof gameTag.$inferSelect;
 
     try {
@@ -132,7 +123,13 @@ export class GameTagService {
     return toGameTagDetail(record);
   }
 
-  async updateTag({ id, actorId, ip, userAgent, ...patchInput }: UpdateGameTagInput & Actor) {
+  async updateTag({
+    id,
+    actorId,
+    ip,
+    userAgent,
+    ...patchInput
+  }: UpdateGameTagInput & CatalogActor) {
     const hasChanges = Object.values(patchInput).some((value) => value !== undefined);
 
     if (!hasChanges) {
@@ -194,7 +191,7 @@ export class GameTagService {
     return toGameTagDetail(updated);
   }
 
-  async deleteTag({ id, actorId, ip, userAgent }: { id: GameTag['id'] } & Actor) {
+  async deleteTag({ id, actorId, ip, userAgent }: { id: GameTag['id'] } & CatalogActor) {
     const { deleted, affectedGameIds } = await this.drizzle.db.transaction(async (tx) => {
       const existing = findOneOrThrow(
         await tx.select().from(gameTag).where(eq(gameTag.id, id)).for('update'),

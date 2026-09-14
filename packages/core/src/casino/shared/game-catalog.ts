@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import type { GameProviderAggregatorMapping } from '@openora/core/contracts';
+import type { ClientMeta, GameProviderAggregatorMapping, User } from '@openora/core/contracts';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import {
   game,
@@ -14,6 +14,11 @@ import {
   type GameTag,
   type GameProvider,
 } from '@openora/core/casino/schema/gaming';
+
+// The admin making a catalog change - carried into the emitted event for the audit trail.
+export type CatalogActor = {
+  actorId: User['id'];
+} & ClientMeta;
 
 // A game is player-visible only when the game itself and its provider are both
 // active. Single owner for the "enabled" definition - the public list/search
@@ -50,6 +55,25 @@ export function isGamePlayable(
   return target.isActive === true && provider.isActive === true;
 }
 
+// Groups batched join rows per owner id, keeping the query's row order in each list.
+function groupRows<Row, Key, Value>(
+  rows: Row[],
+  keyOf: (row: Row) => Key,
+  valueOf: (row: Row) => Value,
+) {
+  const grouped = new Map<Key, Value[]>();
+  for (const row of rows) {
+    const key = keyOf(row);
+    const list = grouped.get(key);
+    if (list) {
+      list.push(valueOf(row));
+    } else {
+      grouped.set(key, [valueOf(row)]);
+    }
+  }
+  return grouped;
+}
+
 // One batched query for many games - never per-game lookups (no N+1).
 // Shared by gaming and lobby so the join + ordering has a single owner.
 export async function categoriesByGameIds(
@@ -71,25 +95,19 @@ export async function categoriesByGameIds(
       ),
     )
     .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name));
-  const map = new Map<Game['id'], GameCategory[]>();
-  for (const r of rows) {
-    const list = map.get(r.gameId);
-    if (list) {
-      list.push(r.category);
-    } else {
-      map.set(r.gameId, [r.category]);
-    }
-  }
-  return map;
+  return groupRows(
+    rows,
+    (r) => r.gameId,
+    (r) => r.category,
+  );
 }
 
 export async function mappingsByProviderIds(
   db: DrizzleDb | DrizzleTx,
   providerIds: GameProvider['id'][],
 ) {
-  const grouped = new Map<GameProvider['id'], GameProviderAggregatorMapping[]>();
   if (providerIds.length === 0) {
-    return grouped;
+    return new Map<GameProvider['id'], GameProviderAggregatorMapping[]>();
   }
   const rows = await db
     .select({
@@ -104,12 +122,11 @@ export async function mappingsByProviderIds(
       asc(gameProviderAggregatorMapping.aggregator),
       asc(gameProviderAggregatorMapping.vendorId),
     );
-  for (const { providerId, ...mapping } of rows) {
-    const mappings = grouped.get(providerId) ?? [];
-    mappings.push(mapping);
-    grouped.set(providerId, mappings);
-  }
-  return grouped;
+  return groupRows(
+    rows,
+    (r) => r.providerId,
+    ({ providerId: _providerId, ...mapping }): GameProviderAggregatorMapping => mapping,
+  );
 }
 
 export async function tagsByGameIds(
@@ -131,14 +148,9 @@ export async function tagsByGameIds(
       ),
     )
     .orderBy(asc(gameTag.name), asc(gameTag.id));
-  const map = new Map<Game['id'], GameTag[]>();
-  for (const r of rows) {
-    const list = map.get(r.gameId);
-    if (list) {
-      list.push(r.tag);
-    } else {
-      map.set(r.gameId, [r.tag]);
-    }
-  }
-  return map;
+  return groupRows(
+    rows,
+    (r) => r.gameId,
+    (r) => r.tag,
+  );
 }

@@ -11,10 +11,10 @@ import {
   uniqueConstraintName,
 } from '@openora/core/server';
 import { eq, and, asc, count, ilike, inArray, ne, or } from 'drizzle-orm';
-import type { ClientMeta, GameProviderAggregatorMapping, User } from '@openora/core/contracts';
+import type { GameProviderAggregatorMapping } from '@openora/core/contracts';
 import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
 import type { CreateProviderInput, UpdateProviderInput } from '../contract/index.js';
-import { mappingsByProviderIds } from '../../shared/game-catalog.js';
+import { mappingsByProviderIds, type CatalogActor } from '../../shared/game-catalog.js';
 
 export const GameProviderNotFoundError = makeNotFoundError('GameProvider');
 export const GameProviderSlugTakenError = makeConflictError(
@@ -32,10 +32,6 @@ export const GameProviderMappingInUseError = createDomainError<
   (providerId, aggregator) =>
     `Provider ${providerId} still has games on aggregator ${aggregator}; move them before removing the mapping`,
 );
-
-type Actor = {
-  actorId: User['id'];
-} & ClientMeta;
 
 export function toProviderSummary(record: typeof gameProvider.$inferSelect) {
   return {
@@ -177,7 +173,7 @@ export class GameProviderService {
     actorId,
     ip,
     userAgent,
-  }: CreateProviderInput & Actor) {
+  }: CreateProviderInput & CatalogActor) {
     let outcome: {
       record: typeof gameProvider.$inferSelect;
       mappings: GameProviderAggregatorMapping[];
@@ -238,7 +234,7 @@ export class GameProviderService {
     userAgent,
     aggregatorMappings,
     ...patchInput
-  }: UpdateProviderInput & Actor) {
+  }: UpdateProviderInput & CatalogActor) {
     const outcome = await this.drizzle.db
       .transaction(async (tx) => {
         const existing = findOneOrThrow(
