@@ -4,10 +4,10 @@ Read this before adding or restructuring a test.
 
 ## When a test is written
 
-A feature PR carries **unit tests only**. Cover the pure logic it introduces - parser, resolver,
-mapper, money calculation - and stop there. No Playwright spec goes into a feature PR.
+A feature PR carries **no tests** - no Playwright spec, no integration test, no unit test. It
+carries the change and the manual verification pass that proves the change works.
 
-What the spec would have proved is proved by hand instead, before the PR opens:
+Before the PR opens:
 
 1. Drive the change against the running stack. Reach for the **Playwright CLI** first
    (`npx playwright screenshot <url> <file>`, or a throwaway spec that clicks through the flow) -
@@ -16,17 +16,18 @@ What the spec would have proved is proved by hand instead, before the PR opens:
 2. Capture the evidence: one screenshot per changed screen, and the before/after pair when you
    fixed something. An API-only change attaches the request/response trace instead.
 3. Attach that evidence **to the PR description**, not only to your report - a reviewer confirms a
-   UI change by looking at it.
-4. End the description with an **"E2E to add"** list built from what you just exercised: one line
-   per scenario (the happy path, one hostile path, the authz negative), naming the tier and the
-   path the spec would live at. Prose only - never spec code.
+   change by looking at it, because there is no spec to read.
+4. End the description with a **"Tests to add"** list built from what you just exercised: one line
+   per test the change deserves, naming its tier (unit / API E2E / browser E2E) and the path it
+   would live at. Include the hostile paths and the authz negatives. Prose only - never test code.
 
-E2E lands afterwards, in its own **stacked PR** branched off the feature branch: it targets the
-feature branch while that is open, and the integration branch once it has merged, titled
-`test(<TICKET>): e2e for <feature>`. Write it from what the manual pass actually exercised.
+Every one of those tests lands afterwards, in its own **stacked test PR** branched off the feature
+branch: it targets the feature branch while that is open, and the integration branch once it has
+merged, titled `test(<TICKET>): tests for <feature>`. Write them from what the manual pass actually
+exercised.
 
-A missing E2E spec is therefore never a review blocker. Write specs when you are explicitly asked
-for that stacked PR - and then the tier table below says where each one goes.
+A missing test is therefore never a review blocker on a feature PR. Write tests when you are
+explicitly asked for that stacked PR - and then the tier table below says where each one goes.
 
 ## Pick the tier
 
@@ -67,8 +68,7 @@ expect(await service.get(id)).toEqual(row);
 
 - Test behavior, not implementation - tests must survive a safe refactor (assert outputs, not
   private caches).
-- Cover new pure logic with a unit test in the same change; the E2E that covers the rest arrives in
-  the stacked test PR, and it always includes the authz negatives.
+- Cover the change in the stacked test PR, never in the feature PR; always include the authz negatives.
 - Drive a vendor's inbound side the way the vendor does: post the real webhook shape to the real
   route with a signature the stub's key material produces. Never call the adapter directly.
 - Deterministic and isolated: no shared mutable state, no real outbound network, seedable data.

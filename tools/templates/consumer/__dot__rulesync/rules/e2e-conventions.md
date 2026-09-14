@@ -11,7 +11,7 @@ description: Playwright E2E conventions - specs run against the real stack; mock
 
 Applies once this repo has an `apps/e2e` Playwright suite; a repo without one is not covered by this rule, and adding the suite is what turns it on.
 
-This file governs **how** a spec is written, not **when**. A feature PR ships no Playwright spec - it ships unit tests plus a manual verification pass, and E2E follows in its own stacked test PR (`docs/standards/testing.md`). Read this when you are writing that PR.
+This file governs **how** a spec is written, not **when**. A feature PR ships no tests at all - it ships the change plus a manual verification pass, and every test follows in its own stacked test PR (`docs/standards/testing.md`). Read this when you are writing that PR.
 
 Two kinds of spec live here:
 

@@ -55,7 +55,7 @@ a DI token wins).
 
 - `builder` - configure extensions, swap adapters, write overlays, customize UI
 - `expert` - turn product asks into requirements + acceptance criteria
-- `qa` - verify a change by hand, capture screenshot evidence, propose the E2E, triage bugs
+- `qa` - verify a change by hand, capture screenshot evidence, propose the tests, triage bugs
 - `debugger`, `deployer`, `quality-reviewer`, `security-reviewer` - root-cause, packaging, review
 
 The `oss` MCP server (`.mcp.json`) gives them read-only inspection of the platform surface.
