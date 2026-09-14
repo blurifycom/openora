@@ -168,5 +168,10 @@ export function createGamingRouter({
       await adminGuard.assert(context, 'game-config', 'view');
       return gaming.listGamesAdmin(input);
     }),
+
+    getCatalogStats: os.getCatalogStats.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return gaming.getCatalogStats();
+    }),
   });
 }
