@@ -693,6 +693,23 @@ describe('GamingService updateGame (real PG)', () => {
     expect(cleared.tags).toEqual([]);
   });
 
+  it('serializes against a concurrent tag delete instead of racing an FK violation', async () => {
+    const tag = await seedTag({ name: 'Raced', type: 'custom' });
+    const created = await seedGame();
+    const svc = makeService();
+
+    let updateGamePromise!: Promise<unknown>;
+    await db.drizzle.db.transaction(async (tx) => {
+      await tx.select({ id: gameTag.id }).from(gameTag).where(eq(gameTag.id, tag.id)).for('update');
+
+      updateGamePromise = svc.updateGame({ id: created.id, tagIds: [tag.id], ...ACTOR });
+
+      await tx.delete(gameTag).where(eq(gameTag.id, tag.id));
+    });
+
+    await expect(updateGamePromise).rejects.toBeInstanceOf(GameTagNotFoundError);
+  });
+
   it('leaves links untouched when categoryIds is omitted', async () => {
     const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
     const created = await seedGame({}, [table.id]);

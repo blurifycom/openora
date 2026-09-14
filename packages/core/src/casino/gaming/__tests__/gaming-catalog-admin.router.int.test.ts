@@ -338,6 +338,18 @@ describe('gaming catalog router authz', () => {
     await expect(call(router.deleteTag, { id: created.id }, { context: CTX })).resolves.toBe(true);
   });
 
+  it('strips an admin-supplied type and always creates a custom tag', async () => {
+    const { router } = routerWith(allowingGuard());
+
+    const created = await call(
+      router.createTag,
+      { name: 'Sneaky', type: 'system' } as unknown as { name: string },
+      { context: CTX },
+    );
+
+    expect(created).toMatchObject({ name: 'Sneaky', type: 'custom' });
+  });
+
   it('refuses deleting a system tag through the guarded route', async () => {
     const { router } = routerWith(allowingGuard());
     const [system] = await db.drizzle.db

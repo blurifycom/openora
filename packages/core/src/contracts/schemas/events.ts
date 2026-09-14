@@ -458,16 +458,16 @@ export const domainEventSchemas = {
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })
     .extend(GameTagSnapshotSchema.shape)
-    .extend({ actorId: UuidSchema.optional() }),
+    .extend({ actorId: UuidSchema }),
   'gaming.tag.updated': authContextBase.extend({
     tagId: UuidSchema,
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
     before: GameTagSnapshotSchema,
     after: GameTagSnapshotSchema,
   }),
   'gaming.tag.deleted': authContextBase.extend({
     tagId: UuidSchema,
-    actorId: UuidSchema.optional(),
+    actorId: UuidSchema,
     before: GameTagSnapshotSchema,
     after: z.object({
       deleted: z.literal(true),

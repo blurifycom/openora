@@ -10,7 +10,6 @@ import {
   GameTagNotFoundError,
   GameTagService,
   GameTagSystemDeletionError,
-  GameTagSystemTypeChangeError,
 } from '../service/game-tag.service.js';
 
 let db: TestDb;
@@ -79,7 +78,6 @@ describe('GameTagService (real PG)', () => {
 
     const created = await svc.createTag({
       name: 'Featured',
-      type: 'custom',
       visibility: 'invisible',
       ...ACTOR,
     });
@@ -112,14 +110,13 @@ describe('GameTagService (real PG)', () => {
   });
 
   it('updates a tag and rejects a duplicate name', async () => {
-    const existing = await seedTag({ name: 'Existing' });
+    const existing = await seedTag({ name: 'Existing', type: 'system' });
     const other = await seedTag({ name: 'Other' });
     const { svc, events } = makeService();
 
     const updated = await svc.updateTag({
       id: existing.id,
       name: 'Renamed',
-      type: 'system',
       visibility: 'visible',
       badgeSettings: { badgeColor: '#112233', textColor: '#abcdef' },
       ...ACTOR,
@@ -133,8 +130,17 @@ describe('GameTagService (real PG)', () => {
       badgeSettings: { badgeColor: '#112233', textColor: '#abcdef' },
     });
     expect(emittedTopics(events)).toContain('gaming.tag.updated');
+    await expect(svc.updateTag({ id: other.id, name: 'Renamed', ...ACTOR })).rejects.toBeInstanceOf(
+      GameTagNameTakenError,
+    );
+  });
+
+  it('createTag rejects a duplicate name', async () => {
+    await seedTag({ name: 'Featured' });
+    const { svc } = makeService();
+
     await expect(
-      svc.updateTag({ id: other.id, name: 'Renamed', ...NO_CLIENT_META }),
+      svc.createTag({ name: 'Featured', visibility: 'invisible', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameTagNameTakenError);
   });
 
@@ -147,9 +153,6 @@ describe('GameTagService (real PG)', () => {
 
     await expect(svc.deleteTag({ id: system.id, ...ACTOR })).rejects.toBeInstanceOf(
       GameTagSystemDeletionError,
-    );
-    await expect(svc.updateTag({ id: system.id, type: 'custom', ...ACTOR })).rejects.toBeInstanceOf(
-      GameTagSystemTypeChangeError,
     );
     await expect(svc.getTag(system.id)).resolves.toMatchObject({ name: 'System' });
 

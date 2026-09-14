@@ -602,6 +602,7 @@ export class GamingService {
                   .select({ id: gameTag.id })
                   .from(gameTag)
                   .where(inArray(gameTag.id, uniqueTagIds))
+                  .for('key share')
               : [];
           const found = new Set(rows.map((r) => r.id));
           const missing = uniqueTagIds.find((tagId) => !found.has(tagId));

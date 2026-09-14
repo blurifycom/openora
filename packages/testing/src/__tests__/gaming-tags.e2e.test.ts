@@ -121,12 +121,13 @@ describe('gaming game tags e2e', () => {
       { id: visible.id, visibility: 'visible' },
     ]);
 
-    const systemResponse = await admin.post('/backoffice/gaming/tags', {
-      name: `E2E System ${randomUUID()}`,
-      type: 'system',
-    });
-    expect(systemResponse.status).toBe(200);
-    const system = await readJson(systemResponse);
+    const [system] = await drizzleOf(app.container)
+      .insert(gameTag)
+      .values({ name: `E2E System ${randomUUID()}`, type: 'system' })
+      .returning();
+    if (!system) {
+      throw new Error('failed to seed a system tag');
+    }
     const deleteSystemResponse = await admin.del(`/backoffice/gaming/tags/${system.id}`);
     expect(deleteSystemResponse.status).toBe(409);
     expect((await admin.get(`/backoffice/gaming/tags/${system.id}`)).status).toBe(200);

@@ -252,7 +252,6 @@ export const GameTagSchema = GameTagDetailSchema;
 
 export const CreateGameTagInputSchema = z.object({
   name: z.string().trim().min(1).max(128),
-  type: GameTagTypeSchema.default('custom'),
   visibility: GameTagVisibilitySchema.default('invisible'),
   badgeSettings: GameTagBadgeSettingsSchema.optional(),
 });
@@ -261,7 +260,6 @@ export type CreateGameTagInput = z.infer<typeof CreateGameTagInputSchema>;
 export const UpdateGameTagInputSchema = z.object({
   id: UuidSchema,
   name: z.string().trim().min(1).max(128).optional(),
-  type: GameTagTypeSchema.optional(),
   visibility: GameTagVisibilitySchema.optional(),
   badgeSettings: GameTagBadgeSettingsSchema.optional(),
 });

@@ -32,13 +32,9 @@ export const GameTagSystemDeletionError = makeConflictError(
   'GameTagSystemDeletionError',
   'System game tags cannot be deleted',
 );
-export const GameTagSystemTypeChangeError = makeConflictError(
-  'GameTagSystemTypeChangeError',
-  'System game tags cannot be changed to custom',
-);
 
 type Actor = {
-  actorId?: User['id'];
+  actorId: User['id'];
 } & ClientMeta;
 
 export function toGameTagSummary(record: typeof gameTag.$inferSelect) {
@@ -99,7 +95,6 @@ export class GameTagService {
 
   async createTag({
     name,
-    type = 'custom',
     visibility = 'invisible',
     badgeSettings = DEFAULT_GAME_TAG_BADGE_SETTINGS,
     actorId,
@@ -119,7 +114,7 @@ export class GameTagService {
         }
         const [created] = await tx
           .insert(gameTag)
-          .values({ name, type, visibility, badgeSettings })
+          .values({ name, visibility, badgeSettings })
           .returning();
         return created;
       });
@@ -151,9 +146,6 @@ export class GameTagService {
           await tx.select().from(gameTag).where(eq(gameTag.id, id)).for('update'),
           new GameTagNotFoundError(id),
         );
-        if (existing.type === 'system' && patchInput.type === 'custom') {
-          throw new GameTagSystemTypeChangeError();
-        }
         if (patchInput.name !== undefined && patchInput.name !== existing.name) {
           const [clash] = await tx
             .select({ id: gameTag.id })

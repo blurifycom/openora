@@ -21,7 +21,6 @@ import {
   GameTagNameTakenError,
   GameTagNotFoundError,
   GameTagSystemDeletionError,
-  GameTagSystemTypeChangeError,
 } from '../service/game-tag.service.js';
 import {
   GameProviderService,
@@ -184,7 +183,7 @@ export function createGamingRouter({
       return mapErrors(
         {
           NOT_FOUND: GameTagNotFoundError,
-          CONFLICT: [GameTagNameTakenError, GameTagSystemTypeChangeError],
+          CONFLICT: GameTagNameTakenError,
         },
         () => tags.updateTag({ ...input, actorId: userId, ip, userAgent }),
       );
