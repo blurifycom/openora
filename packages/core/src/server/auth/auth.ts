@@ -12,6 +12,7 @@ import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora
 export type DispatchOtpMail = (args: {
   to: string;
   template: MailTemplate;
+  recipientName?: string | null;
 }) => Promise<void> | void;
 
 // Transport-agnostic second-factor OTP hook. The identity plugin binds the
@@ -190,6 +191,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
                 key: 'emailChangeConfirmation',
                 data: { otp, oldEmail: session.user.email, newEmail: email },
               },
+              recipientName: session.user.name ?? null,
             });
             return;
           }

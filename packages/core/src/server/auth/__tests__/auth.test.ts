@@ -117,7 +117,9 @@ describe('createAuth', () => {
 
     it('dispatches the change-email confirmation with the still-current email read from the live session', async () => {
       const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
-      const getSession = vi.fn().mockResolvedValue({ user: { email: 'old@example.com' } });
+      const getSession = vi
+        .fn()
+        .mockResolvedValue({ user: { email: 'old@example.com', name: 'Alex Player' } });
       betterAuthMock.mockReturnValue({ api: { getSession } });
 
       createAuth({ db: {} as never, dispatchOtpMail });
@@ -136,6 +138,7 @@ describe('createAuth', () => {
           key: 'emailChangeConfirmation',
           data: { otp: '123456', oldEmail: 'old@example.com', newEmail: 'new@example.com' },
         },
+        recipientName: 'Alex Player',
       });
     });
 

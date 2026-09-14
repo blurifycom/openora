@@ -10,6 +10,7 @@ export const MailRecipientSchema = z.discriminatedUnion('kind', [
     email: z.email(),
     locale: z.string().optional(),
     antiPhishingCode: z.string().nullable().optional(),
+    recipientName: z.string().nullable().optional(),
   }),
 ]);
 export type MailRecipient = z.infer<typeof MailRecipientSchema>;

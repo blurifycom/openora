@@ -514,14 +514,19 @@ export class IdentityService {
       schema: { user, session, account, verification, twoFactor },
       ...(mailDispatch
         ? {
-            dispatchOtpMail: async ({ to, template }) => {
+            dispatchOtpMail: async ({ to, template, recipientName }) => {
               const idempotencyKey = `otp:${template.key}:${randomUUID()}`;
               const recipient = await this.findUserByEmail(to);
               if (recipient) {
                 await mailDispatch.toUser({ userId: recipient.id, template, idempotencyKey });
                 return;
               }
-              await mailDispatch.toAddress({ email: to, template, idempotencyKey });
+              await mailDispatch.toAddress({
+                email: to,
+                template,
+                idempotencyKey,
+                ...(recipientName !== undefined ? { recipientName } : {}),
+              });
             },
           }
         : {}),
@@ -2532,6 +2537,7 @@ export class IdentityService {
       .select({
         email: user.email,
         language: user.language,
+        name: user.name,
         antiPhishingCode: user.antiPhishingCode,
         loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
       })
@@ -2568,6 +2574,7 @@ export class IdentityService {
           email: before.email,
           locale: before.language,
           antiPhishingCode: before.antiPhishingCode,
+          recipientName: before.name,
           template: { key: 'emailChanged', data: { newEmail, occurredAt: changedAt } },
           idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
         })
