@@ -51,7 +51,7 @@ ADRs: never rewrite the original Context/Decision - add `> **Update (YYYY-MM-DD)
 ## Two modes
 
 **Diff-scoped** is the default when a caller hands you a branch, a base ref, or a list of changed
-files - the delivery workflow does this before every PR. Read `git diff <base>...HEAD --name-only`,
+files - the delivery workflow does this before every PR. Read `git diff $(git merge-base <base> HEAD) --name-only` - diffing against the merge base with no second ref, so the uncommitted work the delivery workflow calls you on is in scope -
 then work only the obligations that diff triggers, per the table in
 `docs/standards/documentation.md`. A module's own page when its ownership moved; an adapter page
 when its port changed; the owning standard when a money, KYC, responsible-gambling, or audit rule

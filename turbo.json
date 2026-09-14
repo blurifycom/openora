@@ -79,8 +79,9 @@
     },
     "//#check:refs": {
       "inputs": [
-        "docs/**/*.md",
-        ".rulesync/**/*.md",
+        "**/*.md",
+        "!**/node_modules/**",
+        "!**/dist/**",
         "package.json",
         "tools/lint/verify-references.ts"
       ],
