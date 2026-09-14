@@ -113,6 +113,10 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
     name: 'listAdminGames',
     invoke: (r) => call(r.listAdminGames, {}, { context: CTX }),
   },
+  {
+    name: 'getCatalogStats',
+    invoke: (r) => call(r.getCatalogStats, undefined, { context: CTX }),
+  },
 ];
 
 beforeAll(async () => {
@@ -203,6 +207,54 @@ describe('gaming catalog router authz', () => {
     await expect(call(router.getGame, { id: g!.id }, { context: CTX })).rejects.toBeInstanceOf(
       ORPCError,
     );
+  });
+
+  it('returns zero catalog stats for an empty catalog', async () => {
+    const empty = { total: 0, active: 0, inactive: 0 };
+    await expect(
+      call(routerWith(allowingGuard()).router.getCatalogStats, undefined, { context: CTX }),
+    ).resolves.toEqual({ providers: empty, categories: empty, games: empty });
+  });
+
+  it('counts an active game under an inactive provider as inactive', async () => {
+    const [activeProvider] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: 'acme', name: 'Acme', isActive: true })
+      .returning();
+    const [inactiveProvider] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: 'dormant', name: 'Dormant', isActive: false })
+      .returning();
+    await db.drizzle.db.insert(gameCategory).values([
+      { slug: 'slots', name: 'Slots', isActive: true },
+      { slug: 'live', name: 'Live', isActive: true },
+      { slug: 'retired', name: 'Retired', isActive: false },
+    ]);
+    await db.drizzle.db.insert(game).values([
+      {
+        name: 'Aces',
+        slug: 'aces',
+        providerId: activeProvider!.id,
+        aggregator: 'direct',
+        isActive: true,
+      },
+      { name: 'Blaze', slug: 'blaze', providerId: activeProvider!.id, aggregator: 'direct' },
+      {
+        name: 'Comet',
+        slug: 'comet',
+        providerId: inactiveProvider!.id,
+        aggregator: 'direct',
+        isActive: true,
+      },
+    ]);
+
+    await expect(
+      call(routerWith(allowingGuard()).router.getCatalogStats, undefined, { context: CTX }),
+    ).resolves.toEqual({
+      providers: { total: 2, active: 1, inactive: 1 },
+      categories: { total: 3, active: 2, inactive: 1 },
+      games: { total: 3, active: 1, inactive: 2 },
+    });
   });
 
   it('creates a category and patches a game through the guarded routes', async () => {

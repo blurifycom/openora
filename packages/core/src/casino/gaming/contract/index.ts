@@ -171,6 +171,21 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
 });
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
+// Providers and categories count their own `isActive` flag; a game counts as active only while
+// its provider is active too.
+const CatalogCountsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  active: z.number().int().nonnegative(),
+  inactive: z.number().int().nonnegative(),
+});
+
+export const CatalogStatsSchema = z.object({
+  providers: CatalogCountsSchema,
+  categories: CatalogCountsSchema,
+  games: CatalogCountsSchema,
+});
+export type CatalogStats = z.infer<typeof CatalogStatsSchema>;
+
 const ProviderAggregatorMappingsInputSchema = z
   .array(GameProviderAggregatorMappingSchema)
   .max(50)
@@ -295,4 +310,8 @@ export const gamingAdminContract = {
     .route({ method: 'GET', path: '/backoffice/gaming/games' })
     .input(ListAdminGamesInputSchema)
     .output(paginated(GameSchema)),
+
+  getCatalogStats: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/stats' })
+    .output(CatalogStatsSchema),
 };
