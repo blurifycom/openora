@@ -421,10 +421,6 @@ export default {
       });
     }
 
-    // Welcome mail, mail-only like the security login alert below. `idempotencyKey` is a
-    // BullMQ jobId - a short-window dedupe guard, not what makes this once-per-account.
-    // That comes from `sendEmailVerification` skipping addresses already `emailVerified`,
-    // so `identity.email.verified` (and this handler) can never fire a second time.
     ctx.events.on('identity.email.verified', (payload) => {
       if (!mailDispatchRef) {
         return;

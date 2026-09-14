@@ -220,9 +220,6 @@ export class MailService {
   } | null> {
     if (job.recipient.kind === 'address') {
       // Pre-account emails (admin invitation, brand-new signup verification) correctly
-      // have no code/name - there is no user row to read them off. A caller that already
-      // has them in hand (eg the caller's own name on an email-change notice) passes
-      // them explicitly.
       return {
         email: job.recipient.email,
         locale: job.recipient.locale ?? DEFAULT_LOCALE,

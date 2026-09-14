@@ -76,10 +76,7 @@ export type AuthOptions = {
 export function createAuth(options: AuthOptions): BetterAuthType {
   const dispatchOtpMail: DispatchOtpMail = options.dispatchOtpMail ?? (() => {});
   const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
-  // `sendVerificationOTP` below calls back into the instance it is defined on, to read
-  // the caller's still-current email before the swap lands. `auth` is assigned once
-  // betterAuth() returns and closed over by that callback, which only runs later, on a
-  // real request - never during construction.
+
   const auth: BetterAuthType = betterAuth({
     database: drizzleAdapter(options.db, {
       provider: 'pg',

@@ -2448,11 +2448,6 @@ export class IdentityService {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const meta = extractClientMeta(reqHeaders);
     const { ip } = meta;
-    // Session resolved first so the caller-keyed bucket below still covers anonymous
-    // callers too - unlike `changePassword`'s single pre-authenticated bucket, this
-    // route also caps by target inbox and IP, which must stay unspent until we know
-    // the caller is signed in (an anonymous caller must not be able to burn a real
-    // owner's budget for their own address).
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
       this.limiter,
@@ -2463,7 +2458,6 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
     const newEmail = input.newEmail.toLowerCase();
-    // Separate budget caps codes per target inbox, regardless of caller.
     await assertRateLimit(
       this.limiter,
       `change-email-target:${newEmail}`,

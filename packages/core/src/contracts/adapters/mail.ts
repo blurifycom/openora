@@ -25,8 +25,6 @@ export type MailToUserInput = {
 export type MailToAddressInput = {
   email: string;
   locale?: string;
-  // Only when the caller already has the code/name in hand (eg the old address on an
-  // email-change notice): an address-kind recipient has no user row to read one off.
   antiPhishingCode?: string | null;
   recipientName?: string | null;
   template: MailTemplate;

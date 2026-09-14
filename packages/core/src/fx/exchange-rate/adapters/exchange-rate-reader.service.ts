@@ -124,11 +124,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return moneyScaleBy(amount, quote.rate);
   }
 
-  // Single-flighted like `fetchLeg` below, but one level up: without this, concurrent
-  // callers for the same leg each run their own `readRow` before any of them reaches the
-  // `fetchLeg` guard, and a slow reader can still miss an already-finished, already-cleaned-up
-  // fetch and start a redundant one. Joining here happens synchronously, before any of them
-  // touch the database, so the collapse to one caller never depends on read timing.
   private resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
     if (currency === this.pivot) {
       return Promise.resolve({ rate: '1.000000000000000000', asOf: new Date().toISOString() });
