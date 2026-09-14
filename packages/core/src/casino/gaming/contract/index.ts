@@ -7,6 +7,7 @@ import {
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
   GameTagBadgeSettingsSchema,
+  GameTagBadgeSettingsPatchSchema,
   GameTagSummarySchema,
   GameTagTypeSchema,
   GameTagVisibilitySchema,
@@ -30,6 +31,7 @@ export { GameCategorySummaryWithTranslationsSchema } from '@openora/core/contrac
 export { GameCategoryTranslationsSchema } from '@openora/core/contracts';
 export {
   GameTagBadgeSettingsSchema,
+  GameTagBadgeSettingsPatchSchema,
   GameTagSummarySchema,
   GameTagTypeSchema,
   GameTagVisibilitySchema,
@@ -261,7 +263,7 @@ export const UpdateGameTagInputSchema = z.object({
   id: UuidSchema,
   name: z.string().trim().min(1).max(128).optional(),
   visibility: GameTagVisibilitySchema.optional(),
-  badgeSettings: GameTagBadgeSettingsSchema.optional(),
+  badgeSettings: GameTagBadgeSettingsPatchSchema.optional(),
 });
 export type UpdateGameTagInput = z.infer<typeof UpdateGameTagInputSchema>;
 

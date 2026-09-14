@@ -17,6 +17,7 @@ import {
 } from '@openora/core/server';
 import { and, asc, count, eq, ilike, ne } from 'drizzle-orm';
 import { gameTag, gameTagGame, type GameTag } from '../schema/index.js';
+import { toGameTagSummary } from '../../shared/game-catalog.js';
 import type {
   CreateGameTagInput,
   ListAdminTagsInput,
@@ -37,22 +38,13 @@ type Actor = {
   actorId: User['id'];
 } & ClientMeta;
 
-export function toGameTagSummary(record: typeof gameTag.$inferSelect) {
-  return {
-    id: record.id,
-    name: record.name,
-    type: record.type,
-    visibility: record.visibility,
-    badgeSettings: record.badgeSettings,
-  };
-}
-
 function toGameTagEventSnapshot(record: typeof gameTag.$inferSelect) {
   return GameTagSnapshotSchema.parse(toGameTagSummary(record));
 }
 
 function toGameTagDetail(record: typeof gameTag.$inferSelect) {
   const dates = serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
+
   return {
     ...toGameTagSummary(record),
     createdAt: dates.createdAt,
@@ -72,6 +64,7 @@ export class GameTagService {
       type ? eq(gameTag.type, type) : undefined,
       visibility ? eq(gameTag.visibility, visibility) : undefined,
     );
+
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
         .select()
@@ -82,6 +75,7 @@ export class GameTagService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(gameTag).where(where),
     ]);
+
     return { items: rows.map(toGameTagDetail), total: Number(n), page, limit };
   }
 
@@ -90,6 +84,7 @@ export class GameTagService {
       await this.drizzle.db.select().from(gameTag).where(eq(gameTag.id, id)).limit(1),
       new GameTagNotFoundError(id),
     );
+
     return toGameTagDetail(record);
   }
 
@@ -102,6 +97,7 @@ export class GameTagService {
     userAgent,
   }: CreateGameTagInput & Actor) {
     let record: typeof gameTag.$inferSelect;
+
     try {
       record = await this.drizzle.db.transaction(async (tx) => {
         const [existing] = await tx
@@ -124,6 +120,7 @@ export class GameTagService {
       }
       throw error;
     }
+
     this.events.emit('gaming.tag.created', {
       tagId: record.id,
       ...toGameTagEventSnapshot(record),
@@ -131,21 +128,24 @@ export class GameTagService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     return toGameTagDetail(record);
   }
 
   async updateTag({ id, actorId, ip, userAgent, ...patchInput }: UpdateGameTagInput & Actor) {
-    const patch: Partial<typeof gameTag.$inferInsert> = { ...patchInput };
-    const hasChanges = Object.values(patch).some((value) => value !== undefined);
+    const hasChanges = Object.values(patchInput).some((value) => value !== undefined);
+
     if (!hasChanges) {
       return this.getTag(id);
     }
+
     const { existing, updated } = await this.drizzle.db
       .transaction(async (tx) => {
         const existing = findOneOrThrow(
           await tx.select().from(gameTag).where(eq(gameTag.id, id)).for('update'),
           new GameTagNotFoundError(id),
         );
+
         if (patchInput.name !== undefined && patchInput.name !== existing.name) {
           const [clash] = await tx
             .select({ id: gameTag.id })
@@ -156,18 +156,32 @@ export class GameTagService {
             throw new GameTagNameTakenError();
           }
         }
+
         const updated = findOneOrThrow(
-          await tx.update(gameTag).set(patch).where(eq(gameTag.id, id)).returning(),
+          await tx
+            .update(gameTag)
+            .set({
+              ...patchInput,
+              badgeSettings: patchInput.badgeSettings && {
+                ...existing.badgeSettings,
+                ...patchInput.badgeSettings,
+              },
+            })
+            .where(eq(gameTag.id, id))
+            .returning(),
           new GameTagNotFoundError(id),
         );
+
         return { existing, updated };
       })
       .catch((error: unknown) => {
         if (isUniqueConstraintViolation(error)) {
           throw new GameTagNameTakenError();
         }
+
         throw error;
       });
+
     this.events.emit('gaming.tag.updated', {
       tagId: updated.id,
       actorId,
@@ -176,6 +190,7 @@ export class GameTagService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     return toGameTagDetail(updated);
   }
 
@@ -185,19 +200,24 @@ export class GameTagService {
         await tx.select().from(gameTag).where(eq(gameTag.id, id)).for('update'),
         new GameTagNotFoundError(id),
       );
+
       if (existing.type !== 'custom') {
         throw new GameTagSystemDeletionError();
       }
+
       const affectedLinks = await tx
         .select({ gameId: gameTagGame.gameId })
         .from(gameTagGame)
         .where(eq(gameTagGame.tagId, id));
+
       const deleted = findOneOrThrow(
         await tx.delete(gameTag).where(eq(gameTag.id, id)).returning(),
         new GameTagNotFoundError(id),
       );
+
       return { deleted, affectedGameIds: affectedLinks.map((link) => link.gameId) };
     });
+
     this.events.emit('gaming.tag.deleted', {
       tagId: deleted.id,
       actorId,
@@ -206,6 +226,7 @@ export class GameTagService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+
     return true;
   }
 }

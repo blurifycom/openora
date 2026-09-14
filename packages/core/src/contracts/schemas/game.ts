@@ -75,6 +75,12 @@ export const GameTagBadgeSettingsSchema = z.object({
 });
 export type GameTagBadgeSettings = z.infer<typeof GameTagBadgeSettingsSchema>;
 
+export const GameTagBadgeSettingsPatchSchema = z.object({
+  badgeColor: HexColorSchema.optional(),
+  textColor: HexColorSchema.optional(),
+});
+export type GameTagBadgeSettingsPatch = z.infer<typeof GameTagBadgeSettingsPatchSchema>;
+
 export const GameTagSummarySchema = z.object({
   id: UuidSchema,
   name: z.string(),

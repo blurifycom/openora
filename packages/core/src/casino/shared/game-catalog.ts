@@ -33,6 +33,16 @@ export function toCategorySummary(record: GameCategory) {
   };
 }
 
+export function toGameTagSummary(record: GameTag) {
+  return {
+    id: record.id,
+    name: record.name,
+    type: record.type,
+    visibility: record.visibility,
+    badgeSettings: record.badgeSettings,
+  };
+}
+
 export function isGamePlayable(
   target: Pick<Game, 'isActive'>,
   provider: Pick<GameProvider, 'isActive'>,

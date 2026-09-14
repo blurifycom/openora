@@ -117,6 +117,22 @@ describe('mapEventToRecord: gaming tag catalog mutations', () => {
     badgeSettings: { badgeColor: '#3377ff', textColor: '#ffffff' },
   };
 
+  it('audits tag creation against the game tag resource', async () => {
+    const row = await mapEventToRecord('gaming.tag.created', {
+      tagId,
+      actorId: adminId,
+      ...snapshot,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_tag',
+      resourceId: tagId,
+      after: snapshot,
+    });
+  });
+
   it('audits tag updates against the game tag resource', async () => {
     const row = await mapEventToRecord('gaming.tag.updated', {
       tagId,

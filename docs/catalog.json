@@ -1870,6 +1870,10 @@
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
+      "name": "GameTagBadgeSettingsPatchSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GameTagBadgeSettingsSchema",
       "file": "packages/core/src/contracts/schemas/game.ts"
     },

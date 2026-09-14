@@ -39,13 +39,14 @@ import {
 } from '../schema/index.js';
 import { GameProviderNotFoundError } from './game-provider.service.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
-import { GameTagNotFoundError, toGameTagSummary } from './game-tag.service.js';
+import { GameTagNotFoundError } from './game-tag.service.js';
 import {
   categoriesByGameIds,
   isGamePlayable,
   playableGameCondition,
   tagsByGameIds,
   toCategorySummary,
+  toGameTagSummary,
 } from '../../shared/game-catalog.js';
 import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
@@ -258,16 +259,20 @@ export class GamingService {
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
         .where(where),
     ]);
-    const categories = await categoriesByGameIds(
-      this.drizzle.db,
-      rows.map((r) => r.game.id),
-      playableOnly,
-    );
-    const tags = await tagsByGameIds(
-      this.drizzle.db,
-      rows.map((r) => r.game.id),
-      { includeInvisible: includeInvisibleTags },
-    );
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(
+        this.drizzle.db,
+        rows.map((r) => r.game.id),
+        playableOnly,
+      ),
+      tagsByGameIds(
+        this.drizzle.db,
+        rows.map((r) => r.game.id),
+        {
+          includeInvisible: includeInvisibleTags,
+        },
+      ),
+    ]);
     return {
       items: rows.map((r) =>
         toGame({
@@ -299,10 +304,12 @@ export class GamingService {
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
       throw new GameNotFoundError(id);
     }
-    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly);
-    const tags = await tagsByGameIds(this.drizzle.db, [row.game.id], {
-      includeInvisible: opts.includeInvisibleTags,
-    });
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly),
+      tagsByGameIds(this.drizzle.db, [row.game.id], {
+        includeInvisible: opts.includeInvisibleTags,
+      }),
+    ]);
     return toGame({
       ...row,
       categories: categories.get(row.game.id) ?? [],

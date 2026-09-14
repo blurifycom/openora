@@ -53,6 +53,7 @@ import {
   playableGameCondition,
   tagsByGameIds,
   toCategorySummary,
+  toGameTagSummary,
 } from '../../shared/game-catalog.js';
 
 export const LobbySectionNotFoundError = makeNotFoundError('LobbySection');
@@ -112,13 +113,7 @@ function toGameSummary(row: {
       logoUrl: row.provider.logoUrl,
     },
     categories: row.categories.map(toCategorySummary),
-    tags: row.tags.map((tag) => ({
-      id: tag.id,
-      name: tag.name,
-      type: tag.type,
-      visibility: tag.visibility,
-      badgeSettings: tag.badgeSettings,
-    })),
+    tags: row.tags.map(toGameTagSummary),
     thumbnailUrl: row.game.thumbnailUrl,
   };
 }
@@ -183,8 +178,10 @@ export class LobbyService {
             .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
             .where(and(inArray(game.id, gameIds), playableGameCondition()))
         : [];
-    const categories = await categoriesByGameIds(db, gameIds, true);
-    const tags = await tagsByGameIds(db, gameIds);
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(db, gameIds, true),
+      tagsByGameIds(db, gameIds),
+    ]);
 
     const gameMap = new Map(rows.map((r) => [r.game.id, r]));
 
@@ -262,15 +259,17 @@ export class LobbyService {
       .where(whereClause)
       .orderBy(asc(game.name))
       .limit(50);
-    const categories = await categoriesByGameIds(
-      db,
-      rows.map((r) => r.game.id),
-      true,
-    );
-    const tags = await tagsByGameIds(
-      db,
-      rows.map((r) => r.game.id),
-    );
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(
+        db,
+        rows.map((r) => r.game.id),
+        true,
+      ),
+      tagsByGameIds(
+        db,
+        rows.map((r) => r.game.id),
+      ),
+    ]);
 
     return rows.map((r) =>
       toGameSummary({

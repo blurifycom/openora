@@ -135,6 +135,22 @@ describe('GameTagService (real PG)', () => {
     );
   });
 
+  it('updates one badge colour without resetting the other', async () => {
+    const existing = await seedTag({
+      name: 'Badged',
+      badgeSettings: { badgeColor: '#112233', textColor: '#445566' },
+    });
+    const { svc } = makeService();
+
+    const updated = await svc.updateTag({
+      id: existing.id,
+      badgeSettings: { badgeColor: '#778899' },
+      ...ACTOR,
+    });
+
+    expect(updated.badgeSettings).toEqual({ badgeColor: '#778899', textColor: '#445566' });
+  });
+
   it('createTag rejects a duplicate name', async () => {
     await seedTag({ name: 'Featured' });
     const { svc } = makeService();

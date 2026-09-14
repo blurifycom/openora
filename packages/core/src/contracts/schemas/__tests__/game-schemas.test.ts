@@ -3,6 +3,7 @@ import {
   GameCategorySummarySchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
+  GameTagBadgeSettingsPatchSchema,
   GameTagBadgeSettingsSchema,
 } from '../game.js';
 
@@ -72,5 +73,14 @@ describe('game tag badge settings', () => {
     expect(() =>
       GameTagBadgeSettingsSchema.parse({ badgeColor: 'white', textColor: '#ffffff' }),
     ).toThrow();
+  });
+});
+
+describe('game tag badge settings patch', () => {
+  it('leaves an omitted colour undefined instead of defaulting it', () => {
+    expect(GameTagBadgeSettingsPatchSchema.parse({ badgeColor: '#112233' })).toEqual({
+      badgeColor: '#112233',
+    });
+    expect(GameTagBadgeSettingsPatchSchema.parse({})).toEqual({});
   });
 });
