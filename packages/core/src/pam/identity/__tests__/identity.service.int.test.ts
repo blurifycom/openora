@@ -727,7 +727,11 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app', trustedDeviceDays: 30 });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 
   it('challenges a live trusted device while the account requires 2FA every login', async () => {
@@ -743,7 +747,11 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app', trustedDeviceDays: 30 });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 
   it('challenges a device whose cookie was replayed from another browser', async () => {
@@ -759,7 +767,11 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app', trustedDeviceDays: 30 });
+    expect(result).toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethod: 'app',
+      trustedDeviceDays: 30,
+    });
   });
 });
 
