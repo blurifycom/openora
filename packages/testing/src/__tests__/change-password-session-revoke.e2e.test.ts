@@ -24,6 +24,9 @@ import {
  *  - `revokeOtherSessions` makes better-auth mint the caller's replacement session with
  *    no `dontRememberMe` argument. A caller who signed in with `rememberMe: false` must
  *    still end up with a short-lived row, not a silently promoted 30-day one.
+ *
+ * The single-session revoke rides the same stream and the same transport, so it is
+ * covered here too: it must reach the one tab it names, and no other.
  */
 
 let db: TestDb;
@@ -103,6 +106,15 @@ const newPlayer = async (label: string): Promise<{ email: string; userId: string
  * for the user and mints exactly one. `changePassword` returns only `{ success: true }`,
  * so the rotated row is found by user, not by token.
  */
+const sessionIdsOf = async (userId: string): Promise<string[]> =>
+  (
+    await app.container
+      .get(DRIZZLE)
+      .db.select({ id: session.id })
+      .from(session)
+      .where(eq(session.userId, userId))
+  ).map((row) => row.id);
+
 const rotatedSessionTtlMs = async (userId: string): Promise<number> => {
   const rows = await app.container
     .get(DRIZZLE)
@@ -193,6 +205,38 @@ describe('POST /identity/password/change + GET /identity/session/stream', () => 
     // it is nowhere near the 30-day `session.expiresIn` default.
     expect(ttlMs).toBeLessThan(DAY_MS + 60 * 60 * 1000);
     expect(ttlMs).toBeGreaterThan(DAY_MS - 60 * 60 * 1000);
+  });
+
+  it('force-logs-out only the single session a self-service revoke names', async () => {
+    const { email, userId } = await newPlayer('revoke-one');
+    const keptCookie = await login(email, true);
+    const keptSessionIds = await sessionIdsOf(userId);
+    const revokedCookie = await login(email, true);
+    const revokedSessionId = (await sessionIdsOf(userId)).find(
+      (id) => !keptSessionIds.includes(id),
+    );
+    expect(revokedSessionId).toBeDefined();
+
+    const keptStream = watchForRevoked(
+      await app.app.request('/identity/session/stream', { headers: { cookie: keptCookie } }),
+    );
+    const revokedStream = watchForRevoked(
+      await app.app.request('/identity/session/stream', { headers: { cookie: revokedCookie } }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const res = await app.app.request('/identity/sessions/me/revoke', {
+      method: 'POST',
+      headers: { cookie: keptCookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: revokedSessionId }),
+    });
+    expect(res.status).toBe(200);
+
+    await expect(withTimeout(revokedStream.result, 4000, null)).resolves.toBe('revoked');
+    await expect(withTimeout(keptStream.result, 1500, null)).resolves.toBeNull();
+
+    await keptStream.close();
+    await revokedStream.close();
   });
 
   it('leaves the rotated session at full length for a remembered caller', async () => {
