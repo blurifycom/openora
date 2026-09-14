@@ -6,6 +6,7 @@ import {
   TimestampSchema,
   UuidSchema,
 } from './common.js';
+import { GameCategoryTranslationsSchema, GameProviderAggregatorMappingSchema } from './game.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -13,9 +14,11 @@ import {
   LimitChangeKindSchema,
   RgInitiatorSchema,
   ExclusionKindSchema,
+  NonEmptyReasonSchema,
 } from './compliance.js';
-import { TagKeySchema } from './tag.js';
+import { LobbyLayoutSnapshotSchema } from './lobby.js';
 import { CountryCodeSchema } from './igaming-config.js';
+import { TagKeySchema } from './tag.js';
 import { PermissionLevelSchema } from './iam.js';
 import { RegistrationFailureReasonSchema, UsernameSchema } from './identity.js';
 import {
@@ -27,6 +30,7 @@ import {
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
+const lobbyLayoutAuditSnapshotSchema = LobbyLayoutSnapshotSchema;
 
 const iamRoleEventBase = z
   .object({ roleId: UuidSchema, actorId: UuidSchema })
@@ -40,6 +44,7 @@ const cmsBannerConfigurationEventBase = z
 const cmsBannerImageEventBase = z
   .object({ bannerImageId: UuidSchema, bannerConfigurationId: UuidSchema, actorId: UuidSchema })
   .extend(authContextBase.shape);
+const droppedImageUrlsSchema = z.array(z.url()).default([]);
 const cmsBannerScheduleEventBase = z
   .object({
     bannerScheduleId: UuidSchema,
@@ -60,6 +65,15 @@ const tagPlayerEventBase = actorReasonBase
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
+
+const gameGeoRuleEventState = z.object({
+  id: UuidSchema,
+  gameId: UuidSchema,
+  countryCode: CountryCodeSchema,
+  reason: NonEmptyReasonSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
 
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
@@ -281,6 +295,13 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // The code itself never travels here - audit/event streams are broader-read than
+  // security.me, which is the only place the raw value is returned.
+  'identity.security.anti_phishing_code.set': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    wasAlreadySet: z.boolean(),
+  }),
   'identity.profile.updated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -373,6 +394,96 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  'lobby.layout.updated': authContextBase.extend({
+    actorId: UuidSchema.optional(),
+    before: lobbyLayoutAuditSnapshotSchema,
+    after: lobbyLayoutAuditSnapshotSchema,
+  }),
+  // Backoffice game-catalog management (actorId = acting admin UUID).
+  'gaming.provider.created': authContextBase.extend({
+    providerId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+    logoUrl: z.string().nullable(),
+    metadata: z.unknown().nullable(),
+    isActive: z.boolean(),
+    actorId: UuidSchema,
+  }),
+  'gaming.provider.updated': authContextBase.extend({
+    providerId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+      logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      aggregatorMappings: z.array(GameProviderAggregatorMappingSchema),
+      logoUrl: z.string().nullable(),
+      metadata: z.unknown().nullable(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.category.created': authContextBase.extend({
+    categoryId: UuidSchema,
+    slug: z.string(),
+    name: z.string(),
+    translations: GameCategoryTranslationsSchema.optional(),
+    icon: z.string().nullable(),
+    sortOrder: z.number().int(),
+    isActive: z.boolean(),
+    actorId: UuidSchema,
+  }),
+  'gaming.category.updated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      translations: GameCategoryTranslationsSchema.optional(),
+      icon: z.string().nullable(),
+      sortOrder: z.number().int(),
+      isActive: z.boolean(),
+    }),
+  }),
+  'gaming.game.updated': authContextBase.extend({
+    gameId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+    after: z.object({
+      slug: z.string(),
+      name: z.string(),
+      providerId: UuidSchema,
+      aggregator: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      isActive: z.boolean(),
+      categoryIds: z.array(UuidSchema),
+      metadata: z.unknown().nullable(),
+    }),
+  }),
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.
@@ -525,12 +636,30 @@ export const domainEventSchemas = {
     messageCount: z.number().int(),
   }),
 
-  // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
-  // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': authContextBase.extend({
     countryCode: CountryCodeSchema,
     action: GeoRuleActionSchema,
     actorId: UuidSchema.optional(),
+  }),
+
+  'compliance.game-geo-rule.upserted': authContextBase.extend({
+    ruleId: UuidSchema,
+    gameId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    before: gameGeoRuleEventState.nullable(),
+    after: gameGeoRuleEventState,
+    actorId: UuidSchema,
+  }),
+
+  'compliance.game-geo-rule.deleted': authContextBase.extend({
+    ruleId: UuidSchema,
+    gameId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    before: gameGeoRuleEventState,
+    after: z.null(),
+    actorId: UuidSchema,
   }),
 
   'compliance.limit.upserted': authContextBase.extend({
@@ -669,7 +798,9 @@ export const domainEventSchemas = {
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
   'cms.banner.configuration.created': cmsBannerConfigurationEventBase,
-  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase,
+  'cms.banner.configuration.deleted': cmsBannerConfigurationEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.configuration.set_default': cmsBannerConfigurationEventBase,
   'cms.banner.configuration.unset_default': z
     .object({
@@ -678,8 +809,12 @@ export const domainEventSchemas = {
       actorId: UuidSchema,
     })
     .extend(authContextBase.shape),
-  'cms.banner.image.set': cmsBannerImageEventBase,
-  'cms.banner.image.deleted': cmsBannerImageEventBase,
+  'cms.banner.image.set': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
+  'cms.banner.image.deleted': cmsBannerImageEventBase.extend({
+    droppedImageUrls: droppedImageUrlsSchema,
+  }),
   'cms.banner.schedule.created': cmsBannerScheduleEventBase,
   'cms.banner.schedule.updated': cmsBannerScheduleUpdatedEvent,
 

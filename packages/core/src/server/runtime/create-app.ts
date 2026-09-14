@@ -50,7 +50,7 @@ import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platfor
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
-// only (lobby feeds, public CMS content, the game catalogue). NOTHING
+// only (public CMS content and the game catalogue). NOTHING
 // authenticated or per-player (wallet, profile, notifications, admin, chat) - a
 // consumer replaces this wholesale via `httpCache.paths`, extends it via
 // `httpCache.additionalPaths`, or disables caching entirely with `httpCache: false`.
@@ -59,13 +59,7 @@ import type { CoreTokenCatalog } from './core-token-catalog.js';
 // using `paths` to add one prefix can spread this in instead of hand-copying it.
 // '/cms/banners' is excluded on purpose: its `listBanners` route is unguarded and returns
 // inactive banners, so HTTP-caching it would leak draft banners to a shared cache.
-export const PUBLIC_HTTP_CACHE_PATHS = [
-  '/lobby/categories',
-  '/lobby/featured',
-  '/lobby/search',
-  '/cms/pages',
-  '/gaming/games',
-] as const;
+export const PUBLIC_HTTP_CACHE_PATHS = ['/cms/pages', '/gaming/games'] as const;
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;

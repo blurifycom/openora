@@ -123,6 +123,14 @@ export const WalletConfigSchema = z
         lookbackHours: z.number().int().positive().default(24),
         batchSize: z.number().int().positive().default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
+        /**
+         * Swaps get their own cutoff because `processing` is a legitimate resting state
+         * for a swap leg: `SwapService.swap` returns it whenever the desk fills
+         * asynchronously, and the leg then waits for the desk's webhook. Measured against
+         * the withdrawal cutoff, a desk that settles slower than withdrawals would file a
+         * finding for every healthy swap. Absent falls back to `stuckAfterMinutes`.
+         */
+        stuckSwapAfterMinutes: z.number().int().positive().optional(),
         /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),
         alertThreshold: z.number().int().positive().default(10),
@@ -134,10 +142,12 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
+
 export const ExchangeRateConfigSchema = z
   .object({
     /** Comparison currency the fx module derives a cross rate against. Absent = 'USD'. */
-    pivot: CurrencyCodeSchema.default('USD'),
+    pivot: CurrencyCodeSchema.default(DEFAULT_EXCHANGE_RATE_PIVOT),
     freshTtlMs: z.number().int().positive().default(60_000),
     hardMaxAgeMs: z
       .number()
@@ -149,6 +159,11 @@ export const ExchangeRateConfigSchema = z
   .strict();
 
 export type ExchangeRateConfig = z.infer<typeof ExchangeRateConfigSchema>;
+
+/** The pivot every fx conversion targets. One resolver, so no module converts against another. */
+export function resolveExchangeRatePivot(config: ExchangeRateConfig | undefined): string {
+  return (config?.pivot ?? DEFAULT_EXCHANGE_RATE_PIVOT).toUpperCase();
+}
 
 export const NotificationsConfigSchema = z
   .object({

@@ -35,6 +35,7 @@ import {
   SecurityControlsSchema,
   SetLoginWithdrawalAlertsInputSchema,
   SetWithdrawalPinInputSchema,
+  SetAntiPhishingCodeInputSchema,
   PhoneVerificationRequestInputSchema,
   PhoneVerificationRequestOutputSchema,
   PhoneVerificationConfirmInputSchema,
@@ -166,6 +167,13 @@ export const identityContract = {
 
     removeWithdrawalPin: oc
       .route({ method: 'DELETE', path: '/identity/security/withdrawal-pin' })
+      .output(SecurityControlsSchema),
+
+    // No reauth (not money-moving, unlike the withdrawal PIN); set/overwrite only, no
+    // remove route. Calling it again with a new value changes the code.
+    setAntiPhishingCode: oc
+      .route({ method: 'POST', path: '/identity/security/anti-phishing-code' })
+      .input(SetAntiPhishingCodeInputSchema)
       .output(SecurityControlsSchema),
   },
 

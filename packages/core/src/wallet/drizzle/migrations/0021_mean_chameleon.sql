@@ -1,0 +1,3 @@
+ALTER TYPE "public"."wallet_reconciliation_finding_kind" ADD VALUE 'rg_limit_breach';--> statement-breakpoint
+DROP INDEX "wallet_reconciliation_finding_kind_external_id_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "wallet_reconciliation_finding_kind_provider_external_id_idx" ON "wallet_reconciliation_finding" USING btree ("kind","provider_name","external_id") WHERE "wallet_reconciliation_finding"."external_id" IS NOT NULL;

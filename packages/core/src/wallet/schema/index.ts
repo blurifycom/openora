@@ -127,6 +127,10 @@ export const walletTransaction = pgTable(
     reviewedBy: uuid(),
     reviewedAt: timestamp({ withTimezone: true }),
     reviewReason: text(),
+    // What an auto-approved payout was worth in the fx pivot at approval. The daily amount cap
+    // sums these, so a rate move after approval cannot shrink what the player already took.
+    // NULL on every other row, and on auto-approvals written before this column existed.
+    autoApprovalPivotAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // The concrete settlement provider (eg a PSP name) and its reference id (eg the
     // PSP charge id), as first-class typed columns so they are filterable for
     // reconciliation rather than buried in free-form JSON.
@@ -488,8 +492,11 @@ export const walletReconciliationFinding = pgTable(
   },
   (t) => [
     // Re-running reconciliation over an overlapping window must not duplicate findings.
-    uniqueIndex('wallet_reconciliation_finding_kind_external_id_idx')
-      .on(t.kind, t.externalId)
+    // `providerName` is part of the key because an externalId is only unique WITHIN a
+    // vendor: two providers can hand out the same reference, and without it the second
+    // one's finding is silently swallowed as a duplicate of the first's.
+    uniqueIndex('wallet_reconciliation_finding_kind_provider_external_id_idx')
+      .on(t.kind, t.providerName, t.externalId)
       .where(sql`${t.externalId} IS NOT NULL`),
     index('wallet_reconciliation_finding_status_created_at_idx').on(t.status, t.createdAt),
     index('wallet_reconciliation_finding_run_id_idx').on(t.runId),

@@ -1014,3 +1014,414 @@ describe('CmsService.deleteConfiguration blocked-while-scheduled (real PG)', () 
     );
   });
 });
+
+describe('CmsService banner events carry the image URLs they drop (real PG)', () => {
+  const lastPayload = (events: ReturnType<typeof makeEventBus>) =>
+    events.emit.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+
+  it('names both URLs of a deleted image row', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const image = await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/gone-d.png'),
+        mobileImageUrl: imageUrl('/gone-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    await svc.deleteBannerImage(image.id, ADMIN_ID);
+
+    expect(lastPayload(events)).toMatchObject({
+      bannerImageId: image.id,
+      droppedImageUrls: [imageUrl('/gone-d.png'), imageUrl('/gone-m.png')],
+    });
+  });
+
+  it('names every URL the cascade takes with a deleted configuration', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'carousel' },
+      ADMIN_ID,
+    );
+    for (const slot of [0, 1]) {
+      await svc.setBannerImage(
+        {
+          bannerConfigurationId: config.id,
+          sortOrder: slot,
+          desktopImageUrl: imageUrl(`/cascade-${slot}-d.png`),
+          mobileImageUrl: imageUrl(`/cascade-${slot}-m.png`),
+        },
+        ADMIN_ID,
+      );
+    }
+
+    await svc.deleteConfiguration(config.id, ADMIN_ID);
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual(
+      expect.arrayContaining([
+        imageUrl('/cascade-0-d.png'),
+        imageUrl('/cascade-0-m.png'),
+        imageUrl('/cascade-1-d.png'),
+        imageUrl('/cascade-1-m.png'),
+      ]),
+    );
+    expect(lastPayload(events)?.['droppedImageUrls']).toHaveLength(4);
+  });
+
+  it('excludes URLs a different configuration still references after a cascade', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/shared-cascade.png');
+    const deletedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const retainedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: deletedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/unique-cascade.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: retainedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/retained-cascade.png'),
+        mobileImageUrl: sharedUrl,
+      },
+      ADMIN_ID,
+    );
+
+    await svc.deleteConfiguration(deletedConfig.id, ADMIN_ID);
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual([imageUrl('/unique-cascade.png')]);
+  });
+
+  it('drops nothing when an image is set for the first time', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/first-d.png'),
+        mobileImageUrl: imageUrl('/first-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    expect(lastPayload(events)).toMatchObject({ droppedImageUrls: [] });
+  });
+
+  it('drops only the half an overwrite actually replaced', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/old-d.png'),
+        mobileImageUrl: imageUrl('/kept-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/new-d.png'),
+        mobileImageUrl: imageUrl('/kept-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    expect(lastPayload(events)).toMatchObject({ droppedImageUrls: [imageUrl('/old-d.png')] });
+  });
+
+  it('excludes an overwritten URL another configuration still references', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/shared-overwrite.png');
+    const updatedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const retainedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: updatedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/unique-overwrite.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: retainedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/retained-overwrite.png'),
+      },
+      ADMIN_ID,
+    );
+
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: updatedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/new-overwrite-d.png'),
+        mobileImageUrl: imageUrl('/new-overwrite-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual([imageUrl('/unique-overwrite.png')]);
+  });
+
+  it('excludes a deleted image URL another configuration still references', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/shared-delete.png');
+    const deletedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const retainedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const deletedImage = await svc.setBannerImage(
+      {
+        bannerConfigurationId: deletedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/unique-delete.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: retainedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/retained-delete.png'),
+        mobileImageUrl: sharedUrl,
+      },
+      ADMIN_ID,
+    );
+
+    await svc.deleteBannerImage(deletedImage.id, ADMIN_ID);
+
+    expect(lastPayload(events)?.['droppedImageUrls']).toEqual([imageUrl('/unique-delete.png')]);
+  });
+
+  it('serializes concurrent writes so the overwritten write is reported', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const firstUrls = [imageUrl('/concurrent-a-d.png'), imageUrl('/concurrent-a-m.png')] as const;
+    const secondUrls = [imageUrl('/concurrent-b-d.png'), imageUrl('/concurrent-b-m.png')] as const;
+
+    await Promise.all([
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: config.id,
+          sortOrder: 0,
+          desktopImageUrl: firstUrls[0],
+          mobileImageUrl: firstUrls[1],
+        },
+        ADMIN_ID,
+      ),
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: config.id,
+          sortOrder: 0,
+          desktopImageUrl: secondUrls[0],
+          mobileImageUrl: secondUrls[1],
+        },
+        ADMIN_ID,
+      ),
+    ]);
+
+    const [finalImage] = await db.drizzle.db
+      .select()
+      .from(bannerImageTable)
+      .where(eq(bannerImageTable.bannerConfigurationId, config.id));
+    if (!finalImage) {
+      throw new Error('Expected the concurrent image write to persist a row');
+    }
+    const replacedUrls = finalImage.desktopImageUrl === firstUrls[0] ? secondUrls : firstUrls;
+    const setEvents = events.emit.mock.calls.filter(([topic]) => topic === 'cms.banner.image.set');
+
+    expect(setEvents).toHaveLength(2);
+    expect(setEvents.map(([, payload]) => payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ droppedImageUrls: [] }),
+        expect.objectContaining({ droppedImageUrls: replacedUrls }),
+      ]),
+    );
+  });
+
+  it('serializes concurrent cross-configuration mutations that affect the same URL', async () => {
+    const { svc, events } = makeService();
+    const sharedUrl = imageUrl('/cross-configuration-race.png');
+    const removedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const introducedConfig = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: removedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: sharedUrl,
+        mobileImageUrl: imageUrl('/cross-configuration-removed-mobile.png'),
+      },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: introducedConfig.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/cross-configuration-original.png'),
+        mobileImageUrl: imageUrl('/cross-configuration-introduced-mobile.png'),
+      },
+      ADMIN_ID,
+    );
+    events.emit.mockClear();
+
+    let reportLockHeld!: () => void;
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      reportLockHeld = resolve;
+    });
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const blocker = db.drizzle.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${`cms:banner-image-url:${sharedUrl}`}))`,
+      );
+      reportLockHeld();
+      await lockReleased;
+    });
+    await lockHeld;
+
+    const mutations = Promise.all([
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: removedConfig.id,
+          sortOrder: 0,
+          desktopImageUrl: imageUrl('/cross-configuration-replacement.png'),
+          mobileImageUrl: imageUrl('/cross-configuration-removed-mobile.png'),
+        },
+        ADMIN_ID,
+      ),
+      svc.setBannerImage(
+        {
+          bannerConfigurationId: introducedConfig.id,
+          sortOrder: 0,
+          desktopImageUrl: sharedUrl,
+          mobileImageUrl: imageUrl('/cross-configuration-introduced-mobile.png'),
+        },
+        ADMIN_ID,
+      ),
+    ]);
+    let lockWaitError: unknown;
+    try {
+      await expect
+        .poll(
+          async () => {
+            const result = await db.drizzle.db.execute<{ waiting: number }>(sql`
+              select count(*)::int as waiting
+              from pg_locks
+              where locktype = 'advisory'
+                and database = (select oid from pg_database where datname = current_database())
+                and not granted
+            `);
+            return result.rows[0]?.waiting ?? 0;
+          },
+          { timeout: 2_000 },
+        )
+        .toBe(2);
+    } catch (err) {
+      lockWaitError = err;
+    } finally {
+      releaseLock();
+      await blocker;
+      await mutations;
+    }
+    if (lockWaitError) {
+      throw lockWaitError;
+    }
+
+    const images = await db.drizzle.db.select().from(bannerImageTable);
+    expect(images).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bannerConfigurationId: removedConfig.id,
+          desktopImageUrl: imageUrl('/cross-configuration-replacement.png'),
+        }),
+        expect.objectContaining({
+          bannerConfigurationId: introducedConfig.id,
+          desktopImageUrl: sharedUrl,
+        }),
+      ]),
+    );
+  });
+
+  it('emits one deletion event when two deletes race for the same image', async () => {
+    const { svc, events } = makeService();
+    const config = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    const image = await svc.setBannerImage(
+      {
+        bannerConfigurationId: config.id,
+        sortOrder: 0,
+        desktopImageUrl: imageUrl('/delete-race-d.png'),
+        mobileImageUrl: imageUrl('/delete-race-m.png'),
+      },
+      ADMIN_ID,
+    );
+
+    const results = await Promise.allSettled([
+      svc.deleteBannerImage(image.id, ADMIN_ID),
+      svc.deleteBannerImage(image.id, ADMIN_ID),
+    ]);
+    const deletionEvents = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'cms.banner.image.deleted',
+    );
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(deletionEvents).toHaveLength(1);
+  });
+});

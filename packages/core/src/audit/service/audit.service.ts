@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   DrizzleService,
+  likePrefix,
   pageToOffset,
   serializeRow,
   withAdvisoryXactLock,
@@ -125,12 +126,6 @@ function canonicalHashInput(fields: CanonicalHashInput): string {
 
 export function computeHash(fields: CanonicalHashInput): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
-}
-
-// Escape LIKE wildcards so a caller-supplied prefix ('rg.') matches literally and a
-// stray % or _ can't widen the match. Backslash is the default PG escape char.
-function likePrefix(prefix: string): string {
-  return `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
 export function startOfDayUtc(dateStr: string): Date {
