@@ -19,6 +19,7 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  EXCHANGE_RATE_READER,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
   AUDIT_WRITER,
@@ -253,6 +254,7 @@ export default {
           : undefined,
         audit: c.get(AUDIT_WRITER),
         rgLimits: c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
       });
 
       const reconciliation = new ReconciliationService({

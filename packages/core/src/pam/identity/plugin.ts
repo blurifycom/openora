@@ -23,6 +23,7 @@ import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/ser
 import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
+import { TwoFactorDeliveryService } from './service/two-factor-delivery.service.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
 import { PhoneVerificationService } from './service/phone-verification.service.js';
 import { WithdrawalPinService } from './service/withdrawal-pin.service.js';
@@ -158,6 +159,11 @@ export default {
           cache: c.get(CACHE),
           trustedDevices: makeTrustedDevices(c),
           twoFactorLockout: makeTwoFactorLockout(c),
+          twoFactorDelivery: new TwoFactorDeliveryService({
+            drizzle: c.get(DRIZZLE),
+            mailDispatch: c.get(MAIL_DISPATCH),
+            sms: c.get(SMS_ADAPTER),
+          }),
           sessions,
         }),
         sessions,

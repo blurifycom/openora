@@ -15,8 +15,11 @@ import type {
   PhoneVerificationRequestInput,
   PhoneVerificationRequestOutput,
   SecurityControls,
+  SendTwoFactorOtpResult,
   SetLoginWithdrawalAlertsInput,
   SetWithdrawalPinInput,
+  TwoFactorDeliveryMethod,
+  TwoFactorStatus,
 } from '@openora/core/contracts';
 import type { Paginated } from '@openora/core/contracts/kit';
 import { useOrpcQueryUtils } from '@openora/core/react';
@@ -45,8 +48,11 @@ export type UseConfirmPhoneVerificationResult = UseMutationResult<
   Error,
   PhoneVerificationConfirmInput
 >;
+export type UseTwoFactorStatusResult = UseQueryResult<TwoFactorStatus, Error>;
+// The route takes no body, so the mutation carries no variables of its own.
+export type UseSendTwoFactorOtpResult = UseMutationResult<SendTwoFactorOtpResult, Error, unknown>;
 
-export type { Enable2faResult };
+export type { Enable2faResult, TwoFactorDeliveryMethod, TwoFactorStatus };
 
 type IdentityUtils = ReturnType<typeof useOrpcQueryUtils<typeof identityContract>>;
 
@@ -57,6 +63,9 @@ const invalidateSecurityControls = (utils: IdentityUtils, queryClient: QueryClie
   Promise.all([
     queryClient.invalidateQueries({ queryKey: utils.me.key() }),
     queryClient.invalidateQueries({ queryKey: utils.security.me.key() }),
+    // Enrolment state lives in its own query, so without this the Security page keeps
+    // rendering the pre-enrolment controls until something else refetches it.
+    queryClient.invalidateQueries({ queryKey: utils.twoFactorStatus.key() }),
   ]);
 
 export function useEnable2fa() {
@@ -75,6 +84,19 @@ export function useVerify2fa() {
     ...utils.verify2fa.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
   });
+}
+
+// The Security page reads this rather than `me`: the active method and the masked
+// destinations are 2FA state, not profile fields, and must refresh whenever enrolment
+// changes without dragging the whole user object along.
+export function useTwoFactorStatus(): UseTwoFactorStatusResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useQuery(utils.twoFactorStatus.queryOptions());
+}
+
+export function useSendTwoFactorOtp(): UseSendTwoFactorOtpResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useMutation(utils.sendTwoFactorOtp.mutationOptions());
 }
 
 export function useDisable2fa() {

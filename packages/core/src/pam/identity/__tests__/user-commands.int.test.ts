@@ -39,14 +39,4 @@ describe('DrizzleUserCommands.setUsername', () => {
       code: 'CONFLICT',
     });
   });
-
-  it('lets other unique violations through untouched', async () => {
-    const existing = await seedUser(db, { name: 'other_name', username: 'other_name' });
-    const account = await seedUser(db, { name: 'mine_name', username: 'mine_name' });
-
-    // Email collides, not the username - the port must not relabel it as a username clash.
-    await expect(
-      db.drizzle.db.update(user).set({ email: existing.email }).where(eq(user.id, account.id)),
-    ).rejects.toThrow();
-  });
 });

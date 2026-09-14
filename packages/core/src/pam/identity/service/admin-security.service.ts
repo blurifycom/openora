@@ -349,6 +349,9 @@ export class AdminSecurityService implements AdminSecurityPolicy {
         .update(user)
         .set({
           twoFactorEnabled: false,
+          // Cleared with the enrolment it described: a stale method would route the
+          // next enrolment's code to a transport the account never chose.
+          twoFactorMethod: null,
           failedTwoFactorAttempts: 0,
           twoFactorLockoutUntil: null,
         })

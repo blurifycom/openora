@@ -132,22 +132,36 @@ export const UsernameAvailabilityInputSchema = z.object({ username: UsernameSche
 
 export const UsernameAvailabilityOutputSchema = z.object({ available: z.boolean() });
 
+// How the account receives its second factor. All three share one enrolment - the
+// secret and backup codes better-auth mints on enable - and differ only in delivery:
+// `app` reads a TOTP off the shared secret, `email` and `sms` have a one-time code
+// pushed to the registered address. The account holds exactly one at a time.
+export const TWO_FACTOR_DELIVERY_METHODS = ['app', 'email', 'sms'] as const;
+export const TwoFactorDeliveryMethodSchema = z.enum(TWO_FACTOR_DELIVERY_METHODS);
+
 export const Enable2faInputSchema = z.object({
   password: z.string().min(8),
+  method: TwoFactorDeliveryMethodSchema.default('app'),
 });
 
 export const Enable2faResultSchema = z.object({
-  totpUri: z.string().min(1),
+  // Only the authenticator method has a URI to render as a QR code; `email` and `sms`
+  // get their code pushed instead, so there is nothing for the client to display.
+  totpUri: z.string().min(1).optional(),
   backupCodes: z.array(z.string()),
+  // Where an `email`/`sms` code was sent, masked for display (p***@example.com).
+  maskedDestination: z.string().min(1).optional(),
 });
 
-// The two credentials that clear a challenge today. A backup code is single-use and
-// spends itself, which is what makes it the recovery path off a lost authenticator.
-export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code']);
+// The credentials that clear a challenge. A backup code is single-use and spends
+// itself, which is what makes it the recovery path off a lost authenticator; `otp`
+// is the pushed code the `email` and `sms` methods deliver.
+export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code', 'otp']);
 
-// A live authenticator code, six digits. Used as the fresh second factor a step-up
-// action (disable 2FA, regenerate backup codes, trust this device) has to clear on
-// top of the account password - a backup code is deliberately not accepted here.
+// A live second-factor code, six digits: a TOTP for the `app` method, a pushed
+// one-time code for `email`/`sms`. Used as the fresh factor a step-up action
+// (disable 2FA, regenerate backup codes, trust this device) has to clear on top of
+// the account password - a backup code is deliberately not accepted here.
 export const TotpStepUpCodeSchema = z.string().length(6);
 
 export const Verify2faInputSchema = z.object({
@@ -175,6 +189,24 @@ export const TrustCurrentDeviceInputSchema = z.object({
 
 export const BackupCodesResultSchema = z.object({
   backupCodes: z.array(z.string()),
+});
+
+// Pushes a one-time code to the account's registered address. Serves both the
+// "Resend code" action during enrolment and the send leg of an `email`/`sms`
+// challenge at login, so it answers from a live session or a pending challenge alike.
+export const SendTwoFactorOtpResultSchema = z.object({
+  maskedDestination: z.string().min(1),
+});
+
+// What the Security page renders: whether a second factor is active, which one, and
+// the addresses a code could go to - masked, because this is read from the session
+// rather than re-proved, so it must not hand back a full address or phone number.
+export const TwoFactorStatusSchema = z.object({
+  enabled: z.boolean(),
+  method: TwoFactorDeliveryMethodSchema.nullable(),
+  maskedEmail: z.string().min(1),
+  // Null when the account has no verified phone - the `sms` method is unavailable then.
+  maskedPhone: z.string().min(1).nullable(),
 });
 
 export const Disable2faInputSchema = z.object({
@@ -292,6 +324,9 @@ export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
 export type TwoFactorChallengeMethod = z.infer<typeof TwoFactorChallengeMethodSchema>;
+export type TwoFactorDeliveryMethod = z.infer<typeof TwoFactorDeliveryMethodSchema>;
+export type TwoFactorStatus = z.infer<typeof TwoFactorStatusSchema>;
+export type SendTwoFactorOtpResult = z.infer<typeof SendTwoFactorOtpResultSchema>;
 export type RegenerateBackupCodesInput = z.infer<typeof RegenerateBackupCodesInputSchema>;
 export type TrustCurrentDeviceInput = z.infer<typeof TrustCurrentDeviceInputSchema>;
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;

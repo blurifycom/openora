@@ -12,7 +12,7 @@ import {
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import type { PlatformConfig, RateLimiterAdapter } from '@openora/core/contracts';
+import type { PlatformConfig, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
@@ -23,6 +23,7 @@ import { user, session } from '../schema/index.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
 import { SessionService } from '../service/session.service.js';
 import type { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
+import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
 import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
@@ -31,6 +32,8 @@ const {
   verifyBackupCodeMock,
   generateBackupCodesMock,
   disableTwoFactorMock,
+  enableTwoFactorMock,
+  verifyTwoFactorOtpMock,
   getSessionMock,
   updateUserMock,
   requestPasswordResetEmailOTPMock,
@@ -44,6 +47,8 @@ const {
   verifyBackupCodeMock: vi.fn(),
   generateBackupCodesMock: vi.fn(),
   disableTwoFactorMock: vi.fn(),
+  enableTwoFactorMock: vi.fn(),
+  verifyTwoFactorOtpMock: vi.fn(),
   getSessionMock: vi.fn().mockResolvedValue(null),
   updateUserMock: vi.fn(),
   requestPasswordResetEmailOTPMock: vi.fn(),
@@ -78,6 +83,8 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         verifyBackupCode: verifyBackupCodeMock,
         generateBackupCodes: generateBackupCodesMock,
         disableTwoFactor: disableTwoFactorMock,
+        enableTwoFactor: enableTwoFactorMock,
+        verifyTwoFactorOTP: verifyTwoFactorOtpMock,
         signOut: vi.fn(),
         updateUser: updateUserMock,
         requestPasswordResetEmailOTP: requestPasswordResetEmailOTPMock,
@@ -105,6 +112,10 @@ function buildService(deps: Partial<IdentityServiceDeps> = {}) {
     drizzle: db.drizzle,
     events: makeEventBus(),
     identityReader: makeIdentityReader(),
+    twoFactorDelivery: new TwoFactorDeliveryService({
+      drizzle: db.drizzle,
+      sms: mock<SmsAdapter>({ sendOtp: vi.fn() }),
+    }),
     ...deps,
   });
 }
@@ -711,7 +722,7 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true });
+    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
   });
 
   it('challenges a device whose cookie was replayed from another browser', async () => {
@@ -727,7 +738,7 @@ describe('IdentityService - trusted device login (real PG)', () => {
       new Headers(),
     );
 
-    expect(result).toEqual({ twoFactorRedirect: true });
+    expect(result).toEqual({ twoFactorRedirect: true, twoFactorMethod: 'app' });
   });
 });
 
@@ -1149,10 +1160,10 @@ describe('IdentityService 2fa step-up teardown', () => {
     );
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
     const [row] = await db.drizzle.db
-      .select({ expiresAt: session.expiresAt })
+      .select({ live: sql<boolean>`${session.expiresAt} > now()` })
       .from(session)
       .where(eq(session.id, liveSession));
-    expect(row && row.expiresAt.getTime() > Date.now()).toBe(false);
+    expect(row?.live).toBe(false);
     expect(events.emit).toHaveBeenCalledWith('identity.2fa.disabled', expect.anything());
   });
 
@@ -1170,6 +1181,42 @@ describe('IdentityService 2fa step-up teardown', () => {
       ),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(disableTwoFactorMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to re-enrol an account that already has a live second factor', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await expect(
+      svc.enableTwoFactor(
+        { password: 'rightpass1', method: 'email' },
+        { cookie: 'better-auth.session_token=live' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    // better-auth's enable leg would have destroyed the working secret and backup
+    // codes before the player ever confirmed the new method.
+    expect(enableTwoFactorMock).not.toHaveBeenCalled();
+    expect((await readUser(account.id))?.twoFactorMethod).toBe('app');
+  });
+
+  it('enrols an account that has no second factor yet', async () => {
+    const account = await seedUser({ twoFactorEnabled: false });
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    enableTwoFactorMock.mockResolvedValue(
+      jsonResponse({ totpURI: 'otpauth://totp/x', backupCodes: ['aaaaa-bbbbb'] }, 200),
+    );
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    const result = await svc.enableTwoFactor(
+      { password: 'rightpass1', method: 'app' },
+      { cookie: 'better-auth.session_token=live' },
+      new Headers(),
+    );
+
+    expect(result.totpUri).toBe('otpauth://totp/x');
+    expect((await readUser(account.id))?.twoFactorMethod).toBe('app');
   });
 
   it('regenerateBackupCodes takes a fresh authenticator code and revokes old trust', async () => {
@@ -1217,9 +1264,10 @@ describe('IdentityService.trustCurrentDevice', () => {
     trusted.headers.append('set-cookie', 'better-auth.trust_device=granted; Path=/; HttpOnly');
     verifyTotpMock.mockResolvedValue(trusted);
     const trustedDevices = makeTrustedDevices();
+    const events = makeEventBus();
     const resHeaders = new Headers();
 
-    await buildService({ trustedDevices }).trustCurrentDevice(
+    await buildService({ trustedDevices, events }).trustCurrentDevice(
       { password: 'rightpass1', code: '123456' },
       { cookie: 'better-auth.session_token=live', 'user-agent': BROWSER_UA },
       resHeaders,
@@ -1230,6 +1278,17 @@ describe('IdentityService.trustCurrentDevice', () => {
     expect(call?.[0].headers.get('cookie')).toBe('better-auth.two_factor=pending-value');
     expect(resHeaders.getSetCookie().join(';')).toContain('trust_device=granted');
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(true);
+    // The event carries the method that was actually spent, not a literal - a
+    // reader (security alerts, audit) must see `totp` for the reason it is `totp`
+    // here: this route rejects every other method before it ever gets this far.
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.verified',
+      expect.objectContaining({ method: 'totp', trustedDevice: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.authentication.succeeded',
+      expect.objectContaining({ method: 'totp' }),
+    );
   });
 
   it('refuses an account that has no second factor to trust', async () => {

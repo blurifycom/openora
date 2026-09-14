@@ -1,3 +1,5 @@
 # A pull that fast-forwards never fires post-checkout, so mirror the regen here
-# too - new .rulesync sources must reach AGENTS.md / CLAUDE.md immediately.
+# too - new .rulesync sources must reach AGENTS.md / CLAUDE.md immediately, and the
+# gitignored catalog must match the pulled source.
 pnpm gen:agents
+pnpm gen:catalog

@@ -138,6 +138,9 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           ? { trustDeviceMaxAge: options.twoFactor.trustDeviceMaxAgeSec }
           : {}),
         otpOptions: {
+          // better-auth defaults this to "plain", which parks a live second factor in
+          // `verification.value` in cleartext for the whole of its window.
+          storeOTP: 'hashed',
           ...(options.twoFactor?.otpPeriodMinutes !== undefined
             ? { period: options.twoFactor.otpPeriodMinutes }
             : {}),

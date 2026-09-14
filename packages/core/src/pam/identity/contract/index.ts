@@ -11,6 +11,9 @@ import {
   Enable2faResultSchema,
   Verify2faInputSchema,
   Disable2faInputSchema,
+  SendTwoFactorOtpResultSchema,
+  TwoFactorDeliveryMethodSchema,
+  TwoFactorStatusSchema,
   RegenerateBackupCodesInputSchema,
   BackupCodesResultSchema,
   TrustCurrentDeviceInputSchema,
@@ -122,6 +125,9 @@ export const identityContract = {
         user: UserSchema.optional(),
         session: SessionSchema.optional(),
         twoFactorRedirect: z.boolean().optional(),
+        // Which second factor the challenge should ask for. Absent when the attempt
+        // never resolved to an account, so the client falls back to an authenticator.
+        twoFactorMethod: TwoFactorDeliveryMethodSchema.optional(),
         security: LoginSecurityStateSchema.optional(),
       }),
     ),
@@ -199,6 +205,18 @@ export const identityContract = {
     .route({ method: 'POST', path: '/identity/2fa/disable' })
     .input(Disable2faInputSchema)
     .output(IdentitySuccessSchema),
+
+  // Pushes a fresh code to an `email`/`sms` account. The subject is resolved from a
+  // live session or, failing that, the signed pending-challenge cookie, so this
+  // answers during enrolment ("Resend code") and mid-login alike - and takes no body,
+  // so the caller can never name an account other than its own.
+  sendTwoFactorOtp: oc
+    .route({ method: 'POST', path: '/identity/2fa/otp/send' })
+    .output(SendTwoFactorOtpResultSchema),
+
+  twoFactorStatus: oc
+    .route({ method: 'GET', path: '/identity/2fa/status' })
+    .output(TwoFactorStatusSchema),
 
   // Backup codes are spent one per use and are shown exactly once, so an account that
   // burns through them needs a way back to a full set without dropping its second factor.

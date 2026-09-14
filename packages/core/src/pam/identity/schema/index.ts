@@ -10,9 +10,10 @@ import {
   integer,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { THEMES } from '@openora/core/contracts';
+import { THEMES, TWO_FACTOR_DELIVERY_METHODS } from '@openora/core/contracts';
 
 export const userThemeEnum = pgEnum('user_theme', THEMES);
+export const twoFactorMethodEnum = pgEnum('two_factor_method', TWO_FACTOR_DELIVERY_METHODS);
 
 export const user = pgTable(
   'user',
@@ -36,6 +37,10 @@ export const user = pgTable(
     // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
     // for SQL identifiers so migrations and runtime are consistent.
     twoFactorEnabled: boolean().default(false),
+    // Which delivery the account's single enrolment uses. Ours, not better-auth's: the
+    // plugin knows one secret and lets any of its verify endpoints spend it, so this
+    // column is what pins an account to `app`, `email` or `sms`. Null while unenrolled.
+    twoFactorMethod: twoFactorMethodEnum(),
     phoneNumber: text().unique(),
     phoneVerified: boolean().notNull().default(false),
     phoneVerifiedAt: timestamp({ withTimezone: true }),

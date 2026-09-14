@@ -2,8 +2,12 @@
 /**
  * Generates the platform CATALOG - the machine-readable surface a downstream
  * consumer's AI agent reads INSTEAD of grepping node_modules. Emits:
- *   docs/catalog.json  - structured, consumed at runtime by the published @openora/mcp
- *                        server (a consumer's node_modules has no platform source).
+ *   docs/catalog.json               - structured, read by this repo's tooling and agents.
+ *   packages/mcp/docs/catalog.json  - the same file, read at runtime by @openora/mcp: shipped in
+ *                                     the published package, and resolved by a consumer running
+ *                                     the server from a linked checkout.
+ * Both are gitignored: generated on install (`prepare`), after a pull or branch switch (husky),
+ * and by `pnpm regen`, so a committed copy can never go stale.
  * Human/agent-readable access is the MCP dev server (describe-module, list-routes)
  * plus each module's contract, schema, and plugin - no monolithic markdown dump.
  *
@@ -11,8 +15,8 @@
  * status), domain events, Zod schema index, the igaming-config shape,
  * and the plugin-contract surface.
  *
- * Pure filesystem parsing - no package imports - so it is robust and DETERMINISTIC
- * (no timestamp), which lets CI run it and fail on an uncommitted diff (drift gate).
+ * Pure filesystem parsing - no package imports, no build - so it is cheap enough to run on every
+ * install, and DETERMINISTIC (no timestamp).
  *
  * Run via `pnpm regen` (or `pnpm gen:catalog`).
  */
@@ -268,14 +272,17 @@ const catalog = {
 };
 
 const docsDir = join(repoRoot, 'docs');
-mkdirSync(docsDir, { recursive: true });
-writeFileSync(join(docsDir, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n');
+const catalogJson = JSON.stringify(catalog, null, 2) + '\n';
+for (const dir of [docsDir, join(repoRoot, 'packages', 'mcp', 'docs')]) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'catalog.json'), catalogJson);
+}
 console.log(
   `[catalog] ${catalog.modules.length} modules, ${catalog.adapters.length} adapters ` +
     `(${catalog.adapters.filter((a) => a.status === 'wired').length} wired), ` +
     `${catalog.events.length} events, ${catalog.schemas.length} schemas`,
 );
-console.log('[catalog] wrote docs/catalog.json');
+console.log('[catalog] wrote docs/catalog.json and packages/mcp/docs/catalog.json');
 
 // The domain reference table in system-design.md is derived from the same data, so it is
 // generated rather than hand-maintained - it drifted badly when it was not. Everything else

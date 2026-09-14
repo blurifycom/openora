@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { AdminPermissionResolver } from '@openora/core/contracts';
+import type { AdminPermissionResolver, AdminSecurityPolicy } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeEventBus } from '../../../testing/mock.js';
 import { AdminGuard } from '../admin-guard.js';
@@ -17,10 +17,12 @@ function makeGuard({
   userId,
   grants,
   superAdmin,
+  securityPolicy,
 }: {
   userId?: string;
   grants?: { resource: string; action: string }[];
   superAdmin?: boolean | null;
+  securityPolicy?: AdminSecurityPolicy;
 } = {}) {
   const events = makeEventBus();
   const sessions = mock<SessionResolver>({
@@ -32,7 +34,14 @@ function makeGuard({
         isSuperAdmin: vi.fn(async () => superAdmin ?? null),
       })
     : undefined;
-  const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events);
+  const guard = new AdminGuard(
+    db.drizzle,
+    sessions,
+    permissionResolver,
+    events,
+    undefined,
+    securityPolicy,
+  );
   return { guard, events };
 }
 
@@ -247,5 +256,63 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
     await expect(guard.assertSuperAdmin(requestContext(ADMIN_HEADERS))).rejects.toThrow(
       expect.objectContaining({ code: 'FORBIDDEN' }),
     );
+  });
+
+  describe('admin security policy', () => {
+    const policy = (overrides: Partial<AdminSecurityPolicy> = {}) =>
+      mock<AdminSecurityPolicy>({
+        assertEnrolled: vi.fn(async () => undefined),
+        assertSessionIntact: vi.fn(async () => undefined),
+        ...overrides,
+      });
+
+    it('propagates a refused enrolment check, even for a caller the permission check passed', async () => {
+      const userId = await seedUser('admin');
+      const securityPolicy = policy({
+        assertEnrolled: vi.fn(async () => {
+          throw new Error('two-factor enrolment required');
+        }),
+      });
+      const { guard } = makeGuard({
+        userId,
+        grants: [{ resource: 'player', action: 'view' }],
+        securityPolicy,
+      });
+
+      await expect(guard.assert(requestContext(ADMIN_HEADERS), 'player', 'view')).rejects.toThrow(
+        /two-factor enrolment required/,
+      );
+      expect(securityPolicy.assertSessionIntact).not.toHaveBeenCalled();
+    });
+
+    it('propagates a refused session-integrity check', async () => {
+      const userId = await seedUser('admin');
+      const securityPolicy = policy({
+        assertSessionIntact: vi.fn(async () => {
+          throw new Error('session device mismatch');
+        }),
+      });
+      const { guard } = makeGuard({ userId, securityPolicy });
+
+      await expect(guard.assert(requestContext(ADMIN_HEADERS))).rejects.toThrow(
+        /session device mismatch/,
+      );
+    });
+
+    it('returns the caller once both checks pass, having run them on this session', async () => {
+      const userId = await seedUser('admin');
+      const securityPolicy = policy();
+      const { guard } = makeGuard({ userId, securityPolicy });
+
+      await expect(guard.assert(requestContext(ADMIN_HEADERS))).resolves.toMatchObject({
+        userId,
+        role: 'admin',
+      });
+      const expected = { userId, sessionId: expect.any(String), ip: '127.0.0.1' };
+      expect(securityPolicy.assertEnrolled).toHaveBeenCalledWith(expect.objectContaining(expected));
+      expect(securityPolicy.assertSessionIntact).toHaveBeenCalledWith(
+        expect.objectContaining(expected),
+      );
+    });
   });
 });
