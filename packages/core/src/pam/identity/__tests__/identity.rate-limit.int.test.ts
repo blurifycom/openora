@@ -32,6 +32,16 @@ function withTemplateRenderer(
   });
 }
 
+const { getSessionMock } = vi.hoisted(() => ({
+  getSessionMock: vi.fn().mockResolvedValue(null),
+}));
+
+const rejectedOtpResponse = () =>
+  new Response(JSON.stringify({ message: 'Invalid or expired verification code' }), {
+    status: 400,
+    headers: { 'content-type': 'application/json' },
+  });
+
 // Keep the real @openora/core/server (so assertRateLimit + RedisRateLimiter are real); only
 // stub createAuth so the constructor doesn't touch a real DB.
 vi.mock('@openora/core/server', async (importOriginal) => {
@@ -39,7 +49,12 @@ vi.mock('@openora/core/server', async (importOriginal) => {
   return {
     ...actual,
     createAuth: vi.fn(() => ({
-      api: { getSession: vi.fn().mockResolvedValue(null), signUpEmail: vi.fn() },
+      api: {
+        getSession: getSessionMock,
+        signUpEmail: vi.fn(),
+        requestEmailChangeEmailOTP: vi.fn().mockResolvedValue(rejectedOtpResponse()),
+        changeEmailEmailOTP: vi.fn().mockResolvedValue(rejectedOtpResponse()),
+      },
     })),
   };
 });
@@ -64,6 +79,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await redis.flush();
+  getSessionMock.mockReset();
+  getSessionMock.mockResolvedValue(null);
 });
 
 describe('IdentityService - rate limiting (real Redis)', () => {
@@ -279,6 +296,56 @@ describe('IdentityService - email-change rate limits do not spend the target/IP 
         }),
       ).resolves.toMatchObject({ allowed: true });
     }
+  });
+});
+
+describe('IdentityService - email-change target rate limit is bound to the caller, not just the target', () => {
+  const attackerId = '00000000-0000-4000-8000-0000000000a1';
+  const victimId = '00000000-0000-4000-8000-0000000000b2';
+
+  it('a different signed-in caller spamming a known target does not spend the real requester budget', async () => {
+    const limiter = makeLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+    const targetEmail = 'coveted-request@e2e.test';
+
+    getSessionMock.mockResolvedValue({ user: { id: attackerId } });
+
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        svc.requestEmailChange(
+          { newEmail: targetEmail, currentPassword: 'whatever' },
+          {},
+          new Headers(),
+        ),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    }
+
+    getSessionMock.mockResolvedValue({ user: { id: victimId } });
+    await expect(
+      svc.requestEmailChange(
+        { newEmail: targetEmail, currentPassword: 'whatever' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+
+  it('a different signed-in caller spamming a known confirm target does not spend the real requester budget', async () => {
+    const limiter = makeLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+    const targetEmail = 'coveted-confirm@e2e.test';
+
+    getSessionMock.mockResolvedValue({ user: { id: attackerId } });
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        svc.confirmEmailChange({ newEmail: targetEmail, otp: '000000' }, {}, new Headers()),
+      ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    }
+
+    getSessionMock.mockResolvedValue({ user: { id: victimId } });
+    await expect(
+      svc.confirmEmailChange({ newEmail: targetEmail, otp: '000000' }, {}, new Headers()),
+    ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });
 

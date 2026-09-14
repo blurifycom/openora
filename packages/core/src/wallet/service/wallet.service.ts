@@ -1762,9 +1762,22 @@ export class WalletService {
         return false;
       }
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
+      // In the same transaction as the credit, not left to the `wallet.withdrawal.failed`
+      // subscriber below: that fires only after commit, so a crash or a dead subscriber
+      // between the two would return the funds with no audit row behind the movement.
+      await this.audit.recordInTransaction(txn, {
+        actorType: adminId ? 'admin' : 'system',
+        actorId: adminId,
+        action: 'wallet.withdrawal.failed',
+        resourceType: 'withdrawal',
+        resourceId: tx.id,
+        after: { userId, amount, currency: tx.currency, reason: null },
+      });
       return true;
     });
     // Emitted on every path that returns held funds, not just the admin-reviewed one.
+    // Notification-only now - the audit plugin no longer subscribes this topic, see
+    // the recordInTransaction call above.
     if (transitioned) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,

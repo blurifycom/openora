@@ -92,7 +92,7 @@ describe('email change flow', () => {
     expect(await emailOf(userId)).toBe(oldEmail);
   });
 
-  it('confirms the new address with an OTP and notifies the old one', async () => {
+  it('confirms the new address with an OTP and notifies both inboxes', async () => {
     const { userId, email: oldEmail, client } = await newPlayer();
     const newEmail = `mail-lc-new-${randomUUID()}@e2e.test`;
     clearCapturedEmails();
@@ -109,10 +109,14 @@ describe('email change flow', () => {
 
     expect(await emailOf(userId)).toBe(newEmail);
 
-    // "It changed" notice lands on the OLD inbox, not the new one.
+    // The OLD inbox gets the "was this you?" warning, with a support CTA.
     const notice = await waitForEmail(oldEmail, (m) => m.subject === CHANGED_SUBJECT);
     expect(notice.text).toContain(newEmail);
-    expect(capturedEmailsFor(newEmail).some((m) => m.subject === CHANGED_SUBJECT)).toBe(false);
+    expect(notice.text).toContain('support');
+
+    // The NEW inbox gets a plain confirmation instead - same subject, no warning.
+    const confirmation = await waitForEmail(newEmail, (m) => m.subject === CHANGED_SUBJECT);
+    expect(confirmation.text).not.toContain('support');
 
     // No second welcome for an account that already had one.
     expect(capturedEmailsFor(newEmail).some((m) => m.subject === WELCOME_SUBJECT)).toBe(false);

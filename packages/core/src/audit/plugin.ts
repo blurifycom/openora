@@ -1055,7 +1055,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.requested',
   'wallet.withdrawal.approved',
   'wallet.withdrawal.rejected',
-  'wallet.withdrawal.failed',
+  // wallet.withdrawal.failed: NOT subscribed - WalletService.finalizeFailedWithdrawal
+  // writes this audit row itself via recordInTransaction, atomically with the refund
+  // credit (docs/standards/money.md). Subscribing here too would double-record it,
+  // and worse, on the same best-effort/after-commit timing the direct write exists
+  // to avoid. mapEventToRecord keeps its 'wallet.withdrawal.failed' branch - it is
+  // still unit-tested directly - it is just never reached through this subscription.
   'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',

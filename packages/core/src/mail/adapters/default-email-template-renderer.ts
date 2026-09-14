@@ -168,9 +168,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
   }),
   emailChanged: (data, locale) => ({
     subject: 'Your email address was changed',
-    text:
-      `The email address on your account was changed to ${data.newEmail} on ${formatEmailDate(data.occurredAt, locale)}.\n\n` +
-      `If this was not you, contact support immediately - your account may be compromised.`,
+    text: data.isNewAddress
+      ? `This is now the email address used to sign in to your account, effective ${formatEmailDate(data.occurredAt, locale)}.`
+      : `The email address on your account was changed to ${data.newEmail} on ${formatEmailDate(data.occurredAt, locale)}.\n\n` +
+        `If this was not you, contact support immediately - your account may be compromised.`,
   }),
   securityAntiPhishingCodeChanged: (data) => ({
     subject: 'Your anti-phishing code changed',

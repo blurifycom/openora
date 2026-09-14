@@ -72,10 +72,17 @@ export const EmailTemplateDataSchemas = {
   welcome: z.object({}),
   emailChangeConfirmation: z.object({
     otp: z.string(),
-    oldEmail: z.email(),
+    // Masked, never the full address: this mail goes to the new inbox before it has
+    // proven anything, so the current owner's real address must not leak to whoever
+    // typed it in as the target.
+    oldEmail: z.string(),
     newEmail: z.email(),
   }),
-  emailChanged: z.object({ newEmail: z.email(), occurredAt: TimestampSchema }),
+  emailChanged: z.object({
+    newEmail: z.email(),
+    occurredAt: TimestampSchema,
+    isNewAddress: z.boolean(),
+  }),
   securityAntiPhishingCodeChanged: z.object({ previousAntiPhishingCode: z.string().nullable() }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
 

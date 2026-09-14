@@ -7,12 +7,23 @@ import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
 import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora/core/contracts';
 
+// Mirrors `maskEmail` in pam/identity/service/two-factor-delivery.service.ts - duplicated
+// rather than imported so server/auth (lower-level) doesn't depend on pam/identity
+// (built on top of it). Masks a registered address down to what is safe to show an
+// inbox that has not yet proven it belongs to this account.
+function maskEmail(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  const head = local.length > 1 ? local.slice(0, 1) : '';
+  return `${head}***@${domain}`;
+}
+
 // Transport-agnostic OTP-mail hook; the identity plugin wires it to MAIL_DISPATCH.
 // A silent no-op when omitted (tests, the SessionResolver-only createAuth()).
 export type DispatchOtpMail = (args: {
   to: string;
   template: MailTemplate;
   recipientName?: string | null;
+  antiPhishingCode?: string | null;
 }) => Promise<void> | void;
 
 // Transport-agnostic second-factor OTP hook. The identity plugin binds the
@@ -186,9 +197,13 @@ export function createAuth(options: AuthOptions): BetterAuthType {
               to: email,
               template: {
                 key: 'emailChangeConfirmation',
-                data: { otp, oldEmail: session.user.email, newEmail: email },
+                data: { otp, oldEmail: maskEmail(session.user.email), newEmail: email },
               },
               recipientName: session.user.name ?? null,
+              // The new inbox has no user row of its own yet, so it cannot resolve one
+              // itself - carry the caller's own code, unaffected by the pending swap.
+              antiPhishingCode:
+                (session.user as { antiPhishingCode?: string | null }).antiPhishingCode ?? null,
             });
             return;
           }

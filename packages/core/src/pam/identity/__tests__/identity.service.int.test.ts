@@ -1713,10 +1713,53 @@ describe('IdentityService security controls', () => {
         antiPhishingCode: 'Sunny Meadow',
         template: {
           key: 'emailChanged',
-          data: { newEmail: 'new-address-2@test.dev', occurredAt: expect.any(String) },
+          data: {
+            newEmail: 'new-address-2@test.dev',
+            occurredAt: expect.any(String),
+            isNewAddress: false,
+          },
         },
       }),
     );
+  });
+
+  it('sends a plain, warning-free confirmation to the new address, with fields captured at swap time rather than looked up live', async () => {
+    const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address-4@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ success: true }, 200);
+    });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ mailDispatch });
+
+    await svc.confirmEmailChange(
+      { newEmail: 'new-address-4@test.dev', otp: '123456' },
+      {},
+      new Headers(),
+    );
+
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'new-address-4@test.dev',
+        antiPhishingCode: 'Sunny Meadow',
+        template: {
+          key: 'emailChanged',
+          data: {
+            newEmail: 'new-address-4@test.dev',
+            occurredAt: expect.any(String),
+            isNewAddress: true,
+          },
+        },
+      }),
+    );
+    expect(mailDispatch.toUser).not.toHaveBeenCalled();
   });
 
   it('still enqueues the emailChanged notice even when session revocation later throws', async () => {
@@ -1756,7 +1799,11 @@ describe('IdentityService security controls', () => {
         email: EMAIL,
         template: {
           key: 'emailChanged',
-          data: { newEmail: 'new-address-3@test.dev', occurredAt: expect.any(String) },
+          data: {
+            newEmail: 'new-address-3@test.dev',
+            occurredAt: expect.any(String),
+            isNewAddress: false,
+          },
         },
       }),
     );

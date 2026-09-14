@@ -93,7 +93,11 @@ describe('DefaultEmailTemplateRenderer', () => {
       },
       {
         key: 'emailChanged',
-        data: { newEmail: 'new@b.com', occurredAt: '2026-01-01T00:00:00.000Z' },
+        data: {
+          newEmail: 'new@b.com',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+          isNewAddress: false,
+        },
       },
       {
         key: 'withdrawalCompleted',
@@ -137,13 +141,30 @@ describe('DefaultEmailTemplateRenderer', () => {
     const notice = renderer.render(
       {
         key: 'emailChanged',
-        data: { newEmail: 'new@example.com', occurredAt: '2026-01-01T00:00:00.000Z' },
+        data: {
+          newEmail: 'new@example.com',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+          isNewAddress: false,
+        },
       },
       'en',
     );
     expect(notice.text).toContain('new@example.com');
     expect(notice.text).toContain('support');
     expect(notice.text).toContain('2026');
+
+    const confirmation = renderer.render(
+      {
+        key: 'emailChanged',
+        data: {
+          newEmail: 'new@example.com',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+          isNewAddress: true,
+        },
+      },
+      'en',
+    );
+    expect(confirmation.text).not.toContain('support');
   });
 
   it('groups the withdrawal amount in thousands, matching the in-app notification', () => {

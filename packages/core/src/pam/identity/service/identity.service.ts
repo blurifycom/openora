@@ -514,7 +514,7 @@ export class IdentityService {
       schema: { user, session, account, verification, twoFactor },
       ...(mailDispatch
         ? {
-            dispatchOtpMail: async ({ to, template, recipientName }) => {
+            dispatchOtpMail: async ({ to, template, recipientName, antiPhishingCode }) => {
               const idempotencyKey = `otp:${template.key}:${randomUUID()}`;
               const recipient = await this.findUserByEmail(to);
               if (recipient) {
@@ -526,6 +526,7 @@ export class IdentityService {
                 template,
                 idempotencyKey,
                 ...(recipientName !== undefined ? { recipientName } : {}),
+                ...(antiPhishingCode !== undefined ? { antiPhishingCode } : {}),
               });
             },
           }
@@ -2458,9 +2459,13 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
     const newEmail = input.newEmail.toLowerCase();
+    // Keyed on the caller too, not just the target inbox: a target-only bucket lets any
+    // signed-in account (no correct password needed - this runs before reauth) exhaust
+    // a known address's budget and deny the real owner their own change for 15 minutes.
+    // Per-(caller, target) still bounds how many codes one inbox gets from one caller.
     await assertRateLimit(
       this.limiter,
-      `change-email-target:${newEmail}`,
+      `change-email-target:${userId}:${newEmail}`,
       EMAIL_VERIFICATION_RATE_LIMIT,
     );
     if (ip) {
@@ -2519,9 +2524,12 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
     const newEmail = input.newEmail.toLowerCase();
+    // Same actor-binding as requestEmailChange's target bucket: a bare-target key lets
+    // any signed-in caller burn a known address's guess budget and lock the real
+    // requester out of confirming their own pending change for 15 minutes.
     await assertRateLimit(
       this.limiter,
-      `confirm-email-change-target:${newEmail}`,
+      `confirm-email-change-target:${userId}:${newEmail}`,
       VERIFY_EMAIL_RATE_LIMIT,
     );
     if (ip) {
@@ -2557,23 +2565,50 @@ export class IdentityService {
         ip,
         userAgent,
       });
-      // To the OLD address - the row now holds the new one. Enqueued right after the
-      // emit and before the revocation calls below: if either of those throws, the
-      // swap has already committed and the owner still needs the notice. Fire-and-
-      // forget like `dispatchMail` in notifications/plugin.ts - a mail-enqueue hiccup
-      // must not turn a committed swap into a reported failure. `randomUUID()` keeps
-      // the key unique so the queue's dedupe window can't swallow a repeat notice.
+      // Both inboxes get told - fire-and-forget like `dispatchMail` in
+      // notifications/plugin.ts, right after the emit and before the revocation calls
+      // below: if either of those throws, the swap has already committed and both
+      // owners still need their notice. `randomUUID()` keeps each key unique so the
+      // queue's dedupe window can't swallow a repeat notice.
+      //
+      // To the OLD address - the row no longer holds it, so every field is read from
+      // `before`. Carries the "was this you?" warning and a support CTA: this inbox
+      // could belong to someone who never asked for the change.
       this.mailDispatch
         ?.toAddress({
           email: before.email,
           locale: before.language,
           antiPhishingCode: before.antiPhishingCode,
           recipientName: before.name,
-          template: { key: 'emailChanged', data: { newEmail, occurredAt: changedAt } },
-          idempotencyKey: `email-change-notice:${userId}:${randomUUID()}`,
+          template: {
+            key: 'emailChanged',
+            data: { newEmail, occurredAt: changedAt, isNewAddress: false },
+          },
+          idempotencyKey: `email-change-notice-old:${userId}:${randomUUID()}`,
         })
         .catch((err: unknown) =>
-          identityLogger.error({ err, userId }, 'email-change notice enqueue failed'),
+          identityLogger.error({ err, userId }, 'email-change notice (old address) enqueue failed'),
+        );
+      // To the NEW address - `toAddress` with the fields already in hand from `before`
+      // (name/locale/antiPhishingCode are account-level, unaffected by the swap), not
+      // `toUser`: that reads the row live at delivery time, so a second change started
+      // right after this one would relabel this "new" notice onto whatever address the
+      // account holds by then. Plain confirmation, no warning: this inbox just proved
+      // ownership with a live OTP, it didn't fall victim to one.
+      this.mailDispatch
+        ?.toAddress({
+          email: newEmail,
+          locale: before.language,
+          antiPhishingCode: before.antiPhishingCode,
+          recipientName: before.name,
+          template: {
+            key: 'emailChanged',
+            data: { newEmail, occurredAt: changedAt, isNewAddress: true },
+          },
+          idempotencyKey: `email-change-notice-new:${userId}:${randomUUID()}`,
+        })
+        .catch((err: unknown) =>
+          identityLogger.error({ err, userId }, 'email-change notice (new address) enqueue failed'),
         );
       await this.trustedDevices?.revokeAllForUser(userId, userId);
       await this.sessions?.revokeAllSessions(userId, userId, meta);
