@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { SessionService, SessionNotFoundError } from '../service/session.service.js';
+
+const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000);
 
 let db: TestDb;
 
@@ -109,5 +111,52 @@ describe('SessionService', () => {
     await expect(service().revokeSession(stranger.id, target.id)).rejects.toBeInstanceOf(
       SessionNotFoundError,
     );
+  });
+
+  it('drops a player session idled past its own window from the active list, even though it has not expired yet', async () => {
+    const account = await seedUser(db);
+    await db.drizzle.db
+      .update(user)
+      .set({ autoLogoutDuration: '15m' })
+      .where(eq(user.id, account.id));
+    const idled = await seedSession(account.id, { lastSeenAt: minutesAgo(20) });
+    const fresh = await seedSession(account.id, { lastSeenAt: minutesAgo(1) });
+
+    const active = await service().listSessions({
+      userId: account.id,
+      activeOnly: true,
+      page: 1,
+      limit: 20,
+    });
+
+    expect(active.items.map((s) => s.id)).toEqual([fresh.id]);
+    expect(active.items.map((s) => s.id)).not.toContain(idled.id);
+  });
+
+  it('does not idle out an admin session, which has no auto-logout window of its own', async () => {
+    const admin = await seedUser(db, { role: 'admin' });
+    const target = await seedSession(admin.id, { lastSeenAt: minutesAgo(60 * 24 * 30) });
+
+    const active = await service().listSessions({
+      userId: admin.id,
+      activeOnly: true,
+      page: 1,
+      limit: 20,
+    });
+
+    expect(active.items.map((s) => s.id)).toContain(target.id);
+  });
+
+  it('excludes an idled-out player session from the platform-wide active list', async () => {
+    const account = await seedUser(db);
+    await db.drizzle.db
+      .update(user)
+      .set({ autoLogoutDuration: '15m' })
+      .where(eq(user.id, account.id));
+    const idled = await seedSession(account.id, { lastSeenAt: minutesAgo(20) });
+
+    const { items } = await service().listAllActiveSessions({ page: 1, limit: 20 });
+
+    expect(items.map((s) => s.id)).not.toContain(idled.id);
   });
 });

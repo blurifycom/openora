@@ -41,6 +41,7 @@ import {
   type IgamingConfig,
   PLATFORM_CONFIG,
   PLAYER_ACTIVITY_TRACKER,
+  SESSION_IDLE_POLICY,
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
@@ -457,7 +458,29 @@ export async function createApp(
       return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
     }
 
-    const { userId } = resolved;
+    const { userId, sessionId } = resolved;
+
+    // The player's "auto-logout when inactive" window. Checked before the session is
+    // published onto the context, so an idled-out request falls through to the
+    // unauthenticated path above rather than being served and 401ing somewhere deeper.
+    // A DB error here takes the same path as an expired session rather than throwing: it
+    // is a security check, so a transient failure must not serve the request anyway, but
+    // it must also not turn into a 500 on every authenticated route the moment this one
+    // query blips - the client should see "not signed in", the same honest answer an
+    // actually-idle session gets, not "server broken".
+    if (sessionId && container.has(SESSION_IDLE_POLICY)) {
+      let state: 'active' | 'expired';
+      try {
+        state = await container.get(SESSION_IDLE_POLICY).touch(userId, sessionId);
+      } catch (err) {
+        createLogger('session-idle').error({ err }, 'touch failed');
+        state = 'expired';
+      }
+      if (state === 'expired') {
+        return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
+      }
+    }
+
     context.auth = resolved;
 
     if (container.has(PLAYER_ACTIVITY_TRACKER)) {

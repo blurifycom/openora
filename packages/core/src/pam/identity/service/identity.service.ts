@@ -14,9 +14,9 @@ import {
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, lte, ne, sql } from 'drizzle-orm';
 import * as z from 'zod';
-import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import { user, session, account, verification, twoFactor, type Session } from '../schema/index.js';
 import { captureTimezone } from './capture-timezone.service.js';
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
@@ -61,8 +61,10 @@ import type {
   GeoCheckCommands,
   PlayerProvisioning,
   SecurityControls,
-  SetLoginWithdrawalAlertsInput,
   SetAntiPhishingCodeInput,
+  SetAutoLogoutInput,
+  SetLoginWithdrawalAlertsInput,
+  SetRequireTwoFactorOnLoginInput,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -88,6 +90,33 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
+}
+
+// Deletes every session row for `userId` created at or before `deadline`, except the
+// caller's freshly minted one (matched by `sparedToken`), and returns the ids of what
+// it deleted. Run a short delay after a password change: better-auth rotates the
+// password hash and deletes sessions in separate, untransacted statements, so a
+// sign-in that verified the OLD password just before the rotation can still insert
+// its session row immediately after `deleteUserSessions()` ran. That row predates
+// `deadline` (captured once the change is known committed), so this catches it while
+// sparing anything created afterwards.
+// Exported for direct testing; the service schedules it via setTimeout.
+export async function sweepRacedSessionsAfterPasswordChange(
+  db: DrizzleService['db'],
+  params: { userId: User['id']; sparedToken: Session['token']; deadline: Date },
+): Promise<Session['id'][]> {
+  const { userId, sparedToken, deadline } = params;
+  const deleted = await db
+    .delete(session)
+    .where(
+      and(
+        eq(session.userId, userId),
+        ne(session.token, sparedToken),
+        lte(session.createdAt, deadline),
+      ),
+    )
+    .returning({ id: session.id });
+  return deleted.map((row) => row.id);
 }
 
 // better-auth returns Date objects and may omit theme/language; the public
@@ -163,6 +192,22 @@ function hasTrustDeviceCookie(headers: Headers): boolean {
   return false;
 }
 
+// better-auth sets `<prefix>.dont_remember` when a user signs in with `rememberMe: false`.
+// Presence is enough here: we only use it to shorten the caller's own rotated session,
+// so a forged cookie can at worst clamp its owner's session earlier - never extend one.
+function hasDontRememberCookie(headers: Headers): boolean {
+  const cookieHeader = headers.get('cookie');
+  if (!cookieHeader) {
+    return false;
+  }
+  for (const [name] of parseCookies(cookieHeader)) {
+    if (name.endsWith('.dont_remember') || name === 'dont_remember') {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Drops the one pair and leaves every other byte alone: the cookies that stay carry
 // signed, percent-encoded values better-auth re-verifies exactly as the browser sent them.
 function withoutTrustDeviceCookie(headers: Headers): Headers {
@@ -216,7 +261,11 @@ type ExtendedAuthApi = {
   resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
   sendVerificationOTP: AuthCall<{ email: string; type: 'email-verification' }>;
   verifyEmailOTP: AuthCall<{ email: string; otp: string }>;
-  changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
+  changePassword: AuthCall<{
+    currentPassword: string;
+    newPassword: string;
+    revokeOtherSessions?: boolean;
+  }>;
   requestEmailChangeEmailOTP: AuthCall<{ newEmail: string }>;
   changeEmailEmailOTP: AuthCall<{ newEmail: string; otp: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
@@ -312,6 +361,15 @@ const VERIFY_EMAIL_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+// How long after a password change to re-sweep the user's sessions for a row that a
+// concurrent old-password sign-in raced in just after better-auth's revoke ran. This
+// is the residual exposure window; keep it short.
+const RACED_SESSION_SWEEP_DELAY_MS = 2_000;
+// better-auth's `createSession` gives a `dontRememberMe` session this fixed TTL
+// (`getDate(3600 * 24, 'sec')`). `revokeOtherSessions` mints the caller's replacement
+// session without that flag, so we re-apply the clamp when the request carries the
+// `dont_remember` cookie. Matches `SESSION_TTL_MS` in phone-login.service.
+const DONT_REMEMBER_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 // Fails closed: every call spends real money on an `sms` enrolment and fills a mailbox
 // on an `email` one, and better-auth issues a fresh code per send, so an unbounded
@@ -527,12 +585,29 @@ export class IdentityService {
   }
 
   private async currentUserId(headers: Headers) {
-    const session = await this.auth.api.getSession({ headers });
-    return session?.user?.id ?? null;
+    return (await this.currentSession(headers))?.userId ?? null;
+  }
+
+  // Both the caller's userId and the id of the session row they are authenticating
+  // with, for handlers that must tell the caller's own device apart from their others
+  // (eg sparing the acting session from a revoke-all).
+  private async currentSession(
+    headers: Headers,
+  ): Promise<{ userId: User['id']; sessionId?: Session['id'] } | null> {
+    const resolved = await this.auth.api.getSession({ headers });
+    const userId = resolved?.user?.id;
+    return userId ? { userId, sessionId: resolved?.session?.id } : null;
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
-    const controls = await getSecurityControls(this.drizzle, userId);
+    // 0 when trusted devices are not wired at all (some deployments), matching what
+    // `trust()` itself does with a non-positive `trustedDeviceDays`: a client reading 0
+    // knows the offer is not real anywhere it might otherwise render one.
+    const controls = await getSecurityControls(
+      this.drizzle,
+      userId,
+      this.trustedDevices?.getTrustedDeviceDays() ?? 0,
+    );
     if (!controls) {
       throw new UserNotFoundError(userId);
     }
@@ -786,6 +861,7 @@ export class IdentityService {
         role: user.role,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
+        requireTwoFactorOnLogin: user.requireTwoFactorOnLogin,
       })
       .from(user)
       .where(eq(user.email, email))
@@ -802,6 +878,7 @@ export class IdentityService {
           | 'role'
           | 'rgBlocked'
           | 'rgBlockedUntil'
+          | 'requireTwoFactorOnLogin'
         >
       | undefined = existingUserRow;
 
@@ -864,7 +941,11 @@ export class IdentityService {
     // presenting the cookie without a live row has to fall back to the full challenge.
     let signInHeaders = headers;
     if (existingUser && this.trustedDevices && hasTrustDeviceCookie(headers)) {
-      const trusted = await this.trustedDevices.isTrusted(existingUser.id, userAgent);
+      // "Require 2FA every login" outranks the cookie outright, so no lookup is needed -
+      // how well this browser is trusted stops mattering while the preference holds.
+      const trusted =
+        !existingUser.requireTwoFactorOnLogin &&
+        (await this.trustedDevices.isTrusted(existingUser.id, userAgent));
       if (!trusted) {
         signInHeaders = withoutTrustDeviceCookie(headers);
       }
@@ -897,9 +978,11 @@ export class IdentityService {
       if (body.twoFactorRedirect || !body.user || !body.token) {
         // The challenge screen has to know whether to ask for an authenticator code or
         // to push one, and there is no session yet to read the account's method from.
-        // Naming it here reveals nothing the challenge would not show anyway.
+        // Naming it here reveals nothing the challenge would not show anyway. Same for
+        // the trust window: an operator's configured length is not account-specific.
         return {
           twoFactorRedirect: true,
+          trustedDeviceDays: this.trustedDevices?.getTrustedDeviceDays() ?? 0,
           ...(existingUser
             ? { twoFactorMethod: await this.resolveTwoFactorMethod(existingUser.id) }
             : {}),
@@ -1491,6 +1574,25 @@ export class IdentityService {
     return destination.masked;
   }
 
+  /**
+   * Whether the account insists on a second factor every login. Read off the row rather
+   * than passed in: mid-challenge there is no session yet, so the only handle on the
+   * account is the id the pending cookie resolved to.
+   */
+  private async requiresTwoFactorEveryLogin(
+    userId: User['id'] | null | undefined,
+  ): Promise<boolean> {
+    if (!userId) {
+      return false;
+    }
+    const [row] = await this.drizzle.db
+      .select({ requireTwoFactorOnLogin: user.requireTwoFactorOnLogin })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.requireTwoFactorOnLogin ?? false;
+  }
+
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
@@ -1509,7 +1611,10 @@ export class IdentityService {
     // browser to: it clears the challenge but never buys the trust window. A pushed
     // `otp` is a real factor and does, the same as a live authenticator code.
     const trustDevice =
-      input.trustDevice && input.method !== 'backup_code' && this.trustedDevices !== undefined;
+      input.trustDevice &&
+      input.method !== 'backup_code' &&
+      this.trustedDevices !== undefined &&
+      !(await this.requiresTwoFactorEveryLogin(challengedUserId));
     const body = { code: input.code, trustDevice };
     const res = await this.verifyChallengeCode(input.method, body, headers);
     if (!res.ok && challengedUserId) {
@@ -1523,6 +1628,11 @@ export class IdentityService {
     // better-auth rotates the session on a successful challenge, so the request cookie is
     // already dead here - the actor is the identity resolved before the call.
     const userId = challengedUserId ?? (await this.currentUserId(headers));
+    // Ground truth for the caller: `trustDevice` already reflects backup-code and
+    // require-2fa-every-login refusals, but only actually buys the cookie below, and
+    // only when `userId` resolved. The client asked to trust this device and deserves to
+    // know whether that request was honoured rather than silently dropped.
+    let trustGranted = false;
     if (userId) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
       // A challenge answered from a live session is the enrolment step: better-auth only
@@ -1556,10 +1666,11 @@ export class IdentityService {
       }
       if (trustDevice) {
         await this.trustedDevices?.trust(userId, { ip, userAgent });
+        trustGranted = true;
       }
       await captureTimezone(this.playerProvisioning, userId, input.timezone);
     }
-    return SUCCESS;
+    return { ...SUCCESS, trustGranted };
   }
 
   /**
@@ -1580,6 +1691,13 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
     await assertRateLimit(this.limiter, `trustDevice:${userId}`, TWO_FACTOR_PASSWORD_RATE_LIMIT);
+    // Granting trust the login path is contractually going to ignore would leave the
+    // player with a device listed as trusted that still gets challenged every time.
+    if (await this.requiresTwoFactorEveryLogin(userId)) {
+      throw new ORPCError('UNPROCESSABLE_CONTENT', {
+        message: 'Turn off two-factor on every login before trusting this device.',
+      });
+    }
 
     const [account] = await this.drizzle.db
       .select({ email: user.email })
@@ -1752,6 +1870,14 @@ export class IdentityService {
     // a Super Admin reset performs - a browser must not keep the access 2FA was guarding.
     await this.trustedDevices?.revokeAllForUser(userId, userId);
     await this.sessions?.revokeAllSessions(userId, userId, { ip, userAgent });
+    // Must clear alongside the method: leaving it set strands the account with
+    // `twoFactorEnabled: false, requireTwoFactorOnLogin: true` - a state `trustCurrentDevice`
+    // reads as "still enforced" while `setRequireTwoFactorOnLogin` itself refuses to turn it
+    // off without `twoFactorEnabled`, so nothing in the product could ever escape it again.
+    await this.drizzle.db
+      .update(user)
+      .set({ requireTwoFactorOnLogin: false })
+      .where(eq(user.id, userId));
 
     this.events.emit('identity.2fa.disabled', {
       userId,
@@ -1822,26 +1948,134 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async changePassword(input: ChangePasswordInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  async changePassword(
+    input: ChangePasswordInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+    caller: { userId: User['id']; sessionId: Session['id'] },
+  ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const userId = await this.currentUserId(headers);
-    await assertRateLimit(
-      this.limiter,
-      `change-password:${userId ?? 'anonymous'}`,
-      CHANGE_PASSWORD_RATE_LIMIT,
-    );
+    const { userId, sessionId } = caller;
+    await assertRateLimit(this.limiter, `change-password:${userId}`, CHANGE_PASSWORD_RATE_LIMIT);
     const res = await this.api.changePassword({
-      body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
+      // revokeOtherSessions: better-auth deletes every session for this user and
+      // mints a fresh one for the caller; forwardCookies below ships that cookie.
+      body: {
+        currentPassword: input.currentPassword,
+        newPassword: input.newPassword,
+        revokeOtherSessions: true,
+      },
       headers,
       asResponse: true,
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    if (userId) {
+    // Captured once the rotation is known committed - the deferred sweep below deletes
+    // any session row created at or before this instant (i.e. one a concurrent
+    // old-password sign-in raced in), sparing anything created afterwards.
+    const sweepDeadline = new Date();
+    // The token of the session better-auth just minted for the caller. `ensureOk` only
+    // reads the body on failure, so this read is safe here.
+    // Library boundary: `Response.json()` resolves to `any`, and better-auth publishes no
+    // response type for this route, so its shape is asserted once here.
+    const rotatedToken =
+      ((await res.json().catch(() => ({}))) as { token?: string | null }).token ?? null;
+    // better-auth's response only carries the token, not the row id - look the row up
+    // once here and reuse its id both to clamp the dontRememberMe TTL below and to
+    // spare this (legitimate) session from the sweep's own revoke push further down.
+    const rotated = rotatedToken
+      ? (
+          await this.drizzle.db
+            .select({ id: session.id })
+            .from(session)
+            .where(eq(session.token, rotatedToken))
+            .limit(1)
+        )[0]
+      : undefined;
+    // `revokeOtherSessions` makes better-auth mint the replacement session via
+    // `createSession(userId)` with no `dontRememberMe` argument, so a caller who signed
+    // in with `rememberMe: false` silently gets a full-TTL row. better-auth's own
+    // `setSessionCookie` still honours the `dont_remember` cookie for the cookie maxAge,
+    // but not the DB row - clamp it back to the non-remembered TTL to match.
+    if (rotated && hasDontRememberCookie(headers)) {
       await this.drizzle.db
-        .update(user)
-        .set({ passwordMeetsPolicy: true })
-        .where(eq(user.id, userId));
+        .update(session)
+        .set({ expiresAt: new Date(Date.now() + DONT_REMEMBER_SESSION_TTL_MS) })
+        .where(eq(session.id, rotated.id));
+    }
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    // Independent of each other and of `rotated` - one round trip instead of two on a
+    // user-facing endpoint. (The TTL clamp above does depend on `rotated`, so it stays
+    // sequential.)
+    const [, playerId] = await Promise.all([
+      this.drizzle.db.update(user).set({ passwordMeetsPolicy: true }).where(eq(user.id, userId)),
+      this.identityReader.getPlayerIdByUserIdSafe(userId),
+    ]);
+    // Dedicated, non-sensitive record that the login credential itself changed -
+    // the audit mapper keys the action off the topic, so a plain
+    // `identity.sessions.revoked_all` alone would read as "revoked all sessions",
+    // not "changed password". Every state-changing credential action needs its own
+    // accurately named audit record.
+    this.events.emit('identity.password.changed', {
+      userId,
+      playerId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    // Same event the admin "revoke all sessions" path emits, so the streamSession
+    // SSE handler pushes { type: 'revoked' } to this user's OTHER tabs.
+    // exceptSessionId is the caller's PRE-rotation session id - it's the id the
+    // caller's already-open streamSession connection captured at stream-open, and the
+    // only value its SSE compare can ever match, so this is what spares the
+    // initiating tab.
+    this.events.emit('identity.sessions.revoked_all', {
+      userId,
+      playerId,
+      actorId: userId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+      exceptSessionId: sessionId,
+    });
+    // better-auth rotates the password hash and deletes sessions in separate,
+    // untransacted statements; a sign-in that verified the OLD password just before
+    // the rotation can still insert its session row right after. Re-sweep shortly
+    // after to delete it, sparing the caller's fresh session by token. Skipped when
+    // the rotated token is unknown - without it the sweep cannot tell the caller's
+    // own new session apart. Residual exposure: RACED_SESSION_SWEEP_DELAY_MS.
+    if (rotatedToken) {
+      const timer = setTimeout(() => {
+        void sweepRacedSessionsAfterPasswordChange(this.drizzle.db, {
+          userId,
+          sparedToken: rotatedToken,
+          deadline: sweepDeadline,
+        })
+          .then((deletedIds) => {
+            // A session the sweep just force-deleted got no push and no audit record
+            // otherwise: it raced in after the primary revoked_all above already
+            // fired, so this is the only notice it gets of either.
+            if (deletedIds.length === 0) {
+              return;
+            }
+            this.events.emit('identity.sessions.revoked_all', {
+              userId,
+              playerId,
+              actorId: userId,
+              ip: ip ?? null,
+              userAgent: userAgent ?? null,
+              // The caller's PRE-rotation session id, same as the primary emit above -
+              // it's what the initiating tab's already-open streamSession connection
+              // captured at stream-open, and the only value its SSE compare can match.
+              // `rotated.id` (the NEW row) can never match that, so using it here would
+              // force-revoke the legitimate acting tab the moment the sweep actually
+              // deletes a raced session.
+              exceptSessionId: sessionId,
+            });
+          })
+          .catch((err: unknown) => {
+            identityLogger.warn({ err, userId }, 'post-password-change session sweep failed');
+          });
+      }, RACED_SESSION_SWEEP_DELAY_MS);
+      timer.unref?.();
     }
     return SUCCESS;
   }
@@ -1854,10 +2088,16 @@ export class IdentityService {
     return this.securityControlsFor(userId);
   }
 
-  async setLoginWithdrawalAlerts(
-    input: SetLoginWithdrawalAlertsInput,
+  /**
+   * Resolves the caller of a security-preference setter and refuses anyone who is not a
+   * player. These setters reject before any shared guard runs, so a denial still owes the
+   * audit log the same signal AdminGuard emits (docs/standards/audit.md) - `resource`
+   * names which preference was attempted.
+   */
+  private async assertPlayerPreferenceCaller(
     reqHeaders: NodeHeaders,
-  ): Promise<SecurityControls> {
+    resource: string,
+  ): Promise<{ userId: string } & ClientMeta> {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const userId = await this.currentUserId(nodeHeadersToHeaders(reqHeaders));
     if (!userId) {
@@ -1869,12 +2109,10 @@ export class IdentityService {
       .where(eq(user.id, userId))
       .limit(1);
     if (caller?.role !== 'player') {
-      // A service-level denial still owes the audit log the same signal AdminGuard emits,
-      // since this check rejects before any shared guard runs (docs/standards/audit.md).
       this.events.emit('identity.user.unauthorized_access', {
         userId,
         playerId: null,
-        resource: 'identity.security.login_withdrawal_alerts',
+        resource,
         action: 'set',
         ...(caller?.role ? { role: caller.role } : {}),
         ip,
@@ -1884,6 +2122,17 @@ export class IdentityService {
         message: 'Only players can set this preference.',
       });
     }
+    return { userId, ip, userAgent };
+  }
+
+  async setLoginWithdrawalAlerts(
+    input: SetLoginWithdrawalAlertsInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { userId, ip, userAgent } = await this.assertPlayerPreferenceCaller(
+      reqHeaders,
+      'identity.security.login_withdrawal_alerts',
+    );
     const before = await this.securityControlsFor(userId);
     if (input.enabled && !before.emailVerified) {
       throw new ORPCError('UNPROCESSABLE_CONTENT', {
@@ -1906,6 +2155,74 @@ export class IdentityService {
       userAgent,
     });
     return { ...before, loginWithdrawalAlertsEnabled: input.enabled };
+  }
+
+  async setAutoLogoutDuration(
+    input: SetAutoLogoutInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { userId, ip, userAgent } = await this.assertPlayerPreferenceCaller(
+      reqHeaders,
+      'identity.security.auto_logout',
+    );
+    const before = await this.securityControlsFor(userId);
+    if (before.autoLogoutDuration === input.duration) {
+      return before;
+    }
+    await this.drizzle.db
+      .update(user)
+      .set({ autoLogoutDuration: input.duration })
+      .where(eq(user.id, userId));
+    this.events.emit('identity.security.auto_logout.updated', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      previousDuration: before.autoLogoutDuration,
+      duration: input.duration,
+      ip,
+      userAgent,
+    });
+    return { ...before, autoLogoutDuration: input.duration };
+  }
+
+  /**
+   * Turning this on also tears down the devices already trusted: stripping the trust
+   * cookie at login is enough to force the challenge, but leaving live rows behind would
+   * show a player devices that no longer buy anything, and hand them straight back the
+   * moment the toggle goes off again.
+   */
+  async setRequireTwoFactorOnLogin(
+    input: SetRequireTwoFactorOnLoginInput,
+    reqHeaders: NodeHeaders,
+  ): Promise<SecurityControls> {
+    const { userId, ip, userAgent } = await this.assertPlayerPreferenceCaller(
+      reqHeaders,
+      'identity.security.require_two_factor',
+    );
+    const before = await this.securityControlsFor(userId);
+    if (input.enabled && !before.twoFactorEnabled) {
+      throw new ORPCError('UNPROCESSABLE_CONTENT', {
+        message: 'Enable two-factor authentication before requiring it on every login.',
+      });
+    }
+    if (before.requireTwoFactorOnLogin === input.enabled) {
+      return before;
+    }
+    await this.drizzle.db
+      .update(user)
+      .set({ requireTwoFactorOnLogin: input.enabled })
+      .where(eq(user.id, userId));
+    if (input.enabled) {
+      await this.trustedDevices?.revokeAllForUser(userId, userId);
+    }
+    this.events.emit('identity.security.require_two_factor.updated', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      previousEnabled: before.requireTwoFactorOnLogin,
+      enabled: input.enabled,
+      ip,
+      userAgent,
+    });
+    return { ...before, requireTwoFactorOnLogin: input.enabled };
   }
 
   /**

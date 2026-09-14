@@ -4,8 +4,8 @@
 // (exit 2) only if the error is in the file just edited. Output is capped so a
 // failure can't balloon the model context. Fail-open on anything unexpected.
 
-import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, isAbsolute, relative } from 'node:path';
 import { extractFilePath, readPayload } from './_shared.mjs';
 
@@ -23,9 +23,19 @@ if (filePath.includes('/templates/') || filePath.includes('/generated/')) {
   process.exit(0);
 }
 
+/**
+ * node_modules/.bin/<name> when it exists, else the bare name off PATH. `pnpm exec`
+ * costs ~2.2s of package-manager startup per call against ~0.12s for the binary, and
+ * this hook runs on every edit.
+ */
+function bin(name) {
+  const local = join(process.env.CLAUDE_PROJECT_DIR ?? process.cwd(), 'node_modules/.bin', name);
+  return existsSync(local) ? local : name;
+}
+
 // Lint-fix (best effort - never block on the linter).
 try {
-  execSync(`pnpm exec oxlint --fix "${filePath}"`, { stdio: 'pipe' });
+  execFileSync(bin('oxlint'), ['--fix', filePath], { stdio: 'pipe' });
 } catch {
   /* oxlint unavailable or errored - fall through to the re-lint / typecheck */
 }
@@ -36,7 +46,7 @@ try {
 // only (warnings don't fail), so this blocks on a real boundary/cycle violation
 // in the edited file and feeds the message back. Fail-open on anything else.
 try {
-  execSync(`pnpm exec oxlint "${filePath}"`, { stdio: 'pipe' });
+  execFileSync(bin('oxlint'), [filePath], { stdio: 'pipe' });
 } catch (e) {
   const out = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');
   if (/\berror\b/.test(out)) {
@@ -76,7 +86,11 @@ function cap(text) {
 }
 
 try {
-  execSync(`pnpm --filter "${owner}" check:types`, { stdio: 'pipe' });
+  execFileSync(
+    bin('turbo'),
+    ['run', 'check:types', '--filter', owner, '--output-logs=errors-only', '--ui=stream'],
+    { stdio: 'pipe' },
+  );
   process.exit(0);
 } catch (e) {
   const output = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');

@@ -45,6 +45,7 @@ function build({
     auth,
     identityReader: makeIdentityReader(),
     hmacSecret: HMAC_SECRET,
+    trustedDeviceDays: 30,
   });
   return { svc, events, auth };
 }

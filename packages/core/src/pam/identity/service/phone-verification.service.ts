@@ -63,6 +63,7 @@ export type PhoneVerificationServiceDeps = {
   auth: Auth;
   identityReader: IdentityReader;
   twoFactorLockout?: TwoFactorLockoutService;
+  trustedDeviceDays: number;
 };
 
 export class PhoneVerificationService {
@@ -73,6 +74,7 @@ export class PhoneVerificationService {
   private readonly auth: Auth;
   private readonly identityReader: IdentityReader;
   private readonly twoFactorLockout?: TwoFactorLockoutService;
+  private readonly trustedDeviceDays: number;
 
   constructor({
     drizzle,
@@ -82,6 +84,7 @@ export class PhoneVerificationService {
     auth,
     identityReader,
     twoFactorLockout,
+    trustedDeviceDays,
   }: PhoneVerificationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -90,6 +93,7 @@ export class PhoneVerificationService {
     this.auth = auth;
     this.identityReader = identityReader;
     this.twoFactorLockout = twoFactorLockout;
+    this.trustedDeviceDays = trustedDeviceDays;
   }
 
   async request({
@@ -289,7 +293,7 @@ export class PhoneVerificationService {
       }
       throw error;
     }
-    const controls = await getSecurityControls(this.drizzle, userId);
+    const controls = await getSecurityControls(this.drizzle, userId, this.trustedDeviceDays);
     if (!controls) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
