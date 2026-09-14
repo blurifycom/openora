@@ -122,3 +122,25 @@ test('reads and consumer-local writes pass', () => {
   assert.equal(exitCode({ file_path: join(consumer, 'apps/api/src/a.ts') }), ALLOWED);
   assert.equal(exitCode({ file_path: join(consumer, 'node_modules/pkg/index.js') }), DENIED);
 });
+
+// Consumers work in git worktrees (<repo>/.claude/worktrees/<branch>), where `.git` is a file
+// pointing at the main checkout. Resolving the OSS sibling from the worktree would find nothing
+// and let every core write through, so the guard has to walk back to the main checkout first.
+test('the guard still finds the OSS checkout when the consumer is a git worktree', () => {
+  const worktree = join(consumer, '.claude', 'worktrees', 'feat+x');
+  mkdirSync(join(worktree, '.rulesync', 'hooks'), { recursive: true });
+  for (const name of ['guard-core.mjs', '_shared.mjs']) {
+    const hook = join('.rulesync', 'hooks', name);
+    copyFileSync(join(consumer, hook), join(worktree, hook));
+  }
+  writeFileSync(join(worktree, '.git'), `gitdir: ${join(consumer, '.git/worktrees/feat+x')}\n`);
+
+  const fromWorktree = (toolInput) =>
+    spawnSync('node', [join(worktree, '.rulesync', 'hooks', 'guard-core.mjs')], {
+      cwd: worktree,
+      input: JSON.stringify({ tool_input: toolInput }),
+    }).status;
+
+  assert.equal(fromWorktree({ file_path: join(oss, 'packages/core/src/a.ts') }), DENIED);
+  assert.equal(fromWorktree({ file_path: join(oss, '.worktrees/feat+x/packages/a.ts') }), ALLOWED);
+});
