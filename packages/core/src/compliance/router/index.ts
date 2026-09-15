@@ -21,6 +21,8 @@ import {
   ComplianceService,
   GameGeoRuleNotFoundError,
   GeoRuleGameNotFoundError,
+  GeoRuleProviderNotFoundError,
+  ProviderGeoRuleNotFoundError,
   CountryRuleConfirmationRequiredError,
   CountryRuleVersionConflictError,
   GlobalKycConfigVersionConflictError,
@@ -159,6 +161,33 @@ export function createComplianceRouter({
     listGameGeoRules: os.listGameGeoRules.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGameGeoRules(input);
+    }),
+
+    upsertProviderGeoRule: os.upsertProviderGeoRule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ NOT_FOUND: GeoRuleProviderNotFoundError }, () =>
+        compliance.upsertProviderGeoRule(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    deleteProviderGeoRule: os.deleteProviderGeoRule.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ NOT_FOUND: ProviderGeoRuleNotFoundError }, () =>
+        compliance.deleteProviderGeoRule(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    listProviderGeoRules: os.listProviderGeoRules.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return compliance.listProviderGeoRules(input);
     }),
 
     upsertCountryRule: os.upsertCountryRule.handler(async ({ input, context }) => {

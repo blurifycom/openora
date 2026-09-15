@@ -88,7 +88,7 @@ flowchart TB
     PM["player-management (PAM)"]:::gated
   end
   subgraph DCOMP["@openora/core/compliance · RG/KYC"]
-    COMP["compliance ⟨geo_rule·user_limit⟩"]:::core
+    COMP["compliance ⟨geo_rule·game_geo_rule·provider_geo_rule·user_limit⟩"]:::core
   end
   subgraph D3["@openora/core/wallet · money"]
     WAL["wallet ⟨wallet·wallet_transaction⟩"]:::core

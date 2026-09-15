@@ -121,6 +121,26 @@ export async function mapEventToRecord(
     };
   }
 
+  if (
+    topic === 'compliance.provider-geo-rule.upserted' ||
+    topic === 'compliance.provider-geo-rule.deleted'
+  ) {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'provider-geo-rule',
+      resourceId: str(p['ruleId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: {
+        state: isRecord(p['after']) ? p['after'] : null,
+        reason: p['reason'] ?? null,
+        providerId: p['providerId'] ?? null,
+        countryCode: p['countryCode'] ?? null,
+      },
+    };
+  }
+
   // Player requested a withdrawal (funds held). actorId = the player (resolved
   // playerId); resourceId = the withdrawal transaction.
   if (topic === 'wallet.withdrawal.requested') {
@@ -1132,6 +1152,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.geo-rule.added',
   'compliance.game-geo-rule.upserted',
   'compliance.game-geo-rule.deleted',
+  'compliance.provider-geo-rule.upserted',
+  'compliance.provider-geo-rule.deleted',
   'cms.page.published',
   'cms.page.created',
   'cms.page.updated',
