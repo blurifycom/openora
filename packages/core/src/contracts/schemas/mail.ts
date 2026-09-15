@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
+import { RgInitiatorSchema } from './compliance.js';
 
 export const MAIL_TEMPLATE_KEYS = [
   'verifyEmail',
@@ -50,8 +51,8 @@ export const EmailTemplateDataSchemas = {
     currency: CurrencyCodeSchema.nullable(),
     minutes: z.number().int().nullable(),
   }),
-  rgCoolingOffActivated: z.object({ expiresAt: TimestampSchema }),
-  rgCoolingOffLifted: z.object({}),
+  rgCoolingOffActivated: z.object({ expiresAt: TimestampSchema, initiatedBy: RgInitiatorSchema }),
+  rgCoolingOffLifted: z.object({ initiatedBy: RgInitiatorSchema }),
   rgSelfExclusionActivated: z.object({
     expiresAt: TimestampSchema.nullable(),
     isPermanent: z.boolean(),

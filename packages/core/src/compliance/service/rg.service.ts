@@ -438,7 +438,10 @@ export class RgService {
     });
     await this.notify(
       userId,
-      { key: 'rgCoolingOffActivated', data: { expiresAt: expiresAt.toISOString() } },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: expiresAt.toISOString(), initiatedBy },
+      },
       row.id,
     );
     return toExclusionDto(row);
@@ -622,7 +625,11 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, { key: 'rgCoolingOffLifted', data: {} }, row.id);
+    await this.notify(
+      userId,
+      { key: 'rgCoolingOffLifted', data: { initiatedBy: 'admin' } },
+      row.id,
+    );
     return toExclusionDto(row);
   }
 
@@ -680,6 +687,14 @@ export class RgService {
         expiresAt: (row.expiresAt ?? now).toISOString(),
       });
     }
+
+    await mapConcurrent(lapsed, SWEEP_CONCURRENCY, (row) =>
+      this.notify(
+        row.userId,
+        { key: 'rgCoolingOffLifted', data: { initiatedBy: 'system' } },
+        row.id,
+      ),
+    );
   }
 
   private expireLapsedCoolingOff(userId: User['id'], tx: Tx, now: Date) {

@@ -12,7 +12,7 @@ import { MailService } from '../service/mail.service.js';
 import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from '../contract/index.js';
 
 const verify: MailTemplate = { key: 'verifyEmail', data: { otp: '123456' } };
-const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: {} };
+const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: { initiatedBy: 'admin' } };
 const withdrawal: MailTemplate = {
   key: 'withdrawalApproved',
   data: {

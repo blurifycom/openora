@@ -61,8 +61,11 @@ describe('DefaultEmailTemplateRenderer', () => {
           minutes: null,
         },
       },
-      { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-01-01T00:00:00.000Z' } },
-      { key: 'rgCoolingOffLifted', data: {} },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: '2026-01-01T00:00:00.000Z', initiatedBy: 'player' },
+      },
+      { key: 'rgCoolingOffLifted', data: { initiatedBy: 'admin' } },
       { key: 'rgSelfExclusionActivated', data: { expiresAt: null, isPermanent: true } },
       { key: 'rgSelfExclusionLifted', data: {} },
       {
@@ -213,7 +216,10 @@ describe('DefaultEmailTemplateRenderer', () => {
   it('falls back to a default locale instead of throwing on an unparseable tag', () => {
     const render = () =>
       renderer.render(
-        { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+        {
+          key: 'rgCoolingOffActivated',
+          data: { expiresAt: '2026-03-09T15:30:00.000Z', initiatedBy: 'player' },
+        },
         'en_US',
       );
 
@@ -252,11 +258,17 @@ describe('DefaultEmailTemplateRenderer', () => {
 
   it('formats the cooling-off date against the recipient locale', () => {
     const en = renderer.render(
-      { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: '2026-03-09T15:30:00.000Z', initiatedBy: 'player' },
+      },
       'en-GB',
     );
     const de = renderer.render(
-      { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: '2026-03-09T15:30:00.000Z', initiatedBy: 'player' },
+      },
       'de-DE',
     );
 
