@@ -2539,7 +2539,7 @@ export class IdentityService {
       .select({
         email: user.email,
         language: user.language,
-        name: user.name,
+        name: user.username,
         antiPhishingCode: user.antiPhishingCode,
         loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
       })
