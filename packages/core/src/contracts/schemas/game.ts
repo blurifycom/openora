@@ -59,12 +59,24 @@ export const GAME_TAG_VISIBILITIES = ['visible', 'invisible'] as const;
 export const GameTagVisibilitySchema = z.enum(GAME_TAG_VISIBILITIES);
 export type GameTagVisibility = z.infer<typeof GameTagVisibilitySchema>;
 
+export const GAME_TAG_METADATA_MAX_ENTRIES = 20;
+
+// Operator-owned display data (a badge colour, an icon key). Lobby routes return it to
+// players on every visible tag, so it must never hold internal data. Flat strings keep
+// it bounded; widening the value type later is non-breaking, narrowing it is not.
+export const GameTagMetadataSchema = z
+  .record(z.string().min(1).max(64), z.string().max(512))
+  .refine((metadata) => Object.keys(metadata).length <= GAME_TAG_METADATA_MAX_ENTRIES, {
+    message: `At most ${GAME_TAG_METADATA_MAX_ENTRIES} metadata entries`,
+  });
+export type GameTagMetadata = z.infer<typeof GameTagMetadataSchema>;
+
 export const GameTagSummarySchema = z.object({
   id: UuidSchema,
   name: z.string(),
   type: GameTagTypeSchema,
   visibility: GameTagVisibilitySchema,
-  metadata: z.unknown().nullable(),
+  metadata: GameTagMetadataSchema.nullable(),
 });
 export type GameTagSummary = z.infer<typeof GameTagSummarySchema>;
 export const GameTagSnapshotSchema = GameTagSummarySchema.omit({ id: true });

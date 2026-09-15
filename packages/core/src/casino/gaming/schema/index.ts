@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   GameCategoryTranslationsSchema,
+  GameTagMetadataSchema,
   GAME_TAG_TYPES,
   GAME_TAG_VISIBILITIES,
   GAME_TYPES,
@@ -128,7 +129,7 @@ export const gameTag = pgTable(
     name: text().notNull(),
     type: gameTagTypeEnum().notNull().default('custom'),
     visibility: gameTagVisibilityEnum().notNull().default('invisible'),
-    metadata: jsonb(),
+    metadata: zodJsonb(GameTagMetadataSchema.nullable(), 'game_tag.metadata')(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),

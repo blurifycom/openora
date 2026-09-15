@@ -3,7 +3,38 @@ import {
   GameCategorySummarySchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
+  GameTagMetadataSchema,
+  GAME_TAG_METADATA_MAX_ENTRIES,
 } from '../game.js';
+
+describe('game tag metadata', () => {
+  it('accepts a flat map of strings', () => {
+    const result = GameTagMetadataSchema.safeParse({ badgeColor: '#ff0000', icon: 'fire' });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects non-string values', () => {
+    for (const value of [10, true, null, ['fire'], { bg: '#000' }]) {
+      expect(GameTagMetadataSchema.safeParse({ theme: value }).success).toBe(false);
+    }
+  });
+
+  it('bounds keys, values, and entry count', () => {
+    expect(GameTagMetadataSchema.safeParse({ '': 'x' }).success).toBe(false);
+    expect(GameTagMetadataSchema.safeParse({ ['k'.repeat(65)]: 'x' }).success).toBe(false);
+    expect(GameTagMetadataSchema.safeParse({ theme: 'x'.repeat(513) }).success).toBe(false);
+
+    const entries = (count: number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`key${i}`, 'x']));
+    expect(GameTagMetadataSchema.safeParse(entries(GAME_TAG_METADATA_MAX_ENTRIES)).success).toBe(
+      true,
+    );
+    expect(
+      GameTagMetadataSchema.safeParse(entries(GAME_TAG_METADATA_MAX_ENTRIES + 1)).success,
+    ).toBe(false);
+  });
+});
 
 describe('game category translations', () => {
   it('accepts BCP 47 language keys and bounded names', () => {
