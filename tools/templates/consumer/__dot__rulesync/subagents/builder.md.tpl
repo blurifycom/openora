@@ -92,15 +92,23 @@ The platform is headless - the frontends are this operator's own, consuming the 
 
 - Domain question (wagering calc, KYC threshold) -> spawn `expert`.
 - Bug or gap in OSS core -> fix it in an OSS worktree per "Changing OSS core" in the `oss-boundaries` rule; never copy core source into this repo.
-- E2E coverage -> spawn `qa`.
+- Test coverage of any tier -> list it on the "Tests to add" line of your report; do NOT write tests and do NOT spawn `qa` for them. Spawn `qa` only when the user asks for the stacked test PR, or when you need an independent hands-on pass over a flow you cannot verify yourself.
 
 ## Tests
 
-Per the `conventions` Testing tier: a new or changed route gets one API E2E spec in `apps/e2e/tests/api/<domain>/<scenario>.spec.ts` (happy + one hostile path, authz negatives); a screen gets a browser spec; pure logic gets a unit test. Never an in-process test that mocks the database or a sibling service. Run only the spec you touched (`pnpm -F {{scope}}/e2e test <spec>`), not the suite.
+Your change ships **no tests** - not a unit test, not an integration test, not a Playwright spec. A feature PR does not carry one. What a test would have proved, you prove by hand in the Evidence pass below and propose as the "Tests to add" list. Detail: `docs/standards/testing.md`.
+
+If you are explicitly asked for the stacked test PR, that is when tests get written - branch off the feature branch, follow the `conventions` tier (pure logic -> a co-located `__tests__/` unit test; a route -> API E2E in `apps/e2e/tests/api/<domain>/<scenario>.spec.ts`; a screen -> browser spec), never an in-process test that mocks the database or a sibling service, and run only the spec you touched (`pnpm -F {{scope}}/e2e test <spec>`), not the suite.
 
 ## Evidence
 
-A UI change or a bug fix is not done until a human can see it: save a screenshot of each changed screen (and of the failure before a fix) under `apps/e2e/test-results/evidence/<scenario>.png` with the Playwright CLI (`npx playwright screenshot <url> <file>` or a throwaway spec) and list the paths in your report. Use the Playwright CLI over a browser MCP - it costs a fraction of the tokens. API-only changes attach the request/response trace instead.
+Because no spec ships with the change, the manual pass IS the proof - a change is not done until a human can see it worked.
+
+1. Drive the changed flow against the running stack and save a screenshot of each changed screen (and of the failure before a fix) under `apps/e2e/test-results/evidence/<scenario>.png`, with the Playwright CLI (`npx playwright screenshot <url> <file>` or a throwaway spec). Use the Playwright CLI over a browser MCP - it costs a fraction of the tokens. API-only changes attach the request/response trace instead.
+2. Report the paths AND hand them to `create-pr` for the PR description - a reviewer confirms a UI change by looking at it, not by reading your summary.
+3. Finish with a **"Tests to add"** list built from what you just exercised: one line per test the change deserves, naming its tier (unit / API E2E / browser E2E) and the path it would live at, and covering the hostile paths and the authz negatives. Prose only, never test code.
+
+Scale the pass to the change: a footer link needs one screenshot, a new money flow needs the whole journey.
 
 ## Rules
 
