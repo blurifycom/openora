@@ -52,7 +52,8 @@ import type {
   User,
   IdentityReader,
   ChangePasswordInput,
-  ChangeEmailInput,
+  RequestEmailChangeInput,
+  ConfirmEmailChangeInput,
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
@@ -78,6 +79,7 @@ import {
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
 import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
+import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -264,7 +266,8 @@ type ExtendedAuthApi = {
     newPassword: string;
     revokeOtherSessions?: boolean;
   }>;
-  changeEmail: AuthCall<{ newEmail: string }>;
+  requestEmailChangeEmailOTP: AuthCall<{ newEmail: string }>;
+  changeEmailEmailOTP: AuthCall<{ newEmail: string; otp: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
 };
 
@@ -511,14 +514,20 @@ export class IdentityService {
       schema: { user, session, account, verification, twoFactor },
       ...(mailDispatch
         ? {
-            dispatchOtpMail: async ({ to, template }) => {
+            dispatchOtpMail: async ({ to, template, recipientName, antiPhishingCode }) => {
               const idempotencyKey = `otp:${template.key}:${randomUUID()}`;
               const recipient = await this.findUserByEmail(to);
               if (recipient) {
                 await mailDispatch.toUser({ userId: recipient.id, template, idempotencyKey });
                 return;
               }
-              await mailDispatch.toAddress({ email: to, template, idempotencyKey });
+              await mailDispatch.toAddress({
+                email: to,
+                template,
+                idempotencyKey,
+                ...(recipientName !== undefined ? { recipientName } : {}),
+                ...(antiPhishingCode !== undefined ? { antiPhishingCode } : {}),
+              });
             },
           }
         : {}),
@@ -2425,40 +2434,192 @@ export class IdentityService {
     };
   }
 
-  async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  /**
+   * Step 1 of the email change: better-auth mails a code to `newEmail` (type
+   * `change-email`), answering success even when the address is already taken so this
+   * never reveals whether an account exists. A live session is not proof enough on its
+   * own for a change this sensitive, so it demands the same fresh password/2FA proof as
+   * a withdrawal PIN or phone rebind (`assertFreshReauthentication`).
+   */
+  async requestEmailChange(
+    input: RequestEmailChangeInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const meta = extractClientMeta(reqHeaders);
+    const { ip } = meta;
     const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `change-email:${userId ?? 'anonymous'}`,
+      EMAIL_VERIFICATION_RATE_LIMIT,
+    );
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
     const newEmail = input.newEmail.toLowerCase();
-    const res = await this.api.changeEmail({
+    // Keyed on the caller too, not just the target inbox: a target-only bucket lets any
+    // signed-in account (no correct password needed - this runs before reauth) exhaust
+    // a known address's budget and deny the real owner their own change for 15 minutes.
+    // Per-(caller, target) still bounds how many codes one inbox gets from one caller.
+    await assertRateLimit(
+      this.limiter,
+      `change-email-target:${userId}:${newEmail}`,
+      EMAIL_VERIFICATION_RATE_LIMIT,
+    );
+    if (ip) {
+      await assertRateLimit(this.limiter, `change-email-ip:${ip}`, EMAIL_VERIFICATION_RATE_LIMIT);
+    }
+    const [caller] = await this.drizzle.db
+      .select({ twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    if (!caller) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    await assertFreshReauthentication({
+      drizzle: this.drizzle,
+      auth: this.auth,
+      twoFactorLockout: this.twoFactorLockout,
+      userId,
+      headers,
+      currentPassword: input.currentPassword,
+      totpCode: input.totpCode,
+      twoFactorEnabled: caller.twoFactorEnabled ?? false,
+      meta,
+    });
+    const res = await this.api.requestEmailChangeEmailOTP({
       body: { newEmail: input.newEmail },
       headers,
       asResponse: true,
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    if (userId) {
-      // better-auth's `/change-email` returns the same `{ status: true }` shape for the
-      // anti-enumeration no-op (target already owned by someone else) and for a deferred
-      // confirmation-email flow, where the address only actually changes once the
-      // confirmation link is clicked - neither of which touched this row yet. Requiring
-      // `user.email` to already equal the requested address scopes the disable to the
-      // one branch (`updateEmailWithoutVerification`) that updates it synchronously.
-      const [disabled] = await this.drizzle.db
-        .update(user)
-        .set({ loginWithdrawalAlertsEnabled: false })
-        .where(
-          and(
-            eq(user.id, userId),
-            eq(user.loginWithdrawalAlertsEnabled, true),
-            eq(user.email, newEmail),
-          ),
-        )
-        .returning({ id: user.id });
-      if (disabled) {
-        const { ip, userAgent } = extractClientMeta(reqHeaders);
+    return SUCCESS;
+  }
+
+  /**
+   * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email.
+   * The old address is read first, since no row carries it afterwards, for the "changed"
+   * notice and to reset the verified-email alert opt-in (made on the old inbox). Every
+   * other session and trusted device is torn down too, the same as `disableTwoFactor`.
+   */
+  async confirmEmailChange(
+    input: ConfirmEmailChangeInput,
+    reqHeaders: NodeHeaders,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const meta = extractClientMeta(reqHeaders);
+    const { ip, userAgent } = meta;
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `confirm-email-change:${userId ?? 'anonymous'}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
+    if (!userId) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
+    }
+    const newEmail = input.newEmail.toLowerCase();
+    // Same actor-binding as requestEmailChange's target bucket: a bare-target key lets
+    // any signed-in caller burn a known address's guess budget and lock the real
+    // requester out of confirming their own pending change for 15 minutes.
+    await assertRateLimit(
+      this.limiter,
+      `confirm-email-change-target:${userId}:${newEmail}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
+    if (ip) {
+      await assertRateLimit(this.limiter, `confirm-email-change-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
+    }
+    const [before] = await this.drizzle.db
+      .select({
+        email: user.email,
+        language: user.language,
+        name: user.username,
+        antiPhishingCode: user.antiPhishingCode,
+        loginWithdrawalAlertsEnabled: user.loginWithdrawalAlertsEnabled,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    const res = await this.api.changeEmailEmailOTP({
+      body: { newEmail: input.newEmail, otp: input.otp },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    this.forwardCookies(res, resHeaders);
+    const changedAt = new Date().toISOString();
+
+    if (before) {
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+      this.events.emit('identity.email.changed', {
+        userId,
+        playerId,
+        previousEmail: before.email,
+        newEmail,
+        ip,
+        userAgent,
+      });
+      // Both inboxes get told - fire-and-forget like `dispatchMail` in
+      // notifications/plugin.ts, right after the emit and before the revocation calls
+      // below: if either of those throws, the swap has already committed and both
+      // owners still need their notice. `randomUUID()` keeps each key unique so the
+      // queue's dedupe window can't swallow a repeat notice.
+      //
+      // To the OLD address - the row no longer holds it, so every field is read from
+      // `before`. Carries the "was this you?" warning and a support CTA: this inbox
+      // could belong to someone who never asked for the change.
+      this.mailDispatch
+        ?.toAddress({
+          email: before.email,
+          locale: before.language,
+          antiPhishingCode: before.antiPhishingCode,
+          recipientName: before.name,
+          template: {
+            key: 'emailChanged',
+            data: { newEmail, occurredAt: changedAt, isNewAddress: false },
+          },
+          idempotencyKey: `email-change-notice-old:${userId}:${randomUUID()}`,
+        })
+        .catch((err: unknown) =>
+          identityLogger.error({ err, userId }, 'email-change notice (old address) enqueue failed'),
+        );
+      // To the NEW address - `toAddress` with the fields already in hand from `before`
+      // (name/locale/antiPhishingCode are account-level, unaffected by the swap), not
+      // `toUser`: that reads the row live at delivery time, so a second change started
+      // right after this one would relabel this "new" notice onto whatever address the
+      // account holds by then. Plain confirmation, no warning: this inbox just proved
+      // ownership with a live OTP, it didn't fall victim to one.
+      this.mailDispatch
+        ?.toAddress({
+          email: newEmail,
+          locale: before.language,
+          antiPhishingCode: before.antiPhishingCode,
+          recipientName: before.name,
+          template: {
+            key: 'emailChanged',
+            data: { newEmail, occurredAt: changedAt, isNewAddress: true },
+          },
+          idempotencyKey: `email-change-notice-new:${userId}:${randomUUID()}`,
+        })
+        .catch((err: unknown) =>
+          identityLogger.error({ err, userId }, 'email-change notice (new address) enqueue failed'),
+        );
+      await this.trustedDevices?.revokeAllForUser(userId, userId);
+      await this.sessions?.revokeAllSessions(userId, userId, meta);
+      if (before.loginWithdrawalAlertsEnabled) {
+        await this.drizzle.db
+          .update(user)
+          .set({ loginWithdrawalAlertsEnabled: false })
+          .where(eq(user.id, userId));
         this.events.emit('identity.security.login_withdrawal_alerts.updated', {
           userId,
-          playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+          playerId,
           previousEnabled: true,
           enabled: false,
           ip,

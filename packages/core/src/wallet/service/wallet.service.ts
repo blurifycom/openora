@@ -1667,8 +1667,8 @@ export class WalletService {
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const amount = tx.amount;
-    // approved/failed are admin-attributed events (schema requires a uuid adminId); the system auto path
-    // skips them - its trail is the AUDIT_WRITER entry plus the shared `completed` event below.
+    // `approved` is admin-attributed; the system auto path skips it - its trail is the
+    // AUDIT_WRITER entry plus the shared `completed` event below.
     if (adminId) {
       this.events.emit('wallet.withdrawal.approved', {
         userId,
@@ -1762,9 +1762,23 @@ export class WalletService {
         return false;
       }
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
+      // In the same transaction as the credit, not left to the `wallet.withdrawal.failed`
+      // subscriber below: that fires only after commit, so a crash or a dead subscriber
+      // between the two would return the funds with no audit row behind the movement.
+      await this.audit.recordInTransaction(txn, {
+        actorType: adminId ? 'admin' : 'system',
+        actorId: adminId,
+        action: 'wallet.withdrawal.failed',
+        resourceType: 'withdrawal',
+        resourceId: tx.id,
+        after: { userId, amount, currency: tx.currency, reason: null },
+      });
       return true;
     });
-    if (transitioned && adminId) {
+    // Emitted on every path that returns held funds, not just the admin-reviewed one.
+    // Notification-only now - the audit plugin no longer subscribes this topic, see
+    // the recordInTransaction call above.
+    if (transitioned) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,
         amount,

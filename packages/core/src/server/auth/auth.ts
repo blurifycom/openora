@@ -7,11 +7,23 @@ import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
 import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora/core/contracts';
 
+// Mirrors `maskEmail` in pam/identity/service/two-factor-delivery.service.ts - duplicated
+// rather than imported so server/auth (lower-level) doesn't depend on pam/identity
+// (built on top of it). Masks a registered address down to what is safe to show an
+// inbox that has not yet proven it belongs to this account.
+function maskEmail(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  const head = local.length > 1 ? local.slice(0, 1) : '';
+  return `${head}***@${domain}`;
+}
+
 // Transport-agnostic OTP-mail hook; the identity plugin wires it to MAIL_DISPATCH.
 // A silent no-op when omitted (tests, the SessionResolver-only createAuth()).
 export type DispatchOtpMail = (args: {
   to: string;
   template: MailTemplate;
+  recipientName?: string | null;
+  antiPhishingCode?: string | null;
 }) => Promise<void> | void;
 
 // Transport-agnostic second-factor OTP hook. The identity plugin binds the
@@ -75,7 +87,8 @@ export type AuthOptions = {
 export function createAuth(options: AuthOptions): BetterAuthType {
   const dispatchOtpMail: DispatchOtpMail = options.dispatchOtpMail ?? (() => {});
   const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
-  return betterAuth({
+
+  const auth: BetterAuthType = betterAuth({
     database: drizzleAdapter(options.db, {
       provider: 'pg',
       schema: options.schema,
@@ -157,10 +170,41 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       emailOTP({
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,
-        async sendVerificationOTP({ email, otp, type }) {
-          // Allow-list, not a fallback: an OTP type this app never issues (sign-in,
-          // change-email) must send nothing rather than borrow another template's copy.
-          if (type !== 'email-verification' && type !== 'forget-password') {
+        // OTP goes to the NEW address; the current one is not re-verified (the caller
+        // already holds a live session). IdentityService wraps the endpoints this unlocks.
+        changeEmail: { enabled: true },
+        async sendVerificationOTP({ email, otp, type }, request) {
+          // Allow-list, not a fallback: an OTP type this app never issues (sign-in)
+          // must send nothing rather than borrow another template's copy.
+          if (
+            type !== 'email-verification' &&
+            type !== 'forget-password' &&
+            type !== 'change-email'
+          ) {
+            return;
+          }
+          if (type === 'change-email') {
+            // The row still carries the pre-swap address at this point - IdentityService
+            // has only asked better-auth to mail a code, nothing has changed yet - so the
+            // caller's live session is the only place left to read it from.
+            const session = await auth.api.getSession({
+              headers: request?.headers ?? new Headers(),
+            });
+            if (!session) {
+              throw new Error('change-email OTP requested without a resolvable session');
+            }
+            await dispatchOtpMail({
+              to: email,
+              template: {
+                key: 'emailChangeConfirmation',
+                data: { otp, oldEmail: maskEmail(session.user.email), newEmail: email },
+              },
+              recipientName: (session.user as { username?: string | null }).username ?? null,
+              // The new inbox has no user row of its own yet, so it cannot resolve one
+              // itself - carry the caller's own code, unaffected by the pending swap.
+              antiPhishingCode:
+                (session.user as { antiPhishingCode?: string | null }).antiPhishingCode ?? null,
+            });
             return;
           }
           const template: MailTemplate =
@@ -179,6 +223,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     // assignable to its own exported `Auth` alias. No way to narrow without matching the
     // full generic - the one sanctioned cast, see conventions.
   }) as unknown as BetterAuthType;
+  return auth;
 }
 
 export type Auth = BetterAuthType;

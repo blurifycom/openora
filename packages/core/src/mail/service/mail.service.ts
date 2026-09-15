@@ -85,6 +85,8 @@ export class MailService {
   async enqueueToAddress({
     email,
     locale,
+    antiPhishingCode,
+    recipientName,
     template,
     idempotencyKey,
   }: MailToAddressInput): Promise<void> {
@@ -92,7 +94,13 @@ export class MailService {
       this.jobQueue.enqueue(
         MAIL_SEND_QUEUE,
         this.encrypt({
-          recipient: { kind: 'address', email, ...(locale ? { locale } : {}) },
+          recipient: {
+            kind: 'address',
+            email,
+            ...(locale ? { locale } : {}),
+            ...(antiPhishingCode !== undefined ? { antiPhishingCode } : {}),
+            ...(recipientName !== undefined ? { recipientName } : {}),
+          },
           template,
         }),
         { idempotencyKey, ...MAIL_ENQUEUE_OPTS },
@@ -212,12 +220,11 @@ export class MailService {
   } | null> {
     if (job.recipient.kind === 'address') {
       // Pre-account emails (admin invitation, brand-new signup verification) correctly
-      // have no code yet - there is no user row to read one off.
       return {
         email: job.recipient.email,
         locale: job.recipient.locale ?? DEFAULT_LOCALE,
-        name: null,
-        antiPhishingCode: null,
+        name: job.recipient.recipientName ?? null,
+        antiPhishingCode: job.recipient.antiPhishingCode ?? null,
       };
     }
     const row = await this.directory.getMailRecipient(job.recipient.userId);

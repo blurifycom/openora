@@ -237,7 +237,7 @@ export class DrizzleMailRecipientDirectory implements MailRecipientDirectory {
       .select({
         email: user.email,
         language: user.language,
-        name: user.name,
+        name: user.username,
         antiPhishingCode: user.antiPhishingCode,
       })
       .from(user)
