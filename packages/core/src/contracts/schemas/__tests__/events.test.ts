@@ -289,3 +289,42 @@ describe('game geo rule event reasons', () => {
     ).toBe(false);
   });
 });
+
+describe('provider geo rule event payloads', () => {
+  const providerId = randomUUID();
+  const state = {
+    id: randomUUID(),
+    providerId,
+    countryCode: 'US',
+    reason: 'licence restriction',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const deleted = {
+    ruleId: state.id,
+    providerId,
+    countryCode: 'US',
+    reason: 'licence restored',
+    before: state,
+    after: null,
+    actorId: randomUUID(),
+  };
+
+  it('accepts a provider-scoped snapshot and rejects a blank reason', () => {
+    expect(
+      domainEventSchemas['compliance.provider-geo-rule.deleted'].safeParse(deleted).success,
+    ).toBe(true);
+    expect(
+      domainEventSchemas['compliance.provider-geo-rule.deleted'].safeParse({
+        ...deleted,
+        reason: '   ',
+      }).success,
+    ).toBe(false);
+    expect(
+      domainEventSchemas['compliance.provider-geo-rule.deleted'].safeParse({
+        ...deleted,
+        before: { ...state, providerId: 'not-a-uuid' },
+      }).success,
+    ).toBe(false);
+  });
+});

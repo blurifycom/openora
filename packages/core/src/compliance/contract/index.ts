@@ -179,6 +179,16 @@ export const GameGeoRuleSchema = z.object({
 });
 export type GameGeoRule = z.infer<typeof GameGeoRuleSchema>;
 
+export const ProviderGeoRuleSchema = z.object({
+  id: UuidSchema,
+  providerId: UuidSchema,
+  countryCode: CountryCodeSchema,
+  reason: NonEmptyReasonSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type ProviderGeoRule = z.infer<typeof ProviderGeoRuleSchema>;
+
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
 export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true })
@@ -228,6 +238,22 @@ export type DeleteGameGeoRuleInput = z.infer<typeof DeleteGameGeoRuleInputSchema
 export const ListGameGeoRulesInputSchema = z.object({ gameId: UuidSchema.optional() });
 export type ListGameGeoRulesInput = z.infer<typeof ListGameGeoRulesInputSchema>;
 
+export const UpsertProviderGeoRuleInputSchema = ProviderGeoRuleSchema.pick({
+  providerId: true,
+  countryCode: true,
+  reason: true,
+});
+export type UpsertProviderGeoRuleInput = z.infer<typeof UpsertProviderGeoRuleInputSchema>;
+
+export const DeleteProviderGeoRuleInputSchema = ProviderGeoRuleSchema.pick({
+  id: true,
+  reason: true,
+});
+export type DeleteProviderGeoRuleInput = z.infer<typeof DeleteProviderGeoRuleInputSchema>;
+
+export const ListProviderGeoRulesInputSchema = z.object({ providerId: UuidSchema.optional() });
+export type ListProviderGeoRulesInput = z.infer<typeof ListProviderGeoRulesInputSchema>;
+
 const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
   countryCode: CountryCodeSchema.nullable(),
@@ -274,6 +300,21 @@ export const complianceContract = {
     .route({ method: 'GET', path: '/compliance/game-geo-rules' })
     .input(ListGameGeoRulesInputSchema)
     .output(z.array(GameGeoRuleSchema)),
+
+  upsertProviderGeoRule: oc
+    .route({ method: 'PUT', path: '/compliance/provider-geo-rules' })
+    .input(UpsertProviderGeoRuleInputSchema)
+    .output(ProviderGeoRuleSchema),
+
+  deleteProviderGeoRule: oc
+    .route({ method: 'DELETE', path: '/compliance/provider-geo-rules/{id}' })
+    .input(DeleteProviderGeoRuleInputSchema)
+    .output(ProviderGeoRuleSchema),
+
+  listProviderGeoRules: oc
+    .route({ method: 'GET', path: '/compliance/provider-geo-rules' })
+    .input(ListProviderGeoRulesInputSchema)
+    .output(z.array(ProviderGeoRuleSchema)),
 
   upsertCountryRule: oc
     .route({ method: 'PUT', path: '/compliance/country-rules' })
