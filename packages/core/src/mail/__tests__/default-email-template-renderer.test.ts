@@ -59,6 +59,7 @@ describe('DefaultEmailTemplateRenderer', () => {
           amount: '100.00',
           currency: 'EUR',
           minutes: null,
+          initiatedBy: 'player',
         },
       },
       {
@@ -197,6 +198,7 @@ describe('DefaultEmailTemplateRenderer', () => {
           amount: '10000.00',
           currency: 'EUR',
           minutes: null,
+          initiatedBy: 'player',
         },
       },
       'en',
@@ -206,7 +208,14 @@ describe('DefaultEmailTemplateRenderer', () => {
     const session = renderer.render(
       {
         key: 'rgLimitUpdated',
-        data: { period: 'session', type: 'session', amount: null, currency: null, minutes: 60 },
+        data: {
+          period: 'session',
+          type: 'session',
+          amount: null,
+          currency: null,
+          minutes: 60,
+          initiatedBy: 'player',
+        },
       },
       'en',
     );

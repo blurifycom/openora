@@ -50,6 +50,7 @@ export const EmailTemplateDataSchemas = {
     amount: MoneyAmountSchema.nullable(),
     currency: CurrencyCodeSchema.nullable(),
     minutes: z.number().int().nullable(),
+    initiatedBy: RgInitiatorSchema,
   }),
   rgCoolingOffActivated: z.object({ expiresAt: TimestampSchema, initiatedBy: RgInitiatorSchema }),
   rgCoolingOffLifted: z.object({ initiatedBy: RgInitiatorSchema }),

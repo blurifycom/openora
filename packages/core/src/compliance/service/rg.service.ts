@@ -364,11 +364,15 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notifyLimitUpdated(userId, row);
+    await this.notifyLimitUpdated(userId, row, initiatedBy);
     return toLimitDto(row);
   }
 
-  async notifyLimitUpdated(userId: User['id'], row: LimitRow): Promise<void> {
+  async notifyLimitUpdated(
+    userId: User['id'],
+    row: LimitRow,
+    initiatedBy: RgInitiator,
+  ): Promise<void> {
     await this.notify(
       userId,
       {
@@ -379,6 +383,7 @@ export class RgService {
           amount: row.amount,
           currency: toWireCurrency(row.type, row.currency),
           minutes: row.minutes,
+          initiatedBy,
         },
       },
       `${row.id}:${row.updatedAt.toISOString()}`,
