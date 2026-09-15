@@ -6,7 +6,11 @@ import {
   TimestampSchema,
   UuidSchema,
 } from './common.js';
-import { GameCategoryTranslationsSchema, GameProviderAggregatorMappingSchema } from './game.js';
+import {
+  GameCategoryTranslationsSchema,
+  GameProviderAggregatorMappingSchema,
+  GameTagSnapshotSchema,
+} from './game.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -488,6 +492,25 @@ export const domainEventSchemas = {
       isActive: z.boolean(),
     }),
   }),
+  'gaming.tag.created': authContextBase
+    .extend({ tagId: UuidSchema })
+    .extend(GameTagSnapshotSchema.shape)
+    .extend({ actorId: UuidSchema }),
+  'gaming.tag.updated': authContextBase.extend({
+    tagId: UuidSchema,
+    actorId: UuidSchema,
+    before: GameTagSnapshotSchema,
+    after: GameTagSnapshotSchema,
+  }),
+  'gaming.tag.deleted': authContextBase.extend({
+    tagId: UuidSchema,
+    actorId: UuidSchema,
+    before: GameTagSnapshotSchema,
+    after: z.object({
+      deleted: z.literal(true),
+      affectedGameIds: z.array(UuidSchema),
+    }),
+  }),
   'gaming.game.updated': authContextBase.extend({
     gameId: UuidSchema,
     actorId: UuidSchema,
@@ -499,6 +522,8 @@ export const domainEventSchemas = {
       thumbnailUrl: z.string().nullable(),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
+      // Older game-update events predate game tags; replay them as an empty tag set.
+      tagIds: z.array(UuidSchema).default([]),
       metadata: z.unknown().nullable(),
     }),
     after: z.object({
@@ -509,6 +534,8 @@ export const domainEventSchemas = {
       thumbnailUrl: z.string().nullable(),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
+      // Older game-update events predate game tags; replay them as an empty tag set.
+      tagIds: z.array(UuidSchema).default([]),
       metadata: z.unknown().nullable(),
     }),
   }),

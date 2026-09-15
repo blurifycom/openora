@@ -805,6 +805,46 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'gaming.tag.created') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_tag',
+      resourceId: str(p['tagId']),
+      after: {
+        name: p['name'] ?? null,
+        type: p['type'] ?? null,
+        visibility: p['visibility'] ?? null,
+        metadata: p['metadata'] ?? null,
+      },
+    };
+  }
+
+  if (topic === 'gaming.tag.updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_tag',
+      resourceId: str(p['tagId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.tag.deleted') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_tag',
+      resourceId: str(p['tagId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
   if (topic === 'gaming.game.updated') {
     return {
       ...base,
@@ -1069,6 +1109,9 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.provider.updated',
   'gaming.category.created',
   'gaming.category.updated',
+  'gaming.tag.created',
+  'gaming.tag.updated',
+  'gaming.tag.deleted',
   'gaming.game.updated',
   'chat.user.blocked',
   'chat.user.unblocked',

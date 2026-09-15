@@ -42,11 +42,18 @@ import {
   lobbySection,
   type LobbySection,
 } from '../schema/index.js';
-import { game, gameProvider, type GameCategory } from '@openora/core/casino/schema/gaming';
+import {
+  game,
+  gameProvider,
+  type GameCategory,
+  type GameTag,
+} from '@openora/core/casino/schema/gaming';
 import {
   categoriesByGameIds,
   playableGameCondition,
+  tagsByGameIds,
   toCategorySummary,
+  toGameTagSummary,
 } from '../../shared/game-catalog.js';
 
 export const LobbySectionNotFoundError = makeNotFoundError('LobbySection');
@@ -93,6 +100,7 @@ function toGameSummary(row: {
   game: typeof game.$inferSelect;
   provider: typeof gameProvider.$inferSelect;
   categories: GameCategory[];
+  tags: GameTag[];
 }) {
   return {
     id: row.game.id,
@@ -105,6 +113,7 @@ function toGameSummary(row: {
       logoUrl: row.provider.logoUrl,
     },
     categories: row.categories.map(toCategorySummary),
+    tags: row.tags.map(toGameTagSummary),
     thumbnailUrl: row.game.thumbnailUrl,
   };
 }
@@ -169,7 +178,12 @@ export class LobbyService {
             .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
             .where(and(inArray(game.id, gameIds), playableGameCondition()))
         : [];
-    const categories = await categoriesByGameIds(db, gameIds, true);
+
+    const playableIds = rows.map((r) => r.game.id);
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(db, playableIds, true),
+      tagsByGameIds(db, playableIds),
+    ]);
 
     const gameMap = new Map(rows.map((r) => [r.game.id, r]));
 
@@ -187,7 +201,13 @@ export class LobbyService {
             provider: typeof gameProvider.$inferSelect;
           } => g !== undefined,
         )
-        .map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] })),
+        .map((r) =>
+          toGameSummary({
+            ...r,
+            categories: categories.get(r.game.id) ?? [],
+            tags: tags.get(r.game.id) ?? [],
+          }),
+        ),
     };
   }
 
@@ -241,13 +261,25 @@ export class LobbyService {
       .where(whereClause)
       .orderBy(asc(game.name))
       .limit(50);
-    const categories = await categoriesByGameIds(
-      db,
-      rows.map((r) => r.game.id),
-      true,
-    );
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(
+        db,
+        rows.map((r) => r.game.id),
+        true,
+      ),
+      tagsByGameIds(
+        db,
+        rows.map((r) => r.game.id),
+      ),
+    ]);
 
-    return rows.map((r) => toGameSummary({ ...r, categories: categories.get(r.game.id) ?? [] }));
+    return rows.map((r) =>
+      toGameSummary({
+        ...r,
+        categories: categories.get(r.game.id) ?? [],
+        tags: tags.get(r.game.id) ?? [],
+      }),
+    );
   }
 
   async getAdminLayout(): Promise<LobbyAdminLayout> {

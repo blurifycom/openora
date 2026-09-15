@@ -8,6 +8,7 @@ import {
   LobbySectionTypeSchema,
   TimestampSchema,
   GameCategorySummaryWithTranslationsSchema,
+  GameTagSummarySchema,
   GameProviderSummarySchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -20,6 +21,7 @@ export const GameSummarySchema = z.object({
   slug: z.string(),
   provider: GameProviderSummarySchema,
   categories: z.array(GameCategorySummaryWithTranslationsSchema),
+  tags: z.array(GameTagSummarySchema),
   thumbnailUrl: z.string().nullable(),
 });
 
