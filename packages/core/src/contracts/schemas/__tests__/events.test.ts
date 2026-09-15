@@ -328,3 +328,31 @@ describe('provider geo rule event payloads', () => {
     ).toBe(false);
   });
 });
+
+describe('gaming.game.updated tag forward-compat', () => {
+  const gameSnapshot = {
+    slug: 'demo-game',
+    name: 'Demo Game',
+    providerId: randomUUID(),
+    aggregator: 'direct',
+    thumbnailUrl: null,
+    isActive: true,
+    categoryIds: [],
+    metadata: null,
+  };
+
+  it('defaults tagIds for game-update events emitted before game tags existed', () => {
+    const result = domainEventSchemas['gaming.game.updated'].safeParse({
+      gameId: randomUUID(),
+      actorId: randomUUID(),
+      before: gameSnapshot,
+      after: gameSnapshot,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.before.tagIds).toEqual([]);
+      expect(result.data.after.tagIds).toEqual([]);
+    }
+  });
+});

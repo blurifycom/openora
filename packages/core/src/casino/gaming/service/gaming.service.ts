@@ -28,7 +28,6 @@ import {
 } from 'drizzle-orm';
 import {
   RgLimitExceededError,
-  type ClientMeta,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -42,6 +41,8 @@ import {
   game,
   gameCategory,
   gameCategoryGame,
+  gameTag,
+  gameTagGame,
   gameProvider,
   gameProviderAggregatorMapping,
   gameRound,
@@ -50,11 +51,15 @@ import {
 } from '../schema/index.js';
 import { GameProviderNotFoundError } from './game-provider.service.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
+import { GameTagNotFoundError } from './game-tag.service.js';
 import {
   categoriesByGameIds,
   isGamePlayable,
   playableGameCondition,
+  tagsByGameIds,
   toCategorySummary,
+  toGameTagSummary,
+  type CatalogActor,
 } from '../../shared/game-catalog.js';
 import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
 
@@ -73,10 +78,6 @@ export const GameAggregatorNotMappedError = createDomainError<
   'GameAggregatorNotMappedError',
   (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
 );
-
-type Actor = {
-  actorId: User['id'];
-} & ClientMeta;
 
 export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
@@ -118,6 +119,7 @@ function toGame(row: {
   game: typeof game.$inferSelect;
   provider: typeof gameProvider.$inferSelect;
   categories: (typeof gameCategory.$inferSelect)[];
+  tags: (typeof gameTag.$inferSelect)[];
 }) {
   return {
     id: row.game.id,
@@ -131,6 +133,7 @@ function toGame(row: {
     },
     aggregator: row.game.aggregator,
     categories: row.categories.map(toCategorySummary),
+    tags: row.tags.map(toGameTagSummary),
     gameType: row.game.gameType,
     thumbnailUrl: row.game.thumbnailUrl,
     isActive: row.game.isActive,
@@ -141,11 +144,18 @@ function toGame(row: {
 // Reads the links through the caller's transaction so the snapshot matches the
 // locked row; ordered so identical link sets always serialize identically.
 async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
-  const links = await tx
-    .select({ categoryId: gameCategoryGame.categoryId })
-    .from(gameCategoryGame)
-    .where(eq(gameCategoryGame.gameId, row.id))
-    .orderBy(asc(gameCategoryGame.categoryId));
+  const [links, tagLinks] = await Promise.all([
+    tx
+      .select({ categoryId: gameCategoryGame.categoryId })
+      .from(gameCategoryGame)
+      .where(eq(gameCategoryGame.gameId, row.id))
+      .orderBy(asc(gameCategoryGame.categoryId)),
+    tx
+      .select({ tagId: gameTagGame.tagId })
+      .from(gameTagGame)
+      .where(eq(gameTagGame.gameId, row.id))
+      .orderBy(asc(gameTagGame.tagId)),
+  ]);
   return {
     slug: row.slug,
     name: row.name,
@@ -154,6 +164,7 @@ async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
     thumbnailUrl: row.thumbnailUrl,
     isActive: row.isActive,
     categoryIds: links.map((link) => link.categoryId),
+    tagIds: tagLinks.map((link) => link.tagId),
     metadata: row.metadata ?? null,
   };
 }
@@ -183,11 +194,21 @@ export class GamingService {
   ) {}
 
   async listGamesPublic(input: ListGamesInput) {
-    return this.listGames({ ...input, playableOnly: true, sort: 'public' });
+    return this.listGames({
+      ...input,
+      playableOnly: true,
+      sort: 'public',
+      includeInvisibleTags: false,
+    });
   }
 
   async listGamesAdmin(input: ListAdminGamesInput) {
-    return this.listGames({ ...input, playableOnly: false, sort: 'admin' });
+    return this.listGames({
+      ...input,
+      playableOnly: false,
+      sort: 'admin',
+      includeInvisibleTags: true,
+    });
   }
 
   async getCatalogStats() {
@@ -224,10 +245,12 @@ export class GamingService {
     isActive,
     playableOnly,
     sort,
+    includeInvisibleTags,
   }: ListGamesInput & {
     isActive?: boolean;
     playableOnly: boolean;
     sort: 'admin' | 'public';
+    includeInvisibleTags: boolean;
   }) {
     const where = and(
       q
@@ -278,20 +301,38 @@ export class GamingService {
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
         .where(where),
     ]);
-    const categories = await categoriesByGameIds(
-      this.drizzle.db,
-      rows.map((r) => r.game.id),
-      playableOnly,
-    );
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(
+        this.drizzle.db,
+        rows.map((r) => r.game.id),
+        playableOnly,
+      ),
+      tagsByGameIds(
+        this.drizzle.db,
+        rows.map((r) => r.game.id),
+        {
+          includeInvisible: includeInvisibleTags,
+        },
+      ),
+    ]);
     return {
-      items: rows.map((r) => toGame({ ...r, categories: categories.get(r.game.id) ?? [] })),
+      items: rows.map((r) =>
+        toGame({
+          ...r,
+          categories: categories.get(r.game.id) ?? [],
+          tags: tags.get(r.game.id) ?? [],
+        }),
+      ),
       total: Number(n),
       page,
       limit,
     };
   }
 
-  async getGame(id: string, opts: { activeOnly?: boolean } = {}) {
+  async getGame(
+    id: Game['id'],
+    opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
+  ) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .select({ game, provider: gameProvider })
@@ -305,8 +346,17 @@ export class GamingService {
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
       throw new GameNotFoundError(id);
     }
-    const categories = await categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly);
-    return toGame({ ...row, categories: categories.get(row.game.id) ?? [] });
+    const [categories, tags] = await Promise.all([
+      categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly),
+      tagsByGameIds(this.drizzle.db, [row.game.id], {
+        includeInvisible: opts.includeInvisibleTags,
+      }),
+    ]);
+    return toGame({
+      ...row,
+      categories: categories.get(row.game.id) ?? [],
+      tags: tags.get(row.game.id) ?? [],
+    });
   }
 
   async startRound(
@@ -520,16 +570,18 @@ export class GamingService {
   async updateGame({
     id,
     categoryIds,
+    tagIds,
     actorId,
     ip,
     userAgent,
     ...patchInput
-  }: UpdateGameInput & Actor) {
+  }: UpdateGameInput & CatalogActor) {
     const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
+    const uniqueTagIds = tagIds === undefined ? undefined : [...new Set(tagIds)];
     const patch: Partial<typeof game.$inferInsert> = { ...patchInput };
     const hasScalarChanges = Object.values(patch).some((value) => value !== undefined);
-    if (!hasScalarChanges && uniqueCategoryIds === undefined) {
-      return this.getGame(id);
+    if (!hasScalarChanges && uniqueCategoryIds === undefined && uniqueTagIds === undefined) {
+      return this.getGame(id, { includeInvisibleTags: true });
     }
     const transition = await this.drizzle.db
       .transaction(async (tx) => {
@@ -592,6 +644,21 @@ export class GamingService {
             throw new GameCategoryNotFoundError(missing);
           }
         }
+        if (uniqueTagIds !== undefined) {
+          const rows =
+            uniqueTagIds.length > 0
+              ? await tx
+                  .select({ id: gameTag.id })
+                  .from(gameTag)
+                  .where(inArray(gameTag.id, uniqueTagIds))
+                  .for('key share')
+              : [];
+          const found = new Set(rows.map((r) => r.id));
+          const missing = uniqueTagIds.find((tagId) => !found.has(tagId));
+          if (missing) {
+            throw new GameTagNotFoundError(missing);
+          }
+        }
         if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
@@ -603,6 +670,14 @@ export class GamingService {
               .values(uniqueCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
           }
         }
+        if (uniqueTagIds !== undefined) {
+          await tx.delete(gameTagGame).where(eq(gameTagGame.gameId, id));
+          if (uniqueTagIds.length > 0) {
+            await tx
+              .insert(gameTagGame)
+              .values(uniqueTagIds.map((tagId) => ({ gameId: id, tagId })));
+          }
+        }
         const afterRow = findOneOrThrow(
           await tx.select().from(game).where(eq(game.id, id)).limit(1),
           new GameNotFoundError(id),
@@ -610,7 +685,7 @@ export class GamingService {
         return { before, after: await gameAuditSnapshot(tx, afterRow) };
       })
       .catch((error: unknown) => {
-        // The transaction also writes category links: only a slug collision maps
+        // The transaction also writes category and tag links: only a slug collision maps
         // to GameSlugTakenError, a link race must not masquerade as one.
         if (uniqueConstraintName(error) === 'game_slug_key') {
           throw new GameSlugTakenError();
@@ -625,6 +700,6 @@ export class GamingService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    return this.getGame(id);
+    return this.getGame(id, { includeInvisibleTags: true });
   }
 }

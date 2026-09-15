@@ -10,20 +10,15 @@ import {
   pageToOffset,
 } from '@openora/core/server';
 import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
-import type { ClientMeta, User } from '@openora/core/contracts';
 import { gameCategory } from '../schema/index.js';
 import type { CreateCategoryInput, UpdateCategoryInput } from '../contract/index.js';
-import { toCategorySummary } from '../../shared/game-catalog.js';
+import { toCategorySummary, type CatalogActor } from '../../shared/game-catalog.js';
 
 export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
 export const GameCategorySlugTakenError = makeConflictError(
   'GameCategorySlugTakenError',
   'A category with this slug already exists',
 );
-
-type Actor = {
-  actorId: User['id'];
-} & ClientMeta;
 
 function categorySnapshot(record: typeof gameCategory.$inferSelect) {
   return {
@@ -138,7 +133,7 @@ export class GameCategoryService {
     actorId,
     ip,
     userAgent,
-  }: CreateCategoryInput & Actor) {
+  }: CreateCategoryInput & CatalogActor) {
     let record: typeof gameCategory.$inferSelect;
     try {
       record = await this.drizzle.db.transaction(async (tx) => {
@@ -178,7 +173,13 @@ export class GameCategoryService {
     return toCategoryDetail(record);
   }
 
-  async updateCategory({ id, actorId, ip, userAgent, ...patchInput }: UpdateCategoryInput & Actor) {
+  async updateCategory({
+    id,
+    actorId,
+    ip,
+    userAgent,
+    ...patchInput
+  }: UpdateCategoryInput & CatalogActor) {
     const patch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
     const hasChanges = Object.values(patch).some((value) => value !== undefined);
     const outcome = await this.drizzle.db

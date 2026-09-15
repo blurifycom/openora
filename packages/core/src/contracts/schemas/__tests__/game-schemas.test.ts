@@ -3,7 +3,42 @@ import {
   GameCategorySummarySchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
+  GameTagMetadataSchema,
+  GAME_TAG_METADATA_MAX_BYTES,
 } from '../game.js';
+
+describe('game tag metadata', () => {
+  it('accepts any JSON value per key', () => {
+    const result = GameTagMetadataSchema.safeParse({
+      badgeColor: '#ff0000',
+      weight: 10,
+      pinned: true,
+      note: null,
+      icons: ['fire', 'star'],
+      theme: { bg: '#000', fg: '#fff' },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects values JSON cannot represent', () => {
+    for (const value of [undefined, Number.NaN, new Date(), () => 'x']) {
+      expect(GameTagMetadataSchema.safeParse({ theme: value }).success).toBe(false);
+    }
+  });
+
+  it('bounds keys and serialized size', () => {
+    expect(GameTagMetadataSchema.safeParse({ '': 'x' }).success).toBe(false);
+    expect(GameTagMetadataSchema.safeParse({ ['k'.repeat(65)]: 'x' }).success).toBe(false);
+
+    // {"t":"..."} adds 8 bytes around the value.
+    const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 8) });
+    expect(GameTagMetadataSchema.safeParse(sized(GAME_TAG_METADATA_MAX_BYTES)).success).toBe(true);
+    expect(GameTagMetadataSchema.safeParse(sized(GAME_TAG_METADATA_MAX_BYTES + 1)).success).toBe(
+      false,
+    );
+  });
+});
 
 describe('game category translations', () => {
   it('accepts BCP 47 language keys and bounded names', () => {
