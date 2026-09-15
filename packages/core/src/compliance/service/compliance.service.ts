@@ -154,6 +154,10 @@ function providerGeoRuleLockKey(
   return `provider-geo-rule:${providerId}:${countryCode}`;
 }
 
+function serializeGeoRule<Rule extends { createdAt: Date; updatedAt: Date }>(rule: Rule) {
+  return serializeRow(rule, { dateFields: ['createdAt', 'updatedAt'] });
+}
+
 export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -213,6 +217,9 @@ export class ComplianceService {
 
     const { countryCode } = globalDecision;
     // Without a resolved country any rule counts, so an unresolved lookup fails closed.
+    const matchesCountry = (
+      column: typeof providerGeoRule.countryCode | typeof gameGeoRule.countryCode,
+    ) => (countryCode ? eq(column, countryCode) : undefined);
     const [rules] = await this.drizzle.db
       .select({
         providerRule: sql<boolean>`${exists(
@@ -222,7 +229,7 @@ export class ComplianceService {
             .where(
               and(
                 eq(providerGeoRule.providerId, game.providerId),
-                countryCode ? eq(providerGeoRule.countryCode, countryCode) : undefined,
+                matchesCountry(providerGeoRule.countryCode),
               ),
             ),
         )}`,
@@ -230,19 +237,14 @@ export class ComplianceService {
           this.drizzle.db
             .select({ id: gameGeoRule.id })
             .from(gameGeoRule)
-            .where(
-              and(
-                eq(gameGeoRule.gameId, game.id),
-                countryCode ? eq(gameGeoRule.countryCode, countryCode) : undefined,
-              ),
-            ),
+            .where(and(eq(gameGeoRule.gameId, game.id), matchesCountry(gameGeoRule.countryCode))),
         )}`,
       })
       .from(game)
       .where(eq(game.id, input.gameId));
 
     if (!rules) {
-      return { allowed: false as const, countryCode, reason: 'game_not_found' as const };
+      return { allowed: false as const, countryCode: null, reason: 'game_not_found' as const };
     }
     if (!countryCode) {
       return rules.providerRule || rules.gameRule
@@ -496,10 +498,8 @@ export class ComplianceService {
             new GameGeoRuleNotFoundError(`${input.gameId}:${input.countryCode}`),
           );
           return {
-            before: before
-              ? serializeRow(before, { dateFields: ['createdAt', 'updatedAt'] })
-              : null,
-            after: serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] }),
+            before: before ? serializeGeoRule(before) : null,
+            after: serializeGeoRule(row),
           };
         },
       );
@@ -537,7 +537,7 @@ export class ComplianceService {
             await tx.delete(gameGeoRule).where(eq(gameGeoRule.id, input.id)).returning(),
             new GameGeoRuleNotFoundError(input.id),
           );
-          return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
+          return serializeGeoRule(row);
         },
       );
     });
@@ -560,7 +560,7 @@ export class ComplianceService {
     const rows = input.gameId
       ? await this.drizzle.db.select().from(gameGeoRule).where(eq(gameGeoRule.gameId, input.gameId))
       : await this.drizzle.db.select().from(gameGeoRule);
-    return rows.map((row) => serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] }));
+    return rows.map(serializeGeoRule);
   }
 
   async upsertProviderGeoRule(
@@ -602,10 +602,8 @@ export class ComplianceService {
             new ProviderGeoRuleNotFoundError(`${input.providerId}:${input.countryCode}`),
           );
           return {
-            before: before
-              ? serializeRow(before, { dateFields: ['createdAt', 'updatedAt'] })
-              : null,
-            after: serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] }),
+            before: before ? serializeGeoRule(before) : null,
+            after: serializeGeoRule(row),
           };
         },
       );
@@ -650,7 +648,7 @@ export class ComplianceService {
             await tx.delete(providerGeoRule).where(eq(providerGeoRule.id, input.id)).returning(),
             new ProviderGeoRuleNotFoundError(input.id),
           );
-          return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
+          return serializeGeoRule(row);
         },
       );
     });
@@ -676,6 +674,6 @@ export class ComplianceService {
           .from(providerGeoRule)
           .where(eq(providerGeoRule.providerId, input.providerId))
       : await this.drizzle.db.select().from(providerGeoRule);
-    return rows.map((row) => serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] }));
+    return rows.map(serializeGeoRule);
   }
 }

@@ -713,7 +713,7 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
 
     await expect(svc.checkGame({ gameId: randomUUID(), ipAddress: '1.2.3.4' })).resolves.toEqual({
       allowed: false,
-      countryCode: 'US',
+      countryCode: null,
       reason: 'game_not_found',
     });
   });
