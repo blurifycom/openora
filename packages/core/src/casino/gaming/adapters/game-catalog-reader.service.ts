@@ -1,4 +1,4 @@
-import { DrizzleService, type DrizzleDb } from '@openora/core/server';
+import { DrizzleService, pageToOffset, type DrizzleDb } from '@openora/core/server';
 import {
   UuidSchema,
   type CatalogCategoryWithGameCount,
@@ -6,8 +6,9 @@ import {
   type GameCatalogReader,
   type GameCategorySummary,
   type GameProviderSummary,
+  type PageQuery,
 } from '@openora/core/contracts';
-import { type SQL, and, asc, eq, inArray } from 'drizzle-orm';
+import { type SQL, and, asc, count, eq, inArray } from 'drizzle-orm';
 import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
 import {
   categorySummaryColumns,
@@ -27,6 +28,12 @@ const catalogGameColumns = {
 
 function isUuid(id: string) {
   return UuidSchema.safeParse(id).success;
+}
+
+// Guards the offset: Postgres rejects a negative OFFSET, and a plugin calls the port
+// directly, with no PageQuerySchema in front of it.
+function isValidPage(page: number, limit: number) {
+  return page >= 1 && limit >= 1;
 }
 
 function distinctUuids(ids: readonly string[]) {
@@ -151,19 +158,34 @@ export class GameCatalogReaderService implements GameCatalogReader {
     );
   }
 
-  async listActiveCategoriesWithGameCount() {
-    return selectActiveCategoriesWithGameCount(this.drizzle.db).orderBy(
-      asc(gameCategory.sortOrder),
-      asc(gameCategory.name),
-      asc(gameCategory.slug),
-    );
+  async listActiveCategoriesWithGameCount({ page, limit }: PageQuery) {
+    const isActive = eq(gameCategory.isActive, true);
+    const [items, [{ n }]] = await Promise.all([
+      isValidPage(page, limit)
+        ? selectActiveCategoriesWithGameCount(this.drizzle.db)
+            .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name), asc(gameCategory.slug))
+            .limit(limit)
+            .offset(pageToOffset(page, limit))
+        : [],
+      this.drizzle.db.select({ n: count() }).from(gameCategory).where(isActive),
+    ]);
+    return { items, total: Number(n), page, limit };
   }
 
-  async listActiveProviders() {
-    return this.drizzle.db
-      .select(providerSummaryColumns)
-      .from(gameProvider)
-      .where(eq(gameProvider.isActive, true))
-      .orderBy(asc(gameProvider.name), asc(gameProvider.slug));
+  async listActiveProviders({ page, limit }: PageQuery) {
+    const isActive = eq(gameProvider.isActive, true);
+    const [items, [{ n }]] = await Promise.all([
+      isValidPage(page, limit)
+        ? this.drizzle.db
+            .select(providerSummaryColumns)
+            .from(gameProvider)
+            .where(isActive)
+            .orderBy(asc(gameProvider.name), asc(gameProvider.slug))
+            .limit(limit)
+            .offset(pageToOffset(page, limit))
+        : [],
+      this.drizzle.db.select({ n: count() }).from(gameProvider).where(isActive),
+    ]);
+    return { items, total: Number(n), page, limit };
   }
 }

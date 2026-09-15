@@ -292,14 +292,37 @@ describe('GameCatalogReaderService.listActiveCategoriesWithGameCount (real PG)',
     await seedGame(provider.id, { isActive: false }, [slots.id]);
     await seedGame(disabledProvider.id, {}, [slots.id, unplayable.id]);
 
-    const categories = await reader.listActiveCategoriesWithGameCount();
+    const categories = await reader.listActiveCategoriesWithGameCount({ page: 1, limit: 100 });
 
-    expect(categories.map(({ name, gameCount }) => ({ name, gameCount }))).toEqual([
+    expect(categories.items.map(({ name, gameCount }) => ({ name, gameCount }))).toEqual([
       { name: 'Slots', gameCount: 2 },
       { name: 'Live', gameCount: 1 },
       { name: 'Unplayable', gameCount: 0 },
       { name: 'Unlinked', gameCount: 0 },
     ]);
+    expect(categories.total).toBe(4);
+  });
+
+  it('pages active categories, with the total counting every active category', async () => {
+    await seedCategory({ name: 'Slots', sortOrder: 1 });
+    await seedCategory({ name: 'Live', sortOrder: 2 });
+    await seedCategory({ name: 'Table', sortOrder: 3 });
+    await seedCategory({ name: 'Retired', sortOrder: 0, isActive: false });
+
+    const secondPage = await reader.listActiveCategoriesWithGameCount({ page: 2, limit: 2 });
+
+    expect(secondPage.items.map((c) => c.name)).toEqual(['Table']);
+    expect(secondPage).toMatchObject({ total: 3, page: 2, limit: 2 });
+  });
+
+  it('returns no items when page or limit is below 1', async () => {
+    await seedCategory();
+
+    const zeroLimit = await reader.listActiveCategoriesWithGameCount({ page: 1, limit: 0 });
+    const zeroPage = await reader.listActiveCategoriesWithGameCount({ page: 0, limit: 10 });
+
+    expect(zeroLimit).toMatchObject({ items: [], total: 1 });
+    expect(zeroPage).toMatchObject({ items: [], total: 1 });
   });
 });
 
@@ -309,8 +332,31 @@ describe('GameCatalogReaderService.listActiveProviders (real PG)', () => {
     await seedProvider({ name: 'Alpha' });
     await seedProvider({ name: 'Beta', isActive: false });
 
-    const providers = await reader.listActiveProviders();
+    const providers = await reader.listActiveProviders({ page: 1, limit: 100 });
 
-    expect(providers.map((p) => p.name)).toEqual(['Alpha', 'Zeta']);
+    expect(providers.items.map((p) => p.name)).toEqual(['Alpha', 'Zeta']);
+    expect(providers.total).toBe(2);
+  });
+
+  it('pages active providers, with the total counting every active provider', async () => {
+    await seedProvider({ name: 'Zeta' });
+    await seedProvider({ name: 'Alpha' });
+    await seedProvider({ name: 'Mu' });
+    await seedProvider({ name: 'Beta', isActive: false });
+
+    const secondPage = await reader.listActiveProviders({ page: 2, limit: 2 });
+
+    expect(secondPage.items.map((p) => p.name)).toEqual(['Zeta']);
+    expect(secondPage).toMatchObject({ total: 3, page: 2, limit: 2 });
+  });
+
+  it('returns no items when page or limit is below 1', async () => {
+    await seedProvider();
+
+    const zeroLimit = await reader.listActiveProviders({ page: 1, limit: 0 });
+    const zeroPage = await reader.listActiveProviders({ page: -1, limit: 10 });
+
+    expect(zeroLimit).toMatchObject({ items: [], total: 1 });
+    expect(zeroPage).toMatchObject({ items: [], total: 1 });
   });
 });
