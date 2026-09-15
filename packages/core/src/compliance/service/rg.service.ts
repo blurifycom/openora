@@ -511,6 +511,7 @@ export class RgService {
         data: {
           expiresAt: expiresAt ? expiresAt.toISOString() : null,
           isPermanent: input.isPermanent,
+          initiatedBy,
         },
       },
       row.id,
@@ -577,7 +578,11 @@ export class RgService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.notify(userId, { key: 'rgSelfExclusionLifted', data: {} }, row.id);
+    await this.notify(
+      userId,
+      { key: 'rgSelfExclusionLifted', data: { initiatedBy: 'admin' } },
+      row.id,
+    );
     return toExclusionDto(row);
   }
 

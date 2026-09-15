@@ -67,8 +67,11 @@ describe('DefaultEmailTemplateRenderer', () => {
         data: { expiresAt: '2026-01-01T00:00:00.000Z', initiatedBy: 'player' },
       },
       { key: 'rgCoolingOffLifted', data: { initiatedBy: 'admin' } },
-      { key: 'rgSelfExclusionActivated', data: { expiresAt: null, isPermanent: true } },
-      { key: 'rgSelfExclusionLifted', data: {} },
+      {
+        key: 'rgSelfExclusionActivated',
+        data: { expiresAt: null, isPermanent: true, initiatedBy: 'player' },
+      },
+      { key: 'rgSelfExclusionLifted', data: { initiatedBy: 'admin' } },
       {
         key: 'withdrawalApproved',
         data: {

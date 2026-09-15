@@ -57,8 +57,9 @@ export const EmailTemplateDataSchemas = {
   rgSelfExclusionActivated: z.object({
     expiresAt: TimestampSchema.nullable(),
     isPermanent: z.boolean(),
+    initiatedBy: RgInitiatorSchema,
   }),
-  rgSelfExclusionLifted: z.object({}),
+  rgSelfExclusionLifted: z.object({ initiatedBy: RgInitiatorSchema }),
   depositCompleted: z.object({ ...WithdrawalDetailsShape }),
   withdrawalApproved: z.object({ ...WithdrawalDetailsShape }),
   withdrawalRejected: z.object({
