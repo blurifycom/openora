@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { type SQL, and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { ClientMeta, GameProviderAggregatorMapping, User } from '@openora/core/contracts';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import {
@@ -26,6 +26,26 @@ export type CatalogActor = {
 export function playableGameCondition() {
   return and(eq(game.isActive, true), eq(gameProvider.isActive, true));
 }
+
+export function countWhere(condition: SQL | undefined) {
+  return sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
+}
+
+export const providerSummaryColumns = {
+  id: gameProvider.id,
+  slug: gameProvider.slug,
+  name: gameProvider.name,
+  logoUrl: gameProvider.logoUrl,
+};
+
+export const categorySummaryColumns = {
+  id: gameCategory.id,
+  slug: gameCategory.slug,
+  name: gameCategory.name,
+  translations: gameCategory.translations,
+  icon: gameCategory.icon,
+  sortOrder: gameCategory.sortOrder,
+};
 
 export function toCategorySummary(record: GameCategory) {
   return {
@@ -56,7 +76,7 @@ export function isGamePlayable(
 }
 
 // Groups batched join rows per owner id, keeping the query's row order in each list.
-function groupRows<Row, Key, Value>(
+export function groupRows<Row, Key, Value>(
   rows: Row[],
   keyOf: (row: Row) => Key,
   valueOf: (row: Row) => Value,

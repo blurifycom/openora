@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/ser
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
+  GAME_CATALOG_READER,
   GAME_GEO_CHECK,
   GAMING_COMMANDS,
   IDENTITY_READER,
@@ -19,6 +20,7 @@ import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
 import { DrizzleAdminGameReporting } from './admin-reporting.js';
+import { GameCatalogReaderService } from './adapters/game-catalog-reader.service.js';
 
 export default {
   id: 'gaming',
@@ -28,6 +30,7 @@ export default {
     ctx.provide(GAME_ADAPTER, () => new MockGameAdapter());
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());
     ctx.provide(ADMIN_GAME_REPORTING, (c) => new DrizzleAdminGameReporting(c.get(DRIZZLE)));
+    ctx.provide(GAME_CATALOG_READER, (c) => new GameCatalogReaderService(c.get(DRIZZLE)));
     // One memoized instance backs both the router and the GAMING_COMMANDS port.
     let svc: GamingService | null = null;
     const gamingService = (c: TypedContainer<CoreTokenCatalog>) =>
