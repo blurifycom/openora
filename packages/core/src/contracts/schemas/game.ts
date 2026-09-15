@@ -59,16 +59,18 @@ export const GAME_TAG_VISIBILITIES = ['visible', 'invisible'] as const;
 export const GameTagVisibilitySchema = z.enum(GAME_TAG_VISIBILITIES);
 export type GameTagVisibility = z.infer<typeof GameTagVisibilitySchema>;
 
-export const GAME_TAG_METADATA_MAX_ENTRIES = 20;
+export const GAME_TAG_METADATA_MAX_BYTES = 4096;
 
 // Operator-owned display data (a badge colour, an icon key). Lobby routes return it to
-// players on every visible tag, so it must never hold internal data. Flat strings keep
-// it bounded; widening the value type later is non-breaking, narrowing it is not.
+// players on every visible tag, so it must never hold internal data. The byte cap keeps
+// it small on every lobby response and event snapshot, however deeply it nests.
 export const GameTagMetadataSchema = z
-  .record(z.string().min(1).max(64), z.string().max(512))
-  .refine((metadata) => Object.keys(metadata).length <= GAME_TAG_METADATA_MAX_ENTRIES, {
-    message: `At most ${GAME_TAG_METADATA_MAX_ENTRIES} metadata entries`,
-  });
+  .record(z.string().min(1).max(64), z.json())
+  .refine(
+    (metadata) =>
+      new TextEncoder().encode(JSON.stringify(metadata)).length <= GAME_TAG_METADATA_MAX_BYTES,
+    { message: `Metadata must serialize to at most ${GAME_TAG_METADATA_MAX_BYTES} bytes` },
+  );
 export type GameTagMetadata = z.infer<typeof GameTagMetadataSchema>;
 
 export const GameTagSummarySchema = z.object({

@@ -4,35 +4,39 @@ import {
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
   GameTagMetadataSchema,
-  GAME_TAG_METADATA_MAX_ENTRIES,
+  GAME_TAG_METADATA_MAX_BYTES,
 } from '../game.js';
 
 describe('game tag metadata', () => {
-  it('accepts a flat map of strings', () => {
-    const result = GameTagMetadataSchema.safeParse({ badgeColor: '#ff0000', icon: 'fire' });
+  it('accepts any JSON value per key', () => {
+    const result = GameTagMetadataSchema.safeParse({
+      badgeColor: '#ff0000',
+      weight: 10,
+      pinned: true,
+      note: null,
+      icons: ['fire', 'star'],
+      theme: { bg: '#000', fg: '#fff' },
+    });
 
     expect(result.success).toBe(true);
   });
 
-  it('rejects non-string values', () => {
-    for (const value of [10, true, null, ['fire'], { bg: '#000' }]) {
+  it('rejects values JSON cannot represent', () => {
+    for (const value of [undefined, Number.NaN, new Date(), () => 'x']) {
       expect(GameTagMetadataSchema.safeParse({ theme: value }).success).toBe(false);
     }
   });
 
-  it('bounds keys, values, and entry count', () => {
+  it('bounds keys and serialized size', () => {
     expect(GameTagMetadataSchema.safeParse({ '': 'x' }).success).toBe(false);
     expect(GameTagMetadataSchema.safeParse({ ['k'.repeat(65)]: 'x' }).success).toBe(false);
-    expect(GameTagMetadataSchema.safeParse({ theme: 'x'.repeat(513) }).success).toBe(false);
 
-    const entries = (count: number) =>
-      Object.fromEntries(Array.from({ length: count }, (_, i) => [`key${i}`, 'x']));
-    expect(GameTagMetadataSchema.safeParse(entries(GAME_TAG_METADATA_MAX_ENTRIES)).success).toBe(
-      true,
+    // {"t":"..."} adds 8 bytes around the value.
+    const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 8) });
+    expect(GameTagMetadataSchema.safeParse(sized(GAME_TAG_METADATA_MAX_BYTES)).success).toBe(true);
+    expect(GameTagMetadataSchema.safeParse(sized(GAME_TAG_METADATA_MAX_BYTES + 1)).success).toBe(
+      false,
     );
-    expect(
-      GameTagMetadataSchema.safeParse(entries(GAME_TAG_METADATA_MAX_ENTRIES + 1)).success,
-    ).toBe(false);
   });
 });
 
