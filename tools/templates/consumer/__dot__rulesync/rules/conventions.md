@@ -3,7 +3,11 @@ root: false
 targets:
   - '*'
 globs:
-  - '**/*'
+  - 'apps/**'
+  - 'packages/**'
+  - 'tools/**'
+  - '*.config.*'
+  - 'package.json'
 description: Engineering code conventions (TS, DB, frontend, testing, git) - the always-on core, with a routing table to full detail in docs/standards/.
 ---
 

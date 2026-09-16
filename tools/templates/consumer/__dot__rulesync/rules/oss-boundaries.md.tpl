@@ -3,7 +3,10 @@ root: false
 targets:
   - '*'
 globs:
-  - '**/*'
+  - 'apps/**'
+  - 'packages/**'
+  - 'package.json'
+  - 'pnpm-workspace.yaml'
 description: OSS core is read-only except in an OSS worktree (paired changes); enforced import/module boundaries.
 ---
 
