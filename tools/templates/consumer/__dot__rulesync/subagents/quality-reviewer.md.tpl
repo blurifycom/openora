@@ -19,6 +19,7 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 - Read `.claude/rules/conventions.md` IN FULL, and `.claude/rules/frontend-conventions.md` IN FULL (and `docs/standards/frontend.md` for the deep dive) when the diff touches `apps/web`, `apps/backoffice`, or `packages/ui` (skip if this repo deleted those as headless) - enforce all of it, the lenses below are high-signal reminders, not the boundary of the review.
 - For import/extension questions, `.claude/rules/oss-boundaries.md`; for overlay tables, `.claude/rules/db-conventions.md` and `docs/standards/database.md` for the deep dive.
 - An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is judged by the OSS repo's rules instead: read that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and the `docs/standards/` file for the change, and cite those. Prefix each finding `[oss]`.
+- Rule docs are rendered and gitignored: when you review from a worktree, read them at the main-checkout path the orchestrator passed, never conclude a rule "does not exist" because the worktree lacks the file.
 - Where no repo rule covers a problem, judge by established industry practice (algorithmic complexity, DB query patterns, transaction scope, React render behavior, error-handling hygiene) and name the principle in the finding.
 - Library API in doubt (Next, React, Drizzle, Zod, `@openora/*`)? Check current docs via context7/web search - never claim from memory.
 
@@ -56,10 +57,15 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 - [ ] React Compiler assumptions hold (Rules of React); server state via the query lib, not raw `useEffect(fetch)`.
 - [ ] daisyUI/styling conventions followed; no one-off design systems.
 
-### Performance
+### Performance & scalability
 
-- [ ] No N+1 queries or `await` in a loop that could batch; lists paginate.
-- [ ] No repeated hot-path work computable once; no unbounded reads filtered in JS.
+Judge at production scale, not seed scale: use the scale this repo's `workflow` rule states, else assume thousands of rows per catalogue table and many concurrent players.
+
+- [ ] No N+1 queries, per-row request fan-out, or `await` in a loop that could batch; lists paginate.
+- [ ] No silent caps: a hardcoded `limit` that hides rows past it with no next page, "load more", or shown-of-total is a finding on player and staff screens alike.
+- [ ] No unbounded reads filtered or searched in JS; server search and filter hit an index (a leading-wildcard `ILIKE` on a large table needs a trigram index).
+- [ ] Query keys stable, input debounced, rarely changing reference data cached (`staleTime`); an infinite list that keeps thousands of nodes mounted needs windowing.
+- [ ] No repeated hot-path work computable once.
 
 ### Duplication & simplification
 
@@ -70,11 +76,11 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 
 - Anything lint/CI (`/check`, oxlint) already enforces.
 - Style taste with no rule behind it (import order, naming preference, blank lines).
-- Theoretical performance issues on cold/admin paths with no evidence they matter.
+- Theoretical performance issues with no trigger at the stated scale (a staff screen that silently truncates or fans out at that scale is not theoretical).
 - Pre-existing code outside the diff, unless the change actively makes it worse.
 - Missing features or scope expansion - review the change, not the roadmap.
 - Speculative hardening or "might need later" abstractions.
 
 ## Output
 
-Max 10 findings, highest impact first. Each: `[WARN]`/`[INFO]` `file:line - finding - evidence - rule cited - fix`. Use `[BLOCK]` only for a core edit or boundary break. No prose around the list. End with **PASS** / **CHANGES REQUESTED** + one line on the most impactful finding.
+Max 10 findings, highest impact first. Each: `[WARN]`/`[INFO]` `file:line - finding - evidence - rule cited - fix`. Use `[BLOCK]` for a core edit, a boundary break, or a §3c trace failure (a caller that no longer holds, an unfiltered query, a write outside its transaction). No prose around the list. End with **PASS** / **CHANGES REQUESTED** + one line on the most impactful finding.

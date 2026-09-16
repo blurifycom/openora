@@ -18,6 +18,10 @@ Stance: assume every protection in the diff is broken or bypassable until you tr
 
 If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/{{mrTarget}}...HEAD --name-only`. Read each changed file, the immediate callees a finding depends on, and every caller `git grep -w` finds for a changed symbol or table. Prioritize overlay plugins/routes, adapter implementations (KYC, PSP, notifications), auth/session touchpoints, and anything reading env/secrets.
 
+Rule docs are rendered and gitignored: read them at the main-checkout path the orchestrator passed, not from a review worktree. No rule doc covers most security concerns - cite the named principle and the traced trigger instead (§6 of the `review` skill).
+
+A UI-only diff still calls platform routes: open each route's guard in `@openora/core` (`adminGuard.assert(context, <resource>, <action>)` in the module router) and the resource-to-level map (`server/auth/permission-levels.ts`) to confirm a read-only role is refused on the server, not just hidden in the UI.
+
 An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is core money/auth logic: review it against that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and `docs/standards/`, cite those, and prefix each finding `[oss]`.
 
 ## Request trace
@@ -49,6 +53,8 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 - [ ] All external input Zod-validated at the boundary (no `z.any()`/`z.unknown()` on a security edge).
 - [ ] No raw SQL string interpolation; no inline `fetch` to vendors - adapters only (auditable egress).
 - [ ] Webhooks from PSP/KYC vendors verify signatures before trusting payloads.
+- [ ] Staff-supplied URLs rendered to players (`img src`, `href`, embeds) are validated as URLs with an allowed scheme and host - otherwise any host sees every player's IP, and a link can phish.
+- [ ] A seed or fixture that deletes or overwrites rows refuses to run outside local and test environments.
 
 ## Do NOT flag (false-positive guard)
 

@@ -37,13 +37,18 @@ Checklist - tick as you go:
 
 `git diff <base>...HEAD --name-only`; if empty, fall back to `git status -s`; if still empty, ask (under `--ci`: APPROVED, zero findings). Group changed files by app/package so reviewers and any file-split share the same map. Note the total changed-line count - it picks the mode in §4.
 
+**Reviewing a pull request by number:** reviewers need files to open, and the working tree is not theirs to switch. Fetch the source branch and add a detached worktree: `git fetch origin <src-branch> && git worktree add --detach .claude/worktrees/review-<n> FETCH_HEAD`. Scope with `git -C .claude/worktrees/review-<n> diff origin/<base>...HEAD --name-only`, pass the worktree path to every reviewer, and remove it with `git worktree remove` after §7.
+
+**Rule docs live in the main checkout, not the review worktree.** `.claude/rules/`, `.rulesync/rules/`, `docs/standards/`, and `docs/agents/` are rendered by `pnpm sync:agents` + `pnpm gen:agents` and gitignored, so a fresh worktree has none of them. Pass reviewers the absolute main-checkout path for every rule doc. When the render has not run (a CI job that skips `prepare`), run `pnpm sync:agents && pnpm gen:agents` before reviewing.
+
 ## 2b. Collect task context (mandatory - this is the spec axis)
 
 Distill everything here into ONE context block of at most ~40 lines; it is the only task context reviewers receive.
 
 - **Ticket - read it whole, per `docs/agents/issue-tracker.md`.** Resolve the `{{trackerKey}}-n` key from the MR description (`Closes {{trackerKey}}-n`), MR title, branch, or commit subjects. Read: description + AC, every comment, every attached image viewed as pixels, parent epic, linked issues, and every wiki page the ticket links (their images and comments too). Use a reader that returns image bytes (for Jira + Confluence: the `atlassian-read` skill - `read.py issue {{trackerKey}}-n`, then `page <id>` per linked page - or REST); the Atlassian MCP returns none, so it is never enough on its own. A chat thread is optional: read it (via `slack-reader` when available) only when the ticket or MR points at one ("shared in chat", a Slack link) and the AC depend on it.
 - **Distill:** goal in one line; AC quoted verbatim as bullets (a `CRITERION:` line needs the exact bullet); decisions and open questions from comments (who, when); design references (which screenshot shows what); out-of-scope lines.
-- **Pull-request discussion.** If reviewing one: read its intent and unresolved threads per `docs/agents/forge.md`. Distill to stated intent + open reviewer asks, so the review doesn't repeat or contradict them. No pull request: use branch commit subjects as intent.
+- **Pull-request discussion.** If reviewing one: read its description and every thread, resolved ones included, per `docs/agents/forge.md`. Distill to stated intent, open reviewer asks, and the decisions resolved threads settled (quote who asked for what and what was agreed), so the review doesn't repeat or contradict them. No pull request: use branch commit subjects as intent.
+- **Reviewers have no forge access.** You own the description checks: the manual-verification evidence and the "Tests to add" list (§3c). Report them yourself; never hand them to a reviewer.
 - **No key** -> write `no ticket` in the report and judge against the MR description only. **Fetch failed** -> write `no access`. Never skip silently, never invent AC.
 - A UI change whose ticket carries design screenshots is judged against them: compare the rendered UI (`playwright-cli` screenshot when the stack is up) with the reference; when you cannot, the CRITERION is `not verifiable`, never `met`.
 - The MR description is the author's claim, not the spec. Where it contradicts the ticket or the diff, that contradiction is a finding.
@@ -83,7 +88,9 @@ Each reviewer MUST read the changed code AND the rule docs owning its dimension 
 - `.claude/rules/frontend-conventions.md` + `docs/standards/frontend.md` - React/UI rules (React Compiler, daisyUI, module isolation) when the diff touches a UI app or the shared UI package.
 - `.claude/rules/oss-boundaries.md` - OSS core read-only; enforced import boundaries.
 - `.claude/rules/db-conventions.md` + `docs/standards/database.md` - SQL/Drizzle rules for overlay tables.
-- `.claude/rules/overview.md` (and `.claude/rules/workflow.md` when this repo ships one) - how this repo operates.
+- `CLAUDE.md` / `AGENTS.md` (the rendered `overview` rule) and `.claude/rules/workflow.md` when this repo ships one - how this repo operates.
+
+No rule doc covers performance, scalability, or most security concerns. There a finding cites the named, established principle it breaks instead (N+1, unbounded list, silent truncation, authz enforced only client-side, unvalidated URL rendered to players) - §6 accepts that citation.
 
 ## 3b. Stance - assume the change is broken
 
@@ -97,6 +104,8 @@ Review to falsify, not to confirm. Every reviewer (and you, on the fast path) st
 ## 3c. Request trace - end to end, then blast radius (mandatory)
 
 Applies to every change that crosses a layer: an oRPC route, a service, a Drizzle query, a table, an event, or a job. Skip only for a change inside one pure function, a test, a doc, or a type. Money, wallet, payment, auth/session, KYC, and RG paths always get a trace.
+
+**UI-only diff** (no route, service, query, table, event, or job changed in this repo): trace each changed data hook to the platform route it calls - hops 1, 2, and 7 only (input schema, guard, response fields) - and say so in the `TRACE:` line. The full walk is for layers this repo owns.
 
 **Walk the hops.** For each changed route or entry point, list the hops in order and open the code at each one - the diff hunk is never enough:
 
@@ -128,7 +137,7 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 Dimensions and the roster agent that owns each - never `general-purpose`:
 
-1. **Boundaries, conventions, frontend, perf, duplication** - `quality-reviewer` (its prompt carries the full lens checklists; always applicable).
+1. **Boundaries, conventions, frontend, performance and scalability, duplication** - `quality-reviewer` (its prompt carries the full lens checklists; always applicable). On a large diff, one instance can own performance and scalability across all file groups while others own conventions per group.
 2. **Security & secrets** - `security-reviewer`; only if overlay routes, adapters, auth/session, env/config, or money-adjacent code changed.
 3. **Operator/domain fit** - `expert`; only if business logic changed AND AC exists to judge against.
 
@@ -140,13 +149,13 @@ Dimensions and the roster agent that owns each - never `general-purpose`:
 - N > dimensions: extras are additional `quality-reviewer` instances split by file group (state the split; never silently drop files).
 - N < dimensions: drop `expert` first, then merge security into quality (say so in the report).
 
-Spawn all reviewers in a SINGLE message (parallel). Pass each: the changed-file list for its dimension (pre-grouped - reviewers never re-scope), the base ref, the §2b context block, the §3b stance verbatim, the §3c trace for its file group, and hard caps: read only changed files + immediate callees; max 10 findings; compact `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `/check`/tests.
+Spawn all reviewers in a SINGLE message (parallel). Pass each: the changed-file list for its dimension, copied from the `--name-only` output (pre-grouped - reviewers never re-scope; never hand-typed paths or globs), the review worktree path and the main-checkout rule-doc paths (§2), the base ref, the §2b context block, the §3b stance verbatim, the §3c trace for its file group, and hard caps: read only changed files + immediate callees; max 10 findings; compact `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `/check`/tests.
 
 ## 6. Evidence gate (cut false positives)
 
 Every reviewer applies this before returning; re-apply it yourself when synthesizing:
 
-- Every `[BLOCK]`/`[WARN]` cites a concrete `file:line` AND the rule doc violated - otherwise downgrade to `[INFO]` or drop.
+- Every `[BLOCK]`/`[WARN]` cites a concrete `file:line` AND the rule doc violated, or - where no rule doc covers it (§3) - the named principle plus the traced trigger. Otherwise downgrade to `[INFO]` or drop.
 - High-confidence findings only; unsure = downgrade or omit. Few actionable findings beat flooding.
 - No invented runtime failures - state the trigger path or don't raise it.
 - Don't duplicate what tooling enforces (oxlint, the `/check` gate); for a suspected lint/boundary issue say "confirm with `pnpm check:lint`" - flag only what the gates miss.
@@ -192,5 +201,5 @@ Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete 
 - Reviewers report; only the orchestrator edits, and only under `--fix` (working tree only - no commit, no push).
 - Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
 - NEVER edit `node_modules` or the main `{{ossDir}}` checkout. Under `--fix`, an `[oss]` finding is fixed in the OSS worktree only.
-- Every finding cites a rule doc - no ungrounded opinions.
+- Every finding cites a rule doc or a named principle with a traced trigger - no ungrounded opinions.
 - Cap at 5 parallel reviewers.

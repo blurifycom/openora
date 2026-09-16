@@ -25,6 +25,7 @@ coverage
 .codex/
 .claude/agents/
 .claude/commands/
+.claude/worktrees/
 .github/copilot-instructions.md
 .github/agents/
 .github/prompts/
