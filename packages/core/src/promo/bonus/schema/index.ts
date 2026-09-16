@@ -7,13 +7,25 @@ import {
   text,
   decimal,
   timestamp,
+  jsonb,
+  index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import {
   CONTRIBUTION_PERCENT_PRECISION,
   CONTRIBUTION_PERCENT_SCALE,
+  type BonusGrantSource,
+  type BonusGrantTerms,
 } from '@openora/core/contracts';
-import { WAGER_WEIGHT_SCOPES, type WagerWeightScope } from '../contract/index.js';
+import {
+  BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
+  WAGER_WEIGHT_SCOPES,
+  type BonusForfeitReason,
+  type BonusGrantStatus,
+  type WagerWeightScope,
+} from '../contract/index.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
 
@@ -67,5 +79,52 @@ export const promoWeight = pgTable(
   ],
 );
 
+export const promoGrantStatusEnum = pgEnum('promo_grant_status', BONUS_GRANT_STATUSES);
+export const promoGrantSourceEnum = pgEnum('promo_grant_source', BONUS_GRANT_SOURCES);
+export const promoForfeitReasonEnum = pgEnum('promo_forfeit_reason', BONUS_FORFEIT_REASONS);
+
+/**
+ * One bonus a player holds. There is no separate balance column and no balance table: a grant
+ * row is the bonus, and what a player has left is derived from its own numbers.
+ *
+ * `terms` is a snapshot, never a lookup. Editing an offer must not change a bonus already
+ * granted, which is the one rule the configuration surface has to obey.
+ */
+export const promoGrant = pgTable(
+  'promo_grant',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module id, no FK (module-boundary rule).
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    source: promoGrantSourceEnum().$type<BonusGrantSource>().notNull(),
+    // The deposit transaction, the `<mechanic>:<utc-day>` job key, the race id.
+    sourceRef: text().notNull(),
+    offerId: uuid(),
+    terms: jsonb().$type<BonusGrantTerms>().notNull(),
+    grantedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    wageringRequired: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    wageringProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    status: promoGrantStatusEnum().$type<BonusGrantStatus>().notNull().default('active'),
+    forfeitReason: promoForfeitReasonEnum().$type<BonusForfeitReason>(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // The idempotency guard. A replayed deposit or a re-run daily job hits this, not a
+    // read-then-write check that two concurrent callers would both pass.
+    uniqueIndex().on(t.userId, t.source, t.sourceRef),
+    // FIFO consumption order and the balance read.
+    index().on(t.userId, t.currency, t.status, t.createdAt),
+    // The expiry sweep, over live rows only.
+    index()
+      .on(t.expiresAt)
+      .where(sql`${t.status} = 'active'`),
+  ],
+);
+
+export type PromoGrant = typeof promoGrant.$inferSelect;
 export type PromoWeightProfile = typeof promoWeightProfile.$inferSelect;
 export type PromoWeight = typeof promoWeight.$inferSelect;

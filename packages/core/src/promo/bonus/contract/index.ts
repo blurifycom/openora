@@ -30,4 +30,41 @@ export const WagerWeightProfileSchema = z.object({
 
 export type WagerWeightProfile = z.infer<typeof WagerWeightProfileSchema>;
 
+/**
+ * `pending` is a grant that is claimed but not yet funded, `cancelled` its only exit - nothing
+ * was credited, so there is nothing to lose. Everything after funding ends in `completed`,
+ * `expired` or `forfeited`.
+ */
+export const BONUS_GRANT_STATUSES = [
+  'pending',
+  'active',
+  'completed',
+  'expired',
+  'forfeited',
+  'cancelled',
+] as const;
+export type BonusGrantStatus = (typeof BONUS_GRANT_STATUSES)[number];
+
+/** Why an active grant was taken away. Recorded on every forfeit, for the regulator. */
+export const BONUS_FORFEIT_REASONS = [
+  'self_exclusion',
+  'account_closed',
+  'admin',
+  'player_opt_out',
+  'withdrawal_while_active',
+] as const;
+export type BonusForfeitReason = (typeof BONUS_FORFEIT_REASONS)[number];
+
+/** What caused a grant. Half of its idempotency key. */
+export const BONUS_GRANT_SOURCES = [
+  'deposit',
+  'manual',
+  'streak',
+  'rank',
+  'race',
+  'gift',
+  'rain',
+] as const;
+export const BonusGrantSourceSchema = z.enum(BONUS_GRANT_SOURCES);
+
 export const bonusContract = {};
