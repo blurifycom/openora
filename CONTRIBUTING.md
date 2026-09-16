@@ -79,14 +79,15 @@ pushes to `dev`.
 ## Releasing (`@openora/*` to npm)
 
 Stable and rc versions are driven by [Changesets](https://github.com/changesets/changesets) - you
-never hand-edit a release version. Any PR that changes published behavior includes a changeset
-(`pnpm changeset` -> pick patch/minor/major + a one-line summary); the tooling computes the stable
-version from those. Canary builds ignore changesets and publish continuously (below). The two
+never hand-edit a release version. Feature and fix PRs carry no changeset: once the work has landed,
+changesets for it go in their own PR (`pnpm changeset` -> pick patch/minor/major + a summary), so
+the bump and summary describe the finished change. The tooling computes the stable version from those. Canary builds ignore changesets and publish continuously (below). The two
 published packages (`@openora/core`, `@openora/mcp`) move together as a fixed group.
 
 ```mermaid
 flowchart LR
-    PR["feat/* PR<br/>+ pnpm changeset"] -->|merge| DEV[dev]
+    PR["feat/* PR"] -->|merge| DEV[dev]
+    CS["changeset PR"] -->|merge| DEV
     DEV -. push .-> CANARY(["npm canary<br/>x.y.z-canary.run"])
     DEV ==>|promote| STAGE[stage]
     STAGE -->|"tag vX.Y.Z-rc.N"| RC(["npm rc<br/>+ GitHub pre-release"])
