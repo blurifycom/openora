@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   asAdmin,
   bootTestApp,
@@ -56,6 +57,12 @@ function startFromBlockedCountry(gameId: string) {
     headers: { 'content-type': 'application/json', 'x-real-ip': '198.51.100.40' },
     body: JSON.stringify({ gameId, currency: 'USD', betAmount: '10' }),
   });
+}
+
+async function auditEntries(resourceId: string, action: string) {
+  const response = await admin.get(`/audit/logs?resourceId=${resourceId}&action=${action}`);
+  expect(response.status).toBe(200);
+  return (await readJson(response)).items as Array<Record<string, unknown>>;
 }
 
 async function seedGame(label: string): Promise<SeededGame> {
@@ -241,6 +248,29 @@ describe('per-provider geo-blocking lifecycle', () => {
     const rule = (await readJson(upsert)) as { id: string; providerId: string };
     expect(rule).toMatchObject({ providerId, countryCode: 'US' });
 
+    const drizzle = app.container.get(DRIZZLE).db;
+    const [adminUser] = await drizzle
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, 'admin@oss.dev'));
+    await vi.waitFor(async () => {
+      expect(await auditEntries(rule.id, 'compliance.provider-geo-rule.upserted')).toEqual([
+        expect.objectContaining({
+          actorType: 'admin',
+          actorId: adminUser?.id,
+          resourceType: 'provider-geo-rule',
+          resourceId: rule.id,
+          before: null,
+          after: {
+            state: expect.objectContaining({ id: rule.id, providerId, countryCode: 'US' }),
+            reason: 'provider licence excludes this country',
+            providerId,
+            countryCode: 'US',
+          },
+        }),
+      ]);
+    });
+
     const listed = await admin.get(`/compliance/provider-geo-rules?providerId=${providerId}`);
     expect(listed.status).toBe(200);
     expect(await readJson(listed)).toEqual([expect.objectContaining({ id: rule.id, providerId })]);
@@ -264,6 +294,23 @@ describe('per-provider geo-blocking lifecycle', () => {
     });
     expect(deleted.status).toBe(200);
     expect(await readJson(deleted)).toMatchObject({ id: rule.id, providerId });
+    await vi.waitFor(async () => {
+      expect(await auditEntries(rule.id, 'compliance.provider-geo-rule.deleted')).toEqual([
+        expect.objectContaining({
+          actorType: 'admin',
+          actorId: adminUser?.id,
+          resourceType: 'provider-geo-rule',
+          resourceId: rule.id,
+          before: expect.objectContaining({ id: rule.id, providerId, countryCode: 'US' }),
+          after: {
+            state: null,
+            reason: 'provider licence restored',
+            providerId,
+            countryCode: 'US',
+          },
+        }),
+      ]);
+    });
 
     const restored = await startFromBlockedCountry(gameId);
     expect(restored.status).toBe(200);

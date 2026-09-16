@@ -216,7 +216,6 @@ export class ComplianceService {
     }
 
     const { countryCode } = globalDecision;
-    // Without a resolved country any rule counts, so an unresolved lookup fails closed.
     const matchesCountry = (
       column: typeof providerGeoRule.countryCode | typeof gameGeoRule.countryCode,
     ) => (countryCode ? eq(column, countryCode) : undefined);
