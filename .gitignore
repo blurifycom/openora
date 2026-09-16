@@ -26,11 +26,11 @@ routeTree.gen.ts
 # TanStack Router plugin cache
 .tanstack
 
-# AI-agent instruction files - ALL generated, never commit. Regenerated on
-# `pnpm install` (prepare) or `pnpm gen:agents`. Never hand-write a CLAUDE.md
-# anywhere; root instructions are generated from `.rulesync/`.
+# AI-agent instruction files - ALL generated from `.rulesync/` on `pnpm install`
+# (prepare) or `pnpm gen:agents`. Never hand-write one. The root AGENTS.md is the
+# one exception that is committed: hosted reviewers read it from the checkout, and
+# `pnpm check:drift` fails when it goes stale.
 CLAUDE.md
-/AGENTS.md
 /.mcp.json
 .vscode/mcp.json
 .codex/

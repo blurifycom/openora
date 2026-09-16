@@ -5,7 +5,13 @@ export const MAIL_SEND_QUEUE = queue('mail-send');
 
 export const MailRecipientSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user'), userId: UuidSchema }),
-  z.object({ kind: z.literal('address'), email: z.email(), locale: z.string().optional() }),
+  z.object({
+    kind: z.literal('address'),
+    email: z.email(),
+    locale: z.string().optional(),
+    antiPhishingCode: z.string().nullable().optional(),
+    recipientName: z.string().nullable().optional(),
+  }),
 ]);
 export type MailRecipient = z.infer<typeof MailRecipientSchema>;
 
