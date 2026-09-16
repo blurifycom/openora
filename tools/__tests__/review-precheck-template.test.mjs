@@ -40,7 +40,7 @@ git('init', '-q', '-b', 'dev');
 commit('base', {
   '.rulesync/sync.json': JSON.stringify({
     reviewPrecheck: {
-      bannedClasses: { paths: ['apps/web'], tokens: ['btn', 'alert'] },
+      bannedClasses: [{ paths: ['apps/web'], tokens: ['btn', 'alert', 'tabs'] }],
       reactCompilerPaths: ['apps/web'],
     },
   }),
@@ -59,6 +59,7 @@ const firstFeature = commit('feature', {
     'const status = key as Status;',
     'const tabs = useMemo(() => [], []);',
     "const styles = { banner: 'alert alert-error p-4' } as const;",
+    "<span className={styles.banner} role=\"alert\" aria-label={t('tabs.left', 'Scroll tabs left')} />",
     "const label = t('added');",
     "const missing = t('nope.key');",
     'const balance = wallet.balance;',
@@ -70,7 +71,7 @@ const firstFeature = commit('feature', {
 test('scopes reviewable files and names every skipped one with its reason', () => {
   const out = precheck('--base', 'dev', '--head', 'feature');
   assert.match(out[0], /^SCOPE: files 5 .* reviewable 2 .* skipped 3 mode full$/);
-  assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +8/-0'));
+  assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +9/-0'));
   assert.ok(out.includes('SKIPPED: pnpm-lock.yaml - lockfile'));
   assert.ok(out.includes('SKIPPED: apps/web/src/mod/__tests__/page.test.tsx - test'));
   assert.ok(
@@ -88,13 +89,14 @@ test('reports mechanical checks on added lines only, never on tests or aliases',
   assert.match(out, /page\.tsx:2 - hardcoded-limit - `PROVIDERS_LIMIT = 100`/);
   assert.match(out, /page\.tsx:4 - hand-memo/);
   assert.match(out, /page\.tsx:5 - banned-class - `alert alert-error`/);
+  assert.doesNotMatch(out, /page\.tsx:6 - banned-class/);
 });
 
 test('flags locale keys a sibling added and t() keys no locale file has', () => {
   const out = precheck('--base', 'dev', '--head', 'feature').join('\n');
   assert.match(out, /de\.json:1 - i18n-parity - missing 1 key\(s\) a sibling locale added: added/);
   assert.doesNotMatch(out, /en\.json:1 - i18n-parity/);
-  assert.match(out, /page\.tsx:7 - i18n-missing-key - `nope\.key`/);
+  assert.match(out, /page\.tsx:8 - i18n-missing-key - `nope\.key`/);
   assert.doesNotMatch(out, /`added` not in/);
 });
 
@@ -102,7 +104,7 @@ test('counts domain hits so a reviewer can short-circuit on zero', () => {
   const out = precheck('--base', 'dev', '--head', 'feature');
   assert.ok(out.includes('DOMAIN: compliance hits 1'));
   assert.ok(
-    out.some((row) => row.startsWith('DOMAIN-HIT: compliance apps/web/src/mod/page.tsx:8')),
+    out.some((row) => row.startsWith('DOMAIN-HIT: compliance apps/web/src/mod/page.tsx:9')),
   );
   assert.ok(out.includes('DOMAIN: security hits 0'));
 });
