@@ -4,6 +4,7 @@
  */
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
+import type { WagerContext } from './wager-context.js';
 
 export type WalletProviderRef = {
   providerName: string;
@@ -19,6 +20,12 @@ export type WalletDebitArgs = {
   /** Which of the player's balances to take from. Omit it and the debit falls on the player's active currency (`wallet.currency`). */
   currency?: string;
   providerRef?: WalletProviderRef;
+  /**
+   * What the bet was placed on, when this debit is one. The bonus engine resolves a wagering
+   * weight from it and gamification counts qualifying wagers off it, so a provider seam that
+   * drops it silently stops both. Absent for a debit that is not a bet (a withdrawal, a swap).
+   */
+  context?: WagerContext;
 };
 
 /**

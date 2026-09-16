@@ -612,6 +612,76 @@ export const domainEventSchemas = {
     creditedAmount: MoneyAmountSchema,
   }),
 
+  // Promo. Every one of these fires post-commit and is notification/analytics fan-out only:
+  // money and counters move through the BONUS_GRANTS, BONUS_WAGERING and WAGER_TRACKING command
+  // ports instead, because the bus is best-effort and a dropped event would be a player's money.
+  'promo.bonus.granted': z.object({
+    userId: UuidSchema,
+    grantId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    grantedAmount: MoneyAmountSchema,
+    wageringRequired: MoneyAmountSchema,
+    source: z.enum(['deposit', 'manual', 'streak', 'rank', 'race', 'gift', 'rain']),
+    offerId: UuidSchema.nullable(),
+  }),
+  // Wagering requirement met. The lock is released; what happens to the balance is the
+  // conversion step, which emits nothing of its own.
+  'promo.bonus.completed': z.object({
+    userId: UuidSchema,
+    grantId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    convertedAmount: MoneyAmountSchema,
+  }),
+  'promo.bonus.forfeited': z.object({
+    userId: UuidSchema,
+    grantId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    forfeitedAmount: MoneyAmountSchema,
+    reason: z.enum([
+      'self_exclusion',
+      'account_closed',
+      'admin',
+      'player_opt_out',
+      'withdrawal_while_active',
+    ]),
+    // The admin who forfeited it; null when a rule or the player did.
+    actorId: UuidSchema.nullable(),
+  }),
+  'promo.bonus.expired': z.object({
+    userId: UuidSchema,
+    grantId: UuidSchema,
+    currency: CurrencyTickerSchema,
+    forfeitedAmount: MoneyAmountSchema,
+  }),
+  'promo.streak.milestone.reached': z.object({
+    userId: UuidSchema,
+    // Consecutive qualifying days that triggered the milestone.
+    day: z.number().int().positive(),
+    // Absent when the milestone's reward is not a bonus grant.
+    grantId: UuidSchema.nullable(),
+  }),
+  // Fires on promotion only - a rank never decreases.
+  'promo.rank.changed': z.object({
+    userId: UuidSchema,
+    tierId: UuidSchema,
+    previousTierId: UuidSchema.nullable(),
+    position: z.number().int().nonnegative(),
+  }),
+  // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
+  'promo.race.settled': z.object({
+    raceId: UuidSchema,
+    // Winners in finishing order; a player who placed outside the prize scale is not listed.
+    winners: z.array(
+      z.object({
+        userId: UuidSchema,
+        rank: z.number().int().positive(),
+        prizeAmount: MoneyAmountSchema,
+        grantId: UuidSchema.nullable(),
+      }),
+    ),
+    currency: CurrencyTickerSchema,
+  }),
+
   'chat.message.sent': z.object({
     messageId: UuidSchema,
     // null for global-chat messages (no room); a room id otherwise.
