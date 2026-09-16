@@ -1555,8 +1555,8 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.withdrawal.completed']);
   });
 
-  it('refunds and marks failed without an admin-attributed event', async () => {
-    const { svc, events } = makeService();
+  it('refunds, marks failed, and emits a failed event with no admin attribution', async () => {
+    const { svc, events, audit } = makeService();
     const w = await seedWallet({ balance: '0' });
     const externalId = randomUUID();
     const tx = await seedTx(w.id, {
@@ -1570,7 +1570,23 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
 
     expect(await txById(tx.id)).toMatchObject({ status: 'failed' });
     expect(await balanceOf(w.userId)).toBe(40);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.withdrawal.failed',
+      expect.objectContaining({ userId: w.userId, transactionId: tx.id, adminId: null }),
+    );
+    // The audit row for the refund commits in the same transaction as the credit -
+    // not left to a best-effort subscriber on the event above.
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: 'system',
+        actorId: null,
+        action: 'wallet.withdrawal.failed',
+        resourceType: 'withdrawal',
+        resourceId: tx.id,
+        after: expect.objectContaining({ userId: w.userId }),
+      }),
+    );
   });
 
   it('no-ops on a replay of an already terminal transaction', async () => {

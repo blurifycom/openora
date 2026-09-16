@@ -25,6 +25,8 @@ export type MailToUserInput = {
 export type MailToAddressInput = {
   email: string;
   locale?: string;
+  antiPhishingCode?: string | null;
+  recipientName?: string | null;
   template: MailTemplate;
   idempotencyKey: string;
 };

@@ -59,12 +59,19 @@ describe('DefaultEmailTemplateRenderer', () => {
           amount: '100.00',
           currency: 'EUR',
           minutes: null,
+          initiatedBy: 'player',
         },
       },
-      { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-01-01T00:00:00.000Z' } },
-      { key: 'rgCoolingOffLifted', data: {} },
-      { key: 'rgSelfExclusionActivated', data: { expiresAt: null, isPermanent: true } },
-      { key: 'rgSelfExclusionLifted', data: {} },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: '2026-01-01T00:00:00.000Z', initiatedBy: 'player' },
+      },
+      { key: 'rgCoolingOffLifted', data: { initiatedBy: 'admin' } },
+      {
+        key: 'rgSelfExclusionActivated',
+        data: { expiresAt: null, isPermanent: true, initiatedBy: 'player' },
+      },
+      { key: 'rgSelfExclusionLifted', data: { initiatedBy: 'admin' } },
       {
         key: 'withdrawalApproved',
         data: {
@@ -86,6 +93,37 @@ describe('DefaultEmailTemplateRenderer', () => {
       },
       { key: 'kycResubmissionRequested', data: { reason: null } },
       { key: 'adminInvitation', data: { token: 'tok', expiresAt: '2026-01-01T00:00:00.000Z' } },
+      { key: 'welcome', data: {} },
+      {
+        key: 'emailChangeConfirmation',
+        data: { otp: '111111', oldEmail: 'old@example.com', newEmail: 'new@example.com' },
+      },
+      {
+        key: 'emailChanged',
+        data: {
+          newEmail: 'new@b.com',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+          isNewAddress: false,
+        },
+      },
+      {
+        key: 'withdrawalCompleted',
+        data: {
+          amount: '100.00',
+          currency: 'USDT',
+          transactionId: '00000000-0000-0000-0000-000000000000',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        key: 'withdrawalFailed',
+        data: {
+          amount: '100.00',
+          currency: 'USDT',
+          transactionId: '00000000-0000-0000-0000-000000000000',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
     ];
 
     for (const template of samples) {
@@ -95,6 +133,45 @@ describe('DefaultEmailTemplateRenderer', () => {
       expect(result.text).not.toMatch(/<[a-z/]/i);
       expect(result.html).toContain('<p>');
     }
+  });
+
+  it('renders the email-change confirmation code and the change notice', () => {
+    expect(
+      renderer.render(
+        {
+          key: 'emailChangeConfirmation',
+          data: { otp: '424242', oldEmail: 'old@example.com', newEmail: 'new@example.com' },
+        },
+        'en',
+      ).text,
+    ).toContain('424242');
+    const notice = renderer.render(
+      {
+        key: 'emailChanged',
+        data: {
+          newEmail: 'new@example.com',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+          isNewAddress: false,
+        },
+      },
+      'en',
+    );
+    expect(notice.text).toContain('new@example.com');
+    expect(notice.text).toContain('support');
+    expect(notice.text).toContain('2026');
+
+    const confirmation = renderer.render(
+      {
+        key: 'emailChanged',
+        data: {
+          newEmail: 'new@example.com',
+          occurredAt: '2026-01-01T00:00:00.000Z',
+          isNewAddress: true,
+        },
+      },
+      'en',
+    );
+    expect(confirmation.text).not.toContain('support');
   });
 
   it('groups the withdrawal amount in thousands, matching the in-app notification', () => {
@@ -124,6 +201,7 @@ describe('DefaultEmailTemplateRenderer', () => {
           amount: '10000.00',
           currency: 'EUR',
           minutes: null,
+          initiatedBy: 'player',
         },
       },
       'en',
@@ -133,7 +211,14 @@ describe('DefaultEmailTemplateRenderer', () => {
     const session = renderer.render(
       {
         key: 'rgLimitUpdated',
-        data: { period: 'session', type: 'session', amount: null, currency: null, minutes: 60 },
+        data: {
+          period: 'session',
+          type: 'session',
+          amount: null,
+          currency: null,
+          minutes: 60,
+          initiatedBy: 'player',
+        },
       },
       'en',
     );
@@ -143,7 +228,10 @@ describe('DefaultEmailTemplateRenderer', () => {
   it('falls back to a default locale instead of throwing on an unparseable tag', () => {
     const render = () =>
       renderer.render(
-        { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+        {
+          key: 'rgCoolingOffActivated',
+          data: { expiresAt: '2026-03-09T15:30:00.000Z', initiatedBy: 'player' },
+        },
         'en_US',
       );
 
@@ -182,11 +270,17 @@ describe('DefaultEmailTemplateRenderer', () => {
 
   it('formats the cooling-off date against the recipient locale', () => {
     const en = renderer.render(
-      { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: '2026-03-09T15:30:00.000Z', initiatedBy: 'player' },
+      },
       'en-GB',
     );
     const de = renderer.render(
-      { key: 'rgCoolingOffActivated', data: { expiresAt: '2026-03-09T15:30:00.000Z' } },
+      {
+        key: 'rgCoolingOffActivated',
+        data: { expiresAt: '2026-03-09T15:30:00.000Z', initiatedBy: 'player' },
+      },
       'de-DE',
     );
 

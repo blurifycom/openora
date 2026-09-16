@@ -45,7 +45,8 @@ const {
   requestPasswordResetEmailOTPMock,
   checkVerificationOTPMock,
   resetPasswordEmailOTPMock,
-  changeEmailMock,
+  requestEmailChangeMock,
+  confirmEmailChangeMock,
   changePasswordMock,
   capturedAuthOptions,
 } = vi.hoisted(() => ({
@@ -61,7 +62,8 @@ const {
   requestPasswordResetEmailOTPMock: vi.fn(),
   checkVerificationOTPMock: vi.fn(),
   resetPasswordEmailOTPMock: vi.fn(),
-  changeEmailMock: vi.fn(),
+  requestEmailChangeMock: vi.fn(),
+  confirmEmailChangeMock: vi.fn(),
   changePasswordMock: vi.fn(),
   capturedAuthOptions: {
     current: undefined as
@@ -98,7 +100,8 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         requestPasswordResetEmailOTP: requestPasswordResetEmailOTPMock,
         checkVerificationOTP: checkVerificationOTPMock,
         resetPasswordEmailOTP: resetPasswordEmailOTPMock,
-        changeEmail: changeEmailMock,
+        requestEmailChangeEmailOTP: requestEmailChangeMock,
+        changeEmailEmailOTP: confirmEmailChangeMock,
         changePassword: changePasswordMock,
       },
     };
@@ -180,7 +183,8 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(null);
-  changeEmailMock.mockReset();
+  requestEmailChangeMock.mockReset();
+  confirmEmailChangeMock.mockReset();
   changePasswordMock.mockReset();
   await db.drizzle.db.execute(
     sql`TRUNCATE ${user}, ${session}, ${player} RESTART IDENTITY CASCADE`,
@@ -1614,29 +1618,38 @@ describe('IdentityService security controls', () => {
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
   });
 
-  it('auditable alert preference is reset when the player changes email', async () => {
+  it('resets the alert preference and emits the change event once the new address is confirmed', async () => {
     const account = await seedUser({
       emailVerified: true,
       loginWithdrawalAlertsEnabled: true,
     });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    // better-auth's `/change-email` returns the same `{ status: true }` shape whether or
-    // not it actually touched the row (see the identity.service.ts `changeEmail` comment),
-    // so the service keys the alert-disable off the row's own email column - update it the
-    // way the real endpoint's synchronous-update branch would, before the mock resolves.
-    changeEmailMock.mockImplementation(async () => {
+    // Mirror better-auth's row swap before the mock resolves.
+    confirmEmailChangeMock.mockImplementation(async () => {
       await db.drizzle.db
         .update(user)
         .set({ email: 'new-address@test.dev' })
         .where(eq(user.id, account.id));
-      return jsonResponse({ status: true }, 200);
+      return jsonResponse({ success: true }, 200);
     });
     const events = makeEventBus();
     const svc = buildService({ events });
 
-    await svc.changeEmail({ newEmail: 'new-address@test.dev' }, {}, new Headers());
+    await svc.confirmEmailChange(
+      { newEmail: 'new-address@test.dev', otp: '123456' },
+      {},
+      new Headers(),
+    );
 
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(false);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.email.changed',
+      expect.objectContaining({
+        userId: account.id,
+        previousEmail: EMAIL,
+        newEmail: 'new-address@test.dev',
+      }),
+    );
     expect(events.emit).toHaveBeenCalledWith(
       'identity.security.login_withdrawal_alerts.updated',
       expect.objectContaining({
@@ -1647,24 +1660,152 @@ describe('IdentityService security controls', () => {
     );
   });
 
-  it('leaves the alert preference untouched when change-email does not actually update the row', async () => {
-    // Covers better-auth's anti-enumeration no-op and its deferred confirmation-email
-    // branch: both return `{ status: true }` without touching `user.email`.
+  it('leaves the alert preference untouched when the confirmation code is rejected', async () => {
     const account = await seedUser({
       emailVerified: true,
       loginWithdrawalAlertsEnabled: true,
     });
     getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
-    changeEmailMock.mockResolvedValue(jsonResponse({ status: true }, 200));
+    confirmEmailChangeMock.mockResolvedValue(jsonResponse({ message: 'Invalid OTP' }, 400));
     const events = makeEventBus();
     const svc = buildService({ events });
 
-    await svc.changeEmail({ newEmail: 'new-address@test.dev' }, {}, new Headers());
+    await expect(
+      svc.confirmEmailChange(
+        { newEmail: 'new-address@test.dev', otp: '000000' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect((await readUser(account.id))?.loginWithdrawalAlertsEnabled).toBe(true);
     expect(events.emit).not.toHaveBeenCalledWith(
       'identity.security.login_withdrawal_alerts.updated',
       expect.anything(),
+    );
+  });
+
+  it('carries the caller anti-phishing code on the emailChanged notice to the old address', async () => {
+    const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address-2@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ success: true }, 200);
+    });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ mailDispatch });
+
+    await svc.confirmEmailChange(
+      { newEmail: 'new-address-2@test.dev', otp: '123456' },
+      {},
+      new Headers(),
+    );
+
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: EMAIL,
+        antiPhishingCode: 'Sunny Meadow',
+        template: {
+          key: 'emailChanged',
+          data: {
+            newEmail: 'new-address-2@test.dev',
+            occurredAt: expect.any(String),
+            isNewAddress: false,
+          },
+        },
+      }),
+    );
+  });
+
+  it('sends a plain, warning-free confirmation to the new address, with fields captured at swap time rather than looked up live', async () => {
+    const account = await seedUser({ emailVerified: true, antiPhishingCode: 'Sunny Meadow' });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address-4@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ success: true }, 200);
+    });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ mailDispatch });
+
+    await svc.confirmEmailChange(
+      { newEmail: 'new-address-4@test.dev', otp: '123456' },
+      {},
+      new Headers(),
+    );
+
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'new-address-4@test.dev',
+        antiPhishingCode: 'Sunny Meadow',
+        template: {
+          key: 'emailChanged',
+          data: {
+            newEmail: 'new-address-4@test.dev',
+            occurredAt: expect.any(String),
+            isNewAddress: true,
+          },
+        },
+      }),
+    );
+    expect(mailDispatch.toUser).not.toHaveBeenCalled();
+  });
+
+  it('still enqueues the emailChanged notice even when session revocation later throws', async () => {
+    const account = await seedUser({ emailVerified: true });
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: account.id } });
+    confirmEmailChangeMock.mockImplementation(async () => {
+      await db.drizzle.db
+        .update(user)
+        .set({ email: 'new-address-3@test.dev' })
+        .where(eq(user.id, account.id));
+      return jsonResponse({ success: true }, 200);
+    });
+    const mailDispatch = mock<MailDispatchPort>({
+      toAddress: vi.fn(async () => undefined),
+      toUser: vi.fn(async () => undefined),
+    });
+    const sessions = new SessionService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      identityReader: makeIdentityReader(),
+    });
+    vi.spyOn(sessions, 'revokeAllSessions').mockRejectedValue(new Error('redis down'));
+    const svc = buildService({ mailDispatch, sessions });
+
+    await expect(
+      svc.confirmEmailChange(
+        { newEmail: 'new-address-3@test.dev', otp: '123456' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toThrow('redis down');
+
+    // The swap already committed by the time revocation blew up - the owner still
+    // needs the notice, so it must have gone out before the throw propagated.
+    expect(mailDispatch.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: EMAIL,
+        template: {
+          key: 'emailChanged',
+          data: {
+            newEmail: 'new-address-3@test.dev',
+            occurredAt: expect.any(String),
+            isNewAddress: false,
+          },
+        },
+      }),
     );
   });
 });

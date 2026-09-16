@@ -82,6 +82,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly hardMaxAgeMs: number;
   private readonly providerTimeoutMs: number;
   private readonly inFlight = new Map<string, Promise<ExchangeRateQuote>>();
+  private readonly legResolution = new Map<string, Promise<ExchangeRateQuote | null>>();
   private readonly failedUntil = new Map<string, number>();
 
   constructor(deps: ExchangeRateReaderServiceDeps) {
@@ -123,11 +124,27 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     return moneyScaleBy(amount, quote.rate);
   }
 
-  private async resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
+  private resolveLeg(currency: string): Promise<ExchangeRateQuote | null> {
     if (currency === this.pivot) {
-      return { rate: '1.000000000000000000', asOf: new Date().toISOString() };
+      return Promise.resolve({ rate: '1.000000000000000000', asOf: new Date().toISOString() });
     }
 
+    const key = `${currency}:${this.pivot}`;
+    const existing = this.legResolution.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const attempt = this.resolveLegUncached(currency).finally(() => {
+      if (this.legResolution.get(key) === attempt) {
+        this.legResolution.delete(key);
+      }
+    });
+    this.legResolution.set(key, attempt);
+    return attempt;
+  }
+
+  private async resolveLegUncached(currency: string): Promise<ExchangeRateQuote | null> {
     const row = await this.readRow(currency);
     // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
     const ageMs = row
