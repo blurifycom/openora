@@ -199,11 +199,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
                 key: 'emailChangeConfirmation',
                 data: { otp, oldEmail: maskEmail(session.user.email), newEmail: email },
               },
-              recipientName: (session.user as { username?: string | null }).username ?? null,
-              // The new inbox has no user row of its own yet, so it cannot resolve one
-              // itself - carry the caller's own code, unaffected by the pending swap.
-              antiPhishingCode:
-                (session.user as { antiPhishingCode?: string | null }).antiPhishingCode ?? null,
             });
             return;
           }
