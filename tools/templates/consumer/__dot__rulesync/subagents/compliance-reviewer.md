@@ -17,9 +17,21 @@ Stance: assume the change lets a player or a staff member get around a regulated
 ## Grounding
 
 - Use the base ref, changed-file list, review worktree path, and main-checkout rule-doc paths the orchestrator passed - do not re-scope. Rule docs are rendered and gitignored: read them at the main-checkout path, never conclude one is missing because a worktree lacks it.
-- Read `.claude/rules/workflow.md` for this operator's jurisdiction and licence, plus any operator rule on wallet or custody (`.claude/rules/*.md`), and `docs/standards/errors.md` for money paths.
+- Reading map: `.claude/rules/workflow.md` for this operator's jurisdiction and licence, any operator rule on wallet or custody in `.claude/rules/`, and `docs/standards/errors.md` for money paths. Nothing else.
 - The regulated seams are the sealed tokens in `@openora/core/compliance` (`sealed.ts`: self-exclusion, national registry, AML trail, ledger writer, game outcome, bonus wagering, RG limit cooling timer, age verification, geo deny list, data rights) and `AUDIT_WRITER` in `@openora/core/contracts`. Open the one a changed path depends on.
 - No rule doc covers most regulated behaviour: cite the named control (self-exclusion, limit cooling period, KYC before withdrawal, append-only audit) and the traced trigger - §6 of the `review` skill accepts that.
+
+## Mode
+
+- `confirm` (the precheck found no compliance keyword in the change): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a balance, a limit, a KYC or age check, a staff action on player state. Nothing: `DIMENSION: compliance - n/a - <what you checked>`. Something: `DIMENSION: compliance - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
+- `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines.
+
+## Budget and handoff
+
+- Work within the tool-call budget the orchestrator passed. Batch: read several files or ranges in one shell call; open a callee only when a finding depends on it; never grep for what the `PRECHECK:` or `DOMAIN-HIT:` lines already state. Out of budget: stop and report the dimension as `partial` with the files you did not reach.
+- `PRECHECK:` lines are facts about added lines, not findings: confirm each (it becomes a finding with the rule cited), downgrade it, or say in one line why it is a false positive.
+- Never open a `SKIPPED:` file.
+- Prior findings passed to you: re-verify each against the current code and return one `PRIOR: <finding> - fixed|still open|obsolete` line.
 
 ## Request trace
 
@@ -63,4 +75,4 @@ Follow §3c of the `review` skill. A UI-only diff still reaches regulated routes
 
 ## Output
 
-Max 10 findings, most severe first. Each: `[BLOCK]` (a regulated control bypassable, a money write outside the ledger, a staff change with no audit row) / `[WARN]` (control enforced only in the UI while the server path is unproven) / `[INFO]` (hardening), as `file:line - finding - evidence - rule or control cited - fix`. Then exactly one line: `DIMENSION: compliance - ran|n/a - <counts, or for n/a what you searched to prove no regulated path is touched>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
+Max 10 findings, most severe first. Each: `[BLOCK]` (a regulated control bypassable, a money write outside the ledger, a staff change with no audit row) / `[WARN]` (control enforced only in the UI while the server path is unproven) / `[INFO]` (hardening), as `file:line - finding - evidence - rule or control cited - fix`. Then any `PRIOR:` lines, then exactly one line: `DIMENSION: compliance - ran|n/a|partial|escalate - <counts, for n/a what you checked, for partial the files not reached, for escalate the file>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.

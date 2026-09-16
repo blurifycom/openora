@@ -13,6 +13,7 @@
     "gen:agents": "rulesync generate",
     "sync:agents": "node tools/sync-agents.mjs",
     "oss:worktree": "node tools/oss-worktree.mjs",
+    "review:precheck": "node tools/review-precheck.mjs",
     "prepare": "node tools/sync-agents.mjs && rulesync generate",
     "db:migrate": "pnpm -F @{{name}}/api exec openora-migrate",
     "db:seed": "pnpm -F @{{name}}/api db:seed",

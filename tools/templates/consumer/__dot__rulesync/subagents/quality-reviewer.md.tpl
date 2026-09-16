@@ -16,8 +16,9 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 
 ## Grounding
 
-- Read `.claude/rules/conventions.md` IN FULL, and `.claude/rules/frontend-conventions.md` IN FULL (and `docs/standards/frontend.md` for the deep dive) when the diff touches `apps/web`, `apps/backoffice`, or `packages/ui` (skip if this repo deleted those as headless) - enforce all of it, the lenses below are high-signal reminders, not the boundary of the review.
-- For import/extension questions, `.claude/rules/oss-boundaries.md`; for overlay tables, `.claude/rules/db-conventions.md` and `docs/standards/database.md` for the deep dive.
+- Reading map, at the main-checkout path the orchestrator passed - read only your focus's docs, IN FULL, and enforce all of them; the lenses below are high-signal reminders, not the boundary of the review:
+  - focus `conventions`: `.claude/rules/conventions.md`, `.claude/rules/oss-boundaries.md`, and `.claude/rules/frontend-conventions.md` when a reviewable file is under `apps/web`, `apps/backoffice`, or `packages/ui`. Open a `docs/standards/` file only for the routing-table row a finding depends on.
+  - focus `performance`: `.claude/rules/db-conventions.md` + `docs/standards/database.md`, and the scale line of `.claude/rules/workflow.md`.
 - An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is judged by the OSS repo's rules instead: read that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and the `docs/standards/` file for the change, and cite those. Prefix each finding `[oss]`.
 - Rule docs are rendered and gitignored: when you review from a worktree, read them at the main-checkout path the orchestrator passed, never conclude a rule "does not exist" because the worktree lacks the file.
 - Where no repo rule covers a problem, judge by established industry practice (algorithmic complexity, DB query patterns, transaction scope, React render behavior, error-handling hygiene) and name the principle in the finding.
@@ -26,6 +27,13 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 ## Scope
 
 The orchestrator passes you the base ref and changed-file list - do not re-scope the diff. Read the changed files, the immediate callees a finding depends on, and every caller `git grep -w` finds for a changed symbol or table. If no file list was passed: `git diff origin/{{mrTarget}}...HEAD --name-only`.
+
+## Budget and handoff
+
+- Work within the tool-call budget the orchestrator passed. Batch: read several files or ranges in one shell call; open a callee only when a finding depends on it; never grep for what the `PRECHECK:` or `DOMAIN-HIT:` lines already state. Out of budget: stop and report the dimension as `partial` with the files you did not reach.
+- `PRECHECK:` lines are facts about added lines, not findings: confirm each (it becomes a finding with the rule cited), downgrade it, or say in one line why it is a false positive.
+- Never open a `SKIPPED:` file.
+- Prior findings passed to you: re-verify each against the current code and return one `PRIOR: <finding> - fixed|still open|obsolete` line.
 
 ## Request trace
 
@@ -59,8 +67,7 @@ The orchestrator passes a focus. `conventions`: run Correctness, OSS boundaries,
 
 - [ ] Module isolation per the Modular-architecture rules; no cross-module reach-ins.
 - [ ] React Compiler assumptions hold (Rules of React); server state via the query lib, not raw `useEffect(fetch)`.
-- [ ] daisyUI/styling conventions followed; no one-off design systems.
-- [ ] Every new user-visible string has a key in every shipped locale, not only an inline default.
+- [ ] Styling conventions followed; no one-off design systems. Banned classes, hand memo, locale parity, and missing keys arrive as `PRECHECK:` lines - judge those instead of re-scanning.
 - [ ] Interactive elements are reachable and labelled (button not `div`, `aria-label` on icon buttons, focus visible); loading, empty, and error states exist for each new data view.
 
 ### Dependencies
@@ -72,7 +79,7 @@ The orchestrator passes a focus. `conventions`: run Correctness, OSS boundaries,
 Judge at production scale, not seed scale: use the scale this repo's `workflow` rule states, else assume thousands of rows per catalogue table and many concurrent players.
 
 - [ ] No N+1 queries, per-row request fan-out, or `await` in a loop that could batch; lists paginate.
-- [ ] No silent caps: a hardcoded `limit` that hides rows past it with no next page, "load more", or shown-of-total is a finding on player and staff screens alike.
+- [ ] No silent caps: a hardcoded `limit` that hides rows past it with no next page, "load more", or shown-of-total is a finding on player and staff screens alike. Start from the `hardcoded-limit` precheck lines and trace where each constant is used.
 - [ ] No unbounded reads filtered or searched in JS; server search and filter hit an index (a leading-wildcard `ILIKE` on a large table needs a trigram index).
 - [ ] Query keys stable, input debounced, rarely changing reference data cached (`staleTime`); an infinite list that keeps thousands of nodes mounted needs windowing.
 - [ ] No repeated hot-path work computable once.
@@ -99,4 +106,4 @@ Judge at production scale, not seed scale: use the scale this repo's `workflow` 
 
 ## Output
 
-Max 10 findings, highest impact first. Each: `[WARN]`/`[INFO]` `file:line - finding - evidence - rule cited - fix`. Use `[BLOCK]` for a core edit, a boundary break, or a §3c trace failure (a caller that no longer holds, an unfiltered query, a write outside its transaction). No prose around the list. Then one line per dimension you own (§ Focus): `DIMENSION: <name> - ran|n/a - <counts, or for n/a what you checked>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most impactful finding.
+Max 10 findings, highest impact first. Each: `[WARN]`/`[INFO]` `file:line - finding - evidence - rule cited - fix`. Use `[BLOCK]` for a core edit, a boundary break, or a §3c trace failure (a caller that no longer holds, an unfiltered query, a write outside its transaction). No prose around the list. Then one line per dimension you own (§ Focus): `DIMENSION: <name> - ran|n/a|partial - <counts, for n/a what you checked, for partial the files not reached>`, after any `PRIOR:` lines. End with **PASS** / **CHANGES REQUESTED** + one line on the most impactful finding.

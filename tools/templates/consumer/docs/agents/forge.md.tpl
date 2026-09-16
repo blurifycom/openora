@@ -29,6 +29,8 @@ Reuse an open PR for the same head -> base instead of opening a duplicate: `gh p
 - Patch: `gh pr diff <n>`
 - Unresolved threads: `gh api "repos/{{gitRemotePath}}/pulls/<n>/comments"`
 - CI: `gh pr checks <n>`
+- Source to review, without switching the working tree: `git fetch origin "$(gh pr view <n> --json headRefName -q .headRefName)" && git worktree add --detach .claude/worktrees/review-<n> FETCH_HEAD`
+- Last review marker (`review` skill §2a): `gh api "repos/{{gitRemotePath}}/issues/<n>/comments" --jq '[.[] | select(.body | contains("<!-- review:sha="))] | last | .body' | grep -o 'review:sha=[0-9a-f]*'`
 
 ## Inline review comments
 
