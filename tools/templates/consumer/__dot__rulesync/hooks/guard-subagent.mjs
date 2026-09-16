@@ -43,6 +43,10 @@ const ROUTES = [
     re: /\b(dockerfile|containerize|deploy pipeline|deploy to (ecs|kubernetes|fly|railway|render)|ci\/cd deploy|helm chart)\b/,
   },
   {
+    agent: 'compliance-reviewer',
+    re: /\b(compliance|responsible gambling|ledger|audit trail) review\b/,
+  },
+  {
     agent: 'quality-reviewer',
     re: /\b(quality review|code quality|over-engineer(ed|ing)?|simplification review|duplication review)\b|\breview (the )?(mr|pr|diff|changed files)\b/,
   },

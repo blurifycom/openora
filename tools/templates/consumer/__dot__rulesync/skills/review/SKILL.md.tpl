@@ -16,9 +16,9 @@ Checklist - tick as you go:
 - [ ] 3. Collect task context (ticket AC + MR discussion)
 - [ ] 3a. Paired OSS change? Review the OSS diff by the OSS rules + cross-check the contract (§2c)
 - [ ] 3c. Trace each changed entry point end to end + check the blast radius
-- [ ] 4. Pick applicable dimensions; small diff -> review inline, else spawn reviewers in ONE message
+- [ ] 4. Cover all seven dimensions; small diff -> review inline, else spawn the fixed roster in ONE message
 - [ ] 5. Dedup + apply the evidence gate
-- [ ] 6. Report one verdict (+ apply fixes only if --fix)
+- [ ] 6. Report one DIMENSION line per dimension + one verdict (+ apply fixes only if --fix)
 - [ ] 7. Post to the MR as inline comments + summary (only if --post)
 ```
 
@@ -31,7 +31,7 @@ Checklist - tick as you go:
 - `--fix` - apply BLOCK/WARN fixes after the review; default report-only.
 - `--post` - publish findings to the pull request as inline diff-line comments + a one-line summary verdict (§8). Requires a pull-request number. Draft-and-confirm by default.
 - `--yes` - with `--post`, skip the confirmation and publish straight away.
-- `--ci` - non-interactive: never ask, never post, never fix; print only the §7 machine block. The model cannot set the process exit code; the CI job derives it from the last line, e.g. `claude -p '/review --ci' | tee review.txt | grep -q '^VERDICT: APPROVED'`. An empty diff is APPROVED with zero findings.
+- `--ci` - non-interactive: never ask, never post, never fix; print only the §7 machine block. The model cannot set the process exit code; the CI job derives it from the output, e.g. `claude -p '/review --ci' > review.txt; [ "$(grep -c '^DIMENSION: ' review.txt)" -eq 7 ] && grep -q '^VERDICT: APPROVED' review.txt` - a review that skipped a dimension fails the job even when it approves. An empty diff is APPROVED with zero findings.
 
 ## 2. Scope the diff
 
@@ -133,23 +133,31 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 **Report the trace.** One `TRACE:` line per entry point (format in §7). A missing hop, an unfiltered query, a write outside the transaction, or a caller that no longer holds is a `[BLOCK]`. A hop that could not be traced is a finding, not a silent pass.
 
-## 4. Dimensions
+## 4. Dimensions - all seven, every review
 
-Dimensions and the roster agent that owns each - never `general-purpose`:
+Every review covers every dimension below, whatever the diff touches. Relevance is decided by looking, not by guessing from file names: a dimension that does not apply still runs its search and reports `n/a` with what it checked. Owners - never `general-purpose`:
 
-1. **Boundaries, conventions, frontend, performance and scalability, duplication** - `quality-reviewer` (its prompt carries the full lens checklists; always applicable). On a large diff, one instance can own performance and scalability across all file groups while others own conventions per group.
-2. **Security & secrets** - `security-reviewer`; only if overlay routes, adapters, auth/session, env/config, or money-adjacent code changed.
-3. **Operator/domain fit** - `expert`; only if business logic changed AND AC exists to judge against.
+| Dimension     | Owner                                     | Covers                                                                                  |
+| ------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| `conventions` | `quality-reviewer` (focus `conventions`)  | correctness, boundaries, conventions, UI quality (i18n, a11y, states), dependencies     |
+| `performance` | `quality-reviewer` (focus `performance`)  | performance and scalability at production scale                                         |
+| `reliability` | `quality-reviewer` (focus `performance`)  | races, double submit, retries, partial failure, cache invalidation, error handling      |
+| `security`    | `security-reviewer`                       | authz, secrets and PII, input validation, URLs                                          |
+| `compliance`  | `compliance-reviewer`                     | responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail            |
+| `rollout`     | orchestrator                              | §3c migrations, destructive seeds, event and payload compatibility, new env/config      |
+| `spec`        | orchestrator                              | AC (§2b), ticket scope, manual-verification evidence and "Tests to add" (§3c)           |
 
-**Small-diff fast path (<= 150 changed lines): no subagents.** Read the changed files in the main thread and apply the applicable agents' checklists yourself under the §3b stance (they live in `.claude/agents/<name>.md` - skim, don't spawn). This is the common case and costs a fraction of a fan-out.
+`expert` is not a reviewer; ask it only when an AC is ambiguous enough to block a `CRITERION:` line.
+
+**Small-diff fast path (<= 150 changed lines): no subagents, same seven dimensions.** Read `.claude/agents/quality-reviewer.md`, `security-reviewer.md`, and `compliance-reviewer.md` IN FULL, then work each checklist yourself under the §3b stance. The fast path changes who reviews, never what is covered.
 
 ## 5. Allocate to `--agents N` (large diffs only)
 
-- N unset: one reviewer per applicable dimension.
-- N > dimensions: extras are additional `quality-reviewer` instances split by file group (state the split; never silently drop files).
-- N < dimensions: drop `expert` first, then merge security into quality (say so in the report).
+- N unset or 4: `quality-reviewer` (focus `conventions`), `quality-reviewer` (focus `performance`), `security-reviewer`, `compliance-reviewer`.
+- N = 5: the fifth is another `quality-reviewer` (focus `conventions`), the file groups split between the two (state the split; never silently drop files).
+- N < 4: refuse the reduction - run the four and say so in the report. Merging dimensions into fewer reviewers is how they get skipped.
 
-Spawn all reviewers in a SINGLE message (parallel). Pass each: the changed-file list for its dimension, copied from the `--name-only` output (pre-grouped - reviewers never re-scope; never hand-typed paths or globs), the review worktree path and the main-checkout rule-doc paths (§2), the base ref, the §2b context block, the §3b stance verbatim, the §3c trace for its file group, and hard caps: read only changed files + immediate callees; max 10 findings; compact `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `/check`/tests.
+Spawn all reviewers in a SINGLE message (parallel). Pass each: the changed-file list for its dimension, copied from the `--name-only` output (pre-grouped - reviewers never re-scope; never hand-typed paths or globs), the review worktree path and the main-checkout rule-doc paths (§2), the base ref, the §2b context block, the §3b stance verbatim, the §3c trace for its file group, its focus and the `DIMENSION:` names it owns (§4), and hard caps: read only changed files + immediate callees; max 10 findings; compact `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `/check`/tests.
 
 ## 6. Evidence gate (cut false positives)
 
@@ -164,7 +172,9 @@ Every reviewer applies this before returning; re-apply it yourself when synthesi
 
 Dedup by `file:line`, order BLOCK -> WARN -> INFO.
 
-Default and `--post`: a human-readable report - one line per finding `[SEV] file:line - finding - evidence - rule cited - fix`, one `TRACE:` line per traced entry point (format below), one status line per AC bullet, and **APPROVED** / **CHANGES REQUESTED** with the most critical finding last. `--post` rewrites those findings into the §8 comments.
+**Coverage gate first.** Collect one `DIMENSION:` line per dimension in §4 - from each reviewer's output, plus `rollout` and `spec` from you. A reviewer that returned no `DIMENSION:` line, or an `n/a` with no stated check, did not cover it: resume that reviewer once asking for the missing line; if it still has none, write the line as `DIMENSION: <name> - missing - <reviewer> returned no coverage` and the verdict is CHANGES REQUESTED.
+
+Default and `--post`: a human-readable report - one line per finding `[SEV] file:line - finding - evidence - rule cited - fix`, one `TRACE:` line per traced entry point (format below), one status line per AC bullet, the seven `DIMENSION:` lines, and **APPROVED** / **CHANGES REQUESTED** with the most critical finding last. `--post` rewrites those findings into the §8 comments.
 
 `--ci`: print exactly this block and nothing else - a CI job parses it line by line:
 
@@ -172,10 +182,11 @@ Default and `--post`: a human-readable report - one line per finding `[SEV] file
 FINDING: [BLOCK|WARN|INFO] <file>:<line> - <finding> - <evidence> - <rule cited> - <fix>
 TRACE: <entry point> - hops <n>/7 walked - callers <checked>/<found> - <ok|BLOCK reason>
 CRITERION: <acceptance criterion> - <met|not met|not verifiable>
+DIMENSION: <conventions|performance|reliability|security|compliance|rollout|spec> - <ran|n/a|missing> - <counts per severity, or what was checked for n/a>
 VERDICT: <APPROVED|CHANGES REQUESTED> - <counts per severity> - <most critical finding>
 ```
 
-One `TRACE:` line per traced entry point, one `CRITERION:` line per AC bullet, exactly one `VERDICT:` line, last. A `[BLOCK]` of any kind, an unmet AC, or a trace failure forces CHANGES REQUESTED.
+One `TRACE:` line per traced entry point, one `CRITERION:` line per AC bullet, exactly seven `DIMENSION:` lines, exactly one `VERDICT:` line, last. A `[BLOCK]` of any kind, an unmet AC, a trace failure, or a `missing` dimension forces CHANGES REQUESTED.
 
 Spec findings cite the ticket the way code findings cite a rule doc: a diff that crosses a ticket's out-of-scope line, answers an open question in code without recording it on the ticket, or ships behavior no AC asked for is a `[WARN]` with the ticket line quoted as evidence.
 
@@ -202,4 +213,4 @@ Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete 
 - Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
 - NEVER edit `node_modules` or the main `{{ossDir}}` checkout. Under `--fix`, an `[oss]` finding is fixed in the OSS worktree only.
 - Every finding cites a rule doc or a named principle with a traced trigger - no ungrounded opinions.
-- Cap at 5 parallel reviewers.
+- Four reviewers minimum on a large diff, five maximum; seven `DIMENSION:` lines on every review.

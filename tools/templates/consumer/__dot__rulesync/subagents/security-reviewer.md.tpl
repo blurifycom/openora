@@ -4,7 +4,7 @@ targets:
 name: security-reviewer
 description: >-
   Security review of changed overlay/frontend files for authz, secret/PII,
-  money-path, and input-validation risks in a real-money igaming consumer repo.
+  and input-validation risks in a real-money igaming consumer repo.
   Findings only, no edits.
 claudecode:
   model: opus
@@ -36,11 +36,7 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 - [ ] No client-supplied user id trusted for ownership decisions; caller resolved server-side.
 - [ ] Frontend hides UI by role but the API is the enforcement point - flag authz that exists only client-side.
 
-### Money paths
-
-- [ ] Overlay code never mutates balances directly - money flows through platform commands/ports.
-- [ ] Any overlay money-adjacent mutation is idempotent at the data layer (DB guard, not just a key).
-- [ ] Amounts are integer minor units; no float arithmetic on money.
+Money paths, ledger integrity, and regulated gates belong to `compliance-reviewer` - do not duplicate them here.
 
 ### Secrets & PII
 
@@ -65,4 +61,4 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 
 ## Output
 
-Max 10 findings, most severe first. Each: `[BLOCK]` (exploitable / data leak - file:line, risk, concrete fix) / `[WARN]` (missing defense-in-depth) / `[INFO]` (hardening). End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
+Max 10 findings, most severe first. Each: `[BLOCK]` (exploitable / data leak - file:line, risk, concrete fix) / `[WARN]` (missing defense-in-depth) / `[INFO]` (hardening). Then exactly one line: `DIMENSION: security - ran|n/a - <counts, or for n/a what you checked>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
