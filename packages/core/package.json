@@ -658,6 +658,61 @@
       "types": "./dist/fx/exchange-rate/migrate.d.ts",
       "import": "./dist/fx/exchange-rate/migrate.js",
       "default": "./dist/fx/exchange-rate/migrate.js"
+    },
+    "./promo": {
+      "types": "./dist/promo/index.d.ts",
+      "import": "./dist/promo/index.js",
+      "default": "./dist/promo/index.js"
+    },
+    "./promo/contracts": {
+      "types": "./dist/promo/contracts.d.ts",
+      "import": "./dist/promo/contracts.js",
+      "default": "./dist/promo/contracts.js"
+    },
+    "./promo/server": {
+      "types": "./dist/promo/server.d.ts",
+      "import": "./dist/promo/server.js",
+      "default": "./dist/promo/server.js"
+    },
+    "./promo/contracts/bonus": {
+      "types": "./dist/promo/bonus/contract/index.d.ts",
+      "import": "./dist/promo/bonus/contract/index.js",
+      "default": "./dist/promo/bonus/contract/index.js"
+    },
+    "./promo/schema/bonus": {
+      "types": "./dist/promo/bonus/schema/index.d.ts",
+      "import": "./dist/promo/bonus/schema/index.js",
+      "default": "./dist/promo/bonus/schema/index.js"
+    },
+    "./promo/plugins/bonus": {
+      "types": "./dist/promo/bonus/plugin.d.ts",
+      "import": "./dist/promo/bonus/plugin.js",
+      "default": "./dist/promo/bonus/plugin.js"
+    },
+    "./promo/migrate/bonus": {
+      "types": "./dist/promo/bonus/migrate.d.ts",
+      "import": "./dist/promo/bonus/migrate.js",
+      "default": "./dist/promo/bonus/migrate.js"
+    },
+    "./promo/contracts/gamification": {
+      "types": "./dist/promo/gamification/contract/index.d.ts",
+      "import": "./dist/promo/gamification/contract/index.js",
+      "default": "./dist/promo/gamification/contract/index.js"
+    },
+    "./promo/schema/gamification": {
+      "types": "./dist/promo/gamification/schema/index.d.ts",
+      "import": "./dist/promo/gamification/schema/index.js",
+      "default": "./dist/promo/gamification/schema/index.js"
+    },
+    "./promo/plugins/gamification": {
+      "types": "./dist/promo/gamification/plugin.d.ts",
+      "import": "./dist/promo/gamification/plugin.js",
+      "default": "./dist/promo/gamification/plugin.js"
+    },
+    "./promo/migrate/gamification": {
+      "types": "./dist/promo/gamification/migrate.d.ts",
+      "import": "./dist/promo/gamification/migrate.js",
+      "default": "./dist/promo/gamification/migrate.js"
     }
   },
   "publishConfig": {

@@ -7,6 +7,8 @@
 // dir). Downstream consumers compose the contract slices they enable. See ADR-0025.
 
 export const extensions = [
+  { id: 'gamification', path: './packages/core/dist/promo/gamification/plugin.js' },
+  { id: 'bonus', path: './packages/core/dist/promo/bonus/plugin.js' },
   { id: 'social', path: './packages/core/dist/engagement/social/plugin.js' },
   // --- MODULES (always loaded) ---
   { id: 'audit', path: './packages/core/dist/audit/plugin.js' },
