@@ -31,6 +31,10 @@ The orchestrator passes you the base ref and changed-file list - do not re-scope
 
 Follow §3c of the `review` skill: walk the seven hops for each changed entry point, and check the blast radius: `git grep -w` each changed export, table symbol, and SQL table name across `*.ts`, `*.tsx`, `*.sql`, and open every caller found, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.
 
+## Focus
+
+The orchestrator passes a focus. `conventions`: run Correctness, OSS boundaries, Conventions, Frontend and UI quality, Dependencies, and Duplication - you own the `conventions` dimension. `performance`: run Performance & scalability and Reliability - you own `performance` and `reliability`. No focus passed: run every lens and own all three.
+
 ## Lenses
 
 ### Correctness (first - the change must actually work)
@@ -56,6 +60,12 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 - [ ] Module isolation per the Modular-architecture rules; no cross-module reach-ins.
 - [ ] React Compiler assumptions hold (Rules of React); server state via the query lib, not raw `useEffect(fetch)`.
 - [ ] daisyUI/styling conventions followed; no one-off design systems.
+- [ ] Every new user-visible string has a key in every shipped locale, not only an inline default.
+- [ ] Interactive elements are reachable and labelled (button not `div`, `aria-label` on icon buttons, focus visible); loading, empty, and error states exist for each new data view.
+
+### Dependencies
+
+- [ ] A new package is justified (no in-repo helper or few lines cover it), pinned exact, in the lockfile, with a compatible licence and no open advisory.
 
 ### Performance & scalability
 
@@ -66,6 +76,12 @@ Judge at production scale, not seed scale: use the scale this repo's `workflow` 
 - [ ] No unbounded reads filtered or searched in JS; server search and filter hit an index (a leading-wildcard `ILIKE` on a large table needs a trigram index).
 - [ ] Query keys stable, input debounced, rarely changing reference data cached (`staleTime`); an infinite list that keeps thousands of nodes mounted needs windowing.
 - [ ] No repeated hot-path work computable once.
+
+### Reliability
+
+- [ ] A repeated or concurrent action (double click, retry, two tabs) cannot apply twice or race: mutation buttons disable while pending, writes are idempotent.
+- [ ] Every mutation invalidates every query that renders the data it changed; optimistic updates roll back on error.
+- [ ] Errors surface to the user or the log with context - no swallowed rejection, no generic message hiding a typed error the UI should branch on.
 
 ### Duplication & simplification
 
@@ -83,4 +99,4 @@ Judge at production scale, not seed scale: use the scale this repo's `workflow` 
 
 ## Output
 
-Max 10 findings, highest impact first. Each: `[WARN]`/`[INFO]` `file:line - finding - evidence - rule cited - fix`. Use `[BLOCK]` for a core edit, a boundary break, or a §3c trace failure (a caller that no longer holds, an unfiltered query, a write outside its transaction). No prose around the list. End with **PASS** / **CHANGES REQUESTED** + one line on the most impactful finding.
+Max 10 findings, highest impact first. Each: `[WARN]`/`[INFO]` `file:line - finding - evidence - rule cited - fix`. Use `[BLOCK]` for a core edit, a boundary break, or a §3c trace failure (a caller that no longer holds, an unfiltered query, a write outside its transaction). No prose around the list. Then one line per dimension you own (§ Focus): `DIMENSION: <name> - ran|n/a - <counts, or for n/a what you checked>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most impactful finding.
