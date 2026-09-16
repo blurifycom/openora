@@ -45,6 +45,26 @@ export type {
 } from './wallet-commands.js';
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
+export type { WagerContext } from './wager-context.js';
+
+export type {
+  BonusGrantCommands,
+  BonusGrantArgs,
+  BonusGrantOutcome,
+  BonusGrantSource,
+} from './bonus-grants.js';
+export { BONUS_GRANTS } from './bonus-grants.js';
+
+export type {
+  BonusWageringCommands,
+  BonusContributeArgs,
+  BonusContributeOutcome,
+} from './bonus-wagering.js';
+export { BONUS_WAGERING } from './bonus-wagering.js';
+
+export type { WagerTrackingCommands, WagerTrackingArgs } from './wager-tracking.js';
+export { WAGER_TRACKING } from './wager-tracking.js';
+
 export type {
   GamingCommands,
   GamingAccumulateExternalRoundArgs,
