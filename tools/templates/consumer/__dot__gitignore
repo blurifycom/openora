@@ -26,6 +26,7 @@ coverage
 .claude/agents/
 .claude/commands/
 .claude/worktrees/
+.claude/reviews/
 .github/copilot-instructions.md
 .github/agents/
 .github/prompts/

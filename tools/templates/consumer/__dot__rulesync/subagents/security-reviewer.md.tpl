@@ -18,11 +18,23 @@ Stance: assume every protection in the diff is broken or bypassable until you tr
 
 If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/{{mrTarget}}...HEAD --name-only`. Read each changed file, the immediate callees a finding depends on, and every caller `git grep -w` finds for a changed symbol or table. Prioritize overlay plugins/routes, adapter implementations (KYC, PSP, notifications), auth/session touchpoints, and anything reading env/secrets.
 
-Rule docs are rendered and gitignored: read them at the main-checkout path the orchestrator passed, not from a review worktree. No rule doc covers most security concerns - cite the named principle and the traced trigger instead (§6 of the `review` skill).
+Reading map, at the main-checkout path the orchestrator passed (rule docs are rendered and gitignored, so never from a review worktree): `.claude/rules/oss-boundaries.md` and `docs/standards/errors.md`. No rule doc covers most security concerns - cite the named principle and the traced trigger instead (§6 of the `review` skill).
 
 A UI-only diff still calls platform routes: open each route's guard in `@openora/core` (`adminGuard.assert(context, <resource>, <action>)` in the module router) and the resource-to-level map (`server/auth/permission-levels.ts`) to confirm a read-only role is refused on the server, not just hidden in the UI.
 
 An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is core money/auth logic: review it against that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and `docs/standards/`, cite those, and prefix each finding `[oss]`.
+
+## Mode
+
+- `confirm` (the precheck found no security keyword in the change): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
+- `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines.
+
+## Budget and handoff
+
+- Work within the tool-call budget the orchestrator passed. Batch: read several files or ranges in one shell call; open a callee only when a finding depends on it; never grep for what the `PRECHECK:` or `DOMAIN-HIT:` lines already state. Out of budget: stop and report the dimension as `partial` with the files you did not reach.
+- `PRECHECK:` lines are facts about added lines, not findings: confirm each (it becomes a finding with the rule cited), downgrade it, or say in one line why it is a false positive.
+- Never open a `SKIPPED:` file.
+- Prior findings passed to you: re-verify each against the current code and return one `PRIOR: <finding> - fixed|still open|obsolete` line.
 
 ## Request trace
 
@@ -61,4 +73,4 @@ Money paths, ledger integrity, and regulated gates belong to `compliance-reviewe
 
 ## Output
 
-Max 10 findings, most severe first. Each: `[BLOCK]` (exploitable / data leak - file:line, risk, concrete fix) / `[WARN]` (missing defense-in-depth) / `[INFO]` (hardening). Then exactly one line: `DIMENSION: security - ran|n/a - <counts, or for n/a what you checked>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
+Max 10 findings, most severe first. Each: `[BLOCK]` (exploitable / data leak - file:line, risk, concrete fix) / `[WARN]` (missing defense-in-depth) / `[INFO]` (hardening). Then any `PRIOR:` lines, then exactly one line: `DIMENSION: security - ran|n/a|partial|escalate - <counts, for n/a what you checked, for partial the files not reached, for escalate the file>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
