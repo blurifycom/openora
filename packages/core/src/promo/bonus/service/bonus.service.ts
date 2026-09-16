@@ -1,26 +1,34 @@
-import { type DrizzleService, type EventBus } from '@openora/core/server';
-import { bonus } from '../schema/index.js';
+import { eq } from 'drizzle-orm';
+import type { Uuid, WagerContext } from '@openora/core/contracts';
+import { type DrizzleTx } from '@openora/core/server';
+import { promoWeight } from '../schema/index.js';
+import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
-// Pure business logic for Bonus. A plain class wired by plugin.ts via
-// the composition container (no decorators). Methods read as data-in/data-out
-// transforms; isolate side effects (DB writes, event emits) at the edges. Throw
-// domain errors (makeNotFoundError from @openora/core/server), never HTTP/transport errors.
-// Money mutations MUST run inside `this.drizzle.db.transaction(...)` (lint: money-in-transaction).
+// Pure business logic for Bonus. A plain class wired by plugin.ts via the composition
+// container (no decorators). Money mutations MUST run inside a transaction
+// (lint: money-in-transaction).
 export class BonusService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
-  ) {}
+  /**
+   * The part of `stake` that counts toward a wagering requirement under `profileId`.
+   *
+   * Takes the caller's transaction handle: this runs inside the wallet debit that placed the
+   * bet, so the weight a bet was scored at and the bet itself cannot end up on different sides
+   * of a rollback.
+   */
+  async weightedContribution(
+    tx: DrizzleTx,
+    { profileId, stake, context }: { profileId: Uuid; stake: string; context: WagerContext },
+  ): Promise<{ contributionPercent: string; weightedAmount: string }> {
+    const rows = await tx
+      .select({
+        scope: promoWeight.scope,
+        scopeRef: promoWeight.scopeRef,
+        contributionPercent: promoWeight.contributionPercent,
+      })
+      .from(promoWeight)
+      .where(eq(promoWeight.profileId, profileId));
 
-  // Reference list method - the scaffolded `list` route delegates here. Replace the
-  // projection / add filters as your domain needs. Selecting only contract fields
-  // keeps the return type aligned with the output schema.
-  async list() {
-    const rows = await this.drizzle.db
-      .select({ id: bonus.id, createdAt: bonus.createdAt })
-      .from(bonus);
-    return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+    const contributionPercent = resolveContributionPercent(rows, context);
+    return { contributionPercent, weightedAmount: weightedStake(stake, contributionPercent) };
   }
-
-  // AGENT: implement here - add the module's business methods below.
 }
