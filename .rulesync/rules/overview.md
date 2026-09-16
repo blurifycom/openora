@@ -14,7 +14,7 @@ Canonical brief for AI agents and humans. Per-tool files are generated from `.ru
 
 Open-source, headless, plugin-based, AI-native igaming framework. Consumers extend modules, plugins, and adapters in their own repo; this repository ships backend contracts, runtime, SDK, tooling, and no consumer UI.
 
-This is real-money regulated gambling. A defect here moves a player's money or breaks an operator's licence, so the money, KYC, responsible-gambling and audit standards get read before those paths change, not after. "Operator" is the company running a igaming on this platform; "player" is the person gambling. `docs/platform/glossary.md` defines the rest of the vocabulary.
+This is real-money regulated gambling. A defect here moves a player's money or breaks an operator's licence, so the money, KYC, responsible-gambling and audit standards get read before those paths change, not after. "Operator" is the company running an igaming on this platform; "player" is the person gambling. `docs/platform/glossary.md` defines the rest of the vocabulary.
 
 ## Repo map
 
@@ -28,7 +28,7 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 ## Orient before reading files
 
 - `docs/catalog.json` is the generated surface: every module, table, route, event, adapter port, config field. Read it, or call the `oss-dev` MCP tools (`catalog-overview`, `list-modules`, `describe-module`, `list-routes`, `list-adapters`, `schema-get`, `docs-search`) instead of grepping.
-- `pnpm setup` boots infra, migrates, and prints a summary. `pnpm dev` runs it. `pnpm verify` is the gate CI runs; `/pre-pr` adds the drift check on top.
+- `pnpm setup` boots infra, migrates, and prints a summary. `pnpm dev` runs it. `pnpm verify` is the gate CI runs; it ends with `pnpm check:drift`.
 
 ## Load the right owner
 
@@ -52,12 +52,14 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 - Headless means no frontend UI belongs here; consumers build over `@openora/core/react`.
 - This repository is public. A client's or vendor's name, and a client's ticket id, must never appear in a file name or in file content - `pnpm check:hygiene` fails the build on either. Describe the behaviour or name the port instead; ticket ids belong in the commit message and the PR description.
 - The `SealedToken` services in `packages/core/src/compliance/sealed.ts` (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG) are the ones an operator may never override. Do not add a rebind path around one.
-- Admin routes resolve the shared `AdminGuard` in `plugin.ts`; `await adminGuard.assert(context)` is the handler's first line.
+- Admin routes resolve the shared `AdminGuard` in `plugin.ts`; the handler's first statement awaits `adminGuard.assert(context, <resource>, <action>)`.
 - Serialize `pnpm regen` and `pnpm gen:agents` across agents. They rewrite shared generated state; one owner runs each command after parallel edits finish.
 
 ## Code Review Rules
 
 Report defects a reader can act on: a concrete input or state and the wrong result it produces. Rank money, compliance, and security findings first. Skip what `pnpm verify` already fails on (lint, format, types, module boundaries, hygiene) and pure style preferences.
+
+`docs/catalog.json` is gitignored and the `oss-dev` MCP server runs only locally, so a hosted review has neither. Read the touched module's contract, schema, and `plugin.ts` directly.
 
 ### Money and ledger
 
@@ -71,7 +73,7 @@ Report defects a reader can act on: a concrete input or state and the wrong resu
 
 ### Authorization and trust boundaries
 
-- Flag an admin handler whose first line is not `await adminGuard.assert(context)`, a player route that reads or writes another player's resource, an unverified webhook, and a secret or PII written to a log or an error message.
+- Flag an admin handler whose first statement does not await `adminGuard.assert(context, <resource>, <action>)`, a player route that reads or writes another player's resource, an unverified webhook, and a secret or PII written to a log or an error message.
 
 ### Contracts and data
 

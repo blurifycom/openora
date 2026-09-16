@@ -10,12 +10,12 @@ Run the same gate CI enforces. Stop at the first failure and report it.
 
 `check:drift` verifies tsconfig paths are in sync and regenerates the catalog. `docs/catalog.json` is gitignored and rebuilt on install, on merge and on checkout, so it cannot drift.
 
-The rulesync-generated agent files (AGENTS.md, CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install` - they can't drift, so there's nothing to check. If you changed agent instructions, edit `.rulesync/` and run `pnpm gen:agents`.
+The rulesync-generated agent files (CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install`, so they can't drift. The root AGENTS.md is the exception: it is committed for hosted reviewers, and `check:drift` regenerates it and fails when the committed copy is stale. If you changed agent instructions, edit `.rulesync/`, run `pnpm gen:agents`, and commit the regenerated AGENTS.md.
 
 After running:
 
 - All green: report ready for PR, list the changed files (`git diff origin/dev...HEAD --name-only`).
 - A `verify` step fails: show the failing step (build / lint / format / boundaries / shape / hygiene / deprecations / tests) with location, propose a fix.
-- `check:drift` fails: the generated table is stale - run `pnpm regen`, then re-run the gate.
+- `check:drift` fails: a generated artifact is stale - run `pnpm regen` (or `pnpm gen:agents` for AGENTS.md), then re-run the gate.
 
 Never report ready for PR if the gate fails.
