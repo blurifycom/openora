@@ -23,7 +23,7 @@
     "check:hygiene": "tsx tools/lint/verify-oss-hygiene.ts",
     "check:refs": "tsx tools/lint/verify-references.ts",
     "check:deprecations": "depretec --fail-on-found",
-    "check:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-catalog.ts",
+    "check:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-catalog.ts && rulesync generate && git diff --exit-code -- AGENTS.md",
     "fix:lint": "oxlint . --fix",
     "fix:format": "oxfmt && node tools/lint/ensure-final-newline.mjs",
     "test:unit": "turbo run test:unit",

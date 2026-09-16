@@ -1,11 +1,3 @@
----
-root: true
-targets:
-  - '*'
-globs:
-  - '**/*'
----
-
 # AGENTS.md
 
 Canonical brief for AI agents and humans. Per-tool files are generated from `.rulesync/`; edit the source, then run `pnpm gen:agents`. Never hand-edit generated mirrors.
@@ -85,3 +77,67 @@ Report defects a reader can act on: a concrete input or state and the wrong resu
 ## The roster
 
 Delegate to the matching named agent; do not use a generic agent for a roster task. `expert` (fuzzy ask -> requirements and acceptance criteria), `dev` (implement a spec), `module-author` (a whole new module), `plugin-author` (an overlay), `qa` (automated tests plus a hands-on walkthrough), `docs` (prose audited against the code), `cleaner` (delete the surplus a branch added, before the PR), `operator` (consume the platform as a downstream operator would), and the reviewers `contract-reviewer`, `quality-reviewer`, `security-reviewer`.
+
+# Engineering conventions
+
+Use pure, composable functions and explicit typed wiring. Match local naming and structure. Prefer clear names, guard clauses, immutable construction, and side effects at boundaries. Reuse an existing helper before adding one.
+
+| Change                                                  | Read first                           |
+| ------------------------------------------------------- | ------------------------------------ |
+| schema, type, enum-like value set                       | `docs/standards/types.md`            |
+| SQL, Drizzle, migration, seed, DB tool                  | `docs/standards/database.md`         |
+| function, service method, constructor                   | `docs/standards/functions.md`        |
+| module, DI wiring, integration, cross-module dependency | `docs/standards/module-structure.md` |
+| error class or catch                                    | `docs/standards/errors.md`           |
+| money movement or payment settlement                    | `docs/standards/money.md`            |
+| wallet module surface or ledger invariant               | `docs/modules/wallet.md`             |
+| deposit address, sweep, reconciliation, custody rules   | `docs/standards/custody.md`          |
+| implementing or binding a payment/custody vendor        | `docs/adapters/`                     |
+| KYC or responsible gambling                             | `docs/standards/compliance.md`       |
+| audit production or consumption                         | `docs/standards/audit.md`            |
+| async seam, event, job, or realtime                     | `messaging-and-microservices`        |
+| test                                                    | `docs/standards/testing.md`          |
+| comment or JSDoc                                        | `docs/standards/comments.md`         |
+| prose doc, README, guide                                | `docs/standards/documentation.md`    |
+| hook or typed client                                    | `docs/standards/react-sdk.md`        |
+| commit or PR                                            | `docs/standards/git-delivery.md`     |
+| failing gate or lint rule                               | `docs/standards/enforcement.md`      |
+
+## Universal baseline
+
+- Schema-first at trust boundaries. Infer types from their owning schema or row; do not hand-write duplicates.
+- Literal config arrays/objects (option lists, key sets) use `as const`, not an explicit union type annotation - let TypeScript infer the literal types.
+- No `any`, `interface`, decorators, reuse inheritance, suppressive casts, or default exports except `plugin.ts` and `drizzle.config.ts`.
+- Keep third-party access behind an owning adapter port. Do not import another module's internals or create cycles.
+- Do not hand-edit generated artifacts: migrations, `docs/catalog.json`, or per-tool agent mirrors.
+- State-changing work is transactional where its standard requires it. Money work is also idempotent with a durable database guard inside that transaction.
+
+# Messaging and microservices-readiness
+
+Use the seams and contracts in code; this rule owns channel selection and the safety limits that affect a design.
+
+| Need                                        | Channel                                          |
+| ------------------------------------------- | ------------------------------------------------ |
+| An answer or mutation now, including money  | Synchronous command port                         |
+| A fact happened and others may react        | Domain event via `EventBus`                      |
+| Durable, retryable, or scheduled work later | `JOB_QUEUE`                                      |
+| Server-to-client push                       | `REALTIME_TRANSPORT` with an SSE `eventIterator` |
+
+- Handlers and jobs are at-least-once: they must be idempotent. Money-adjacent work needs a durable database guard, not only an event ID or idempotency key.
+- Money and any needed-now answer never travel over events. Use a synchronous, transactional command port.
+- `emit()` is best-effort. Use `emitInTransaction()` only when the transactional outbox is explicitly enabled by `OUTBOX_ENABLED`, `AMQP_URL`, or `RABBITMQ_URL`; those AMQP variables enable the outbox but do not bind an AMQP broker.
+- A Redis Streams deployment uses `SERVICE_NAME` as its durable consumer-group identity. Every independently deployed service sharing Redis needs a distinct name.
+- The shipped Redis Streams and BullMQ drivers do not honor `orderingKey`; use an overlay when strict ordering is required.
+- `REALTIME_TRANSPORT` is Redis Pub/Sub (`RedisPubSubRealtimeTransport`, auto-bound on `REDIS_URL`, no in-process fallback - ADR-0031) - fire-and-forget UI push, not a durable event: a message published while nobody is subscribed is simply lost, which is why a realtime channel carries a change _signal_ the client refetches, never the state itself. Channels are prefixed with `SERVICE_NAME` for the same cross-deployment isolation reason as the streams broker's consumer group. `RealtimePresence`/`getOnlineUserIds` are shared across replicas via `RedisPresenceStore`, a per-channel sorted set scored by each member's last heartbeat and read with a TTL cutoff, so a crashed replica's members self-expire instead of lingering forever.
+
+# Wallet
+
+Routing only. Open the file you need; do not work from this list alone.
+
+| Change                                                | Read                        |
+| ----------------------------------------------------- | --------------------------- |
+| Any balance change                                    | `docs/standards/money.md`   |
+| This module's surface and its own invariants          | `docs/modules/wallet.md`    |
+| Deposit address, sweep, reconciliation, custody rules | `docs/standards/custody.md` |
+| Implementing or binding a custody vendor              | `docs/adapters/custody.md`  |
+| Binding a synchronous PSP                             | `docs/adapters/payment.md`  |
