@@ -115,6 +115,49 @@ describe('createAuth', () => {
       });
     });
 
+    it('dispatches the change-email confirmation with the still-current email read from the live session', async () => {
+      const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
+      const getSession = vi.fn().mockResolvedValue({
+        user: { email: 'old@example.com' },
+      });
+      betterAuthMock.mockReturnValue({ api: { getSession } });
+
+      createAuth({ db: {} as never, dispatchOtpMail });
+
+      const emailOtpOpts = emailOTPMock.mock.calls[0][0];
+      const request = new Request('https://example.com', { headers: { cookie: 'session=abc' } });
+      await emailOtpOpts.sendVerificationOTP(
+        { email: 'new@example.com', otp: '123456', type: 'change-email' },
+        request,
+      );
+
+      expect(getSession).toHaveBeenCalledWith({ headers: request.headers });
+      expect(dispatchOtpMail).toHaveBeenCalledWith({
+        to: 'new@example.com',
+        template: {
+          key: 'emailChangeConfirmation',
+          data: { otp: '123456', oldEmail: 'o***@example.com', newEmail: 'new@example.com' },
+        },
+      });
+    });
+
+    it('refuses to send a change-email code it cannot attribute to a live session', async () => {
+      const dispatchOtpMail = vi.fn().mockResolvedValue(undefined);
+      const getSession = vi.fn().mockResolvedValue(null);
+      betterAuthMock.mockReturnValue({ api: { getSession } });
+
+      createAuth({ db: {} as never, dispatchOtpMail });
+
+      const emailOtpOpts = emailOTPMock.mock.calls[0][0];
+      await expect(
+        emailOtpOpts.sendVerificationOTP(
+          { email: 'new@example.com', otp: '123456', type: 'change-email' },
+          undefined,
+        ),
+      ).rejects.toThrow('change-email OTP requested without a resolvable session');
+      expect(dispatchOtpMail).not.toHaveBeenCalled();
+    });
+
     it('returns early without dispatching mail for other types', async () => {
       const dispatchOtpMail = vi.fn();
 

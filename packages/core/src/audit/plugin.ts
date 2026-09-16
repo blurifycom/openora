@@ -156,7 +156,7 @@ export async function mapEventToRecord(
 
   // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
   // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
-  // carried on reject.
+  // carried on reject. `failed` has no adminId when auto-approved or webhook-rejected.
   if (
     topic === 'wallet.withdrawal.approved' ||
     topic === 'wallet.withdrawal.rejected' ||
@@ -164,7 +164,7 @@ export async function mapEventToRecord(
   ) {
     return {
       ...base,
-      actorType: 'admin',
+      actorType: p['adminId'] ? 'admin' : 'system',
       actorId: str(p['adminId']),
       resourceType: 'withdrawal',
       resourceId: str(p['transactionId']),
@@ -926,6 +926,21 @@ export async function mapEventToRecord(
     };
   }
 
+  // Player (or admin, when no player row backs the account) replaced their login email.
+  // before/after carry the two addresses so the regulatory trail is diffable.
+  if (topic === 'identity.email.changed') {
+    const playerId = p['playerId'];
+    return {
+      ...base,
+      actorType: playerId ? 'player' : 'admin',
+      actorId: playerId ? str(playerId) : str(p['userId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { email: str(p['previousEmail']) },
+      after: { email: str(p['newEmail']) },
+    };
+  }
+
   if (topic === 'identity.phone.verified') {
     const playerId = p['playerId'];
     return {
@@ -1081,6 +1096,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.password.reset',
   'identity.password.changed',
   'identity.email.verified',
+  'identity.email.changed',
   'identity.phone.verified',
   'identity.security.login_withdrawal_alerts.updated',
   'identity.security.auto_logout.updated',
@@ -1099,7 +1115,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.requested',
   'wallet.withdrawal.approved',
   'wallet.withdrawal.rejected',
-  'wallet.withdrawal.failed',
+  // wallet.withdrawal.failed: NOT subscribed - WalletService.finalizeFailedWithdrawal
+  // writes this audit row itself via recordInTransaction, atomically with the refund
+  // credit (docs/standards/money.md). Subscribing here too would double-record it,
+  // and worse, on the same best-effort/after-commit timing the direct write exists
+  // to avoid. mapEventToRecord keeps its 'wallet.withdrawal.failed' branch - it is
+  // still unit-tested directly - it is just never reached through this subscription.
   'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',

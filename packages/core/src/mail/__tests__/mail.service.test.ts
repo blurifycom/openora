@@ -12,7 +12,7 @@ import { MailService } from '../service/mail.service.js';
 import { EncryptedMailSendJobSchema, MAIL_SEND_QUEUE } from '../contract/index.js';
 
 const verify: MailTemplate = { key: 'verifyEmail', data: { otp: '123456' } };
-const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: {} };
+const rgLifted: MailTemplate = { key: 'rgCoolingOffLifted', data: { initiatedBy: 'admin' } };
 const withdrawal: MailTemplate = {
   key: 'withdrawalApproved',
   data: {
@@ -207,6 +207,36 @@ describe('MailService', () => {
     });
 
     expect(addressRenderer.render).toHaveBeenCalledWith(verify, 'de', null, null);
+  });
+
+  it('passes an explicit recipientName through to the renderer for an address-kind recipient', async () => {
+    const { svc, renderer } = build();
+
+    await svc.deliver({
+      recipient: { kind: 'address', email: 'old@b.com', locale: 'de', recipientName: 'Ada' },
+      template: verify,
+    });
+
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'de', 'Ada', null);
+  });
+
+  it('survives the enqueue/decrypt round trip for an address-kind recipientName', async () => {
+    const { svc, jobQueue, renderer } = build();
+
+    await svc.enqueueToAddress({
+      email: 'old@b.com',
+      recipientName: 'Ada',
+      template: verify,
+      idempotencyKey: 'k-name',
+    });
+
+    const encrypted = vi.mocked(jobQueue.enqueue).mock.calls[0]?.[1];
+    if (!encrypted) {
+      throw new Error('mail job was not queued');
+    }
+    await svc.deliverEncrypted(EncryptedMailSendJobSchema.parse(encrypted));
+
+    expect(renderer.render).toHaveBeenCalledWith(verify, 'en', 'Ada', null);
   });
 
   it('skips - without throwing - when the user has no address (nothing to retry)', async () => {

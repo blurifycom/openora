@@ -62,22 +62,24 @@ Require explicit approval. Treat as plan mode even if the harness isn't.
 
 ### 4. Build (delegate)
 
-After approval, for **downstream** work: run the **create-plugin** skill for each overlay/adapter/page slice - it scaffolds, wires `extensions.config.ts`, and enforces boundaries + audit + db rules. The owning subagent (`builder`) also writes unit + integration tests as part of the deliverable. `deployer` only if infra changes; `debugger` on demand for build/runtime failures.
+After approval, for **downstream** work: run the **create-plugin** skill for each overlay/adapter/page slice - it scaffolds, wires `extensions.config.ts`, and enforces boundaries + audit + db rules. `builder` writes no tests as part of the deliverable - they follow in the stacked test PR (step 5). `deployer` only if infra changes; `debugger` on demand for build/runtime failures.
 
 For **OSS-core** items: read `handoff.md`, write the work-order, STOP that slice, continue the rest. When implementation starts, transition Jira to In Progress (Step 7 - confirm first).
 
-### 5. Tests, then review
+### 5. Verify by hand, then review
 
 Cheap gates first, prove it works, only then spend review on working code:
 
-1. `/check` (typecheck + lint + unit). Don't proceed on red.
-2. Derive an e2e checklist from the AC (happy path, edge cases, authz negatives, error states); `qa` writes/runs Playwright specs in `apps/e2e`, drives `chrome-devtools` on failure. E2e failures go back to `builder` BEFORE any review - don't review code that doesn't work.
-3. **review** on the change set, passing what the e2e run proved so reviewers dig where tests can't reach; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
-4. After fixes: re-run `/check` always; re-run the affected e2e specs if any fix changed behavior (not needed for pure convention/style fixes).
+1. `/check` (typecheck + lint + the existing unit tests). Don't proceed on red.
+2. Derive a verification checklist from the AC (happy path, edge cases, authz negatives, error states) and have `qa` walk it against the running stack - Playwright CLI for the walkthrough and the screenshots, `chrome-devtools` only for a live read it cannot give. **No tests are written here, at any tier** (`docs/standards/testing.md`). `qa` returns screenshot evidence plus the "Tests to add" list. A broken flow goes back to `builder` BEFORE any review - don't review code that doesn't work.
+3. **review** on the change set, passing what the manual pass proved so reviewers dig where it couldn't reach; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
+4. After fixes: re-run `/check` always; re-walk the affected screens if a fix changed behavior, and refresh the screenshots (not needed for pure convention/style fixes).
 
 ### 6. Open the MR
 
-Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Never bypass its push-consent gate.
+Run **create-pr**: it commits (`feat({{trackerKey}}-XXX): ...`), reports the SHA, asks for "yes push", pushes, and opens the pull request against `{{mrTarget}}` per `docs/agents/forge.md`, with the CODEOWNERS for the changed paths as reviewers. Hand it the step-5 screenshots and the "Tests to add" list - both belong in the description. Never bypass its push-consent gate.
+
+The tests themselves are a separate, stacked pull request written later from that list; they are not part of this delivery unless the user asks for them.
 
 ### 7. Jira status transition (NOT comments)
 

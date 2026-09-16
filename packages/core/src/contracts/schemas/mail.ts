@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
+import { RgInitiatorSchema } from './compliance.js';
 
 export const MAIL_TEMPLATE_KEYS = [
   'verifyEmail',
@@ -16,10 +17,15 @@ export const MAIL_TEMPLATE_KEYS = [
   'depositCompleted',
   'withdrawalApproved',
   'withdrawalRejected',
+  'withdrawalCompleted',
+  'withdrawalFailed',
   'kycResubmissionRequested',
   'adminInvitation',
   'securityLoginAlert',
   'securityWithdrawalRequested',
+  'welcome',
+  'emailChangeConfirmation',
+  'emailChanged',
   'securityAntiPhishingCodeChanged',
 ] as const;
 
@@ -44,24 +50,42 @@ export const EmailTemplateDataSchemas = {
     amount: MoneyAmountSchema.nullable(),
     currency: CurrencyCodeSchema.nullable(),
     minutes: z.number().int().nullable(),
+    initiatedBy: RgInitiatorSchema,
   }),
-  rgCoolingOffActivated: z.object({ expiresAt: TimestampSchema }),
-  rgCoolingOffLifted: z.object({}),
+  rgCoolingOffActivated: z.object({ expiresAt: TimestampSchema, initiatedBy: RgInitiatorSchema }),
+  rgCoolingOffLifted: z.object({ initiatedBy: RgInitiatorSchema }),
   rgSelfExclusionActivated: z.object({
     expiresAt: TimestampSchema.nullable(),
     isPermanent: z.boolean(),
+    initiatedBy: RgInitiatorSchema,
   }),
-  rgSelfExclusionLifted: z.object({}),
+  rgSelfExclusionLifted: z.object({ initiatedBy: RgInitiatorSchema }),
   depositCompleted: z.object({ ...WithdrawalDetailsShape }),
   withdrawalApproved: z.object({ ...WithdrawalDetailsShape }),
   withdrawalRejected: z.object({
     ...WithdrawalDetailsShape,
     reason: z.string().nullable(),
   }),
+  withdrawalCompleted: z.object({ ...WithdrawalDetailsShape }),
+  withdrawalFailed: z.object({ ...WithdrawalDetailsShape }),
   kycResubmissionRequested: z.object({ reason: z.string().nullable() }),
   adminInvitation: z.object({ token: z.string(), expiresAt: TimestampSchema }),
   securityLoginAlert: z.object({ occurredAt: TimestampSchema }),
   securityWithdrawalRequested: z.object({ ...WithdrawalDetailsShape }),
+  welcome: z.object({}),
+  emailChangeConfirmation: z.object({
+    otp: z.string(),
+    // Masked, never the full address: this mail goes to the new inbox before it has
+    // proven anything, so the current owner's real address must not leak to whoever
+    // typed it in as the target.
+    oldEmail: z.string(),
+    newEmail: z.email(),
+  }),
+  emailChanged: z.object({
+    newEmail: z.email(),
+    occurredAt: TimestampSchema,
+    isNewAddress: z.boolean(),
+  }),
   securityAntiPhishingCodeChanged: z.object({ previousAntiPhishingCode: z.string().nullable() }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
 
@@ -86,10 +110,15 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('depositCompleted'),
   templateVariant('withdrawalApproved'),
   templateVariant('withdrawalRejected'),
+  templateVariant('withdrawalCompleted'),
+  templateVariant('withdrawalFailed'),
   templateVariant('kycResubmissionRequested'),
   templateVariant('adminInvitation'),
   templateVariant('securityLoginAlert'),
   templateVariant('securityWithdrawalRequested'),
+  templateVariant('welcome'),
+  templateVariant('emailChangeConfirmation'),
+  templateVariant('emailChanged'),
   templateVariant('securityAntiPhishingCodeChanged'),
 ]);
 

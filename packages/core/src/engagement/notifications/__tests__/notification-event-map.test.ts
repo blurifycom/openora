@@ -177,11 +177,9 @@ describe('notificationEventMap', () => {
     expect(entryFor('social.friend_request.accepted').buildEmail({}, OCCURRED_AT)).toBeNull();
   });
 
-  it('keeps every newly-mapped trigger type in-app only (no email), per the email scope decision', () => {
+  it('keeps every in-app-only trigger type free of email, per the email scope decision', () => {
     const inAppOnlyEvents = [
       'wallet.manual_adjustment.created',
-      'wallet.withdrawal.completed',
-      'wallet.withdrawal.failed',
       'chat.user.mentioned',
       'chat.room.ownership.transferred',
     ] as const;
@@ -190,6 +188,28 @@ describe('notificationEventMap', () => {
       expect(entryFor(event).buildEmail({}, OCCURRED_AT)).toBeNull();
       expect(entryFor(event).securityAlert).toBe(false);
     }
+  });
+
+  it('builds the withdrawal completed/failed mails dated from the envelope', () => {
+    const payload = {
+      userId: randomUUID(),
+      amount: '10.00',
+      currency: 'USD',
+      transactionId: randomUUID(),
+      adminId: null,
+      playerId: null,
+    };
+
+    expect(entryFor('wallet.withdrawal.completed').buildEmail(payload, OCCURRED_AT)).toMatchObject({
+      key: 'withdrawalCompleted',
+      data: { amount: '10.00', currency: 'USD', occurredAt: OCCURRED_AT },
+    });
+    expect(entryFor('wallet.withdrawal.completed').securityAlert).toBe(false);
+    expect(entryFor('wallet.withdrawal.failed').buildEmail(payload, OCCURRED_AT)).toMatchObject({
+      key: 'withdrawalFailed',
+      data: { amount: '10.00', currency: 'USD', occurredAt: OCCURRED_AT },
+    });
+    expect(entryFor('wallet.withdrawal.failed').securityAlert).toBe(false);
   });
 
   it('builds a preference-gated security alert mail for a requested withdrawal', () => {
