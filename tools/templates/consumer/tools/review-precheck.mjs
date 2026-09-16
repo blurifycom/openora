@@ -157,7 +157,9 @@ const LIMIT_LITERAL = /\b(limit|pageSize|perPage|take)\s*:\s*\d+\b/;
 const LIMIT_CONSTANT = /\b[A-Z][A-Z0-9_]*(LIMIT|PAGE_SIZE|PER_PAGE|MAX_ROWS)\s*=\s*\d+/;
 const HAND_MEMO = /\b(useMemo|useCallback|React\.memo|memo)\s*\(/;
 const STRING_LITERAL = /(['"`])((?:\\.|(?!\1).)*)\1/g;
-const bannedTokens = config.bannedClasses?.tokens ?? [];
+const CLASS_TOKEN = /^[a-z0-9:!\[\]\-/.%#_]+$/;
+const NON_CLASS_ATTRIBUTE = /\b(?!class(?:Name)?\b)[\w-]+=\{?\s*$/;
+const bannedClassRules = config.bannedClasses ?? [];
 
 for (const { file, line, text } of added) {
   const location = `${file}:${line}`;
@@ -194,17 +196,21 @@ for (const { file, line, text } of added) {
       `\`${text.match(HAND_MEMO)[0]}\` under the React Compiler`,
     );
   }
-  if (under(config.bannedClasses?.paths, file)) {
+  const bannedTokens = bannedClassRules
+    .filter(({ paths }) => under(paths, file))
+    .flatMap(({ tokens }) => tokens);
+  if (bannedTokens.length > 0) {
     const looksLikeClasses = /class(Name)?\b/.test(text);
-    for (const [, , literal] of text.matchAll(STRING_LITERAL)) {
-      if (!looksLikeClasses && !/\s/.test(literal.trim())) {
+    for (const match of text.matchAll(STRING_LITERAL)) {
+      const tokens = match[2].trim().split(/\s+/);
+      const boundToOtherAttribute = NON_CLASS_ATTRIBUTE.test(text.slice(0, match.index));
+      const classShaped = tokens.every((token) => CLASS_TOKEN.test(token));
+      if (boundToOtherAttribute || !classShaped || (!looksLikeClasses && tokens.length < 2)) {
         continue;
       }
-      const hits = literal
-        .split(/\s+/)
-        .filter((token) =>
-          bannedTokens.some((banned) => token === banned || token.startsWith(`${banned}-`)),
-        );
+      const hits = tokens.filter((token) =>
+        bannedTokens.some((banned) => token === banned || token.startsWith(`${banned}-`)),
+      );
       if (hits.length > 0) {
         report('banned-class', 'WARN', location, `\`${[...new Set(hits)].join(' ')}\``);
       }
@@ -214,7 +220,7 @@ for (const { file, line, text } of added) {
 if (!config.reactCompilerPaths) {
   report('hand-memo', 'INFO', '-', 'not configured (reviewPrecheck.reactCompilerPaths)');
 }
-if (!config.bannedClasses) {
+if (bannedClassRules.length === 0) {
   report('banned-class', 'INFO', '-', 'not configured (reviewPrecheck.bannedClasses)');
 }
 
