@@ -1,5 +1,6 @@
 import { createToken, type Token } from './token.js';
 import type { GameType } from '../schemas/game.js';
+import type { Granularity } from '../schemas/reporting.js';
 
 /**
  * Admin/back-office reporting over game performance. Owned + bound by the
@@ -43,6 +44,37 @@ export type GamePerformanceRow = {
   roundsPlayed: number;
 };
 
+export type GamePerformanceTrendFilter = {
+  gameId: string;
+  dateFrom: Date;
+  dateTo: Date;
+  granularity: Granularity;
+  currency?: string;
+};
+
+/** A bucket is the UTC start of its day, ISO week (Monday) or month, as `YYYY-MM-DD`. */
+export type GamePerformanceTrendPoint = {
+  bucket: string;
+  volume: string;
+  revenue: string;
+  roundsPlayed: number;
+};
+
+/**
+ * One game's metrics over [dateFrom, dateTo], with the same round scoping as
+ * GamePerformanceRow. `points` holds every bucket in range, zero-filled, and sums to
+ * `totals`; `uniquePlayers` is totals-only because distinct counts do not add up.
+ */
+export type GamePerformanceTrend = {
+  totals: {
+    volume: string;
+    revenue: string;
+    uniquePlayers: number;
+    roundsPlayed: number;
+  };
+  points: GamePerformanceTrendPoint[];
+};
+
 export type PlayerGameStats = {
   totalWagered: string;
   totalBets: number;
@@ -50,6 +82,8 @@ export type PlayerGameStats = {
 
 export type AdminGameReporting = {
   listGamePerformance(filter: GamePerformanceFilter): Promise<GamePerformanceRow[]>;
+  /** `null` when no game has `filter.gameId`. */
+  getGamePerformanceTrend(filter: GamePerformanceTrendFilter): Promise<GamePerformanceTrend | null>;
   getPlayerStats(userId: string): Promise<PlayerGameStats>;
 };
 

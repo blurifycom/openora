@@ -173,15 +173,14 @@ describe('gaming catalog migration 0005 (real PG)', () => {
       .select({ id: gameProvider.id })
       .from(gameProvider)
       .where(eq(gameProvider.slug, 'netent'));
-    const [inserted] = await db.drizzle.db
-      .insert(game)
-      .values({
-        name: 'Fresh Game',
-        slug: 'custom-slug',
-        providerId: studio!.id,
-        aggregator: 'hub',
-      })
-      .returning({ id: game.id, slug: game.slug, aggregator: game.aggregator });
+    const {
+      rows: [inserted],
+    } = (await db.drizzle.db.execute(sql`
+      INSERT INTO "game" ("name", "slug", "provider_id", "aggregator")
+      VALUES ('Fresh Game', 'custom-slug', ${studio!.id}, 'hub')
+      RETURNING "id", "slug", "aggregator"`)) as unknown as {
+      rows: Array<{ id: string; slug: string; aggregator: string }>;
+    };
 
     expect(inserted).toMatchObject({ slug: 'custom-slug', aggregator: 'hub' });
     const links = await db.drizzle.db

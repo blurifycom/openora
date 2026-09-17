@@ -543,6 +543,11 @@ export const domainEventSchemas = {
       metadata: z.unknown().nullable(),
     }),
   }),
+  'gaming.game.availability_changed': z.object({
+    gameId: UuidSchema,
+    before: z.object({ isUnavailable: z.boolean() }),
+    after: z.object({ isUnavailable: z.boolean() }),
+  }),
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.

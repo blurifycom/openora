@@ -1,0 +1,1 @@
+ALTER TABLE "game" ADD COLUMN "is_unavailable" boolean DEFAULT false NOT NULL;
