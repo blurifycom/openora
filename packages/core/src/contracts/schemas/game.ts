@@ -20,6 +20,12 @@ export const GameProviderAggregatorMappingSchema = z.object({
 });
 export type GameProviderAggregatorMapping = z.infer<typeof GameProviderAggregatorMappingSchema>;
 
+export const GameBulkIdsSchema = z.object({
+  gameIds: z.array(UuidSchema),
+  providerIds: z.array(UuidSchema),
+});
+export type GameBulkIds = z.infer<typeof GameBulkIdsSchema>;
+
 export const GameCategoryNameSchema = z.string().trim().min(1).max(128);
 export const GameCategoryTranslationSchema = z
   .object({

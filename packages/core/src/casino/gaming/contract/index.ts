@@ -2,6 +2,7 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CurrencyCodeSchema,
+  GameBulkIdsSchema,
   GameCategoryNameSchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
@@ -335,11 +336,6 @@ export const AddGameCategoriesInputSchema = BulkGameTargetFieldsSchema.extend({
 }).refine(hasBulkTarget, bulkTargetRefinement);
 export type AddGameCategoriesInput = z.infer<typeof AddGameCategoriesInputSchema>;
 
-const BulkNotFoundSchema = z.object({
-  gameIds: z.array(UuidSchema),
-  providerIds: z.array(UuidSchema),
-});
-
 const BulkCountSchema = z.object({
   updatedCount: z.number().int().nonnegative(),
   unchangedCount: z.number().int().nonnegative(),
@@ -347,14 +343,14 @@ const BulkCountSchema = z.object({
 
 export const AddGameLinksOutputSchema = z.object({
   games: BulkCountSchema,
-  notFound: BulkNotFoundSchema,
+  notFound: GameBulkIdsSchema,
 });
 export type AddGameLinksOutput = z.infer<typeof AddGameLinksOutputSchema>;
 
 export const SetGamesActiveOutputSchema = z.object({
   games: BulkCountSchema,
   providers: BulkCountSchema,
-  notFound: BulkNotFoundSchema,
+  notFound: GameBulkIdsSchema,
   unplayableGameIds: z.array(UuidSchema),
 });
 export type SetGamesActiveOutput = z.infer<typeof SetGamesActiveOutputSchema>;

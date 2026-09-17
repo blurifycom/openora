@@ -7,6 +7,7 @@ import {
   UuidSchema,
 } from './common.js';
 import {
+  GameBulkIdsSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
   GameTagSnapshotSchema,
@@ -73,6 +74,10 @@ const tagPlayerEventBase = actorReasonBase
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
+
+const gameBulkEventBase = z
+  .object({ actorId: UuidSchema, target: GameBulkIdsSchema, notFound: GameBulkIdsSchema })
+  .extend(authContextBase.shape);
 
 const gameGeoRuleEventState = z.object({
   id: UuidSchema,
@@ -541,38 +546,23 @@ export const domainEventSchemas = {
     }),
   }),
   'gaming.games.bulk_updated': z.discriminatedUnion('operation', [
-    z
-      .object({
-        operation: z.literal('set_active'),
-        actorId: UuidSchema,
-        bulkOperationId: UuidSchema,
-        target: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
-        isActive: z.boolean(),
-        changedGameIds: z.array(UuidSchema),
-        changedProviderIds: z.array(UuidSchema),
-        notFound: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
-      })
-      .extend(authContextBase.shape),
-    z
-      .object({
-        operation: z.literal('add_tags'),
-        actorId: UuidSchema,
-        target: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
-        tagIds: z.array(UuidSchema),
-        addedLinks: z.array(z.object({ gameId: UuidSchema, tagIds: z.array(UuidSchema) })),
-        notFound: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
-      })
-      .extend(authContextBase.shape),
-    z
-      .object({
-        operation: z.literal('add_categories'),
-        actorId: UuidSchema,
-        target: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
-        categoryIds: z.array(UuidSchema),
-        addedLinks: z.array(z.object({ gameId: UuidSchema, categoryIds: z.array(UuidSchema) })),
-        notFound: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
-      })
-      .extend(authContextBase.shape),
+    gameBulkEventBase.extend({
+      operation: z.literal('set_active'),
+      bulkOperationId: UuidSchema,
+      isActive: z.boolean(),
+      changedGameIds: z.array(UuidSchema),
+      changedProviderIds: z.array(UuidSchema),
+    }),
+    gameBulkEventBase.extend({
+      operation: z.literal('add_tags'),
+      tagIds: z.array(UuidSchema),
+      addedLinks: z.array(z.object({ gameId: UuidSchema, tagIds: z.array(UuidSchema) })),
+    }),
+    gameBulkEventBase.extend({
+      operation: z.literal('add_categories'),
+      categoryIds: z.array(UuidSchema),
+      addedLinks: z.array(z.object({ gameId: UuidSchema, categoryIds: z.array(UuidSchema) })),
+    }),
   ]),
   'gaming.game.availability_changed': z.object({
     gameId: UuidSchema,
