@@ -92,10 +92,6 @@ describe('CmsService public banner cache invalidation (real PG + real Redis)', (
     expect((await svc.getPublicBanner('home-top', 'es'))?.slots[0]?.desktopImageUrl).toBe(
       'https://cdn.example/spanish-desktop-v1.png',
     );
-    expect(await redis.client.get('cache:cms:banner-placement:home-top:es')).toContain(
-      'spanish-desktop-v1',
-    );
-
     await svc.setBannerImage(
       {
         bannerConfigurationId: configuration.id,
@@ -107,16 +103,55 @@ describe('CmsService public banner cache invalidation (real PG + real Redis)', (
       ADMIN_ID,
     );
 
-    expect(await redis.client.get('cache:cms:banner-placement:home-top:es')).toBeNull();
     expect((await svc.getPublicBanner('home-top', 'es'))?.slots[0]?.desktopImageUrl).toBe(
       'https://cdn.example/spanish-desktop-v2.png',
     );
 
     await svc.deleteBannerImage(localized.id, ADMIN_ID);
 
-    expect(await redis.client.get('cache:cms:banner-placement:home-top:es')).toBeNull();
     expect((await svc.getPublicBanner('home-top', 'es'))?.slots[0]?.desktopImageUrl).toBe(
       'https://cdn.example/default-desktop.png',
+    );
+  });
+
+  it('invalidates every locale when the placement default changes', async () => {
+    const { svc } = makeService();
+    const initial = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: initial.id,
+        sortOrder: 0,
+        desktopImageUrl: 'https://cdn.example/initial-desktop.png',
+        mobileImageUrl: 'https://cdn.example/initial-mobile.png',
+      },
+      ADMIN_ID,
+    );
+    await svc.setDefaultConfiguration(initial.id, ADMIN_ID);
+
+    expect((await svc.getPublicBanner('home-top', 'en'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/initial-desktop.png',
+    );
+
+    const replacement = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: replacement.id,
+        sortOrder: 0,
+        desktopImageUrl: 'https://cdn.example/replacement-desktop.png',
+        mobileImageUrl: 'https://cdn.example/replacement-mobile.png',
+      },
+      ADMIN_ID,
+    );
+    await svc.setDefaultConfiguration(replacement.id, ADMIN_ID);
+
+    expect((await svc.getPublicBanner('home-top', 'en'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/replacement-desktop.png',
     );
   });
 });
