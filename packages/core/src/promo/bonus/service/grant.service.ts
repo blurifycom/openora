@@ -57,8 +57,12 @@ export class GrantService implements BonusGrantCommands {
         offerId: args.offerId ?? null,
         terms,
         grantedAmount: args.amount,
+        // The grant row is the bonus balance: the funds start here and never sit in
+        // `wallet_balance` until they convert.
+        bonusBalance: args.amount,
         wageringRequired,
         expiresAt: sql`now() + make_interval(days => ${args.terms.expiryDays})`,
+        activatedAt: sql`now()`,
       })
       .onConflictDoNothing()
       .returning({ id: promoGrant.id });
@@ -91,6 +95,7 @@ export class GrantService implements BonusGrantCommands {
         source: args.source,
         sourceRef: args.sourceRef,
         grantedAmount: args.amount,
+        bonusBalance: args.amount,
         wageringRequired,
         terms,
       },

@@ -10,11 +10,14 @@ CREATE TABLE "promo_grant" (
 	"offer_id" uuid,
 	"terms" jsonb NOT NULL,
 	"granted_amount" numeric(38, 18) NOT NULL,
+	"bonus_balance" numeric(38, 18) DEFAULT '0' NOT NULL,
 	"wagering_required" numeric(38, 18) NOT NULL,
 	"wagering_progress" numeric(38, 18) DEFAULT '0' NOT NULL,
 	"status" "promo_grant_status" DEFAULT 'active' NOT NULL,
 	"forfeit_reason" "promo_forfeit_reason",
 	"expires_at" timestamp with time zone NOT NULL,
+	"activated_at" timestamp with time zone,
+	"closed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint

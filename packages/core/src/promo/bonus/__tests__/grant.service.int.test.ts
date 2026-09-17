@@ -59,10 +59,13 @@ describe('GrantService.grant (real PG)', () => {
     const [row] = await rows();
     expect(row).toMatchObject({
       grantedAmount: '100.000000000000000000',
+      bonusBalance: '100.000000000000000000',
       wageringRequired: '3500.000000000000000000',
       wageringProgress: '0.000000000000000000',
       status: 'active',
     });
+    expect(row?.activatedAt).toBeInstanceOf(Date);
+    expect(row?.closedAt).toBeNull();
   });
 
   it('snapshots the terms and the profile weights onto the grant', async () => {
