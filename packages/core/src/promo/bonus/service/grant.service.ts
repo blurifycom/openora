@@ -20,6 +20,7 @@ import {
 } from '@openora/core/server';
 import {
   promoGrant,
+  promoGrantEntry,
   promoWeight,
   promoWeightProfile,
   type GrantTermsSnapshot,
@@ -125,6 +126,16 @@ export class GrantService implements BonusGrantCommands {
       }
       return winner;
     }
+
+    // The opening ledger row. Written only on the created path, so a replay leaves the ledger
+    // alone and the sum of a grant's entries still equals its bonus balance.
+    await tx.insert(promoGrantEntry).values({
+      grantId: inserted.id,
+      userId: args.userId,
+      type: 'grant',
+      bonusAmount: args.amount,
+      balanceAfter: args.amount,
+    });
 
     await this.audit.recordInTransaction(tx, {
       ...(args.actor.type === 'admin' ? { actorId: args.actor.id } : {}),
