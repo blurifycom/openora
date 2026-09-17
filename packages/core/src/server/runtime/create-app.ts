@@ -484,7 +484,17 @@ export async function createApp(
     context.auth = resolved;
 
     if (container.has(PLAYER_ACTIVITY_TRACKER)) {
-      container
+      // Awaited, not fire-and-forget. Modules and overlays read this stamp to decide
+      // whether a player is online, so a request that refreshes presence must not be able
+      // to return before the write lands: a second caller acting on the answer would
+      // otherwise read a value the completed request had already superseded. The adapter
+      // narrows the update to rows older than its throttle, so the statement is a
+      // no-op most of the time; the cost is the round trip, on the same path that already
+      // awaits SESSION_IDLE_POLICY above.
+      //
+      // A failure is still swallowed: presence is a hint, never authorisation, and losing
+      // the stamp must not fail the request it rode in on.
+      await container
         .get(PLAYER_ACTIVITY_TRACKER)
         .touchLastSeen(userId)
         .catch((err: unknown) =>
