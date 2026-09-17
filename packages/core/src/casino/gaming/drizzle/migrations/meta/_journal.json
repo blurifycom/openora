@@ -50,6 +50,13 @@
       "when": 1789410326523,
       "tag": "0006_young_wrecker",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789639350049,
+      "tag": "0007_flowery_toad",
+      "breakpoints": true
     }
   ]
 }

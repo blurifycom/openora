@@ -14,15 +14,25 @@ import type {
   UserRole,
   ClientMeta,
 } from '@openora/core/contracts';
-import { makeNotFoundError, serializeRow } from '@openora/core/server';
+import { countGranularityBuckets } from '@openora/core/contracts';
+import { createDomainError, makeNotFoundError, serializeRow } from '@openora/core/server';
 import type {
   GamePerformanceFilter,
+  GamePerformanceTrendFilter,
   PlayerActivityFilter,
   TransactionFilter,
 } from '../contract/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
+export const GameNotFoundError = makeNotFoundError('Game');
+export const GamePerformanceTrendRangeError = createDomainError<[message: string]>(
+  'GamePerformanceTrendRangeError',
+  (message) => message,
+);
+
+const DEFAULT_TREND_RANGE_DAYS = 30;
+const MAX_TREND_BUCKETS = 366;
 
 function toAdminUser(r: AdminUserRow, assignedRoles: AdminRoleAssignmentSummary[]) {
   return {
@@ -197,6 +207,34 @@ export class BackofficeService {
       sortBy: filter.sortBy,
       sortDir: filter.sortDir,
     });
+  }
+
+  async getGamePerformanceTrend(filter: GamePerformanceTrendFilter) {
+    const dateTo = filter.dateTo ? new Date(filter.dateTo) : new Date();
+    const dateFrom = filter.dateFrom
+      ? new Date(filter.dateFrom)
+      : new Date(dateTo.getTime() - DEFAULT_TREND_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    // The schema only orders the range when both ends are given; a lone dateFrom can
+    // still land after the default dateTo of now.
+    if (dateFrom > dateTo) {
+      throw new GamePerformanceTrendRangeError('dateFrom must be before or equal to dateTo');
+    }
+    if (countGranularityBuckets(dateFrom, dateTo, filter.granularity) > MAX_TREND_BUCKETS) {
+      throw new GamePerformanceTrendRangeError(
+        `range spans more than ${MAX_TREND_BUCKETS} ${filter.granularity} buckets; narrow it or use a coarser granularity`,
+      );
+    }
+    const trend = await this.gameReporting.getGamePerformanceTrend({
+      gameId: filter.gameId,
+      dateFrom,
+      dateTo,
+      granularity: filter.granularity,
+      currency: filter.currency,
+    });
+    if (!trend) {
+      throw new GameNotFoundError(filter.gameId);
+    }
+    return trend;
   }
 
   async getPlayerActivity(filter: PlayerActivityFilter) {

@@ -48,6 +48,7 @@ export { WALLET_COMMANDS } from './wallet-commands.js';
 export type {
   GamingCommands,
   GamingAccumulateExternalRoundArgs,
+  GamingSetGameAvailabilityArgs,
   GamingAccumulateExternalRoundOutcome,
 } from './gaming-commands.js';
 export { GAMING_COMMANDS } from './gaming-commands.js';
@@ -280,6 +281,9 @@ export type {
   GamePerformanceSortBy,
   GamePerformanceFilter,
   GamePerformanceRow,
+  GamePerformanceTrendFilter,
+  GamePerformanceTrendPoint,
+  GamePerformanceTrend,
   AdminGameReporting,
   PlayerGameStats,
 } from './admin-game-reporting.js';
