@@ -8,15 +8,16 @@ import type { BonusGrantSource } from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
 
 /**
- * The terms a grant is created under, snapshotted onto the grant row. Editing an offer must
- * not change a bonus a player already holds, so nothing here is read from config again later.
+ * The terms a grant is created under. The grant row stores a snapshot of them, with the weight
+ * profile's rows resolved into it, so editing or deleting an offer or a profile never changes a
+ * bonus a player already holds.
  */
 export type BonusGrantTerms = {
   /** Wagering requirement as a multiple of the granted amount, as a decimal string. */
   wageringMultiplier: string;
   /** Days from the grant until it expires and what is left of it is forfeited. */
   expiryDays: number;
-  /** Weight profile that scores this grant's bets. */
+  /** Weight profile whose rows are copied onto the grant to score its bets. */
   weightProfileId: string;
 };
 

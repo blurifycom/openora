@@ -26,6 +26,7 @@ import {
   type BonusGrantStatus,
   type WagerWeightScope,
 } from '../contract/index.js';
+import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
 
@@ -79,6 +80,12 @@ export const promoWeight = pgTable(
   ],
 );
 
+/**
+ * The terms as stored on a grant: the caller's terms plus the weight rows the profile held at
+ * grant time. Wagering is scored from `weights`, never from the live profile.
+ */
+export type GrantTermsSnapshot = BonusGrantTerms & { weights: WagerWeightRow[] };
+
 export const promoGrantStatusEnum = pgEnum('promo_grant_status', BONUS_GRANT_STATUSES);
 export const promoGrantSourceEnum = pgEnum('promo_grant_source', BONUS_GRANT_SOURCES);
 export const promoForfeitReasonEnum = pgEnum('promo_forfeit_reason', BONUS_FORFEIT_REASONS);
@@ -101,7 +108,7 @@ export const promoGrant = pgTable(
     // The deposit transaction, the `<mechanic>:<utc-day>` job key, the race id.
     sourceRef: text().notNull(),
     offerId: uuid(),
-    terms: jsonb().$type<BonusGrantTerms>().notNull(),
+    terms: jsonb().$type<GrantTermsSnapshot>().notNull(),
     grantedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     wageringRequired: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     wageringProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })

@@ -5,7 +5,8 @@ import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { AuditWritePort, BonusGrantArgs, Uuid } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
-import { promoGrant, promoWeightProfile } from '../schema/index.js';
+import { promoGrant, promoWeight, promoWeightProfile } from '../schema/index.js';
+import { BonusService } from '../service/bonus.service.js';
 import { GrantService } from '../service/grant.service.js';
 
 let db: TestDb;
@@ -64,11 +65,57 @@ describe('GrantService.grant (real PG)', () => {
     });
   });
 
-  it('snapshots the terms, so a later config change cannot reach a granted bonus', async () => {
+  it('snapshots the terms and the profile weights onto the grant', async () => {
+    await seedWeight('product', 'casino', '100');
     await grant(args({ terms: { wageringMultiplier: '35', expiryDays: 7, weightProfileId } }));
 
     const [row] = await rows();
-    expect(row?.terms).toEqual({ wageringMultiplier: '35', expiryDays: 7, weightProfileId });
+    expect(row?.terms).toEqual({
+      wageringMultiplier: '35',
+      expiryDays: 7,
+      weightProfileId,
+      weights: [
+        { scope: 'product', scopeRef: 'casino', contributionPercent: '100.000000000000000000' },
+      ],
+    });
+  });
+
+  it('keeps scoring a granted bonus at its snapshot after the profile is edited', async () => {
+    await seedWeight('product', 'casino', '100');
+    await grant(args());
+    await db.drizzle.db.update(promoWeight).set({ contributionPercent: '10' });
+
+    const [row] = await rows();
+    expect(
+      new BonusService().weightedContribution({ terms: row!.terms, stake: '50', context: CASINO }),
+    ).toMatchObject({ weightedAmount: '50.000000000000000000' });
+  });
+
+  it('keeps scoring a granted bonus at its snapshot after the profile is deleted', async () => {
+    await seedWeight('product', 'casino', '100');
+    await grant(args());
+    await db.drizzle.db.delete(promoWeightProfile);
+
+    const [row] = await rows();
+    expect(
+      new BonusService().weightedContribution({ terms: row!.terms, stake: '50', context: CASINO }),
+    ).toMatchObject({ weightedAmount: '50.000000000000000000' });
+  });
+
+  it('snapshots an empty weight set for a profile with no rows, so no bet counts', async () => {
+    await grant(args());
+
+    const [row] = await rows();
+    expect(row?.terms.weights).toEqual([]);
+  });
+
+  it('refuses a grant whose weight profile does not exist', async () => {
+    await expect(
+      grant(
+        args({ terms: { wageringMultiplier: '35', expiryDays: 7, weightProfileId: randomUUID() } }),
+      ),
+    ).rejects.toThrow('weight profile');
+    expect(await rows()).toHaveLength(0);
   });
 
   it('expires the grant `expiryDays` after it was created', async () => {
@@ -171,6 +218,18 @@ describe('GrantService.grant (real PG)', () => {
     expect(await rows()).toHaveLength(0);
   });
 });
+
+const CASINO = { provider: 'aggregator', product: 'casino' };
+
+function seedWeight(
+  scope: (typeof promoWeight.$inferInsert)['scope'],
+  scopeRef: string | null,
+  contributionPercent: string,
+) {
+  return db.drizzle.db
+    .insert(promoWeight)
+    .values({ profileId: weightProfileId, scope, scopeRef, contributionPercent });
+}
 
 function termsWith(wageringMultiplier: string, expiryDays = 30) {
   return { wageringMultiplier, expiryDays, weightProfileId };
