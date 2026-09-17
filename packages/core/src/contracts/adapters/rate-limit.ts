@@ -11,6 +11,7 @@ import { createToken, type Token } from './token.js';
 export const RATE_LIMIT_KEYS = {
   REGISTER: 'register',
   LOGIN: 'login',
+  LOGIN_IP: 'login-ip',
   ENABLE_2FA: 'enable2fa',
   VERIFY_2FA: 'verify2fa',
   DISABLE_2FA: 'disable2fa',

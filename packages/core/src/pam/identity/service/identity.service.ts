@@ -152,6 +152,10 @@ function makeLoginRateLimitKey(email: string): `login:${string}` {
   return `login:${email.toLowerCase()}`;
 }
 
+function makeLoginIpRateLimitKey(ip: string): `login-ip:${string}` {
+  return `login-ip:${ip}`;
+}
+
 // Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
 // otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
@@ -330,6 +334,16 @@ export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // unthrottled login/2fa/reset window is worse than a transient 429. The volume
 // throttles (register/resend/etc.) keep the default fail-open.
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
+// Per-IP companion to LOGIN_RATE_LIMIT above: catches credential stuffing spread across
+// many accounts from one source, which the per-email counter can't see (each guess lands
+// on a different key). Limit is deliberately far above LOGIN_RATE_LIMIT's per-account 10/5min
+// so a shared network (office NAT) never blocks legitimate players signing into their own
+// accounts. Overridable via IDENTITY_OPTIONS.loginIpRateLimit.
+const DEFAULT_LOGIN_IP_RATE_LIMIT = {
+  limit: 100,
+  windowMs: 15 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 // Keyed on the caller, not the handle: the abuse shape here is enumerating many
 // usernames from one client, not probing one username repeatedly.
@@ -851,6 +865,19 @@ export class IdentityService {
     const email = input.email.toLowerCase();
 
     await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
+    // Skipped when the IP is unknown (no trusted proxy header) rather than bucketed under
+    // a shared 'unknown' key - that shared key would let one client's traffic exhaust the
+    // budget for every other client with no IP, which is a self-inflicted DoS.
+    const ipRateLimitOptions = this.options?.loginIpRateLimit;
+    if (ip && (ipRateLimitOptions?.enabled ?? true)) {
+      await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip), {
+        ...DEFAULT_LOGIN_IP_RATE_LIMIT,
+        ...(ipRateLimitOptions?.limit !== undefined ? { limit: ipRateLimitOptions.limit } : {}),
+        ...(ipRateLimitOptions?.windowMs !== undefined
+          ? { windowMs: ipRateLimitOptions.windowMs }
+          : {}),
+      });
+    }
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate

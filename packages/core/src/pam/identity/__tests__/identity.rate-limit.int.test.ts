@@ -136,6 +136,88 @@ describe('IdentityService - rate limiting (real Redis)', () => {
   });
 });
 
+describe('IdentityService - per-IP login rate limit (real Redis)', () => {
+  it('rejects login with a 429 once the per-IP limit is exhausted, even across different accounts', async () => {
+    const ip = '203.0.113.40';
+    const limiter = makeLimiter();
+    // Pre-exhaust the IP bucket (100 per 15min) with a key no single account owns.
+    for (let i = 0; i < 100; i++) {
+      await limiter.consume(`login-ip:${ip}`, { limit: 100, windowMs: 15 * 60 * 1000 });
+    }
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    await expect(
+      svc.login(
+        { email: 'brand-new-account@x.dev', password: 'password123' },
+        { 'x-real-ip': ip },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      data: { retryAfterMs: expect.any(Number) },
+    });
+  });
+
+  it('buckets IPs separately, so one abusive IP cannot stall logins from another', async () => {
+    const abusiveIp = '203.0.113.41';
+    const limiter = makeLimiter();
+    for (let i = 0; i < 100; i++) {
+      await limiter.consume(`login-ip:${abusiveIp}`, { limit: 100, windowMs: 15 * 60 * 1000 });
+    }
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    await expect(
+      svc.login(
+        { email: 'other-account@x.dev', password: 'password123' },
+        { 'x-real-ip': '203.0.113.42' },
+        new Headers(),
+      ),
+    ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+
+  it('skips the per-IP gate when the request carries no IP, rather than bucketing under a shared key', async () => {
+    const consume = vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 });
+    const limiter = mock<RateLimiterAdapter>({ consume, reset: vi.fn() });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    // No 'x-real-ip' header, so extractClientMeta yields ip: null. A shared 'unknown'
+    // bucket would let one IP-less client's traffic exhaust the budget for every other
+    // IP-less client - a self-inflicted DoS - so the gate must be skipped outright.
+    await expect(
+      svc.login({ email: 'no-ip-caller@x.dev', password: 'password123' }, {}, new Headers()),
+    ).rejects.toThrow();
+
+    expect(consume).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^login-ip:/),
+      expect.anything(),
+    );
+  });
+
+  it('can be disabled via IDENTITY_OPTIONS.loginIpRateLimit.enabled', async () => {
+    const consume = vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 });
+    const limiter = mock<RateLimiterAdapter>({ consume, reset: vi.fn() });
+    const svc = withTemplateRenderer({
+      drizzle,
+      events,
+      limiter,
+      options: { loginIpRateLimit: { enabled: false } },
+    });
+
+    await expect(
+      svc.login(
+        { email: 'ip-gate-disabled@x.dev', password: 'password123' },
+        { 'x-real-ip': '203.0.113.43' },
+        new Headers(),
+      ),
+    ).rejects.toThrow();
+
+    expect(consume).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^login-ip:/),
+      expect.anything(),
+    );
+  });
+});
+
 describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding #3)', () => {
   it('keys on the two_factor cookie VALUE, not the raw Cookie header, so junk cookie pairs cannot churn the bucket', async () => {
     const limiter = makeLimiter();
@@ -368,6 +450,30 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(consume).toHaveBeenCalledWith(
       'login:user@x.dev',
+      expect.objectContaining({ onUnavailable: 'deny' }),
+    );
+  });
+
+  it('passes onUnavailable: deny on the login-ip: key', async () => {
+    // Only the IP bucket denies here, so the login: consume above it must allow -
+    // otherwise the per-email gate would short-circuit before the IP gate runs at all.
+    const consume = vi.fn(async (key: string) =>
+      key.startsWith('login-ip:')
+        ? { allowed: false, retryAfterMs: 1 }
+        : { allowed: true, retryAfterMs: 0 },
+    );
+    const limiter = mock<RateLimiterAdapter>({ consume });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    await expect(
+      svc.login(
+        { email: 'User@X.dev', password: 'password123' },
+        { 'x-real-ip': '203.0.113.44' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(consume).toHaveBeenCalledWith(
+      'login-ip:203.0.113.44',
       expect.objectContaining({ onUnavailable: 'deny' }),
     );
   });
