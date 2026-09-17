@@ -47,12 +47,7 @@ export { WALLET_COMMANDS } from './wallet-commands.js';
 
 export type { WagerContext } from './wager-context.js';
 
-export type {
-  BonusGrantCommands,
-  BonusGrantArgs,
-  BonusGrantOutcome,
-  BonusGrantSource,
-} from './bonus-grants.js';
+export type { BonusGrantCommands, BonusGrantArgs, BonusGrantOutcome } from './bonus-grants.js';
 export { BONUS_GRANTS } from './bonus-grants.js';
 
 export type {

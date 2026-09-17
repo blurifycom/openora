@@ -39,6 +39,7 @@ import {
   PlayerStatusSchema,
 } from './player.js';
 import { WalletTransactionTypeSchema } from './wallet-tx.js';
+import { BonusForfeitReasonSchema, BonusGrantSourceSchema } from './promo.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -621,7 +622,7 @@ export const domainEventSchemas = {
     currency: CurrencyTickerSchema,
     grantedAmount: MoneyAmountSchema,
     wageringRequired: MoneyAmountSchema,
-    source: z.enum(['deposit', 'manual', 'streak', 'rank', 'race', 'gift', 'rain']),
+    source: BonusGrantSourceSchema,
     offerId: UuidSchema.nullable(),
   }),
   // Wagering requirement met. The lock is released; what happens to the balance is the
@@ -637,13 +638,7 @@ export const domainEventSchemas = {
     grantId: UuidSchema,
     currency: CurrencyTickerSchema,
     forfeitedAmount: MoneyAmountSchema,
-    reason: z.enum([
-      'self_exclusion',
-      'account_closed',
-      'admin',
-      'player_opt_out',
-      'withdrawal_while_active',
-    ]),
+    reason: BonusForfeitReasonSchema,
     // The admin who forfeited it; null when a rule or the player did.
     actorId: UuidSchema.nullable(),
   }),

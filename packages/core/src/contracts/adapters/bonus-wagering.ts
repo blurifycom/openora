@@ -1,17 +1,15 @@
 /**
  * Bonus wagering command port: wallet calls this from inside its debit and credit transactions,
- * so a bet and the wagering progress it produced can never disagree. A domain event would not do
- * - the bus emits post-commit and best-effort, and lost progress is a player's money.
+ * so a bet and the wagering progress it produced can never disagree.
  *
- * Both calls sit BELOW the wallet's duplicate-provider-reference guard, so a replayed wager can
- * never reach them. That placement is the dedupe guarantee; a second check inside this port would
- * be a copy that drifts.
+ * Both calls sit below the wallet's duplicate-provider-reference guard, so a replayed wager
+ * cannot reach them.
  *
- * The implementation is sealed (BONUS_WAGERING_ENGINE). Weight resolution, grant attribution and
- * the completion threshold are regulated arithmetic an operator may not rebind.
+ * Sealed: weight resolution, grant attribution and the completion threshold are regulated
+ * arithmetic an operator may configure but never replace.
  */
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
-import { createToken, type Token } from './token.js';
+import { createSealedToken, type SealedToken } from './token.js';
 import type { WagerContext } from './wager-context.js';
 
 export type BonusWagerArgs = {
@@ -42,9 +40,7 @@ export type BonusWagerOutcome =
       completedGrantIds: string[];
       /**
        * Bonus funds that just met their requirement and are owed to the real balance. The wallet
-       * performs the credit itself rather than the engine calling back into WALLET_COMMANDS: the
-       * wallet already holds the transaction, and a callback would make the two modules mutually
-       * dependent for no gain.
+       * performs the credit itself, so the two modules never call back into each other.
        */
       convertedAmount: string;
     }
@@ -73,4 +69,5 @@ export type BonusWageringCommands = {
   settle(tx: unknown, args: BonusSettleArgs): Promise<BonusSettleOutcome>;
 };
 
-export const BONUS_WAGERING: Token<BonusWageringCommands> = createToken('BONUS_WAGERING');
+export const BONUS_WAGERING: SealedToken<BonusWageringCommands> =
+  createSealedToken('bonus-wagering-engine');

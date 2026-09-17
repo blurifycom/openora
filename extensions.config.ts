@@ -7,8 +7,6 @@
 // dir). Downstream consumers compose the contract slices they enable. See ADR-0025.
 
 export const extensions = [
-  { id: 'gamification', path: './packages/core/dist/promo/gamification/plugin.js' },
-  { id: 'bonus', path: './packages/core/dist/promo/bonus/plugin.js' },
   { id: 'social', path: './packages/core/dist/engagement/social/plugin.js' },
   // --- MODULES (always loaded) ---
   { id: 'audit', path: './packages/core/dist/audit/plugin.js' },
@@ -26,6 +24,8 @@ export const extensions = [
   { id: 'lobby', path: './packages/core/dist/casino/lobby/plugin.js' },
   { id: 'chat', path: './packages/core/dist/engagement/chat/plugin.js' },
   { id: 'chat-commands', path: './packages/core/dist/engagement/chat-commands/plugin.js' },
+  { id: 'bonus', path: './packages/core/dist/promo/bonus/plugin.js' },
+  { id: 'gamification', path: './packages/core/dist/promo/gamification/plugin.js' },
   // Player self-profile (owns the `player` table); the admin PAM surface is
   // player-management below, which reads that table via the /schema subpath.
   { id: 'profile', path: './packages/core/dist/pam/profile/plugin.js' },

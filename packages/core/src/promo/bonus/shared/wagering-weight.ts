@@ -1,8 +1,6 @@
 import type { WagerContext } from '@openora/core/contracts';
 import { moneyDivide, moneyScaleBy } from '@openora/core/server';
-import type { wagerWeightScopes } from '../schema/index.js';
-
-export type WagerWeightScope = (typeof wagerWeightScopes)[number];
+import type { WagerWeightScope } from '../contract/index.js';
 
 /** One row of a weight profile: how much a bet matching `scope`/`scopeRef` contributes. */
 export type WagerWeightRow = {
@@ -12,8 +10,6 @@ export type WagerWeightRow = {
   contributionPercent: string;
 };
 
-// Most specific first. A game weight overrides its category, which overrides its product,
-// which overrides the profile default.
 const resolutionOrder: ReadonlyArray<{
   scope: WagerWeightScope;
   ref: (context: WagerContext) => string | undefined;

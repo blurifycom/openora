@@ -1,20 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
-import { findOneOrThrow, uniqueConstraintName, type DrizzleTx } from '@openora/core/server';
+import { eq } from 'drizzle-orm';
+import { findOneOrThrow, uniqueConstraintName } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { Uuid } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoWeight, promoWeightProfile } from '../schema/index.js';
-import { BonusService } from '../service/bonus.service.js';
+import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 let db: TestDb;
-let service: BonusService;
 let profileId: Uuid;
 
 const CASINO = { provider: 'aggregator', product: 'casino' };
 
-async function seedProfile() {
+async function seedProfile(): Promise<Uuid> {
   const row = findOneOrThrow(
     await db.drizzle.db
       .insert(promoWeightProfile)
@@ -40,19 +39,24 @@ async function seedWeight(
   );
 }
 
-const weigh = (
-  stake: string,
-  context: Parameters<BonusService['weightedContribution']>[1]['context'],
-) =>
-  service.weightedContribution(db.drizzle.db as unknown as DrizzleTx, {
-    profileId,
-    stake,
-    context,
-  });
+const rowsOf = (owner: Uuid = profileId) =>
+  db.drizzle.db
+    .select({
+      scope: promoWeight.scope,
+      scopeRef: promoWeight.scopeRef,
+      contributionPercent: promoWeight.contributionPercent,
+    })
+    .from(promoWeight)
+    .where(eq(promoWeight.profileId, owner));
+
+const violatedIndex = async (insert: Promise<unknown>) =>
+  insert.then(
+    () => null,
+    (e: unknown) => uniqueConstraintName(e),
+  );
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  service = new BonusService();
 });
 
 afterAll(async () => {
@@ -60,55 +64,47 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(
-    sql`TRUNCATE ${promoWeight}, ${promoWeightProfile} RESTART IDENTITY CASCADE`,
-  );
+  await db.drizzle.db.delete(promoWeight);
+  await db.drizzle.db.delete(promoWeightProfile);
   profileId = await seedProfile();
 });
 
-describe('BonusService.weightedContribution (real PG)', () => {
-  it('WGR-01: scores a casino bet at the product weight', async () => {
+describe('wagering weights stored in Postgres', () => {
+  it('scores a casino bet at the stored product weight', async () => {
     await seedWeight('product', 'casino', '100');
 
-    expect(await weigh('100', CASINO)).toEqual({
-      contributionPercent: '100.000000000000000000',
-      weightedAmount: '100.000000000000000000',
-    });
+    const percent = resolveContributionPercent(await rowsOf(), CASINO);
+    expect(percent).toBe('100.00');
+    expect(weightedStake('100', percent)).toBe('100.000000000000000000');
   });
 
-  it('WGR-07: prefers the game row over the category, product and default rows', async () => {
+  it('prefers the game row over the category, product and default rows', async () => {
     await seedWeight('default', null, '10');
     await seedWeight('product', 'casino', '20');
     await seedWeight('category', 'slots', '30');
     await seedWeight('game', 'game-a', '40');
 
-    const { weightedAmount } = await weigh('100', {
+    const percent = resolveContributionPercent(await rowsOf(), {
       ...CASINO,
       categorySlug: 'slots',
       gameId: 'game-a',
     });
-
-    expect(weightedAmount).toBe('40.000000000000000000');
+    expect(weightedStake('100', percent)).toBe('40.000000000000000000');
   });
 
-  it('WGR-05: falls through to the product weight when the game is unresolved', async () => {
+  it('falls through to the product weight when the game is unresolved', async () => {
     await seedWeight('product', 'casino', '100');
     await seedWeight('game', 'game-a', '50');
 
-    expect((await weigh('100', CASINO)).weightedAmount).toBe('100.000000000000000000');
-  });
-
-  it('WGR-03: scores a PvP bet at zero', async () => {
-    await seedWeight('product', 'casino', '100');
-    await seedWeight('product', 'pvp', '0');
-
-    expect((await weigh('100', { ...CASINO, product: 'pvp' })).weightedAmount).toBe(
-      '0.000000000000000000',
+    expect(weightedStake('100', resolveContributionPercent(await rowsOf(), CASINO))).toBe(
+      '100.000000000000000000',
     );
   });
 
-  it('scores at zero when the profile holds no matching row', async () => {
-    expect((await weigh('100', CASINO)).weightedAmount).toBe('0.000000000000000000');
+  it('scores a bet at zero when the profile holds no matching row', async () => {
+    expect(weightedStake('100', resolveContributionPercent(await rowsOf(), CASINO))).toBe(
+      '0.000000000000000000',
+    );
   });
 
   it('reads only its own profile, so two profiles can weight the same game differently', async () => {
@@ -116,22 +112,18 @@ describe('BonusService.weightedContribution (real PG)', () => {
     await seedWeight('product', 'casino', '100');
     await seedWeight('product', 'casino', '25', other);
 
-    expect((await weigh('100', CASINO)).weightedAmount).toBe('100.000000000000000000');
+    expect(weightedStake('100', resolveContributionPercent(await rowsOf(other), CASINO))).toBe(
+      '25.000000000000000000',
+    );
   });
 });
 
-describe('promo_weight guards (real PG)', () => {
-  const violatedIndex = async (insert: Promise<unknown>) =>
-    insert.then(
-      () => null,
-      (e: unknown) => uniqueConstraintName(e),
-    );
-
+describe('promo_weight guards', () => {
   it('rejects a second row for the same target in one profile', async () => {
     await seedWeight('product', 'casino', '100');
 
     expect(await violatedIndex(seedWeight('product', 'casino', '50'))).toBe(
-      'promo_weight_profile_id_scope_scope_ref_index',
+      'promo_weight_profile_id_scope_scope_ref_idx',
     );
   });
 
@@ -139,8 +131,16 @@ describe('promo_weight guards (real PG)', () => {
     await seedWeight('default', null, '10');
 
     expect(await violatedIndex(seedWeight('default', null, '20'))).toBe(
-      'promo_weight_profile_id_index',
+      'promo_weight_profile_id_default_idx',
     );
+  });
+
+  it('rejects a weight above one hundred percent', async () => {
+    await expect(seedWeight('product', 'casino', '500')).rejects.toThrow();
+  });
+
+  it('rejects a negative weight', async () => {
+    await expect(seedWeight('product', 'casino', '-1')).rejects.toThrow();
   });
 
   it('allows the same target in a different profile', async () => {

@@ -1,4 +1,9 @@
-import { AUDIT_WRITER, createSealedToken, type SealedToken } from '@openora/core/contracts';
+import {
+  AUDIT_WRITER,
+  BONUS_WAGERING,
+  createSealedToken,
+  type SealedToken,
+} from '@openora/core/contracts';
 
 /**
  * Self-exclusion + cool-off enforcement.
@@ -52,16 +57,6 @@ export const GAME_OUTCOME_AUTHORITY: SealedToken<unknown> =
   createSealedToken('game-outcome-authority');
 
 /**
- * Bonus wagering math.
- *
- * Operators configure parameters (rollover multiplier, contribution per game,
- * expiry); the calculation engine is sealed - regulators ask to see the
- * formula and there must be one canonical impl.
- */
-export const BONUS_WAGERING_ENGINE: SealedToken<unknown> =
-  createSealedToken('bonus-wagering-engine');
-
-/**
  * RG limit-increase cooling timer.
  *
  * UKGC customer-interaction guidance (24h cool-off on UK deposit limit
@@ -103,7 +98,7 @@ export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   LEDGER_WRITER,
   AUDIT_WRITER,
   GAME_OUTCOME_AUTHORITY,
-  BONUS_WAGERING_ENGINE,
+  BONUS_WAGERING,
   RG_LIMIT_COOLING_TIMER,
   AGE_VERIFICATION_GATE,
   GEO_PLATFORM_DENY_LIST,

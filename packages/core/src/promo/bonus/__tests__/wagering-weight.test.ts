@@ -19,36 +19,36 @@ const row = (
 ): WagerWeightRow => ({ scope, scopeRef, contributionPercent });
 
 describe('resolveContributionPercent', () => {
-  it('WGR-01: a casino bet with a 100 percent product weight counts in full', () => {
+  it('a casino bet with a 100 percent product weight counts in full', () => {
     expect(resolveContributionPercent([row('product', 'casino', '100')], casino())).toBe('100');
   });
 
-  it('WGR-02: a game-level weight is what applies when the game is known', () => {
+  it('a game-level weight is what applies when the game is known', () => {
     const rows = [row('product', 'casino', '100'), row('game', 'game-a', '50')];
     expect(resolveContributionPercent(rows, casino({ gameId: 'game-a' }))).toBe('50');
   });
 
-  it('WGR-03: a PvP bet does not count', () => {
+  it('a PvP bet does not count', () => {
     const rows = [row('product', 'casino', '100'), row('product', 'pvp', '0')];
     expect(resolveContributionPercent(rows, casino({ product: 'pvp' }))).toBe('0');
   });
 
-  it('WGR-04: a sportsbook bet does not count', () => {
+  it('a sportsbook bet does not count', () => {
     const rows = [row('product', 'casino', '100'), row('product', 'sportsbook', '0')];
     expect(resolveContributionPercent(rows, casino({ product: 'sportsbook' }))).toBe('0');
   });
 
-  it('WGR-05: an unresolved game on a casino product falls through to the product weight', () => {
+  it('an unresolved game on a casino product falls through to the product weight', () => {
     const rows = [row('product', 'casino', '100'), row('game', 'game-a', '50')];
     expect(resolveContributionPercent(rows, casino())).toBe('100');
   });
 
-  it('WGR-06: an unresolved game on a PvP product still does not count', () => {
+  it('an unresolved game on a PvP product still does not count', () => {
     const rows = [row('product', 'casino', '100'), row('product', 'pvp', '0')];
     expect(resolveContributionPercent(rows, casino({ product: 'pvp' }))).toBe('0');
   });
 
-  it('WGR-07: resolution order is game, then category, then product, then the default', () => {
+  it('resolution order is game, then category, then product, then the default', () => {
     const rows = [
       row('default', null, '10'),
       row('product', 'casino', '20'),
@@ -96,15 +96,15 @@ describe('resolveContributionPercent', () => {
 });
 
 describe('weightedStake', () => {
-  it('WGR-01: a full-weight stake passes through unchanged', () => {
+  it('a full-weight stake passes through unchanged', () => {
     expect(weightedStake('100', '100')).toBe('100.000000000000000000');
   });
 
-  it('WGR-02: a half-weight stake halves', () => {
+  it('a half-weight stake halves', () => {
     expect(weightedStake('100', '50')).toBe('50.000000000000000000');
   });
 
-  it('WGR-03: a zero weight contributes nothing', () => {
+  it('a zero weight contributes nothing', () => {
     expect(weightedStake('100', '0')).toBe('0.000000000000000000');
   });
 
