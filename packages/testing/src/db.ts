@@ -20,6 +20,8 @@ import { migrate as migrateChatCommands } from '@openora/core/engagement/migrate
 import { migrate as migrateNotifications } from '@openora/core/engagement/migrate/notifications';
 import { migrate as migrateSocial } from '@openora/core/engagement/migrate/social';
 import { migrate as migrateExchangeRate } from '@openora/core/fx/migrate/exchange-rate';
+import { migrate as migratePromoBonus } from '@openora/core/promo/migrate/bonus';
+import { migrate as migratePromoGamification } from '@openora/core/promo/migrate/gamification';
 
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 
@@ -41,6 +43,8 @@ async function applyAllMigrations(url: string): Promise<void> {
   await migrateNotifications(url);
   await migrateSocial(url);
   await migrateExchangeRate(url);
+  await migratePromoBonus(url);
+  await migratePromoGamification(url);
 }
 
 export async function applyMigrations(url: string): Promise<void> {

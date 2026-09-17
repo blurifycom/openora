@@ -91,8 +91,9 @@ export const promoGrantSourceEnum = pgEnum('promo_grant_source', BONUS_GRANT_SOU
 export const promoForfeitReasonEnum = pgEnum('promo_forfeit_reason', BONUS_FORFEIT_REASONS);
 
 /**
- * One bonus a player holds. There is no separate balance column and no balance table: a grant
- * row is the bonus, and what a player has left is derived from its own numbers.
+ * One bonus a player holds. The grant row IS the bonus balance: bonus funds never enter
+ * `wallet_balance`, so a withdrawal cannot reach them and reconciliation never sees money that
+ * was never deposited. They cross into the real balance exactly once, at conversion.
  *
  * `terms` is a snapshot, never a lookup. Editing an offer must not change a bonus already
  * granted, which is the one rule the configuration surface has to obey.
@@ -110,6 +111,11 @@ export const promoGrant = pgTable(
     offerId: uuid(),
     terms: jsonb().$type<GrantTermsSnapshot>().notNull(),
     grantedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    // Bonus funds still on this grant. Spent by a bet, topped up by a bonus-funded win,
+    // zeroed by conversion, expiry or forfeiture.
+    bonusBalance: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
     wageringRequired: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     wageringProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
       .notNull()
@@ -117,6 +123,10 @@ export const promoGrant = pgTable(
     status: promoGrantStatusEnum().$type<BonusGrantStatus>().notNull().default('active'),
     forfeitReason: promoForfeitReasonEnum().$type<BonusForfeitReason>(),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
+    // Null while the grant is still `pending` and nothing has been credited.
+    activatedAt: timestamp({ withTimezone: true }),
+    // Set once the grant reaches any terminal status; `status` says which one.
+    closedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

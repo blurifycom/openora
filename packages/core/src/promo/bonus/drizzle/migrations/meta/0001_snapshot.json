@@ -1,5 +1,5 @@
 {
-  "id": "ffb33b06-e89f-41d8-9f57-f8a36bfff0c2",
+  "id": "b4340622-844b-4b2c-b865-f54e2b62cdae",
   "prevId": "aaed7415-d3af-410d-8b4e-b86174d4dd66",
   "version": "7",
   "dialect": "postgresql",
@@ -58,6 +58,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "bonus_balance": {
+          "name": "bonus_balance",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
         "wagering_required": {
           "name": "wagering_required",
           "type": "numeric(38, 18)",
@@ -91,6 +98,18 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
