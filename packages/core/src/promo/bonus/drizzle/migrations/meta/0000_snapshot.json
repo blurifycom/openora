@@ -1,5 +1,5 @@
 {
-  "id": "aaed7415-d3af-410d-8b4e-b86174d4dd66",
+  "id": "2ac20ab4-1698-4d57-9d07-9e0cdc76857c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -36,7 +36,7 @@
         },
         "contribution_percent": {
           "name": "contribution_percent",
-          "type": "numeric(38, 18)",
+          "type": "numeric(5, 2)",
           "primaryKey": false,
           "notNull": true
         },
@@ -49,8 +49,8 @@
         }
       },
       "indexes": {
-        "promo_weight_profile_id_scope_scope_ref_index": {
-          "name": "promo_weight_profile_id_scope_scope_ref_index",
+        "promo_weight_profile_id_scope_scope_ref_idx": {
+          "name": "promo_weight_profile_id_scope_scope_ref_idx",
           "columns": [
             {
               "expression": "profile_id",
@@ -76,8 +76,8 @@
           "method": "btree",
           "with": {}
         },
-        "promo_weight_profile_id_index": {
-          "name": "promo_weight_profile_id_index",
+        "promo_weight_profile_id_default_idx": {
+          "name": "promo_weight_profile_id_default_idx",
           "columns": [
             {
               "expression": "profile_id",
@@ -107,7 +107,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "promo_weight_contribution_percent_range": {
+          "name": "promo_weight_contribution_percent_range",
+          "value": "\"promo_weight\".\"contribution_percent\" >= 0 AND \"promo_weight\".\"contribution_percent\" <= 100"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.promo_weight_profile": {

@@ -3,15 +3,9 @@
  * own transaction handle, so the grant, the money movement and the audit row commit or roll back
  * together. Mirrors the WALLET_COMMANDS idiom (ADR-0017) - `tx: unknown` so neither side imports
  * the other's DB module.
- *
- * Callers: the deposit path, the streak, rank and race payout jobs, and the admin manual grant.
- * The implementation is sealed (BONUS_WAGERING_ENGINE): an operator configures the terms of a
- * bonus, never the arithmetic that applies them.
  */
+import type { BonusGrantSource } from '../schemas/promo.js';
 import { createToken, type Token } from './token.js';
-
-/** What caused the grant. Half of the idempotency key. */
-export type BonusGrantSource = 'deposit' | 'manual' | 'streak' | 'rank' | 'race' | 'gift' | 'rain';
 
 export type BonusGrantArgs = {
   userId: string;

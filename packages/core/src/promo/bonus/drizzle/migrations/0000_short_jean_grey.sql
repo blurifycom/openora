@@ -4,8 +4,9 @@ CREATE TABLE "promo_weight" (
 	"profile_id" uuid NOT NULL,
 	"scope" "promo_weight_scope" NOT NULL,
 	"scope_ref" text,
-	"contribution_percent" numeric(38, 18) NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"contribution_percent" numeric(5, 2) NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "promo_weight_contribution_percent_range" CHECK ("promo_weight"."contribution_percent" >= 0 AND "promo_weight"."contribution_percent" <= 100)
 );
 --> statement-breakpoint
 CREATE TABLE "promo_weight_profile" (
@@ -17,5 +18,5 @@ CREATE TABLE "promo_weight_profile" (
 );
 --> statement-breakpoint
 ALTER TABLE "promo_weight" ADD CONSTRAINT "promo_weight_profile_id_promo_weight_profile_id_fk" FOREIGN KEY ("profile_id") REFERENCES "public"."promo_weight_profile"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "promo_weight_profile_id_scope_scope_ref_index" ON "promo_weight" USING btree ("profile_id","scope","scope_ref");--> statement-breakpoint
-CREATE UNIQUE INDEX "promo_weight_profile_id_index" ON "promo_weight" USING btree ("profile_id") WHERE "promo_weight"."scope" = 'default';
+CREATE UNIQUE INDEX "promo_weight_profile_id_scope_scope_ref_idx" ON "promo_weight" USING btree ("profile_id","scope","scope_ref");--> statement-breakpoint
+CREATE UNIQUE INDEX "promo_weight_profile_id_default_idx" ON "promo_weight" USING btree ("profile_id") WHERE "promo_weight"."scope" = 'default';

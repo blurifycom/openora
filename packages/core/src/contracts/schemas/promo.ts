@@ -1,0 +1,63 @@
+import * as z from 'zod';
+
+// Canonical promo value sets. Declared here rather than in the promo module because the
+// isomorphic event and adapter contracts reference them and cannot import from a domain.
+
+export const BONUS_GRANT_SOURCES = [
+  'deposit',
+  'manual',
+  'streak',
+  'rank',
+  'race',
+  'gift',
+  'rain',
+] as const;
+
+export const BONUS_GRANT_STATUSES = [
+  'pending',
+  'active',
+  'completed',
+  'expired',
+  'forfeited',
+  'cancelled',
+] as const;
+
+export const BONUS_FORFEIT_REASONS = [
+  'self_exclusion',
+  'account_closed',
+  'admin',
+  'player_opt_out',
+  'withdrawal_while_active',
+] as const;
+
+export const BONUS_GRANT_ENTRY_TYPES = [
+  'grant',
+  'stake',
+  'win',
+  'reversal',
+  'convert',
+  'forfeit',
+  'expire',
+] as const;
+
+export const BonusGrantSourceSchema = z.enum(BONUS_GRANT_SOURCES);
+export const BonusGrantStatusSchema = z.enum(BONUS_GRANT_STATUSES);
+export const BonusForfeitReasonSchema = z.enum(BONUS_FORFEIT_REASONS);
+export const BonusGrantEntryTypeSchema = z.enum(BONUS_GRANT_ENTRY_TYPES);
+
+export type BonusGrantSource = z.infer<typeof BonusGrantSourceSchema>;
+export type BonusGrantStatus = z.infer<typeof BonusGrantStatusSchema>;
+export type BonusForfeitReason = z.infer<typeof BonusForfeitReasonSchema>;
+export type BonusGrantEntryType = z.infer<typeof BonusGrantEntryTypeSchema>;
+
+// A weight as a percentage of the stake, `numeric(5,2)` in the database. Zero excludes a product
+// or game from wagering; above 100 would count a bet for more than it was worth.
+export const CONTRIBUTION_PERCENT_PRECISION = 5;
+export const CONTRIBUTION_PERCENT_SCALE = 2;
+export const ContributionPercentSchema = z
+  .string()
+  .regex(/^\d{1,3}(\.\d{1,2})?$/, 'must be a decimal string with at most two decimal places')
+  .refine((v) => {
+    const [whole = '0', fraction = ''] = v.split('.');
+    return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')) <= 10_000n;
+  }, 'must not exceed 100');
