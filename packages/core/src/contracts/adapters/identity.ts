@@ -18,6 +18,11 @@ export type IdentityLockoutOptions = {
  * because each guess lands on a different account. Must stay well above the
  * per-account threshold so a shared network (office NAT) never blocks legitimate
  * users signing into their own accounts.
+ *
+ * The IP comes from the client-supplied X-Real-IP header - meaningless unless the
+ * deployment terminates at a reverse proxy that overwrites that header with the real
+ * peer address before the request reaches this service. Without that, the header is
+ * attacker-controlled and this throttle does not hold.
  */
 export type IdentityLoginIpRateLimitOptions = {
   enabled?: boolean;

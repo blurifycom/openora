@@ -868,6 +868,13 @@ export class IdentityService {
     // Skipped when the IP is unknown (no trusted proxy header) rather than bucketed under
     // a shared 'unknown' key - that shared key would let one client's traffic exhaust the
     // budget for every other client with no IP, which is a self-inflicted DoS.
+    //
+    // `ip` comes from extractClientMeta(), which reads X-Real-IP unconditionally (see its
+    // doc comment) - a deployment MUST terminate at a reverse proxy that overwrites
+    // X-Real-IP with the real peer address (eg nginx `proxy_set_header X-Real-IP
+    // $remote_addr`) before this protection means anything; the same assumption already
+    // applies to register-ip:/verify-email-ip:/change-email-ip:/confirm-email-change-ip:
+    // elsewhere in this file.
     const ipRateLimitOptions = this.options?.loginIpRateLimit;
     if (ip && (ipRateLimitOptions?.enabled ?? true)) {
       await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip), {
