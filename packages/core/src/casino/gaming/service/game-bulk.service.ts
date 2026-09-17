@@ -13,9 +13,9 @@ import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
 import { providerSnapshot } from './game-provider.service.js';
 import type {
-  BulkAddGameCategoriesInput,
-  BulkAddGameTagsInput,
-  BulkSetGamesActiveInput,
+  AddGameCategoriesInput,
+  AddGameTagsInput,
+  SetGamesActiveInput,
 } from '../contract/index.js';
 
 const GAME_BULK_CAP = 5000;
@@ -127,13 +127,13 @@ export class GameBulkService {
     throw new ScopeChangedDuringLockError();
   }
 
-  async bulkSetGamesActive({
+  async setGamesActive({
     isActive,
     actorId,
     ip,
     userAgent,
     ...target
-  }: BulkSetGamesActiveInput & CatalogActor) {
+  }: SetGamesActiveInput & CatalogActor) {
     const gameIds = sortIds(dedupe(target.gameIds));
     const providerIds = sortIds(dedupe(target.providerIds));
     const condition = targetCondition(gameIds, providerIds);
@@ -252,13 +252,13 @@ export class GameBulkService {
     };
   }
 
-  async bulkAddGameTags({
+  async addGameTags({
     tagIds: rawTagIds,
     actorId,
     ip,
     userAgent,
     ...target
-  }: BulkAddGameTagsInput & CatalogActor) {
+  }: AddGameTagsInput & CatalogActor) {
     const tagIds = sortIds(dedupe(rawTagIds));
     const gameIds = sortIds(dedupe(target.gameIds));
     const providerIds = sortIds(dedupe(target.providerIds));
@@ -336,13 +336,13 @@ export class GameBulkService {
     };
   }
 
-  async bulkAddGameCategories({
+  async addGameCategories({
     categoryIds: rawCategoryIds,
     actorId,
     ip,
     userAgent,
     ...target
-  }: BulkAddGameCategoriesInput & CatalogActor) {
+  }: AddGameCategoriesInput & CatalogActor) {
     const categoryIds = sortIds(dedupe(rawCategoryIds));
     const gameIds = sortIds(dedupe(target.gameIds));
     const providerIds = sortIds(dedupe(target.providerIds));

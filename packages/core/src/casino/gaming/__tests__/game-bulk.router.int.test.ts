@@ -174,13 +174,13 @@ beforeEach(async () => {
 
 const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
 
-describe('bulkSetGamesActive', () => {
+describe('setGamesActive', () => {
   it('rejects a non-privileged caller and writes nothing', async () => {
     const provider = await seedProvider();
     const target = await seedGame(provider.id);
     await expect(
       call(
-        routerWith(denyingGuard()).router.bulkSetGamesActive,
+        routerWith(denyingGuard()).router.setGamesActive,
         { gameIds: [target.id], isActive: false },
         { context: CTX },
       ),
@@ -194,7 +194,7 @@ describe('bulkSetGamesActive', () => {
     const target = await seedGame(provider.id);
     const { router } = routerWith(makeAdminGuard({ allow: [] }));
     await expect(
-      call(router.bulkSetGamesActive, { gameIds: [target.id], isActive: false }, { context: CTX }),
+      call(router.setGamesActive, { gameIds: [target.id], isActive: false }, { context: CTX }),
     ).rejects.toBeInstanceOf(ORPCError);
   });
 
@@ -208,7 +208,7 @@ describe('bulkSetGamesActive', () => {
 
     const { router, events } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkSetGamesActive,
+      router.setGamesActive,
       { gameIds: [gA1.id, gB1.id], providerIds: [providerA.id], isActive: false },
       { context: CTX },
     );
@@ -267,7 +267,7 @@ describe('bulkSetGamesActive', () => {
 
     const { router } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkSetGamesActive,
+      router.setGamesActive,
       { gameIds: [target.id, ghostGame], providerIds: [ghostProvider], isActive: false },
       { context: CTX },
     );
@@ -290,7 +290,7 @@ describe('bulkSetGamesActive', () => {
 
     const { router } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkSetGamesActive,
+      router.setGamesActive,
       { gameIds: [targeted.id, strandedGame.id], isActive: true },
       { context: CTX },
     );
@@ -304,15 +304,11 @@ describe('bulkSetGamesActive', () => {
     const target = await seedGame(provider.id);
     const { router, events } = routerWith(allowingGuard());
 
-    await call(
-      router.bulkSetGamesActive,
-      { gameIds: [target.id], isActive: false },
-      { context: CTX },
-    );
+    await call(router.setGamesActive, { gameIds: [target.id], isActive: false }, { context: CTX });
     expect(events.emit).toHaveBeenCalledTimes(1);
 
     const second = await call(
-      router.bulkSetGamesActive,
+      router.setGamesActive,
       { gameIds: [target.id], isActive: false },
       { context: CTX },
     );
@@ -326,14 +322,14 @@ describe('bulkSetGamesActive', () => {
   });
 });
 
-describe('bulkAddGameTags', () => {
+describe('addGameTags', () => {
   it('rejects a non-privileged caller and writes nothing', async () => {
     const provider = await seedProvider();
     const target = await seedGame(provider.id);
     const tag = await seedTag();
     await expect(
       call(
-        routerWith(denyingGuard()).router.bulkAddGameTags,
+        routerWith(denyingGuard()).router.addGameTags,
         { gameIds: [target.id], tagIds: [tag.id] },
         { context: CTX },
       ),
@@ -351,7 +347,7 @@ describe('bulkAddGameTags', () => {
 
     const { router, events } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkAddGameTags,
+      router.addGameTags,
       { gameIds: [gA1.id, gB1.id], providerIds: [providerA.id], tagIds: [tag.id] },
       { context: CTX },
     );
@@ -382,7 +378,7 @@ describe('bulkAddGameTags', () => {
 
     const { router } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkAddGameTags,
+      router.addGameTags,
       { gameIds: [target.id, ghostGame], tagIds: [tag.id] },
       { context: CTX },
     );
@@ -402,7 +398,7 @@ describe('bulkAddGameTags', () => {
     const { router } = routerWith(allowingGuard());
     await expect(
       call(
-        router.bulkAddGameTags,
+        router.addGameTags,
         { gameIds: [target.id], tagIds: [realTag.id, ghostTag] },
         { context: CTX },
       ),
@@ -418,11 +414,7 @@ describe('bulkAddGameTags', () => {
     await db.drizzle.db.insert(gameTagGame).values({ gameId: target.id, tagId: existingTag.id });
 
     const { router } = routerWith(allowingGuard());
-    await call(
-      router.bulkAddGameTags,
-      { gameIds: [target.id], tagIds: [newTag.id] },
-      { context: CTX },
-    );
+    await call(router.addGameTags, { gameIds: [target.id], tagIds: [newTag.id] }, { context: CTX });
 
     expect(await gameTagIdsFor(target.id)).toEqual([existingTag.id, newTag.id].sort());
   });
@@ -437,7 +429,7 @@ describe('bulkAddGameTags', () => {
 
     const { router, events } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkAddGameTags,
+      router.addGameTags,
       { gameIds: [partial.id, fresh.id], tagIds: [tagA.id, tagB.id] },
       { context: CTX },
     );
@@ -465,15 +457,11 @@ describe('bulkAddGameTags', () => {
     const tag = await seedTag();
     const { router, events } = routerWith(allowingGuard());
 
-    await call(
-      router.bulkAddGameTags,
-      { gameIds: [target.id], tagIds: [tag.id] },
-      { context: CTX },
-    );
+    await call(router.addGameTags, { gameIds: [target.id], tagIds: [tag.id] }, { context: CTX });
     expect(events.emit).toHaveBeenCalledTimes(1);
 
     const second = await call(
-      router.bulkAddGameTags,
+      router.addGameTags,
       { gameIds: [target.id], tagIds: [tag.id] },
       { context: CTX },
     );
@@ -485,14 +473,14 @@ describe('bulkAddGameTags', () => {
   });
 });
 
-describe('bulkAddGameCategories', () => {
+describe('addGameCategories', () => {
   it('rejects a non-privileged caller and writes nothing', async () => {
     const provider = await seedProvider();
     const target = await seedGame(provider.id);
     const category = await seedCategory();
     await expect(
       call(
-        routerWith(denyingGuard()).router.bulkAddGameCategories,
+        routerWith(denyingGuard()).router.addGameCategories,
         { gameIds: [target.id], categoryIds: [category.id] },
         { context: CTX },
       ),
@@ -510,7 +498,7 @@ describe('bulkAddGameCategories', () => {
 
     const { router, events } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkAddGameCategories,
+      router.addGameCategories,
       { gameIds: [gA1.id, gB1.id], providerIds: [providerA.id], categoryIds: [category.id] },
       { context: CTX },
     );
@@ -544,7 +532,7 @@ describe('bulkAddGameCategories', () => {
     const { router } = routerWith(allowingGuard());
     await expect(
       call(
-        router.bulkAddGameCategories,
+        router.addGameCategories,
         { gameIds: [target.id], categoryIds: [realCategory.id, ghostCategory] },
         { context: CTX },
       ),
@@ -563,7 +551,7 @@ describe('bulkAddGameCategories', () => {
 
     const { router } = routerWith(allowingGuard());
     await call(
-      router.bulkAddGameCategories,
+      router.addGameCategories,
       { gameIds: [target.id], categoryIds: [newCategory.id] },
       { context: CTX },
     );
@@ -581,7 +569,7 @@ describe('bulkAddGameCategories', () => {
 
     const { router } = routerWith(allowingGuard());
     const result = await call(
-      router.bulkAddGameCategories,
+      router.addGameCategories,
       { gameIds: [target.id], providerIds: [ghostProvider], categoryIds: [category.id] },
       { context: CTX },
     );
@@ -601,11 +589,7 @@ describe('bulk route 5,000-game cap', () => {
     const { router } = routerWith(allowingGuard());
 
     await expect(
-      call(
-        router.bulkAddGameTags,
-        { providerIds: [provider.id], tagIds: [tag.id] },
-        { context: CTX },
-      ),
+      call(router.addGameTags, { providerIds: [provider.id], tagIds: [tag.id] }, { context: CTX }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(await gameTagIdsFor(gameIds[0]!)).toEqual([]);
   }, 30_000);
@@ -617,7 +601,7 @@ describe('bulk route 5,000-game cap', () => {
     const { router } = routerWith(allowingGuard());
 
     const result = await call(
-      router.bulkAddGameTags,
+      router.addGameTags,
       { providerIds: [provider.id], tagIds },
       { context: CTX },
     );
@@ -629,7 +613,7 @@ describe('bulk route 5,000-game cap', () => {
     expect(await gameTagIdsFor(gameIds[0]!)).toEqual([...tagIds].sort());
   }, 30_000);
 
-  it('also caps bulkSetGamesActive and bulkAddGameCategories the same way', async () => {
+  it('also caps setGamesActive and addGameCategories the same way', async () => {
     const provider = await seedProvider();
     await seedManyGames(provider.id, 5001);
     const category = await seedCategory();
@@ -637,14 +621,14 @@ describe('bulk route 5,000-game cap', () => {
 
     await expect(
       call(
-        router.bulkSetGamesActive,
+        router.setGamesActive,
         { providerIds: [provider.id], isActive: false },
         { context: CTX },
       ),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     await expect(
       call(
-        router.bulkAddGameCategories,
+        router.addGameCategories,
         { providerIds: [provider.id], categoryIds: [category.id] },
         { context: CTX },
       ),
@@ -656,7 +640,7 @@ describe('bulk route input validation', () => {
   it('rejects a target naming neither gameIds nor providerIds', async () => {
     const { router } = routerWith(allowingGuard());
     await expect(
-      call(router.bulkSetGamesActive, { isActive: true } as never, { context: CTX }),
+      call(router.setGamesActive, { isActive: true } as never, { context: CTX }),
     ).rejects.toBeInstanceOf(ORPCError);
   });
 
@@ -665,18 +649,16 @@ describe('bulk route input validation', () => {
     const target = await seedGame(provider.id);
     const { router } = routerWith(allowingGuard());
     await expect(
-      call(router.bulkAddGameTags, { gameIds: [target.id], tagIds: [] }, { context: CTX }),
+      call(router.addGameTags, { gameIds: [target.id], tagIds: [] }, { context: CTX }),
     ).rejects.toBeInstanceOf(ORPCError);
   });
 
   it('rejects when the guarded id is not even a UUID', async () => {
     const { router } = routerWith(allowingGuard());
     await expect(
-      call(
-        router.bulkSetGamesActive,
-        { gameIds: [UNKNOWN_ID], providerIds: ['not-a-uuid'] } as never,
-        { context: CTX },
-      ),
+      call(router.setGamesActive, { gameIds: [UNKNOWN_ID], providerIds: ['not-a-uuid'] } as never, {
+        context: CTX,
+      }),
     ).rejects.toBeInstanceOf(ORPCError);
   });
 });

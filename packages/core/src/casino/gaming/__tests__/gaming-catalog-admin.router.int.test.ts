@@ -154,19 +154,19 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
     invoke: (r) => call(r.getCatalogStats, undefined, { context: CTX }),
   },
   {
-    name: 'bulkSetGamesActive',
+    name: 'setGamesActive',
     invoke: (r) =>
       call(
-        r.bulkSetGamesActive,
+        r.setGamesActive,
         { gameIds: ['00000000-0000-4000-8000-000000000000'], isActive: true },
         { context: CTX },
       ),
   },
   {
-    name: 'bulkAddGameTags',
+    name: 'addGameTags',
     invoke: (r) =>
       call(
-        r.bulkAddGameTags,
+        r.addGameTags,
         {
           gameIds: ['00000000-0000-4000-8000-000000000000'],
           tagIds: ['00000000-0000-4000-8000-000000000001'],
@@ -175,10 +175,10 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
       ),
   },
   {
-    name: 'bulkAddGameCategories',
+    name: 'addGameCategories',
     invoke: (r) =>
       call(
-        r.bulkAddGameCategories,
+        r.addGameCategories,
         {
           gameIds: ['00000000-0000-4000-8000-000000000000'],
           categoryIds: ['00000000-0000-4000-8000-000000000001'],

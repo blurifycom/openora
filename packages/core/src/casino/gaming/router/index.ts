@@ -226,26 +226,26 @@ export function createGamingRouter({
       return gaming.getCatalogStats();
     }),
 
-    bulkSetGamesActive: os.bulkSetGamesActive.handler(async ({ input, context }) => {
+    setGamesActive: os.setGamesActive.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
-        bulk.bulkSetGamesActive({ ...input, actorId: userId, ip, userAgent }),
+        bulk.setGamesActive({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 
-    bulkAddGameTags: os.bulkAddGameTags.handler(async ({ input, context }) => {
+    addGameTags: os.addGameTags.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
         { NOT_FOUND: GameTagNotFoundError, BAD_REQUEST: GameBulkTooManyGamesError },
-        () => bulk.bulkAddGameTags({ ...input, actorId: userId, ip, userAgent }),
+        () => bulk.addGameTags({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 
-    bulkAddGameCategories: os.bulkAddGameCategories.handler(async ({ input, context }) => {
+    addGameCategories: os.addGameCategories.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
         { NOT_FOUND: GameCategoryNotFoundError, BAD_REQUEST: GameBulkTooManyGamesError },
-        () => bulk.bulkAddGameCategories({ ...input, actorId: userId, ip, userAgent }),
+        () => bulk.addGameCategories({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
   });

@@ -197,7 +197,7 @@ describe('gaming bulk catalog actions e2e', () => {
   });
 
   it(
-    'bulkSetGamesActive flips games by gameIds and providerIds, counts an overlap once, ' +
+    'setGamesActive flips games by gameIds and providerIds, counts an overlap once, ' +
       'reports notFound, flags a still-inactive-provider game as unplayable, writes exactly ' +
       'one audit row, is a no-op on repeat, and public reads reflect the change',
     async () => {
@@ -288,7 +288,7 @@ describe('gaming bulk catalog actions e2e', () => {
   );
 
   it(
-    'bulkAddGameTags is add-only, reports notFound, rejects the whole call on an unknown ' +
+    'addGameTags is add-only, reports notFound, rejects the whole call on an unknown ' +
       'tagId writing nothing, writes exactly one audit row, and a visible tag shows up publicly',
     async () => {
       const provider = await seedProvider();
@@ -356,7 +356,7 @@ describe('gaming bulk catalog actions e2e', () => {
     },
   );
 
-  it('bulkAddGameTags records only the ids a game was actually missing on a partial overlap', async () => {
+  it('addGameTags records only the ids a game was actually missing on a partial overlap', async () => {
     const provider = await seedProvider();
     const partial = await seedGame(provider.id);
     const fresh = await seedGame(provider.id);
@@ -427,7 +427,7 @@ describe('gaming bulk catalog actions e2e', () => {
     expect((await gameRow(anchorGameId))?.isActive).toBe(true);
   }, 30_000);
 
-  it('bulkAddGameCategories is add-only, reports notFound, and rejects the whole call on an unknown categoryId writing nothing', async () => {
+  it('addGameCategories is add-only, reports notFound, and rejects the whole call on an unknown categoryId writing nothing', async () => {
     const provider = await seedProvider();
     const target = await seedGame(provider.id);
     const existingCategoryRes = await admin.post('/backoffice/gaming/categories', {
