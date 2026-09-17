@@ -53,6 +53,13 @@ export type {
 export { GAMING_COMMANDS } from './gaming-commands.js';
 
 export type {
+  CatalogCategoryWithGameCount,
+  CatalogGame,
+  GameCatalogReader,
+} from './game-catalog-reader.js';
+export { GAME_CATALOG_READER } from './game-catalog-reader.js';
+
+export type {
   WalletReader,
   WalletBalanceReading,
   WalletBalancesReading,

@@ -14,7 +14,11 @@ import { eq, and, asc, count, ilike, inArray, ne, or } from 'drizzle-orm';
 import type { GameProviderAggregatorMapping } from '@openora/core/contracts';
 import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
 import type { CreateProviderInput, UpdateProviderInput } from '../contract/index.js';
-import { mappingsByProviderIds, type CatalogActor } from '../../shared/game-catalog.js';
+import {
+  mappingsByProviderIds,
+  providerSummaryColumns,
+  type CatalogActor,
+} from '../../shared/game-catalog.js';
 
 export const GameProviderNotFoundError = makeNotFoundError('GameProvider');
 export const GameProviderSlugTakenError = makeConflictError(
@@ -88,12 +92,7 @@ export class GameProviderService {
     const where = eq(gameProvider.isActive, true);
     const [items, [{ n }]] = await Promise.all([
       this.drizzle.db
-        .select({
-          id: gameProvider.id,
-          slug: gameProvider.slug,
-          name: gameProvider.name,
-          logoUrl: gameProvider.logoUrl,
-        })
+        .select(providerSummaryColumns)
         .from(gameProvider)
         .where(where)
         .orderBy(asc(gameProvider.name), asc(gameProvider.slug))

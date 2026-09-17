@@ -12,20 +12,7 @@ import {
   serializeRow,
   uniqueConstraintName,
 } from '@openora/core/server';
-import {
-  type SQL,
-  eq,
-  and,
-  asc,
-  count,
-  desc,
-  exists,
-  ilike,
-  inArray,
-  ne,
-  or,
-  sql,
-} from 'drizzle-orm';
+import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   RgLimitExceededError,
   type GameAdapter,
@@ -54,6 +41,7 @@ import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
 import {
   categoriesByGameIds,
+  countWhere,
   isGamePlayable,
   playableGameCondition,
   tagsByGameIds,
@@ -171,10 +159,6 @@ async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
 
 function toGameRound(record: typeof gameRound.$inferSelect) {
   return serializeRow(record, { dateFields: ['startedAt', 'endedAt'] });
-}
-
-function countWhere(condition: SQL | undefined) {
-  return sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
 }
 
 function withInactive<T extends { total: number; active: number }>(counts: T) {
