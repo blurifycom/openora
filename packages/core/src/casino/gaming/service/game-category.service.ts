@@ -12,7 +12,11 @@ import {
 import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
 import { gameCategory } from '../schema/index.js';
 import type { CreateCategoryInput, UpdateCategoryInput } from '../contract/index.js';
-import { toCategorySummary, type CatalogActor } from '../../shared/game-catalog.js';
+import {
+  categorySummaryColumns,
+  toCategorySummary,
+  type CatalogActor,
+} from '../../shared/game-catalog.js';
 
 export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
 export const GameCategorySlugTakenError = makeConflictError(
@@ -51,14 +55,7 @@ export class GameCategoryService {
     const where = eq(gameCategory.isActive, true);
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
-        .select({
-          id: gameCategory.id,
-          slug: gameCategory.slug,
-          name: gameCategory.name,
-          translations: gameCategory.translations,
-          icon: gameCategory.icon,
-          sortOrder: gameCategory.sortOrder,
-        })
+        .select(categorySummaryColumns)
         .from(gameCategory)
         .where(where)
         .orderBy(asc(gameCategory.sortOrder), asc(gameCategory.name), asc(gameCategory.slug))
