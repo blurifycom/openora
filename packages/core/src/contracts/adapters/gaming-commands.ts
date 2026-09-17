@@ -21,11 +21,21 @@ export type GamingAccumulateExternalRoundOutcome = {
   winAmount: string;
 };
 
+export type GamingSetGameAvailabilityArgs = {
+  gameId: string;
+  isUnavailable: boolean;
+};
+
 export type GamingCommands = {
   accumulateExternalRound(
     tx: unknown,
     args: GamingAccumulateExternalRoundArgs,
   ): Promise<GamingAccumulateExternalRoundOutcome>;
+  /**
+   * The only writer of a game's vendor-unavailable flag; an unavailable game is unplayable.
+   * `changed` is false when the game was already in that state. Throws when the game is unknown.
+   */
+  setGameAvailability(args: GamingSetGameAvailabilityArgs): Promise<{ changed: boolean }>;
 };
 
 export const GAMING_COMMANDS: Token<GamingCommands> = createToken('GAMING_COMMANDS');
