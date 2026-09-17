@@ -7,6 +7,8 @@ import {
   UuidSchema,
 } from './common.js';
 import {
+  GameAddedCategoryLinksSchema,
+  GameAddedTagLinksSchema,
   GameBulkIdsSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
@@ -556,12 +558,12 @@ export const domainEventSchemas = {
     gameBulkEventBase.extend({
       operation: z.literal('add_tags'),
       tagIds: z.array(UuidSchema),
-      addedLinks: z.array(z.object({ gameId: UuidSchema, tagIds: z.array(UuidSchema) })),
+      addedLinks: GameAddedTagLinksSchema,
     }),
     gameBulkEventBase.extend({
       operation: z.literal('add_categories'),
       categoryIds: z.array(UuidSchema),
-      addedLinks: z.array(z.object({ gameId: UuidSchema, categoryIds: z.array(UuidSchema) })),
+      addedLinks: GameAddedCategoryLinksSchema,
     }),
   ]),
   'gaming.game.availability_changed': z.object({

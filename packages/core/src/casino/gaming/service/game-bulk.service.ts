@@ -6,7 +6,11 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import type { GameProviderAggregatorMapping } from '@openora/core/contracts';
+import type {
+  GameAddedCategoryLinks,
+  GameAddedTagLinks,
+  GameProviderAggregatorMapping,
+} from '@openora/core/contracts';
 import { game, gameCategory, gameProvider, gameTag } from '../schema/index.js';
 import { mappingsByProviderIds, type CatalogActor } from '../../shared/game-catalog.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
@@ -288,7 +292,7 @@ export class GameBulkService {
       }
 
       const matchedGameIds = games.map((row) => row.id);
-      let addedLinks: Array<{ gameId: string; tagIds: string[] }> = [];
+      let addedLinks: GameAddedTagLinks = [];
       if (matchedGameIds.length > 0) {
         // Array parameters keep the insert under Postgres' 65,535 bind-parameter limit.
         const { rows } = await tx.execute<{ game_id: string; tag_id: string }>(sql`
@@ -372,7 +376,7 @@ export class GameBulkService {
       }
 
       const matchedGameIds = games.map((row) => row.id);
-      let addedLinks: Array<{ gameId: string; categoryIds: string[] }> = [];
+      let addedLinks: GameAddedCategoryLinks = [];
       if (matchedGameIds.length > 0) {
         const { rows } = await tx.execute<{ game_id: string; category_id: string }>(sql`
           INSERT INTO game_category_game (game_id, category_id)
