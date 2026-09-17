@@ -14,6 +14,8 @@ import {
 import {
   CONTRIBUTION_PERCENT_PRECISION,
   CONTRIBUTION_PERCENT_SCALE,
+  MONEY_PRECISION,
+  MONEY_SCALE,
   type BonusGrantSource,
   type BonusGrantTerms,
 } from '@openora/core/contracts';
@@ -132,13 +134,27 @@ export const promoGrant = pgTable(
   (t) => [
     // The idempotency guard. A replayed deposit or a re-run daily job hits this, not a
     // read-then-write check that two concurrent callers would both pass.
-    uniqueIndex().on(t.userId, t.source, t.sourceRef),
-    // FIFO consumption order and the balance read.
-    index().on(t.userId, t.currency, t.status, t.createdAt),
+    uniqueIndex('promo_grant_user_id_source_source_ref_idx').on(t.userId, t.source, t.sourceRef),
+    // FIFO consumption order and the balance read. Partial, because a terminal grant is never
+    // consumed again and long-term they are almost the whole table.
+    index('promo_grant_user_id_currency_created_at_idx')
+      .on(t.userId, t.currency, t.createdAt)
+      .where(sql`${t.status} in ('pending', 'active')`),
     // The expiry sweep, over live rows only.
-    index()
+    index('promo_grant_expires_at_idx')
       .on(t.expiresAt)
       .where(sql`${t.status} = 'active'`),
+    // Money invariants the engine must never be able to break, held where no caller can route
+    // around them: a bonus balance cannot go negative and progress cannot pass its requirement.
+    check('promo_grant_bonus_balance_non_negative', sql`${t.bonusBalance} >= 0`),
+    check(
+      'promo_grant_progress_within_requirement',
+      sql`${t.wageringProgress} >= 0 AND ${t.wageringProgress} <= ${t.wageringRequired}`,
+    ),
+    check(
+      'promo_grant_forfeit_reason_requires_forfeited',
+      sql`${t.forfeitReason} is null or ${t.status} = 'forfeited'`,
+    ),
   ],
 );
 

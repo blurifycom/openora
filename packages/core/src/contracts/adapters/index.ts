@@ -50,6 +50,7 @@ export { WAGER_PRODUCTS, isWagerProduct } from './wager-context.js';
 
 export type {
   BonusGrantCommands,
+  BonusGrantActor,
   BonusGrantArgs,
   BonusGrantOutcome,
   BonusGrantTerms,
