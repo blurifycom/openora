@@ -49,6 +49,7 @@ export type { WagerContext } from './wager-context.js';
 
 export type {
   BonusGrantCommands,
+  BonusGrantActor,
   BonusGrantArgs,
   BonusGrantOutcome,
   BonusGrantTerms,

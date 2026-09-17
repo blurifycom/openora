@@ -1,18 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
-import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
+import { eq } from 'drizzle-orm';
+import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type { AuditWritePort, BonusGrantArgs, Uuid } from '@openora/core/contracts';
+import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
+import { makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoWeight, promoWeightProfile } from '../schema/index.js';
-import { BonusService } from '../service/bonus.service.js';
 import { GrantService } from '../service/grant.service.js';
+import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 let db: TestDb;
 let service: GrantService;
-let audit: AuditWritePort;
+let audit: ReturnType<typeof makeAuditWriter>;
 let weightProfileId: Uuid;
+
+const CASINO = { provider: 'aggregator', product: 'casino' };
+
+const termsWith = (wageringMultiplier: string, expiryDays = 30) => ({
+  wageringMultiplier,
+  expiryDays,
+  weightProfileId,
+});
 
 const args = (over: Partial<BonusGrantArgs> = {}): BonusGrantArgs => ({
   userId: randomUUID(),
@@ -20,18 +29,30 @@ const args = (over: Partial<BonusGrantArgs> = {}): BonusGrantArgs => ({
   amount: '100',
   source: 'deposit',
   sourceRef: randomUUID(),
-  terms: { wageringMultiplier: '35', expiryDays: 30, weightProfileId },
+  actor: { type: 'system' },
+  terms: termsWith('35'),
   ...over,
 });
 
-const grant = (a: BonusGrantArgs) =>
-  db.drizzle.db.transaction((tx) => service.grant(tx as unknown as DrizzleTx, a));
+const grant = (a: BonusGrantArgs) => db.drizzle.db.transaction((tx) => service.grant(tx, a));
 
 const rows = () => db.drizzle.db.select().from(promoGrant);
 
+const seedWeight = (
+  scope: (typeof promoWeight.$inferInsert)['scope'],
+  scopeRef: string | null,
+  contributionPercent: string,
+) =>
+  db.drizzle.db
+    .insert(promoWeight)
+    .values({ profileId: weightProfileId, scope, scopeRef, contributionPercent });
+
+const scoreOf = (terms: (typeof promoGrant.$inferSelect)['terms'], stake: string) =>
+  weightedStake(stake, resolveContributionPercent(terms.weights, CASINO));
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  audit = { record: vi.fn(), recordInTransaction: vi.fn() };
+  audit = makeAuditWriter();
   service = new GrantService(audit);
 });
 
@@ -40,7 +61,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${promoGrant} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.delete(promoGrant);
+  await db.drizzle.db.delete(promoWeight);
+  await db.drizzle.db.delete(promoWeightProfile);
   vi.clearAllMocks();
   weightProfileId = findOneOrThrow(
     await db.drizzle.db
@@ -48,11 +71,11 @@ beforeEach(async () => {
       .values({ name: `profile-${randomUUID()}` })
       .returning(),
     new Error('seed profile: query returned no row'),
-  ).id as Uuid;
+  ).id;
 });
 
-describe('GrantService.grant (real PG)', () => {
-  it('GRT-01: credits the bonus and derives the requirement from the multiplier', async () => {
+describe('GrantService.grant', () => {
+  it('credits the bonus and derives the requirement from the multiplier', async () => {
     const outcome = await grant(args({ amount: '100', terms: termsWith('35') }));
 
     expect(outcome).toMatchObject({ ok: true, created: true });
@@ -68,41 +91,47 @@ describe('GrantService.grant (real PG)', () => {
     expect(row?.closedAt).toBeNull();
   });
 
+  it('uppercases the currency, so a lowercase caller cannot hide a grant from its own bets', async () => {
+    await grant(args({ currency: 'usd' }));
+
+    const [row] = await rows();
+    expect(row?.currency).toBe('USD');
+  });
+
   it('snapshots the terms and the profile weights onto the grant', async () => {
     await seedWeight('product', 'casino', '100');
-    await grant(args({ terms: { wageringMultiplier: '35', expiryDays: 7, weightProfileId } }));
+    await grant(args({ terms: termsWith('35', 7) }));
 
     const [row] = await rows();
     expect(row?.terms).toEqual({
       wageringMultiplier: '35',
       expiryDays: 7,
       weightProfileId,
-      weights: [
-        { scope: 'product', scopeRef: 'casino', contributionPercent: '100.000000000000000000' },
-      ],
+      weights: [{ scope: 'product', scopeRef: 'casino', contributionPercent: '100.00' }],
     });
   });
 
   it('keeps scoring a granted bonus at its snapshot after the profile is edited', async () => {
     await seedWeight('product', 'casino', '100');
     await grant(args());
-    await db.drizzle.db.update(promoWeight).set({ contributionPercent: '10' });
+    await db.drizzle.db
+      .update(promoWeight)
+      .set({ contributionPercent: '10' })
+      .where(eq(promoWeight.profileId, weightProfileId));
 
     const [row] = await rows();
-    expect(
-      new BonusService().weightedContribution({ terms: row!.terms, stake: '50', context: CASINO }),
-    ).toMatchObject({ weightedAmount: '50.000000000000000000' });
+    expect(scoreOf(row!.terms, '50')).toBe('50.000000000000000000');
   });
 
   it('keeps scoring a granted bonus at its snapshot after the profile is deleted', async () => {
     await seedWeight('product', 'casino', '100');
     await grant(args());
-    await db.drizzle.db.delete(promoWeightProfile);
+    await db.drizzle.db
+      .delete(promoWeightProfile)
+      .where(eq(promoWeightProfile.id, weightProfileId));
 
     const [row] = await rows();
-    expect(
-      new BonusService().weightedContribution({ terms: row!.terms, stake: '50', context: CASINO }),
-    ).toMatchObject({ weightedAmount: '50.000000000000000000' });
+    expect(scoreOf(row!.terms, '50')).toBe('50.000000000000000000');
   });
 
   it('snapshots an empty weight set for a profile with no rows, so no bet counts', async () => {
@@ -117,8 +146,7 @@ describe('GrantService.grant (real PG)', () => {
       grant(
         args({ terms: { wageringMultiplier: '35', expiryDays: 7, weightProfileId: randomUUID() } }),
       ),
-    ).rejects.toThrow('weight profile');
-    expect(await rows()).toHaveLength(0);
+    ).rejects.toThrow(/WagerWeightProfile/i);
   });
 
   it('expires the grant `expiryDays` after it was created', async () => {
@@ -129,7 +157,7 @@ describe('GrantService.grant (real PG)', () => {
     expect(days).toBeCloseTo(7, 5);
   });
 
-  it('IDM-01: a replayed deposit returns the first grant and creates no second row', async () => {
+  it('a replayed deposit returns the first grant and creates no second row', async () => {
     const a = args();
 
     const first = await grant(a);
@@ -139,7 +167,15 @@ describe('GrantService.grant (real PG)', () => {
     expect(await rows()).toHaveLength(1);
   });
 
-  it('IDM-03: concurrent duplicates settle to one grant, the index is the guard', async () => {
+  it('refuses a replay that asks for different money under the same reference', async () => {
+    const a = args({ amount: '100' });
+    await grant(a);
+
+    await expect(grant({ ...a, amount: '500' })).rejects.toThrow();
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('concurrent duplicates settle to one grant, the index is the guard', async () => {
     const a = args();
 
     const outcomes = await Promise.all([grant(a), grant(a), grant(a)]);
@@ -149,12 +185,14 @@ describe('GrantService.grant (real PG)', () => {
     expect(new Set(outcomes.map((o) => (o.ok ? o.grantId : null))).size).toBe(1);
   });
 
-  it('IDM-09: the same source ref under a different source is a different grant', async () => {
+  it('the same source ref under a different source is a different grant', async () => {
     const sourceRef = randomUUID();
     const userId = randomUUID();
 
     await grant(args({ userId, sourceRef, source: 'deposit' }));
-    await grant(args({ userId, sourceRef, source: 'manual' }));
+    await grant(
+      args({ userId, sourceRef, source: 'manual', actor: { type: 'admin', id: randomUUID() } }),
+    );
 
     expect(await rows()).toHaveLength(2);
   });
@@ -168,7 +206,7 @@ describe('GrantService.grant (real PG)', () => {
     expect(await rows()).toHaveLength(2);
   });
 
-  it('LDG-01: writes one audit row per grant, on the same transaction', async () => {
+  it('writes one audit row per grant, on the same transaction', async () => {
     const a = args();
     await grant(a);
     await grant(a);
@@ -180,40 +218,53 @@ describe('GrantService.grant (real PG)', () => {
     );
   });
 
-  it('VAL-01: rejects a zero or negative amount before it reaches the ledger', async () => {
+  it('records the admin behind a manual grant, so a hand-issued bonus is attributable', async () => {
+    const adminId = randomUUID();
+    await grant(args({ source: 'manual', actor: { type: 'admin', id: adminId } }));
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorType: 'admin', actorId: adminId }),
+    );
+  });
+
+  it('rejects a zero or negative amount before it reaches the ledger', async () => {
     await expect(grant(args({ amount: '0' }))).rejects.toThrow();
     await expect(grant(args({ amount: '-1' }))).rejects.toThrow();
     expect(await rows()).toHaveLength(0);
   });
 
-  it('VAL-02: rejects an amount that is not a decimal string', async () => {
+  it('rejects an amount that is not a decimal string', async () => {
     await expect(grant(args({ amount: 'NaN' }))).rejects.toThrow();
     expect(await rows()).toHaveLength(0);
   });
 
-  it('VAL-03: rejects a multiplier below zero', async () => {
+  it('rejects a multiplier of zero, which would convert the moment it was granted', async () => {
+    await expect(grant(args({ terms: termsWith('0') }))).rejects.toThrow();
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it('rejects a negative multiplier', async () => {
     await expect(grant(args({ terms: termsWith('-1') }))).rejects.toThrow();
     expect(await rows()).toHaveLength(0);
   });
 
-  it('VAL-04: rejects an expiry that is not a positive whole number of days', async () => {
-    await expect(grant(args({ terms: termsWith('35', 0) }))).rejects.toThrow();
-    await expect(grant(args({ terms: termsWith('35', 1.5) }))).rejects.toThrow();
+  it('rejects a multiplier past the sane ceiling, which is a fat finger not an offer', async () => {
+    await expect(grant(args({ terms: termsWith('100000') }))).rejects.toThrow();
     expect(await rows()).toHaveLength(0);
   });
 
-  it('allows a zero multiplier, which is a bonus with no wagering attached', async () => {
-    await grant(args({ terms: termsWith('0') }));
-
-    const [row] = await rows();
-    expect(row?.wageringRequired).toBe('0.000000000000000000');
+  it('rejects an expiry that is not a positive whole number of days', async () => {
+    await expect(grant(args({ terms: termsWith('35', 0) }))).rejects.toThrow();
+    await expect(grant(args({ terms: termsWith('35', 1.5) }))).rejects.toThrow();
+    expect(await rows()).toHaveLength(0);
   });
 
   it('rolls the audit write back with the grant when the transaction fails', async () => {
     const a = args();
     await expect(
       db.drizzle.db.transaction(async (tx) => {
-        await service.grant(tx as unknown as DrizzleTx, a);
+        await service.grant(tx, a);
         throw new Error('caller failed after the grant');
       }),
     ).rejects.toThrow('caller failed after the grant');
@@ -221,19 +272,3 @@ describe('GrantService.grant (real PG)', () => {
     expect(await rows()).toHaveLength(0);
   });
 });
-
-const CASINO = { provider: 'aggregator', product: 'casino' };
-
-function seedWeight(
-  scope: (typeof promoWeight.$inferInsert)['scope'],
-  scopeRef: string | null,
-  contributionPercent: string,
-) {
-  return db.drizzle.db
-    .insert(promoWeight)
-    .values({ profileId: weightProfileId, scope, scopeRef, contributionPercent });
-}
-
-function termsWith(wageringMultiplier: string, expiryDays = 30) {
-  return { wageringMultiplier, expiryDays, weightProfileId };
-}

@@ -21,6 +21,12 @@ export type BonusGrantTerms = {
   weightProfileId: string;
 };
 
+/**
+ * Who asked for the grant. A `manual` grant is an admin handing a player money, so it carries
+ * that admin onto the audit row; every other source is a rule firing with no person behind it.
+ */
+export type BonusGrantActor = { type: 'admin'; id: string } | { type: 'system' };
+
 export type BonusGrantArgs = {
   userId: string;
   currency: string;
@@ -33,6 +39,7 @@ export type BonusGrantArgs = {
    * replayed deposit or a re-run job resolves to the first grant instead of creating a second.
    */
   sourceRef: string;
+  actor: BonusGrantActor;
   /** Offer the grant is created from, when one exists. Absent for a manual or a job grant. */
   offerId?: string;
   terms: BonusGrantTerms;

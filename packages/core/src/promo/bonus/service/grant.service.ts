@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import {
+  CurrencyTickerInputSchema,
   MoneyAmountSchema,
   UuidSchema,
   type AuditWritePort,
@@ -8,7 +9,14 @@ import {
   type BonusGrantCommands,
   type BonusGrantOutcome,
 } from '@openora/core/contracts';
-import { isPositiveMoney, moneyScaleBy, type DrizzleTx } from '@openora/core/server';
+import {
+  isPositiveMoney,
+  makeConflictError,
+  makeNotFoundError,
+  moneyCompare,
+  moneyScaleBy,
+  type DrizzleTx,
+} from '@openora/core/server';
 import { BonusGrantSourceSchema } from '../contract/index.js';
 import {
   promoGrant,
@@ -17,17 +25,35 @@ import {
   type GrantTermsSnapshot,
 } from '../schema/index.js';
 
-// Untrusted at the boundary: a caller is another module, and a malformed multiplier or a
-// non-positive amount must be refused before it reaches the ledger, not corrected after.
+export const WagerWeightProfileNotFoundError = makeNotFoundError('WagerWeightProfile');
+export const GrantConflictError = makeConflictError(
+  'GrantConflictError',
+  'A different grant already exists for this source reference',
+);
+
+// A requirement of zero converts the moment it is created, and a multiplier in the thousands is
+// a fat finger rather than an offer. Both are refused before anything reaches the ledger.
+const MAX_WAGERING_MULTIPLIER = '1000';
+
 const grantArgsSchema = z.object({
   userId: UuidSchema,
-  currency: z.string().min(1),
+  currency: CurrencyTickerInputSchema,
   amount: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero'),
   source: BonusGrantSourceSchema,
   sourceRef: z.string().min(1),
+  actor: z.union([
+    z.object({ type: z.literal('admin'), id: UuidSchema }),
+    z.object({ type: z.literal('system') }),
+  ]),
   offerId: UuidSchema.optional(),
   terms: z.object({
-    wageringMultiplier: MoneyAmountSchema,
+    wageringMultiplier: MoneyAmountSchema.refine(
+      isPositiveMoney,
+      'must be greater than zero',
+    ).refine(
+      (v) => moneyCompare(v, MAX_WAGERING_MULTIPLIER) <= 0,
+      `must not exceed ${MAX_WAGERING_MULTIPLIER}`,
+    ),
     expiryDays: z.number().int().positive(),
     weightProfileId: UuidSchema,
   }),
@@ -57,8 +83,6 @@ export class GrantService implements BonusGrantCommands {
         offerId: args.offerId ?? null,
         terms,
         grantedAmount: args.amount,
-        // The grant row is the bonus balance: the funds start here and never sit in
-        // `wallet_balance` until they convert.
         bonusBalance: args.amount,
         wageringRequired,
         expiresAt: sql`now() + make_interval(days => ${args.terms.expiryDays})`,
@@ -68,24 +92,12 @@ export class GrantService implements BonusGrantCommands {
       .returning({ id: promoGrant.id });
 
     if (!inserted) {
-      const [existing] = await tx
-        .select({ id: promoGrant.id })
-        .from(promoGrant)
-        .where(
-          and(
-            eq(promoGrant.userId, args.userId),
-            eq(promoGrant.source, args.source),
-            eq(promoGrant.sourceRef, args.sourceRef),
-          ),
-        );
-      if (!existing) {
-        throw new Error('promo grant: insert conflicted but no existing grant was found');
-      }
-      return { ok: true, grantId: existing.id, created: false };
+      return this.resolveReplay(tx, args, wageringRequired);
     }
 
     await this.audit.recordInTransaction(tx, {
-      actorType: 'system',
+      ...(args.actor.type === 'admin' ? { actorId: args.actor.id } : {}),
+      actorType: args.actor.type,
       action: 'promo.bonus.granted',
       resourceType: 'promo_grant',
       resourceId: inserted.id,
@@ -95,13 +107,52 @@ export class GrantService implements BonusGrantCommands {
         source: args.source,
         sourceRef: args.sourceRef,
         grantedAmount: args.amount,
-        bonusBalance: args.amount,
         wageringRequired,
-        terms,
+        wageringMultiplier: args.terms.wageringMultiplier,
+        expiryDays: args.terms.expiryDays,
+        weightProfileId: args.terms.weightProfileId,
       },
     });
 
     return { ok: true, grantId: inserted.id, created: true };
+  }
+
+  /**
+   * A replay resolves to the grant that already exists - but only if it is the same grant. Two
+   * different payouts sharing one source reference would otherwise return success while crediting
+   * nothing, and the caller would record a payout that never happened.
+   */
+  private async resolveReplay(
+    tx: DrizzleTx,
+    args: z.infer<typeof grantArgsSchema>,
+    wageringRequired: string,
+  ): Promise<BonusGrantOutcome> {
+    const [existing] = await tx
+      .select({
+        id: promoGrant.id,
+        currency: promoGrant.currency,
+        grantedAmount: promoGrant.grantedAmount,
+        wageringRequired: promoGrant.wageringRequired,
+      })
+      .from(promoGrant)
+      .where(
+        and(
+          eq(promoGrant.userId, args.userId),
+          eq(promoGrant.source, args.source),
+          eq(promoGrant.sourceRef, args.sourceRef),
+        ),
+      );
+    if (!existing) {
+      throw new GrantConflictError();
+    }
+    const matches =
+      existing.currency === args.currency &&
+      moneyCompare(existing.grantedAmount, args.amount) === 0 &&
+      moneyCompare(existing.wageringRequired, wageringRequired) === 0;
+    if (!matches) {
+      throw new GrantConflictError();
+    }
+    return { ok: true, grantId: existing.id, created: false };
   }
 
   // One statement, so a profile deleted or edited mid-grant yields either its old rows or a
@@ -121,7 +172,7 @@ export class GrantService implements BonusGrantCommands {
       .where(eq(promoWeightProfile.id, terms.weightProfileId));
 
     if (rows.length === 0) {
-      throw new Error(`promo grant: weight profile ${terms.weightProfileId} not found`);
+      throw new WagerWeightProfileNotFoundError(terms.weightProfileId);
     }
     const weights = rows.flatMap((r) =>
       r.scope && r.contributionPercent

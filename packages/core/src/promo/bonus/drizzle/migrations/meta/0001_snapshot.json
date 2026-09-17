@@ -1,6 +1,6 @@
 {
-  "id": "b4340622-844b-4b2c-b865-f54e2b62cdae",
-  "prevId": "aaed7415-d3af-410d-8b4e-b86174d4dd66",
+  "id": "2f2e0f6c-e8e0-42c3-ae04-db27bf93c1e1",
+  "prevId": "2ac20ab4-1698-4d57-9d07-9e0cdc76857c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -120,8 +120,8 @@
         }
       },
       "indexes": {
-        "promo_grant_user_id_source_source_ref_index": {
-          "name": "promo_grant_user_id_source_source_ref_index",
+        "promo_grant_user_id_source_source_ref_idx": {
+          "name": "promo_grant_user_id_source_source_ref_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -147,8 +147,8 @@
           "method": "btree",
           "with": {}
         },
-        "promo_grant_user_id_currency_status_created_at_index": {
-          "name": "promo_grant_user_id_currency_status_created_at_index",
+        "promo_grant_user_id_currency_created_at_idx": {
+          "name": "promo_grant_user_id_currency_created_at_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -163,12 +163,6 @@
               "nulls": "last"
             },
             {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
               "expression": "created_at",
               "isExpression": false,
               "asc": true,
@@ -176,12 +170,13 @@
             }
           ],
           "isUnique": false,
+          "where": "\"promo_grant\".\"status\" in ('pending', 'active')",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "promo_grant_expires_at_index": {
-          "name": "promo_grant_expires_at_index",
+        "promo_grant_expires_at_idx": {
+          "name": "promo_grant_expires_at_idx",
           "columns": [
             {
               "expression": "expires_at",
@@ -201,7 +196,20 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "promo_grant_bonus_balance_non_negative": {
+          "name": "promo_grant_bonus_balance_non_negative",
+          "value": "\"promo_grant\".\"bonus_balance\" >= 0"
+        },
+        "promo_grant_progress_within_requirement": {
+          "name": "promo_grant_progress_within_requirement",
+          "value": "\"promo_grant\".\"wagering_progress\" >= 0 AND \"promo_grant\".\"wagering_progress\" <= \"promo_grant\".\"wagering_required\""
+        },
+        "promo_grant_forfeit_reason_requires_forfeited": {
+          "name": "promo_grant_forfeit_reason_requires_forfeited",
+          "value": "\"promo_grant\".\"forfeit_reason\" is null or \"promo_grant\".\"status\" = 'forfeited'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.promo_weight": {
@@ -236,7 +244,7 @@
         },
         "contribution_percent": {
           "name": "contribution_percent",
-          "type": "numeric(38, 18)",
+          "type": "numeric(5, 2)",
           "primaryKey": false,
           "notNull": true
         },
@@ -249,8 +257,8 @@
         }
       },
       "indexes": {
-        "promo_weight_profile_id_scope_scope_ref_index": {
-          "name": "promo_weight_profile_id_scope_scope_ref_index",
+        "promo_weight_profile_id_scope_scope_ref_idx": {
+          "name": "promo_weight_profile_id_scope_scope_ref_idx",
           "columns": [
             {
               "expression": "profile_id",
@@ -276,8 +284,8 @@
           "method": "btree",
           "with": {}
         },
-        "promo_weight_profile_id_index": {
-          "name": "promo_weight_profile_id_index",
+        "promo_weight_profile_id_default_idx": {
+          "name": "promo_weight_profile_id_default_idx",
           "columns": [
             {
               "expression": "profile_id",
@@ -298,8 +306,12 @@
           "name": "promo_weight_profile_id_promo_weight_profile_id_fk",
           "tableFrom": "promo_weight",
           "tableTo": "promo_weight_profile",
-          "columnsFrom": ["profile_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -307,7 +319,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "promo_weight_contribution_percent_range": {
+          "name": "promo_weight_contribution_percent_range",
+          "value": "\"promo_weight\".\"contribution_percent\" >= 0 AND \"promo_weight\".\"contribution_percent\" <= 100"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.promo_weight_profile": {
@@ -349,7 +366,9 @@
         "promo_weight_profile_name_unique": {
           "name": "promo_weight_profile_name_unique",
           "nullsNotDistinct": false,
-          "columns": ["name"]
+          "columns": [
+            "name"
+          ]
         }
       },
       "policies": {},
@@ -372,17 +391,37 @@
     "public.promo_grant_source": {
       "name": "promo_grant_source",
       "schema": "public",
-      "values": ["deposit", "manual", "streak", "rank", "race", "gift", "rain"]
+      "values": [
+        "deposit",
+        "manual",
+        "streak",
+        "rank",
+        "race",
+        "gift",
+        "rain"
+      ]
     },
     "public.promo_grant_status": {
       "name": "promo_grant_status",
       "schema": "public",
-      "values": ["pending", "active", "completed", "expired", "forfeited", "cancelled"]
+      "values": [
+        "pending",
+        "active",
+        "completed",
+        "expired",
+        "forfeited",
+        "cancelled"
+      ]
     },
     "public.promo_weight_scope": {
       "name": "promo_weight_scope",
       "schema": "public",
-      "values": ["game", "category", "product", "default"]
+      "values": [
+        "game",
+        "category",
+        "product",
+        "default"
+      ]
     }
   },
   "schemas": {},
