@@ -282,7 +282,11 @@ describe('gaming catalog router authz', () => {
     const empty = { total: 0, active: 0, inactive: 0 };
     await expect(
       call(routerWith(allowingGuard()).router.getCatalogStats, undefined, { context: CTX }),
-    ).resolves.toEqual({ providers: empty, categories: empty, games: { ...empty, playable: 0 } });
+    ).resolves.toEqual({
+      providers: empty,
+      categories: empty,
+      games: { ...empty, unavailable: 0, playable: 0 },
+    });
   });
 
   it('counts an active game under an inactive provider as active but not playable', async () => {
@@ -309,6 +313,14 @@ describe('gaming catalog router authz', () => {
       },
       { name: 'Blaze', slug: 'blaze', providerId: activeProvider!.id, aggregator: 'direct' },
       {
+        name: 'Dusk',
+        slug: 'dusk',
+        providerId: activeProvider!.id,
+        aggregator: 'direct',
+        isActive: true,
+        isUnavailable: true,
+      },
+      {
         name: 'Comet',
         slug: 'comet',
         providerId: inactiveProvider!.id,
@@ -322,7 +334,7 @@ describe('gaming catalog router authz', () => {
     ).resolves.toEqual({
       providers: { total: 2, active: 1, inactive: 1 },
       categories: { total: 3, active: 2, inactive: 1 },
-      games: { total: 3, active: 2, inactive: 1, playable: 1 },
+      games: { total: 4, active: 3, inactive: 1, unavailable: 1, playable: 1 },
     });
   });
 
@@ -387,6 +399,33 @@ describe('gaming catalog router authz', () => {
     expect(events.emit).toHaveBeenCalledWith(
       'gaming.provider.created',
       expect.objectContaining({ providerId: provider.id }),
+    );
+  });
+
+  it('ignores an admin-supplied isUnavailable on the game PATCH', async () => {
+    const { router } = routerWith(allowingGuard());
+    const [provider] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: 'acme', name: 'Acme', isActive: true })
+      .returning();
+    const [down] = await db.drizzle.db
+      .insert(game)
+      .values({
+        name: 'Down',
+        slug: 'down',
+        providerId: provider!.id,
+        aggregator: 'direct',
+        isActive: true,
+        isUnavailable: true,
+      })
+      .returning();
+
+    const hostileInput = { id: down!.id, isActive: true, isUnavailable: false };
+    const updated = await call(router.updateGame, hostileInput, { context: CTX });
+
+    expect(updated).toMatchObject({ isActive: true, isUnavailable: true });
+    await expect(call(router.getGame, { id: down!.id }, { context: CTX })).rejects.toBeInstanceOf(
+      ORPCError,
     );
   });
 

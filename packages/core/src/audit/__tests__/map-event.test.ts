@@ -303,6 +303,25 @@ describe('mapEventToRecord: gaming.provider.updated', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.game.availability_changed', () => {
+  it('audits a vendor outage flip as a system action on the game', async () => {
+    const gameId = '99999999-9999-4999-8999-999999999999';
+    const row = await mapEventToRecord('gaming.game.availability_changed', {
+      gameId,
+      before: { isUnavailable: false },
+      after: { isUnavailable: true },
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'game',
+      resourceId: gameId,
+      before: { isUnavailable: false },
+      after: { isUnavailable: true },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 

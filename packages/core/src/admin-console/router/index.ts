@@ -4,6 +4,8 @@ import type { AuditWritePort } from '@openora/core/contracts';
 import { backofficeContract } from '../contract/index.js';
 import {
   BackofficeService,
+  GameNotFoundError,
+  GamePerformanceTrendRangeError,
   TransactionNotFoundError,
   UserNotFoundError,
 } from '../service/backoffice.service.js';
@@ -87,6 +89,14 @@ export function createBackofficeRouter(
     getGamePerformance: os.getGamePerformance.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'report', 'view');
       return backofficeService.getGamePerformance(input);
+    }),
+
+    getGamePerformanceTrend: os.getGamePerformanceTrend.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'report', 'view');
+      return mapErrors(
+        { NOT_FOUND: GameNotFoundError, BAD_REQUEST: GamePerformanceTrendRangeError },
+        () => backofficeService.getGamePerformanceTrend(input),
+      );
     }),
 
     getPlayerActivity: os.getPlayerActivity.handler(async ({ input, context }) => {

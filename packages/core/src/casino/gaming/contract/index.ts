@@ -51,6 +51,7 @@ export const GameSchema = z.object({
   gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),
+  isUnavailable: z.boolean(),
   metadata: z.unknown().nullable(),
 });
 
@@ -179,6 +180,7 @@ const CatalogFilterSchema = CatalogQueryBaseSchema.extend({
 
 export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   isActive: QueryBooleanSchema.optional(),
+  isUnavailable: QueryBooleanSchema.optional(),
 });
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
@@ -193,7 +195,8 @@ export const CatalogStatsSchema = z.object({
   providers: CatalogCountsSchema,
   categories: CatalogCountsSchema,
   games: CatalogCountsSchema.extend({
-    // Active games whose provider is active too: what a player can actually launch.
+    unavailable: z.number().int().nonnegative(),
+    // Active, available games whose provider is active too: what a player can actually launch.
     playable: z.number().int().nonnegative(),
   }),
 });
@@ -295,6 +298,7 @@ export const UpdateGameInputSchema = z.object({
   providerId: UuidSchema.optional(),
   aggregator: z.string().trim().min(1).max(64).optional(),
   thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
+  // No isUnavailable: the flag is vendor-set only, an admin must never be able to toggle it.
   isActive: z.boolean().optional(),
   metadata: z.unknown().nullable().optional(),
   categoryIds: z.array(UuidSchema).max(50).optional(),

@@ -417,6 +417,23 @@ describe('GamingService.startRound (real PG)', () => {
     expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
   });
 
+  it('404s a vendor-unavailable game without touching the wallet or provider', async () => {
+    const created = await seedGame({ name: 'Down', isUnavailable: true });
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const launchGame = vi.fn();
+    const svc = makeService({
+      provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      walletCommands,
+    });
+
+    await expect(
+      svc.startRound('00000000-0000-0000-0000-000000000313', created.id, 'USD', '10'),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
+    expect(walletCommands.debit).not.toHaveBeenCalled();
+    expect(launchGame).not.toHaveBeenCalled();
+    expect(await db.drizzle.db.select().from(gameRound)).toHaveLength(0);
+  });
+
   it('404s a game on a deactivated provider without touching the wallet or provider', async () => {
     const created = await seedGame({ name: 'Orphaned' });
     await db.drizzle.db
@@ -532,6 +549,69 @@ describe('GamingService listGames provider gate (real PG)', () => {
       ['Beta', 'beta-alpha', 'Aardvark', expect.any(String)],
     ]);
     expect(result.total).toBe(4);
+  });
+});
+
+describe('GamingService unavailable games (real PG)', () => {
+  it('hides a vendor-unavailable game publicly while the admin list can filter on it', async () => {
+    const live = await seedGame({ name: 'Live' });
+    const down = await seedGame({ name: 'Down', isUnavailable: true });
+    const svc = makeService();
+
+    const pub = await svc.listGamesPublic({ page: 1, limit: 10 });
+    expect(pub.items.map((g) => g.id)).toEqual([live.id]);
+    await expect(svc.getGame(down.id, { activeOnly: true })).rejects.toBeInstanceOf(
+      GameNotFoundError,
+    );
+
+    const unavailable = await svc.listGamesAdmin({ page: 1, limit: 10, isUnavailable: true });
+    expect(unavailable.items).toEqual([
+      expect.objectContaining({ id: down.id, isActive: true, isUnavailable: true }),
+    ]);
+    const available = await svc.listGamesAdmin({ page: 1, limit: 10, isUnavailable: false });
+    expect(available.items.map((g) => g.id)).toEqual([live.id]);
+  });
+
+  it('flips availability, audits each real change once, and keeps the admin isActive choice', async () => {
+    const created = await seedGame({ isActive: false });
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    await expect(
+      svc.setGameAvailability({ gameId: created.id, isUnavailable: true }),
+    ).resolves.toEqual({ changed: true });
+    await expect(
+      svc.setGameAvailability({ gameId: created.id, isUnavailable: true }),
+    ).resolves.toEqual({ changed: false });
+    await expect(svc.getGame(created.id)).resolves.toMatchObject({
+      isActive: false,
+      isUnavailable: true,
+    });
+
+    await svc.setGameAvailability({ gameId: created.id, isUnavailable: false });
+    await expect(svc.getGame(created.id)).resolves.toMatchObject({
+      isActive: false,
+      isUnavailable: false,
+    });
+
+    expect(
+      events.emit.mock.calls.filter(([topic]) => topic === 'gaming.game.availability_changed'),
+    ).toEqual([
+      [
+        'gaming.game.availability_changed',
+        { gameId: created.id, before: { isUnavailable: false }, after: { isUnavailable: true } },
+      ],
+      [
+        'gaming.game.availability_changed',
+        { gameId: created.id, before: { isUnavailable: true }, after: { isUnavailable: false } },
+      ],
+    ]);
+  });
+
+  it('refuses an unknown game', async () => {
+    await expect(
+      makeService().setGameAvailability({ gameId: randomUUID(), isUnavailable: true }),
+    ).rejects.toBeInstanceOf(GameNotFoundError);
   });
 });
 

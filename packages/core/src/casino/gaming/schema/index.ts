@@ -105,6 +105,7 @@ export const game = pgTable(
     gameType: gameTypeEnum().notNull().default('casino'),
     thumbnailUrl: text(),
     isActive: boolean().notNull().default(false),
+    isUnavailable: boolean().notNull().default(false),
     metadata: jsonb(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     // Legacy pre-0003 free-text columns. Retained (unread, unwritten by new code)
