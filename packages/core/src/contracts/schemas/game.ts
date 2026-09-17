@@ -20,6 +20,24 @@ export const GameProviderAggregatorMappingSchema = z.object({
 });
 export type GameProviderAggregatorMapping = z.infer<typeof GameProviderAggregatorMappingSchema>;
 
+export const GameBulkIdsSchema = z.object({
+  gameIds: z.array(UuidSchema),
+  providerIds: z.array(UuidSchema),
+});
+export type GameBulkIds = z.infer<typeof GameBulkIdsSchema>;
+
+const GameAddedLinkBaseSchema = z.object({ gameId: UuidSchema });
+
+export const GameAddedTagLinksSchema = z.array(
+  GameAddedLinkBaseSchema.extend({ tagIds: z.array(UuidSchema) }),
+);
+export type GameAddedTagLinks = z.infer<typeof GameAddedTagLinksSchema>;
+
+export const GameAddedCategoryLinksSchema = z.array(
+  GameAddedLinkBaseSchema.extend({ categoryIds: z.array(UuidSchema) }),
+);
+export type GameAddedCategoryLinks = z.infer<typeof GameAddedCategoryLinksSchema>;
+
 export const GameCategoryNameSchema = z.string().trim().min(1).max(128);
 export const GameCategoryTranslationSchema = z
   .object({

@@ -2,6 +2,7 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CurrencyCodeSchema,
+  GameBulkIdsSchema,
   GameCategoryNameSchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
@@ -306,6 +307,54 @@ export const UpdateGameInputSchema = z.object({
 });
 export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
 
+const BulkGameTargetFieldsSchema = z.object({
+  providerIds: z.array(UuidSchema).max(50).optional(),
+  gameIds: z.array(UuidSchema).max(500).optional(),
+});
+
+function hasBulkTarget(target: { providerIds?: string[]; gameIds?: string[] }) {
+  return (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0;
+}
+
+const bulkTargetRefinement = {
+  message: 'Provide at least one non-empty providerIds or gameIds',
+  path: ['gameIds'],
+};
+
+export const SetGamesActiveInputSchema = BulkGameTargetFieldsSchema.extend({
+  isActive: z.boolean(),
+}).refine(hasBulkTarget, bulkTargetRefinement);
+export type SetGamesActiveInput = z.infer<typeof SetGamesActiveInputSchema>;
+
+export const AddGameTagsInputSchema = BulkGameTargetFieldsSchema.extend({
+  tagIds: z.array(UuidSchema).min(1).max(50),
+}).refine(hasBulkTarget, bulkTargetRefinement);
+export type AddGameTagsInput = z.infer<typeof AddGameTagsInputSchema>;
+
+export const AddGameCategoriesInputSchema = BulkGameTargetFieldsSchema.extend({
+  categoryIds: z.array(UuidSchema).min(1).max(50),
+}).refine(hasBulkTarget, bulkTargetRefinement);
+export type AddGameCategoriesInput = z.infer<typeof AddGameCategoriesInputSchema>;
+
+const BulkCountSchema = z.object({
+  updatedCount: z.number().int().nonnegative(),
+  unchangedCount: z.number().int().nonnegative(),
+});
+
+export const AddGameLinksOutputSchema = z.object({
+  games: BulkCountSchema,
+  notFound: GameBulkIdsSchema,
+});
+export type AddGameLinksOutput = z.infer<typeof AddGameLinksOutputSchema>;
+
+export const SetGamesActiveOutputSchema = z.object({
+  games: BulkCountSchema,
+  providers: BulkCountSchema,
+  notFound: GameBulkIdsSchema,
+  unplayableGameIds: z.array(UuidSchema),
+});
+export type SetGamesActiveOutput = z.infer<typeof SetGamesActiveOutputSchema>;
+
 export const gamingAdminContract = {
   listAdminProviders: oc
     .route({ method: 'GET', path: '/backoffice/gaming/providers' })
@@ -385,4 +434,19 @@ export const gamingAdminContract = {
   getCatalogStats: oc
     .route({ method: 'GET', path: '/backoffice/gaming/stats' })
     .output(CatalogStatsSchema),
+
+  setGamesActive: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/active' })
+    .input(SetGamesActiveInputSchema)
+    .output(SetGamesActiveOutputSchema),
+
+  addGameTags: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/tags' })
+    .input(AddGameTagsInputSchema)
+    .output(AddGameLinksOutputSchema),
+
+  addGameCategories: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/categories' })
+    .input(AddGameCategoriesInputSchema)
+    .output(AddGameLinksOutputSchema),
 };

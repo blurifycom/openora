@@ -129,7 +129,7 @@ flowchart TB
     PG[("PostgreSQL 16")]:::data
     REDIS[("Redis to BullMQ<br/>(REDIS_URL)")]:::data
     RMQ[("RabbitMQ to Kafka<br/>(AMQP_URL)")]:::data
-    BUS["EventBus envelope<br/>49 domain events"]:::seam
+    BUS["EventBus envelope<br/>domain events"]:::seam
   end
 
   %% ---- wiring ----
