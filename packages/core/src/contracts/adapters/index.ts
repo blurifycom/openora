@@ -281,6 +281,9 @@ export type {
   GamePerformanceSortBy,
   GamePerformanceFilter,
   GamePerformanceRow,
+  GamePerformanceTrendFilter,
+  GamePerformanceTrendPoint,
+  GamePerformanceTrend,
   AdminGameReporting,
   PlayerGameStats,
 } from './admin-game-reporting.js';

@@ -176,3 +176,158 @@ describe('DrizzleAdminGameReporting.listGamePerformance (real PG)', () => {
     expect(rows.map((r) => r.gameId)).toEqual([high.id, low.id]);
   });
 });
+
+describe('DrizzleAdminGameReporting.getGamePerformanceTrend (real PG)', () => {
+  const JAN = {
+    dateFrom: AT('2026-01-05T00:00:00.000Z'),
+    dateTo: AT('2026-01-25T23:59:59.999Z'),
+  };
+
+  it('buckets completed rounds by ISO week and sums the points into the totals', async () => {
+    const g = await seedGame();
+    const player = randomUUID();
+    await seedRound(g.id, {
+      userId: player,
+      betAmount: '100',
+      winAmount: '40',
+      startedAt: AT('2026-01-05T00:00:00.000Z'),
+    });
+    await seedRound(g.id, {
+      userId: player,
+      betAmount: '50',
+      winAmount: '0',
+      startedAt: AT('2026-01-11T23:59:59.000Z'),
+    });
+    await seedRound(g.id, {
+      betAmount: '30',
+      winAmount: '10',
+      startedAt: AT('2026-01-21T12:00:00.000Z'),
+    });
+    await seedRound(g.id, {
+      status: 'active',
+      betAmount: '999',
+      startedAt: AT('2026-01-21T12:00:00.000Z'),
+    });
+    await seedRound(g.id, { betAmount: '999', startedAt: AT('2026-01-26T00:00:00.000Z') });
+
+    const trend = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'week',
+      ...JAN,
+    });
+
+    expect(
+      trend?.points.map((p) => [p.bucket, Number(p.volume), Number(p.revenue), p.roundsPlayed]),
+    ).toEqual([
+      ['2026-01-05', 150, 110, 2],
+      ['2026-01-12', 0, 0, 0],
+      ['2026-01-19', 30, 20, 1],
+    ]);
+    expect(trend?.totals).toMatchObject({ uniquePlayers: 2, roundsPlayed: 3 });
+    expect(Number(trend?.totals.volume)).toBe(180);
+    expect(Number(trend?.totals.revenue)).toBe(130);
+  });
+
+  it('truncates buckets in UTC by day and by month', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { betAmount: '10', startedAt: AT('2026-01-31T23:30:00.000Z') });
+    await seedRound(g.id, { betAmount: '20', startedAt: AT('2026-02-01T00:30:00.000Z') });
+    const range = {
+      dateFrom: AT('2026-01-31T00:00:00.000Z'),
+      dateTo: AT('2026-02-01T23:59:59.000Z'),
+    };
+
+    const daily = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'day',
+      ...range,
+    });
+    const monthly = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'month',
+      ...range,
+    });
+
+    expect(daily?.points.map((p) => [p.bucket, Number(p.volume)])).toEqual([
+      ['2026-01-31', 10],
+      ['2026-02-01', 20],
+    ]);
+    expect(monthly?.points.map((p) => [p.bucket, Number(p.volume)])).toEqual([
+      ['2026-01-01', 10],
+      ['2026-02-01', 20],
+    ]);
+  });
+
+  it('returns zero totals and a zero-filled series for a game with no activity', async () => {
+    const g = await seedGame();
+    const other = await seedGame({ name: 'Busy' });
+    await seedRound(other.id, { startedAt: AT('2026-01-10T00:00:00.000Z') });
+
+    const trend = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'week',
+      ...JAN,
+    });
+
+    expect(trend?.totals).toMatchObject({ uniquePlayers: 0, roundsPlayed: 0 });
+    expect(Number(trend?.totals.volume)).toBe(0);
+    expect(Number(trend?.totals.revenue)).toBe(0);
+    expect(trend?.points).toHaveLength(3);
+    expect(trend?.points.every((p) => p.roundsPlayed === 0 && Number(p.volume) === 0)).toBe(true);
+  });
+
+  it('keeps revenue negative in the bucket and the totals when a game pays out more than it takes', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, {
+      betAmount: '10',
+      winAmount: '100',
+      startedAt: AT('2026-01-06T00:00:00.000Z'),
+    });
+
+    const trend = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'week',
+      ...JAN,
+    });
+
+    expect(Number(trend?.points[0]?.revenue)).toBe(-90);
+    expect(Number(trend?.totals.revenue)).toBe(-90);
+  });
+
+  it('scopes rounds to the currency when one is given and sums unconverted without one', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, {
+      betAmount: '100',
+      currency: 'USD',
+      startedAt: AT('2026-01-06T00:00:00.000Z'),
+    });
+    await seedRound(g.id, {
+      betAmount: '50',
+      currency: 'EUR',
+      startedAt: AT('2026-01-06T00:00:00.000Z'),
+    });
+
+    const usd = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'week',
+      currency: 'USD',
+      ...JAN,
+    });
+    const mixed = await reporting.getGamePerformanceTrend({
+      gameId: g.id,
+      granularity: 'week',
+      ...JAN,
+    });
+
+    expect(usd?.totals.roundsPlayed).toBe(1);
+    expect(Number(usd?.totals.volume)).toBe(100);
+    expect(Number(usd?.points[0]?.volume)).toBe(100);
+    expect(Number(mixed?.totals.volume)).toBe(150);
+  });
+
+  it('returns null for an unknown game', async () => {
+    await expect(
+      reporting.getGamePerformanceTrend({ gameId: randomUUID(), granularity: 'week', ...JAN }),
+    ).resolves.toBeNull();
+  });
+});
