@@ -1,6 +1,7 @@
 import {
   DrizzleService,
   findOneOrThrow,
+  pageToOffset,
   makeConflictError,
   makeNotFoundError,
   makeOwnershipError,
@@ -8,7 +9,7 @@ import {
   withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
-import { and, eq, exists, sql } from 'drizzle-orm';
+import { and, asc, count, eq, exists, inArray, sql } from 'drizzle-orm';
 import {
   countryRule,
   gameGeoRule,
@@ -555,11 +556,20 @@ export class ComplianceService {
     return before;
   }
 
-  async listGameGeoRules(input: ListGameGeoRulesInput) {
-    const rows = input.gameId
-      ? await this.drizzle.db.select().from(gameGeoRule).where(eq(gameGeoRule.gameId, input.gameId))
-      : await this.drizzle.db.select().from(gameGeoRule);
-    return rows.map(serializeGeoRule);
+  async listGameGeoRules({ gameIds, page, limit }: ListGameGeoRulesInput) {
+    const where = gameIds ? inArray(gameGeoRule.gameId, gameIds) : undefined;
+    const db = this.drizzle.db;
+    const [rows, [{ n }]] = await Promise.all([
+      db
+        .select()
+        .from(gameGeoRule)
+        .where(where)
+        .orderBy(asc(gameGeoRule.gameId), asc(gameGeoRule.countryCode))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      db.select({ n: count() }).from(gameGeoRule).where(where),
+    ]);
+    return { items: rows.map(serializeGeoRule), total: Number(n), page, limit };
   }
 
   async upsertProviderGeoRule(
@@ -666,13 +676,19 @@ export class ComplianceService {
     return before;
   }
 
-  async listProviderGeoRules(input: ListProviderGeoRulesInput) {
-    const rows = input.providerId
-      ? await this.drizzle.db
-          .select()
-          .from(providerGeoRule)
-          .where(eq(providerGeoRule.providerId, input.providerId))
-      : await this.drizzle.db.select().from(providerGeoRule);
-    return rows.map(serializeGeoRule);
+  async listProviderGeoRules({ providerIds, page, limit }: ListProviderGeoRulesInput) {
+    const where = providerIds ? inArray(providerGeoRule.providerId, providerIds) : undefined;
+    const db = this.drizzle.db;
+    const [rows, [{ n }]] = await Promise.all([
+      db
+        .select()
+        .from(providerGeoRule)
+        .where(where)
+        .orderBy(asc(providerGeoRule.providerId), asc(providerGeoRule.countryCode))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      db.select({ n: count() }).from(providerGeoRule).where(where),
+    ]);
+    return { items: rows.map(serializeGeoRule), total: Number(n), page, limit };
   }
 }

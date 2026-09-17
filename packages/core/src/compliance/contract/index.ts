@@ -9,6 +9,8 @@ import {
   CountryCodeSchema,
   GeoRuleActionSchema,
   NonEmptyReasonSchema,
+  PageQuerySchema,
+  paginated,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
@@ -235,7 +237,9 @@ export type UpsertGameGeoRuleInput = z.infer<typeof UpsertGameGeoRuleInputSchema
 export const DeleteGameGeoRuleInputSchema = GameGeoRuleSchema.pick({ id: true, reason: true });
 export type DeleteGameGeoRuleInput = z.infer<typeof DeleteGameGeoRuleInputSchema>;
 
-export const ListGameGeoRulesInputSchema = z.object({ gameId: UuidSchema.optional() });
+export const ListGameGeoRulesInputSchema = PageQuerySchema.extend({
+  gameIds: z.array(UuidSchema).min(1).max(100).optional(),
+});
 export type ListGameGeoRulesInput = z.infer<typeof ListGameGeoRulesInputSchema>;
 
 export const UpsertProviderGeoRuleInputSchema = ProviderGeoRuleSchema.pick({
@@ -251,7 +255,9 @@ export const DeleteProviderGeoRuleInputSchema = ProviderGeoRuleSchema.pick({
 });
 export type DeleteProviderGeoRuleInput = z.infer<typeof DeleteProviderGeoRuleInputSchema>;
 
-export const ListProviderGeoRulesInputSchema = z.object({ providerId: UuidSchema.optional() });
+export const ListProviderGeoRulesInputSchema = PageQuerySchema.extend({
+  providerIds: z.array(UuidSchema).min(1).max(100).optional(),
+});
 export type ListProviderGeoRulesInput = z.infer<typeof ListProviderGeoRulesInputSchema>;
 
 const GeoCheckOutputSchema = z.object({
@@ -299,7 +305,7 @@ export const complianceContract = {
   listGameGeoRules: oc
     .route({ method: 'GET', path: '/compliance/game-geo-rules' })
     .input(ListGameGeoRulesInputSchema)
-    .output(z.array(GameGeoRuleSchema)),
+    .output(paginated(GameGeoRuleSchema)),
 
   upsertProviderGeoRule: oc
     .route({ method: 'PUT', path: '/compliance/provider-geo-rules' })
@@ -314,7 +320,7 @@ export const complianceContract = {
   listProviderGeoRules: oc
     .route({ method: 'GET', path: '/compliance/provider-geo-rules' })
     .input(ListProviderGeoRulesInputSchema)
-    .output(z.array(ProviderGeoRuleSchema)),
+    .output(paginated(ProviderGeoRuleSchema)),
 
   upsertCountryRule: oc
     .route({ method: 'PUT', path: '/compliance/country-rules' })

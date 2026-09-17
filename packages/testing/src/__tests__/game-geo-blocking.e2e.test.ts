@@ -147,9 +147,12 @@ describe('per-game geo-blocking lifecycle', () => {
     });
     expect(forbidden.status).toBe(403);
 
-    const noRules = await admin.get(`/compliance/game-geo-rules?gameId=${gameId}`);
+    const noRules = await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`);
     expect(noRules.status).toBe(200);
-    expect(await readJson(noRules)).toEqual([]);
+    expect(await readJson(noRules)).toEqual({ items: [], total: 0, page: 1, limit: 100 });
+
+    const malformedFilter = await admin.get('/compliance/game-geo-rules?gameIds[]=not-a-uuid');
+    expect(malformedFilter.status).toBe(400);
 
     const start = await startFromBlockedCountry(gameId);
     expect(start.status).toBe(200);
@@ -174,9 +177,14 @@ describe('per-game geo-blocking lifecycle', () => {
       reason: 'game licence excludes this country',
     });
 
-    const listed = await admin.get(`/compliance/game-geo-rules?gameId=${gameId}`);
+    const listed = await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`);
     expect(listed.status).toBe(200);
-    expect(await readJson(listed)).toEqual([expect.objectContaining({ id: rule.id, gameId })]);
+    expect(await readJson(listed)).toEqual({
+      items: [expect.objectContaining({ id: rule.id, gameId })],
+      total: 1,
+      page: 1,
+      limit: 100,
+    });
 
     const end = await player.post(`/gaming/rounds/${admitted.roundId}/end`, {
       roundId: admitted.roundId,
@@ -210,9 +218,9 @@ describe('per-game geo-blocking lifecycle', () => {
     expect(deleted.status).toBe(200);
     expect(await readJson(deleted)).toMatchObject({ id: rule.id, gameId });
 
-    const emptyAgain = await admin.get(`/compliance/game-geo-rules?gameId=${gameId}`);
+    const emptyAgain = await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`);
     expect(emptyAgain.status).toBe(200);
-    expect(await readJson(emptyAgain)).toEqual([]);
+    expect(await readJson(emptyAgain)).toMatchObject({ items: [], total: 0 });
   });
 });
 
@@ -271,9 +279,19 @@ describe('per-provider geo-blocking lifecycle', () => {
       ]);
     });
 
-    const listed = await admin.get(`/compliance/provider-geo-rules?providerId=${providerId}`);
+    const listed = await admin.get(`/compliance/provider-geo-rules?providerIds[]=${providerId}`);
     expect(listed.status).toBe(200);
-    expect(await readJson(listed)).toEqual([expect.objectContaining({ id: rule.id, providerId })]);
+    expect(await readJson(listed)).toEqual({
+      items: [expect.objectContaining({ id: rule.id, providerId })],
+      total: 1,
+      page: 1,
+      limit: 100,
+    });
+
+    const forbiddenList = await player.get(
+      `/compliance/provider-geo-rules?providerIds[]=${providerId}`,
+    );
+    expect(forbiddenList.status).toBe(403);
 
     const balanceBeforeBlockedStart = await getBalance();
     const roundsBeforeBlockedStart = await listRounds();

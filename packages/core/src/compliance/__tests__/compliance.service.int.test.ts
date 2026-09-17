@@ -613,7 +613,50 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
       'compliance.game-geo-rule.deleted',
       expect.objectContaining({ gameId, actorId, reason: 'licence restored', after: null }),
     );
-    expect(await svc.listGameGeoRules({ gameId })).toEqual([]);
+    expect(await svc.listGameGeoRules({ gameIds: [gameId], page: 1, limit: 100 })).toEqual({
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 100,
+    });
+  });
+
+  it('lists rules for the requested games one page at a time', async () => {
+    const [first, second, other] = [randomUUID(), randomUUID(), randomUUID()];
+    const actorId = randomUUID();
+    const meta = { ip: null, userAgent: null };
+    const { svc } = makeService();
+    for (const [gameId, name] of [
+      [first, 'First'],
+      [second, 'Second'],
+      [other, 'Other'],
+    ] as const) {
+      await seedGame(gameId, name);
+      await svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'licence' }, actorId, meta);
+    }
+    await svc.upsertGameGeoRule(
+      { gameId: first, countryCode: 'DE', reason: 'licence' },
+      actorId,
+      meta,
+    );
+
+    const pageOne = await svc.listGameGeoRules({ gameIds: [first, second], page: 1, limit: 2 });
+    const pageTwo = await svc.listGameGeoRules({ gameIds: [first, second], page: 2, limit: 2 });
+
+    expect(pageOne).toMatchObject({ total: 3, page: 1, limit: 2 });
+    expect(pageOne.items).toHaveLength(2);
+    expect(pageTwo).toMatchObject({ total: 3, page: 2, limit: 2 });
+    expect(pageTwo.items).toHaveLength(1);
+    expect(
+      [...pageOne.items, ...pageTwo.items].map((r) => [r.gameId, r.countryCode]).sort(),
+    ).toEqual(
+      [
+        [first, 'DE'],
+        [first, 'US'],
+        [second, 'US'],
+      ].sort(),
+    );
+    expect((await svc.listGameGeoRules({ page: 1, limit: 100 })).total).toBe(4);
   });
 
   it('serializes concurrent upserts before emitting audit snapshots', async () => {
@@ -747,7 +790,9 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
       actorId,
       meta,
     );
-    expect(await svc.listProviderGeoRules({ providerId })).toEqual([
+    expect(
+      (await svc.listProviderGeoRules({ providerIds: [providerId], page: 1, limit: 100 })).items,
+    ).toEqual([
       expect.objectContaining({ id: created.id, providerId, reason: 'updated restriction' }),
     ]);
 
@@ -766,6 +811,50 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
       'compliance.provider-geo-rule.deleted',
       expect.objectContaining({ providerId, actorId, reason: 'licence restored', after: null }),
     );
-    expect(await svc.listProviderGeoRules({ providerId })).toEqual([]);
+    expect(
+      await svc.listProviderGeoRules({ providerIds: [providerId], page: 1, limit: 100 }),
+    ).toEqual({ items: [], total: 0, page: 1, limit: 100 });
+  });
+
+  it('lists rules for the requested providers one page at a time', async () => {
+    const [first, second, other] = [
+      await seedProvider(),
+      await seedProvider(),
+      await seedProvider(),
+    ];
+    const actorId = randomUUID();
+    const meta = { ip: null, userAgent: null };
+    const { svc } = makeService();
+    for (const providerId of [first, second, other]) {
+      await svc.upsertProviderGeoRule(
+        { providerId, countryCode: 'US', reason: 'licence' },
+        actorId,
+        meta,
+      );
+    }
+    await svc.upsertProviderGeoRule(
+      { providerId: first, countryCode: 'DE', reason: 'licence' },
+      actorId,
+      meta,
+    );
+
+    const input = { providerIds: [first, second], limit: 2 };
+    const pageOne = await svc.listProviderGeoRules({ ...input, page: 1 });
+    const pageTwo = await svc.listProviderGeoRules({ ...input, page: 2 });
+
+    expect(pageOne).toMatchObject({ total: 3, page: 1, limit: 2 });
+    expect(pageOne.items).toHaveLength(2);
+    expect(pageTwo).toMatchObject({ total: 3, page: 2, limit: 2 });
+    expect(pageTwo.items).toHaveLength(1);
+    expect(
+      [...pageOne.items, ...pageTwo.items].map((r) => [r.providerId, r.countryCode]).sort(),
+    ).toEqual(
+      [
+        [first, 'DE'],
+        [first, 'US'],
+        [second, 'US'],
+      ].sort(),
+    );
+    expect((await svc.listProviderGeoRules({ page: 1, limit: 100 })).total).toBe(4);
   });
 });
