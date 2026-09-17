@@ -1,6 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { MESSAGE_BROKER, JOB_QUEUE, CACHE, RATE_LIMITER } from '@openora/core/contracts';
+import {
+  MESSAGE_BROKER,
+  JOB_QUEUE,
+  CACHE,
+  RATE_LIMITER,
+  PLAYER_ACTIVITY_TRACKER,
+} from '@openora/core/contracts';
 import { redisUrlForWorker } from '@openora/core/testing';
+import { mock } from '../../../testing/mock.js';
+import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import { createApp } from '../create-app.js';
 
 // A syntactically valid but unreachable DB url - fine here because nothing in this
@@ -175,5 +183,63 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
     await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
       /SERVICE_MANIFEST is set but SERVICE_NAME is not/,
     );
+  });
+});
+
+describe('createApp - the player-activity stamp', () => {
+  it('lands before the request that refreshed it returns', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      let release: (() => void) | undefined;
+      const writing = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let stamped = false;
+
+      const created = await createApp(
+        { plugins: [], databaseUrl: DUMMY_DATABASE_URL },
+        (container) => {
+          // A session the resolver can answer without a database, so the request reaches
+          // the activity stamp at all.
+          container.register(AUTH_SESSION, () =>
+            mock<SessionResolver>({
+              resolveUserId: async () => 'user-1',
+              resolveSession: async () => ({ userId: 'user-1' }),
+            }),
+          );
+          container.register(PLAYER_ACTIVITY_TRACKER, () => ({
+            touchLastSeen: async () => {
+              await writing;
+              stamped = true;
+            },
+          }));
+        },
+      );
+      // Read at handler time: a fire-and-forget stamp leaves this false, which is the
+      // read-after-write race every presence-gated feature would inherit.
+      created.app.get('/activity-probe', (c) => c.json({ stamped }));
+
+      // `request()` is typed as Response | Promise<Response>; normalise so the
+      // pending-ness below is observable.
+      const response = Promise.resolve(created.app.request('/activity-probe'));
+      let settled = false;
+      void response.then(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      release?.();
+      expect(await (await response).json()).toEqual({ stamped: true });
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
   });
 });
