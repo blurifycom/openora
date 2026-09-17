@@ -18,6 +18,7 @@ import {
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
+  type GamingSetGameAvailabilityArgs,
   type PlayEligibilityPort,
   type RgLimitsPort,
   type WalletCommands,
@@ -125,6 +126,7 @@ function toGame(row: {
     gameType: row.game.gameType,
     thumbnailUrl: row.game.thumbnailUrl,
     isActive: row.game.isActive,
+    isUnavailable: row.game.isUnavailable,
     metadata: row.game.metadata,
   };
 }
@@ -208,6 +210,7 @@ export class GamingService {
         .select({
           total: count(),
           active: countWhere(eq(game.isActive, true)),
+          unavailable: countWhere(eq(game.isUnavailable, true)),
           playable: countWhere(playableGameCondition()),
         })
         .from(game)
@@ -227,11 +230,13 @@ export class GamingService {
     providerId,
     categoryId,
     isActive,
+    isUnavailable,
     playableOnly,
     sort,
     includeInvisibleTags,
   }: ListGamesInput & {
     isActive?: boolean;
+    isUnavailable?: boolean;
     playableOnly: boolean;
     sort: 'admin' | 'public';
     includeInvisibleTags: boolean;
@@ -250,6 +255,7 @@ export class GamingService {
         : isActive === undefined
           ? undefined
           : eq(game.isActive, isActive),
+      isUnavailable !== undefined ? eq(game.isUnavailable, isUnavailable) : undefined,
       categoryId
         ? exists(
             this.drizzle.db
@@ -549,6 +555,33 @@ export class GamingService {
       .orderBy(desc(gameRound.startedAt))
       .limit(50);
     return rounds.map(toGameRound);
+  }
+
+  async setGameAvailability({ gameId, isUnavailable }: GamingSetGameAvailabilityArgs) {
+    const changed = await this.drizzle.db.transaction(async (tx) => {
+      const current = findOneOrThrow(
+        await tx
+          .select({ isUnavailable: game.isUnavailable })
+          .from(game)
+          .where(eq(game.id, gameId))
+          .limit(1)
+          .for('update'),
+        new GameNotFoundError(gameId),
+      );
+      if (current.isUnavailable === isUnavailable) {
+        return false;
+      }
+      await tx.update(game).set({ isUnavailable }).where(eq(game.id, gameId));
+      return true;
+    });
+    if (changed) {
+      this.events.emit('gaming.game.availability_changed', {
+        gameId,
+        before: { isUnavailable: !isUnavailable },
+        after: { isUnavailable },
+      });
+    }
+    return { changed };
   }
 
   async updateGame({
