@@ -66,9 +66,6 @@ export class BannerScheduleOverlapError extends Error {
 const CMS_CACHE_TTL_MS = 60_000;
 
 const pageCacheKey = (slug: string) => `cms:page:${slug}`;
-// Keyed per requested locale, but invalidation below only targets DEFAULT_LOCALE -
-// a non-default-locale read can lag a write by up to CMS_CACHE_TTL_MS, which is
-// acceptable for this public, non-money read.
 const publicBannerCacheKey = (placement: string, locale: string) =>
   `cms:banner-placement:${placement}:${locale}`;
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
@@ -754,7 +751,7 @@ export class CmsService {
     );
 
     if (configuration.isDefault) {
-      await invalidate(this.cache, publicBannerCacheKey(configuration.placement, DEFAULT_LOCALE));
+      await invalidate(this.cache, publicBannerCacheKey(configuration.placement, record.locale));
     }
 
     this.events.emit('cms.banner.image.set', {
@@ -792,6 +789,7 @@ export class CmsService {
                 .select({
                   id: bannerImageTable.id,
                   bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                  locale: bannerImageTable.locale,
                   desktopImageUrl: bannerImageTable.desktopImageUrl,
                   mobileImageUrl: bannerImageTable.mobileImageUrl,
                 })
@@ -809,6 +807,7 @@ export class CmsService {
                   .returning({
                     id: bannerImageTable.id,
                     bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                    locale: bannerImageTable.locale,
                     desktopImageUrl: bannerImageTable.desktopImageUrl,
                     mobileImageUrl: bannerImageTable.mobileImageUrl,
                   });
@@ -834,7 +833,7 @@ export class CmsService {
       },
     );
     if (configuration?.isDefault) {
-      await invalidate(this.cache, publicBannerCacheKey(configuration.placement, DEFAULT_LOCALE));
+      await invalidate(this.cache, publicBannerCacheKey(configuration.placement, existing.locale));
     }
 
     this.events.emit('cms.banner.image.deleted', {
