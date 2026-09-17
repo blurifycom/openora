@@ -132,6 +132,7 @@ export class GrantService implements BonusGrantCommands {
     await tx.insert(promoGrantEntry).values({
       grantId: inserted.id,
       userId: args.userId,
+      currency: args.currency,
       type: 'grant',
       bonusAmount: args.amount,
       balanceAfter: args.amount,
