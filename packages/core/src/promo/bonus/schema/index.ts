@@ -177,11 +177,14 @@ export const promoGrantEntry = pgTable(
   'promo_grant_entry',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Same module, so a real FK. Deleting a grant takes its ledger with it.
+    // Same module, so a real FK. Restrict, not cascade: a ledger a single DELETE can erase is
+    // not a ledger, and a grant that has to go away gets a forfeit or expire entry instead.
     grantId: uuid()
       .notNull()
-      .references(() => promoGrant.id, { onDelete: 'cascade' }),
+      .references(() => promoGrant.id, { onDelete: 'restrict' }),
     userId: uuid().notNull(),
+    // Denormalised from the grant so the ledger reads as money on its own terms.
+    currency: text().notNull(),
     type: promoGrantEntryTypeEnum().$type<BonusGrantEntryType>().notNull(),
     // Signed: negative on a stake, positive on a grant or a win, negative on a conversion.
     bonusAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
@@ -199,11 +202,11 @@ export const promoGrantEntry = pgTable(
   },
   (t) => [
     // Win and reversal attribution: find this round's stake rows without joining the grant.
-    index()
+    index('promo_grant_entry_user_id_external_round_id_idx')
       .on(t.userId, t.externalRoundId)
       .where(sql`${t.externalRoundId} is not null`),
     // A grant's own history, oldest first.
-    index().on(t.grantId, t.createdAt),
+    index('promo_grant_entry_grant_id_created_at_idx').on(t.grantId, t.createdAt),
   ],
 );
 

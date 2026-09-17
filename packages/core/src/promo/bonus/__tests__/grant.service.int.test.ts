@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
 import { makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { promoGrant, promoWeight, promoWeightProfile } from '../schema/index.js';
+import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
 import { GrantService } from '../service/grant.service.js';
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
@@ -38,6 +38,16 @@ const grant = (a: BonusGrantArgs) => db.drizzle.db.transaction((tx) => service.g
 
 const rows = () => db.drizzle.db.select().from(promoGrant);
 
+const entries = () => db.drizzle.db.select().from(promoGrantEntry);
+
+const ledgerSum = async (grantId: string): Promise<string> => {
+  const [row] = await db.drizzle.db
+    .select({ total: sql<string>`coalesce(sum(${promoGrantEntry.bonusAmount}), 0)::text` })
+    .from(promoGrantEntry)
+    .where(eq(promoGrantEntry.grantId, grantId));
+  return row?.total ?? '0';
+};
+
 const seedWeight = (
   scope: (typeof promoWeight.$inferInsert)['scope'],
   scopeRef: string | null,
@@ -61,6 +71,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.drizzle.db.delete(promoGrantEntry);
   await db.drizzle.db.delete(promoGrant);
   await db.drizzle.db.delete(promoWeight);
   await db.drizzle.db.delete(promoWeightProfile);
@@ -270,5 +281,81 @@ describe('GrantService.grant', () => {
     ).rejects.toThrow('caller failed after the grant');
 
     expect(await rows()).toHaveLength(0);
+  });
+});
+
+describe('the grant ledger', () => {
+  it('opens with one entry carrying the granted amount', async () => {
+    const outcome = await grant(args({ amount: '250', currency: 'USD' }));
+    if (!outcome.ok) {throw new Error('grant was refused');}
+
+    const rows = await entries();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      grantId: outcome.grantId,
+      currency: 'USD',
+      type: 'grant',
+      bonusAmount: '250.000000000000000000',
+      realAmount: '0.000000000000000000',
+      wageringDelta: '0.000000000000000000',
+      balanceAfter: '250.000000000000000000',
+      externalRoundId: null,
+      walletTransactionId: null,
+    });
+  });
+
+  it('adds no second entry when a grant is replayed', async () => {
+    const a = args();
+    await grant(a);
+    await grant(a);
+
+    expect(await entries()).toHaveLength(1);
+  });
+
+  it('adds no entry when concurrent replays race', async () => {
+    const a = args();
+    await Promise.all([grant(a), grant(a), grant(a)]);
+
+    expect(await entries()).toHaveLength(1);
+  });
+
+  it('sums to exactly the bonus balance it explains', async () => {
+    const outcome = await grant(args({ amount: '77.5' }));
+    if (!outcome.ok) {throw new Error('grant was refused');}
+
+    const [row] = await rows();
+    expect(await ledgerSum(outcome.grantId)).toBe(row?.bonusBalance);
+  });
+
+  it('keeps one ledger per grant when a player holds several', async () => {
+    const userId = randomUUID();
+    const one = await grant(args({ userId, amount: '10' }));
+    const two = await grant(args({ userId, amount: '20' }));
+    if (!one.ok || !two.ok) {throw new Error('grant was refused');}
+
+    expect(await ledgerSum(one.grantId)).toBe('10.000000000000000000');
+    expect(await ledgerSum(two.grantId)).toBe('20.000000000000000000');
+  });
+
+  it('refuses to let a grant be deleted out from under its history', async () => {
+    const outcome = await grant(args());
+    if (!outcome.ok) {throw new Error('grant was refused');}
+
+    await expect(
+      db.drizzle.db.delete(promoGrant).where(eq(promoGrant.id, outcome.grantId)),
+    ).rejects.toThrow();
+    expect(await entries()).toHaveLength(1);
+  });
+
+  it('rolls back with the grant when the caller fails', async () => {
+    const a = args();
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await service.grant(tx, a);
+        throw new Error('caller failed after the grant');
+      }),
+    ).rejects.toThrow('caller failed after the grant');
+
+    expect(await entries()).toHaveLength(0);
   });
 });

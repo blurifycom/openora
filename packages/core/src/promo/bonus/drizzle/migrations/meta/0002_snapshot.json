@@ -1,6 +1,6 @@
 {
-  "id": "8bb8cb48-2284-4acd-8a6b-6df9775684ab",
-  "prevId": "b4340622-844b-4b2c-b865-f54e2b62cdae",
+  "id": "822324a3-9c58-4c51-a718-cf3fc5b70586",
+  "prevId": "2f2e0f6c-e8e0-42c3-ae04-db27bf93c1e1",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -120,8 +120,8 @@
         }
       },
       "indexes": {
-        "promo_grant_user_id_source_source_ref_index": {
-          "name": "promo_grant_user_id_source_source_ref_index",
+        "promo_grant_user_id_source_source_ref_idx": {
+          "name": "promo_grant_user_id_source_source_ref_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -147,8 +147,8 @@
           "method": "btree",
           "with": {}
         },
-        "promo_grant_user_id_currency_status_created_at_index": {
-          "name": "promo_grant_user_id_currency_status_created_at_index",
+        "promo_grant_user_id_currency_created_at_idx": {
+          "name": "promo_grant_user_id_currency_created_at_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -163,12 +163,6 @@
               "nulls": "last"
             },
             {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
               "expression": "created_at",
               "isExpression": false,
               "asc": true,
@@ -176,12 +170,13 @@
             }
           ],
           "isUnique": false,
+          "where": "\"promo_grant\".\"status\" in ('pending', 'active')",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "promo_grant_expires_at_index": {
-          "name": "promo_grant_expires_at_index",
+        "promo_grant_expires_at_idx": {
+          "name": "promo_grant_expires_at_idx",
           "columns": [
             {
               "expression": "expires_at",
@@ -201,7 +196,20 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "promo_grant_bonus_balance_non_negative": {
+          "name": "promo_grant_bonus_balance_non_negative",
+          "value": "\"promo_grant\".\"bonus_balance\" >= 0"
+        },
+        "promo_grant_progress_within_requirement": {
+          "name": "promo_grant_progress_within_requirement",
+          "value": "\"promo_grant\".\"wagering_progress\" >= 0 AND \"promo_grant\".\"wagering_progress\" <= \"promo_grant\".\"wagering_required\""
+        },
+        "promo_grant_forfeit_reason_requires_forfeited": {
+          "name": "promo_grant_forfeit_reason_requires_forfeited",
+          "value": "\"promo_grant\".\"forfeit_reason\" is null or \"promo_grant\".\"status\" = 'forfeited'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.promo_grant_entry": {
@@ -224,6 +232,12 @@
         "user_id": {
           "name": "user_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -281,8 +295,8 @@
         }
       },
       "indexes": {
-        "promo_grant_entry_user_id_external_round_id_index": {
-          "name": "promo_grant_entry_user_id_external_round_id_index",
+        "promo_grant_entry_user_id_external_round_id_idx": {
+          "name": "promo_grant_entry_user_id_external_round_id_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -303,8 +317,8 @@
           "method": "btree",
           "with": {}
         },
-        "promo_grant_entry_grant_id_created_at_index": {
-          "name": "promo_grant_entry_grant_id_created_at_index",
+        "promo_grant_entry_grant_id_created_at_idx": {
+          "name": "promo_grant_entry_grant_id_created_at_idx",
           "columns": [
             {
               "expression": "grant_id",
@@ -332,7 +346,7 @@
           "tableTo": "promo_grant",
           "columnsFrom": ["grant_id"],
           "columnsTo": ["id"],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },
@@ -374,7 +388,7 @@
         },
         "contribution_percent": {
           "name": "contribution_percent",
-          "type": "numeric(38, 18)",
+          "type": "numeric(5, 2)",
           "primaryKey": false,
           "notNull": true
         },
@@ -387,8 +401,8 @@
         }
       },
       "indexes": {
-        "promo_weight_profile_id_scope_scope_ref_index": {
-          "name": "promo_weight_profile_id_scope_scope_ref_index",
+        "promo_weight_profile_id_scope_scope_ref_idx": {
+          "name": "promo_weight_profile_id_scope_scope_ref_idx",
           "columns": [
             {
               "expression": "profile_id",
@@ -414,8 +428,8 @@
           "method": "btree",
           "with": {}
         },
-        "promo_weight_profile_id_index": {
-          "name": "promo_weight_profile_id_index",
+        "promo_weight_profile_id_default_idx": {
+          "name": "promo_weight_profile_id_default_idx",
           "columns": [
             {
               "expression": "profile_id",
@@ -445,7 +459,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "promo_weight_contribution_percent_range": {
+          "name": "promo_weight_contribution_percent_range",
+          "value": "\"promo_weight\".\"contribution_percent\" >= 0 AND \"promo_weight\".\"contribution_percent\" <= 100"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.promo_weight_profile": {
