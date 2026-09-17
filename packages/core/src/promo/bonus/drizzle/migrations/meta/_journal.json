@@ -15,6 +15,13 @@
       "when": 1789687709950,
       "tag": "0001_talented_human_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789685935745,
+      "tag": "0002_daily_lady_vermin",
+      "breakpoints": true
     }
   ]
 }

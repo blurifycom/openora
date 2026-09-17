@@ -20,6 +20,7 @@ import {
 import { BonusGrantSourceSchema } from '../contract/index.js';
 import {
   promoGrant,
+  promoGrantEntry,
   promoWeight,
   promoWeightProfile,
   type GrantTermsSnapshot,
@@ -94,6 +95,16 @@ export class GrantService implements BonusGrantCommands {
     if (!inserted) {
       return this.resolveReplay(tx, args, wageringRequired);
     }
+
+    // The opening ledger row. Written only on the created path, so a replay leaves the ledger
+    // alone and the sum of a grant's entries still equals its bonus balance.
+    await tx.insert(promoGrantEntry).values({
+      grantId: inserted.id,
+      userId: args.userId,
+      type: 'grant',
+      bonusAmount: args.amount,
+      balanceAfter: args.amount,
+    });
 
     await this.audit.recordInTransaction(tx, {
       ...(args.actor.type === 'admin' ? { actorId: args.actor.id } : {}),

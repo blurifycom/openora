@@ -67,4 +67,24 @@ export const BONUS_GRANT_SOURCES = [
 ] as const;
 export const BonusGrantSourceSchema = z.enum(BONUS_GRANT_SOURCES);
 
+/**
+ * One movement on a grant's own ledger. Append-only: a correction is another row, never an edit,
+ * because the spec demands every credit, debit, conversion and forfeiture be recorded immutably.
+ *
+ * `stake` and `win` carry the provider round, which is how a win finds the grant that funded the
+ * bet. `reversal` undoes a voided round: the bonus stake goes back and its wagering progress with
+ * it, because money returned without progress returned is free wagering bought by a rollback.
+ */
+export const BONUS_GRANT_ENTRY_TYPES = [
+  'grant',
+  'stake',
+  'win',
+  'reversal',
+  'convert',
+  'forfeit',
+  'expire',
+] as const;
+export type BonusGrantEntryType = (typeof BONUS_GRANT_ENTRY_TYPES)[number];
+export const BonusGrantEntryTypeSchema = z.enum(BONUS_GRANT_ENTRY_TYPES);
+
 export const bonusContract = {};
