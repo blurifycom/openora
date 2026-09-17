@@ -21,10 +21,15 @@ export type CatalogActor = {
 } & ClientMeta;
 
 // A game is player-visible only when the game itself and its provider are both
-// active. Single owner for the "enabled" definition - the public list/search
-// filters and the startRound gate must never drift apart.
+// active and the vendor has not marked the game unavailable. Single owner for the
+// "playable" definition - the public list/search filters and the startRound gate
+// must never drift apart.
 export function playableGameCondition() {
-  return and(eq(game.isActive, true), eq(gameProvider.isActive, true));
+  return and(
+    eq(game.isActive, true),
+    eq(game.isUnavailable, false),
+    eq(gameProvider.isActive, true),
+  );
 }
 
 export function countWhere(condition: SQL | undefined) {
@@ -69,10 +74,10 @@ export function toGameTagSummary(record: GameTag) {
 }
 
 export function isGamePlayable(
-  target: Pick<Game, 'isActive'>,
+  target: Pick<Game, 'isActive' | 'isUnavailable'>,
   provider: Pick<GameProvider, 'isActive'>,
 ): boolean {
-  return target.isActive === true && provider.isActive === true;
+  return target.isActive === true && target.isUnavailable === false && provider.isActive === true;
 }
 
 // Groups batched join rows per owner id, keeping the query's row order in each list.

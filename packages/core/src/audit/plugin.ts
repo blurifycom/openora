@@ -857,6 +857,17 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'gaming.game.availability_changed') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'game',
+      resourceId: str(p['gameId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
   // Wallet events carry the txn ref in transactionId; surface it as resourceId so
   // a transaction reference is searchable (it otherwise stays buried in `after`).
   // actorId = the resolved playerId (the wallet owner).
@@ -1113,6 +1124,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.tag.updated',
   'gaming.tag.deleted',
   'gaming.game.updated',
+  'gaming.game.availability_changed',
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.user.ignored',

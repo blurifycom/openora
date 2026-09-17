@@ -56,6 +56,7 @@ export default {
     );
     ctx.provide(GAMING_COMMANDS, (c) => ({
       accumulateExternalRound: (tx, args) => gamingService(c).accumulateExternalRound(tx, args),
+      setGameAvailability: (args) => gamingService(c).setGameAvailability(args),
     }));
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
