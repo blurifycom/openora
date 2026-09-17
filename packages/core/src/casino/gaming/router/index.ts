@@ -29,6 +29,7 @@ import {
   GameProviderVendorIdTakenError,
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
+import { GameBulkService, GameBulkTooManyGamesError } from '../service/game-bulk.service.js';
 import { RgLimitExceededError } from '@openora/core/contracts';
 
 export function createGamingRouter({
@@ -36,12 +37,14 @@ export function createGamingRouter({
   providers,
   categories,
   tags,
+  bulk,
   adminGuard,
 }: {
   gaming: GamingService;
   providers: GameProviderService;
   categories: GameCategoryService;
   tags: GameTagService;
+  bulk: GameBulkService;
   adminGuard: AdminGuard;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
@@ -221,6 +224,29 @@ export function createGamingRouter({
     getCatalogStats: os.getCatalogStats.handler(async ({ context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
       return gaming.getCatalogStats();
+    }),
+
+    bulkSetGamesActive: os.bulkSetGamesActive.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
+        bulk.bulkSetGamesActive({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    bulkAddGameTags: os.bulkAddGameTags.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors(
+        { NOT_FOUND: GameTagNotFoundError, BAD_REQUEST: GameBulkTooManyGamesError },
+        () => bulk.bulkAddGameTags({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    bulkAddGameCategories: os.bulkAddGameCategories.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors(
+        { NOT_FOUND: GameCategoryNotFoundError, BAD_REQUEST: GameBulkTooManyGamesError },
+        () => bulk.bulkAddGameCategories({ ...input, actorId: userId, ip, userAgent }),
+      );
     }),
   });
 }

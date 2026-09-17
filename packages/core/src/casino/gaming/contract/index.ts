@@ -302,6 +302,61 @@ export const UpdateGameInputSchema = z.object({
 });
 export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
 
+const BulkGameTargetFieldsSchema = z.object({
+  providerIds: z.array(UuidSchema).max(50).optional(),
+  gameIds: z.array(UuidSchema).max(500).optional(),
+});
+
+function hasBulkTarget(target: { providerIds?: string[]; gameIds?: string[] }) {
+  return (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0;
+}
+
+function bulkTargetRefinement() {
+  return {
+    message: 'Provide at least one non-empty providerIds or gameIds',
+    path: ['gameIds'],
+  };
+}
+
+export const BulkSetGamesActiveInputSchema = BulkGameTargetFieldsSchema.extend({
+  isActive: z.boolean(),
+}).refine(hasBulkTarget, bulkTargetRefinement());
+export type BulkSetGamesActiveInput = z.infer<typeof BulkSetGamesActiveInputSchema>;
+
+export const BulkAddGameTagsInputSchema = BulkGameTargetFieldsSchema.extend({
+  tagIds: z.array(UuidSchema).min(1).max(50),
+}).refine(hasBulkTarget, bulkTargetRefinement());
+export type BulkAddGameTagsInput = z.infer<typeof BulkAddGameTagsInputSchema>;
+
+export const BulkAddGameCategoriesInputSchema = BulkGameTargetFieldsSchema.extend({
+  categoryIds: z.array(UuidSchema).min(1).max(50),
+}).refine(hasBulkTarget, bulkTargetRefinement());
+export type BulkAddGameCategoriesInput = z.infer<typeof BulkAddGameCategoriesInputSchema>;
+
+const BulkNotFoundSchema = z.object({
+  gameIds: z.array(UuidSchema),
+  providerIds: z.array(UuidSchema),
+});
+
+const BulkCountSchema = z.object({
+  updatedCount: z.number().int().nonnegative(),
+  unchangedCount: z.number().int().nonnegative(),
+});
+
+export const BulkAddGameLinksOutputSchema = z.object({
+  games: BulkCountSchema,
+  notFound: BulkNotFoundSchema,
+});
+export type BulkAddGameLinksOutput = z.infer<typeof BulkAddGameLinksOutputSchema>;
+
+export const BulkSetGamesActiveOutputSchema = z.object({
+  games: BulkCountSchema,
+  providers: BulkCountSchema,
+  notFound: BulkNotFoundSchema,
+  unplayableGameIds: z.array(UuidSchema),
+});
+export type BulkSetGamesActiveOutput = z.infer<typeof BulkSetGamesActiveOutputSchema>;
+
 export const gamingAdminContract = {
   listAdminProviders: oc
     .route({ method: 'GET', path: '/backoffice/gaming/providers' })
@@ -381,4 +436,19 @@ export const gamingAdminContract = {
   getCatalogStats: oc
     .route({ method: 'GET', path: '/backoffice/gaming/stats' })
     .output(CatalogStatsSchema),
+
+  bulkSetGamesActive: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/active' })
+    .input(BulkSetGamesActiveInputSchema)
+    .output(BulkSetGamesActiveOutputSchema),
+
+  bulkAddGameTags: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/tags' })
+    .input(BulkAddGameTagsInputSchema)
+    .output(BulkAddGameLinksOutputSchema),
+
+  bulkAddGameCategories: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/categories' })
+    .input(BulkAddGameCategoriesInputSchema)
+    .output(BulkAddGameLinksOutputSchema),
 };

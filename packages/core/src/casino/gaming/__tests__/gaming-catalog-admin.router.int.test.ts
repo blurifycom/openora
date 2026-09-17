@@ -27,6 +27,7 @@ import { GamingService } from '../service/gaming.service.js';
 import { GameCategoryService } from '../service/game-category.service.js';
 import { GameTagService } from '../service/game-tag.service.js';
 import { GameProviderService } from '../service/game-provider.service.js';
+import { GameBulkService } from '../service/game-bulk.service.js';
 
 const CTX = testContext();
 
@@ -59,8 +60,9 @@ function routerWith(adminGuard: AdminGuard) {
   const providers = new GameProviderService(db.drizzle, events);
   const categories = new GameCategoryService(db.drizzle, events);
   const tags = new GameTagService(db.drizzle, events);
+  const bulk = new GameBulkService(db.drizzle, events);
   return {
-    router: createGamingRouter({ gaming, providers, categories, tags, adminGuard }),
+    router: createGamingRouter({ gaming, providers, categories, tags, bulk, adminGuard }),
     events,
   };
 }
@@ -150,6 +152,39 @@ const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promi
   {
     name: 'getCatalogStats',
     invoke: (r) => call(r.getCatalogStats, undefined, { context: CTX }),
+  },
+  {
+    name: 'bulkSetGamesActive',
+    invoke: (r) =>
+      call(
+        r.bulkSetGamesActive,
+        { gameIds: ['00000000-0000-4000-8000-000000000000'], isActive: true },
+        { context: CTX },
+      ),
+  },
+  {
+    name: 'bulkAddGameTags',
+    invoke: (r) =>
+      call(
+        r.bulkAddGameTags,
+        {
+          gameIds: ['00000000-0000-4000-8000-000000000000'],
+          tagIds: ['00000000-0000-4000-8000-000000000001'],
+        },
+        { context: CTX },
+      ),
+  },
+  {
+    name: 'bulkAddGameCategories',
+    invoke: (r) =>
+      call(
+        r.bulkAddGameCategories,
+        {
+          gameIds: ['00000000-0000-4000-8000-000000000000'],
+          categoryIds: ['00000000-0000-4000-8000-000000000001'],
+        },
+        { context: CTX },
+      ),
   },
 ];
 

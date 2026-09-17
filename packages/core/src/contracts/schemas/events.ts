@@ -445,6 +445,7 @@ export const domainEventSchemas = {
   'gaming.provider.updated': authContextBase.extend({
     providerId: UuidSchema,
     actorId: UuidSchema,
+    bulkOperationId: UuidSchema.optional(),
     before: z.object({
       slug: z.string(),
       name: z.string(),
@@ -539,6 +540,41 @@ export const domainEventSchemas = {
       metadata: z.unknown().nullable(),
     }),
   }),
+  'gaming.games.bulk_updated': z.discriminatedUnion('operation', [
+    z
+      .object({
+        operation: z.literal('set_active'),
+        actorId: UuidSchema,
+        bulkOperationId: UuidSchema,
+        target: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
+        isActive: z.boolean(),
+        changedGameIds: z.array(UuidSchema),
+        changedProviderIds: z.array(UuidSchema),
+        notFound: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
+      })
+      .extend(authContextBase.shape),
+    z
+      .object({
+        operation: z.literal('add_tags'),
+        actorId: UuidSchema,
+        target: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
+        tagIds: z.array(UuidSchema),
+        addedLinks: z.array(z.object({ gameId: UuidSchema, tagIds: z.array(UuidSchema) })),
+        notFound: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
+      })
+      .extend(authContextBase.shape),
+    z
+      .object({
+        operation: z.literal('add_categories'),
+        actorId: UuidSchema,
+        target: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
+        categoryIds: z.array(UuidSchema),
+        addedLinks: z.array(z.object({ gameId: UuidSchema, categoryIds: z.array(UuidSchema) })),
+        notFound: z.object({ gameIds: z.array(UuidSchema), providerIds: z.array(UuidSchema) }),
+      })
+      .extend(authContextBase.shape),
+  ]),
+
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.
