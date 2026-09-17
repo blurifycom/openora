@@ -7,6 +7,9 @@ import {
   UuidSchema,
 } from './common.js';
 import {
+  GameAddedCategoryLinksSchema,
+  GameAddedTagLinksSchema,
+  GameBulkIdsSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
   GameTagSnapshotSchema,
@@ -73,6 +76,10 @@ const tagPlayerEventBase = actorReasonBase
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
+
+const gameBulkEventBase = z
+  .object({ actorId: UuidSchema, target: GameBulkIdsSchema, notFound: GameBulkIdsSchema })
+  .extend(authContextBase.shape);
 
 const gameGeoRuleEventState = z.object({
   id: UuidSchema,
@@ -445,6 +452,7 @@ export const domainEventSchemas = {
   'gaming.provider.updated': authContextBase.extend({
     providerId: UuidSchema,
     actorId: UuidSchema,
+    bulkOperationId: UuidSchema.optional(),
     before: z.object({
       slug: z.string(),
       name: z.string(),
@@ -539,11 +547,31 @@ export const domainEventSchemas = {
       metadata: z.unknown().nullable(),
     }),
   }),
+  'gaming.games.bulk_updated': z.discriminatedUnion('operation', [
+    gameBulkEventBase.extend({
+      operation: z.literal('set_active'),
+      bulkOperationId: UuidSchema,
+      isActive: z.boolean(),
+      changedGameIds: z.array(UuidSchema),
+      changedProviderIds: z.array(UuidSchema),
+    }),
+    gameBulkEventBase.extend({
+      operation: z.literal('add_tags'),
+      tagIds: z.array(UuidSchema),
+      addedLinks: GameAddedTagLinksSchema,
+    }),
+    gameBulkEventBase.extend({
+      operation: z.literal('add_categories'),
+      categoryIds: z.array(UuidSchema),
+      addedLinks: GameAddedCategoryLinksSchema,
+    }),
+  ]),
   'gaming.game.availability_changed': z.object({
     gameId: UuidSchema,
     before: z.object({ isUnavailable: z.boolean() }),
     after: z.object({ isUnavailable: z.boolean() }),
   }),
+
   // A currency swap filled: the player's `fromCurrency` balance was debited and
   // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
   // filled, never the quoted number.
