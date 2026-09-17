@@ -57,8 +57,10 @@ export { BONUS_GRANTS } from './bonus-grants.js';
 
 export type {
   BonusWageringCommands,
-  BonusContributeArgs,
-  BonusContributeOutcome,
+  BonusWagerArgs,
+  BonusWagerOutcome,
+  BonusSettleArgs,
+  BonusSettleOutcome,
 } from './bonus-wagering.js';
 export { BONUS_WAGERING } from './bonus-wagering.js';
 
