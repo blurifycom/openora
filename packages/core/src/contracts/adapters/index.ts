@@ -297,6 +297,7 @@ export { ADMIN_PLAYER_ACTIVITY } from './admin-player-activity.js';
 export type {
   IdentityServiceOptions,
   IdentityLockoutOptions,
+  IdentityLoginIpRateLimitOptions,
   SessionCommands,
 } from './identity.js';
 export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js';

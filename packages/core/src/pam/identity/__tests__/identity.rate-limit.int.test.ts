@@ -32,8 +32,9 @@ function withTemplateRenderer(
   });
 }
 
-const { getSessionMock } = vi.hoisted(() => ({
+const { getSessionMock, signInEmailMock } = vi.hoisted(() => ({
   getSessionMock: vi.fn().mockResolvedValue(null),
+  signInEmailMock: vi.fn(),
 }));
 
 const rejectedOtpResponse = () =>
@@ -49,9 +50,11 @@ vi.mock('@openora/core/server', async (importOriginal) => {
   return {
     ...actual,
     createAuth: vi.fn(() => ({
+      options: { session: {} },
       api: {
         getSession: getSessionMock,
         signUpEmail: vi.fn(),
+        signInEmail: signInEmailMock,
         requestEmailChangeEmailOTP: vi.fn().mockResolvedValue(rejectedOtpResponse()),
         changeEmailEmailOTP: vi.fn().mockResolvedValue(rejectedOtpResponse()),
       },
@@ -81,6 +84,7 @@ beforeEach(async () => {
   await redis.flush();
   getSessionMock.mockReset();
   getSessionMock.mockResolvedValue(null);
+  signInEmailMock.mockReset();
 });
 
 describe('IdentityService - rate limiting (real Redis)', () => {
@@ -164,15 +168,35 @@ describe('IdentityService - per-IP login rate limit (real Redis)', () => {
     for (let i = 0; i < 100; i++) {
       await limiter.consume(`login-ip:${abusiveIp}`, { limit: 100, windowMs: 15 * 60 * 1000 });
     }
+    // signInEmail is a bare vi.fn() elsewhere in this file, so an unthrottled login would
+    // reject on that undefined call too - only a stubbed success proves the IP gate, not
+    // just the per-email gate, let this specific request through.
+    signInEmailMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          user: {
+            id: 'other-account-id',
+            email: 'other-account@x.dev',
+            name: 'Other Account',
+            emailVerified: true,
+            createdAt: '2020-01-01T00:00:00.000Z',
+            updatedAt: '2020-01-01T00:00:00.000Z',
+          },
+          token: 'tok',
+          session: { expiresAt: '2030-01-01T00:00:00.000Z' },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
-    await expect(
-      svc.login(
-        { email: 'other-account@x.dev', password: 'password123' },
-        { 'x-real-ip': '203.0.113.42' },
-        new Headers(),
-      ),
-    ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    const result = await svc.login(
+      { email: 'other-account@x.dev', password: 'password123' },
+      { 'x-real-ip': '203.0.113.42' },
+      new Headers(),
+    );
+
+    expect(result).toMatchObject({ session: { token: 'tok' } });
   });
 
   it('skips the per-IP gate when the request carries no IP, rather than bucketing under a shared key', async () => {
