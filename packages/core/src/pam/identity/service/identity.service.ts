@@ -864,20 +864,23 @@ export class IdentityService {
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
-    await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
-    // Skipped when the IP is unknown (no trusted proxy header) rather than bucketed under
-    // a shared 'unknown' key - that shared key would let one client's traffic exhaust the
-    // budget for every other client with no IP, which is a self-inflicted DoS.
+    // IP gate runs before the per-email one: it is the broad, cheap-to-refill resource
+    // (100/15min) guarding the narrow, scarce one (10/5min) - an IP that has already
+    // tripped its own throttle must not keep spending a targeted email's budget on every
+    // further attempt. Falls back to a shared 'unknown' bucket when the IP can't be
+    // derived, matching every sibling per-IP key in this file (register-ip:,
+    // verify-email-ip:, change-email-ip:, confirm-email-change-ip:) - skipping the gate
+    // outright on a missing IP would let an attacker disable this protection for free by
+    // simply not sending the header.
     //
     // `ip` comes from extractClientMeta(), which reads X-Real-IP unconditionally (see its
     // doc comment) - a deployment MUST terminate at a reverse proxy that overwrites
     // X-Real-IP with the real peer address (eg nginx `proxy_set_header X-Real-IP
     // $remote_addr`) before this protection means anything; the same assumption already
-    // applies to register-ip:/verify-email-ip:/change-email-ip:/confirm-email-change-ip:
-    // elsewhere in this file.
+    // applies to the sibling keys above.
     const ipRateLimitOptions = this.options?.loginIpRateLimit;
-    if (ip && (ipRateLimitOptions?.enabled ?? true)) {
-      await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip), {
+    if (ipRateLimitOptions?.enabled ?? true) {
+      await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip ?? 'unknown'), {
         ...DEFAULT_LOGIN_IP_RATE_LIMIT,
         ...(ipRateLimitOptions?.limit !== undefined ? { limit: ipRateLimitOptions.limit } : {}),
         ...(ipRateLimitOptions?.windowMs !== undefined
@@ -885,6 +888,8 @@ export class IdentityService {
           : {}),
       });
     }
+
+    await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate

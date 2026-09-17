@@ -162,6 +162,32 @@ describe('IdentityService - per-IP login rate limit (real Redis)', () => {
     });
   });
 
+  it('an IP already over its own limit is rejected before it can spend a targeted email budget', async () => {
+    const ip = '203.0.113.45';
+    const targetEmail = 'victim@x.dev';
+    const limiter = makeLimiter();
+    for (let i = 0; i < 100; i++) {
+      await limiter.consume(`login-ip:${ip}`, { limit: 100, windowMs: 15 * 60 * 1000 });
+    }
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    await expect(
+      svc.login(
+        { email: targetEmail, password: 'password123' },
+        { 'x-real-ip': ip },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+
+    // The email's own 10/5min budget must still be fully intact - the IP gate rejected
+    // first, so it never touched login:<targetEmail>.
+    for (let i = 0; i < 10; i++) {
+      await expect(
+        limiter.consume(`login:${targetEmail}`, { limit: 10, windowMs: 5 * 60 * 1000 }),
+      ).resolves.toMatchObject({ allowed: true });
+    }
+  });
+
   it('buckets IPs separately, so one abusive IP cannot stall logins from another', async () => {
     const abusiveIp = '203.0.113.41';
     const limiter = makeLimiter();
@@ -199,22 +225,20 @@ describe('IdentityService - per-IP login rate limit (real Redis)', () => {
     expect(result).toMatchObject({ session: { token: 'tok' } });
   });
 
-  it('skips the per-IP gate when the request carries no IP, rather than bucketing under a shared key', async () => {
+  it('falls back to a shared "unknown" bucket when the request carries no IP, matching the sibling per-IP keys', async () => {
     const consume = vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 });
     const limiter = mock<RateLimiterAdapter>({ consume, reset: vi.fn() });
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
-    // No 'x-real-ip' header, so extractClientMeta yields ip: null. A shared 'unknown'
-    // bucket would let one IP-less client's traffic exhaust the budget for every other
-    // IP-less client - a self-inflicted DoS - so the gate must be skipped outright.
+    // No 'x-real-ip' header, so extractClientMeta yields ip: null. Skipping the gate
+    // outright here would let an attacker disable it for free by simply not sending the
+    // header - register-ip:/verify-email-ip:/change-email-ip:/confirm-email-change-ip:
+    // all fall back to a shared 'unknown' bucket instead, and this key does the same.
     await expect(
       svc.login({ email: 'no-ip-caller@x.dev', password: 'password123' }, {}, new Headers()),
     ).rejects.toThrow();
 
-    expect(consume).not.toHaveBeenCalledWith(
-      expect.stringMatching(/^login-ip:/),
-      expect.anything(),
-    );
+    expect(consume).toHaveBeenCalledWith('login-ip:unknown', expect.anything());
   });
 
   it('can be disabled via IDENTITY_OPTIONS.loginIpRateLimit.enabled', async () => {
@@ -466,7 +490,15 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
   }
 
   it('passes onUnavailable: deny on the login: key', async () => {
-    const { limiter, consume } = denyingLimiter();
+    // Only the email bucket denies here, so the login-ip: consume ahead of it (the IP
+    // gate now runs first) must allow - otherwise it would short-circuit before the
+    // email gate runs at all.
+    const consume = vi.fn(async (key: string) =>
+      key.startsWith('login:')
+        ? { allowed: false, retryAfterMs: 1 }
+        : { allowed: true, retryAfterMs: 0 },
+    );
+    const limiter = mock<RateLimiterAdapter>({ consume });
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
