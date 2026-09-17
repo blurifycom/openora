@@ -610,10 +610,10 @@ describe('bulk route 5,000-game cap', () => {
     expect(await gameTagIdsFor(gameIds[0]!)).toEqual([]);
   }, 30_000);
 
-  it('adds 50 tags across exactly 5,000 games (right at the cap) without hitting the bind-parameter limit', async () => {
+  it('adds 7 tags across exactly 5,000 games (35,000 links, past the bind-parameter limit of a VALUES insert)', async () => {
     const provider = await seedProvider();
     const gameIds = await seedManyGames(provider.id, 5000);
-    const tagIds = await seedManyTags(50);
+    const tagIds = await seedManyTags(7);
     const { router } = routerWith(allowingGuard());
 
     const result = await call(
