@@ -6,7 +6,6 @@ import {
   makeNotFoundError,
   makeOwnershipError,
   serializeRow,
-  withAdvisoryXactLock,
   withAdvisoryXactLocks,
   type EventBus,
 } from '@openora/core/server';
@@ -20,18 +19,14 @@ import {
 } from '../schema/index.js';
 import type {
   AddGeoRuleInput,
-  BulkDeleteGameGeoRulesInput,
-  BulkDeleteProviderGeoRulesInput,
-  BulkUpsertGameGeoRulesInput,
-  BulkUpsertProviderGeoRulesInput,
-  DeleteGameGeoRuleInput,
-  DeleteProviderGeoRuleInput,
+  DeleteGameGeoRulesInput,
+  DeleteProviderGeoRulesInput,
+  UpsertGameGeoRulesInput,
+  UpsertProviderGeoRulesInput,
   ListGameGeoRulesInput,
   ListProviderGeoRulesInput,
   SetGlobalKycConfigInput,
   UpsertCountryRuleInput,
-  UpsertGameGeoRuleInput,
-  UpsertProviderGeoRuleInput,
 } from '../contract/index.js';
 import {
   normalizeCountryCode,
@@ -143,8 +138,8 @@ export const GameGeoRuleNotFoundError = makeNotFoundError('GameGeoRule');
 export const GeoRuleGameNotFoundError = makeNotFoundError('Game');
 
 function gameGeoRuleLockKey(
-  gameId: UpsertGameGeoRuleInput['gameId'],
-  countryCode: UpsertGameGeoRuleInput['countryCode'],
+  gameId: UpsertGameGeoRulesInput['gameId'],
+  countryCode: UpsertGameGeoRulesInput['countryCodes'][number],
 ): string {
   return `game-geo-rule:${gameId}:${countryCode}`;
 }
@@ -154,8 +149,8 @@ export const ProviderGeoRuleNotFoundError = makeNotFoundError('ProviderGeoRule')
 export const GeoRuleProviderNotFoundError = makeNotFoundError('GameProvider');
 
 function providerGeoRuleLockKey(
-  providerId: UpsertProviderGeoRuleInput['providerId'],
-  countryCode: UpsertProviderGeoRuleInput['countryCode'],
+  providerId: UpsertProviderGeoRulesInput['providerId'],
+  countryCode: UpsertProviderGeoRulesInput['countryCodes'][number],
 ): string {
   return `provider-geo-rule:${providerId}:${countryCode}`;
 }
@@ -489,19 +484,7 @@ export class ComplianceService {
     return rows.map(toGeoRuleView);
   }
 
-  async upsertGameGeoRule(input: UpsertGameGeoRuleInput, actorId: User['id'], meta: ClientMeta) {
-    const { countryCode, ...rest } = input;
-    return findOneOrThrow(
-      await this.bulkUpsertGameGeoRules({ ...rest, countryCodes: [countryCode] }, actorId, meta),
-      new GameGeoRuleNotFoundError(`${input.gameId}:${countryCode}`),
-    );
-  }
-
-  async bulkUpsertGameGeoRules(
-    input: BulkUpsertGameGeoRulesInput,
-    actorId: User['id'],
-    meta: ClientMeta,
-  ) {
+  async upsertGameGeoRules(input: UpsertGameGeoRulesInput, actorId: User['id'], meta: ClientMeta) {
     const countryCodes = [...new Set(input.countryCodes)].sort();
     const changes = await this.drizzle.db.transaction(async (tx) => {
       findOneOrThrow(
@@ -557,48 +540,7 @@ export class ComplianceService {
     return changes.map(({ after }) => after);
   }
 
-  async deleteGameGeoRule(input: DeleteGameGeoRuleInput, actorId: User['id'], meta: ClientMeta) {
-    const before = await this.drizzle.db.transaction(async (tx) => {
-      const existing = findOneOrThrow(
-        await tx
-          .select({ gameId: gameGeoRule.gameId, countryCode: gameGeoRule.countryCode })
-          .from(gameGeoRule)
-          .where(eq(gameGeoRule.id, input.id)),
-        new GameGeoRuleNotFoundError(input.id),
-      );
-
-      return withAdvisoryXactLock(
-        tx,
-        gameGeoRuleLockKey(existing.gameId, existing.countryCode),
-        async () => {
-          const row = findOneOrThrow(
-            await tx.delete(gameGeoRule).where(eq(gameGeoRule.id, input.id)).returning(),
-            new GameGeoRuleNotFoundError(input.id),
-          );
-          return serializeGeoRule(row);
-        },
-      );
-    });
-
-    this.events.emit('compliance.game-geo-rule.deleted', {
-      ruleId: before.id,
-      gameId: before.gameId,
-      countryCode: before.countryCode,
-      reason: input.reason,
-      before,
-      after: null,
-      actorId,
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-    });
-    return before;
-  }
-
-  async bulkDeleteGameGeoRules(
-    input: BulkDeleteGameGeoRulesInput,
-    actorId: User['id'],
-    meta: ClientMeta,
-  ) {
+  async deleteGameGeoRules(input: DeleteGameGeoRulesInput, actorId: User['id'], meta: ClientMeta) {
     const countryCodes = [...new Set(input.countryCodes)].sort();
     const deleted = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLocks(
@@ -657,24 +599,8 @@ export class ComplianceService {
     return { items: rows.map(serializeGeoRule), total: Number(n), page, limit };
   }
 
-  async upsertProviderGeoRule(
-    input: UpsertProviderGeoRuleInput,
-    actorId: User['id'],
-    meta: ClientMeta,
-  ) {
-    const { countryCode, ...rest } = input;
-    return findOneOrThrow(
-      await this.bulkUpsertProviderGeoRules(
-        { ...rest, countryCodes: [countryCode] },
-        actorId,
-        meta,
-      ),
-      new ProviderGeoRuleNotFoundError(`${input.providerId}:${countryCode}`),
-    );
-  }
-
-  async bulkUpsertProviderGeoRules(
-    input: BulkUpsertProviderGeoRulesInput,
+  async upsertProviderGeoRules(
+    input: UpsertProviderGeoRulesInput,
     actorId: User['id'],
     meta: ClientMeta,
   ) {
@@ -736,52 +662,8 @@ export class ComplianceService {
     return changes.map(({ after }) => after);
   }
 
-  async deleteProviderGeoRule(
-    input: DeleteProviderGeoRuleInput,
-    actorId: User['id'],
-    meta: ClientMeta,
-  ) {
-    const before = await this.drizzle.db.transaction(async (tx) => {
-      const existing = findOneOrThrow(
-        await tx
-          .select({
-            providerId: providerGeoRule.providerId,
-            countryCode: providerGeoRule.countryCode,
-          })
-          .from(providerGeoRule)
-          .where(eq(providerGeoRule.id, input.id)),
-        new ProviderGeoRuleNotFoundError(input.id),
-      );
-
-      return withAdvisoryXactLock(
-        tx,
-        providerGeoRuleLockKey(existing.providerId, existing.countryCode),
-        async () => {
-          const row = findOneOrThrow(
-            await tx.delete(providerGeoRule).where(eq(providerGeoRule.id, input.id)).returning(),
-            new ProviderGeoRuleNotFoundError(input.id),
-          );
-          return serializeGeoRule(row);
-        },
-      );
-    });
-
-    this.events.emit('compliance.provider-geo-rule.deleted', {
-      ruleId: before.id,
-      providerId: before.providerId,
-      countryCode: before.countryCode,
-      reason: input.reason,
-      before,
-      after: null,
-      actorId,
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-    });
-    return before;
-  }
-
-  async bulkDeleteProviderGeoRules(
-    input: BulkDeleteProviderGeoRulesInput,
+  async deleteProviderGeoRules(
+    input: DeleteProviderGeoRulesInput,
     actorId: User['id'],
     meta: ClientMeta,
   ) {

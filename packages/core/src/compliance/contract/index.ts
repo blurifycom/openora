@@ -227,60 +227,37 @@ export const SetGlobalKycConfigInputSchema = z
   .strict();
 export type SetGlobalKycConfigInput = z.infer<typeof SetGlobalKycConfigInputSchema>;
 
-export const UpsertGameGeoRuleInputSchema = GameGeoRuleSchema.pick({
-  gameId: true,
-  countryCode: true,
-  reason: true,
-});
-export type UpsertGameGeoRuleInput = z.infer<typeof UpsertGameGeoRuleInputSchema>;
-
 // ISO 3166-1 alpha-2 assigns 249 codes; the cap lets one request cover every country.
 const GeoRuleCountryCodesSchema = z.array(CountryCodeSchema).min(1).max(250);
 
-export const BulkUpsertGameGeoRulesInputSchema = GameGeoRuleSchema.pick({
+export const UpsertGameGeoRulesInputSchema = GameGeoRuleSchema.pick({
   gameId: true,
   reason: true,
 }).extend({ countryCodes: GeoRuleCountryCodesSchema });
-export type BulkUpsertGameGeoRulesInput = z.infer<typeof BulkUpsertGameGeoRulesInputSchema>;
+export type UpsertGameGeoRulesInput = z.infer<typeof UpsertGameGeoRulesInputSchema>;
 
-export const BulkDeleteGameGeoRulesInputSchema = GameGeoRuleSchema.pick({
+export const DeleteGameGeoRulesInputSchema = GameGeoRuleSchema.pick({
   gameId: true,
   reason: true,
 }).extend({ countryCodes: GeoRuleCountryCodesSchema });
-export type BulkDeleteGameGeoRulesInput = z.infer<typeof BulkDeleteGameGeoRulesInputSchema>;
-
-export const DeleteGameGeoRuleInputSchema = GameGeoRuleSchema.pick({ id: true, reason: true });
-export type DeleteGameGeoRuleInput = z.infer<typeof DeleteGameGeoRuleInputSchema>;
+export type DeleteGameGeoRulesInput = z.infer<typeof DeleteGameGeoRulesInputSchema>;
 
 export const ListGameGeoRulesInputSchema = PageQuerySchema.extend({
   gameIds: z.array(UuidSchema).min(1).max(100).optional(),
 });
 export type ListGameGeoRulesInput = z.infer<typeof ListGameGeoRulesInputSchema>;
 
-export const UpsertProviderGeoRuleInputSchema = ProviderGeoRuleSchema.pick({
-  providerId: true,
-  countryCode: true,
-  reason: true,
-});
-export type UpsertProviderGeoRuleInput = z.infer<typeof UpsertProviderGeoRuleInputSchema>;
-
-export const BulkUpsertProviderGeoRulesInputSchema = ProviderGeoRuleSchema.pick({
+export const UpsertProviderGeoRulesInputSchema = ProviderGeoRuleSchema.pick({
   providerId: true,
   reason: true,
 }).extend({ countryCodes: GeoRuleCountryCodesSchema });
-export type BulkUpsertProviderGeoRulesInput = z.infer<typeof BulkUpsertProviderGeoRulesInputSchema>;
+export type UpsertProviderGeoRulesInput = z.infer<typeof UpsertProviderGeoRulesInputSchema>;
 
-export const BulkDeleteProviderGeoRulesInputSchema = ProviderGeoRuleSchema.pick({
+export const DeleteProviderGeoRulesInputSchema = ProviderGeoRuleSchema.pick({
   providerId: true,
   reason: true,
 }).extend({ countryCodes: GeoRuleCountryCodesSchema });
-export type BulkDeleteProviderGeoRulesInput = z.infer<typeof BulkDeleteProviderGeoRulesInputSchema>;
-
-export const DeleteProviderGeoRuleInputSchema = ProviderGeoRuleSchema.pick({
-  id: true,
-  reason: true,
-});
-export type DeleteProviderGeoRuleInput = z.infer<typeof DeleteProviderGeoRuleInputSchema>;
+export type DeleteProviderGeoRulesInput = z.infer<typeof DeleteProviderGeoRulesInputSchema>;
 
 export const ListProviderGeoRulesInputSchema = PageQuerySchema.extend({
   providerIds: z.array(UuidSchema).min(1).max(100).optional(),
@@ -319,24 +296,14 @@ export const complianceContract = {
     .route({ method: 'GET', path: '/compliance/geo-rules' })
     .output(z.array(GeoRuleSchema)),
 
-  upsertGameGeoRule: oc
-    .route({ method: 'PUT', path: '/compliance/game-geo-rules' })
-    .input(UpsertGameGeoRuleInputSchema)
-    .output(GameGeoRuleSchema),
-
-  bulkUpsertGameGeoRules: oc
-    .route({ method: 'PUT', path: '/compliance/game-geo-rules/bulk' })
-    .input(BulkUpsertGameGeoRulesInputSchema)
+  upsertGameGeoRules: oc
+    .route({ method: 'PUT', path: '/compliance/game-geo-rules/{gameId}' })
+    .input(UpsertGameGeoRulesInputSchema)
     .output(z.array(GameGeoRuleSchema)),
 
-  deleteGameGeoRule: oc
-    .route({ method: 'DELETE', path: '/compliance/game-geo-rules/{id}' })
-    .input(DeleteGameGeoRuleInputSchema)
-    .output(GameGeoRuleSchema),
-
-  bulkDeleteGameGeoRules: oc
-    .route({ method: 'DELETE', path: '/compliance/game-geo-rules/bulk' })
-    .input(BulkDeleteGameGeoRulesInputSchema)
+  deleteGameGeoRules: oc
+    .route({ method: 'DELETE', path: '/compliance/game-geo-rules/{gameId}' })
+    .input(DeleteGameGeoRulesInputSchema)
     .output(z.array(GameGeoRuleSchema)),
 
   listGameGeoRules: oc
@@ -344,24 +311,14 @@ export const complianceContract = {
     .input(ListGameGeoRulesInputSchema)
     .output(paginated(GameGeoRuleSchema)),
 
-  upsertProviderGeoRule: oc
-    .route({ method: 'PUT', path: '/compliance/provider-geo-rules' })
-    .input(UpsertProviderGeoRuleInputSchema)
-    .output(ProviderGeoRuleSchema),
-
-  bulkUpsertProviderGeoRules: oc
-    .route({ method: 'PUT', path: '/compliance/provider-geo-rules/bulk' })
-    .input(BulkUpsertProviderGeoRulesInputSchema)
+  upsertProviderGeoRules: oc
+    .route({ method: 'PUT', path: '/compliance/provider-geo-rules/{providerId}' })
+    .input(UpsertProviderGeoRulesInputSchema)
     .output(z.array(ProviderGeoRuleSchema)),
 
-  deleteProviderGeoRule: oc
-    .route({ method: 'DELETE', path: '/compliance/provider-geo-rules/{id}' })
-    .input(DeleteProviderGeoRuleInputSchema)
-    .output(ProviderGeoRuleSchema),
-
-  bulkDeleteProviderGeoRules: oc
-    .route({ method: 'DELETE', path: '/compliance/provider-geo-rules/bulk' })
-    .input(BulkDeleteProviderGeoRulesInputSchema)
+  deleteProviderGeoRules: oc
+    .route({ method: 'DELETE', path: '/compliance/provider-geo-rules/{providerId}' })
+    .input(DeleteProviderGeoRulesInputSchema)
     .output(z.array(ProviderGeoRuleSchema)),
 
   listProviderGeoRules: oc

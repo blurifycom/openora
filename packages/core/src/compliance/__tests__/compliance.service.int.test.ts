@@ -585,20 +585,21 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     const { svc, events } = makeService();
     await seedGame(gameId, 'Game');
 
-    const created = await svc.upsertGameGeoRule(
-      { gameId, countryCode: 'US', reason: 'licence restriction' },
+    await svc.upsertGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'licence restriction' },
       actorId,
       { ip: '1.2.3.4', userAgent: 'agent' },
     );
-    await svc.upsertGameGeoRule(
-      { gameId, countryCode: 'US', reason: 'updated restriction' },
+    await svc.upsertGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'updated restriction' },
       actorId,
       { ip: '1.2.3.4', userAgent: 'agent' },
     );
-    await svc.deleteGameGeoRule({ id: created.id, reason: 'licence restored' }, actorId, {
-      ip: '1.2.3.4',
-      userAgent: 'agent',
-    });
+    await svc.deleteGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'licence restored' },
+      actorId,
+      { ip: '1.2.3.4', userAgent: 'agent' },
+    );
 
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.game-geo-rule.upserted',
@@ -632,10 +633,14 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
       [other, 'Other'],
     ] as const) {
       await seedGame(gameId, name);
-      await svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'licence' }, actorId, meta);
+      await svc.upsertGameGeoRules(
+        { gameId, countryCodes: ['US'], reason: 'licence' },
+        actorId,
+        meta,
+      );
     }
-    await svc.upsertGameGeoRule(
-      { gameId: first, countryCode: 'DE', reason: 'licence' },
+    await svc.upsertGameGeoRules(
+      { gameId: first, countryCodes: ['DE'], reason: 'licence' },
       actorId,
       meta,
     );
@@ -666,14 +671,22 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     await seedGame(gameId, 'Concurrent Game');
 
     await Promise.all([
-      svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'first restriction' }, actorId, {
-        ip: null,
-        userAgent: null,
-      }),
-      svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'second restriction' }, actorId, {
-        ip: null,
-        userAgent: null,
-      }),
+      svc.upsertGameGeoRules(
+        { gameId, countryCodes: ['US'], reason: 'first restriction' },
+        actorId,
+        {
+          ip: null,
+          userAgent: null,
+        },
+      ),
+      svc.upsertGameGeoRules(
+        { gameId, countryCodes: ['US'], reason: 'second restriction' },
+        actorId,
+        {
+          ip: null,
+          userAgent: null,
+        },
+      ),
     ]);
 
     const upsertPayloads = events.emit.mock.calls
@@ -765,8 +778,8 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
     const { svc, events } = makeService();
 
     await expect(
-      svc.upsertProviderGeoRule(
-        { providerId: randomUUID(), countryCode: 'US', reason: 'licence restriction' },
+      svc.upsertProviderGeoRules(
+        { providerId: randomUUID(), countryCodes: ['US'], reason: 'licence restriction' },
         randomUUID(),
         { ip: null, userAgent: null },
       ),
@@ -780,23 +793,27 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
     const meta = { ip: '1.2.3.4', userAgent: 'agent' };
     const { svc, events } = makeService();
 
-    const created = await svc.upsertProviderGeoRule(
-      { providerId, countryCode: 'US', reason: 'licence restriction' },
+    const [created] = await svc.upsertProviderGeoRules(
+      { providerId, countryCodes: ['US'], reason: 'licence restriction' },
       actorId,
       meta,
     );
-    await svc.upsertProviderGeoRule(
-      { providerId, countryCode: 'US', reason: 'updated restriction' },
+    await svc.upsertProviderGeoRules(
+      { providerId, countryCodes: ['US'], reason: 'updated restriction' },
       actorId,
       meta,
     );
     expect(
       (await svc.listProviderGeoRules({ providerIds: [providerId], page: 1, limit: 100 })).items,
     ).toEqual([
-      expect.objectContaining({ id: created.id, providerId, reason: 'updated restriction' }),
+      expect.objectContaining({ id: created?.id, providerId, reason: 'updated restriction' }),
     ]);
 
-    await svc.deleteProviderGeoRule({ id: created.id, reason: 'licence restored' }, actorId, meta);
+    await svc.deleteProviderGeoRules(
+      { providerId, countryCodes: ['US'], reason: 'licence restored' },
+      actorId,
+      meta,
+    );
 
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.provider-geo-rule.upserted',
@@ -826,14 +843,14 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
     const meta = { ip: null, userAgent: null };
     const { svc } = makeService();
     for (const providerId of [first, second, other]) {
-      await svc.upsertProviderGeoRule(
-        { providerId, countryCode: 'US', reason: 'licence' },
+      await svc.upsertProviderGeoRules(
+        { providerId, countryCodes: ['US'], reason: 'licence' },
         actorId,
         meta,
       );
     }
-    await svc.upsertProviderGeoRule(
-      { providerId: first, countryCode: 'DE', reason: 'licence' },
+    await svc.upsertProviderGeoRules(
+      { providerId: first, countryCodes: ['DE'], reason: 'licence' },
       actorId,
       meta,
     );
