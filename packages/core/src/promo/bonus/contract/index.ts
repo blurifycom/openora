@@ -11,6 +11,7 @@ import {
   ContributionPercentSchema,
   CurrencyTickerSchema,
   MoneyAmountSchema,
+  PageQuerySchema,
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -66,7 +67,8 @@ export const PlayerGrantSchema = z.object({
 export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const ListPlayerGrantsInputSchema = z.object({
-  /** Absent means every grant the player has ever held, newest first. */
+  ...PageQuerySchema.shape,
+  /** Absent means every status; a terminal grant is never purged, so the history only grows. */
   status: BonusGrantStatusSchema.optional(),
 });
 

@@ -9,7 +9,6 @@ import {
   type WagerTrackingCommands,
 } from '@openora/core/contracts';
 import {
-  makeConflictError,
   moneyAdd,
   moneyCompare,
   moneyDivide,
@@ -26,11 +25,6 @@ import {
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
 
 const ZERO = '0';
-
-export const GrantNotReversibleError = makeConflictError(
-  'GrantNotReversibleError',
-  'the grant that funded this round is no longer active, so the stake cannot be returned to it',
-);
 
 type RoundStake = {
   grantId: PromoGrant['id'];
@@ -161,12 +155,25 @@ export class WageringService implements BonusWageringCommands {
           ? await this.creditBonus(tx, stake.grantId, slice)
           : await this.reverseRound(tx, stake, slice);
       if (applied === null) {
-        // A win on a grant that has already completed belongs to the real balance: its bonus
-        // funds converted at completion. A reversal does not - returning a bonus-funded stake as
-        // real money releases it without the wagering it was granted under.
-        if (args.kind === 'bet_reversal') {
-          throw new GrantNotReversibleError();
+        const closed = await this.closedGrantOutcome(tx, stake.grantId);
+        if (closed === 'converted') {
+          // The grant completed and its funds are already real money, so this settlement
+          // belongs to the real balance too.
+          continue;
         }
+        // The grant was expired or forfeited: its bonus funds were destroyed, and the bonus
+        // share of a round it funded goes the same way. Paying it to the real balance instead
+        // would convert a dead bonus into withdrawable cash with no wagering behind it.
+        settled = moneyAdd(settled, slice);
+        await tx.insert(promoGrantEntry).values({
+          grantId: stake.grantId,
+          userId: args.userId,
+          currency: args.currency,
+          type: args.kind === 'win' ? 'win' : 'reversal',
+          bonusAmount: ZERO,
+          balanceAfter: ZERO,
+          externalRoundId: args.externalRoundId,
+        });
         continue;
       }
       settled = moneyAdd(settled, slice);
@@ -293,6 +300,22 @@ export class WageringService implements BonusWageringCommands {
       .where(and(eq(promoGrantEntry.externalRoundId, round), eq(promoGrantEntry.type, 'reversal')))
       .limit(1);
     return row !== undefined;
+  }
+
+  /**
+   * Why a grant refused a settlement. A completed grant already turned its funds into real
+   * money; an expired or forfeited one destroyed them, and anything a round it funded pays out
+   * has to be destroyed with them.
+   */
+  private async closedGrantOutcome(
+    tx: DrizzleTx,
+    grantId: PromoGrant['id'],
+  ): Promise<'converted' | 'destroyed'> {
+    const [row] = await tx
+      .select({ status: promoGrant.status })
+      .from(promoGrant)
+      .where(eq(promoGrant.id, grantId));
+    return row?.status === 'completed' ? 'converted' : 'destroyed';
   }
 
   /** A grant that already completed, expired or was forfeited takes no more money. */
