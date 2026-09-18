@@ -7,7 +7,7 @@ import {
   type DrizzleService,
 } from '@openora/core/server';
 import { promoGrant, type PromoGrant } from '../schema/index.js';
-import type { PlayerGrant } from '../contract/index.js';
+import type { AdminGrant, PlayerGrant } from '../contract/index.js';
 
 export const GrantNotFoundError = makeNotFoundError('Grant');
 
@@ -34,6 +34,14 @@ const COLUMNS = {
   createdAt: promoGrant.createdAt,
 };
 
+const ADMIN_COLUMNS = {
+  ...COLUMNS,
+  userId: promoGrant.userId,
+  offerId: promoGrant.offerId,
+  source: promoGrant.source,
+  sourceRef: promoGrant.sourceRef,
+};
+
 /** What a player is allowed to see of their own bonuses. The terms snapshot stays internal. */
 export class GrantReaderService {
   constructor(private readonly drizzle: DrizzleService) {}
@@ -56,6 +64,29 @@ export class GrantReaderService {
     return rows.map(toPlayerGrant);
   }
 
+  /** Support answering a dispute: one player's bonuses, newest first. */
+  async listForAdmin(userId: Uuid, query: PageQuery): Promise<AdminGrant[]> {
+    const rows = await this.drizzle.db
+      .select(ADMIN_COLUMNS)
+      .from(promoGrant)
+      .where(eq(promoGrant.userId, userId))
+      .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
+      .limit(query.limit)
+      .offset(pageToOffset(query.page, query.limit));
+    return rows.map(toAdminGrant);
+  }
+
+  async getForAdmin(id: PromoGrant['id']): Promise<AdminGrant> {
+    const [row] = await this.drizzle.db
+      .select(ADMIN_COLUMNS)
+      .from(promoGrant)
+      .where(eq(promoGrant.id, id));
+    if (!row) {
+      throw new GrantNotFoundError(id);
+    }
+    return toAdminGrant(row);
+  }
+
   /**
    * Scoped to the caller, and missing rather than forbidden when it belongs to someone else:
    * a 403 would confirm the id exists.
@@ -75,6 +106,17 @@ export class GrantReaderService {
 type PlayerGrantRow = {
   [K in keyof typeof COLUMNS]: PromoGrant[K & keyof PromoGrant];
 };
+
+type AdminGrantRow = {
+  [K in keyof typeof ADMIN_COLUMNS]: PromoGrant[K & keyof PromoGrant];
+};
+
+function toAdminGrant(row: AdminGrantRow): AdminGrant {
+  return serializeRow(row, {
+    dateFields: [...DATE_FIELDS],
+    decimalFields: [...MONEY_FIELDS],
+  });
+}
 
 function toPlayerGrant(row: PlayerGrantRow): PlayerGrant {
   return serializeRow(row, {

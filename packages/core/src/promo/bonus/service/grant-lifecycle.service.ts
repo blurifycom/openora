@@ -1,6 +1,16 @@
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import { type AuditWritePort, type BonusForfeitReason, type Uuid } from '@openora/core/contracts';
-import { moneyCompare, type DrizzleService, type DrizzleTx } from '@openora/core/server';
+import {
+  makeConflictError,
+  moneyCompare,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
+
+export const GrantNotForfeitableError = makeConflictError(
+  'GrantNotForfeitableError',
+  'This bonus is no longer active, so there is nothing to forfeit',
+);
 import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
 
 const ZERO = '0';
@@ -84,6 +94,32 @@ export class GrantLifecycleService {
   }
 
   /**
+   * One grant, taken away by an admin with a reason on the record. Refuses rather than
+   * silently doing nothing when the grant already reached a terminal status: an admin who
+   * forfeits a bonus that converted an hour ago needs to be told, not reassured.
+   */
+  async forfeit(
+    grantId: PromoGrant['id'],
+    reason: BonusForfeitReason,
+    actor: { id: Uuid; isAdmin: boolean },
+    note: string,
+  ): Promise<ClosedGrant> {
+    const closed = await this.drizzle.db.transaction((tx) =>
+      this.close(tx, grantId, {
+        status: 'forfeited',
+        action: 'promo.bonus.forfeited',
+        reason,
+        actor,
+        note,
+      }),
+    );
+    if (!closed) {
+      throw new GrantNotForfeitableError();
+    }
+    return closed;
+  }
+
+  /**
    * Claim-then-act: the `status = 'active'` predicate on the update is what makes a second
    * sweep, or an admin racing the sweep, a no-op rather than a second ledger entry.
    */
@@ -95,6 +131,7 @@ export class GrantLifecycleService {
       action: 'promo.bonus.expired' | 'promo.bonus.forfeited';
       reason?: BonusForfeitReason;
       actor?: { id: Uuid; isAdmin: boolean };
+      note?: string;
     },
   ): Promise<ClosedGrant | null> {
     // The balance under the lock the update is about to take, so the amount recorded as
@@ -159,6 +196,7 @@ export class GrantLifecycleService {
         forfeitedAmount,
         wageringProgress: claimed.wageringProgress,
         ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+        ...(outcome.note === undefined ? {} : { note: outcome.note }),
       },
     });
 
