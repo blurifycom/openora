@@ -713,6 +713,10 @@
       "types": "./dist/promo/gamification/migrate.d.ts",
       "import": "./dist/promo/gamification/migrate.js",
       "default": "./dist/promo/gamification/migrate.js"
+    },
+    "./promo/seed/bonus": {
+      "types": "./dist/promo/bonus/seed/index.d.ts",
+      "default": "./dist/promo/bonus/seed/index.js"
     }
   },
   "publishConfig": {

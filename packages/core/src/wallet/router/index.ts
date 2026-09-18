@@ -38,8 +38,6 @@ import {
   DestinationAddressRequiredError,
   DestinationAddressNotWhitelistedError,
   AutoWithdrawalConfigNotFoundError,
-  BonusRolloverLockedError,
-  BonusRolloverConfigNotFoundError,
   WalletAssetNotFoundError,
   WalletAssetAlreadyExistsError,
   WalletAssetUnsupportedError,
@@ -239,7 +237,6 @@ export function createWalletRouter({
             KycRequiredError,
             IdempotencyKeyReuseError,
             DestinationAddressRequiredError,
-            BonusRolloverLockedError,
             DestinationAddressNotWhitelistedError,
             WithdrawalDisabledError,
           ],
@@ -493,28 +490,6 @@ export function createWalletRouter({
       ),
     },
 
-    bonusRolloverStatus: os.bonusRolloverStatus.handler(({ context, input }) =>
-      wallet.getBonusRolloverStatus(getUserId(context), input.status),
-    ),
-
-    bonusRolloverConfig: {
-      get: os.bonusRolloverConfig.get.handler(async ({ context }) => {
-        await adminGuard.assert(context, 'bonus-rollover-config', 'view');
-        return mapErrors({ NOT_FOUND: BonusRolloverConfigNotFoundError }, () =>
-          wallet.getBonusRolloverConfig(),
-        );
-      }),
-
-      set: os.bonusRolloverConfig.set.handler(async ({ input, context }) => {
-        const {
-          userId: adminId,
-          ip,
-          userAgent,
-        } = await adminGuard.assert(context, 'bonus-rollover-config', 'update');
-        return wallet.setBonusRolloverConfig(adminId, input, { ip, userAgent });
-      }),
-    },
-
     swap: {
       quote: os.swap.quote.handler(({ input, context }) =>
         mapErrors({ CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError] }, () =>
@@ -526,12 +501,7 @@ export function createWalletRouter({
         mapErrors(
           {
             NOT_FOUND: WalletNotFoundError,
-            CONFLICT: [
-              SwapUnavailableError,
-              SwapPairUnsupportedError,
-              IdempotencyKeyReuseError,
-              BonusRolloverLockedError,
-            ],
+            CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError, IdempotencyKeyReuseError],
             BAD_REQUEST: InsufficientBalanceError,
             // SwapFillAmountMissingError is deliberately unmapped: the vendor filled but
             // would not say how much, which is a 500 on our side of the seam, not a 4xx

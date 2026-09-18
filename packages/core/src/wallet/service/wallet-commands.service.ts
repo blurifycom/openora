@@ -12,6 +12,7 @@ import {
   type WalletCreditOutcome,
   type WalletProviderRef,
   type WalletTransactionType,
+  type BonusGrantCommands,
   type BonusWageringCommands,
 } from '@openora/core/contracts';
 import {
@@ -20,23 +21,14 @@ import {
   moneyAdd,
   moneyCompare,
   moneySubtract,
-  moneyToNumber,
   type DrizzleDb,
 } from '@openora/core/server';
-import { and, asc, eq, sql } from 'drizzle-orm';
-import {
-  wallet,
-  walletTransaction,
-  walletBonusCredit,
-  walletBonusRolloverConfig,
-  type Wallet,
-  type WalletTransaction,
-} from '../schema/index.js';
-import type { BonusCreditSourceType, ManualAdjustmentDirection } from '../contract/index.js';
+import { eq } from 'drizzle-orm';
+import { wallet, walletTransaction, type Wallet, type WalletTransaction } from '../schema/index.js';
+import type { ManualAdjustmentDirection } from '../contract/index.js';
 import {
   creditWalletBalance,
   balanceKey,
-  debitWithdrawableBalance,
   debitWalletBalance,
   providerRefCondition,
   railFor,
@@ -61,23 +53,27 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
+export const WalletCreditFailedError = createDomainError<[walletId: string, currency: string]>(
+  'WalletCreditFailedError',
+  (walletId, currency) => `wallet ${walletId} has no ${currency} balance row to credit`,
+);
+
 export const WalletBonusConversionError = createDomainError<[walletId: string, currency: string]>(
   'WalletBonusConversionError',
   (walletId, currency) =>
     `wallet ${walletId} has no ${currency} balance row to convert a completed bonus into`,
 );
 
-const DEFAULT_ROLLOVER_MULTIPLIER = '1';
-
-type CompletedBonusCredit = { id: string; currency: string; creditedAmount: string };
-
 export class WalletCommandsService implements WalletCommands {
   constructor(
     private readonly playEligibility: PlayEligibilityPort,
     private readonly audit: AuditWritePort,
-    private readonly platformConfig?: PlatformConfig,
-    private readonly rgLimits?: RgLimitsPort,
-    private readonly bonusWagering?: BonusWageringCommands,
+    private readonly optional: {
+      platformConfig?: PlatformConfig;
+      rgLimits?: RgLimitsPort;
+      bonusWagering?: BonusWageringCommands;
+      bonusGrants?: BonusGrantCommands;
+    } = {},
   ) {}
 
   // Completed ledger row shared by every gameplay move. `direction` is required (not
@@ -99,7 +95,7 @@ export class WalletCommandsService implements WalletCommands {
       currency: row.currency,
       status: 'completed',
       direction,
-      rail: railFor(row.currency, this.platformConfig?.wallet?.cryptoCurrencies),
+      rail: railFor(row.currency, this.optional.platformConfig?.wallet?.cryptoCurrencies),
       providerName: providerRef?.providerName,
       providerRefId: providerRef?.providerRefId,
       externalRoundId: providerRef?.externalRoundId,
@@ -178,8 +174,8 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: true, newBalance: available, currency: debitCurrency };
     }
 
-    if (type === 'bet' && this.rgLimits) {
-      const decision = await this.rgLimits.checkWager(
+    if (type === 'bet' && this.optional.rgLimits) {
+      const decision = await this.optional.rgLimits.checkWager(
         txn,
         userId,
         amount,
@@ -195,8 +191,8 @@ export class WalletCommandsService implements WalletCommands {
     const realPart = type === 'bet' && moneyCompare(available, amount) < 0 ? available : amount;
     const fromBonus = moneySubtract(amount, realPart);
     const wagered =
-      type === 'bet' && this.bonusWagering
-        ? await this.bonusWagering.wager(txn, {
+      type === 'bet' && this.optional.bonusWagering
+        ? await this.optional.bonusWagering.wager(txn, {
             userId,
             currency: debitCurrency,
             stake: amount,
@@ -219,11 +215,9 @@ export class WalletCommandsService implements WalletCommands {
     // bonus funds touches no real balance at all, and must not be refused for not finding a
     // row to take zero from - the bonus is already spent by this point.
     const debited =
-      type === 'bet'
-        ? moneyCompare(realPart, '0') > 0
-          ? await debitWalletBalance(txn, row.id, debitCurrency, realPart)
-          : [{ amount: available }]
-        : await debitWithdrawableBalance(txn, row.id, debitCurrency, amount);
+      type === 'bet' && moneyCompare(realPart, '0') <= 0
+        ? [{ amount: available }]
+        : await debitWalletBalance(txn, row.id, debitCurrency, type === 'bet' ? realPart : amount);
     const debitedBalance = debited[0]?.amount;
     if (debitedBalance === undefined) {
       return { ok: false, available };
@@ -232,25 +226,8 @@ export class WalletCommandsService implements WalletCommands {
     // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
     await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
 
-    // The older fungible rollover model, still running alongside the grant engine until the
-    // chat-gift and rain paths move across. It reads `wallet_balance`, which grant money never
-    // enters, so the two cannot double-count the same bet.
-    const completedBonusCredits =
-      type === 'bet'
-        ? await this.applyBonusRolloverProgress(txn, {
-            userId,
-            currency: debitCurrency,
-            amount,
-          })
-        : undefined;
-
     if (!wagered) {
-      return {
-        ok: true,
-        newBalance: debitedBalance,
-        currency: debitCurrency,
-        ...(completedBonusCredits === undefined ? {} : { completedBonusCredits }),
-      };
+      return { ok: true, newBalance: debitedBalance, currency: debitCurrency };
     }
 
     const newBalance =
@@ -262,10 +239,10 @@ export class WalletCommandsService implements WalletCommands {
       ok: true,
       newBalance,
       currency: debitCurrency,
-      ...(completedBonusCredits === undefined ? {} : { completedBonusCredits }),
       bonusSpent: wagered.bonusSpent,
       bonusBalance: wagered.bonusBalanceAfter,
       completedGrantIds: wagered.completedGrantIds,
+      convertedAmount: wagered.convertedAmount,
     };
   }
 
@@ -336,7 +313,7 @@ export class WalletCommandsService implements WalletCommands {
 
     // Unlike debit(), credit() takes no row lock, so the ledger row is inserted (and its
     // conflict resolved) before the balance mutation rather than after.
-    const { replayed } = await this.writeLedgerRow(
+    const ledgerRow = await this.writeLedgerRow(
       txn,
       creditRow,
       type,
@@ -344,7 +321,7 @@ export class WalletCommandsService implements WalletCommands {
       'credit',
       providerRef,
     );
-    if (replayed) {
+    if (ledgerRow.replayed) {
       const currentBalance = await readWalletBalance(txn, row.id, balanceKey(currency));
       return { ok: true, newBalance: currentBalance };
     }
@@ -356,10 +333,10 @@ export class WalletCommandsService implements WalletCommands {
     // a rollback callback for a round already returned has nothing left to give back, and
     // subtracting its zero bonus share would pay an un-wagered bonus stake out as spendable cash.
     const settlement =
-      this.bonusWagering &&
+      this.optional.bonusWagering &&
       providerRef?.externalRoundId &&
       (type === 'win' || type === 'bet_reversal')
-        ? await this.bonusWagering.settle(txn, {
+        ? await this.optional.bonusWagering.settle(txn, {
             userId,
             currency: balanceKey(currency),
             amount,
@@ -368,19 +345,23 @@ export class WalletCommandsService implements WalletCommands {
           })
         : { realShare: amount };
 
-    const [credited] = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
-    if (!credited) {
-      throw new Error('wallet credit: no row');
+    // Gifted money is a bonus, not cash: it lands on a grant that has to be wagered before it
+    // converts, so none of it reaches the real balance here.
+    if ((type === 'gift' || type === 'rain') && this.optional.bonusGrants) {
+      await this.optional.bonusGrants.grant(txn, {
+        userId,
+        currency: balanceKey(currency),
+        amount,
+        source: type,
+        sourceRef: ledgerRow.row.id,
+        actor: { type: 'system' },
+      });
+      return { ok: true, newBalance: await readWalletBalance(txn, row.id, balanceKey(currency)) };
     }
 
-    if (type === 'gift' || type === 'rain') {
-      await this.createBonusCredit(txn, {
-        walletId: row.id,
-        userId,
-        currency,
-        amount,
-        sourceType: type,
-      });
+    const [credited] = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
+    if (!credited) {
+      throw new WalletCreditFailedError(row.id, currency);
     }
 
     return { ok: true, newBalance: credited.amount };
@@ -405,150 +386,5 @@ export class WalletCommandsService implements WalletCommands {
     }
     const [raced] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
     return raced;
-  }
-
-  private async resolveRolloverMultiplier(txn: DrizzleDb): Promise<string> {
-    const [row] = await txn
-      .select({ multiplier: walletBonusRolloverConfig.multiplier })
-      .from(walletBonusRolloverConfig)
-      .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
-    return row?.multiplier ?? DEFAULT_ROLLOVER_MULTIPLIER;
-  }
-
-  private async createBonusCredit(
-    txn: DrizzleDb,
-    {
-      walletId,
-      userId,
-      currency,
-      amount,
-      sourceType,
-    }: {
-      walletId: Wallet['id'];
-      userId: Uuid;
-      currency: string;
-      amount: string;
-      sourceType: BonusCreditSourceType;
-    },
-  ): Promise<void> {
-    const multiplier = await this.resolveRolloverMultiplier(txn);
-
-    const [creditRow] = await txn
-      .insert(walletBonusCredit)
-      .values({
-        walletId,
-        userId,
-        currency: balanceKey(currency),
-        sourceType,
-        creditedAmount: amount,
-        rolloverMultiplier: multiplier,
-        rolloverRequired: sql`(${amount}::numeric * ${multiplier}::numeric)`,
-        rolloverProgress: '0',
-        status: 'active',
-      })
-      .returning();
-    if (!creditRow) {
-      throw new Error('wallet bonus credit: no row');
-    }
-
-    await this.audit.recordInTransaction(txn, {
-      actorType: 'system',
-      action: 'wallet.bonus_credit.created',
-      resourceType: 'wallet_bonus_credit',
-      resourceId: creditRow.id,
-      after: {
-        userId,
-        currency: balanceKey(currency),
-        sourceType,
-        creditedAmount: amount,
-        rolloverMultiplier: multiplier,
-        rolloverRequired: creditRow.rolloverRequired,
-      },
-    });
-  }
-
-  private async applyBonusRolloverProgress(
-    txn: DrizzleDb,
-    { userId, currency, amount }: { userId: Uuid; currency: string; amount: string },
-  ): Promise<CompletedBonusCredit[]> {
-    const activeCredits = await txn
-      .select({ id: walletBonusCredit.id })
-      .from(walletBonusCredit)
-      .where(
-        and(
-          eq(walletBonusCredit.userId, userId),
-          eq(walletBonusCredit.currency, balanceKey(currency)),
-          eq(walletBonusCredit.status, 'active'),
-        ),
-      )
-      .orderBy(asc(walletBonusCredit.createdAt), asc(walletBonusCredit.id));
-
-    const completed: CompletedBonusCredit[] = [];
-    let remaining = amount;
-
-    for (const credit of activeCredits) {
-      if (moneyToNumber(remaining) <= 0) {
-        break;
-      }
-
-      const [locked] = await txn
-        .select({ rolloverProgress: walletBonusCredit.rolloverProgress })
-        .from(walletBonusCredit)
-        .where(and(eq(walletBonusCredit.id, credit.id), eq(walletBonusCredit.status, 'active')))
-        .for('update');
-
-      if (!locked) {
-        continue;
-      }
-
-      const [updated] = await txn
-        .update(walletBonusCredit)
-        .set({
-          rolloverProgress: sql`LEAST(${walletBonusCredit.rolloverRequired}, ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric)`,
-          status: sql`(CASE WHEN ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric >= ${walletBonusCredit.rolloverRequired} THEN 'completed' ELSE 'active' END)::wallet_bonus_credit_status`,
-          completedAt: sql`CASE WHEN ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric >= ${walletBonusCredit.rolloverRequired} THEN now() ELSE ${walletBonusCredit.completedAt} END`,
-        })
-        .where(and(eq(walletBonusCredit.id, credit.id), eq(walletBonusCredit.status, 'active')))
-        .returning({
-          id: walletBonusCredit.id,
-          status: walletBonusCredit.status,
-          currency: walletBonusCredit.currency,
-          creditedAmount: walletBonusCredit.creditedAmount,
-          rolloverRequired: walletBonusCredit.rolloverRequired,
-          rolloverProgress: walletBonusCredit.rolloverProgress,
-          remainingAfter: sql<string>`(${remaining}::numeric - (${walletBonusCredit.rolloverProgress} - ${locked.rolloverProgress}::numeric))::text`,
-        });
-
-      if (!updated) {
-        continue;
-      }
-
-      remaining = updated.remainingAfter;
-
-      if (updated.status === 'completed') {
-        completed.push({
-          id: updated.id,
-          currency: updated.currency,
-          creditedAmount: updated.creditedAmount,
-        });
-        await this.audit.recordInTransaction(txn, {
-          actorType: 'system',
-          action: 'wallet.bonus_credit.completed',
-          resourceType: 'wallet_bonus_credit',
-          resourceId: updated.id,
-          before: { status: 'active', rolloverProgress: locked.rolloverProgress },
-          after: {
-            userId,
-            currency: updated.currency,
-            creditedAmount: updated.creditedAmount,
-            rolloverRequired: updated.rolloverRequired,
-            rolloverProgress: updated.rolloverProgress,
-            status: updated.status,
-          },
-        });
-      }
-    }
-
-    return completed;
   }
 }

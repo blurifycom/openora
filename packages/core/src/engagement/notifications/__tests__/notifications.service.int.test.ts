@@ -104,20 +104,20 @@ describe('NotificationsService.create (real PG)', () => {
     });
   });
 
-  it('persists the row a wallet.bonus_rollover.completed subscriber would create', async () => {
+  it('persists the row a promo.bonus.completed subscriber would create', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
 
     const created = await svc.create({
       userId,
-      type: 'wallet.bonus_rollover.completed',
+      type: 'promo.bonus.completed',
       title: 'Bonus unlocked',
       body: 'Your 25.00 USD bonus credit has cleared its rollover requirement and is now fully withdrawable.',
     });
 
     expect(created).toMatchObject({
       userId,
-      type: 'wallet.bonus_rollover.completed',
+      type: 'promo.bonus.completed',
       title: 'Bonus unlocked',
       body: 'Your 25.00 USD bonus credit has cleared its rollover requirement and is now fully withdrawable.',
       readAt: null,
