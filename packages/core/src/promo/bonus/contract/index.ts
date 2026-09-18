@@ -161,6 +161,26 @@ export const PlayerGrantSchema = z.object({
 
 export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
+/**
+ * A grant as support sees it: the player's view plus what they need to answer a dispute - which
+ * offer it came from, and what the player was granted it under.
+ */
+export const AdminGrantSchema = PlayerGrantSchema.extend({
+  userId: UuidSchema,
+  offerId: UuidSchema.nullable(),
+  source: BonusGrantSourceSchema,
+  sourceRef: z.string(),
+});
+
+export type AdminGrant = z.infer<typeof AdminGrantSchema>;
+
+/** The reason is mandatory at the contract, not checked in a handler that could forget. */
+export const ForfeitGrantInputSchema = z.object({
+  id: UuidSchema,
+  reason: BonusForfeitReasonSchema,
+  note: z.string().trim().min(10).max(500),
+});
+
 export const ListPlayerGrantsInputSchema = z.object({
   ...PageQuerySchema.shape,
   /** Absent means every status; a terminal grant is never purged, so the history only grows. */
@@ -187,6 +207,18 @@ export const bonusContract = {
   },
 
   admin: {
+    grants: {
+      list: oc
+        .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/grants' })
+        .input(z.object({ userId: UuidSchema, ...PageQuerySchema.shape }))
+        .output(z.array(AdminGrantSchema)),
+
+      forfeit: oc
+        .route({ method: 'POST', path: '/backoffice/promo/grants/{id}/forfeit' })
+        .input(ForfeitGrantInputSchema)
+        .output(AdminGrantSchema),
+    },
+
     offers: {
       list: oc
         .route({ method: 'GET', path: '/backoffice/promo/offers' })
