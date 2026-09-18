@@ -306,12 +306,8 @@
           "name": "promo_weight_profile_id_promo_weight_profile_id_fk",
           "tableFrom": "promo_weight",
           "tableTo": "promo_weight_profile",
-          "columnsFrom": [
-            "profile_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["profile_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -366,9 +362,7 @@
         "promo_weight_profile_name_unique": {
           "name": "promo_weight_profile_name_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "name"
-          ]
+          "columns": ["name"]
         }
       },
       "policies": {},
@@ -391,37 +385,17 @@
     "public.promo_grant_source": {
       "name": "promo_grant_source",
       "schema": "public",
-      "values": [
-        "deposit",
-        "manual",
-        "streak",
-        "rank",
-        "race",
-        "gift",
-        "rain"
-      ]
+      "values": ["deposit", "manual", "streak", "rank", "race", "gift", "rain"]
     },
     "public.promo_grant_status": {
       "name": "promo_grant_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "active",
-        "completed",
-        "expired",
-        "forfeited",
-        "cancelled"
-      ]
+      "values": ["pending", "active", "completed", "expired", "forfeited", "cancelled"]
     },
     "public.promo_weight_scope": {
       "name": "promo_weight_scope",
       "schema": "public",
-      "values": [
-        "game",
-        "category",
-        "product",
-        "default"
-      ]
+      "values": ["game", "category", "product", "default"]
     }
   },
   "schemas": {},
