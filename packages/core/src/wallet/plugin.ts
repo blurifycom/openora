@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/ser
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
+  BONUS_WAGERING,
   IDENTITY_READER,
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
@@ -228,6 +229,7 @@ export default {
           c.get(AUDIT_WRITER),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
           c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+          c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
         ),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
