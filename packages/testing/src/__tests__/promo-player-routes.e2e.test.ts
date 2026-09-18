@@ -129,12 +129,12 @@ describe('a player reaching for someone else', () => {
   it('cannot read another player’s grant, and is told it does not exist', async () => {
     const owner = await player();
     const stranger = await player();
-    const grantId = await grantBonus(owner.userId, '90');
+    const grantId = await grantBonus(owner.userId, '777.123456');
 
     const res = await stranger.client.get(`/promo/grants/${grantId}`);
 
     expect(res.status).toBe(404);
-    expect(await res.text()).not.toContain('90');
+    expect(await res.text()).not.toContain('777.123456');
   });
 
   it('caps a page at the contract limit rather than returning the whole history', async () => {
