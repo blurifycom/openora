@@ -12,7 +12,24 @@ import {
   serializeRow,
   uniqueConstraintName,
 } from '@openora/core/server';
-import { eq, and, asc, count, desc, exists, ilike, inArray, ne, or, sql } from 'drizzle-orm';
+import {
+  type SQL,
+  type SQLWrapper,
+  eq,
+  and,
+  asc,
+  count,
+  desc,
+  exists,
+  ilike,
+  inArray,
+  ne,
+  notExists,
+  or,
+  sql,
+} from 'drizzle-orm';
+import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
+import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import {
   RgLimitExceededError,
   type GameAdapter,
@@ -87,6 +104,14 @@ export class GameGeoRestrictedError extends Error {
     this.data = { reason: decision.reason, countryCode: decision.countryCode };
   }
 }
+
+// GAME_GEO_CHECK is bound only when the compliance module is loaded; its absence is how
+// listGamesAdmin detects the geo filters have nothing to query.
+export const GameGeoFiltersUnavailableError = createDomainError<[]>(
+  'GameGeoFiltersUnavailableError',
+  () => 'geo filters are unavailable: the compliance module is not loaded',
+);
+
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
@@ -188,13 +213,110 @@ export class GamingService {
     });
   }
 
-  async listGamesAdmin(input: ListAdminGamesInput) {
+  async listGamesAdmin({
+    categoryIds,
+    uncategorized,
+    tagIds,
+    gameTypes,
+    geoBlocked,
+    geoBlockedCountries,
+    ...input
+  }: ListAdminGamesInput) {
+    if (!this.gameGeoCheck && (geoBlocked !== undefined || geoBlockedCountries)) {
+      throw new GameGeoFiltersUnavailableError();
+    }
+    const db = this.drizzle.db;
+    const anyCategory = this.rowsWhere({
+      table: gameCategoryGame,
+      column: gameCategoryGame.gameId,
+      equals: game.id,
+    });
+    // A game counts as geo-blocked by its own rule or its provider's, matching the play gate's check.
+    const anyGameGeoRule = this.rowsWhere({
+      table: gameGeoRule,
+      column: gameGeoRule.gameId,
+      equals: game.id,
+    });
+    const anyProviderGeoRule = this.rowsWhere({
+      table: providerGeoRule,
+      column: providerGeoRule.providerId,
+      equals: game.providerId,
+    });
     return this.listGames({
       ...input,
       playableOnly: false,
       sort: 'admin',
       includeInvisibleTags: true,
+      filters: [
+        categoryIds
+          ? this.linkedToAll({
+              values: categoryIds,
+              pairs: db
+                .select({ gameId: gameCategoryGame.gameId, value: gameCategoryGame.categoryId })
+                .from(gameCategoryGame)
+                .where(inArray(gameCategoryGame.categoryId, categoryIds)),
+            })
+          : undefined,
+        uncategorized === undefined
+          ? undefined
+          : uncategorized
+            ? notExists(anyCategory)
+            : exists(anyCategory),
+        tagIds
+          ? this.linkedToAll({
+              values: tagIds,
+              pairs: db
+                .select({ gameId: gameTagGame.gameId, value: gameTagGame.tagId })
+                .from(gameTagGame)
+                .where(inArray(gameTagGame.tagId, tagIds)),
+            })
+          : undefined,
+        gameTypes ? inArray(game.gameType, gameTypes) : undefined,
+        geoBlocked === undefined
+          ? undefined
+          : geoBlocked
+            ? or(exists(anyGameGeoRule), exists(anyProviderGeoRule))
+            : and(notExists(anyGameGeoRule), notExists(anyProviderGeoRule)),
+        geoBlockedCountries
+          ? this.linkedToAll({
+              values: geoBlockedCountries,
+              pairs: union(
+                db
+                  .select({ gameId: gameGeoRule.gameId, value: gameGeoRule.countryCode })
+                  .from(gameGeoRule)
+                  .where(inArray(gameGeoRule.countryCode, geoBlockedCountries)),
+                db
+                  .select({ gameId: game.id, value: providerGeoRule.countryCode })
+                  .from(providerGeoRule)
+                  .innerJoin(game, eq(game.providerId, providerGeoRule.providerId))
+                  .where(inArray(providerGeoRule.countryCode, geoBlockedCountries)),
+              ),
+            })
+          : undefined,
+      ],
     });
+  }
+
+  private rowsWhere({
+    table,
+    column,
+    equals,
+  }: {
+    table: PgTable;
+    column: PgColumn;
+    equals: PgColumn;
+  }) {
+    return this.drizzle.db
+      .select({ one: sql`1` })
+      .from(table)
+      .where(eq(column, equals));
+  }
+
+  private linkedToAll({ pairs, values }: { pairs: SQLWrapper; values: string[] }) {
+    return inArray(
+      game.id,
+      sql`(select pairs.game_id from (${pairs}) as pairs(game_id, value) group by pairs.game_id having count(distinct pairs.value) = ${values.length})`,
+    );
   }
 
   async getCatalogStats() {
@@ -234,14 +356,17 @@ export class GamingService {
     playableOnly,
     sort,
     includeInvisibleTags,
+    filters = [],
   }: ListGamesInput & {
     isActive?: boolean;
     isUnavailable?: boolean;
     playableOnly: boolean;
     sort: 'admin' | 'public';
     includeInvisibleTags: boolean;
+    filters?: (SQL | undefined)[];
   }) {
     const where = and(
+      ...filters,
       q
         ? or(
             ilike(game.name, likeContains(q)),
