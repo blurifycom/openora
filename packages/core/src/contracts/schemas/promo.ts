@@ -30,6 +30,8 @@ export const BONUS_FORFEIT_REASONS = [
   'withdrawal_while_active',
 ] as const;
 
+export const PROMO_OFFER_STATUSES = ['draft', 'active', 'paused', 'archived'] as const;
+
 export const BONUS_GRANT_ENTRY_TYPES = [
   'grant',
   'stake',
@@ -44,11 +46,13 @@ export const BonusGrantSourceSchema = z.enum(BONUS_GRANT_SOURCES);
 export const BonusGrantStatusSchema = z.enum(BONUS_GRANT_STATUSES);
 export const BonusForfeitReasonSchema = z.enum(BONUS_FORFEIT_REASONS);
 export const BonusGrantEntryTypeSchema = z.enum(BONUS_GRANT_ENTRY_TYPES);
+export const PromoOfferStatusSchema = z.enum(PROMO_OFFER_STATUSES);
 
 export type BonusGrantSource = z.infer<typeof BonusGrantSourceSchema>;
 export type BonusGrantStatus = z.infer<typeof BonusGrantStatusSchema>;
 export type BonusForfeitReason = z.infer<typeof BonusForfeitReasonSchema>;
 export type BonusGrantEntryType = z.infer<typeof BonusGrantEntryTypeSchema>;
+export type PromoOfferStatus = z.infer<typeof PromoOfferStatusSchema>;
 
 // A weight as a percentage of the stake, `numeric(5,2)` in the database. Zero excludes a product
 // or game from wagering; above 100 would count a bet for more than it was worth.
