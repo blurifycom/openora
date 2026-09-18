@@ -147,6 +147,17 @@ export function createComplianceRouter({
       );
     }),
 
+    bulkUpsertGameGeoRules: os.bulkUpsertGameGeoRules.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ NOT_FOUND: GeoRuleGameNotFoundError }, () =>
+        compliance.bulkUpsertGameGeoRules(input, userId, { ip, userAgent }),
+      );
+    }),
+
     deleteGameGeoRule: os.deleteGameGeoRule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(
         context,
@@ -155,6 +166,17 @@ export function createComplianceRouter({
       );
       return mapErrors({ NOT_FOUND: GameGeoRuleNotFoundError }, () =>
         compliance.deleteGameGeoRule(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    bulkDeleteGameGeoRules: os.bulkDeleteGameGeoRules.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ NOT_FOUND: GameGeoRuleNotFoundError }, () =>
+        compliance.bulkDeleteGameGeoRules(input, userId, { ip, userAgent }),
       );
     }),
 
@@ -174,6 +196,19 @@ export function createComplianceRouter({
       );
     }),
 
+    bulkUpsertProviderGeoRules: os.bulkUpsertProviderGeoRules.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(
+          context,
+          'compliance',
+          'manage-geo',
+        );
+        return mapErrors({ NOT_FOUND: GeoRuleProviderNotFoundError }, () =>
+          compliance.bulkUpsertProviderGeoRules(input, userId, { ip, userAgent }),
+        );
+      },
+    ),
+
     deleteProviderGeoRule: os.deleteProviderGeoRule.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(
         context,
@@ -184,6 +219,19 @@ export function createComplianceRouter({
         compliance.deleteProviderGeoRule(input, userId, { ip, userAgent }),
       );
     }),
+
+    bulkDeleteProviderGeoRules: os.bulkDeleteProviderGeoRules.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(
+          context,
+          'compliance',
+          'manage-geo',
+        );
+        return mapErrors({ NOT_FOUND: ProviderGeoRuleNotFoundError }, () =>
+          compliance.bulkDeleteProviderGeoRules(input, userId, { ip, userAgent }),
+        );
+      },
+    ),
 
     listProviderGeoRules: os.listProviderGeoRules.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');

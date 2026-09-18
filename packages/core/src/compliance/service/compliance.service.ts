@@ -7,6 +7,7 @@ import {
   makeOwnershipError,
   serializeRow,
   withAdvisoryXactLock,
+  withAdvisoryXactLocks,
   type EventBus,
 } from '@openora/core/server';
 import { and, asc, count, eq, exists, inArray, sql } from 'drizzle-orm';
@@ -19,6 +20,10 @@ import {
 } from '../schema/index.js';
 import type {
   AddGeoRuleInput,
+  BulkDeleteGameGeoRulesInput,
+  BulkDeleteProviderGeoRulesInput,
+  BulkUpsertGameGeoRulesInput,
+  BulkUpsertProviderGeoRulesInput,
   DeleteGameGeoRuleInput,
   DeleteProviderGeoRuleInput,
   ListGameGeoRulesInput,
@@ -155,8 +160,26 @@ function providerGeoRuleLockKey(
   return `provider-geo-rule:${providerId}:${countryCode}`;
 }
 
+function missingCountryCodes(requested: string[], rows: { countryCode: string }[]) {
+  const found = new Set(rows.map((row) => row.countryCode));
+  return requested.filter((countryCode) => !found.has(countryCode));
+}
+
 function serializeGeoRule<Rule extends { createdAt: Date; updatedAt: Date }>(rule: Rule) {
   return serializeRow(rule, { dateFields: ['createdAt', 'updatedAt'] });
+}
+
+function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date; updatedAt: Date }>(
+  before: Rule[],
+  after: Rule[],
+) {
+  const beforeByCountry = new Map(before.map((row) => [row.countryCode, serializeGeoRule(row)]));
+  return after
+    .map((row) => ({
+      before: beforeByCountry.get(row.countryCode) ?? null,
+      after: serializeGeoRule(row),
+    }))
+    .sort((a, b) => a.after.countryCode.localeCompare(b.after.countryCode));
 }
 
 export class ComplianceService {
@@ -467,56 +490,71 @@ export class ComplianceService {
   }
 
   async upsertGameGeoRule(input: UpsertGameGeoRuleInput, actorId: User['id'], meta: ClientMeta) {
-    const { before, after } = await this.drizzle.db.transaction(async (tx) => {
+    const { countryCode, ...rest } = input;
+    return findOneOrThrow(
+      await this.bulkUpsertGameGeoRules({ ...rest, countryCodes: [countryCode] }, actorId, meta),
+      new GameGeoRuleNotFoundError(`${input.gameId}:${countryCode}`),
+    );
+  }
+
+  async bulkUpsertGameGeoRules(
+    input: BulkUpsertGameGeoRulesInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ) {
+    const countryCodes = [...new Set(input.countryCodes)].sort();
+    const changes = await this.drizzle.db.transaction(async (tx) => {
       findOneOrThrow(
         await tx.select({ id: game.id }).from(game).where(eq(game.id, input.gameId)),
         new GeoRuleGameNotFoundError(input.gameId),
       );
 
-      return withAdvisoryXactLock(
+      return withAdvisoryXactLocks(
         tx,
-        gameGeoRuleLockKey(input.gameId, input.countryCode),
+        countryCodes.map((countryCode) => gameGeoRuleLockKey(input.gameId, countryCode)),
         async () => {
-          const [before] = await tx
+          const before = await tx
             .select()
             .from(gameGeoRule)
             .where(
               and(
                 eq(gameGeoRule.gameId, input.gameId),
-                eq(gameGeoRule.countryCode, input.countryCode),
+                inArray(gameGeoRule.countryCode, countryCodes),
               ),
             );
-          const row = findOneOrThrow(
-            await tx
-              .insert(gameGeoRule)
-              .values(input)
-              .onConflictDoUpdate({
-                target: [gameGeoRule.gameId, gameGeoRule.countryCode],
-                set: { reason: input.reason, updatedAt: new Date() },
-              })
-              .returning(),
-            new GameGeoRuleNotFoundError(`${input.gameId}:${input.countryCode}`),
-          );
-          return {
-            before: before ? serializeGeoRule(before) : null,
-            after: serializeGeoRule(row),
-          };
+          const rows = await tx
+            .insert(gameGeoRule)
+            .values(
+              countryCodes.map((countryCode) => ({
+                gameId: input.gameId,
+                countryCode,
+                reason: input.reason,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: [gameGeoRule.gameId, gameGeoRule.countryCode],
+              set: { reason: input.reason, updatedAt: new Date() },
+            })
+            .returning();
+          return pairGeoRuleChanges(before, rows);
         },
       );
     });
 
-    this.events.emit('compliance.game-geo-rule.upserted', {
-      ruleId: after.id,
-      gameId: input.gameId,
-      countryCode: input.countryCode,
-      reason: input.reason,
-      before,
-      after,
-      actorId,
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-    });
-    return after;
+    for (const { before, after } of changes) {
+      this.events.emit('compliance.game-geo-rule.upserted', {
+        ruleId: after.id,
+        gameId: input.gameId,
+        countryCode: after.countryCode,
+        reason: input.reason,
+        before,
+        after,
+        actorId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return changes.map(({ after }) => after);
   }
 
   async deleteGameGeoRule(input: DeleteGameGeoRuleInput, actorId: User['id'], meta: ClientMeta) {
@@ -556,6 +594,53 @@ export class ComplianceService {
     return before;
   }
 
+  async bulkDeleteGameGeoRules(
+    input: BulkDeleteGameGeoRulesInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ) {
+    const countryCodes = [...new Set(input.countryCodes)].sort();
+    const deleted = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLocks(
+        tx,
+        countryCodes.map((countryCode) => gameGeoRuleLockKey(input.gameId, countryCode)),
+        async () => {
+          const rows = await tx
+            .delete(gameGeoRule)
+            .where(
+              and(
+                eq(gameGeoRule.gameId, input.gameId),
+                inArray(gameGeoRule.countryCode, countryCodes),
+              ),
+            )
+            .returning();
+          const missing = missingCountryCodes(countryCodes, rows);
+          if (missing.length > 0) {
+            throw new GameGeoRuleNotFoundError(`${input.gameId}:${missing.join(',')}`);
+          }
+          return rows
+            .map(serializeGeoRule)
+            .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
+        },
+      ),
+    );
+
+    for (const before of deleted) {
+      this.events.emit('compliance.game-geo-rule.deleted', {
+        ruleId: before.id,
+        gameId: before.gameId,
+        countryCode: before.countryCode,
+        reason: input.reason,
+        before,
+        after: null,
+        actorId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return deleted;
+  }
+
   async listGameGeoRules({ gameIds, page, limit }: ListGameGeoRulesInput) {
     const where = gameIds ? inArray(gameGeoRule.gameId, gameIds) : undefined;
     const db = this.drizzle.db;
@@ -577,7 +662,24 @@ export class ComplianceService {
     actorId: User['id'],
     meta: ClientMeta,
   ) {
-    const { before, after } = await this.drizzle.db.transaction(async (tx) => {
+    const { countryCode, ...rest } = input;
+    return findOneOrThrow(
+      await this.bulkUpsertProviderGeoRules(
+        { ...rest, countryCodes: [countryCode] },
+        actorId,
+        meta,
+      ),
+      new ProviderGeoRuleNotFoundError(`${input.providerId}:${countryCode}`),
+    );
+  }
+
+  async bulkUpsertProviderGeoRules(
+    input: BulkUpsertProviderGeoRulesInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ) {
+    const countryCodes = [...new Set(input.countryCodes)].sort();
+    const changes = await this.drizzle.db.transaction(async (tx) => {
       findOneOrThrow(
         await tx
           .select({ id: gameProvider.id })
@@ -586,50 +688,52 @@ export class ComplianceService {
         new GeoRuleProviderNotFoundError(input.providerId),
       );
 
-      return withAdvisoryXactLock(
+      return withAdvisoryXactLocks(
         tx,
-        providerGeoRuleLockKey(input.providerId, input.countryCode),
+        countryCodes.map((countryCode) => providerGeoRuleLockKey(input.providerId, countryCode)),
         async () => {
-          const [before] = await tx
+          const before = await tx
             .select()
             .from(providerGeoRule)
             .where(
               and(
                 eq(providerGeoRule.providerId, input.providerId),
-                eq(providerGeoRule.countryCode, input.countryCode),
+                inArray(providerGeoRule.countryCode, countryCodes),
               ),
             );
-          const row = findOneOrThrow(
-            await tx
-              .insert(providerGeoRule)
-              .values(input)
-              .onConflictDoUpdate({
-                target: [providerGeoRule.providerId, providerGeoRule.countryCode],
-                set: { reason: input.reason, updatedAt: new Date() },
-              })
-              .returning(),
-            new ProviderGeoRuleNotFoundError(`${input.providerId}:${input.countryCode}`),
-          );
-          return {
-            before: before ? serializeGeoRule(before) : null,
-            after: serializeGeoRule(row),
-          };
+          const rows = await tx
+            .insert(providerGeoRule)
+            .values(
+              countryCodes.map((countryCode) => ({
+                providerId: input.providerId,
+                countryCode,
+                reason: input.reason,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: [providerGeoRule.providerId, providerGeoRule.countryCode],
+              set: { reason: input.reason, updatedAt: new Date() },
+            })
+            .returning();
+          return pairGeoRuleChanges(before, rows);
         },
       );
     });
 
-    this.events.emit('compliance.provider-geo-rule.upserted', {
-      ruleId: after.id,
-      providerId: input.providerId,
-      countryCode: input.countryCode,
-      reason: input.reason,
-      before,
-      after,
-      actorId,
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-    });
-    return after;
+    for (const { before, after } of changes) {
+      this.events.emit('compliance.provider-geo-rule.upserted', {
+        ruleId: after.id,
+        providerId: input.providerId,
+        countryCode: after.countryCode,
+        reason: input.reason,
+        before,
+        after,
+        actorId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return changes.map(({ after }) => after);
   }
 
   async deleteProviderGeoRule(
@@ -674,6 +778,53 @@ export class ComplianceService {
       userAgent: meta.userAgent,
     });
     return before;
+  }
+
+  async bulkDeleteProviderGeoRules(
+    input: BulkDeleteProviderGeoRulesInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ) {
+    const countryCodes = [...new Set(input.countryCodes)].sort();
+    const deleted = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLocks(
+        tx,
+        countryCodes.map((countryCode) => providerGeoRuleLockKey(input.providerId, countryCode)),
+        async () => {
+          const rows = await tx
+            .delete(providerGeoRule)
+            .where(
+              and(
+                eq(providerGeoRule.providerId, input.providerId),
+                inArray(providerGeoRule.countryCode, countryCodes),
+              ),
+            )
+            .returning();
+          const missing = missingCountryCodes(countryCodes, rows);
+          if (missing.length > 0) {
+            throw new ProviderGeoRuleNotFoundError(`${input.providerId}:${missing.join(',')}`);
+          }
+          return rows
+            .map(serializeGeoRule)
+            .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
+        },
+      ),
+    );
+
+    for (const before of deleted) {
+      this.events.emit('compliance.provider-geo-rule.deleted', {
+        ruleId: before.id,
+        providerId: before.providerId,
+        countryCode: before.countryCode,
+        reason: input.reason,
+        before,
+        after: null,
+        actorId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return deleted;
   }
 
   async listProviderGeoRules({ providerIds, page, limit }: ListProviderGeoRulesInput) {

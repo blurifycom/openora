@@ -337,3 +337,212 @@ describe('per-provider geo-blocking lifecycle', () => {
     expect(end.status).toBe(200);
   });
 });
+
+describe('bulk geo-blocking', () => {
+  it('blocks a game in many countries with one request, all or nothing', async () => {
+    const { gameId } = await seedGame('Bulk per-game');
+
+    const forbidden = await player.put('/compliance/game-geo-rules/bulk', {
+      gameId,
+      countryCodes: ['US', 'GB'],
+      reason: 'player must not administer geo policy',
+    });
+    expect(forbidden.status).toBe(403);
+
+    const unknownGame = await admin.put('/compliance/game-geo-rules/bulk', {
+      gameId: randomUUID(),
+      countryCodes: ['US', 'GB'],
+      reason: 'game licence excludes these countries',
+    });
+    expect(unknownGame.status).toBe(404);
+
+    const empty = await admin.put('/compliance/game-geo-rules/bulk', {
+      gameId,
+      countryCodes: [],
+      reason: 'game licence excludes these countries',
+    });
+    expect(empty.status).toBe(400);
+
+    const malformed = await admin.put('/compliance/game-geo-rules/bulk', {
+      gameId,
+      countryCodes: ['US', 'usa'],
+      reason: 'game licence excludes these countries',
+    });
+    expect(malformed.status).toBe(400);
+    expect(
+      await readJson(await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`)),
+    ).toMatchObject({ items: [], total: 0 });
+
+    const single = await admin.put('/compliance/game-geo-rules', {
+      gameId,
+      countryCode: 'GB',
+      reason: 'original reason',
+    });
+    expect(single.status).toBe(200);
+    const existing = (await readJson(single)) as { id: string };
+
+    const bulk = await admin.put('/compliance/game-geo-rules/bulk', {
+      gameId,
+      countryCodes: ['US', 'GB', 'FR', 'US'],
+      reason: 'game licence excludes these countries',
+    });
+    expect(bulk.status).toBe(200);
+    const rules = (await readJson(bulk)) as Array<{ id: string; countryCode: string }>;
+    expect(rules).toEqual([
+      expect.objectContaining({ gameId, countryCode: 'FR' }),
+      expect.objectContaining({
+        id: existing.id,
+        gameId,
+        countryCode: 'GB',
+        reason: 'game licence excludes these countries',
+      }),
+      expect.objectContaining({ gameId, countryCode: 'US' }),
+    ]);
+
+    const listed = await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`);
+    expect(await readJson(listed)).toMatchObject({ total: 3 });
+
+    await vi.waitFor(async () => {
+      expect(await auditEntries(existing.id, 'compliance.game-geo-rule.upserted')).toHaveLength(2);
+    });
+
+    const blocked = await startFromBlockedCountry(gameId);
+    expect(blocked.status).toBe(409);
+    expect(await readJson(blocked)).toMatchObject({
+      data: { reason: 'game_block', countryCode: 'US' },
+    });
+
+    const bulkDelete = (countryCodes: string[], client: TestClient = admin) =>
+      client.request('/compliance/game-geo-rules/bulk', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ gameId, countryCodes, reason: 'licence restored' }),
+      });
+
+    expect((await bulkDelete(['US', 'GB'], player)).status).toBe(403);
+
+    const partlyMissing = await bulkDelete(['US', 'DE']);
+    expect(partlyMissing.status).toBe(404);
+    expect(
+      await readJson(await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`)),
+    ).toMatchObject({ total: 3 });
+
+    const removed = await bulkDelete(['US', 'GB', 'US']);
+    expect(removed.status).toBe(200);
+    expect(await readJson(removed)).toEqual([
+      expect.objectContaining({ id: existing.id, countryCode: 'GB' }),
+      expect.objectContaining({ countryCode: 'US' }),
+    ]);
+    expect(
+      await readJson(await admin.get(`/compliance/game-geo-rules?gameIds[]=${gameId}`)),
+    ).toMatchObject({ items: [expect.objectContaining({ countryCode: 'FR' })], total: 1 });
+
+    await vi.waitFor(async () => {
+      expect(await auditEntries(existing.id, 'compliance.game-geo-rule.deleted')).toEqual([
+        expect.objectContaining({
+          resourceType: 'game-geo-rule',
+          resourceId: existing.id,
+          after: expect.objectContaining({ state: null, reason: 'licence restored' }),
+        }),
+      ]);
+    });
+
+    const restored = await startFromBlockedCountry(gameId);
+    expect(restored.status).toBe(200);
+    const { roundId } = (await readJson(restored)) as { roundId: string };
+    expect((await player.post(`/gaming/rounds/${roundId}/end`, { roundId })).status).toBe(200);
+  });
+
+  it('blocks a provider in many countries with one request, audited per rule', async () => {
+    const { gameId, providerId } = await seedGame('Bulk per-provider');
+
+    const forbidden = await player.put('/compliance/provider-geo-rules/bulk', {
+      providerId,
+      countryCodes: ['US', 'GB'],
+      reason: 'player must not administer geo policy',
+    });
+    expect(forbidden.status).toBe(403);
+
+    const unknownProvider = await admin.put('/compliance/provider-geo-rules/bulk', {
+      providerId: randomUUID(),
+      countryCodes: ['US', 'GB'],
+      reason: 'provider licence excludes these countries',
+    });
+    expect(unknownProvider.status).toBe(404);
+
+    const bulk = await admin.put('/compliance/provider-geo-rules/bulk', {
+      providerId,
+      countryCodes: ['US', 'GB', 'DE'],
+      reason: 'provider licence excludes these countries',
+    });
+    expect(bulk.status).toBe(200);
+    const rules = (await readJson(bulk)) as Array<{ id: string; countryCode: string }>;
+    expect(rules.map((rule) => rule.countryCode)).toEqual(['DE', 'GB', 'US']);
+
+    const listed = await admin.get(`/compliance/provider-geo-rules?providerIds[]=${providerId}`);
+    expect(await readJson(listed)).toMatchObject({ total: 3 });
+
+    await vi.waitFor(async () => {
+      for (const rule of rules) {
+        expect(await auditEntries(rule.id, 'compliance.provider-geo-rule.upserted')).toEqual([
+          expect.objectContaining({
+            resourceType: 'provider-geo-rule',
+            resourceId: rule.id,
+            before: null,
+            after: expect.objectContaining({
+              reason: 'provider licence excludes these countries',
+              providerId,
+              countryCode: rule.countryCode,
+            }),
+          }),
+        ]);
+      }
+    });
+
+    const blocked = await startFromBlockedCountry(gameId);
+    expect(blocked.status).toBe(409);
+    expect(await readJson(blocked)).toMatchObject({
+      data: { reason: 'provider_block', countryCode: 'US' },
+    });
+
+    const bulkDelete = (countryCodes: string[], client: TestClient = admin) =>
+      client.request('/compliance/provider-geo-rules/bulk', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ providerId, countryCodes, reason: 'provider licence restored' }),
+      });
+
+    expect((await bulkDelete(['US'], player)).status).toBe(403);
+    expect((await bulkDelete(['US', 'FR'])).status).toBe(404);
+
+    const removed = await bulkDelete(['US', 'GB', 'DE']);
+    expect(removed.status).toBe(200);
+    expect(((await readJson(removed)) as typeof rules).map((rule) => rule.id)).toEqual(
+      rules.map((rule) => rule.id),
+    );
+    expect(
+      await readJson(await admin.get(`/compliance/provider-geo-rules?providerIds[]=${providerId}`)),
+    ).toMatchObject({ items: [], total: 0 });
+
+    await vi.waitFor(async () => {
+      for (const rule of rules) {
+        expect(await auditEntries(rule.id, 'compliance.provider-geo-rule.deleted')).toEqual([
+          expect.objectContaining({
+            resourceType: 'provider-geo-rule',
+            resourceId: rule.id,
+            after: expect.objectContaining({
+              state: null,
+              reason: 'provider licence restored',
+              countryCode: rule.countryCode,
+            }),
+          }),
+        ]);
+      }
+    });
+
+    const restored = await startFromBlockedCountry(gameId);
+    expect(restored.status).toBe(200);
+    const { roundId } = (await readJson(restored)) as { roundId: string };
+    expect((await player.post(`/gaming/rounds/${roundId}/end`, { roundId })).status).toBe(200);
+  });
+});
