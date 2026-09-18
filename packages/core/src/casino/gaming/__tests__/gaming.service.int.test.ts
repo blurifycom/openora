@@ -630,8 +630,7 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
       ok: true,
       newBalance: '0',
       currency: 'USD',
-      completedGrantIds: ['00000000-0000-0000-0000-0000000000c5'],
-      convertedAmount: '25',
+      completed: { grantId: '00000000-0000-0000-0000-0000000000c5', convertedAmount: '25' },
     });
     const svc = new GamingService(
       db.drizzle,
@@ -654,6 +653,27 @@ describe('GamingService.startRound bonus completion (real PG)', () => {
       convertedAmount: '25',
     });
     expect(launchGame).toHaveBeenCalledOnce();
+  });
+
+  it('emits nothing when the bet completed no bonus', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a6', name: 'Eights' });
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '75', currency: 'USD' });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      mock<GameAdapter>({
+        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'u', token: 't' }),
+        endRound: vi.fn(),
+      }),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+
+    await startRound(svc, '00000000-0000-0000-0000-000000000406', created.id, 'USD', '25');
+
+    expect(events.emit).not.toHaveBeenCalledWith('promo.bonus.completed', expect.anything());
   });
 });
 

@@ -38,10 +38,8 @@ export type WalletDebitOutcome =
       bonusSpent?: string;
       /** Bonus funds left on the grant the bet was attributed to. */
       bonusBalance?: string;
-      /** Grants this debit pushed over their wagering requirement. */
-      completedGrantIds?: string[];
-      /** Bonus funds those grants released into the real balance. */
-      convertedAmount?: string;
+      /** The grant this debit pushed over its requirement, and what it released into the real balance. */
+      completed?: { grantId: string; convertedAmount: string };
     }
   /** `available` is the real balance plus whatever bonus funds could have covered the rest. */
   | { ok: false; available: string };

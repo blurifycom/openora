@@ -53,6 +53,17 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
+export const WalletBonusEngineUnavailableError = createDomainError<[type: string]>(
+  'WalletBonusEngineUnavailableError',
+  (type) =>
+    `a ${type} credit needs the bonus engine to hold its wagering requirement, and none is bound`,
+);
+
+export const WalletBonusGrantRefusedError = createDomainError<[reason: string]>(
+  'WalletBonusGrantRefusedError',
+  (reason) => `the bonus engine refused the grant behind this credit: ${reason}`,
+);
+
 export const WalletCreditFailedError = createDomainError<[walletId: string, currency: string]>(
   'WalletCreditFailedError',
   (walletId, currency) => `wallet ${walletId} has no ${currency} balance row to credit`,
@@ -230,10 +241,9 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: true, newBalance: debitedBalance, currency: debitCurrency };
     }
 
-    const newBalance =
-      moneyCompare(wagered.convertedAmount, '0') > 0
-        ? await this.convertBonus(txn, debitRow, wagered.convertedAmount, wagered.completedGrantIds)
-        : debitedBalance;
+    const newBalance = wagered.completed
+      ? await this.convertBonus(txn, debitRow, wagered.completed)
+      : debitedBalance;
 
     return {
       ok: true,
@@ -241,8 +251,7 @@ export class WalletCommandsService implements WalletCommands {
       currency: debitCurrency,
       bonusSpent: wagered.bonusSpent,
       bonusBalance: wagered.bonusBalanceAfter,
-      completedGrantIds: wagered.completedGrantIds,
-      convertedAmount: wagered.convertedAmount,
+      ...(wagered.completed === null ? {} : { completed: wagered.completed }),
     };
   }
 
@@ -254,29 +263,29 @@ export class WalletCommandsService implements WalletCommands {
   private async convertBonus(
     txn: DrizzleDb,
     debitRow: Wallet & { currency: string },
-    amount: string,
-    grantIds: string[],
+    completed: { grantId: Uuid; convertedAmount: string },
   ): Promise<string> {
     const before = await readWalletBalance(txn, debitRow.id, debitRow.currency);
-    const [credited] = await creditWalletBalance(txn, debitRow.id, debitRow.currency, amount);
+    const { grantId, convertedAmount } = completed;
+    const [credited] = await creditWalletBalance(
+      txn,
+      debitRow.id,
+      debitRow.currency,
+      convertedAmount,
+    );
     if (!credited) {
       throw new WalletBonusConversionError(debitRow.id, debitRow.currency);
     }
-    await this.writeLedgerRow(txn, debitRow, 'bonus', amount, 'credit');
+    await this.writeLedgerRow(txn, debitRow, 'bonus', convertedAmount, 'credit');
     // The one movement that turns a bonus into withdrawable money. A regulator asking who
     // released it reads this row, and it commits with the balance it describes.
     await this.audit.recordInTransaction(txn, {
       actorType: 'system',
       action: 'promo.bonus.converted',
       resourceType: 'promo_grant',
-      resourceId: grantIds[0] ?? null,
+      resourceId: grantId,
       before: { currency: debitRow.currency, balance: before },
-      after: {
-        currency: debitRow.currency,
-        balance: credited.amount,
-        convertedAmount: amount,
-        grantIds,
-      },
+      after: { currency: debitRow.currency, balance: credited.amount, convertedAmount },
     });
     return credited.amount;
   }
@@ -346,16 +355,26 @@ export class WalletCommandsService implements WalletCommands {
         : { realShare: amount };
 
     // Gifted money is a bonus, not cash: it lands on a grant that has to be wagered before it
-    // converts, so none of it reaches the real balance here.
-    if ((type === 'gift' || type === 'rain') && this.optional.bonusGrants) {
-      await this.optional.bonusGrants.grant(txn, {
+    // converts, so none of it reaches the real balance here. With no engine bound there is
+    // nowhere to put the obligation, and crediting the money anyway would hand the player
+    // withdrawable cash an operator never agreed to give away.
+    if (type === 'gift' || type === 'rain') {
+      if (!this.optional.bonusGrants) {
+        throw new WalletBonusEngineUnavailableError(type);
+      }
+      const granted = await this.optional.bonusGrants.grant(txn, {
         userId,
         currency: balanceKey(currency),
         amount,
         source: type,
-        sourceRef: ledgerRow.row.id,
+        // A caller that names the thing behind the gift gets the grant's idempotency guard;
+        // one that does not gets a fresh reference and no protection beyond this transaction.
+        sourceRef: providerRef?.providerRefId ?? ledgerRow.row.id,
         actor: { type: 'system' },
       });
+      if (!granted.ok) {
+        throw new WalletBonusGrantRefusedError(granted.reason);
+      }
       return { ok: true, newBalance: await readWalletBalance(txn, row.id, balanceKey(currency)) };
     }
 

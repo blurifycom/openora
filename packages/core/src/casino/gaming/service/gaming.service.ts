@@ -417,19 +417,17 @@ export class GamingService {
       );
       return {
         round: insertedRound,
-        completed: {
-          grantIds: outcome.completedGrantIds ?? [],
-          currency: outcome.currency,
-          convertedAmount: outcome.convertedAmount ?? '0',
-        },
+        completed: outcome.completed
+          ? { ...outcome.completed, currency: outcome.currency }
+          : undefined,
       };
     });
 
     // Post-commit: the money moved inside the transaction above, this only tells the player.
-    for (const grantId of completed.grantIds) {
+    if (completed) {
       this.events.emit('promo.bonus.completed', {
         userId,
-        grantId,
+        grantId: completed.grantId,
         currency: completed.currency,
         convertedAmount: completed.convertedAmount,
       });

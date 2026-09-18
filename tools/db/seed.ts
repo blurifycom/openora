@@ -49,7 +49,7 @@ async function main() {
   await seedAutoWithdrawalConfig(db);
   console.log('  Auto-withdrawal config ready.');
   await seedDefaultWeightProfile(db);
-  console.log('  Bonus rollover config ready.');
+  console.log('  Default wager-weight profile ready.');
   await seedChatCommands(db);
   console.log('  Chat command config ready.');
 
