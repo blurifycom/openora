@@ -169,6 +169,159 @@ describe('mapEventToRecord: gaming tag catalog mutations', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.games.bulk_updated', () => {
+  const gameId = '99999999-9999-4999-8999-999999999999';
+  const otherGameId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const providerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const emptyTarget = { gameIds: [gameId], providerIds: [] };
+  const emptyNotFound = { gameIds: [], providerIds: [] };
+
+  it('audits a set_active call against the game resource with no single resourceId', async () => {
+    const bulkOperationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const row = await mapEventToRecord('gaming.games.bulk_updated', {
+      operation: 'set_active',
+      actorId: adminId,
+      bulkOperationId,
+      target: emptyTarget,
+      isActive: false,
+      changedGameIds: [gameId],
+      changedProviderIds: [providerId],
+      notFound: emptyNotFound,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game',
+      resourceId: null,
+      before: { isActive: true, gameIds: [gameId], providerIds: [providerId] },
+      after: { operation: 'set_active', isActive: false },
+      correlationId: bulkOperationId,
+    });
+  });
+
+  it('audits an add_tags call recording exactly which ids each game was missing', async () => {
+    const tagA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const tagB = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const addedLinks = [
+      { gameId, tagIds: [tagB] },
+      { gameId: otherGameId, tagIds: [tagA, tagB] },
+    ];
+    const row = await mapEventToRecord('gaming.games.bulk_updated', {
+      operation: 'add_tags',
+      actorId: adminId,
+      target: emptyTarget,
+      tagIds: [tagA, tagB],
+      addedLinks,
+      notFound: emptyNotFound,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game',
+      resourceId: null,
+      before: {
+        addedLinks: [
+          { gameId, tagIds: [] },
+          { gameId: otherGameId, tagIds: [] },
+        ],
+      },
+      after: { operation: 'add_tags', addedLinks },
+      correlationId: null,
+    });
+  });
+
+  it('audits an add_categories call the same way, keyed on categoryIds', async () => {
+    const categoryId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const addedLinks = [{ gameId, categoryIds: [categoryId] }];
+    const row = await mapEventToRecord('gaming.games.bulk_updated', {
+      operation: 'add_categories',
+      actorId: adminId,
+      target: emptyTarget,
+      categoryIds: [categoryId],
+      addedLinks,
+      notFound: emptyNotFound,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game',
+      resourceId: null,
+      before: { addedLinks: [{ gameId, categoryIds: [] }] },
+      after: { operation: 'add_categories', addedLinks },
+    });
+  });
+});
+
+describe('mapEventToRecord: gaming.provider.updated', () => {
+  const providerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const snapshot = {
+    slug: 'acme',
+    name: 'Acme',
+    aggregatorMappings: [],
+    logoUrl: null,
+    metadata: null,
+    isActive: true,
+  };
+
+  it('carries the bulk operation id as correlationId when this flip came from a bulk/active call', async () => {
+    const bulkOperationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const row = await mapEventToRecord('gaming.provider.updated', {
+      providerId,
+      actorId: adminId,
+      bulkOperationId,
+      before: { ...snapshot, isActive: true },
+      after: { ...snapshot, isActive: false },
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_provider',
+      resourceId: providerId,
+      before: { isActive: true },
+      after: { isActive: false },
+      correlationId: bulkOperationId,
+    });
+  });
+
+  it('has no correlationId for an ordinary, non-bulk provider update', async () => {
+    const row = await mapEventToRecord('gaming.provider.updated', {
+      providerId,
+      actorId: adminId,
+      before: { ...snapshot, isActive: true },
+      after: { ...snapshot, isActive: false },
+    });
+
+    expect(row).toMatchObject({
+      resourceType: 'game_provider',
+      resourceId: providerId,
+      correlationId: null,
+    });
+  });
+});
+
+describe('mapEventToRecord: gaming.game.availability_changed', () => {
+  it('audits a vendor outage flip as a system action on the game', async () => {
+    const gameId = '99999999-9999-4999-8999-999999999999';
+    const row = await mapEventToRecord('gaming.game.availability_changed', {
+      gameId,
+      before: { isUnavailable: false },
+      after: { isUnavailable: true },
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'game',
+      resourceId: gameId,
+      before: { isUnavailable: false },
+      after: { isUnavailable: true },
+    });
+  });
+});
+
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 

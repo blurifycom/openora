@@ -1,9 +1,10 @@
 /**
  * Read-only view of the casino catalog for code outside the gaming module (overlay lobby
  * sections, promotions), so it never re-implements the playability rule over the gaming tables.
- * "Playable" means the game and its provider are both active. Every method is batched; an id
- * that is unknown, unplayable, inactive or not a UUID is simply absent from the result, and a
- * map keyed by the given ids iterates in the order those ids were passed.
+ * "Playable" means the game and its provider are both active and the vendor has not marked the
+ * game unavailable. Every method is batched; an id that is unknown, unplayable, inactive or not
+ * a UUID is simply absent from the result, and a map keyed by the given ids iterates in the
+ * order those ids were passed.
  */
 import { createToken, type Token } from './token.js';
 import type { PageQuery, Paginated } from '../kit.js';

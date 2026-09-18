@@ -83,11 +83,13 @@ describe('GameCatalogReaderService.getPlayableGames (real PG)', () => {
       thumbnailUrl: 'https://cdn/thumb.png',
     });
     const inactive = await seedGame(provider.id, { isActive: false });
+    const unavailable = await seedGame(provider.id, { isUnavailable: true });
     const ofDisabledProvider = await seedGame(disabledProvider.id);
 
     const games = await reader.getPlayableGames([
       playable.id,
       inactive.id,
+      unavailable.id,
       ofDisabledProvider.id,
       randomUUID(),
       NOT_A_UUID,

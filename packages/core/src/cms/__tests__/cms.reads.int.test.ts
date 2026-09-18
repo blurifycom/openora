@@ -9,11 +9,12 @@ import { CmsService, PageNotFoundError } from '../service/cms.service.js';
 
 let db: TestDb;
 let redis: TestRedis;
+const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
 
 function makeService() {
   const events = makeEventBus();
   const cache = new RedisCache(redis.client);
-  return { svc: new CmsService(db.drizzle, events, cache), events };
+  return { svc: new CmsService(db.drizzle, events, cache, ['cdn.example']), events };
 }
 
 beforeAll(async () => {
@@ -57,6 +58,101 @@ describe('CmsService page cache invalidation (real PG + real Redis)', () => {
     await svc.updatePage({ id: created.id, title: 'About v2' }, 'admin-1');
     expect(await redis.client.get('cache:cms:page:about')).toBeNull();
     expect((await svc.getPage('about')).title).toBe('About v2');
+  });
+});
+
+describe('CmsService public banner cache invalidation (real PG + real Redis)', () => {
+  it('invalidates the mutated locale after replacing or deleting a localized banner image', async () => {
+    const { svc } = makeService();
+    const configuration = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: configuration.id,
+        sortOrder: 0,
+        desktopImageUrl: 'https://cdn.example/default-desktop.png',
+        mobileImageUrl: 'https://cdn.example/default-mobile.png',
+      },
+      ADMIN_ID,
+    );
+    await svc.setDefaultConfiguration(configuration.id, ADMIN_ID);
+    const localized = await svc.setBannerImage(
+      {
+        bannerConfigurationId: configuration.id,
+        sortOrder: 0,
+        locale: 'es',
+        desktopImageUrl: 'https://cdn.example/spanish-desktop-v1.png',
+        mobileImageUrl: 'https://cdn.example/spanish-mobile-v1.png',
+      },
+      ADMIN_ID,
+    );
+
+    expect((await svc.getPublicBanner('home-top', 'es'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/spanish-desktop-v1.png',
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: configuration.id,
+        sortOrder: 0,
+        locale: 'es',
+        desktopImageUrl: 'https://cdn.example/spanish-desktop-v2.png',
+        mobileImageUrl: 'https://cdn.example/spanish-mobile-v2.png',
+      },
+      ADMIN_ID,
+    );
+
+    expect((await svc.getPublicBanner('home-top', 'es'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/spanish-desktop-v2.png',
+    );
+
+    await svc.deleteBannerImage(localized.id, ADMIN_ID);
+
+    expect((await svc.getPublicBanner('home-top', 'es'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/default-desktop.png',
+    );
+  });
+
+  it('invalidates every locale when the placement default changes', async () => {
+    const { svc } = makeService();
+    const initial = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: initial.id,
+        sortOrder: 0,
+        desktopImageUrl: 'https://cdn.example/initial-desktop.png',
+        mobileImageUrl: 'https://cdn.example/initial-mobile.png',
+      },
+      ADMIN_ID,
+    );
+    await svc.setDefaultConfiguration(initial.id, ADMIN_ID);
+
+    expect((await svc.getPublicBanner('home-top', 'en'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/initial-desktop.png',
+    );
+
+    const replacement = await svc.createConfiguration(
+      { placement: 'home-top', layout: 'single' },
+      ADMIN_ID,
+    );
+    await svc.setBannerImage(
+      {
+        bannerConfigurationId: replacement.id,
+        sortOrder: 0,
+        desktopImageUrl: 'https://cdn.example/replacement-desktop.png',
+        mobileImageUrl: 'https://cdn.example/replacement-mobile.png',
+      },
+      ADMIN_ID,
+    );
+    await svc.setDefaultConfiguration(replacement.id, ADMIN_ID);
+
+    expect((await svc.getPublicBanner('home-top', 'en'))?.slots[0]?.desktopImageUrl).toBe(
+      'https://cdn.example/replacement-desktop.png',
+    );
   });
 });
 

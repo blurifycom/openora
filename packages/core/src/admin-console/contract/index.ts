@@ -4,8 +4,10 @@ import {
   ADMIN_TX_SORT_BY_VALUES,
   ADMIN_USER_SORT_BY_VALUES,
   CurrencyCodeSchema,
+  DateRangeSchema,
   GAME_PERFORMANCE_SORT_FIELDS,
   GameTypeSchema,
+  GranularitySchema,
   IdInputSchema,
   KycStatusSchema,
   MoneyAmountSchema,
@@ -121,6 +123,31 @@ export const GamePerformanceSchema = z.object({
   roundsPlayed: z.number().int(),
 });
 
+// dateTo defaults to now and dateFrom to 30 days before dateTo. Without a currency,
+// amounts across currencies are summed unconverted, as in GamePerformanceSchema.
+export const GamePerformanceTrendFilterSchema = DateRangeSchema.extend({
+  gameId: UuidSchema,
+  currency: CurrencyCodeSchema.optional(),
+  granularity: GranularitySchema.default('day'),
+});
+
+export const GamePerformanceTrendPointSchema = z.object({
+  bucket: z.iso.date().describe('UTC start of the day, ISO week (Monday) or month'),
+  volume: MoneyAmountSchema,
+  revenue: SignedMoneyAmountSchema,
+  roundsPlayed: z.number().int(),
+});
+
+export const GamePerformanceTrendSchema = z.object({
+  totals: z.object({
+    volume: MoneyAmountSchema,
+    revenue: SignedMoneyAmountSchema,
+    uniquePlayers: z.number().int(),
+    roundsPlayed: z.number().int(),
+  }),
+  points: z.array(GamePerformanceTrendPointSchema),
+});
+
 export const PlayerActivityFilterSchema = z.object({
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
@@ -200,6 +227,11 @@ export const backofficeContract = {
     .input(GamePerformanceFilterSchema)
     .output(z.array(GamePerformanceSchema)),
 
+  getGamePerformanceTrend: oc
+    .route({ method: 'GET', path: '/backoffice/analytics/games/{gameId}/trend' })
+    .input(GamePerformanceTrendFilterSchema)
+    .output(GamePerformanceTrendSchema),
+
   getPlayerActivity: oc
     .route({ method: 'GET', path: '/backoffice/analytics/players' })
     .input(PlayerActivityFilterSchema)
@@ -210,5 +242,7 @@ export type TransactionFilter = z.infer<typeof TransactionFilterSchema>;
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 export type GamePerformanceFilter = z.infer<typeof GamePerformanceFilterSchema>;
 export type GamePerformance = z.infer<typeof GamePerformanceSchema>;
+export type GamePerformanceTrendFilter = z.infer<typeof GamePerformanceTrendFilterSchema>;
+export type GamePerformanceTrend = z.infer<typeof GamePerformanceTrendSchema>;
 export type PlayerActivityFilter = z.infer<typeof PlayerActivityFilterSchema>;
 export type PlayerActivity = z.infer<typeof PlayerActivitySchema>;

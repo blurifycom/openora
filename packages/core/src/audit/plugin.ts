@@ -772,6 +772,7 @@ export async function mapEventToRecord(
       resourceId: str(p['providerId']),
       before: isRecord(p['before']) ? p['before'] : null,
       after: isRecord(p['after']) ? p['after'] : null,
+      correlationId: str(p['bulkOperationId']),
     };
   }
 
@@ -850,6 +851,44 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'admin',
       actorId: str(p['actorId']),
+      resourceType: 'game',
+      resourceId: str(p['gameId']),
+      before: isRecord(p['before']) ? p['before'] : null,
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.games.bulk_updated') {
+    const operation = p['operation'];
+    const linkIdsKey = operation === 'add_tags' ? 'tagIds' : 'categoryIds';
+    const before =
+      operation === 'set_active'
+        ? {
+            isActive: !p['isActive'],
+            gameIds: Array.isArray(p['changedGameIds']) ? p['changedGameIds'] : [],
+            providerIds: Array.isArray(p['changedProviderIds']) ? p['changedProviderIds'] : [],
+          }
+        : {
+            addedLinks: (Array.isArray(p['addedLinks']) ? p['addedLinks'] : []).map(
+              (link: Record<string, unknown>) => ({ gameId: link['gameId'], [linkIdsKey]: [] }),
+            ),
+          };
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game',
+      resourceId: null,
+      before,
+      after: p,
+      correlationId: operation === 'set_active' ? str(p['bulkOperationId']) : null,
+    };
+  }
+
+  if (topic === 'gaming.game.availability_changed') {
+    return {
+      ...base,
+      actorType: 'system',
       resourceType: 'game',
       resourceId: str(p['gameId']),
       before: isRecord(p['before']) ? p['before'] : null,
@@ -1113,6 +1152,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.tag.updated',
   'gaming.tag.deleted',
   'gaming.game.updated',
+  'gaming.games.bulk_updated',
+  'gaming.game.availability_changed',
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.user.ignored',

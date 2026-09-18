@@ -46,7 +46,7 @@ export function toProviderSummary(record: typeof gameProvider.$inferSelect) {
   };
 }
 
-function providerSnapshot(
+export function providerSnapshot(
   record: typeof gameProvider.$inferSelect,
   aggregatorMappings: readonly GameProviderAggregatorMapping[],
 ) {

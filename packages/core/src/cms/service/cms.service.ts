@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   type EventBus,
   type DrizzleTx,
@@ -66,15 +67,27 @@ export class BannerScheduleOverlapError extends Error {
 const CMS_CACHE_TTL_MS = 60_000;
 
 const pageCacheKey = (slug: string) => `cms:page:${slug}`;
-// Keyed per requested locale, but invalidation below only targets DEFAULT_LOCALE -
-// a non-default-locale read can lag a write by up to CMS_CACHE_TTL_MS, which is
-// acceptable for this public, non-money read.
-const publicBannerCacheKey = (placement: string, locale: string) =>
-  `cms:banner-placement:${placement}:${locale}`;
+const publicBannerCacheEpochKey = (placement: string) => `cms:banner-placement:${placement}:epoch`;
+const publicBannerCacheKey = (placement: string, epoch: string, locale: string) =>
+  `cms:banner-placement:${placement}:${epoch}:${locale}`;
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 const bannerConfigurationMutationLockKey = (bannerConfigurationId: Uuid) =>
   `cms:banner-configuration:${bannerConfigurationId}`;
 const bannerImageUrlLockKey = (url: string) => `cms:banner-image-url:${url}`;
+
+async function currentPublicBannerCacheKey(
+  cache: CacheAdapter | undefined,
+  placement: string,
+  locale: string,
+) {
+  const epoch = await cached(
+    cache,
+    publicBannerCacheEpochKey(placement),
+    CMS_CACHE_TTL_MS,
+    async () => randomUUID(),
+  );
+  return publicBannerCacheKey(placement, epoch, locale);
+}
 
 async function withBannerImageUrlLocks<T>(
   tx: DrizzleTx,
@@ -612,7 +625,7 @@ export class CmsService {
       });
     });
 
-    await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
+    await invalidate(this.cache, publicBannerCacheEpochKey(placement));
     this.events.emit('cms.banner.configuration.set_default', {
       bannerConfigurationId: id,
       actorId,
@@ -643,7 +656,7 @@ export class CmsService {
       return current.id;
     });
 
-    await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
+    await invalidate(this.cache, publicBannerCacheEpochKey(placement));
     this.events.emit('cms.banner.configuration.unset_default', {
       placement,
       previousBannerConfigurationId,
@@ -754,7 +767,7 @@ export class CmsService {
     );
 
     if (configuration.isDefault) {
-      await invalidate(this.cache, publicBannerCacheKey(configuration.placement, DEFAULT_LOCALE));
+      await invalidate(this.cache, publicBannerCacheEpochKey(configuration.placement));
     }
 
     this.events.emit('cms.banner.image.set', {
@@ -792,6 +805,7 @@ export class CmsService {
                 .select({
                   id: bannerImageTable.id,
                   bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                  locale: bannerImageTable.locale,
                   desktopImageUrl: bannerImageTable.desktopImageUrl,
                   mobileImageUrl: bannerImageTable.mobileImageUrl,
                 })
@@ -809,6 +823,7 @@ export class CmsService {
                   .returning({
                     id: bannerImageTable.id,
                     bannerConfigurationId: bannerImageTable.bannerConfigurationId,
+                    locale: bannerImageTable.locale,
                     desktopImageUrl: bannerImageTable.desktopImageUrl,
                     mobileImageUrl: bannerImageTable.mobileImageUrl,
                   });
@@ -834,7 +849,7 @@ export class CmsService {
       },
     );
     if (configuration?.isDefault) {
-      await invalidate(this.cache, publicBannerCacheKey(configuration.placement, DEFAULT_LOCALE));
+      await invalidate(this.cache, publicBannerCacheEpochKey(configuration.placement));
     }
 
     this.events.emit('cms.banner.image.deleted', {
@@ -852,7 +867,7 @@ export class CmsService {
     const resolvedLocale = locale ?? DEFAULT_LOCALE;
     return cached(
       this.cache,
-      publicBannerCacheKey(placement, resolvedLocale),
+      await currentPublicBannerCacheKey(this.cache, placement, resolvedLocale),
       CMS_CACHE_TTL_MS,
       async () => {
         // "What's live" is resolved here, at read time, not by a background job - a
@@ -1003,7 +1018,7 @@ export class CmsService {
       });
     });
 
-    await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
+    await invalidate(this.cache, publicBannerCacheEpochKey(placement));
     this.events.emit('cms.banner.schedule.created', {
       bannerScheduleId: record.id,
       bannerConfigurationId,
@@ -1072,7 +1087,7 @@ export class CmsService {
       });
     });
 
-    await invalidate(this.cache, publicBannerCacheKey(placement, DEFAULT_LOCALE));
+    await invalidate(this.cache, publicBannerCacheEpochKey(placement));
     this.events.emit('cms.banner.schedule.updated', {
       bannerScheduleId: record.id,
       bannerConfigurationId,
