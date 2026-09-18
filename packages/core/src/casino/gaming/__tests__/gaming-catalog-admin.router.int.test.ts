@@ -429,6 +429,34 @@ describe('gaming catalog router authz', () => {
     );
   });
 
+  it('answers 400 to the geo filters when the compliance module is not loaded', async () => {
+    const { router } = routerWith(allowingGuard());
+
+    await expect(
+      call(router.listAdminGames, { geoBlocked: true }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    await expect(
+      call(router.listAdminGames, { geoBlockedCountries: ['DE'] }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    await expect(call(router.listAdminGames, {}, { context: CTX })).resolves.toMatchObject({
+      total: 0,
+    });
+  });
+
+  it('requires compliance:view for the geo filters only', async () => {
+    const { router } = routerWith(makeAdminGuard({ allow: ['game-config:view'] }));
+
+    await expect(
+      call(router.listAdminGames, { geoBlocked: true }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(router.listAdminGames, { geoBlockedCountries: ['DE'] }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(router.listAdminGames, { tagIds: [randomUUID()] }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 0 });
+  });
+
   it('creates, reads, updates, and deletes custom tags through guarded routes', async () => {
     const { router, events } = routerWith(allowingGuard());
 

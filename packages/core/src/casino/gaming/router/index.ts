@@ -10,6 +10,7 @@ import {
   RgRestrictedError,
   InsufficientBalanceError,
   GameGeoRestrictedError,
+  GameGeoFiltersUnavailableError,
 } from '../service/gaming.service.js';
 import {
   GameCategoryService,
@@ -218,7 +219,13 @@ export function createGamingRouter({
 
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return gaming.listGamesAdmin(input);
+      // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
+      if (input.geoBlocked !== undefined || input.geoBlockedCountries) {
+        await adminGuard.assert(context, 'compliance', 'view');
+      }
+      return mapErrors({ BAD_REQUEST: GameGeoFiltersUnavailableError }, () =>
+        gaming.listGamesAdmin(input),
+      );
     }),
 
     getCatalogStats: os.getCatalogStats.handler(async ({ context }) => {
