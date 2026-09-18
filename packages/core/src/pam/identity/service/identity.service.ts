@@ -873,11 +873,10 @@ export class IdentityService {
     // outright on a missing IP would let an attacker disable this protection for free by
     // simply not sending the header.
     //
-    // `ip` comes from extractClientMeta(), which reads X-Real-IP unconditionally (see its
-    // doc comment) - a deployment MUST terminate at a reverse proxy that overwrites
-    // X-Real-IP with the real peer address (eg nginx `proxy_set_header X-Real-IP
-    // $remote_addr`) before this protection means anything; the same assumption already
-    // applies to the sibling keys above.
+    // `ip` is X-Real-IP as `createApp` leaves it: the socket address, unless the peer is a
+    // configured trusted proxy (`trustedProxies` / TRUSTED_PROXIES). A direct caller cannot
+    // choose its bucket by rotating the header; the proxy must overwrite it (eg nginx
+    // `proxy_set_header X-Real-IP $remote_addr`) rather than pass the client's through.
     const ipRateLimitOptions = this.options?.loginIpRateLimit;
     if (ipRateLimitOptions?.enabled ?? true) {
       await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip ?? 'unknown'), {

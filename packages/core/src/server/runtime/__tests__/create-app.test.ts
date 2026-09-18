@@ -10,6 +10,7 @@ import { redisUrlForWorker } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import { AUTH_SESSION, type SessionResolver } from '../../auth/index.js';
 import { createApp } from '../create-app.js';
+import { getCurrentClientMeta } from '../../kernel/request-context.js';
 
 // A syntactically valid but unreachable DB url - fine here because nothing in this
 // suite ever runs a query: DrizzleService's pg.Pool connects lazily, and neither
@@ -241,5 +242,79 @@ describe('createApp - the player-activity stamp', () => {
         process.env['REDIS_URL'] = saved;
       }
     }
+  });
+});
+
+describe('createApp - client address at the ingress', () => {
+  // What `@hono/node-server` hands the app: the socket the request arrived on.
+  const fromPeer = (remoteAddress: string) => ({ incoming: { socket: { remoteAddress } } });
+
+  it('keys a direct caller on its socket, however it rotates X-Real-IP', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const created = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL });
+      created.app.get('/ip-probe', (c) => c.json({ ip: getCurrentClientMeta().ip }));
+
+      const seen = [];
+      for (const spoofed of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) {
+        const res = await created.app.request(
+          '/ip-probe',
+          { headers: { 'x-real-ip': spoofed, 'x-forwarded-for': spoofed } },
+          fromPeer('203.0.113.7'),
+        );
+        seen.push((await res.json()).ip);
+      }
+      expect(seen).toEqual(['203.0.113.7', '203.0.113.7', '203.0.113.7']);
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+
+  it('takes X-Real-IP from a configured trusted proxy only', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const created = await createApp({
+        plugins: [],
+        databaseUrl: DUMMY_DATABASE_URL,
+        trustedProxies: ['192.0.2.10'],
+      });
+      created.app.get('/ip-probe', (c) => c.json({ ip: getCurrentClientMeta().ip }));
+      const probe = async (peer: string) =>
+        (
+          await (
+            await created.app.request(
+              '/ip-probe',
+              { headers: { 'x-real-ip': '198.51.100.1' } },
+              fromPeer(peer),
+            )
+          ).json()
+        ).ip;
+
+      expect(await probe('192.0.2.10')).toBe('198.51.100.1');
+      // Private, but not in the configured list - the default ranges no longer apply.
+      expect(await probe('10.0.0.5')).toBe('10.0.0.5');
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+
+  it('refuses to boot on a malformed trusted proxy entry', async () => {
+    await expect(
+      createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, trustedProxies: ['10.0.0.0/40'] }),
+    ).rejects.toThrow(/Invalid trusted proxy entry/);
   });
 });
