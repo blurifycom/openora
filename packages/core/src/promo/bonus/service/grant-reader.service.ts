@@ -18,6 +18,7 @@ const MONEY_FIELDS = [
   'wageringProgress',
 ] as const;
 const DATE_FIELDS = ['expiresAt', 'closedAt', 'createdAt'] as const;
+const SERIALIZE = { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] };
 
 const COLUMNS = {
   id: promoGrant.id,
@@ -68,7 +69,6 @@ export class GrantReaderService {
     return { items: rows.map(toPlayerGrant), total: Number(total?.n ?? 0), page, limit };
   }
 
-  /** Support answering a dispute: one player's bonuses, newest first. */
   async listForAdmin(userId: Uuid, query: PageQuery): Promise<AdminGrant[]> {
     const rows = await this.drizzle.db
       .select(ADMIN_COLUMNS)
@@ -116,15 +116,9 @@ type AdminGrantRow = {
 };
 
 function toAdminGrant(row: AdminGrantRow): AdminGrant {
-  return serializeRow(row, {
-    dateFields: [...DATE_FIELDS],
-    decimalFields: [...MONEY_FIELDS],
-  });
+  return serializeRow(row, SERIALIZE);
 }
 
 function toPlayerGrant(row: PlayerGrantRow): PlayerGrant {
-  return serializeRow(row, {
-    dateFields: [...DATE_FIELDS],
-    decimalFields: [...MONEY_FIELDS],
-  });
+  return serializeRow(row, SERIALIZE);
 }

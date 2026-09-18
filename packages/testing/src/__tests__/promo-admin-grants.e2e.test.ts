@@ -175,6 +175,28 @@ describe('support forfeiting a bonus', () => {
     expect(res.status).toBe(409);
   });
 
+  it('tells an admin a grant does not exist rather than that it was already forfeited', async () => {
+    const res = await admin.post(`/backoffice/promo/grants/${randomUUID()}/forfeit`, {
+      reason: 'admin',
+      note: 'Typed the wrong identifier entirely',
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('leaves a record of a forfeit that took nothing', async () => {
+    const before = (await forfeitRows()).length;
+
+    await admin.post(`/backoffice/promo/grants/${randomUUID()}/forfeit`, {
+      reason: 'admin',
+      note: 'Probing an identifier that is not there',
+    });
+
+    const after = await forfeitRows();
+    expect(after.length).toBe(before + 1);
+    expect(JSON.stringify(after.at(-1)?.after)).toContain('refused');
+  });
+
   it('refuses a player forfeiting anything', async () => {
     const { client, userId } = await registerAndMaterializePlayer(app, {
       email: `forfeit-player-${randomUUID()}@example.test`,

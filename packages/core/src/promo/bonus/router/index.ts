@@ -1,9 +1,16 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
+import {
+  getUserId,
+  mapErrors,
+  type AdminGuard,
+  type EventBus,
+  type OssContext,
+} from '@openora/core/server';
 import { bonusContract } from '../contract/index.js';
 import {
   GrantLifecycleService,
   GrantNotForfeitableError,
+  GrantNotFoundError as GrantNotForfeitableNotFoundError,
 } from '../service/grant-lifecycle.service.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
 import {
@@ -18,11 +25,13 @@ export function createBonusRouter({
   grants,
   offers,
   lifecycle,
+  events,
   adminGuard,
 }: {
   grants: GrantReaderService;
   offers: OfferService;
   lifecycle: GrantLifecycleService;
+  events: EventBus;
   adminGuard: AdminGuard;
 }) {
   const os = implement(bonusContract).$context<OssContext>();
@@ -47,15 +56,26 @@ export function createBonusRouter({
 
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {
           const { userId } = await adminGuard.assert(context, 'bonus', 'cancel');
-          return mapErrors({ CONFLICT: GrantNotForfeitableError }, async () => {
-            await lifecycle.forfeit(
-              input.id,
-              input.reason,
-              { id: userId, isAdmin: true },
-              input.note,
-            );
-            return grants.getForAdmin(input.id);
-          });
+          return mapErrors(
+            { CONFLICT: GrantNotForfeitableError, NOT_FOUND: GrantNotForfeitableNotFoundError },
+            async () => {
+              const closed = await lifecycle.forfeit(
+                input.id,
+                input.reason,
+                { id: userId, isAdmin: true },
+                input.note,
+              );
+              events.emit('promo.bonus.forfeited', {
+                userId: closed.userId,
+                grantId: closed.grantId,
+                currency: closed.currency,
+                forfeitedAmount: closed.forfeitedAmount,
+                reason: input.reason,
+                actorId: closed.actorId,
+              });
+              return grants.getForAdmin(input.id);
+            },
+          );
         }),
       },
 
