@@ -179,12 +179,24 @@ describe('forfeiting every grant a player holds', () => {
     expect((await rowOf(theirs)).status).toBe('active');
   });
 
+  it('records a player who excluded themselves as the player, not as an admin', async () => {
+    const userId = randomUUID();
+    await grant({ userId });
+
+    await lifecycle.forfeitAllFor(userId, 'self_exclusion', { id: userId, isAdmin: false });
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorType: 'player', actorId: userId }),
+    );
+  });
+
   it('names the admin when one took the grant away', async () => {
     const userId = randomUUID();
     const actorId = randomUUID();
     await grant({ userId });
 
-    await lifecycle.forfeitAllFor(userId, 'admin', actorId);
+    await lifecycle.forfeitAllFor(userId, 'admin', { id: actorId, isAdmin: true });
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),

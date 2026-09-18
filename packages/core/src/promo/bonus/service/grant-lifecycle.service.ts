@@ -13,6 +13,7 @@ type ClosedGrant = {
   userId: Uuid;
   currency: string;
   forfeitedAmount: string;
+  actorId: Uuid | null;
 };
 
 /**
@@ -57,7 +58,7 @@ export class GrantLifecycleService {
   async forfeitAllFor(
     userId: Uuid,
     reason: BonusForfeitReason,
-    actorId?: Uuid,
+    actor?: { id: Uuid; isAdmin: boolean },
   ): Promise<ClosedGrant[]> {
     const live = await this.drizzle.db
       .select({ id: promoGrant.id })
@@ -72,7 +73,7 @@ export class GrantLifecycleService {
           status: 'forfeited',
           action: 'promo.bonus.forfeited',
           reason,
-          ...(actorId === undefined ? {} : { actorId }),
+          ...(actor === undefined ? {} : { actor }),
         }),
       );
       if (row) {
@@ -93,9 +94,20 @@ export class GrantLifecycleService {
       status: 'expired' | 'forfeited';
       action: 'promo.bonus.expired' | 'promo.bonus.forfeited';
       reason?: BonusForfeitReason;
-      actorId?: Uuid;
+      actor?: { id: Uuid; isAdmin: boolean };
     },
   ): Promise<ClosedGrant | null> {
+    // The balance under the lock the update is about to take, so the amount recorded as
+    // forfeited is the column the CHECK constraint protects rather than a derived sum.
+    const [locked] = await tx
+      .select({ bonusBalance: promoGrant.bonusBalance })
+      .from(promoGrant)
+      .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')))
+      .for('update');
+    if (!locked) {
+      return null;
+    }
+
     const [claimed] = await tx
       .update(promoGrant)
       .set({
@@ -115,13 +127,7 @@ export class GrantLifecycleService {
       return null;
     }
 
-    // The balance the update zeroed, read back off its own ledger: entries sum to the balance,
-    // so what the grant still held is what the entries say it held.
-    const [ledger] = await tx
-      .select({ total: sql<string>`coalesce(sum(${promoGrantEntry.bonusAmount}), 0)::text` })
-      .from(promoGrantEntry)
-      .where(eq(promoGrantEntry.grantId, grantId));
-    const forfeitedAmount = ledger?.total ?? ZERO;
+    const forfeitedAmount = locked.bonusBalance;
 
     if (moneyCompare(forfeitedAmount, ZERO) > 0) {
       await tx.insert(promoGrantEntry).values({
@@ -135,9 +141,14 @@ export class GrantLifecycleService {
     }
 
     await this.audit.recordInTransaction(tx, {
-      ...(outcome.actorId === undefined
+      // A player excluding themselves is not an admin action, and recording it as one would
+      // put the wrong name against a forfeiture in the regulator-facing record.
+      ...(outcome.actor === undefined
         ? { actorType: 'system' as const }
-        : { actorType: 'admin' as const, actorId: outcome.actorId }),
+        : {
+            actorType: outcome.actor.isAdmin ? ('admin' as const) : ('player' as const),
+            actorId: outcome.actor.id,
+          }),
       action: outcome.action,
       resourceType: 'promo_grant',
       resourceId: grantId,
@@ -156,6 +167,7 @@ export class GrantLifecycleService {
       userId: claimed.userId,
       currency: claimed.currency,
       forfeitedAmount,
+      actorId: outcome.actor?.id ?? null,
     };
   }
 }
