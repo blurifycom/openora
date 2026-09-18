@@ -87,7 +87,9 @@ const allowingLimits = () =>
 describe('WalletCommandsService wager-limit gate (real PG)', () => {
   it('refuses a bet over the limit without touching the ledger, and says why', async () => {
     const w = await seedWallet({ balance: '100' });
-    const gated = new WalletCommandsService(eligibility(false), audit, undefined, refusingLimits());
+    const gated = new WalletCommandsService(eligibility(false), audit, {
+      rgLimits: refusingLimits(),
+    });
 
     await expect(
       gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
@@ -101,7 +103,9 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
 
   it('lets a bet within the limit through', async () => {
     const w = await seedWallet({ balance: '100' });
-    const gated = new WalletCommandsService(eligibility(false), audit, undefined, allowingLimits());
+    const gated = new WalletCommandsService(eligibility(false), audit, {
+      rgLimits: allowingLimits(),
+    });
 
     await expect(
       gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
@@ -112,7 +116,7 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
   it('never gates a win or a loss - they settle a round that was already staked', async () => {
     const w = await seedWallet({ balance: '100' });
     const limits = refusingLimits();
-    const gated = new WalletCommandsService(eligibility(false), audit, undefined, limits);
+    const gated = new WalletCommandsService(eligibility(false), audit, { rgLimits: limits });
 
     await gated.credit(db.drizzle.db, {
       userId: w.userId,
@@ -154,7 +158,7 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
         return { allowed: true as const };
       }),
     });
-    const gated = new WalletCommandsService(eligibility(false), audit, undefined, limits);
+    const gated = new WalletCommandsService(eligibility(false), audit, { rgLimits: limits });
 
     const results = await Promise.allSettled([
       db.drizzle.db.transaction((tx) =>
@@ -173,7 +177,7 @@ describe('WalletCommandsService wager-limit gate (real PG)', () => {
   it('refuses on the exclusion before it even asks about the amount', async () => {
     const w = await seedWallet({ balance: '100' });
     const limits = allowingLimits();
-    const gated = new WalletCommandsService(eligibility(true), audit, undefined, limits);
+    const gated = new WalletCommandsService(eligibility(true), audit, { rgLimits: limits });
 
     await expect(
       gated.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),

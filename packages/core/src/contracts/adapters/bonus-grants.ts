@@ -17,8 +17,13 @@ export type BonusGrantTerms = {
   wageringMultiplier: string;
   /** Days from the grant until it expires and what is left of it is forfeited. */
   expiryDays: number;
-  /** Weight profile whose rows are copied onto the grant to score its bets. */
-  weightProfileId: string;
+  /**
+   * Weight profile whose rows are copied onto the grant to score its bets. Omitted by a caller
+   * that has no offer behind it - a chat gift, a rain drop - which falls back to the profile the
+   * module seeds as the operator's default. A grant whose profile cannot be resolved is refused
+   * rather than scored at nothing.
+   */
+  weightProfileId?: string;
 };
 
 /**
@@ -42,7 +47,11 @@ export type BonusGrantArgs = {
   actor: BonusGrantActor;
   /** Offer the grant is created from, when one exists. Absent for a manual or a job grant. */
   offerId?: string;
-  terms: BonusGrantTerms;
+  /**
+   * Omitted by a caller with no offer behind it - a chat gift, a rain drop. The bonus module
+   * owns what those are granted under; the wallet only reports that money was given.
+   */
+  terms?: BonusGrantTerms;
 };
 
 export type BonusGrantOutcome =

@@ -34,13 +34,14 @@ export type WalletDebitOutcome =
       /** Real balance after the debit. Bonus funds are not part of it - they live on the grant. */
       newBalance: string;
       currency: string;
-      completedBonusCredits?: Array<{ id: string; currency: string; creditedAmount: string }>;
       /** Part of the stake paid out of bonus funds, as a decimal string. Absent when none was. */
       bonusSpent?: string;
       /** Bonus funds left on the grant the bet was attributed to. */
       bonusBalance?: string;
       /** Grants this debit pushed over their wagering requirement. */
       completedGrantIds?: string[];
+      /** Bonus funds those grants released into the real balance. */
+      convertedAmount?: string;
     }
   /** `available` is the real balance plus whatever bonus funds could have covered the rest. */
   | { ok: false; available: string };

@@ -383,7 +383,7 @@ export class GamingService {
     // without one can never be settled back.
     const roundId = randomUUID();
 
-    const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
+    const { round, completed } = await this.drizzle.db.transaction(async (tx) => {
       // The same currency the RG pre-check above weighed. Left off, the debit falls on the
       // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
@@ -415,15 +415,23 @@ export class GamingService {
           .returning(),
         new GameRoundNotFoundError(gameId),
       );
-      return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
+      return {
+        round: insertedRound,
+        completed: {
+          grantIds: outcome.completedGrantIds ?? [],
+          currency: outcome.currency,
+          convertedAmount: outcome.convertedAmount ?? '0',
+        },
+      };
     });
 
-    for (const credit of completedBonusCredits) {
-      this.events.emit('wallet.bonus_rollover.completed', {
+    // Post-commit: the money moved inside the transaction above, this only tells the player.
+    for (const grantId of completed.grantIds) {
+      this.events.emit('promo.bonus.completed', {
         userId,
-        creditId: credit.id,
-        currency: credit.currency,
-        creditedAmount: credit.creditedAmount,
+        grantId,
+        currency: completed.currency,
+        convertedAmount: completed.convertedAmount,
       });
     }
 
