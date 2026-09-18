@@ -30,6 +30,7 @@ let app: TestApp;
 let weightProfileId: string;
 
 const CASINO = { provider: 'aggregator', product: 'casino' };
+const BETS_WITHIN_POOL = 8;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
@@ -38,19 +39,19 @@ async function player(realBalance: string) {
     email: `wagering-${randomUUID()}@example.test`,
   });
   if (realBalance === '0') {
-    // A player who has never deposited holds no wallet at all, and a debit stops at that before
-    // it can reach a bonus. Open the wallet so the test exercises the engine, not the gate.
-    const [row] = await drizzle().insert(wallet).values({ userId, currency: 'USD' }).returning();
-    if (!row) {
-      throw new Error('player: wallet insert returned no row');
-    }
-    await drizzle()
-      .insert(walletBalance)
-      .values({ walletId: row.id, currency: 'USD', amount: '0' });
+    await openEmptyWallet(userId);
   } else {
     await deposit(client, realBalance);
   }
   return { client, userId };
+}
+
+async function openEmptyWallet(userId: string) {
+  const [row] = await drizzle().insert(wallet).values({ userId, currency: 'USD' }).returning();
+  if (!row) {
+    throw new Error('openEmptyWallet: wallet insert returned no row');
+  }
+  await drizzle().insert(walletBalance).values({ walletId: row.id, currency: 'USD', amount: '0' });
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
@@ -98,6 +99,19 @@ const bet = (userId: string, amount: string, round: string) =>
     providerRef: {
       providerName: 'aggregator',
       providerRefId: `bet-${round}`,
+      externalRoundId: round,
+    },
+  });
+
+const reverse = (userId: string, amount: string, round: string, ref: string) =>
+  credit({
+    userId,
+    amount,
+    currency: 'USD',
+    type: 'bet_reversal',
+    providerRef: {
+      providerName: 'aggregator',
+      providerRefId: `${ref}-${round}`,
       externalRoundId: round,
     },
   });
@@ -278,14 +292,12 @@ describe('the transaction boundary', () => {
 });
 
 describe('concurrent bets against one grant', () => {
-  // Eight, not twenty: the app pool holds ten connections, and a test that queues more
-  // transactions than that measures the pool rather than the engine.
   it('never overdraws the bonus and the ledger still explains the balance', async () => {
     const { userId } = await player('0');
     const grantId = await grantBonus(userId, '40', '100');
 
     const outcomes = await Promise.all(
-      Array.from({ length: 8 }, () => bet(userId, '10', randomUUID())),
+      Array.from({ length: BETS_WITHIN_POOL }, () => bet(userId, '10', randomUUID())),
     );
 
     const row = await grantRow(grantId);
@@ -381,6 +393,42 @@ describe('a win on a bonus-funded round', () => {
 });
 
 describe('a voided round', () => {
+  it('is reversed once, however many times the provider reports it', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    await bet(userId, '40', round);
+
+    await reverse(userId, '40', round, 'void-a');
+    await reverse(userId, '40', round, 'void-b');
+
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('100.000000000000000000');
+    expect(row.wageringProgress).toBe('0.000000000000000000');
+  });
+
+  it('takes back only the progress the returned part of the stake bought', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    await bet(userId, '40', round);
+
+    await reverse(userId, '10', round, 'partial');
+
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('70.000000000000000000');
+    expect(row.wageringProgress).toBe('30.000000000000000000');
+  });
+
+  it('refuses to return a stake to a grant that has already completed', async () => {
+    const { userId } = await player('0');
+    await grantBonus(userId, '100', '0.4');
+    const round = randomUUID();
+    await bet(userId, '40', round);
+
+    await expect(reverse(userId, '40', round, 'after-completion')).rejects.toThrow();
+  });
+
   it('returns the bonus stake and takes back the progress it bought', async () => {
     const { userId } = await player('0');
     const grantId = await grantBonus(userId, '100', '10');

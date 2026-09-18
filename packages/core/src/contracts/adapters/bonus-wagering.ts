@@ -32,7 +32,11 @@ export type BonusWagerOutcome =
       grantId: string | null;
       /** Part of the stake actually taken from bonus funds. Echoes `fromBonus` on success. */
       bonusSpent: string;
-      /** Stake after the resolved weight, as a decimal string. `'0'` when the bet does not count. */
+      /**
+       * Stake after the resolved weight, as a decimal string. `'0'` when the bet does not count.
+       * Uncapped: a bet that finishes a requirement reports the whole weighted stake, not the part
+       * the grant had room for, because a wager counter measures turnover rather than absorption.
+       */
       weightedAmount: string;
       /** Bonus funds left on the attributed grant once the bet settled. */
       bonusBalanceAfter: string;

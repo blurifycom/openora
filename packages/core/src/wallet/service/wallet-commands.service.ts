@@ -41,6 +41,7 @@ import {
   providerRefCondition,
   railFor,
   readWalletBalance,
+  readWalletBalanceForUpdate,
 } from './wallet.service.js';
 
 export const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
@@ -58,6 +59,12 @@ export const WalletCommandAmountError = createDomainError<[operation: string, am
 export const WalletRgRestrictedError = makeConflictError(
   'WalletRgRestrictedError',
   'wager is restricted by an active responsible-gambling exclusion',
+);
+
+export const WalletBonusConversionError = createDomainError<[walletId: string, currency: string]>(
+  'WalletBonusConversionError',
+  (walletId, currency) =>
+    `wallet ${walletId} has no ${currency} balance row to convert a completed bonus into`,
 );
 
 const DEFAULT_ROLLOVER_MULTIPLIER = '1';
@@ -158,7 +165,7 @@ export class WalletCommandsService implements WalletCommands {
     const debitCurrency = balanceKey(currency ?? row.currency);
     const debitRow = { ...row, currency: debitCurrency };
 
-    const available = await readWalletBalance(txn, row.id, debitCurrency);
+    const available = await readWalletBalanceForUpdate(txn, row.id, debitCurrency);
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
@@ -248,7 +255,7 @@ export class WalletCommandsService implements WalletCommands {
 
     const newBalance =
       moneyCompare(wagered.convertedAmount, '0') > 0
-        ? await this.convertBonus(txn, debitRow, wagered.convertedAmount)
+        ? await this.convertBonus(txn, debitRow, wagered.convertedAmount, wagered.completedGrantIds)
         : debitedBalance;
 
     return {
@@ -271,12 +278,29 @@ export class WalletCommandsService implements WalletCommands {
     txn: DrizzleDb,
     debitRow: Wallet & { currency: string },
     amount: string,
+    grantIds: string[],
   ): Promise<string> {
+    const before = await readWalletBalance(txn, debitRow.id, debitRow.currency);
     const [credited] = await creditWalletBalance(txn, debitRow.id, debitRow.currency, amount);
     if (!credited) {
-      throw new Error('wallet bonus conversion: no row');
+      throw new WalletBonusConversionError(debitRow.id, debitRow.currency);
     }
     await this.writeLedgerRow(txn, debitRow, 'bonus', amount, 'credit');
+    // The one movement that turns a bonus into withdrawable money. A regulator asking who
+    // released it reads this row, and it commits with the balance it describes.
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'promo.bonus.converted',
+      resourceType: 'promo_grant',
+      resourceId: grantIds[0] ?? null,
+      before: { currency: debitRow.currency, balance: before },
+      after: {
+        currency: debitRow.currency,
+        balance: credited.amount,
+        convertedAmount: amount,
+        grantIds,
+      },
+    });
     return credited.amount;
   }
 
@@ -334,7 +358,7 @@ export class WalletCommandsService implements WalletCommands {
         ? (
             await this.bonusWagering.settle(txn, {
               userId,
-              currency,
+              currency: balanceKey(currency),
               amount,
               externalRoundId: providerRef.externalRoundId,
               kind: type,
