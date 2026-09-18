@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   pgTable,
   pgEnum,
@@ -21,13 +22,16 @@ import {
   BONUS_GRANT_ENTRY_TYPES,
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
+  PROMO_OFFER_STATUSES,
   type BonusForfeitReason,
   type BonusGrantSource,
   type BonusGrantEntryType,
   type BonusGrantStatus,
   type BonusGrantTerms,
+  type PromoOfferStatus,
 } from '@openora/core/contracts';
-import { WAGER_WEIGHT_SCOPES, type WagerWeightScope } from '../contract/index.js';
+import { WAGER_WEIGHT_SCOPES,
+  type PromoOfferRules, type WagerWeightScope } from '../contract/index.js';
 import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
@@ -87,6 +91,74 @@ export const promoWeight = pgTable(
  * grant time. Wagering is scored from `weights`, never from the live profile.
  */
 export type GrantTermsSnapshot = BonusGrantTerms & { weights: WagerWeightRow[] };
+
+export const promoOfferStatusEnum = pgEnum('promo_offer_status', PROMO_OFFER_STATUSES);
+
+/**
+ * What an operator is offering. A single mutable row: a grant snapshots the terms it was created
+ * under, so editing an offer cannot reach a bonus a player already holds and the row needs no
+ * version history to make that true.
+ */
+export const promoOffer = pgTable(
+  'promo_offer',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    /** Stable handle an operator names the offer by, and what a player opts into. */
+    key: text().notNull().unique(),
+    name: text().notNull(),
+    status: promoOfferStatusEnum().$type<PromoOfferStatus>().notNull().default('draft'),
+    currency: text().notNull(),
+    /** Percentage of the qualifying deposit granted as bonus, `numeric(5,2)` like a weight. */
+    matchPercent: decimal({
+      precision: CONTRIBUTION_PERCENT_PRECISION,
+      scale: CONTRIBUTION_PERCENT_SCALE,
+    }).notNull(),
+    maxGrantAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    minDeposit: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    terms: jsonb().$type<BonusGrantTerms>().notNull(),
+    rules: jsonb().$type<PromoOfferRules>().notNull(),
+    /** Absent from a player's list until they take it; otherwise it applies to any deposit. */
+    requiresOptIn: boolean().notNull().default(false),
+    validFrom: timestamp({ withTimezone: true }),
+    validUntil: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    // The live-offer read: which offers are on, and in window, right now.
+    index('promo_offer_status_valid_from_valid_until_idx').on(t.status, t.validFrom, t.validUntil),
+    check(
+      'promo_offer_match_percent_positive',
+      sql`${t.matchPercent} > 0 AND ${t.maxGrantAmount} > 0 AND ${t.minDeposit} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * A player's claim on an offer, and the deposits they have put toward its minimum. One row per
+ * player per offer: taking an offer twice is the same claim, and the deposits accumulate on it
+ * so a player who deposits under the minimum twice still qualifies.
+ */
+export const promoOptIn = pgTable(
+  'promo_opt_in',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    offerId: uuid()
+      .notNull()
+      .references(() => promoOffer.id, { onDelete: 'restrict' }),
+    accumulatedDeposit: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    /** Set once the deposits met the minimum and the grant was created. */
+    grantId: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('promo_opt_in_user_id_offer_id_idx').on(t.userId, t.offerId)],
+);
 
 export const promoGrantStatusEnum = pgEnum('promo_grant_status', BONUS_GRANT_STATUSES);
 export const promoGrantSourceEnum = pgEnum('promo_grant_source', BONUS_GRANT_SOURCES);
@@ -234,5 +306,7 @@ export const promoGrantEntry = pgTable(
 
 export type PromoGrant = typeof promoGrant.$inferSelect;
 export type PromoGrantEntry = typeof promoGrantEntry.$inferSelect;
+export type PromoOffer = typeof promoOffer.$inferSelect;
+export type PromoOptIn = typeof promoOptIn.$inferSelect;
 export type PromoWeightProfile = typeof promoWeightProfile.$inferSelect;
 export type PromoWeight = typeof promoWeight.$inferSelect;
