@@ -287,7 +287,9 @@ describe('GrantService.grant', () => {
 describe('the grant ledger', () => {
   it('opens with one entry carrying the granted amount', async () => {
     const outcome = await grant(args({ amount: '250', currency: 'USD' }));
-    if (!outcome.ok) {throw new Error('grant was refused');}
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
 
     const rows = await entries();
     expect(rows).toHaveLength(1);
@@ -321,7 +323,9 @@ describe('the grant ledger', () => {
 
   it('sums to exactly the bonus balance it explains', async () => {
     const outcome = await grant(args({ amount: '77.5' }));
-    if (!outcome.ok) {throw new Error('grant was refused');}
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
 
     const [row] = await rows();
     expect(await ledgerSum(outcome.grantId)).toBe(row?.bonusBalance);
@@ -331,7 +335,9 @@ describe('the grant ledger', () => {
     const userId = randomUUID();
     const one = await grant(args({ userId, amount: '10' }));
     const two = await grant(args({ userId, amount: '20' }));
-    if (!one.ok || !two.ok) {throw new Error('grant was refused');}
+    if (!one.ok || !two.ok) {
+      throw new Error('grant was refused');
+    }
 
     expect(await ledgerSum(one.grantId)).toBe('10.000000000000000000');
     expect(await ledgerSum(two.grantId)).toBe('20.000000000000000000');
@@ -339,7 +345,9 @@ describe('the grant ledger', () => {
 
   it('refuses to let a grant be deleted out from under its history', async () => {
     const outcome = await grant(args());
-    if (!outcome.ok) {throw new Error('grant was refused');}
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
 
     await expect(
       db.drizzle.db.delete(promoGrant).where(eq(promoGrant.id, outcome.grantId)),
