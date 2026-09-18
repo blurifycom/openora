@@ -142,6 +142,7 @@ function toSummaryDto(dto: NonNullable<PlayerKycView['basic']['current']>): KycV
     tier: dto.tier,
     status: dto.status,
     documentTypes: dto.documentTypes,
+    exempt: dto.triggeredBy === 'exemption',
     submittedAt: dto.submittedAt,
     decidedAt: dto.decidedAt,
     createdAt: dto.createdAt,

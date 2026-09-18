@@ -76,10 +76,13 @@ export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
 // Player-facing projection of KycVerificationSchema: no riskSignals, checks, decisionReason,
 // provider, or referenceId - those are fraud-detection internals, admin-only via getPlayerKyc.
+// `exempt` is a narrow, player-safe derivation of `triggeredBy === 'exemption'` - it tells the
+// player their approval came from a jurisdiction rule rather than exposing the internal field.
 export const KycVerificationSummarySchema = z.object({
   tier: KycTierSchema,
   status: KycStatusSchema,
   documentTypes: z.array(KycDocumentTypeSchema),
+  exempt: z.boolean(),
   submittedAt: TimestampSchema,
   decidedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
