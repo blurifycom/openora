@@ -3,6 +3,7 @@ import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora
 import { bonusContract } from '../contract/index.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
 import {
+  OfferClaimedError,
   OfferKeyTakenError,
   OfferNotEligibleError,
   OfferNotFoundError,
@@ -45,7 +46,9 @@ export function createBonusRouter({
 
         update: os.admin.offers.update.handler(async ({ input, context }) => {
           const { userId } = await adminGuard.assert(context, 'bonus', 'update');
-          return mapErrors({ NOT_FOUND: OfferNotFoundError }, () => offers.update(userId, input));
+          return mapErrors({ NOT_FOUND: OfferNotFoundError, CONFLICT: OfferClaimedError }, () =>
+            offers.update(userId, input),
+          );
         }),
       },
     },
