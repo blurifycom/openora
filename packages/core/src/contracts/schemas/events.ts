@@ -150,6 +150,10 @@ export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // The country the registration IP resolved to (GEO_CHECK_COMMANDS), null when
+    // unresolved or no geo-ip port is bound. Drives the country-level KYC exemption
+    // listener - kept optional for backward-compat with a pre-tiering payload.
+    countryCode: CountryCodeSchema.nullable().optional(),
     // The consent the player actually gave, carried so the audit trail holds it too -
     // the `player` row alone is current state, not a record of the act. Absent when the
     // consent write was discarded because a player row already existed.

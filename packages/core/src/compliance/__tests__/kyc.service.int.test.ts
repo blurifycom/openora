@@ -531,4 +531,64 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
 
     expect(statusWriter.setStatus).not.toHaveBeenCalled();
   });
+
+  it('never re-KYCs a player whose only basic-tier history is an exemption', async () => {
+    const { svc, statusWriter } = makeService({ config });
+    const { userId } = await seedPlayer();
+    await svc.applyExemption(userId, { countryCode: 'DE', reason: 'country_exempt' });
+    await seedDeposit(userId, '99999');
+    vi.mocked(statusWriter.setStatus).mockClear();
+
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+    expect(await verificationsOf(userId)).toHaveLength(1);
+  });
+});
+
+describe('KycVerificationService.applyExemption (real PG)', () => {
+  it('auto-approves the basic tier with a triggeredBy of exemption', async () => {
+    const { svc, statusWriter } = makeService();
+    const { userId } = await seedPlayer({ kycStatus: 'not_started' });
+
+    await svc.applyExemption(userId, { countryCode: 'DE', reason: 'country_exempt' });
+
+    const [row] = await verificationsOf(userId);
+    expect(row).toMatchObject({
+      tier: 'basic',
+      status: 'approved',
+      provider: 'exemption',
+      triggeredBy: 'exemption',
+      referenceId: 'exemption-DE',
+    });
+    expect(row?.decidedAt).not.toBeNull();
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'approved',
+      expect.objectContaining({ source: 'exemption' }),
+      expect.anything(),
+    );
+  });
+
+  it('is idempotent - a player with any basic-tier history is left untouched', async () => {
+    const { svc, statusWriter } = makeService();
+    const { userId } = await seedPlayer({ kycStatus: 'pending' });
+    await svc.submit(userId, passportSubmission);
+    vi.mocked(statusWriter.setStatus).mockClear();
+
+    await svc.applyExemption(userId, { countryCode: 'DE', reason: 'country_exempt' });
+
+    expect(await verificationsOf(userId)).toHaveLength(1);
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('records a global-disabled exemption with no country code', async () => {
+    const { svc } = makeService();
+    const { userId } = await seedPlayer({ kycStatus: 'not_started' });
+
+    await svc.applyExemption(userId, { countryCode: null, reason: 'global_disabled' });
+
+    const [row] = await verificationsOf(userId);
+    expect(row).toMatchObject({ referenceId: 'exemption-global', triggeredBy: 'exemption' });
+  });
 });

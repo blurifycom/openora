@@ -224,7 +224,7 @@ export class ComplianceService {
 
   async checkRegistration(ipAddress: string | null) {
     const result = await this.geoCheck(ipAddress);
-    return { allowed: result.allowed };
+    return { allowed: result.allowed, countryCode: result.countryCode };
   }
 
   async upsertCountryRule(input: UpsertCountryRuleInput, actorId: User['id'], meta?: ClientMeta) {
@@ -335,6 +335,38 @@ export class ComplianceService {
     return row
       ? toGlobalKycConfigView(row)
       : { enabled: GLOBAL_KYC_ENABLED_DEFAULT, updatedAt: null, updatedBy: null };
+  }
+
+  /**
+   * The effective KYC requirement for a player, combining the global switch with the
+   * per-country exemption list. Fail-closed on every "we don't actually know" branch:
+   * an unresolved country is treated as requiring KYC, and a country with no rule row
+   * defaults to `kycRequired: true` (the same default `countryRule.kycRequired` carries
+   * in the schema).
+   */
+  async resolveKycRequirement(countryCode: string | null): Promise<{
+    required: boolean;
+    reason: 'global_disabled' | 'country_exempt' | 'required' | 'country_unknown';
+  }> {
+    const global = await this.getGlobalKycConfig();
+    if (!global.enabled) {
+      return { required: false, reason: 'global_disabled' };
+    }
+
+    const normalized = normalizeCountryCode(countryCode);
+    if (!normalized) {
+      return { required: true, reason: 'country_unknown' };
+    }
+
+    const [rule] = await this.drizzle.db
+      .select({ kycRequired: countryRule.kycRequired })
+      .from(countryRule)
+      .where(eq(countryRule.countryCode, normalized));
+
+    if (rule && !rule.kycRequired) {
+      return { required: false, reason: 'country_exempt' };
+    }
+    return { required: true, reason: 'required' };
   }
 
   async setGlobalKycConfig(input: SetGlobalKycConfigInput, actorId: User['id'], meta?: ClientMeta) {
