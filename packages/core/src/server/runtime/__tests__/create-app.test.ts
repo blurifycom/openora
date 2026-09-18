@@ -312,9 +312,38 @@ describe('createApp - client address at the ingress', () => {
     }
   });
 
+  it('gives each client its own address behind an XFF-only trusted proxy', async () => {
+    const saved = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = redisUrlForWorker();
+    try {
+      const created = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL });
+      created.app.get('/ip-probe', (c) => c.json({ ip: getCurrentClientMeta().ip }));
+
+      const seen = [];
+      for (const client of ['198.51.100.1', '198.51.100.2']) {
+        const res = await created.app.request(
+          '/ip-probe',
+          { headers: { 'x-forwarded-for': client } },
+          fromPeer('10.0.0.2'),
+        );
+        seen.push((await res.json()).ip);
+      }
+      // Not null: a null IP would put every login behind this proxy in one `unknown` bucket.
+      expect(seen).toEqual(['198.51.100.1', '198.51.100.2']);
+
+      await created.close();
+    } finally {
+      if (saved === undefined) {
+        delete process.env['REDIS_URL'];
+      } else {
+        process.env['REDIS_URL'] = saved;
+      }
+    }
+  });
+
   it('refuses to boot on a malformed trusted proxy entry', async () => {
     await expect(
-      createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, trustedProxies: ['10.0.0.0/40'] }),
+      createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, trustedProxies: ['10.0.0.1/'] }),
     ).rejects.toThrow(/Invalid trusted proxy entry/);
   });
 });

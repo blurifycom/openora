@@ -39,6 +39,36 @@ describe('applyClientAddress', () => {
     expect(headers).toEqual({ 'x-real-ip': '198.51.100.1' });
   });
 
+  it('derives the client from X-Forwarded-For when a trusted proxy sends only that', () => {
+    const headers: Record<string, string> = { 'x-forwarded-for': '198.51.100.9' };
+    applyClientAddress(headers, '10.0.0.2', defaults);
+    expect(headers['x-real-ip']).toBe('198.51.100.9');
+  });
+
+  it('ignores X-Forwarded-For entries the client wrote ahead of the proxy’s', () => {
+    const headers: Record<string, string> = { 'x-forwarded-for': '1.1.1.1, 198.51.100.9' };
+    applyClientAddress(headers, '10.0.0.2', defaults);
+    expect(headers['x-real-ip']).toBe('198.51.100.9');
+  });
+
+  it('skips trusted hops when several proxies are chained', () => {
+    const headers: Record<string, string> = { 'x-forwarded-for': '198.51.100.9, 10.0.0.3' };
+    applyClientAddress(headers, '10.0.0.2', defaults);
+    expect(headers['x-real-ip']).toBe('198.51.100.9');
+  });
+
+  it('stops at a malformed X-Forwarded-For hop instead of using it', () => {
+    const headers: Record<string, string> = { 'x-forwarded-for': '198.51.100.9, garbage' };
+    applyClientAddress(headers, '10.0.0.2', defaults);
+    expect(headers['x-real-ip']).toBe('10.0.0.2');
+  });
+
+  it('never leaves a trusted request without an address', () => {
+    const headers: Record<string, string> = { 'x-real-ip': 'not-an-ip' };
+    applyClientAddress(headers, '10.0.0.2', defaults);
+    expect(headers['x-real-ip']).toBe('10.0.0.2');
+  });
+
   it('trusts no peer at all with an empty list', () => {
     const headers = { 'x-real-ip': '198.51.100.1' };
     applyClientAddress(headers, '127.0.0.1', parseTrustedProxies([]));
@@ -55,12 +85,20 @@ describe('parseTrustedProxies', () => {
     expect(trusted.contains('203.0.113.8')).toBe(false);
   });
 
-  it.each(['not-an-ip', '10.0.0.0/33', '10.0.0.0/x', '::1/129', ''])(
-    'refuses %j so a typo fails the boot',
-    (entry) => {
-      expect(() => parseTrustedProxies([entry])).toThrow(/Invalid trusted proxy entry/);
-    },
-  );
+  it.each([
+    'not-an-ip',
+    '10.0.0.0/33',
+    '10.0.0.0/x',
+    '::1/129',
+    '',
+    // `Number('')` is 0: an empty suffix must not become a /0 that trusts every peer.
+    '10.0.0.1/',
+    '10.0.0.0/8/9',
+    '10.0.0.0/-1',
+    '10.0.0.0/ 8',
+  ])('refuses %j so a typo fails the boot', (entry) => {
+    expect(() => parseTrustedProxies([entry])).toThrow(/Invalid trusted proxy entry/);
+  });
 });
 
 describe('resolveTrustedProxies', () => {
