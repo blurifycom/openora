@@ -57,6 +57,9 @@ the standing default, with no admin action at either boundary:
   only - there is no route to change `startsAt` or to cancel a schedule outright. Moving `endsAt`
   to now or the past is how a live schedule is ended early. The overlap check reruns, excluding
   the schedule's own configuration.
+- **The standing default remains in place while a schedule is active or still ahead.** Unsetting
+  it is refused until every schedule for the placement has ended, so a scheduled banner always
+  has a configuration to revert to. Expired schedules do not prevent unsetting the default.
 - **`listBannerSchedulesByPlacement`** (`GET /cms/banner-placements/{placement}/schedules`) lists
   every schedule for a placement, ordered by `startsAt`, each with its configuration's summary.
 - **"What's live" is resolved at read time inside `getPublicBanner`**, not by a background job:

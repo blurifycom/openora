@@ -103,6 +103,7 @@ export const bannerSchedule = pgTable(
     // 1:0..1 with bannerConfiguration - at most one schedule row per configuration.
     uniqueIndex('banner_schedule_configuration_id_idx').on(t.bannerConfigurationId),
     index('banner_schedule_starts_ends_idx').on(t.startsAt, t.endsAt),
+    index('banner_schedule_ends_at_idx').on(t.endsAt),
     check('banner_schedule_ends_after_starts_check', sql`${t.endsAt} > ${t.startsAt}`),
   ],
 );

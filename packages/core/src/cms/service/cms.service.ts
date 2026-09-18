@@ -45,6 +45,10 @@ export const BannerConfigurationHasScheduleError = makeConflictError(
   'BannerConfigurationHasScheduleError',
   'This configuration has a banner schedule attached - it cannot be deleted or re-scheduled while one exists',
 );
+export const BannerPlacementHasScheduleError = makeConflictError(
+  'BannerPlacementHasScheduleError',
+  'This placement has an active or future banner schedule - its default configuration cannot be unset',
+);
 export const BannerScheduleInvalidRangeError = createDomainError<[reason: string]>(
   'BannerScheduleInvalidRangeError',
   (reason) => `Invalid banner schedule range: ${reason}`,
@@ -636,25 +640,45 @@ export class CmsService {
   }
 
   async unsetDefaultConfiguration(placement: string, actorId: User['id'], meta?: ClientMeta) {
-    const previousBannerConfigurationId = await this.drizzle.db.transaction(async (tx) => {
-      const [current] = await tx
-        .select()
-        .from(bannerConfigurationTable)
-        .where(
-          and(
-            eq(bannerConfigurationTable.placement, placement),
-            eq(bannerConfigurationTable.isDefault, true),
-          ),
-        );
-      if (!current) {
-        return null;
-      }
-      await tx
-        .update(bannerConfigurationTable)
-        .set({ isDefault: false })
-        .where(eq(bannerConfigurationTable.id, current.id));
-      return current.id;
-    });
+    const previousBannerConfigurationId = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, bannerScheduleLockKey(placement), async () => {
+        const [schedule] = await tx
+          .select({ id: bannerScheduleTable.id })
+          .from(bannerScheduleTable)
+          .innerJoin(
+            bannerConfigurationTable,
+            eq(bannerScheduleTable.bannerConfigurationId, bannerConfigurationTable.id),
+          )
+          .where(
+            and(
+              eq(bannerConfigurationTable.placement, placement),
+              gt(bannerScheduleTable.endsAt, new Date()),
+            ),
+          )
+          .limit(1);
+        if (schedule) {
+          throw new BannerPlacementHasScheduleError();
+        }
+
+        const [current] = await tx
+          .select()
+          .from(bannerConfigurationTable)
+          .where(
+            and(
+              eq(bannerConfigurationTable.placement, placement),
+              eq(bannerConfigurationTable.isDefault, true),
+            ),
+          );
+        if (!current) {
+          return null;
+        }
+        await tx
+          .update(bannerConfigurationTable)
+          .set({ isDefault: false })
+          .where(eq(bannerConfigurationTable.id, current.id));
+        return current.id;
+      }),
+    );
 
     await invalidate(this.cache, publicBannerCacheEpochKey(placement));
     this.events.emit('cms.banner.configuration.unset_default', {

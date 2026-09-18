@@ -11,6 +11,7 @@ import {
   BannerImageHostNotAllowedError,
   BannerScheduleNotFoundError,
   BannerConfigurationHasScheduleError,
+  BannerPlacementHasScheduleError,
   BannerScheduleInvalidRangeError,
   BannerScheduleOverlapError,
 } from '../service/cms.service.js';
@@ -59,7 +60,9 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
     unsetDefaultBannerConfiguration: os.unsetDefaultBannerConfiguration.handler(
       async ({ input, context }) => {
         const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'publish');
-        return cms.unsetDefaultConfiguration(input.placement, userId, { ip, userAgent });
+        return mapErrors({ CONFLICT: BannerPlacementHasScheduleError }, () =>
+          cms.unsetDefaultConfiguration(input.placement, userId, { ip, userAgent }),
+        );
       },
     ),
 

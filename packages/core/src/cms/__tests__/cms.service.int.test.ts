@@ -18,6 +18,7 @@ import {
   BannerConfigurationImageCountError,
   BannerImageHostNotAllowedError,
   BannerConfigurationHasScheduleError,
+  BannerPlacementHasScheduleError,
   BannerScheduleNotFoundError,
   BannerScheduleInvalidRangeError,
   BannerScheduleOverlapError,
@@ -735,6 +736,43 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
 
     await expect(svc.setDefaultConfiguration(target.id, ADMIN_ID)).rejects.toBeInstanceOf(
       BannerConfigurationHasScheduleError,
+    );
+  });
+});
+
+describe('CmsService.unsetDefaultConfiguration schedule guard (real PG)', () => {
+  it('rejects unsetting a default with an active or future schedule in its placement', async () => {
+    const { svc } = makeService();
+    const defaultConfiguration = await makeDefaultConfiguration(svc, 'home-top');
+    const scheduled = await makeSchedulableConfiguration(svc, 'home-top');
+    await insertScheduleDirect({
+      bannerConfigurationId: scheduled.id,
+      startsAt: new Date(Date.now() + 60_000),
+      endsAt: new Date(Date.now() + 120_000),
+    });
+
+    await expect(svc.unsetDefaultConfiguration('home-top', ADMIN_ID)).rejects.toBeInstanceOf(
+      BannerPlacementHasScheduleError,
+    );
+    expect((await configurationById(defaultConfiguration.id))?.isDefault).toBe(true);
+  });
+
+  it('serializes creating a schedule and unsetting the default for the same placement', async () => {
+    const { svc } = makeService();
+    const defaultConfiguration = await makeDefaultConfiguration(svc, 'home-top');
+    const scheduled = await makeSchedulableConfiguration(svc, 'home-top');
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 120_000).toISOString();
+
+    const results = await Promise.allSettled([
+      svc.createBannerSchedule(scheduled.id, { startsAt, endsAt }, ADMIN_ID),
+      svc.unsetDefaultConfiguration('home-top', ADMIN_ID),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect((await configurationById(defaultConfiguration.id))?.isDefault).toBe(
+      (await scheduleByConfigurationId(scheduled.id)) !== undefined,
     );
   });
 });
