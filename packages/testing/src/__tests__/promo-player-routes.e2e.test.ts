@@ -137,6 +137,19 @@ describe('a player reaching for someone else', () => {
     expect(await res.text()).not.toContain('90');
   });
 
+  it('caps a page at the contract limit rather than returning the whole history', async () => {
+    const { client, userId } = await player();
+    await grantBonus(userId, '10');
+    await grantBonus(userId, '20');
+
+    const firstPage = await readJson(await client.get('/promo/grants?limit=1'));
+    const secondPage = await readJson(await client.get('/promo/grants?limit=1&page=2'));
+
+    expect(firstPage).toHaveLength(1);
+    expect(secondPage).toHaveLength(1);
+    expect(firstPage[0].id).not.toBe(secondPage[0].id);
+  });
+
   it('cannot widen the list past their own grants', async () => {
     const owner = await player();
     const stranger = await player();

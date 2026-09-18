@@ -3,9 +3,13 @@ import {
   AUDIT_WRITER,
   BONUS_GRANTS,
   BONUS_WAGERING,
+  BonusForfeitReasonSchema,
   JOB_QUEUE,
+  UuidSchema,
   WAGER_TRACKING,
+  domainEventSchemas,
   queue,
+  type JobQueueAdapter,
 } from '@openora/core/contracts';
 import {
   DRIZZLE,
@@ -24,8 +28,22 @@ import { createBonusRouter } from './router/index.js';
 const logger = createLogger('promo-bonus');
 
 const EXPIRY_QUEUE = queue('promo-bonus-expiry');
+const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
 const EXPIRY_CRON = '*/5 * * * *';
+
 const EmptyJobPayloadSchema = z.object({});
+
+/**
+ * Taking a player's bonuses away is a money movement, so it runs as a durable job rather than
+ * inside a best-effort event handler: a process that dies between two of a player's grants has
+ * to resume, and the `status = 'active'` claim makes the retry harmless.
+ */
+const ForfeitJobSchema = z.object({
+  userId: UuidSchema,
+  reason: BonusForfeitReasonSchema,
+  actorId: UuidSchema.nullable(),
+  actorIsAdmin: z.boolean(),
+});
 
 export default {
   id: 'bonus',
@@ -39,6 +57,7 @@ export default {
 
     let lifecycle: GrantLifecycleService | null = null;
     let events: EventBus | null = null;
+    let jobs: JobQueueAdapter | null = null;
 
     const announce = (
       topic: 'promo.bonus.expired' | 'promo.bonus.forfeited',
@@ -51,7 +70,7 @@ export default {
           grantId: grant.grantId,
           currency: grant.currency,
           forfeitedAmount: grant.forfeitedAmount,
-          ...(reason === undefined ? {} : { reason, actorId: null }),
+          ...(reason === undefined ? {} : { reason, actorId: grant.actorId }),
         });
       }
     };
@@ -72,28 +91,75 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: FORFEIT_QUEUE,
+      schema: ForfeitJobSchema,
+      handler: async ({ payload }) => {
+        if (!lifecycle) {
+          throw new Error('promo-bonus-forfeit: service not constructed');
+        }
+        const closed = await lifecycle.forfeitAllFor(
+          payload.userId,
+          payload.reason,
+          payload.actorId === null
+            ? undefined
+            : { id: payload.actorId, isAdmin: payload.actorIsAdmin },
+        );
+        announce(
+          'promo.bonus.forfeited',
+          closed,
+          payload.reason === 'account_closed' ? 'account_closed' : 'self_exclusion',
+        );
+      },
+    });
+
     // A bonus is money a player may not keep once they have excluded themselves or closed the
     // account, and the rule is immediate rather than "by the next sweep".
     const forfeitEverything =
-      (reason: 'self_exclusion' | 'account_closed') => (payload: unknown) => {
-        const userId = (payload as { userId?: string }).userId;
-        if (!lifecycle || userId === undefined) {
+      <K extends 'rg.self_exclusion.activated' | 'player.account.closed'>(
+        topic: K,
+        reason: 'self_exclusion' | 'account_closed',
+      ) =>
+      (payload: unknown) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success) {
+          logger.error({ topic }, 'promo bonus forfeit skipped - event payload failed validation');
           return;
         }
-        void lifecycle
-          .forfeitAllFor(userId, reason)
-          .then((closed) => announce('promo.bonus.forfeited', closed, reason))
-          .catch((err: unknown) => logger.error({ err, userId }, 'promo bonus forfeit failed'));
+        if (!jobs) {
+          logger.error({ topic }, 'promo bonus forfeit dropped - job queue not bound yet');
+          return;
+        }
+        const { userId, actorId } = parsed.data;
+        // A player excluding themselves is the actor; an account closure is always an admin.
+        const actorIsAdmin =
+          topic === 'player.account.closed' ||
+          ('initiatedBy' in parsed.data && parsed.data.initiatedBy !== 'player');
+        void jobs
+          .enqueue(
+            FORFEIT_QUEUE,
+            { userId, reason, actorId: actorId ?? null, actorIsAdmin },
+            { idempotencyKey: `promo-bonus-forfeit:${reason}:${userId}` },
+          )
+          .catch((err: unknown) =>
+            logger.error({ err, userId }, 'promo bonus forfeit enqueue failed'),
+          );
       };
 
-    ctx.events.on('rg.self_exclusion.activated', forfeitEverything('self_exclusion'));
-    ctx.events.on('player.account.closed', forfeitEverything('account_closed'));
+    ctx.events.on(
+      'rg.self_exclusion.activated',
+      forfeitEverything('rg.self_exclusion.activated', 'self_exclusion'),
+    );
+    ctx.events.on(
+      'player.account.closed',
+      forfeitEverything('player.account.closed', 'account_closed'),
+    );
 
     ctx.routers.add('promo-bonus', (c) => {
       lifecycle = new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
       events = c.get(EVENT_BUS);
-      void c
-        .get(JOB_QUEUE)
+      jobs = c.get(JOB_QUEUE);
+      void jobs
         .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
         .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
       return createBonusRouter(new GrantReaderService(c.get(DRIZZLE)));

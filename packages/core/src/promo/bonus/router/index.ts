@@ -8,9 +8,7 @@ export function createBonusRouter(grants: GrantReaderService) {
 
   return os.router({
     grants: {
-      list: os.grants.list.handler(({ input, context }) =>
-        grants.list(getUserId(context), input.status),
-      ),
+      list: os.grants.list.handler(({ input, context }) => grants.list(getUserId(context), input)),
 
       get: os.grants.get.handler(({ input, context }) =>
         mapErrors({ NOT_FOUND: GrantNotFoundError }, () =>

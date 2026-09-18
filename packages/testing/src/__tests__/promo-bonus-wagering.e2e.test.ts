@@ -439,13 +439,67 @@ describe('a voided round', () => {
     expect(row.wageringProgress).toBe('30.000000000000000000');
   });
 
-  it('refuses to return a stake to a grant that has already completed', async () => {
+  it('pays nothing back to the real balance when the funding grant was forfeited', async () => {
     const { userId } = await player('0');
-    await grantBonus(userId, '100', '0.4');
+    const grantId = await grantBonus(userId, '100', '10');
     const round = randomUUID();
     await bet(userId, '40', round);
+    await drizzle()
+      .update(promoGrant)
+      .set({ status: 'forfeited', bonusBalance: '0', forfeitReason: 'admin' })
+      .where(eq(promoGrant.id, grantId));
 
-    await expect(reverse(userId, '40', round, 'after-completion')).rejects.toThrow();
+    await reverse(userId, '40', round, 'after-forfeit');
+
+    expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
+    expect((await grantRow(grantId)).bonusBalance).toBe('0.000000000000000000');
+  });
+
+  it('pays nothing to the real balance when a win settles on a forfeited grant', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    await bet(userId, '40', round);
+    await drizzle()
+      .update(promoGrant)
+      .set({ status: 'forfeited', bonusBalance: '0', forfeitReason: 'admin' })
+      .where(eq(promoGrant.id, grantId));
+
+    await credit({
+      userId,
+      amount: '200',
+      currency: 'USD',
+      type: 'win',
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `win-${round}`,
+        externalRoundId: round,
+      },
+    });
+
+    expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
+  });
+
+  it('pays a win to the real balance when the funding grant already converted', async () => {
+    const { userId } = await player('200');
+    const grantId = await grantBonus(userId, '100', '1');
+    const round = randomUUID();
+    await bet(userId, '100', round);
+    expect((await grantRow(grantId)).status).toBe('completed');
+
+    await credit({
+      userId,
+      amount: '50',
+      currency: 'USD',
+      type: 'win',
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `win-${round}`,
+        externalRoundId: round,
+      },
+    });
+
+    expect(await realBalanceOf(userId)).toBe('250.000000000000000000');
   });
 
   it('returns the bonus stake and takes back the progress it bought', async () => {

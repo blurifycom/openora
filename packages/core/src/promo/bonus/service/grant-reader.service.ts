@@ -1,6 +1,11 @@
 import { and, desc, eq } from 'drizzle-orm';
-import { type Uuid } from '@openora/core/contracts';
-import { makeNotFoundError, serializeRow, type DrizzleService } from '@openora/core/server';
+import { type PageQuery, type Uuid } from '@openora/core/contracts';
+import {
+  makeNotFoundError,
+  pageToOffset,
+  serializeRow,
+  type DrizzleService,
+} from '@openora/core/server';
 import { promoGrant, type PromoGrant } from '../schema/index.js';
 import type { PlayerGrant } from '../contract/index.js';
 
@@ -33,16 +38,21 @@ const COLUMNS = {
 export class GrantReaderService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async list(userId: Uuid, status?: PlayerGrant['status']): Promise<PlayerGrant[]> {
+  async list(
+    userId: Uuid,
+    query: PageQuery & { status?: PlayerGrant['status'] },
+  ): Promise<PlayerGrant[]> {
     const rows = await this.drizzle.db
       .select(COLUMNS)
       .from(promoGrant)
       .where(
-        status === undefined
+        query.status === undefined
           ? eq(promoGrant.userId, userId)
-          : and(eq(promoGrant.userId, userId), eq(promoGrant.status, status)),
+          : and(eq(promoGrant.userId, userId), eq(promoGrant.status, query.status)),
       )
-      .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id));
+      .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
+      .limit(query.limit)
+      .offset(pageToOffset(query.page, query.limit));
     return rows.map(toPlayerGrant);
   }
 
@@ -62,13 +72,13 @@ export class GrantReaderService {
   }
 }
 
-function toPlayerGrant(row: typeof COLUMNS extends never ? never : Awaited<PlayerGrantRow>) {
-  return serializeRow(row, {
-    dateFields: [...DATE_FIELDS],
-    decimalFields: [...MONEY_FIELDS],
-  }) as PlayerGrant;
-}
-
 type PlayerGrantRow = {
   [K in keyof typeof COLUMNS]: PromoGrant[K & keyof PromoGrant];
 };
+
+function toPlayerGrant(row: PlayerGrantRow): PlayerGrant {
+  return serializeRow(row, {
+    dateFields: [...DATE_FIELDS],
+    decimalFields: [...MONEY_FIELDS],
+  });
+}
