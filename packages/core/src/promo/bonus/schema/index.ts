@@ -130,7 +130,8 @@ export const promoOffer = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
-    // The live-offer read: which offers are on, and in window, right now.
+    // The live-offer read. The window is filtered in the service, where the same predicate
+    // answers both "show me the offers" and "credit this deposit".
     index('promo_offer_status_valid_from_valid_until_idx').on(t.status, t.validFrom, t.validUntil),
     check(
       'promo_offer_match_percent_positive',
@@ -160,6 +161,28 @@ export const promoOptIn = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('promo_opt_in_user_id_offer_id_idx').on(t.userId, t.offerId)],
+);
+
+/**
+ * Which deposits have already been counted toward which claim. The durable guard the accumulator
+ * needs: jobs are at-least-once, and a redelivered deposit that adds itself to the running total
+ * a second time turns a below-minimum deposit into a full-cap bonus.
+ */
+export const promoOptInDeposit = pgTable(
+  'promo_opt_in_deposit',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    optInId: uuid()
+      .notNull()
+      .references(() => promoOptIn.id, { onDelete: 'cascade' }),
+    /** The wallet transaction that was counted. Cross-module id, no FK. */
+    transactionId: uuid().notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('promo_opt_in_deposit_opt_in_id_transaction_id_idx').on(t.optInId, t.transactionId),
+  ],
 );
 
 export const promoGrantStatusEnum = pgEnum('promo_grant_status', BONUS_GRANT_STATUSES);
@@ -287,5 +310,6 @@ export type PromoGrant = typeof promoGrant.$inferSelect;
 export type PromoGrantEntry = typeof promoGrantEntry.$inferSelect;
 export type PromoOffer = typeof promoOffer.$inferSelect;
 export type PromoOptIn = typeof promoOptIn.$inferSelect;
+export type PromoOptInDeposit = typeof promoOptInDeposit.$inferSelect;
 export type PromoWeightProfile = typeof promoWeightProfile.$inferSelect;
 export type PromoWeight = typeof promoWeight.$inferSelect;

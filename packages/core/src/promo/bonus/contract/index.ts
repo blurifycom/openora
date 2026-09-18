@@ -10,7 +10,6 @@ import {
   BonusForfeitReasonSchema,
   ContributionPercentSchema,
   CurrencyTickerSchema,
-  CountryCodeSchema,
   MoneyAmountSchema,
   PROMO_OFFER_STATUSES,
   PageQuerySchema,
@@ -51,13 +50,12 @@ export type WagerWeightProfile = z.infer<typeof WagerWeightProfileSchema>;
 
 /**
  * Who an offer is for. Kept as jsonb on the row rather than as columns: every one of these is a
- * predicate an operator turns on or off, and a new one should not cost a migration.
+ * predicate an operator turns on or off, and a new one should not cost a migration - which is
+ * why a rule with no way to answer it yet is absent rather than present and never firing.
  */
 export const PromoOfferRulesSchema = z.object({
   /** Only the player's first confirmed deposit qualifies. */
   firstDepositOnly: z.boolean().default(false),
-  /** Players resident in these countries are not offered it. */
-  excludedCountries: z.array(CountryCodeSchema).default([]),
 });
 
 export type PromoOfferRules = z.infer<typeof PromoOfferRulesSchema>;
@@ -95,7 +93,7 @@ export const CreatePromoOfferInputSchema = PromoOfferSchema.omit({
   updatedAt: true,
 }).extend({
   status: PromoOfferStatusSchema.default('draft'),
-  rules: PromoOfferRulesSchema.default({ firstDepositOnly: false, excludedCountries: [] }),
+  rules: PromoOfferRulesSchema.default({ firstDepositOnly: false }),
   requiresOptIn: z.boolean().default(false),
   validFrom: TimestampSchema.nullable().default(null),
   validUntil: TimestampSchema.nullable().default(null),

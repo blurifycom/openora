@@ -4,12 +4,14 @@ import {
   type BonusGrantCommands,
   type PageQuery,
   type Uuid,
+  type WalletReader,
 } from '@openora/core/contracts';
 import {
   findOneOrThrow,
   makeConflictError,
   makeNotFoundError,
   moneyAdd,
+  moneyCompare,
   pageToOffset,
   serializeRow,
   type DrizzleService,
@@ -21,7 +23,13 @@ import type {
   PromoOffer,
   UpdatePromoOfferInput,
 } from '../contract/index.js';
-import { promoOffer, promoOptIn, type PromoOffer as PromoOfferRow } from '../schema/index.js';
+import {
+  promoOffer,
+  promoOptIn,
+  promoOptInDeposit,
+  type PromoOffer as PromoOfferRow,
+  type PromoOptIn as PromoOptInRow,
+} from '../schema/index.js';
 import { grantAmountFor } from '../shared/grant-amount.js';
 import { offerIneligibility } from '../shared/offer-eligibility.js';
 
@@ -34,17 +42,23 @@ export const OfferNotEligibleError = makeConflictError(
   'OfferNotEligibleError',
   'This offer is not open to you',
 );
+export const OfferClaimedError = makeConflictError(
+  'OfferClaimedError',
+  'This offer cannot be re-denominated while players hold claims on it',
+);
 
 const DATE_FIELDS = ['validFrom', 'validUntil', 'createdAt', 'updatedAt'] as const;
 const MONEY_FIELDS = ['matchPercent', 'maxGrantAmount', 'minDeposit'] as const;
 
-type OfferContext = { countryCode?: string; isFirstDeposit?: boolean };
+type OfferContext = { isFirstDeposit?: boolean };
 
 export class OfferService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
     private readonly grants: BonusGrantCommands,
+    private readonly wallet: WalletReader,
+    private readonly logger: { error: (context: object, message: string) => void },
   ) {}
 
   async listForAdmin(query: PageQuery & { status?: PromoOffer['status'] }): Promise<PromoOffer[]> {
@@ -59,7 +73,7 @@ export class OfferService {
   }
 
   async create(adminId: Uuid, input: CreatePromoOfferInput): Promise<PromoOffer> {
-    const [row] = await this.drizzle.db.transaction(async (tx) => {
+    return this.drizzle.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(promoOffer)
         .values({
@@ -73,13 +87,10 @@ export class OfferService {
           terms: input.terms,
           rules: input.rules,
           requiresOptIn: input.requiresOptIn,
-          ...toWindow(input),
+          ...toPatch({ validFrom: input.validFrom, validUntil: input.validUntil }),
         })
         .onConflictDoNothing({ target: promoOffer.key })
         .returning();
-      if (inserted.length === 0) {
-        throw new OfferKeyTakenError();
-      }
       const created = findOneOrThrow(inserted, new OfferKeyTakenError());
       await this.audit.recordInTransaction(tx, {
         actorId: adminId,
@@ -89,18 +100,29 @@ export class OfferService {
         resourceId: created.id,
         after: toOffer(created),
       });
-      return inserted;
+      return toOffer(created);
     });
-    return toOffer(findOneOrThrow([row], new OfferKeyTakenError()));
   }
 
   async update(adminId: Uuid, input: UpdatePromoOfferInput): Promise<PromoOffer> {
     const { id, ...patch } = input;
     return this.drizzle.db.transaction(async (tx) => {
       const before = await this.requireOffer(tx, id);
+      // Re-denominating an offer players have already banked deposits against would pay a grant
+      // in one currency backed by deposits made in another.
+      if (patch.currency !== undefined && patch.currency !== before.currency) {
+        const [claimed] = await tx
+          .select({ id: promoOptIn.id })
+          .from(promoOptIn)
+          .where(eq(promoOptIn.offerId, id))
+          .limit(1);
+        if (claimed) {
+          throw new OfferClaimedError();
+        }
+      }
       const [updated] = await tx
         .update(promoOffer)
-        .set({ ...stripWindow(patch), ...toWindow(patch) })
+        .set(toPatch(patch))
         .where(eq(promoOffer.id, id))
         .returning();
       const after = toOffer(findOneOrThrow(updated ? [updated] : [], new OfferNotFoundError(id)));
@@ -146,7 +168,21 @@ export class OfferService {
       }
       // The unique index is the guard: two parallel opt-ins settle on one row rather than both
       // reading "not opted in" and both inserting.
-      await tx.insert(promoOptIn).values({ userId, offerId }).onConflictDoNothing();
+      const [claimed] = await tx
+        .insert(promoOptIn)
+        .values({ userId, offerId })
+        .onConflictDoNothing()
+        .returning({ id: promoOptIn.id });
+      if (claimed) {
+        await this.audit.recordInTransaction(tx, {
+          actorId: userId,
+          actorType: 'player',
+          action: 'promo.offer.claimed',
+          resourceType: 'promo_opt_in',
+          resourceId: claimed.id,
+          after: { offerId, offerKey: offer.key },
+        });
+      }
       const [row] = await tx
         .select({ accumulatedDeposit: promoOptIn.accumulatedDeposit })
         .from(promoOptIn)
@@ -166,54 +202,110 @@ export class OfferService {
     deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
     context: OfferContext = {},
   ): Promise<void> {
-    const claims = await tx
-      .select({ optIn: promoOptIn, offer: promoOffer })
-      .from(promoOptIn)
-      .innerJoin(promoOffer, eq(promoOffer.id, promoOptIn.offerId))
-      .where(and(eq(promoOptIn.userId, deposit.userId), sql`${promoOptIn.grantId} is null`))
-      .for('update');
-
+    // The deposit has already committed by the time this job runs, so a lifetime total equal to
+    // this deposit means there was nothing before it. Asking the wallet keeps the fact where it
+    // is owned rather than snapshotting it onto an event.
+    const lifetime = await this.wallet.getLifetimeDeposit(deposit.userId);
+    const isFirstDeposit = moneyCompare(lifetime, deposit.amount) === 0;
     const at = new Date();
-    for (const { optIn, offer } of claims) {
+
+    for (const { optIn, offer } of await this.claimsFor(tx, deposit)) {
       if (offer.currency !== deposit.currency) {
         continue;
       }
+      // At-least-once delivery: the unique index is what stops a redelivered deposit adding
+      // itself to the running total twice and paying a bonus the deposits never earned.
+      const [counted] = await tx
+        .insert(promoOptInDeposit)
+        .values({ optInId: optIn.id, transactionId: deposit.transactionId, amount: deposit.amount })
+        .onConflictDoNothing()
+        .returning({ id: promoOptInDeposit.id });
+      if (!counted) {
+        continue;
+      }
+
       const accumulated = moneyAdd(optIn.accumulatedDeposit, deposit.amount);
       const refusal = offerIneligibility({
         offer: toOffer(offer),
         at,
+        isFirstDeposit,
         deposit: { amount: accumulated, currency: deposit.currency },
         ...context,
       });
       if (refusal !== null) {
-        // Short of the minimum is the common case and not a failure: the deposit counts toward
-        // it and the player deposits again.
-        await tx
-          .update(promoOptIn)
-          .set({ accumulatedDeposit: accumulated })
-          .where(eq(promoOptIn.id, optIn.id));
+        // Only a deposit short of the minimum banks toward it. Banking one the offer refused for
+        // any other reason means re-activating a paused offer pays a match on every deposit made
+        // while it was shut.
+        if (refusal === 'below_minimum_deposit') {
+          await tx
+            .update(promoOptIn)
+            .set({ accumulatedDeposit: accumulated })
+            .where(eq(promoOptIn.id, optIn.id));
+        }
+        continue;
+      }
+
+      const amount = grantAmountFor(accumulated, offer.matchPercent, offer.maxGrantAmount);
+      if (moneyCompare(amount, '0') <= 0) {
         continue;
       }
 
       const granted = await this.grants.grant(tx, {
         userId: deposit.userId,
         currency: offer.currency,
-        amount: grantAmountFor(accumulated, offer.matchPercent, offer.maxGrantAmount),
+        amount,
         source: 'deposit',
-        // The deposit that tipped it over, so a replayed deposit resolves to the same grant.
-        sourceRef: deposit.transactionId,
+        // Per offer, not per deposit: one deposit can qualify several claims, and a shared
+        // reference would make the second one collide with the first.
+        sourceRef: `${deposit.transactionId}:${offer.id}`,
         actor: { type: 'system' },
         offerId: offer.id,
         terms: offer.terms,
       });
+      if (!granted.ok) {
+        // The accumulator stays where it was: banking a total the grant refused would pay the
+        // match on all of it the next time a deposit lands.
+        this.logger.error(
+          { userId: deposit.userId, offerId: offer.id, reason: granted.reason },
+          'promo offer grant refused',
+        );
+        continue;
+      }
       await tx
         .update(promoOptIn)
-        .set({
-          accumulatedDeposit: accumulated,
-          ...(granted.ok ? { grantId: granted.grantId } : {}),
-        })
+        .set({ accumulatedDeposit: accumulated, grantId: granted.grantId })
         .where(eq(promoOptIn.id, optIn.id));
     }
+  }
+
+  /**
+   * The claims this deposit could satisfy: the ones the player took, plus the offers that need no
+   * taking. An offer marked `requiresOptIn: false` applies to any qualifying deposit, so the claim
+   * is opened here rather than requiring the player to ask for something already theirs.
+   */
+  private async claimsFor(
+    tx: DrizzleTx,
+    deposit: { userId: Uuid; currency: string },
+  ): Promise<{ optIn: PromoOptInRow; offer: PromoOfferRow }[]> {
+    const automatic = await tx
+      .select({ id: promoOffer.id })
+      .from(promoOffer)
+      .where(and(eq(promoOffer.status, 'active'), eq(promoOffer.requiresOptIn, false)));
+    if (automatic.length > 0) {
+      await tx
+        .insert(promoOptIn)
+        .values(automatic.map(({ id }) => ({ userId: deposit.userId, offerId: id })))
+        .onConflictDoNothing();
+    }
+
+    // `of` the opt-in only: locking the joined offer rows as well would put two deposits for
+    // different players in a deadlock over the offers they happen to share.
+    return tx
+      .select({ optIn: promoOptIn, offer: promoOffer })
+      .from(promoOptIn)
+      .innerJoin(promoOffer, eq(promoOffer.id, promoOptIn.offerId))
+      .where(and(eq(promoOptIn.userId, deposit.userId), sql`${promoOptIn.grantId} is null`))
+      .for('update', { of: promoOptIn });
   }
 
   private async requireOffer(tx: DrizzleTx, id: Uuid): Promise<PromoOfferRow> {
@@ -251,14 +343,10 @@ function toPlayerOffer(
   };
 }
 
-function stripWindow(patch: Partial<CreatePromoOfferInput>) {
-  const { validFrom: _from, validUntil: _until, ...rest } = patch;
-  return rest;
-}
-
 /** The wire carries timestamps as strings; the column wants dates, and null is a real value. */
-function toWindow({ validFrom, validUntil }: Partial<CreatePromoOfferInput>) {
+function toPatch({ validFrom, validUntil, ...rest }: Partial<CreatePromoOfferInput>) {
   return {
+    ...rest,
     ...(validFrom === undefined
       ? {}
       : { validFrom: validFrom === null ? null : new Date(validFrom) }),

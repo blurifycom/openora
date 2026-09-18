@@ -50,6 +50,7 @@ export type DirectAuditAction =
   | 'promo.bonus.converted'
   | 'promo.bonus.forfeited'
   | 'promo.bonus.expired'
+  | 'promo.offer.claimed'
   | 'promo.offer.created'
   | 'promo.offer.updated'
   | 'promo.offer.archived'
