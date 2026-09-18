@@ -13,6 +13,7 @@ import {
   BannerConfigurationHasScheduleError,
   BannerPlacementHasScheduleError,
   BannerScheduleInvalidRangeError,
+  BannerScheduleExpiredError,
   BannerScheduleOverlapError,
 } from '../service/cms.service.js';
 
@@ -154,7 +155,7 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
       return mapErrors(
         {
           NOT_FOUND: [BannerConfigurationNotFoundError, BannerScheduleNotFoundError],
-          CONFLICT: BannerScheduleOverlapError,
+          CONFLICT: [BannerScheduleOverlapError, BannerScheduleExpiredError],
           BAD_REQUEST: BannerScheduleInvalidRangeError,
         },
         () =>

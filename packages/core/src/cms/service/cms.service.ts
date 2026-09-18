@@ -53,6 +53,10 @@ export const BannerScheduleInvalidRangeError = createDomainError<[reason: string
   'BannerScheduleInvalidRangeError',
   (reason) => `Invalid banner schedule range: ${reason}`,
 );
+export const BannerScheduleExpiredError = makeConflictError(
+  'BannerScheduleExpiredError',
+  'An expired banner schedule cannot be resumed',
+);
 export type BannerScheduleOverlapData = { startsAt: string; endsAt: string };
 export class BannerScheduleOverlapError extends Error {
   readonly data: BannerScheduleOverlapData;
@@ -1090,6 +1094,10 @@ export class CmsService {
 
         if (newEndsAt <= schedule.startsAt) {
           throw new BannerScheduleInvalidRangeError('endsAt must be after startsAt');
+        }
+        const now = new Date();
+        if (schedule.endsAt <= now && newEndsAt > now) {
+          throw new BannerScheduleExpiredError();
         }
         // startsAt is not editable and not re-validated against now() here - ending a
         // schedule early legitimately moves endsAt to now or the past.

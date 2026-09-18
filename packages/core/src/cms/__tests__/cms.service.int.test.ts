@@ -21,6 +21,7 @@ import {
   BannerPlacementHasScheduleError,
   BannerScheduleNotFoundError,
   BannerScheduleInvalidRangeError,
+  BannerScheduleExpiredError,
   BannerScheduleOverlapError,
 } from '../service/cms.service.js';
 
@@ -814,6 +815,30 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
     const updated = await svc.updateBannerScheduleEnd(target.id, { endsAt: earlyEnd }, ADMIN_ID);
 
     expect(updated.endsAt).toBe(earlyEnd);
+  });
+
+  it('rejects resuming an expired schedule after its placement default was unset', async () => {
+    const { svc } = makeService();
+    const defaultConfiguration = await makeDefaultConfiguration(svc, 'home-top');
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
+    const endsAt = new Date(Date.now() - 60_000);
+    await insertScheduleDirect({
+      bannerConfigurationId: target.id,
+      startsAt: new Date(Date.now() - 120_000),
+      endsAt,
+    });
+
+    await svc.unsetDefaultConfiguration('home-top', ADMIN_ID);
+
+    await expect(
+      svc.updateBannerScheduleEnd(
+        target.id,
+        { endsAt: new Date(Date.now() + 60_000).toISOString() },
+        ADMIN_ID,
+      ),
+    ).rejects.toBeInstanceOf(BannerScheduleExpiredError);
+    expect((await scheduleByConfigurationId(target.id))?.endsAt).toEqual(endsAt);
+    expect((await configurationById(defaultConfiguration.id))?.isDefault).toBe(false);
   });
 
   it('404s a configuration with no attached schedule', async () => {

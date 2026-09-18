@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadExtensions } from '@openora/core/server';
+import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { bannerSchedule } from '@openora/core/cms/schema';
 import {
   asAdmin,
   bootTestApp,
@@ -16,6 +17,7 @@ type BannerConfiguration = { id: string; isDefault: boolean };
 
 let db: TestDb;
 let app: TestApp;
+const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 
 async function readJson(res: Response): Promise<unknown> {
   return res.json();
@@ -138,5 +140,45 @@ describe('banner default schedule guard', () => {
       throw new Error('expected a banner configuration in the get response');
     }
     expect(unchangedConfiguration.isDefault).toBe(true);
+  });
+
+  it('rejects resuming an expired schedule after unsetting its default', async () => {
+    const admin = await asAdmin(app.app);
+    const placement = `cms-expired-${randomUUID()}`;
+    const defaultConfiguration = await createDefaultConfiguration(admin, placement);
+    const scheduledConfiguration = await createConfiguration(admin, placement);
+    const now = Date.now();
+    await app.container
+      .get(DRIZZLE)
+      .db.insert(bannerSchedule)
+      .values({
+        bannerConfigurationId: scheduledConfiguration.id,
+        startsAt: new Date(now - 120_000),
+        endsAt: new Date(now - 60_000),
+        createdBy: SYSTEM_ACTOR_ID,
+      });
+
+    const unsetResponse = await admin.post(`/cms/banner-placements/${placement}/unset-default`, {});
+    expect(unsetResponse.status).toBe(200);
+
+    const updateResponse = await admin.request(
+      `/cms/banner-configurations/${scheduledConfiguration.id}/schedule`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endsAt: new Date(Date.now() + 60_000).toISOString() }),
+      },
+    );
+    expect(updateResponse.status).toBe(409);
+
+    const configurationResponse = await admin.get(
+      `/cms/banner-configurations/${defaultConfiguration.id}`,
+    );
+    expect(configurationResponse.status).toBe(200);
+    const unchangedConfiguration = await readJson(configurationResponse);
+    if (!isBannerConfiguration(unchangedConfiguration)) {
+      throw new Error('expected a banner configuration in the get response');
+    }
+    expect(unchangedConfiguration.isDefault).toBe(false);
   });
 });
