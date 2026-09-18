@@ -1,6 +1,10 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
 import { bonusContract } from '../contract/index.js';
+import {
+  GrantLifecycleService,
+  GrantNotForfeitableError,
+} from '../service/grant-lifecycle.service.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
 import {
   OfferClaimedError,
@@ -13,10 +17,12 @@ import {
 export function createBonusRouter({
   grants,
   offers,
+  lifecycle,
   adminGuard,
 }: {
   grants: GrantReaderService;
   offers: OfferService;
+  lifecycle: GrantLifecycleService;
   adminGuard: AdminGuard;
 }) {
   const os = implement(bonusContract).$context<OssContext>();
@@ -33,6 +39,26 @@ export function createBonusRouter({
     },
 
     admin: {
+      grants: {
+        list: os.admin.grants.list.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return grants.listForAdmin(input.userId, input);
+        }),
+
+        forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {
+          const { userId } = await adminGuard.assert(context, 'bonus', 'cancel');
+          return mapErrors({ CONFLICT: GrantNotForfeitableError }, async () => {
+            await lifecycle.forfeit(
+              input.id,
+              input.reason,
+              { id: userId, isAdmin: true },
+              input.note,
+            );
+            return grants.getForAdmin(input.id);
+          });
+        }),
+      },
+
       offers: {
         list: os.admin.offers.list.handler(async ({ input, context }) => {
           await adminGuard.assert(context, 'bonus', 'view');
