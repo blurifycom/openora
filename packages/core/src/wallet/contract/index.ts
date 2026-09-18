@@ -300,8 +300,6 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   excludeRiskFlags: z.array(TagKeySchema),
 });
 
-export const MAX_BONUS_ROLLOVER_MULTIPLIER = '100';
-
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 
 export const RejectWithdrawalInputSchema = z.object({

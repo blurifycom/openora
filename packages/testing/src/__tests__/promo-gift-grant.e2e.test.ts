@@ -113,6 +113,40 @@ describe('money the platform gifts', () => {
     expect(debited).toMatchObject({ ok: true, newBalance: '0.000000000000000000' });
   });
 
+  it('grants once when the same gift is delivered twice', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `gift-replay-${randomUUID()}@example.test`,
+    });
+    await deposit(client, '10');
+    const providerRef = {
+      providerName: 'chat',
+      providerRefId: `gift-${randomUUID()}`,
+    };
+
+    await drizzle().transaction((tx) =>
+      app.container.get(WALLET_COMMANDS).credit(tx, {
+        userId,
+        amount: '25',
+        currency: 'USD',
+        type: 'gift',
+        providerRef,
+      }),
+    );
+    await drizzle().transaction((tx) =>
+      app.container.get(WALLET_COMMANDS).credit(tx, {
+        userId,
+        amount: '25',
+        currency: 'USD',
+        type: 'gift',
+        providerRef,
+      }),
+    );
+
+    const grants = await grantsOf(userId);
+    expect(grants).toHaveLength(1);
+    expect(grants[0]).toMatchObject({ bonusBalance: '25.000000000000000000' });
+  });
+
   it('scores a gift against the default weight profile', async () => {
     const { client, userId } = await registerAndMaterializePlayer(app, {
       email: `gift-weights-${randomUUID()}@example.test`,

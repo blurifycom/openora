@@ -716,6 +716,7 @@
     },
     "./promo/seed/bonus": {
       "types": "./dist/promo/bonus/seed/index.d.ts",
+      "import": "./dist/promo/bonus/seed/index.js",
       "default": "./dist/promo/bonus/seed/index.js"
     }
   },
