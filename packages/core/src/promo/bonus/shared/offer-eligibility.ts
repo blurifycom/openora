@@ -7,7 +7,6 @@ export type OfferEligibilityInput = {
     'status' | 'currency' | 'minDeposit' | 'rules' | 'validFrom' | 'validUntil'
   >;
   at: Date;
-  countryCode?: string;
   isFirstDeposit?: boolean;
   deposit?: { amount: string; currency: string };
 };
@@ -15,7 +14,6 @@ export type OfferEligibilityInput = {
 export type OfferIneligibility =
   | 'offer_inactive'
   | 'outside_validity_window'
-  | 'country_excluded'
   | 'not_first_deposit'
   | 'currency_mismatch'
   | 'below_minimum_deposit';
@@ -39,12 +37,6 @@ export function offerIneligibility(input: OfferEligibilityInput): OfferIneligibi
     (offer.validUntil !== null && at > new Date(offer.validUntil))
   ) {
     return 'outside_validity_window';
-  }
-  if (
-    input.countryCode !== undefined &&
-    offer.rules.excludedCountries.includes(input.countryCode)
-  ) {
-    return 'country_excluded';
   }
   if (offer.rules.firstDepositOnly && input.isFirstDeposit !== true) {
     return 'not_first_deposit';

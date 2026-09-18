@@ -10,6 +10,7 @@ import {
   MoneyAmountSchema,
   UuidSchema,
   WAGER_TRACKING,
+  WALLET_READER,
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
@@ -230,7 +231,13 @@ export default {
     ctx.routers.add('promo-bonus', (c) => {
       lifecycle = new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
       drizzle = c.get(DRIZZLE);
-      offers = new OfferService(c.get(DRIZZLE), c.get(AUDIT_WRITER), c.get(BONUS_GRANTS));
+      offers = new OfferService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(BONUS_GRANTS),
+        c.get(WALLET_READER),
+        logger,
+      );
       events = c.get(EVENT_BUS);
       jobs = c.get(JOB_QUEUE);
       void jobs

@@ -6,7 +6,7 @@ const OFFER = {
   status: 'active' as const,
   currency: 'USD',
   minDeposit: '20',
-  rules: { firstDepositOnly: false, excludedCountries: [] as string[] },
+  rules: { firstDepositOnly: false },
   validFrom: null,
   validUntil: null,
 };
@@ -37,12 +37,6 @@ describe('who an offer is open to', () => {
   it('opens an offer on the last moment of its window', () => {
     const offer = { ...OFFER, validUntil: AT.toISOString() };
     expect(offerIneligibility({ offer, at: AT })).toBeNull();
-  });
-
-  it('closes an offer to an excluded country', () => {
-    const offer = { ...OFFER, rules: { ...OFFER.rules, excludedCountries: ['US'] } };
-    expect(offerIneligibility({ offer, at: AT, countryCode: 'US' })).toBe('country_excluded');
-    expect(offerIneligibility({ offer, at: AT, countryCode: 'PL' })).toBeNull();
   });
 
   it('closes a first-deposit offer to a caller who cannot say it is the first', () => {
