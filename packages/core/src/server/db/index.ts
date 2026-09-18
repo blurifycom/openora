@@ -10,6 +10,7 @@ export {
   likePrefix,
   uniqueConstraintName,
   withAdvisoryXactLock,
+  withAdvisoryXactLocks,
   moneyToNumber,
   moneyEquals,
   moneyCompare,
