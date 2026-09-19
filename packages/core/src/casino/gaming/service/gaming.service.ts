@@ -232,6 +232,14 @@ export class GamingService {
       equals: game.id,
     });
     // A game counts as geo-blocked by its own rule or its provider's, matching the play gate's check.
+    // Grouped by game id so the planner hashes distinct games, not one entry per rule row.
+    const geoBlockedGameIds = db
+      .select({ gameId: gameGeoRule.gameId })
+      .from(gameGeoRule)
+      .groupBy(gameGeoRule.gameId);
+    const geoBlockedProviderIds = db
+      .select({ providerId: providerGeoRule.providerId })
+      .from(providerGeoRule);
     const anyGameGeoRule = this.rowsWhere({
       table: gameGeoRule,
       column: gameGeoRule.gameId,
@@ -275,8 +283,12 @@ export class GamingService {
         geoBlocked === undefined
           ? undefined
           : geoBlocked
-            ? or(exists(anyGameGeoRule), exists(anyProviderGeoRule))
-            : and(notExists(anyGameGeoRule), notExists(anyProviderGeoRule)),
+            ? or(
+                inArray(game.id, geoBlockedGameIds),
+                inArray(game.providerId, geoBlockedProviderIds),
+              )
+            : // NOT EXISTS, not NOT IN: the anti join keeps scaling with the rule table.
+              and(notExists(anyGameGeoRule), notExists(anyProviderGeoRule)),
         geoBlockedCountries
           ? this.linkedToAll({
               values: geoBlockedCountries,
