@@ -278,6 +278,30 @@ describe('cms router banner configuration writes', () => {
 });
 
 describe('cms router banner error mapping', () => {
+  it('maps unsetting a default with a schedule in its placement to CONFLICT', async () => {
+    const router = routerWith(allowingGuard());
+    await createDefaultConfiguration(router, 'home-top');
+    const target = await createSchedulableConfiguration(router, 'home-top');
+    await call(
+      router.createBannerSchedule,
+      {
+        id: target.id,
+        startsAt: new Date(Date.now() + 60_000).toISOString(),
+        endsAt: new Date(Date.now() + 120_000).toISOString(),
+      },
+      { context: CTX },
+    );
+
+    const error: unknown = await call(
+      router.unsetDefaultBannerConfiguration,
+      { placement: 'home-top' },
+      { context: CTX },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'unsetDefaultBannerConfiguration', unknown>).code).toBe('CONFLICT');
+  });
+
   it('maps deleting the placement default to CONFLICT', async () => {
     const router = routerWith(allowingGuard());
     const created = await call(
