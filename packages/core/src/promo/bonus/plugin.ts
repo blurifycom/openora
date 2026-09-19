@@ -4,24 +4,30 @@ import {
   BONUS_GRANTS,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
+  CurrencyTickerSchema,
   JOB_QUEUE,
+  MoneyAmountSchema,
   UuidSchema,
   WAGER_TRACKING,
+  WALLET_READER,
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
 } from '@openora/core/contracts';
 import {
+  ADMIN_GUARD,
   DRIZZLE,
   EVENT_BUS,
   createLogger,
   type CoreTokenCatalog,
+  type DrizzleService,
   type EventBus,
   type Plugin,
 } from '@openora/core/server';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { GrantReaderService } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
+import { OfferService } from './service/offer.service.js';
 import { WageringService } from './service/wagering.service.js';
 import { createBonusRouter } from './router/index.js';
 
@@ -29,6 +35,7 @@ const logger = createLogger('promo-bonus');
 
 const EXPIRY_QUEUE = queue('promo-bonus-expiry');
 const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
+const DEPOSIT_QUEUE = queue('promo-offer-deposit');
 const EXPIRY_CRON = '*/5 * * * *';
 
 const EmptyJobPayloadSchema = z.object({});
@@ -45,6 +52,19 @@ const ForfeitJobSchema = z.object({
   actorIsAdmin: z.boolean(),
 });
 
+/**
+ * A deposit turning an opt-in into a bonus is a money movement, so it runs as a durable job for
+ * the same reason a forfeit does: the event that triggers it is best-effort, and a grant that
+ * never gets created is a bonus the player was promised and did not receive. The grant's own
+ * `(user, source, source_ref)` index makes the retry harmless.
+ */
+const DepositJobSchema = z.object({
+  userId: UuidSchema,
+  amount: MoneyAmountSchema,
+  currency: CurrencyTickerSchema,
+  transactionId: UuidSchema,
+});
+
 export default {
   id: 'bonus',
   dependsOn: ['audit'],
@@ -56,6 +76,8 @@ export default {
     );
 
     let lifecycle: GrantLifecycleService | null = null;
+    let offers: OfferService | null = null;
+    let drizzle: DrizzleService | null = null;
     let events: EventBus | null = null;
     let jobs: JobQueueAdapter | null = null;
 
@@ -155,14 +177,64 @@ export default {
       forfeitEverything('player.account.closed', 'account_closed'),
     );
 
+    ctx.jobs.worker({
+      queue: DEPOSIT_QUEUE,
+      schema: DepositJobSchema,
+      handler: async ({ payload }) => {
+        if (!offers || !drizzle) {
+          throw new Error('promo-offer-deposit: service not constructed');
+        }
+        const service = offers;
+        await drizzle.db.transaction((tx) => service.applyDeposit(tx, payload));
+      },
+    });
+
+    // A confirmed deposit is what turns an opt-in into a bonus.
+    ctx.events.on('wallet.deposit.completed', (payload: unknown) => {
+      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+      if (!parsed.success) {
+        logger.error('promo offer deposit skipped - event payload failed validation');
+        return;
+      }
+      if (!jobs) {
+        logger.error(
+          { userId: parsed.data.userId },
+          'promo offer deposit dropped - job queue not bound yet',
+        );
+        return;
+      }
+      const { userId, amount, currency, transactionId } = parsed.data;
+      void jobs
+        .enqueue(
+          DEPOSIT_QUEUE,
+          { userId, amount, currency, transactionId },
+          { idempotencyKey: `promo-offer-deposit:${transactionId}` },
+        )
+        .catch((err: unknown) =>
+          logger.error({ err, userId }, 'promo offer deposit enqueue failed'),
+        );
+    });
+
     ctx.routers.add('promo-bonus', (c) => {
       lifecycle = new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
+      drizzle = c.get(DRIZZLE);
+      offers = new OfferService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(BONUS_GRANTS),
+        c.get(WALLET_READER),
+        logger,
+      );
       events = c.get(EVENT_BUS);
       jobs = c.get(JOB_QUEUE);
       void jobs
         .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
         .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
-      return createBonusRouter(new GrantReaderService(c.get(DRIZZLE)));
+      return createBonusRouter({
+        grants: new GrantReaderService(c.get(DRIZZLE)),
+        offers,
+        adminGuard: c.get(ADMIN_GUARD),
+      });
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
