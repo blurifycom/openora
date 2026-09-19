@@ -95,6 +95,7 @@ export default {
     // svcRefs are null at registration (subscriptions wire before router factories run)
     // but set before any real event/job arrives. See create-app.ts boot order.
     let kycRef: KycVerificationService | null = null;
+    let complianceRef: ComplianceService | null = null;
     let rgRef: RgService | null = null;
     let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
@@ -129,6 +130,32 @@ export default {
       kycRef
         .handleDeposit(parsed.data.userId)
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
+    });
+
+    // Country-level KYC exemption: a fresh registration from a country (or while KYC is
+    // globally off) that doesn't require KYC is auto-approved at the basic tier instead
+    // of landing on `pending`. Errors are swallowed - the player staying `pending` is the
+    // safe direction, not a thrown error surfacing on the registration request.
+    ctx.events.on('identity.user.registered', (payload) => {
+      const parsed = domainEventSchemas['identity.user.registered'].safeParse(payload);
+      if (!parsed.success || !complianceRef || !kycRef) {
+        return;
+      }
+      const countryCode = parsed.data.countryCode ?? null;
+      const userId = parsed.data.userId;
+      const compliance = complianceRef;
+      const kyc = kycRef;
+      void (async () => {
+        try {
+          const { required, reason } = await compliance.resolveKycRequirement(countryCode);
+          if (required || (reason !== 'global_disabled' && reason !== 'country_exempt')) {
+            return;
+          }
+          await kyc.applyExemption(userId, { countryCode, reason });
+        } catch (err) {
+          logger.error({ err, userId }, 'KYC exemption apply failed');
+        }
+      })();
     });
 
     const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
@@ -229,6 +256,8 @@ export default {
         platformConfig,
       });
       kycRef = kyc;
+      const compliance = makeComplianceService(c);
+      complianceRef = compliance;
 
       const rg = new RgService({
         drizzle: c.get(DRIZZLE),
@@ -258,7 +287,7 @@ export default {
         .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
 
       return createComplianceRouter({
-        compliance: makeComplianceService(c),
+        compliance,
         adminGuard: c.get(ADMIN_GUARD),
         audit: c.get(AUDIT_WRITER),
         kyc,

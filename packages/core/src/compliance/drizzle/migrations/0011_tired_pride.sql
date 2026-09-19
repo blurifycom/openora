@@ -1,0 +1,1 @@
+ALTER TYPE "public"."kyc_triggered_by" ADD VALUE 'exemption';

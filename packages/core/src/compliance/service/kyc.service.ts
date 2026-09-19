@@ -142,6 +142,7 @@ function toSummaryDto(dto: NonNullable<PlayerKycView['basic']['current']>): KycV
     tier: dto.tier,
     status: dto.status,
     documentTypes: dto.documentTypes,
+    exempt: dto.triggeredBy === 'exemption',
     submittedAt: dto.submittedAt,
     decidedAt: dto.decidedAt,
     createdAt: dto.createdAt,
@@ -208,7 +209,7 @@ export class KycVerificationService {
     playerTransition: KycStatusTransition | null;
     actorId: User['id'] | null;
     reason: string | null;
-    source: 'vendor' | 'manual' | 'webhook' | 'reverify';
+    source: 'vendor' | 'manual' | 'webhook' | 'reverify' | 'exemption';
   }) {
     if (params.tier === 'basic' && !params.playerTransition) {
       return;
@@ -606,6 +607,13 @@ export class KycVerificationService {
       return;
     }
 
+    // A country/global exemption, not a real decision - re-KYC has nothing to re-verify
+    // against, so a high-roller who was only ever exempted never gets threshold-triggered.
+    const latestBasic = await this.latestVerification(userId, 'basic');
+    if (latestBasic?.triggeredBy === 'exemption') {
+      return;
+    }
+
     const [deposited] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
       .from(walletTransaction)
@@ -874,6 +882,68 @@ export class KycVerificationService {
         logger.error({ err, userId }, 'bulk KYC approve failed for player');
         return { userId, success: false, error: 'Failed to approve KYC' };
       }
+    });
+  }
+
+  /**
+   * Registration-time hook (compliance/plugin.ts's `identity.user.registered` listener):
+   * auto-approves the basic tier for a player whose country - or the global KYC switch -
+   * exempts them, instead of leaving them on `pending`. Idempotent on the player's
+   * basic-tier history, not on `(countryCode, reason)`: any prior basic-tier row (a real
+   * submission, a manual decision, or an earlier exemption) means this is a no-op, since
+   * the resolver's decision can only be evaluated once, at registration.
+   */
+  async applyExemption(
+    userId: User['id'],
+    params: { countryCode: string | null; reason: 'global_disabled' | 'country_exempt' },
+  ): Promise<void> {
+    await this.drizzle.db.transaction(async (trx) => {
+      const current = await this.requirePlayerRowForUpdate(userId, trx);
+      const existing = await this.latestVerification(userId, 'basic', trx);
+      if (existing) {
+        return;
+      }
+
+      const decisionReason =
+        params.reason === 'global_disabled'
+          ? 'KYC is globally disabled'
+          : `Country ${params.countryCode ?? 'unknown'} is exempt from KYC`;
+      findOneOrThrow(
+        await trx
+          .insert(kycVerification)
+          .values({
+            userId,
+            provider: 'exemption',
+            referenceId: `exemption-${params.countryCode ?? 'global'}`,
+            tier: 'basic',
+            status: 'approved',
+            documentTypes: [],
+            triggeredBy: 'exemption',
+            decisionReason,
+            decidedAt: new Date(),
+          })
+          .returning(),
+        new KycVerificationNotFoundError(userId),
+      );
+      const playerTransition = await this.statusWriter.setStatus(
+        userId,
+        'approved',
+        { actorId: null, source: 'exemption' },
+        trx,
+      );
+      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+      // compliance.md): emitted here, inside the transaction, so it can never be dropped
+      // by a crash between commit and a post-commit emit.
+      await this.emitUpdated({
+        userId,
+        tier: 'basic',
+        status: 'approved',
+        previousStatus: current.kycStatus,
+        playerTransition,
+        actorId: null,
+        reason: decisionReason,
+        source: 'exemption',
+      });
     });
   }
 
