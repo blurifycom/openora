@@ -212,6 +212,7 @@ export class ReconciliationService {
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
       let creditTx: WalletTransaction | undefined;
+      let heldWithdrawalId: string | null = null;
 
       if (resolution.outcome === 'credited') {
         const [finding] = await txn
@@ -239,6 +240,12 @@ export class ReconciliationService {
         }
         transactionId = tx.id;
         creditTx = tx;
+        // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by
+        // hand. The held row must leave `processing` with it, or the next reconciliation run
+        // (or a late webhook) can still refund or complete it on top of the manual credit.
+        if (finding.kind === 'unknown_at_provider') {
+          heldWithdrawalId = finding.transactionId;
+        }
       } else {
         resolutionNote = resolution.note;
       }
@@ -275,6 +282,18 @@ export class ReconciliationService {
       }
 
       const row = findOneOrThrow(updated, new ReconciliationFindingNotFoundError(id));
+      if (heldWithdrawalId) {
+        await txn
+          .update(walletTransaction)
+          .set({ status: 'failed' })
+          .where(
+            and(
+              eq(walletTransaction.id, heldWithdrawalId),
+              eq(walletTransaction.type, 'withdrawal'),
+              eq(walletTransaction.status, 'processing'),
+            ),
+          );
+      }
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
         actorType: 'admin',
@@ -287,6 +306,7 @@ export class ReconciliationService {
           outcome: resolution.outcome,
           transactionId: row.transactionId,
           resolutionNote: row.resolutionNote,
+          closedWithdrawalId: heldWithdrawalId,
         },
         ...meta,
       });
@@ -663,7 +683,12 @@ export class ReconciliationService {
         and(
           eq(walletTransaction.status, 'processing'),
           eq(walletTransaction.type, 'withdrawal'),
-          lt(walletTransaction.createdAt, cutoff),
+          // From approval, not request: a row that sat in the manual queue is not stuck the
+          // moment an admin approves it, while its vendor call may still be in flight.
+          lt(
+            sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`,
+            cutoff,
+          ),
         ),
       )
       // Unreported first, then oldest. Findings dedupe on (kind, providerName, externalId), so a row
@@ -674,71 +699,56 @@ export class ReconciliationService {
       .limit(batchSize);
 
     for (const tx of stuck) {
-      const providerName = tx.providerName ?? DEFAULT_PAYMENT_PROVIDER;
-      const provider = this.paymentProviders.get(providerName);
-
-      // No vendor reference was stored: the payout call timed out, or the process died before
-      // saving its response. Ask the vendor by our own id first - a found payout gets its
-      // reference back and settles normally instead of waiting on a human.
-      if (!tx.providerRefId) {
-        const found = await provider?.adapter.findWithdrawalByReference?.(tx.id);
-        if (found) {
-          await this.drizzle.db
-            .update(walletTransaction)
-            .set({ providerName, providerRefId: found.externalId })
-            .where(
-              and(
-                eq(walletTransaction.id, tx.id),
-                eq(walletTransaction.status, 'processing'),
-                isNull(walletTransaction.providerRefId),
-              ),
-            );
-          await this.wallet.reconcileWithdrawalStatus(
-            {
-              kind: 'withdrawal',
-              externalId: found.externalId,
-              status: found.status,
-              ...(found.txHash ? { txHash: found.txHash } : {}),
-            },
-            providerName,
-          );
-          continue;
-        }
-        // Still unknown - a finding for a human, deduped on the transaction's own id. Never an
-        // automatic refund: "vendor has no record yet" does not prove the payout never left.
-        counts.unknownAtProvider += 1;
-        await recordReconciliationFinding(
-          this.drizzle.db,
-          {
-            runId,
-            providerName,
-            kind: 'unknown_at_provider',
-            currency: tx.currency,
-            network: tx.network,
-            amount: tx.amount,
-            transactionId: tx.id,
-            externalId: tx.id,
-            detail: 'withdrawal has no providerRefId to look up at the vendor',
-          },
-          this.audit,
+      // One unreachable vendor or bad row must not abort the run - stuck swaps and sweeps
+      // are checked after this loop, and a row that throws would sort first forever.
+      try {
+        await this.reconcileStuckWithdrawal(runId, tx, counts);
+      } catch (err) {
+        logger.error(
+          { err, transactionId: tx.id },
+          'reconciliation: stuck withdrawal check failed',
         );
-        continue;
       }
+    }
+  }
 
-      const status = await provider?.adapter.getWithdrawalStatus?.(tx.providerRefId);
-      if (status) {
+  private async reconcileStuckWithdrawal(
+    runId: WalletJobRun['runId'],
+    tx: WalletTransaction,
+    counts: { unknownAtProvider: number },
+  ): Promise<void> {
+    const providerName = tx.providerName ?? DEFAULT_PAYMENT_PROVIDER;
+    const provider = this.paymentProviders.get(providerName);
+
+    if (!tx.providerRefId) {
+      const found = await provider?.adapter.findWithdrawalByReference?.(tx.id);
+      if (found) {
+        const recovered = await this.drizzle.db
+          .update(walletTransaction)
+          .set({ providerName, providerRefId: found.externalId })
+          .where(
+            and(
+              eq(walletTransaction.id, tx.id),
+              eq(walletTransaction.status, 'processing'),
+              isNull(walletTransaction.providerRefId),
+            ),
+          )
+          .returning({ id: walletTransaction.id });
+        if (recovered.length === 0) {
+          return;
+        }
         await this.wallet.reconcileWithdrawalStatus(
           {
             kind: 'withdrawal',
-            externalId: tx.providerRefId,
-            status: status.status,
-            ...(status.txHash ? { txHash: status.txHash } : {}),
+            externalId: found.externalId,
+            status: found.status,
+            ...(found.txHash ? { txHash: found.txHash } : {}),
           },
           providerName,
         );
-        continue;
+        return;
       }
-
+      // Never an automatic refund: "no record yet" does not prove the payout never left.
       counts.unknownAtProvider += 1;
       await recordReconciliationFinding(
         this.drizzle.db,
@@ -750,12 +760,44 @@ export class ReconciliationService {
           network: tx.network,
           amount: tx.amount,
           transactionId: tx.id,
-          externalId: tx.providerRefId,
-          detail: 'vendor has no record of this withdrawal',
+          externalId: tx.id,
+          detail: 'withdrawal has no providerRefId to look up at the vendor',
         },
         this.audit,
       );
+      return;
     }
+
+    const status = await provider?.adapter.getWithdrawalStatus?.(tx.providerRefId);
+    if (status) {
+      await this.wallet.reconcileWithdrawalStatus(
+        {
+          kind: 'withdrawal',
+          externalId: tx.providerRefId,
+          status: status.status,
+          ...(status.txHash ? { txHash: status.txHash } : {}),
+        },
+        providerName,
+      );
+      return;
+    }
+
+    counts.unknownAtProvider += 1;
+    await recordReconciliationFinding(
+      this.drizzle.db,
+      {
+        runId,
+        providerName,
+        kind: 'unknown_at_provider',
+        currency: tx.currency,
+        network: tx.network,
+        amount: tx.amount,
+        transactionId: tx.id,
+        externalId: tx.providerRefId,
+        detail: 'vendor has no record of this withdrawal',
+      },
+      this.audit,
+    );
   }
 
   /**

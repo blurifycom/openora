@@ -1599,9 +1599,9 @@ export class WalletService {
   }
 
   /**
-   * Approve: Pending -> Processing (commit + emit), send to PSP, then Completed on success
-   * or Failed + refund on PSP error. Robust PSP idempotency-key/reconciliation for a
-   * lost-response is deferred - same scope boundary the deposit path declares.
+   * Approve: Pending -> Processing (commit + emit), send to the vendor, then Completed on
+   * success, Failed + refund on a PaymentRejectedError, or held in Processing when the
+   * outcome is unknown (reconciliation settles it).
    */
   async approveWithdrawal(
     adminId: User['id'],
@@ -1659,7 +1659,7 @@ export class WalletService {
     );
   }
 
-  // Phase two: settle a `processing` withdrawal via the PSP (Completed on success, Failed + refund on error).
+  // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
   // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
@@ -1683,6 +1683,12 @@ export class WalletService {
     }
 
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
+    // Stamped before the call: if its response is lost, reconciliation must ask THIS vendor,
+    // not the default one, or "no record there" could be mistaken for "never paid".
+    await this.drizzle.db
+      .update(walletTransaction)
+      .set({ providerName })
+      .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
@@ -1714,14 +1720,18 @@ export class WalletService {
         { err, transactionId: tx.id, providerName },
         'withdrawal outcome unknown - held in processing for reconciliation',
       );
-      await this.audit.record({
-        actorType: adminId ? 'admin' : 'system',
-        actorId: adminId,
-        action: 'wallet.withdrawal.outcome_unknown',
-        resourceType: 'withdrawal',
-        resourceId: tx.id,
-        after: { userId, amount, currency: tx.currency, providerName },
-      });
+      try {
+        await this.audit.record({
+          actorType: adminId ? 'admin' : 'system',
+          actorId: adminId,
+          action: 'wallet.withdrawal.outcome_unknown',
+          resourceType: 'withdrawal',
+          resourceId: tx.id,
+          after: { userId, amount, currency: tx.currency, providerName },
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, transactionId: tx.id }, 'outcome_unknown audit write failed');
+      }
       return { transactionId: tx.id, status: 'processing' };
     }
 

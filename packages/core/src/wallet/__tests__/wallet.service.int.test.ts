@@ -1307,7 +1307,11 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     const result = await svc.approveWithdrawal(randomUUID(), pending.id);
 
     expect(result.status).toBe('processing');
-    expect(await txById(pending.id)).toMatchObject({ status: 'processing', providerRefId: null });
+    expect(await txById(pending.id)).toMatchObject({
+      status: 'processing',
+      providerRefId: null,
+      providerName: DEFAULT_PAYMENT_PROVIDER,
+    });
     expect(await balanceOf(w.userId)).toBe(20);
     expect(emittedTopics(events)).toEqual(['wallet.withdrawal.approved']);
     expect(audit.record).toHaveBeenCalledWith(
