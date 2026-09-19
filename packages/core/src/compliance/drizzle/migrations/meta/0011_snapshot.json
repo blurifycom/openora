@@ -1,6 +1,6 @@
 {
-  "id": "2b946a03-3001-44b6-b5cd-e706f7263cbf",
-  "prevId": "0014b3e6-dee4-47d5-abca-655323901090",
+  "id": "00884071-84ce-4ed2-8366-f8994220b96b",
+  "prevId": "2b946a03-3001-44b6-b5cd-e706f7263cbf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1019,7 +1019,7 @@
     "public.kyc_triggered_by": {
       "name": "kyc_triggered_by",
       "schema": "public",
-      "values": ["submission", "reverify_threshold", "manual"]
+      "values": ["submission", "reverify_threshold", "manual", "exemption"]
     },
     "public.kyc_verification_status": {
       "name": "kyc_verification_status",

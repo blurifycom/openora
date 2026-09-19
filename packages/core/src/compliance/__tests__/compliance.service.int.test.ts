@@ -12,11 +12,18 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { userLimit, countryRule, globalKycConfig, gameGeoRule } from '../schema/index.js';
+import {
+  userLimit,
+  countryRule,
+  globalKycConfig,
+  gameGeoRule,
+  providerGeoRule,
+} from '../schema/index.js';
 import {
   ComplianceService,
   CountryRuleConfirmationRequiredError,
   CountryRuleVersionConflictError,
+  GeoRuleProviderNotFoundError,
   LicensedJurisdictionBlacklistError,
 } from '../service/compliance.service.js';
 
@@ -33,16 +40,20 @@ function makeService(countryCode?: string | null, igaming: IgamingConfig | null 
   return { svc, audit, events };
 }
 
-async function seedGame(id: string, name: string) {
+async function seedProvider() {
   const [provider] = await db.drizzle.db
     .insert(gameProvider)
     .values({ slug: `studio-${randomUUID()}`, name: 'Studio', isActive: true })
     .returning();
+  return provider.id;
+}
+
+async function seedGame(id: string, name: string, providerId?: string) {
   await db.drizzle.db.insert(game).values({
     id,
     name,
     slug: `game-${randomUUID()}`,
-    providerId: provider.id,
+    providerId: providerId ?? (await seedProvider()),
     aggregator: 'mock',
     isActive: true,
   });
@@ -58,7 +69,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${userLimit}, ${countryRule}, ${globalKycConfig}, ${gameGeoRule}, ${game}, ${gameProvider} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${userLimit}, ${countryRule}, ${globalKycConfig}, ${gameGeoRule}, ${providerGeoRule}, ${game}, ${gameProvider} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -528,6 +539,8 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
   it('blocks only the matching game and country', async () => {
     const blockedGameId = '00000000-0000-0000-0000-000000000112';
     const otherGameId = '00000000-0000-0000-0000-000000000113';
+    await seedGame(blockedGameId, 'Blocked');
+    await seedGame(otherGameId, 'Other');
     const { svc } = makeService('US');
     await db.drizzle.db.insert(gameGeoRule).values({
       gameId: blockedGameId,
@@ -549,6 +562,7 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
 
   it('fails closed on unresolved geo when the game has a geo rule', async () => {
     const gameId = '00000000-0000-0000-0000-000000000114';
+    await seedGame(gameId, 'Unresolved');
     const { svc } = makeService(null);
     await db.drizzle.db
       .insert(gameGeoRule)
@@ -575,6 +589,7 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
 
   it('normalizes country codes returned by the geo-ip adapter', async () => {
     const gameId = '00000000-0000-0000-0000-000000000116';
+    await seedGame(gameId, 'Lowercase');
     const { svc } = makeService('us');
     await db.drizzle.db.insert(gameGeoRule).values({
       gameId,
@@ -591,6 +606,7 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
 
   it('fails closed when the geo-ip adapter returns an invalid country code', async () => {
     const gameId = '00000000-0000-0000-0000-000000000117';
+    await seedGame(gameId, 'Invalid country');
     const { svc } = makeService('USA');
     await db.drizzle.db.insert(gameGeoRule).values({
       gameId,
@@ -611,20 +627,21 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     const { svc, events } = makeService();
     await seedGame(gameId, 'Game');
 
-    const created = await svc.upsertGameGeoRule(
-      { gameId, countryCode: 'US', reason: 'licence restriction' },
+    await svc.upsertGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'licence restriction' },
       actorId,
       { ip: '1.2.3.4', userAgent: 'agent' },
     );
-    await svc.upsertGameGeoRule(
-      { gameId, countryCode: 'US', reason: 'updated restriction' },
+    await svc.upsertGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'updated restriction' },
       actorId,
       { ip: '1.2.3.4', userAgent: 'agent' },
     );
-    await svc.deleteGameGeoRule({ id: created.id, reason: 'licence restored' }, actorId, {
-      ip: '1.2.3.4',
-      userAgent: 'agent',
-    });
+    await svc.deleteGameGeoRules(
+      { gameId, countryCodes: ['US'], reason: 'licence restored' },
+      actorId,
+      { ip: '1.2.3.4', userAgent: 'agent' },
+    );
 
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.game-geo-rule.upserted',
@@ -639,7 +656,54 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
       'compliance.game-geo-rule.deleted',
       expect.objectContaining({ gameId, actorId, reason: 'licence restored', after: null }),
     );
-    expect(await svc.listGameGeoRules({ gameId })).toEqual([]);
+    expect(await svc.listGameGeoRules({ gameIds: [gameId], page: 1, limit: 100 })).toEqual({
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 100,
+    });
+  });
+
+  it('lists rules for the requested games one page at a time', async () => {
+    const [first, second, other] = [randomUUID(), randomUUID(), randomUUID()];
+    const actorId = randomUUID();
+    const meta = { ip: null, userAgent: null };
+    const { svc } = makeService();
+    for (const [gameId, name] of [
+      [first, 'First'],
+      [second, 'Second'],
+      [other, 'Other'],
+    ] as const) {
+      await seedGame(gameId, name);
+      await svc.upsertGameGeoRules(
+        { gameId, countryCodes: ['US'], reason: 'licence' },
+        actorId,
+        meta,
+      );
+    }
+    await svc.upsertGameGeoRules(
+      { gameId: first, countryCodes: ['DE'], reason: 'licence' },
+      actorId,
+      meta,
+    );
+
+    const pageOne = await svc.listGameGeoRules({ gameIds: [first, second], page: 1, limit: 2 });
+    const pageTwo = await svc.listGameGeoRules({ gameIds: [first, second], page: 2, limit: 2 });
+
+    expect(pageOne).toMatchObject({ total: 3, page: 1, limit: 2 });
+    expect(pageOne.items).toHaveLength(2);
+    expect(pageTwo).toMatchObject({ total: 3, page: 2, limit: 2 });
+    expect(pageTwo.items).toHaveLength(1);
+    expect(
+      [...pageOne.items, ...pageTwo.items].map((r) => [r.gameId, r.countryCode]).sort(),
+    ).toEqual(
+      [
+        [first, 'DE'],
+        [first, 'US'],
+        [second, 'US'],
+      ].sort(),
+    );
+    expect((await svc.listGameGeoRules({ page: 1, limit: 100 })).total).toBe(4);
   });
 
   it('serializes concurrent upserts before emitting audit snapshots', async () => {
@@ -649,14 +713,22 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     await seedGame(gameId, 'Concurrent Game');
 
     await Promise.all([
-      svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'first restriction' }, actorId, {
-        ip: null,
-        userAgent: null,
-      }),
-      svc.upsertGameGeoRule({ gameId, countryCode: 'US', reason: 'second restriction' }, actorId, {
-        ip: null,
-        userAgent: null,
-      }),
+      svc.upsertGameGeoRules(
+        { gameId, countryCodes: ['US'], reason: 'first restriction' },
+        actorId,
+        {
+          ip: null,
+          userAgent: null,
+        },
+      ),
+      svc.upsertGameGeoRules(
+        { gameId, countryCodes: ['US'], reason: 'second restriction' },
+        actorId,
+        {
+          ip: null,
+          userAgent: null,
+        },
+      ),
     ]);
 
     const upsertPayloads = events.emit.mock.calls
@@ -668,5 +740,180 @@ describe('ComplianceService per-game geo rules (real PG)', () => {
     const initial = upsertPayloads.find(({ before }) => before === null);
     const followup = upsertPayloads.find(({ before }) => before !== null);
     expect(followup?.before?.reason).toBe(initial?.after.reason);
+  });
+});
+
+describe('ComplianceService per-provider geo rules (real PG)', () => {
+  it('blocks every game of the provider in the matching country only', async () => {
+    const blockedProviderId = await seedProvider();
+    const otherProviderId = await seedProvider();
+    const firstGameId = '00000000-0000-0000-0000-000000000211';
+    const secondGameId = '00000000-0000-0000-0000-000000000212';
+    const otherGameId = '00000000-0000-0000-0000-000000000213';
+    await seedGame(firstGameId, 'First', blockedProviderId);
+    await seedGame(secondGameId, 'Second', blockedProviderId);
+    await seedGame(otherGameId, 'Other', otherProviderId);
+    await db.drizzle.db.insert(providerGeoRule).values({
+      providerId: blockedProviderId,
+      countryCode: 'US',
+      reason: 'provider licence restriction',
+    });
+
+    const { svc } = makeService('US');
+    for (const gameId of [firstGameId, secondGameId]) {
+      await expect(svc.checkGame({ gameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+        allowed: false,
+        countryCode: 'US',
+        reason: 'provider_block',
+      });
+    }
+    await expect(svc.checkGame({ gameId: otherGameId, ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: true,
+      countryCode: 'US',
+      reason: null,
+    });
+    await expect(
+      makeService('DE').svc.checkGame({ gameId: firstGameId, ipAddress: '1.2.3.4' }),
+    ).resolves.toEqual({ allowed: true, countryCode: 'DE', reason: null });
+  });
+
+  it('reports the provider block when the game is blocked too', async () => {
+    const providerId = await seedProvider();
+    const gameId = '00000000-0000-0000-0000-000000000214';
+    await seedGame(gameId, 'Doubly blocked', providerId);
+    await db.drizzle.db
+      .insert(providerGeoRule)
+      .values({ providerId, countryCode: 'US', reason: 'provider licence restriction' });
+    await db.drizzle.db
+      .insert(gameGeoRule)
+      .values({ gameId, countryCode: 'US', reason: 'game licence restriction' });
+
+    await expect(
+      makeService('US').svc.checkGame({ gameId, ipAddress: '1.2.3.4' }),
+    ).resolves.toEqual({ allowed: false, countryCode: 'US', reason: 'provider_block' });
+  });
+
+  it('fails closed on unresolved geo when the game provider has a geo rule', async () => {
+    const providerId = await seedProvider();
+    const gameId = '00000000-0000-0000-0000-000000000215';
+    await seedGame(gameId, 'Unresolved', providerId);
+    await db.drizzle.db
+      .insert(providerGeoRule)
+      .values({ providerId, countryCode: 'US', reason: 'provider licence restriction' });
+
+    await expect(
+      makeService(null).svc.checkGame({ gameId, ipAddress: '1.2.3.4' }),
+    ).resolves.toEqual({ allowed: false, countryCode: null, reason: 'geo_unresolved' });
+  });
+
+  it('denies an unknown game instead of skipping the provider check', async () => {
+    const { svc } = makeService('US');
+
+    await expect(svc.checkGame({ gameId: randomUUID(), ipAddress: '1.2.3.4' })).resolves.toEqual({
+      allowed: false,
+      countryCode: null,
+      reason: 'game_not_found',
+    });
+  });
+
+  it('rejects a rule for an unknown provider', async () => {
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.upsertProviderGeoRules(
+        { providerId: randomUUID(), countryCodes: ['US'], reason: 'licence restriction' },
+        randomUUID(),
+        { ip: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(GeoRuleProviderNotFoundError);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('upserts and deletes a provider rule with auditable before and after state', async () => {
+    const providerId = await seedProvider();
+    const actorId = randomUUID();
+    const meta = { ip: '1.2.3.4', userAgent: 'agent' };
+    const { svc, events } = makeService();
+
+    const [created] = await svc.upsertProviderGeoRules(
+      { providerId, countryCodes: ['US'], reason: 'licence restriction' },
+      actorId,
+      meta,
+    );
+    await svc.upsertProviderGeoRules(
+      { providerId, countryCodes: ['US'], reason: 'updated restriction' },
+      actorId,
+      meta,
+    );
+    expect(
+      (await svc.listProviderGeoRules({ providerIds: [providerId], page: 1, limit: 100 })).items,
+    ).toEqual([
+      expect.objectContaining({ id: created?.id, providerId, reason: 'updated restriction' }),
+    ]);
+
+    await svc.deleteProviderGeoRules(
+      { providerId, countryCodes: ['US'], reason: 'licence restored' },
+      actorId,
+      meta,
+    );
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.provider-geo-rule.upserted',
+      expect.objectContaining({
+        providerId,
+        actorId,
+        before: expect.objectContaining({ reason: 'licence restriction' }),
+        after: expect.objectContaining({ reason: 'updated restriction' }),
+      }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.provider-geo-rule.deleted',
+      expect.objectContaining({ providerId, actorId, reason: 'licence restored', after: null }),
+    );
+    expect(
+      await svc.listProviderGeoRules({ providerIds: [providerId], page: 1, limit: 100 }),
+    ).toEqual({ items: [], total: 0, page: 1, limit: 100 });
+  });
+
+  it('lists rules for the requested providers one page at a time', async () => {
+    const [first, second, other] = [
+      await seedProvider(),
+      await seedProvider(),
+      await seedProvider(),
+    ];
+    const actorId = randomUUID();
+    const meta = { ip: null, userAgent: null };
+    const { svc } = makeService();
+    for (const providerId of [first, second, other]) {
+      await svc.upsertProviderGeoRules(
+        { providerId, countryCodes: ['US'], reason: 'licence' },
+        actorId,
+        meta,
+      );
+    }
+    await svc.upsertProviderGeoRules(
+      { providerId: first, countryCodes: ['DE'], reason: 'licence' },
+      actorId,
+      meta,
+    );
+
+    const input = { providerIds: [first, second], limit: 2 };
+    const pageOne = await svc.listProviderGeoRules({ ...input, page: 1 });
+    const pageTwo = await svc.listProviderGeoRules({ ...input, page: 2 });
+
+    expect(pageOne).toMatchObject({ total: 3, page: 1, limit: 2 });
+    expect(pageOne.items).toHaveLength(2);
+    expect(pageTwo).toMatchObject({ total: 3, page: 2, limit: 2 });
+    expect(pageTwo.items).toHaveLength(1);
+    expect(
+      [...pageOne.items, ...pageTwo.items].map((r) => [r.providerId, r.countryCode]).sort(),
+    ).toEqual(
+      [
+        [first, 'DE'],
+        [first, 'US'],
+        [second, 'US'],
+      ].sort(),
+    );
+    expect((await svc.listProviderGeoRules({ page: 1, limit: 100 })).total).toBe(4);
   });
 });

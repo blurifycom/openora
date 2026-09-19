@@ -90,6 +90,10 @@ const gameGeoRuleEventState = z.object({
   updatedAt: TimestampSchema,
 });
 
+const providerGeoRuleEventState = gameGeoRuleEventState
+  .omit({ gameId: true })
+  .extend({ providerId: UuidSchema });
+
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
   userId: UuidSchema,
@@ -750,6 +754,26 @@ export const domainEventSchemas = {
     countryCode: CountryCodeSchema,
     reason: NonEmptyReasonSchema,
     before: gameGeoRuleEventState,
+    after: z.null(),
+    actorId: UuidSchema,
+  }),
+
+  'compliance.provider-geo-rule.upserted': authContextBase.extend({
+    ruleId: UuidSchema,
+    providerId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    before: providerGeoRuleEventState.nullable(),
+    after: providerGeoRuleEventState,
+    actorId: UuidSchema,
+  }),
+
+  'compliance.provider-geo-rule.deleted': authContextBase.extend({
+    ruleId: UuidSchema,
+    providerId: UuidSchema,
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    before: providerGeoRuleEventState,
     after: z.null(),
     actorId: UuidSchema,
   }),
