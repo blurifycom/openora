@@ -211,11 +211,11 @@ describe('event currency fields accept a wallet/gaming money ticker', () => {
     playerId: null,
     currency: 'USDT',
   };
-  const bonusRolloverCompleted = {
+  const bonusCompleted = {
     userId: crypto.randomUUID(),
-    creditId: crypto.randomUUID(),
+    grantId: crypto.randomUUID(),
     currency: 'USDT',
-    creditedAmount: '10.00',
+    convertedAmount: '10.00',
   };
 
   it('accepts a 4-character ticker on wallet.deposit.completed', () => {
@@ -230,11 +230,10 @@ describe('event currency fields accept a wallet/gaming money ticker', () => {
     );
   });
 
-  it('accepts a 4-character ticker on wallet.bonus_rollover.completed', () => {
-    expect(
-      domainEventSchemas['wallet.bonus_rollover.completed'].safeParse(bonusRolloverCompleted)
-        .success,
-    ).toBe(true);
+  it('accepts a 4-character ticker on promo.bonus.completed', () => {
+    expect(domainEventSchemas['promo.bonus.completed'].safeParse(bonusCompleted).success).toBe(
+      true,
+    );
   });
 
   it('still rejects an obviously invalid currency value', () => {

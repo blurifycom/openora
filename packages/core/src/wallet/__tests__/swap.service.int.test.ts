@@ -19,9 +19,8 @@ import {
 import { createWalletRouter } from '../router/index.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletBonusCredit, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import {
-  BonusRolloverLockedError,
   IdempotencyKeyReuseError,
   InsufficientBalanceError,
   WalletService,
@@ -134,7 +133,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${walletBonusCredit}, ${walletBalance}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${walletBalance}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -267,19 +266,8 @@ describe('SwapService (real PG)', () => {
     expect(await balancesOf(w.id)).toEqual({ USD: 10 });
   });
 
-  it('names the bonus rollover, not a missing balance, when locked funds block the swap', async () => {
-    const w = await seedWallet();
-    await db.drizzle.db.insert(walletBonusCredit).values({
-      walletId: w.id,
-      userId: w.userId,
-      currency: 'USD',
-      sourceType: 'gift',
-      creditedAmount: '100',
-      rolloverMultiplier: '1',
-      rolloverRequired: '100',
-      rolloverProgress: '0',
-      status: 'active',
-    });
+  it('refuses a swap the balance cannot cover, without writing a hold', async () => {
+    const w = await seedWallet({ USD: '10' });
     const adapter = makeAdapter();
 
     await expect(
@@ -290,10 +278,11 @@ describe('SwapService (real PG)', () => {
         fromAmount: '100',
         idempotencyKey: randomUUID(),
       }),
-    ).rejects.toBeInstanceOf(BonusRolloverLockedError);
+    ).rejects.toBeInstanceOf(InsufficientBalanceError);
 
     expect(adapter.execute).not.toHaveBeenCalled();
-    expect(await balancesOf(w.id)).toEqual({ USD: 100 });
+    expect(await legs(w.id)).toEqual([]);
+    expect(await balancesOf(w.id)).toEqual({ USD: 10 });
   });
 
   it('trades once for a replayed idempotency key', async () => {

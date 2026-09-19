@@ -621,49 +621,8 @@ describe('GamingService unavailable games (real PG)', () => {
   });
 });
 
-describe('GamingService.startRound bonus rollover completion (real PG)', () => {
-  it('emits wallet.bonus_rollover.completed once per credit the bet just completed', async () => {
-    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a3', name: 'Aces' });
-    const events = makeEventBus();
-    const walletCommands = makeWalletCommands({
-      ok: true,
-      newBalance: '60',
-      currency: 'USD',
-      completedBonusCredits: [
-        { id: '00000000-0000-0000-0000-0000000000c1', currency: 'USD', creditedAmount: '25' },
-        { id: '00000000-0000-0000-0000-0000000000c2', currency: 'USD', creditedAmount: '10' },
-      ],
-    });
-    const svc = new GamingService(
-      db.drizzle,
-      events,
-      mock<GameAdapter>({
-        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
-        endRound: vi.fn(),
-      }),
-      unrestricted,
-      walletCommands,
-      makeIdentityReader(),
-    );
-    const userId = '00000000-0000-0000-0000-000000000401';
-
-    await startRound(svc, userId, created.id, 'USD', '40');
-
-    expect(events.emit).toHaveBeenCalledWith('wallet.bonus_rollover.completed', {
-      userId,
-      creditId: '00000000-0000-0000-0000-0000000000c1',
-      currency: 'USD',
-      creditedAmount: '25',
-    });
-    expect(events.emit).toHaveBeenCalledWith('wallet.bonus_rollover.completed', {
-      userId,
-      creditId: '00000000-0000-0000-0000-0000000000c2',
-      currency: 'USD',
-      creditedAmount: '10',
-    });
-  });
-
-  it('emits rollover completion before a provider launch failure can discard the notification', async () => {
+describe('GamingService.startRound bonus completion (real PG)', () => {
+  it('emits bonus completion before a provider launch failure can discard the notification', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a5', name: 'Aces' });
     const events = makeEventBus();
     const launchGame = vi.fn().mockRejectedValue(new Error('provider unavailable'));
@@ -671,9 +630,7 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       ok: true,
       newBalance: '0',
       currency: 'USD',
-      completedBonusCredits: [
-        { id: '00000000-0000-0000-0000-0000000000c5', currency: 'USD', creditedAmount: '25' },
-      ],
+      completed: { grantId: '00000000-0000-0000-0000-0000000000c5', convertedAmount: '25' },
     });
     const svc = new GamingService(
       db.drizzle,
@@ -689,38 +646,34 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
       'provider unavailable',
     );
 
-    expect(events.emit).toHaveBeenCalledWith('wallet.bonus_rollover.completed', {
+    expect(events.emit).toHaveBeenCalledWith('promo.bonus.completed', {
       userId,
-      creditId: '00000000-0000-0000-0000-0000000000c5',
+      grantId: '00000000-0000-0000-0000-0000000000c5',
       currency: 'USD',
-      creditedAmount: '25',
+      convertedAmount: '25',
     });
     expect(launchGame).toHaveBeenCalledOnce();
   });
 
-  it('emits no wallet.bonus_rollover.completed event when the debit completed no credit', async () => {
-    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a4', name: 'Aces' });
+  it('emits nothing when the bet completed no bonus', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a6', name: 'Eights' });
     const events = makeEventBus();
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '75', currency: 'USD' });
     const svc = new GamingService(
       db.drizzle,
       events,
       mock<GameAdapter>({
-        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
+        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'u', token: 't' }),
         endRound: vi.fn(),
       }),
       unrestricted,
       walletCommands,
       makeIdentityReader(),
     );
-    const userId = '00000000-0000-0000-0000-000000000402';
 
-    await startRound(svc, userId, created.id, 'USD', '10');
+    await startRound(svc, '00000000-0000-0000-0000-000000000406', created.id, 'USD', '25');
 
-    expect(events.emit).not.toHaveBeenCalledWith(
-      'wallet.bonus_rollover.completed',
-      expect.anything(),
-    );
+    expect(events.emit).not.toHaveBeenCalledWith('promo.bonus.completed', expect.anything());
   });
 });
 

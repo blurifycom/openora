@@ -124,6 +124,7 @@
       "@openora/core/promo/plugins/gamification": ["./src/promo/gamification/plugin.ts"],
       "@openora/core/promo/schema/bonus": ["./src/promo/bonus/schema/index.ts"],
       "@openora/core/promo/schema/gamification": ["./src/promo/gamification/schema/index.ts"],
+      "@openora/core/promo/seed/bonus": ["./src/promo/bonus/seed/index.ts"],
       "@openora/core/promo/server": ["./src/promo/server.ts"],
       "@openora/core/react": ["./src/react/index.ts"],
       "@openora/core/server": ["./src/server/index.ts"],
