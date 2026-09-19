@@ -95,6 +95,7 @@ export const WalletBalanceChangeReasonSchema = z.enum([
   'withdrawal',
   'adjustment',
   'swap',
+  'bonus',
 ]);
 export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
 
