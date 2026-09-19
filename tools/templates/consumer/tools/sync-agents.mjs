@@ -20,6 +20,7 @@ const SYNCED_ROOTS = [
   'docs/agents/',
   'tools/sync-agents.mjs',
   'tools/oss-worktree.mjs',
+  'tools/review-precheck.mjs',
 ];
 // This script bootstraps `prepare`, so it must stay tracked: ignoring it would leave a
 // fresh clone with no way to run the install that would have rendered it.

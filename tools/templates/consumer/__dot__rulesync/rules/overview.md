@@ -90,8 +90,9 @@ Delegate work to these scoped agents - the `start` / `enhance-intent` playbooks 
 - `builder` - senior fullstack engineer. Implements overlays, swaps adapters, mounts UI pages.
 - `qa` - writes/runs Playwright E2E tests; triages whether a bug is in OSS core (upstream) or your overlay (local fix).
 - `debugger` - root-causes failures, build-time (Next/Turbopack, tsc, module resolution) and runtime (Chrome DevTools: console/network/DOM). Spawn it whenever something errors or behaves wrong; it finds the cause and routes the fix.
-- `quality-reviewer` - reviews a diff: boundaries, conventions, frontend rules, perf, duplication. Findings only.
-- `security-reviewer` - reviews a diff: authz, secrets/PII, money paths, input validation. Findings only.
+- `quality-reviewer` - reviews a diff: correctness, boundaries, conventions, UI quality, dependencies, performance, reliability. Findings only.
+- `security-reviewer` - reviews a diff: authz, secrets/PII, input validation. Findings only.
+- `compliance-reviewer` - reviews a diff: responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail. Findings only.
 
 This repo consumes OSS core as packages - never patch `@openora/*` in place. A core change goes through an OSS worktree (`oss-boundaries` rule); everything else extends from the outside via plugins.
 
