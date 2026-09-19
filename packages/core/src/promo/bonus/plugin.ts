@@ -233,6 +233,8 @@ export default {
       return createBonusRouter({
         grants: new GrantReaderService(c.get(DRIZZLE)),
         offers,
+        lifecycle,
+        events,
         adminGuard: c.get(ADMIN_GUARD),
       });
     });

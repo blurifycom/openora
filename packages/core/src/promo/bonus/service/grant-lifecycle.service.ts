@@ -1,7 +1,22 @@
-import { and, asc, eq, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
 import { type AuditWritePort, type BonusForfeitReason, type Uuid } from '@openora/core/contracts';
-import { moneyCompare, type DrizzleService, type DrizzleTx } from '@openora/core/server';
+import {
+  makeConflictError,
+  makeNotFoundError,
+  moneyCompare,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
 import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
+
+export const GrantNotForfeitableError = makeConflictError(
+  'GrantNotForfeitableError',
+  'This bonus is no longer live, so there is nothing to forfeit',
+);
+export const GrantNotFoundError = makeNotFoundError('Grant');
+
+/** A grant that can still be taken away. `completed`, `expired` and `forfeited` cannot. */
+const LIVE_STATUSES = ['pending', 'active'] as const;
 
 const ZERO = '0';
 
@@ -38,7 +53,7 @@ export class GrantLifecycleService {
     const due = await this.drizzle.db
       .select({ id: promoGrant.id })
       .from(promoGrant)
-      .where(and(eq(promoGrant.status, 'active'), lte(promoGrant.expiresAt, sql`now()`)))
+      .where(and(inArray(promoGrant.status, LIVE_STATUSES), lte(promoGrant.expiresAt, sql`now()`)))
       .orderBy(asc(promoGrant.expiresAt))
       .limit(EXPIRY_SWEEP_BATCH);
 
@@ -63,7 +78,7 @@ export class GrantLifecycleService {
     const live = await this.drizzle.db
       .select({ id: promoGrant.id })
       .from(promoGrant)
-      .where(and(eq(promoGrant.userId, userId), eq(promoGrant.status, 'active')))
+      .where(and(eq(promoGrant.userId, userId), inArray(promoGrant.status, LIVE_STATUSES)))
       .orderBy(asc(promoGrant.createdAt));
 
     const closed: ClosedGrant[] = [];
@@ -83,9 +98,60 @@ export class GrantLifecycleService {
     return closed;
   }
 
+  async forfeit(
+    grantId: PromoGrant['id'],
+    reason: BonusForfeitReason,
+    actor: { id: Uuid; isAdmin: boolean },
+    note: string,
+  ): Promise<ClosedGrant> {
+    const [exists] = await this.drizzle.db
+      .select({ status: promoGrant.status })
+      .from(promoGrant)
+      .where(eq(promoGrant.id, grantId));
+    if (!exists) {
+      await this.recordRefusal(grantId, actor, note, 'not_found');
+      throw new GrantNotFoundError(grantId);
+    }
+
+    const closed = await this.drizzle.db.transaction((tx) =>
+      this.close(tx, grantId, {
+        status: 'forfeited',
+        action: 'promo.bonus.forfeited',
+        reason,
+        actor,
+        note,
+      }),
+    );
+    if (!closed) {
+      await this.recordRefusal(grantId, actor, note, exists.status);
+      throw new GrantNotForfeitableError();
+    }
+    return closed;
+  }
+
   /**
-   * Claim-then-act: the `status = 'active'` predicate on the update is what makes a second
-   * sweep, or an admin racing the sweep, a no-op rather than a second ledger entry.
+   * An attempt that took nothing is still an attempt on a money resource, and the record has to
+   * tell a probe apart from a forfeit that landed.
+   */
+  private async recordRefusal(
+    grantId: PromoGrant['id'],
+    actor: { id: Uuid; isAdmin: boolean },
+    note: string,
+    status: string,
+  ): Promise<void> {
+    await this.audit.record({
+      actorId: actor.id,
+      actorType: actor.isAdmin ? 'admin' : 'player',
+      action: 'promo.bonus.forfeited',
+      resourceType: 'promo_grant',
+      resourceId: grantId,
+      after: { outcome: 'refused', status, note },
+    });
+  }
+
+  /**
+   * Claim-then-act: the predicate on the update is what makes a second sweep, or an admin racing
+   * the sweep, a no-op rather than a second ledger entry.
    */
   private async close(
     tx: DrizzleTx,
@@ -95,6 +161,7 @@ export class GrantLifecycleService {
       action: 'promo.bonus.expired' | 'promo.bonus.forfeited';
       reason?: BonusForfeitReason;
       actor?: { id: Uuid; isAdmin: boolean };
+      note?: string;
     },
   ): Promise<ClosedGrant | null> {
     // The balance under the lock the update is about to take, so the amount recorded as
@@ -102,7 +169,7 @@ export class GrantLifecycleService {
     const [locked] = await tx
       .select({ bonusBalance: promoGrant.bonusBalance })
       .from(promoGrant)
-      .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')))
+      .where(and(eq(promoGrant.id, grantId), inArray(promoGrant.status, LIVE_STATUSES)))
       .for('update');
     if (!locked) {
       return null;
@@ -116,9 +183,10 @@ export class GrantLifecycleService {
         bonusBalance: ZERO,
         ...(outcome.reason === undefined ? {} : { forfeitReason: outcome.reason }),
       })
-      .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')))
+      .where(and(eq(promoGrant.id, grantId), inArray(promoGrant.status, LIVE_STATUSES)))
       .returning({
         userId: promoGrant.userId,
+        status: promoGrant.status,
         currency: promoGrant.currency,
         grantedAmount: promoGrant.grantedAmount,
         wageringProgress: promoGrant.wageringProgress,
@@ -152,13 +220,14 @@ export class GrantLifecycleService {
       action: outcome.action,
       resourceType: 'promo_grant',
       resourceId: grantId,
-      before: { status: 'active', bonusBalance: forfeitedAmount },
+      before: { status: claimed.status, bonusBalance: forfeitedAmount },
       after: {
         status: outcome.status,
         bonusBalance: ZERO,
         forfeitedAmount,
         wageringProgress: claimed.wageringProgress,
         ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+        ...(outcome.note === undefined ? {} : { note: outcome.note }),
       },
     });
 
