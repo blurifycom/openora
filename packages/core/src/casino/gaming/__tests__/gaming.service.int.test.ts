@@ -12,6 +12,8 @@ import type {
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateCompliance } from '@openora/core/compliance/migrate';
+import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import { mock, makeEventBus, makeIdentityReader, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -33,8 +35,10 @@ import {
   InsufficientBalanceError,
   WinCreditFailedError,
   ExternalRoundOwnerMismatchError,
+  GameGeoFiltersUnavailableError,
 } from '../service/gaming.service.js';
 import { GameProviderNotFoundError } from '../service/game-provider.service.js';
+import { ListAdminGamesInputSchema } from '../contract/index.js';
 import { GameCategoryNotFoundError } from '../service/game-category.service.js';
 import { GameTagNotFoundError } from '../service/game-tag.service.js';
 
@@ -140,14 +144,16 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}, categ
       ...overrides,
     })
     .returning();
-  await db.drizzle.db
-    .insert(gameCategoryGame)
-    .values(ids.map((categoryId) => ({ gameId: row!.id, categoryId })));
+  if (ids.length > 0) {
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values(ids.map((categoryId) => ({ gameId: row!.id, categoryId })));
+  }
   return row!;
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateCompliance]);
 });
 
 afterAll(async () => {
@@ -156,7 +162,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${gameRound}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${gameGeoRule}, ${providerGeoRule}, ${gameRound}, ${gameCategoryGame}, ${gameTagGame}, ${game}, ${gameProvider}, ${gameCategory}, ${gameTag} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -549,6 +555,214 @@ describe('GamingService listGames provider gate (real PG)', () => {
       ['Beta', 'beta-alpha', 'Aardvark', expect.any(String)],
     ]);
     expect(result.total).toBe(4);
+  });
+});
+
+describe('GamingService admin list filters (real PG)', () => {
+  const ids = (page: { items: { id: string }[] }) => page.items.map((g) => g.id).sort();
+
+  async function tagGame(gameId: string, tagIds: string[]) {
+    await db.drizzle.db.insert(gameTagGame).values(tagIds.map((tagId) => ({ gameId, tagId })));
+  }
+
+  async function blockGame(gameId: string, countryCodes: string[]) {
+    await db.drizzle.db
+      .insert(gameGeoRule)
+      .values(countryCodes.map((countryCode) => ({ gameId, countryCode, reason: 'licence' })));
+  }
+
+  it('categoryIds keeps only games in every listed category', async () => {
+    const slots = await seedCategory();
+    const jackpot = await seedCategory();
+    const both = await seedGame({}, [slots.id, jackpot.id]);
+    await seedGame({}, [slots.id]);
+    await seedGame({}, [jackpot.id]);
+
+    const result = await makeService().listGamesAdmin({
+      page: 1,
+      limit: 10,
+      categoryIds: [slots.id, jackpot.id],
+    });
+
+    expect(ids(result)).toEqual([both.id]);
+    expect(result.total).toBe(1);
+  });
+
+  it('uncategorized splits games with no category from games with one', async () => {
+    const bare = await seedGame({}, []);
+    const filed = await seedGame();
+    const svc = makeService();
+
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, uncategorized: true }))).toEqual([
+      bare.id,
+    ]);
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, uncategorized: false }))).toEqual([
+      filed.id,
+    ]);
+  });
+
+  it('tagIds keeps only games carrying every listed tag', async () => {
+    const hot = await seedTag();
+    const fresh = await seedTag();
+    const both = await seedGame();
+    const onlyHot = await seedGame();
+    await tagGame(both.id, [hot.id, fresh.id]);
+    await tagGame(onlyHot.id, [hot.id]);
+    const svc = makeService();
+
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, tagIds: [hot.id, fresh.id] })),
+    ).toEqual([both.id]);
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, tagIds: [hot.id] }))).toEqual(
+      [both.id, onlyHot.id].sort(),
+    );
+  });
+
+  it('gameTypes matches any listed type', async () => {
+    const original = await seedGame({ gameType: 'original' });
+    const casino = await seedGame({ gameType: 'casino' });
+    await seedGame({ gameType: 'sportsbook' });
+
+    const result = await makeService().listGamesAdmin({
+      page: 1,
+      limit: 10,
+      gameTypes: ['original', 'casino'],
+    });
+
+    expect(ids(result)).toEqual([original.id, casino.id].sort());
+  });
+
+  it('geoBlocked and geoBlockedCountries filter on per-game geo rules', async () => {
+    const deFr = await seedGame();
+    const de = await seedGame();
+    const open = await seedGame();
+    await blockGame(deFr.id, ['DE', 'FR']);
+    await blockGame(de.id, ['DE']);
+    const svc = makeService({ gameGeoCheck: mock<GameGeoCheckPort>({}) });
+
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: true }))).toEqual(
+      [deFr.id, de.id].sort(),
+    );
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: false }))).toEqual([
+      open.id,
+    ]);
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlockedCountries: ['DE', 'FR'] })),
+    ).toEqual([deFr.id]);
+  });
+
+  it('counts a provider geo rule as blocking every game of that provider', async () => {
+    const blockedStudio = await seedProvider();
+    const viaProvider = await seedGame({ providerId: blockedStudio.id });
+    const viaBoth = await seedGame({ providerId: blockedStudio.id });
+    const viaGame = await seedGame();
+    const open = await seedGame();
+    await db.drizzle.db
+      .insert(providerGeoRule)
+      .values({ providerId: blockedStudio.id, countryCode: 'DE', reason: 'licence' });
+    await blockGame(viaBoth.id, ['DE', 'FR']);
+    await blockGame(viaGame.id, ['FR']);
+    const svc = makeService({ gameGeoCheck: mock<GameGeoCheckPort>({}) });
+
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: true }))).toEqual(
+      [viaProvider.id, viaBoth.id, viaGame.id].sort(),
+    );
+    expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: false }))).toEqual([
+      open.id,
+    ]);
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlockedCountries: ['DE'] })),
+    ).toEqual([viaProvider.id, viaBoth.id].sort());
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlockedCountries: ['DE', 'FR'] })),
+    ).toEqual([viaBoth.id]);
+  });
+
+  it('refuses the geo filters when no geo check is bound', async () => {
+    const svc = makeService();
+
+    await expect(
+      svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: true }),
+    ).rejects.toBeInstanceOf(GameGeoFiltersUnavailableError);
+    await expect(
+      svc.listGamesAdmin({ page: 1, limit: 10, geoBlockedCountries: ['DE'] }),
+    ).rejects.toBeInstanceOf(GameGeoFiltersUnavailableError);
+    await expect(svc.listGamesAdmin({ page: 1, limit: 10 })).resolves.toMatchObject({ total: 0 });
+  });
+
+  it('combines filters with AND', async () => {
+    const hot = await seedTag();
+    const match = await seedGame({ gameType: 'original', isActive: true });
+    const inactive = await seedGame({ gameType: 'original', isActive: false });
+    const otherType = await seedGame({ gameType: 'casino', isActive: true });
+    await tagGame(match.id, [hot.id]);
+    await tagGame(inactive.id, [hot.id]);
+    await tagGame(otherType.id, [hot.id]);
+
+    const result = await makeService().listGamesAdmin({
+      page: 1,
+      limit: 10,
+      isActive: true,
+      tagIds: [hot.id],
+      gameTypes: ['original'],
+    });
+
+    expect(ids(result)).toEqual([match.id]);
+  });
+});
+
+describe('ListAdminGamesInputSchema', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+
+  it('wraps a single query value into a list and drops duplicates', () => {
+    const parsed = ListAdminGamesInputSchema.parse({
+      tagIds: id,
+      categoryIds: [id, id],
+      gameTypes: 'casino',
+    });
+    expect(parsed).toMatchObject({ tagIds: [id], categoryIds: [id], gameTypes: ['casino'] });
+  });
+
+  it('applies the list cap after dropping duplicates', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({
+        gameTypes: ['casino', 'casino', 'original', 'sportsbook'],
+      }).success,
+    ).toBe(true);
+    expect(
+      ListAdminGamesInputSchema.safeParse({
+        tagIds: Array.from({ length: 51 }, () => randomUUID()),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects uncategorized combined with a category filter', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({ uncategorized: 'true', categoryIds: [id] }).success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({ uncategorized: 'true', categoryId: id }).success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({ uncategorized: 'false', categoryIds: [id] }).success,
+    ).toBe(true);
+  });
+
+  it('rejects geoBlocked=false combined with geoBlockedCountries', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({ geoBlocked: 'false', geoBlockedCountries: ['DE'] })
+        .success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({ geoBlocked: 'true', geoBlockedCountries: ['DE'] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects a lowercase country code', () => {
+    expect(ListAdminGamesInputSchema.safeParse({ geoBlockedCountries: ['de'] }).success).toBe(
+      false,
+    );
   });
 });
 
