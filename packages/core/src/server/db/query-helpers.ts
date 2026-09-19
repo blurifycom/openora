@@ -183,3 +183,23 @@ export async function withAdvisoryXactLock<T>(
   await txn.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
   return fn();
 }
+
+// Lock every key in one statement. Locks are taken in lock-id order, not key order, so two
+// callers with overlapping key sets cannot deadlock even when keys share a `hashtext` value.
+// Must run in a transaction.
+export async function withAdvisoryXactLocks<T>(
+  txn: DrizzleTx,
+  keys: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (keys.length > 0) {
+    const keyList = sql.join(
+      keys.map((key) => sql`${key}`),
+      sql`, `,
+    );
+    await txn.execute(
+      sql`select pg_advisory_xact_lock(lock_id) from (select distinct hashtext(key) as lock_id from unnest(array[${keyList}]::text[]) as key order by lock_id) as locks`,
+    );
+  }
+  return fn();
+}

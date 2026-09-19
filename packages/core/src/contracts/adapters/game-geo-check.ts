@@ -2,7 +2,13 @@ import * as z from 'zod';
 import { CountryCodeSchema, UuidSchema } from '../schemas/index.js';
 import { createToken, type Token } from './token.js';
 
-export const GAME_GEO_DENIAL_REASONS = ['global_block', 'game_block', 'geo_unresolved'] as const;
+export const GAME_GEO_DENIAL_REASONS = [
+  'global_block',
+  'provider_block',
+  'game_block',
+  'geo_unresolved',
+  'game_not_found',
+] as const;
 
 export const GameGeoDenialReasonSchema = z.enum(GAME_GEO_DENIAL_REASONS);
 export type GameGeoDenialReason = z.infer<typeof GameGeoDenialReasonSchema>;
