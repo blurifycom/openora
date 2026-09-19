@@ -7,13 +7,28 @@ import {
   text,
   decimal,
   timestamp,
+  jsonb,
+  index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import {
   CONTRIBUTION_PERCENT_PRECISION,
   CONTRIBUTION_PERCENT_SCALE,
+  MONEY_PRECISION,
+  MONEY_SCALE,
+  type BonusGrantSource,
+  type BonusGrantTerms,
 } from '@openora/core/contracts';
-import { WAGER_WEIGHT_SCOPES, type WagerWeightScope } from '../contract/index.js';
+import {
+  BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
+  WAGER_WEIGHT_SCOPES,
+  type BonusForfeitReason,
+  type BonusGrantStatus,
+  type WagerWeightScope,
+} from '../contract/index.js';
+import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
 
@@ -67,5 +82,82 @@ export const promoWeight = pgTable(
   ],
 );
 
+/**
+ * The terms as stored on a grant: the caller's terms plus the weight rows the profile held at
+ * grant time. Wagering is scored from `weights`, never from the live profile.
+ */
+export type GrantTermsSnapshot = BonusGrantTerms & { weights: WagerWeightRow[] };
+
+export const promoGrantStatusEnum = pgEnum('promo_grant_status', BONUS_GRANT_STATUSES);
+export const promoGrantSourceEnum = pgEnum('promo_grant_source', BONUS_GRANT_SOURCES);
+export const promoForfeitReasonEnum = pgEnum('promo_forfeit_reason', BONUS_FORFEIT_REASONS);
+
+/**
+ * One bonus a player holds. The grant row IS the bonus balance: bonus funds never enter
+ * `wallet_balance`, so a withdrawal cannot reach them and reconciliation never sees money that
+ * was never deposited. They cross into the real balance exactly once, at conversion.
+ *
+ * `terms` is a snapshot, never a lookup. Editing an offer must not change a bonus already
+ * granted, which is the one rule the configuration surface has to obey.
+ */
+export const promoGrant = pgTable(
+  'promo_grant',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module id, no FK (module-boundary rule).
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    source: promoGrantSourceEnum().$type<BonusGrantSource>().notNull(),
+    // The deposit transaction, the `<mechanic>:<utc-day>` job key, the race id.
+    sourceRef: text().notNull(),
+    offerId: uuid(),
+    terms: jsonb().$type<GrantTermsSnapshot>().notNull(),
+    grantedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    // Bonus funds still on this grant. Spent by a bet, topped up by a bonus-funded win,
+    // zeroed by conversion, expiry or forfeiture.
+    bonusBalance: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    wageringRequired: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    wageringProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    status: promoGrantStatusEnum().$type<BonusGrantStatus>().notNull().default('active'),
+    forfeitReason: promoForfeitReasonEnum().$type<BonusForfeitReason>(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    // Null while the grant is still `pending` and nothing has been credited.
+    activatedAt: timestamp({ withTimezone: true }),
+    // Set once the grant reaches any terminal status; `status` says which one.
+    closedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // The idempotency guard. A replayed deposit or a re-run daily job hits this, not a
+    // read-then-write check that two concurrent callers would both pass.
+    uniqueIndex('promo_grant_user_id_source_source_ref_idx').on(t.userId, t.source, t.sourceRef),
+    // FIFO consumption order and the balance read. Partial, because a terminal grant is never
+    // consumed again and long-term they are almost the whole table.
+    index('promo_grant_user_id_currency_created_at_idx')
+      .on(t.userId, t.currency, t.createdAt)
+      .where(sql`${t.status} in ('pending', 'active')`),
+    // The expiry sweep, over live rows only.
+    index('promo_grant_expires_at_idx')
+      .on(t.expiresAt)
+      .where(sql`${t.status} = 'active'`),
+    // Money invariants the engine must never be able to break, held where no caller can route
+    // around them: a bonus balance cannot go negative and progress cannot pass its requirement.
+    check('promo_grant_bonus_balance_non_negative', sql`${t.bonusBalance} >= 0`),
+    check(
+      'promo_grant_progress_within_requirement',
+      sql`${t.wageringProgress} >= 0 AND ${t.wageringProgress} <= ${t.wageringRequired}`,
+    ),
+    check(
+      'promo_grant_forfeit_reason_requires_forfeited',
+      sql`${t.forfeitReason} is null or ${t.status} = 'forfeited'`,
+    ),
+  ],
+);
+
+export type PromoGrant = typeof promoGrant.$inferSelect;
 export type PromoWeightProfile = typeof promoWeightProfile.$inferSelect;
 export type PromoWeight = typeof promoWeight.$inferSelect;
