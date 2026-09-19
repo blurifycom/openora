@@ -152,6 +152,10 @@ function makeLoginRateLimitKey(email: string): `login:${string}` {
   return `login:${email.toLowerCase()}`;
 }
 
+function makeLoginIpRateLimitKey(ip: string): `login-ip:${string}` {
+  return `login-ip:${ip}`;
+}
+
 // Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
 // otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
@@ -330,6 +334,16 @@ export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // unthrottled login/2fa/reset window is worse than a transient 429. The volume
 // throttles (register/resend/etc.) keep the default fail-open.
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
+// Per-IP companion to LOGIN_RATE_LIMIT above: catches credential stuffing spread across
+// many accounts from one source, which the per-email counter can't see (each guess lands
+// on a different key). Limit is deliberately far above LOGIN_RATE_LIMIT's per-account 10/5min
+// so a shared network (office NAT) never blocks legitimate players signing into their own
+// accounts. Overridable via IDENTITY_OPTIONS.loginIpRateLimit.
+const DEFAULT_LOGIN_IP_RATE_LIMIT = {
+  limit: 100,
+  windowMs: 15 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 // Keyed on the caller, not the handle: the abuse shape here is enumerating many
 // usernames from one client, not probing one username repeatedly.
@@ -849,6 +863,30 @@ export class IdentityService {
     const headers = nodeHeadersToHeaders(reqHeaders);
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
+
+    // IP gate runs before the per-email one: it is the broad, cheap-to-refill resource
+    // (100/15min) guarding the narrow, scarce one (10/5min) - an IP that has already
+    // tripped its own throttle must not keep spending a targeted email's budget on every
+    // further attempt. Falls back to a shared 'unknown' bucket when the IP can't be
+    // derived, matching every sibling per-IP key in this file (register-ip:,
+    // verify-email-ip:, change-email-ip:, confirm-email-change-ip:) - skipping the gate
+    // outright on a missing IP would let an attacker disable this protection for free by
+    // simply not sending the header.
+    //
+    // `ip` is X-Real-IP as `createApp` leaves it: the socket address, unless the peer is a
+    // configured trusted proxy (`trustedProxies` / TRUSTED_PROXIES). A direct caller cannot
+    // choose its bucket by rotating the header; the proxy must overwrite it (eg nginx
+    // `proxy_set_header X-Real-IP $remote_addr`) rather than pass the client's through.
+    const ipRateLimitOptions = this.options?.loginIpRateLimit;
+    if (ipRateLimitOptions?.enabled ?? true) {
+      await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip ?? 'unknown'), {
+        ...DEFAULT_LOGIN_IP_RATE_LIMIT,
+        ...(ipRateLimitOptions?.limit !== undefined ? { limit: ipRateLimitOptions.limit } : {}),
+        ...(ipRateLimitOptions?.windowMs !== undefined
+          ? { windowMs: ipRateLimitOptions.windowMs }
+          : {}),
+      });
+    }
 
     await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 

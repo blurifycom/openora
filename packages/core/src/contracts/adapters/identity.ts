@@ -11,8 +11,27 @@ export type IdentityLockoutOptions = {
   bypassForAdmins?: boolean;
 };
 
+/**
+ * Coarse per-IP throttle on login attempts, separate from the per-account lockout
+ * above. Protects against credential stuffing across many accounts from one source
+ * (eg a botnet or a leaked-credential list), which the per-account counter can't see
+ * because each guess lands on a different account. Must stay well above the
+ * per-account threshold so a shared network (office NAT) never blocks legitimate
+ * users signing into their own accounts.
+ *
+ * The IP is the socket peer, or X-Real-IP when that peer is one of `createApp`'s
+ * `trustedProxies` - that proxy must overwrite the header with the real client address,
+ * not forward a client-supplied one.
+ */
+export type IdentityLoginIpRateLimitOptions = {
+  enabled?: boolean;
+  limit?: number;
+  windowMs?: number;
+};
+
 export type IdentityServiceOptions = {
   lockout?: IdentityLockoutOptions;
+  loginIpRateLimit?: IdentityLoginIpRateLimitOptions;
 };
 
 export const IDENTITY_OPTIONS: Token<IdentityServiceOptions> =

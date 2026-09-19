@@ -47,6 +47,7 @@ import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
+import { applyClientAddress, resolveTrustedProxies } from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 
@@ -112,6 +113,13 @@ export type CreateAppConfig = {
   httpCache?: { paths?: string[]; additionalPaths?: string[]; maxAgeSeconds?: number } | false;
 
   disableHealthModule?: boolean;
+
+  // Peers (IP or CIDR) allowed to set `X-Real-IP` / `X-Forwarded-For` - the reverse proxy in
+  // front of the API. Any other peer's forwarding headers are replaced with its socket
+  // address, so a direct caller cannot pick the IP that per-IP throttles key on. Falls back
+  // to TRUSTED_PROXIES (comma-separated), then to loopback + the private ranges. `[]` trusts
+  // no proxy. The proxy itself must overwrite `X-Real-IP`, not pass the client's through.
+  trustedProxies?: readonly string[];
 };
 
 export type CreatedApp = {
@@ -195,6 +203,12 @@ export async function createApp(
   config: CreateAppConfig,
   configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
 ): Promise<CreatedApp> {
+  // Parsed first so a malformed entry fails the boot before anything is bound.
+  const trustedProxies = resolveTrustedProxies(
+    config.trustedProxies,
+    process.env['TRUSTED_PROXIES'],
+  );
+
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
@@ -425,13 +439,9 @@ export async function createApp(
 
   app.use('/*', async (c, next) => {
     const headers = headersToRecord(c.req.raw.headers);
-    if (!headers['x-real-ip'] && !headers['x-forwarded-for']) {
-      const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
-        ?.incoming?.socket?.remoteAddress;
-      if (remoteAddress) {
-        headers['x-real-ip'] = remoteAddress;
-      }
-    }
+    const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
+      ?.incoming?.socket?.remoteAddress;
+    applyClientAddress(headers, remoteAddress, trustedProxies);
     const context: OssContext = {
       request: { headers },
       clientMeta: extractClientMeta(headers),
