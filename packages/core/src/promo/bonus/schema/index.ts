@@ -16,7 +16,10 @@ import {
   CONTRIBUTION_PERCENT_SCALE,
   MONEY_PRECISION,
   MONEY_SCALE,
+  type BonusForfeitReason,
+  type BonusGrantEntryType,
   type BonusGrantSource,
+  type BonusGrantStatus,
   type BonusGrantTerms,
 } from '@openora/core/contracts';
 import {
@@ -25,9 +28,6 @@ import {
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
   WAGER_WEIGHT_SCOPES,
-  type BonusForfeitReason,
-  type BonusGrantEntryType,
-  type BonusGrantStatus,
   type WagerWeightScope,
 } from '../contract/index.js';
 import type { WagerWeightRow } from '../shared/wagering-weight.js';

@@ -1,5 +1,20 @@
+import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { ContributionPercentSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_ENTRY_TYPES,
+  BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
+  BonusGrantSourceSchema,
+  BonusGrantStatusSchema,
+  BonusForfeitReasonSchema,
+  ContributionPercentSchema,
+  CurrencyTickerSchema,
+  MoneyAmountSchema,
+  PageQuerySchema,
+  TimestampSchema,
+  UuidSchema,
+} from '@openora/core/contracts';
 
 /**
  * What a weight row targets, most specific first. A bet resolves against a profile in this
@@ -31,60 +46,50 @@ export const WagerWeightProfileSchema = z.object({
 export type WagerWeightProfile = z.infer<typeof WagerWeightProfileSchema>;
 
 /**
- * `pending` is a grant that is claimed but not yet funded, `cancelled` its only exit - nothing
- * was credited, so there is nothing to lose. Everything after funding ends in `completed`,
- * `expired` or `forfeited`.
+ * A bonus as its holder sees it. Money is a decimal string, never a number: a bonus balance at
+ * eighteen decimal places does not survive a round trip through a JSON number.
  */
-export const BONUS_GRANT_STATUSES = [
-  'pending',
-  'active',
-  'completed',
-  'expired',
-  'forfeited',
-  'cancelled',
-] as const;
-export type BonusGrantStatus = (typeof BONUS_GRANT_STATUSES)[number];
+export const PlayerGrantSchema = z.object({
+  id: UuidSchema,
+  currency: CurrencyTickerSchema,
+  source: BonusGrantSourceSchema,
+  status: BonusGrantStatusSchema,
+  grantedAmount: MoneyAmountSchema,
+  bonusBalance: MoneyAmountSchema,
+  wageringRequired: MoneyAmountSchema,
+  wageringProgress: MoneyAmountSchema,
+  forfeitReason: BonusForfeitReasonSchema.nullable(),
+  expiresAt: TimestampSchema,
+  closedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+});
 
-/** Why an active grant was taken away. Recorded on every forfeit, for the regulator. */
-export const BONUS_FORFEIT_REASONS = [
-  'self_exclusion',
-  'account_closed',
-  'admin',
-  'player_opt_out',
-  'withdrawal_while_active',
-] as const;
-export type BonusForfeitReason = (typeof BONUS_FORFEIT_REASONS)[number];
+export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
-/** What caused a grant. Half of its idempotency key. */
-export const BONUS_GRANT_SOURCES = [
-  'deposit',
-  'manual',
-  'streak',
-  'rank',
-  'race',
-  'gift',
-  'rain',
-] as const;
-export const BonusGrantSourceSchema = z.enum(BONUS_GRANT_SOURCES);
+export const ListPlayerGrantsInputSchema = z.object({
+  ...PageQuerySchema.shape,
+  /** Absent means every status; a terminal grant is never purged, so the history only grows. */
+  status: BonusGrantStatusSchema.optional(),
+});
 
-/**
- * One movement on a grant's own ledger. Append-only: a correction is another row, never an edit,
- * because the spec demands every credit, debit, conversion and forfeiture be recorded immutably.
- *
- * `stake` and `win` carry the provider round, which is how a win finds the grant that funded the
- * bet. `reversal` undoes a voided round: the bonus stake goes back and its wagering progress with
- * it, because money returned without progress returned is free wagering bought by a rollback.
- */
-export const BONUS_GRANT_ENTRY_TYPES = [
-  'grant',
-  'stake',
-  'win',
-  'reversal',
-  'convert',
-  'forfeit',
-  'expire',
-] as const;
-export type BonusGrantEntryType = (typeof BONUS_GRANT_ENTRY_TYPES)[number];
-export const BonusGrantEntryTypeSchema = z.enum(BONUS_GRANT_ENTRY_TYPES);
+export {
+  BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_ENTRY_TYPES,
+  BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
+  BonusGrantSourceSchema,
+};
 
-export const bonusContract = {};
+export const bonusContract = {
+  grants: {
+    list: oc
+      .route({ method: 'GET', path: '/promo/grants' })
+      .input(ListPlayerGrantsInputSchema)
+      .output(z.array(PlayerGrantSchema)),
+
+    get: oc
+      .route({ method: 'GET', path: '/promo/grants/{id}' })
+      .input(z.object({ id: UuidSchema }))
+      .output(PlayerGrantSchema),
+  },
+};
