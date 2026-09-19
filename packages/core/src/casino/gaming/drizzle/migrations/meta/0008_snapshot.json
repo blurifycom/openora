@@ -160,12 +160,8 @@
           "name": "game_provider_id_game_provider_id_fk",
           "tableFrom": "game",
           "tableTo": "game_provider",
-          "columnsFrom": [
-            "provider_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["provider_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -331,12 +327,8 @@
           "name": "game_category_game_game_id_game_id_fk",
           "tableFrom": "game_category_game",
           "tableTo": "game",
-          "columnsFrom": [
-            "game_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["game_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -344,12 +336,8 @@
           "name": "game_category_game_category_id_game_category_id_fk",
           "tableFrom": "game_category_game",
           "tableTo": "game_category",
-          "columnsFrom": [
-            "category_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["category_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -519,12 +507,8 @@
           "name": "game_provider_aggregator_mapping_provider_id_game_provider_id_fk",
           "tableFrom": "game_provider_aggregator_mapping",
           "tableTo": "game_provider",
-          "columnsFrom": [
-            "provider_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["provider_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -680,12 +664,8 @@
           "name": "game_round_game_id_game_id_fk",
           "tableFrom": "game_round",
           "tableTo": "game",
-          "columnsFrom": [
-            "game_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["game_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -870,12 +850,8 @@
           "name": "game_tag_game_game_id_game_id_fk",
           "tableFrom": "game_tag_game",
           "tableTo": "game",
-          "columnsFrom": [
-            "game_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["game_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -883,12 +859,8 @@
           "name": "game_tag_game_tag_id_game_tag_id_fk",
           "tableFrom": "game_tag_game",
           "tableTo": "game_tag",
-          "columnsFrom": [
-            "tag_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tag_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -904,36 +876,22 @@
     "public.game_round_status": {
       "name": "game_round_status",
       "schema": "public",
-      "values": [
-        "active",
-        "completed",
-        "cancelled"
-      ]
+      "values": ["active", "completed", "cancelled"]
     },
     "public.game_tag_type": {
       "name": "game_tag_type",
       "schema": "public",
-      "values": [
-        "system",
-        "custom"
-      ]
+      "values": ["system", "custom"]
     },
     "public.game_tag_visibility": {
       "name": "game_tag_visibility",
       "schema": "public",
-      "values": [
-        "visible",
-        "invisible"
-      ]
+      "values": ["visible", "invisible"]
     },
     "public.game_type": {
       "name": "game_type",
       "schema": "public",
-      "values": [
-        "original",
-        "casino",
-        "sportsbook"
-      ]
+      "values": ["original", "casino", "sportsbook"]
     }
   },
   "schemas": {},
