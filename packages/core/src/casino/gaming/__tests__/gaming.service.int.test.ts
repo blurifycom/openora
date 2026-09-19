@@ -467,17 +467,23 @@ describe('GamingService.startRound (real PG)', () => {
     const userId = '00000000-0000-0000-0000-000000000301';
     const result = await startRound(svc, userId, created.id, 'USD', '10');
 
-    expect(walletCommands.debit).toHaveBeenCalledWith(expect.anything(), {
-      userId,
-      amount: '10',
-      currency: 'USD',
-      type: 'bet',
-    });
     expect(launchGame).toHaveBeenCalledWith(created.id, userId, 'USD');
     expect(result).toEqual({
       roundId: expect.any(String),
       launchUrl: 'https://mock/play',
       token: 'tok',
+    });
+    expect(walletCommands.debit).toHaveBeenCalledWith(expect.anything(), {
+      userId,
+      amount: '10',
+      currency: 'USD',
+      type: 'bet',
+      context: { provider: 'internal', gameId: created.id },
+      providerRef: {
+        providerName: 'internal',
+        providerRefId: `bet:${result.roundId}`,
+        externalRoundId: result.roundId,
+      },
     });
 
     const rounds = await db.drizzle.db.select().from(gameRound);

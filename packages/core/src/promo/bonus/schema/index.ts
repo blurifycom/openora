@@ -137,10 +137,11 @@ export const promoGrant = pgTable(
     // The idempotency guard. A replayed deposit or a re-run daily job hits this, not a
     // read-then-write check that two concurrent callers would both pass.
     uniqueIndex('promo_grant_user_id_source_source_ref_idx').on(t.userId, t.source, t.sourceRef),
-    // FIFO consumption order and the balance read. Partial, because a terminal grant is never
-    // consumed again and long-term they are almost the whole table.
-    index('promo_grant_user_id_currency_created_at_idx')
-      .on(t.userId, t.currency, t.createdAt)
+    // Attribution on every bet: the live grants a player holds in one currency, earliest expiry
+    // first. Partial, because a terminal grant is never consumed again and long-term they are
+    // almost the whole table.
+    index('promo_grant_user_id_currency_expires_at_idx')
+      .on(t.userId, t.currency, t.expiresAt)
       .where(sql`${t.status} in ('pending', 'active')`),
     // The expiry sweep, over live rows only.
     index('promo_grant_expires_at_idx')

@@ -12,10 +12,14 @@ import {
   type WalletCreditOutcome,
   type WalletProviderRef,
   type WalletTransactionType,
+  type BonusWageringCommands,
 } from '@openora/core/contracts';
 import {
   createDomainError,
   makeConflictError,
+  moneyAdd,
+  moneyCompare,
+  moneySubtract,
   moneyToNumber,
   type DrizzleDb,
 } from '@openora/core/server';
@@ -37,6 +41,7 @@ import {
   providerRefCondition,
   railFor,
   readWalletBalance,
+  readWalletBalanceForUpdate,
 } from './wallet.service.js';
 
 export const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
@@ -56,6 +61,12 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
+export const WalletBonusConversionError = createDomainError<[walletId: string, currency: string]>(
+  'WalletBonusConversionError',
+  (walletId, currency) =>
+    `wallet ${walletId} has no ${currency} balance row to convert a completed bonus into`,
+);
+
 const DEFAULT_ROLLOVER_MULTIPLIER = '1';
 
 type CompletedBonusCredit = { id: string; currency: string; creditedAmount: string };
@@ -66,6 +77,7 @@ export class WalletCommandsService implements WalletCommands {
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
     private readonly rgLimits?: RgLimitsPort,
+    private readonly bonusWagering?: BonusWageringCommands,
   ) {}
 
   // Completed ledger row shared by every gameplay move. `direction` is required (not
@@ -132,7 +144,7 @@ export class WalletCommandsService implements WalletCommands {
 
   async debit(
     tx: unknown,
-    { userId, amount, type, currency, providerRef }: WalletDebitArgs,
+    { userId, amount, type, currency, providerRef, context }: WalletDebitArgs,
   ): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -153,7 +165,7 @@ export class WalletCommandsService implements WalletCommands {
     const debitCurrency = balanceKey(currency ?? row.currency);
     const debitRow = { ...row, currency: debitCurrency };
 
-    const available = await readWalletBalance(txn, row.id, debitCurrency);
+    const available = await readWalletBalanceForUpdate(txn, row.id, debitCurrency);
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
@@ -178,29 +190,118 @@ export class WalletCommandsService implements WalletCommands {
       }
     }
 
-    // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
-    // arithmetic - no JS float math on either side of the debit.
-    const debited =
-      type === 'bet'
-        ? await debitWalletBalance(txn, row.id, debitCurrency, amount)
-        : await debitWithdrawableBalance(txn, row.id, debitCurrency, amount);
-    const newBalance = debited[0]?.amount;
-    if (newBalance === undefined) {
+    // Real balance first, bonus for whatever it could not cover. The engine runs below the
+    // duplicate-provider guard above, so a replayed wager can never buy wagering progress.
+    const realPart = type === 'bet' && moneyCompare(available, amount) < 0 ? available : amount;
+    const fromBonus = moneySubtract(amount, realPart);
+    const wagered =
+      type === 'bet' && this.bonusWagering
+        ? await this.bonusWagering.wager(txn, {
+            userId,
+            currency: debitCurrency,
+            stake: amount,
+            fromBonus,
+            context: context ?? { provider: 'wallet' },
+            ...(providerRef?.externalRoundId === undefined
+              ? {}
+              : { externalRoundId: providerRef.externalRoundId }),
+          })
+        : undefined;
+    if (wagered && !wagered.ok) {
+      return { ok: false, available: moneyAdd(available, wagered.bonusAvailable) };
+    }
+    if (moneyCompare(fromBonus, '0') > 0 && !wagered) {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
-
-    if (type === 'bet') {
-      const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
-        userId,
-        currency: debitCurrency,
-        amount,
-      });
-      return { ok: true, newBalance, currency: debitCurrency, completedBonusCredits };
+    // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
+    // arithmetic - no JS float math on either side of the debit. A stake paid entirely from
+    // bonus funds touches no real balance at all, and must not be refused for not finding a
+    // row to take zero from - the bonus is already spent by this point.
+    const debited =
+      type === 'bet'
+        ? moneyCompare(realPart, '0') > 0
+          ? await debitWalletBalance(txn, row.id, debitCurrency, realPart)
+          : [{ amount: available }]
+        : await debitWithdrawableBalance(txn, row.id, debitCurrency, amount);
+    const debitedBalance = debited[0]?.amount;
+    if (debitedBalance === undefined) {
+      return { ok: false, available };
     }
 
-    return { ok: true, newBalance, currency: debitCurrency };
+    // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
+    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
+
+    // The older fungible rollover model, still running alongside the grant engine until the
+    // chat-gift and rain paths move across. It reads `wallet_balance`, which grant money never
+    // enters, so the two cannot double-count the same bet.
+    const completedBonusCredits =
+      type === 'bet'
+        ? await this.applyBonusRolloverProgress(txn, {
+            userId,
+            currency: debitCurrency,
+            amount,
+          })
+        : undefined;
+
+    if (!wagered) {
+      return {
+        ok: true,
+        newBalance: debitedBalance,
+        currency: debitCurrency,
+        ...(completedBonusCredits === undefined ? {} : { completedBonusCredits }),
+      };
+    }
+
+    const newBalance =
+      moneyCompare(wagered.convertedAmount, '0') > 0
+        ? await this.convertBonus(txn, debitRow, wagered.convertedAmount, wagered.completedGrantIds)
+        : debitedBalance;
+
+    return {
+      ok: true,
+      newBalance,
+      currency: debitCurrency,
+      ...(completedBonusCredits === undefined ? {} : { completedBonusCredits }),
+      bonusSpent: wagered.bonusSpent,
+      bonusBalance: wagered.bonusBalanceAfter,
+      completedGrantIds: wagered.completedGrantIds,
+    };
+  }
+
+  /**
+   * A grant that just met its requirement crosses into the real balance here rather than from
+   * inside the engine: the wallet already holds the transaction, and a callback the other way
+   * would make the two modules depend on each other in both directions.
+   */
+  private async convertBonus(
+    txn: DrizzleDb,
+    debitRow: Wallet & { currency: string },
+    amount: string,
+    grantIds: string[],
+  ): Promise<string> {
+    const before = await readWalletBalance(txn, debitRow.id, debitRow.currency);
+    const [credited] = await creditWalletBalance(txn, debitRow.id, debitRow.currency, amount);
+    if (!credited) {
+      throw new WalletBonusConversionError(debitRow.id, debitRow.currency);
+    }
+    await this.writeLedgerRow(txn, debitRow, 'bonus', amount, 'credit');
+    // The one movement that turns a bonus into withdrawable money. A regulator asking who
+    // released it reads this row, and it commits with the balance it describes.
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'promo.bonus.converted',
+      resourceType: 'promo_grant',
+      resourceId: grantIds[0] ?? null,
+      before: { currency: debitRow.currency, balance: before },
+      after: {
+        currency: debitRow.currency,
+        balance: credited.amount,
+        convertedAmount: amount,
+        grantIds,
+      },
+    });
+    return credited.amount;
   }
 
   async credit(
@@ -248,7 +349,29 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: true, newBalance: currentBalance };
     }
 
-    const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
+    // A win on a round that drew bonus funds belongs to the grant that funded it, or a forfeit
+    // could never take "the winnings from that bonus" with it. Below the replay guard above.
+    const bonusShare =
+      this.bonusWagering &&
+      providerRef?.externalRoundId &&
+      (type === 'win' || type === 'bet_reversal')
+        ? (
+            await this.bonusWagering.settle(txn, {
+              userId,
+              currency: balanceKey(currency),
+              amount,
+              externalRoundId: providerRef.externalRoundId,
+              kind: type,
+            })
+          ).bonusShare
+        : '0';
+
+    const [credited] = await creditWalletBalance(
+      txn,
+      row.id,
+      currency,
+      moneySubtract(amount, bonusShare),
+    );
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
