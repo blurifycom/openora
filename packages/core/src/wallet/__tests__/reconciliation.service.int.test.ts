@@ -265,7 +265,7 @@ describe('ReconciliationService.runCycle - amount and currency mismatch', () => 
 });
 
 describe('ReconciliationService.runCycle - stuck withdrawals', () => {
-  async function seedStuckWithdrawal(providerRefId: string) {
+  async function seedStuckWithdrawal(providerRefId: string | null) {
     const w = await seedWallet('BTC', '5');
     const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000);
     const tx = findOneOrThrow(
@@ -346,6 +346,52 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
     const findings = await findingRows();
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ kind: 'unknown_at_provider', externalId: providerRefId });
+  });
+
+  it('recovers a payout whose response was lost by looking it up with our own id', async () => {
+    const { w, tx } = await seedStuckWithdrawal(null);
+    const vendorId = randomUUID();
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      findWithdrawalByReference: vi.fn(async () => ({
+        externalId: vendorId,
+        status: 'completed' as const,
+        txHash: '0xabc',
+      })),
+    });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+
+    expect(payment.findWithdrawalByReference).toHaveBeenCalledWith(tx.id);
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row).toMatchObject({ status: 'completed', providerRefId: vendorId, txHash: '0xabc' });
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+    expect(await findingRows()).toHaveLength(0);
+  });
+
+  it('never refunds a payout the vendor cannot find by our id - it files a finding instead', async () => {
+    const { w, tx } = await seedStuckWithdrawal(null);
+    const payment = mock<PaymentAdapter>({
+      listTransactions: vi.fn(async () => []),
+      findWithdrawalByReference: vi.fn(async () => null),
+    });
+    const { reconciliation } = makeServices(payment);
+
+    await reconciliation.runCycle();
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, tx.id));
+    expect(row?.status).toBe('processing');
+    expect(await balanceOf(w.id)).toBe('5.000000000000000000');
+    const findings = await findingRows();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'unknown_at_provider', externalId: tx.id });
   });
 });
 

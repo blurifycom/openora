@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import {
   DEFAULT_PAYMENT_PROVIDER,
+  PaymentRejectedError,
   type AdminUserDirectory,
   type PaymentAdapter,
   type AdminPlayerSummary,
@@ -1277,13 +1278,17 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     expect(await txById(pending.id)).toMatchObject({ providerName: DEFAULT_PAYMENT_PROVIDER });
   });
 
-  it('marks failed, refunds the hold, emits failed, and rethrows when the PSP throws', async () => {
+  it('marks failed, refunds the hold, emits failed, and rethrows when the vendor refuses the payout', async () => {
     const { svc, events, psp } = makeService();
     const w = await seedWallet({ balance: '20' });
     const pending = await seedTx(w.id, { amount: '40' });
-    psp.processWithdrawal.mockRejectedValueOnce(new Error('psp down'));
+    psp.processWithdrawal.mockRejectedValueOnce(
+      new PaymentRejectedError('destination not approved'),
+    );
 
-    await expect(svc.approveWithdrawal(randomUUID(), pending.id)).rejects.toThrow('psp down');
+    await expect(svc.approveWithdrawal(randomUUID(), pending.id)).rejects.toBeInstanceOf(
+      PaymentRejectedError,
+    );
 
     expect(await txById(pending.id)).toMatchObject({ status: 'failed' });
     expect(await balanceOf(w.userId)).toBe(60);
@@ -1291,6 +1296,48 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
       'wallet.withdrawal.approved',
       'wallet.withdrawal.failed',
     ]);
+  });
+
+  it('holds the withdrawal in processing without a refund when the vendor call times out', async () => {
+    const { svc, events, psp, audit } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    psp.processWithdrawal.mockRejectedValueOnce(new Error('socket hang up'));
+
+    const result = await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(result.status).toBe('processing');
+    expect(await txById(pending.id)).toMatchObject({ status: 'processing', providerRefId: null });
+    expect(await balanceOf(w.userId)).toBe(20);
+    expect(emittedTopics(events)).toEqual(['wallet.withdrawal.approved']);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'wallet.withdrawal.outcome_unknown',
+        resourceId: pending.id,
+      }),
+    );
+  });
+
+  it('keeps a webhook-driven failure when the vendor answers completed after it', async () => {
+    const { svc, events, psp } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    const externalId = randomUUID();
+    psp.processWithdrawal.mockImplementationOnce(async () => {
+      await db.drizzle.db
+        .update(walletTransaction)
+        .set({ providerName: DEFAULT_PAYMENT_PROVIDER, providerRefId: externalId })
+        .where(eq(walletTransaction.id, pending.id));
+      await svc.reconcileWithdrawalStatus({ kind: 'withdrawal', externalId, status: 'failed' });
+      return { externalId, status: 'completed' };
+    });
+
+    const result = await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(result.status).toBe('failed');
+    expect(await txById(pending.id)).toMatchObject({ status: 'failed' });
+    expect(await balanceOf(w.userId)).toBe(60);
+    expect(emittedTopics(events)).not.toContain('wallet.withdrawal.completed');
   });
 
   it('marks failed and refunds when the PSP answers with a failed status', async () => {

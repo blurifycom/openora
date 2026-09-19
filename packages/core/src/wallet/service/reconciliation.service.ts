@@ -677,9 +677,35 @@ export class ReconciliationService {
       const providerName = tx.providerName ?? DEFAULT_PAYMENT_PROVIDER;
       const provider = this.paymentProviders.get(providerName);
 
-      // Nothing to look up at all (crashed before the vendor ever responded with a
-      // reference) - still worth a finding, deduped on the transaction's own id.
+      // No vendor reference was stored: the payout call timed out, or the process died before
+      // saving its response. Ask the vendor by our own id first - a found payout gets its
+      // reference back and settles normally instead of waiting on a human.
       if (!tx.providerRefId) {
+        const found = await provider?.adapter.findWithdrawalByReference?.(tx.id);
+        if (found) {
+          await this.drizzle.db
+            .update(walletTransaction)
+            .set({ providerName, providerRefId: found.externalId })
+            .where(
+              and(
+                eq(walletTransaction.id, tx.id),
+                eq(walletTransaction.status, 'processing'),
+                isNull(walletTransaction.providerRefId),
+              ),
+            );
+          await this.wallet.reconcileWithdrawalStatus(
+            {
+              kind: 'withdrawal',
+              externalId: found.externalId,
+              status: found.status,
+              ...(found.txHash ? { txHash: found.txHash } : {}),
+            },
+            providerName,
+          );
+          continue;
+        }
+        // Still unknown - a finding for a human, deduped on the transaction's own id. Never an
+        // automatic refund: "vendor has no record yet" does not prove the payout never left.
         counts.unknownAtProvider += 1;
         await recordReconciliationFinding(
           this.drizzle.db,
