@@ -21,10 +21,12 @@ import {
 } from '@openora/core/contracts';
 import {
   BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_ENTRY_TYPES,
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
   WAGER_WEIGHT_SCOPES,
   type BonusForfeitReason,
+  type BonusGrantEntryType,
   type BonusGrantStatus,
   type WagerWeightScope,
 } from '../contract/index.js';
@@ -158,6 +160,57 @@ export const promoGrant = pgTable(
   ],
 );
 
+export const promoGrantEntryTypeEnum = pgEnum('promo_grant_entry_type', BONUS_GRANT_ENTRY_TYPES);
+
+/**
+ * The bonus ledger: one row per movement on a grant, append-only. `wallet_transaction` stays the
+ * real-money ledger; a movement that never touches the real balance belongs here, and the spec
+ * still requires it be recorded immutably.
+ *
+ * `bonusAmount` is a signed delta, so the sum of a grant's entries always equals its
+ * `bonus_balance`. If that identity ever breaks, money moved outside the ledger.
+ *
+ * `userId` is denormalised from the grant so the win-attribution lookup by round is one indexed
+ * read with no join.
+ */
+export const promoGrantEntry = pgTable(
+  'promo_grant_entry',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Same module, so a real FK. Restrict, not cascade: a ledger a single DELETE can erase is
+    // not a ledger, and a grant that has to go away gets a forfeit or expire entry instead.
+    grantId: uuid()
+      .notNull()
+      .references(() => promoGrant.id, { onDelete: 'restrict' }),
+    userId: uuid().notNull(),
+    // Denormalised from the grant so the ledger reads as money on its own terms.
+    currency: text().notNull(),
+    type: promoGrantEntryTypeEnum().$type<BonusGrantEntryType>().notNull(),
+    // Signed: negative on a stake, positive on a grant or a win, negative on a conversion.
+    bonusAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    // The real-money half of the same bet. The win split needs both sides of the stake.
+    realAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
+    wageringDelta: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    // The provider round, on the movements that have one. How a win finds its funding grant.
+    externalRoundId: text(),
+    // Cross-module id, no FK (module-boundary rule).
+    walletTransactionId: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Win and reversal attribution: find this round's stake rows without joining the grant.
+    index('promo_grant_entry_user_id_external_round_id_idx')
+      .on(t.userId, t.externalRoundId)
+      .where(sql`${t.externalRoundId} is not null`),
+    // A grant's own history, oldest first.
+    index('promo_grant_entry_grant_id_created_at_idx').on(t.grantId, t.createdAt),
+  ],
+);
+
 export type PromoGrant = typeof promoGrant.$inferSelect;
+export type PromoGrantEntry = typeof promoGrantEntry.$inferSelect;
 export type PromoWeightProfile = typeof promoWeightProfile.$inferSelect;
 export type PromoWeight = typeof promoWeight.$inferSelect;

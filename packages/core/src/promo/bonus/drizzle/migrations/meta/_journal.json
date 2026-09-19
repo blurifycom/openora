@@ -15,6 +15,13 @@
       "when": 1789687709950,
       "tag": "0001_talented_human_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789687831481,
+      "tag": "0002_free_pepper_potts",
+      "breakpoints": true
     }
   ]
 }
