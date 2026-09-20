@@ -316,7 +316,11 @@ describe('createApp - client address at the ingress', () => {
     const saved = process.env['REDIS_URL'];
     process.env['REDIS_URL'] = redisUrlForWorker();
     try {
-      const created = await createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL });
+      const created = await createApp({
+        plugins: [],
+        databaseUrl: DUMMY_DATABASE_URL,
+        trustedProxies: ['10.0.0.0/8'],
+      });
       created.app.get('/ip-probe', (c) => c.json({ ip: getCurrentClientMeta().ip }));
 
       const seen = [];

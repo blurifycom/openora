@@ -19,9 +19,8 @@ export type IdentityLockoutOptions = {
  * per-account threshold so a shared network (office NAT) never blocks legitimate
  * users signing into their own accounts.
  *
- * The IP is the socket peer, or X-Real-IP when that peer is one of `createApp`'s
- * `trustedProxies` - that proxy must overwrite the header with the real client address,
- * not forward a client-supplied one.
+ * The IP is the socket peer, or the client address appended to X-Forwarded-For by one of
+ * `createApp`'s explicitly configured `trustedProxies`.
  */
 export type IdentityLoginIpRateLimitOptions = {
   enabled?: boolean;

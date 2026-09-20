@@ -1,16 +1,9 @@
 import { BlockList, isIP } from 'node:net';
 
-// Loopback plus the RFC 1918 / RFC 4193 private ranges: a reverse proxy on the same host or
-// on the deployment's private network. A caller reaching Node from a public address is never
-// in this list, so it cannot choose its own IP by sending a forwarding header.
-export const DEFAULT_TRUSTED_PROXIES: readonly string[] = [
-  '127.0.0.0/8',
-  '::1/128',
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-  'fc00::/7',
-];
+// A same-host reverse proxy works without configuration. Private ranges are deliberately not
+// trusted by default: a VPN user, pod, or another workload can reach an API from one of them
+// directly and would otherwise be able to choose its own forwarding headers.
+export const DEFAULT_TRUSTED_PROXIES: readonly string[] = ['127.0.0.0/8', '::1/128'];
 
 export type TrustedProxies = { contains(address: string): boolean };
 
@@ -63,7 +56,22 @@ export function resolveTrustedProxies(
   return parseTrustedProxies(DEFAULT_TRUSTED_PROXIES);
 }
 
-// Walks X-Forwarded-For from the right - each hop appends the address it saw - and stops at
+function forwardedAddress(value: string): string | undefined {
+  const normalized = normalizeAddress(value.trim());
+  if (isIP(normalized) !== 0) {
+    return normalized;
+  }
+
+  const match = /^(?:([^:[\]]+):(\d{1,5})|\[([^\]]+)\]:(\d{1,5}))$/.exec(normalized);
+  const address = match?.[1] ?? match?.[3];
+  const port = match?.[2] ?? match?.[4];
+  if (!address || !port || Number(port) > 65_535 || isIP(address) === 0) {
+    return undefined;
+  }
+  return normalizeAddress(address);
+}
+
+// Walks X-Forwarded-For from the right - each proxy appends the address it saw - and stops at
 // the first entry that is not itself a trusted proxy: that is the client. Anything left of it
 // was written by the client and is ignored. A malformed entry ends the walk at the last hop
 // that could still be read, so garbage never becomes the address.
@@ -74,8 +82,8 @@ function clientFromForwardedFor(
 ): string {
   let client = peerAddress;
   for (const hop of forwardedFor.split(',').reverse()) {
-    const address = normalizeAddress(hop.trim());
-    if (isIP(address) === 0) {
+    const address = forwardedAddress(hop);
+    if (!address) {
       break;
     }
     client = address;
@@ -92,10 +100,11 @@ function clientFromForwardedFor(
 // peer gets its socket address written over `X-Real-IP` and its `X-Forwarded-For` dropped -
 // rotating either header then buys a direct caller nothing.
 //
-// Behind a trusted proxy, `X-Real-IP` always ends up holding a valid address: the proxy's own
-// `X-Real-IP` if it set a usable one, else the client derived from `X-Forwarded-For` (an
-// XFF-only balancer such as AWS ALB), else the proxy's socket address. It is never left empty,
-// so no request falls into a shared `unknown` bucket that one caller could exhaust for all.
+// Behind a trusted proxy, `X-Real-IP` always ends up holding a valid address: the client
+// derived from `X-Forwarded-For` when present, else the proxy's own `X-Real-IP` if it set a
+// usable one, else the proxy's socket address. Prefer XFF because a proxy appends the client
+// address to it; an XFF-only proxy can pass a client-supplied X-Real-IP unchanged. It is never
+// left empty, so no request falls into a shared `unknown` bucket that one caller could exhaust.
 //
 // No peer address means the request never crossed a socket (an in-process `app.request`),
 // so there is no network caller to distrust and the headers are left alone.
@@ -115,10 +124,9 @@ export function applyClientAddress(
   }
   const realIp = normalizeAddress(headers['x-real-ip']?.trim() ?? '');
   const forwardedFor = headers['x-forwarded-for'];
-  headers['x-real-ip'] =
-    isIP(realIp) !== 0
+  headers['x-real-ip'] = forwardedFor
+    ? clientFromForwardedFor(forwardedFor, peer, trustedProxies)
+    : isIP(realIp) !== 0
       ? realIp
-      : forwardedFor
-        ? clientFromForwardedFor(forwardedFor, peer, trustedProxies)
-        : peer;
+      : peer;
 }

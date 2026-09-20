@@ -874,9 +874,9 @@ export class IdentityService {
     // simply not sending the header.
     //
     // `ip` is X-Real-IP as `createApp` leaves it: the socket address, unless the peer is a
-    // configured trusted proxy (`trustedProxies` / TRUSTED_PROXIES). A direct caller cannot
-    // choose its bucket by rotating the header; the proxy must overwrite it (eg nginx
-    // `proxy_set_header X-Real-IP $remote_addr`) rather than pass the client's through.
+    // configured trusted proxy (`trustedProxies` / TRUSTED_PROXIES), in which case it is
+    // derived from that proxy's appended X-Forwarded-For address. A direct caller cannot
+    // choose its bucket by rotating either forwarding header.
     const ipRateLimitOptions = this.options?.loginIpRateLimit;
     if (ipRateLimitOptions?.enabled ?? true) {
       await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip ?? 'unknown'), {

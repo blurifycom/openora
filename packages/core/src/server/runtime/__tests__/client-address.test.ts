@@ -7,6 +7,7 @@ import {
 } from '../client-address.js';
 
 const defaults = parseTrustedProxies(DEFAULT_TRUSTED_PROXIES);
+const privateProxy = parseTrustedProxies(['172.16.0.0/12']);
 
 describe('applyClientAddress', () => {
   it('replaces a direct caller’s forwarding headers with its socket address', () => {
@@ -17,8 +18,14 @@ describe('applyClientAddress', () => {
 
   it('keeps the headers a trusted proxy set', () => {
     const headers = { 'x-real-ip': '198.51.100.1', 'x-forwarded-for': '198.51.100.1' };
-    applyClientAddress(headers, '172.18.0.5', defaults);
+    applyClientAddress(headers, '172.18.0.5', privateProxy);
     expect(headers).toEqual({ 'x-real-ip': '198.51.100.1', 'x-forwarded-for': '198.51.100.1' });
+  });
+
+  it('does not trust a direct private peer by default', () => {
+    const headers = { 'x-real-ip': '198.51.100.1', 'x-forwarded-for': '198.51.100.1' };
+    applyClientAddress(headers, '10.0.0.2', defaults);
+    expect(headers).toEqual({ 'x-real-ip': '10.0.0.2' });
   });
 
   it('falls back to a trusted peer’s own address when it sent no forwarding header', () => {
@@ -41,32 +48,50 @@ describe('applyClientAddress', () => {
 
   it('derives the client from X-Forwarded-For when a trusted proxy sends only that', () => {
     const headers: Record<string, string> = { 'x-forwarded-for': '198.51.100.9' };
-    applyClientAddress(headers, '10.0.0.2', defaults);
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
     expect(headers['x-real-ip']).toBe('198.51.100.9');
   });
 
   it('ignores X-Forwarded-For entries the client wrote ahead of the proxy’s', () => {
     const headers: Record<string, string> = { 'x-forwarded-for': '1.1.1.1, 198.51.100.9' };
-    applyClientAddress(headers, '10.0.0.2', defaults);
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
     expect(headers['x-real-ip']).toBe('198.51.100.9');
   });
 
   it('skips trusted hops when several proxies are chained', () => {
     const headers: Record<string, string> = { 'x-forwarded-for': '198.51.100.9, 10.0.0.3' };
-    applyClientAddress(headers, '10.0.0.2', defaults);
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
     expect(headers['x-real-ip']).toBe('198.51.100.9');
   });
 
   it('stops at a malformed X-Forwarded-For hop instead of using it', () => {
     const headers: Record<string, string> = { 'x-forwarded-for': '198.51.100.9, garbage' };
-    applyClientAddress(headers, '10.0.0.2', defaults);
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
     expect(headers['x-real-ip']).toBe('10.0.0.2');
   });
 
   it('never leaves a trusted request without an address', () => {
     const headers: Record<string, string> = { 'x-real-ip': 'not-an-ip' };
-    applyClientAddress(headers, '10.0.0.2', defaults);
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
     expect(headers['x-real-ip']).toBe('10.0.0.2');
+  });
+
+  it('prefers a trusted proxy’s appended XFF address over a spoofed X-Real-IP', () => {
+    const headers = { 'x-real-ip': '198.51.100.66', 'x-forwarded-for': '203.0.113.9' };
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
+    expect(headers['x-real-ip']).toBe('203.0.113.9');
+  });
+
+  it('accepts XFF addresses with a client port', () => {
+    const headers: Record<string, string> = { 'x-forwarded-for': '203.0.113.9:443' };
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
+    expect(headers['x-real-ip']).toBe('203.0.113.9');
+  });
+
+  it('accepts bracketed IPv6 XFF addresses with a client port', () => {
+    const headers: Record<string, string> = { 'x-forwarded-for': '[2001:db8::9]:443' };
+    applyClientAddress(headers, '10.0.0.2', parseTrustedProxies(['10.0.0.0/8']));
+    expect(headers['x-real-ip']).toBe('2001:db8::9');
   });
 
   it('trusts no peer at all with an empty list', () => {
@@ -113,10 +138,10 @@ describe('resolveTrustedProxies', () => {
     expect(resolveTrustedProxies(undefined, '').contains('127.0.0.1')).toBe(false);
   });
 
-  it('defaults to loopback and the private ranges', () => {
+  it('defaults to loopback only', () => {
     const trusted = resolveTrustedProxies(undefined, undefined);
     expect(trusted.contains('127.0.0.1')).toBe(true);
-    expect(trusted.contains('10.1.2.3')).toBe(true);
+    expect(trusted.contains('10.1.2.3')).toBe(false);
     expect(trusted.contains('203.0.113.7')).toBe(false);
   });
 });

@@ -117,8 +117,9 @@ export type CreateAppConfig = {
   // Peers (IP or CIDR) allowed to set `X-Real-IP` / `X-Forwarded-For` - the reverse proxy in
   // front of the API. Any other peer's forwarding headers are replaced with its socket
   // address, so a direct caller cannot pick the IP that per-IP throttles key on. Falls back
-  // to TRUSTED_PROXIES (comma-separated), then to loopback + the private ranges. `[]` trusts
-  // no proxy. The proxy itself must overwrite `X-Real-IP`, not pass the client's through.
+  // to TRUSTED_PROXIES (comma-separated), then loopback only. Configure every remote proxy
+  // CIDR explicitly. `[]` trusts no proxy. A trusted proxy must append the client address to
+  // X-Forwarded-For, rather than passing a client-supplied value through unchanged.
   trustedProxies?: readonly string[];
 };
 
