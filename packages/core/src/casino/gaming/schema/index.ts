@@ -120,6 +120,8 @@ export const game = pgTable(
     uniqueIndex('game_slug_key').on(t.slug),
     index('game_provider_id_idx').on(t.providerId),
     index('game_aggregator_idx').on(t.aggregator),
+    // The public list sorts by name; lets the planner walk in order and stop at the page.
+    index('game_name_idx').on(t.name),
   ],
 );
 
