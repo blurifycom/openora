@@ -305,6 +305,7 @@ describe('KYC tiers (gated stack)', () => {
       tier: 'basic',
       status: submitted.status,
       documentTypes: ['passport'],
+      exempt: false,
       submittedAt: expect.any(String),
       decidedAt: mineCurrent.decidedAt,
       createdAt: expect.any(String),
