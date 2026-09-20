@@ -405,6 +405,25 @@ describe('a voided round', () => {
     const row = await grantRow(grantId);
     expect(row.bonusBalance).toBe('100.000000000000000000');
     expect(row.wageringProgress).toBe('0.000000000000000000');
+    // The stake came out of the bonus, so the second callback must put nothing in the real
+    // balance: cash here is an un-wagered bonus the player could withdraw straight away.
+    expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
+    expect(await ledgerSum(grantId)).toBe(row.bonusBalance);
+  });
+
+  it('returns a stake voided in two parts once in total, not once per callback', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    await bet(userId, '40', round);
+
+    await reverse(userId, '25', round, 'void-a');
+    await reverse(userId, '15', round, 'void-b');
+
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('100.000000000000000000');
+    expect(await realBalanceOf(userId)).toBe('0.000000000000000000');
+    expect(await ledgerSum(grantId)).toBe(row.bonusBalance);
   });
 
   it('takes back only the progress the returned part of the stake bought', async () => {

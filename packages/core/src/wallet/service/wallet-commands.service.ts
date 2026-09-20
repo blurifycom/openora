@@ -351,27 +351,24 @@ export class WalletCommandsService implements WalletCommands {
 
     // A win on a round that drew bonus funds belongs to the grant that funded it, or a forfeit
     // could never take "the winnings from that bonus" with it. Below the replay guard above.
-    const bonusShare =
+    //
+    // The engine reports the real share rather than leaving this to compute `amount - bonusShare`:
+    // a rollback callback for a round already returned has nothing left to give back, and
+    // subtracting its zero bonus share would pay an un-wagered bonus stake out as spendable cash.
+    const settlement =
       this.bonusWagering &&
       providerRef?.externalRoundId &&
       (type === 'win' || type === 'bet_reversal')
-        ? (
-            await this.bonusWagering.settle(txn, {
-              userId,
-              currency: balanceKey(currency),
-              amount,
-              externalRoundId: providerRef.externalRoundId,
-              kind: type,
-            })
-          ).bonusShare
-        : '0';
+        ? await this.bonusWagering.settle(txn, {
+            userId,
+            currency: balanceKey(currency),
+            amount,
+            externalRoundId: providerRef.externalRoundId,
+            kind: type,
+          })
+        : { realShare: amount };
 
-    const [credited] = await creditWalletBalance(
-      txn,
-      row.id,
-      currency,
-      moneySubtract(amount, bonusShare),
-    );
+    const [credited] = await creditWalletBalance(txn, row.id, currency, settlement.realShare);
     if (!credited) {
       throw new Error('wallet credit: no row');
     }

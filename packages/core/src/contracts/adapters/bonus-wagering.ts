@@ -62,10 +62,16 @@ export type BonusSettleArgs = {
 
 export type BonusSettleOutcome = {
   /**
-   * Part of `amount` that belongs to the bonus balance, already applied there. The wallet credits
-   * the remainder to the real balance. `'0'` when the round drew no bonus funds.
+   * Part of `amount` that belongs to the bonus balance, already applied there. `'0'` when the
+   * round drew no bonus funds.
    */
   bonusShare: string;
+  /**
+   * Part of `amount` the wallet credits to the real balance. Not simply `amount - bonusShare`: a
+   * reversal is bounded by what the round still has outstanding, so a duplicate rollback callback
+   * reports `'0'` on both shares rather than paying an already-returned stake out as cash.
+   */
+  realShare: string;
 };
 
 export type BonusWageringCommands = {

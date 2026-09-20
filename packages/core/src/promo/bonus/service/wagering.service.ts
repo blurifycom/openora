@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import {
   type BonusSettleArgs,
   type BonusSettleOutcome,
@@ -37,6 +37,10 @@ type RoundStake = {
   bonusStake: string;
   realStake: string;
   weightedTotal: string;
+  /** Bonus funds of this round already returned to the grant by an earlier reversal. */
+  bonusReturned: string;
+  /** Real funds of this round already returned to the player by an earlier reversal. */
+  realReturned: string;
 };
 
 /**
@@ -133,59 +137,85 @@ export class WageringService implements BonusWageringCommands {
 
   async settle(tx: DrizzleTx, args: BonusSettleArgs): Promise<BonusSettleOutcome> {
     const stakes = await this.roundStakes(tx, args.userId, args.externalRoundId);
-    const totalBonus = stakes.reduce((sum, stake) => moneyAdd(sum, stake.bonusStake), ZERO);
-    const totalStake = stakes.reduce((sum, stake) => moneyAdd(sum, stake.realStake), totalBonus);
+    const reversal = args.kind === 'bet_reversal';
+
+    // A reversal can only give back what the round still holds. A second rollback callback for a
+    // round already returned in full finds nothing outstanding, and reporting its amount as the
+    // player's own money would pay an un-wagered bonus stake out as withdrawable cash.
+    const outstanding = stakes.map((stake) => ({
+      stake,
+      bonus: reversal ? moneySubtract(stake.bonusStake, stake.bonusReturned) : stake.bonusStake,
+      real: reversal ? moneySubtract(stake.realStake, stake.realReturned) : stake.realStake,
+    }));
+    const totalBonus = outstanding.reduce((sum, row) => moneyAdd(sum, row.bonus), ZERO);
+    const totalStake = outstanding.reduce((sum, row) => moneyAdd(sum, row.real), totalBonus);
+
     if (moneyCompare(totalBonus, ZERO) <= 0 || moneyCompare(totalStake, ZERO) <= 0) {
-      return { bonusShare: ZERO };
+      // A round that drew no bonus at all settles entirely against the real balance. One whose
+      // bonus part is already back on the grant settles against nothing.
+      const drewBonus = stakes.some((stake) => moneyCompare(stake.bonusStake, ZERO) > 0);
+      return { bonusShare: ZERO, realShare: reversal && drewBonus ? ZERO : args.amount };
     }
 
-    if (args.kind === 'bet_reversal' && (await this.alreadyReversed(tx, args.externalRoundId))) {
-      return { bonusShare: ZERO };
-    }
-
+    // A rollback larger than what is outstanding is capped rather than trusted: the surplus is
+    // not the player's money either.
+    const applyAmount =
+      reversal && moneyCompare(args.amount, totalStake) > 0 ? totalStake : args.amount;
     // Truncating, so a rounding remainder lands on the real balance rather than the bonus one.
-    const share = moneyDivide(moneyScaleBy(args.amount, totalBonus), totalStake);
+    const share = moneyDivide(moneyScaleBy(applyAmount, totalBonus), totalStake);
+    const totalReal = moneySubtract(totalStake, totalBonus);
+    const realShare = moneySubtract(applyAmount, share);
 
     let settled = ZERO;
-    for (const [index, stake] of stakes.entries()) {
-      // Each grant takes the part of the share its own funding paid for; the last takes whatever
+    let returned = ZERO;
+    for (const [index, row] of outstanding.entries()) {
+      const last = index === outstanding.length - 1;
+      // Each grant takes the part of each share its own funding paid for; the last takes whatever
       // truncation left over, so the parts always add back up to the share.
-      const slice =
-        index === stakes.length - 1
-          ? moneySubtract(share, settled)
-          : moneyDivide(moneyScaleBy(share, stake.bonusStake), totalBonus);
-      if (moneyCompare(slice, ZERO) <= 0) {
+      const slice = last
+        ? moneySubtract(share, settled)
+        : moneyDivide(moneyScaleBy(share, row.bonus), totalBonus);
+      const realSlice =
+        moneyCompare(totalReal, ZERO) <= 0
+          ? ZERO
+          : last
+            ? moneySubtract(realShare, returned)
+            : moneyDivide(moneyScaleBy(realShare, row.real), totalReal);
+      if (moneyCompare(slice, ZERO) <= 0 && moneyCompare(realSlice, ZERO) <= 0) {
         continue;
       }
 
-      const applied =
-        args.kind === 'win'
-          ? await this.creditBonus(tx, stake.grantId, slice)
-          : await this.reverseRound(tx, stake, slice);
+      const applied = reversal
+        ? await this.reverseRound(tx, row.stake, slice)
+        : await this.creditBonus(tx, row.stake.grantId, slice);
       if (applied === null) {
         // A win on a grant that has already completed belongs to the real balance: its bonus
         // funds converted at completion. A reversal does not - returning a bonus-funded stake as
         // real money releases it without the wagering it was granted under.
-        if (args.kind === 'bet_reversal') {
+        if (reversal) {
           throw new GrantNotReversibleError();
         }
         continue;
       }
       settled = moneyAdd(settled, slice);
+      returned = moneyAdd(returned, realSlice);
 
       await tx.insert(promoGrantEntry).values({
-        grantId: stake.grantId,
+        grantId: row.stake.grantId,
         userId: args.userId,
         currency: args.currency,
-        type: args.kind === 'win' ? 'win' : 'reversal',
-        bonusAmount: args.kind === 'win' ? slice : `-${slice}`,
-        wageringDelta: args.kind === 'win' ? ZERO : `-${applied.progressReversed}`,
+        type: reversal ? 'reversal' : 'win',
+        // Both movements put funds back on the grant, so both are a positive delta: a grant's
+        // entries have to keep summing to the balance they explain.
+        bonusAmount: slice,
+        ...(reversal ? { realAmount: realSlice } : {}),
+        wageringDelta: reversal ? `-${applied.progressReversed}` : ZERO,
         balanceAfter: applied.balanceAfter,
         externalRoundId: args.externalRoundId,
       });
     }
 
-    return { bonusShare: settled };
+    return { bonusShare: settled, realShare: moneySubtract(applyAmount, settled) };
   }
 
   /**
@@ -265,36 +295,29 @@ export class WageringService implements BonusWageringCommands {
     userId: Uuid,
     round: NonNullable<PromoGrantEntry['externalRoundId']>,
   ): Promise<RoundStake[]> {
+    // What the round took, and what earlier callbacks already gave back, in one pass: a second
+    // rollback has to net against the first rather than be waved through or refused outright.
+    const onStake = sql`${promoGrantEntry.type} = 'stake'`;
+    const onReversal = sql`${promoGrantEntry.type} = 'reversal'`;
     return tx
       .select({
         grantId: promoGrantEntry.grantId,
-        bonusStake: sql<string>`(-sum(${promoGrantEntry.bonusAmount}))::text`,
-        realStake: sql<string>`sum(${promoGrantEntry.realAmount})::text`,
-        weightedTotal: sql<string>`sum(${promoGrantEntry.wageringDelta})::text`,
+        bonusStake: sql<string>`(-sum(case when ${onStake} then ${promoGrantEntry.bonusAmount} else 0 end))::text`,
+        realStake: sql<string>`sum(case when ${onStake} then ${promoGrantEntry.realAmount} else 0 end)::text`,
+        weightedTotal: sql<string>`sum(case when ${onStake} then ${promoGrantEntry.wageringDelta} else 0 end)::text`,
+        bonusReturned: sql<string>`sum(case when ${onReversal} then ${promoGrantEntry.bonusAmount} else 0 end)::text`,
+        realReturned: sql<string>`sum(case when ${onReversal} then ${promoGrantEntry.realAmount} else 0 end)::text`,
       })
       .from(promoGrantEntry)
       .where(
         and(
           eq(promoGrantEntry.userId, userId),
           eq(promoGrantEntry.externalRoundId, round),
-          eq(promoGrantEntry.type, 'stake'),
+          inArray(promoGrantEntry.type, ['stake', 'reversal']),
         ),
       )
       .groupBy(promoGrantEntry.grantId)
       .orderBy(asc(promoGrantEntry.grantId));
-  }
-
-  /** A round is reversed once. A second callback for it must not refund the stake again. */
-  private async alreadyReversed(
-    tx: DrizzleTx,
-    round: NonNullable<PromoGrantEntry['externalRoundId']>,
-  ): Promise<boolean> {
-    const [row] = await tx
-      .select({ id: promoGrantEntry.id })
-      .from(promoGrantEntry)
-      .where(and(eq(promoGrantEntry.externalRoundId, round), eq(promoGrantEntry.type, 'reversal')))
-      .limit(1);
-    return row !== undefined;
   }
 
   /** A grant that already completed, expired or was forfeited takes no more money. */
@@ -312,10 +335,12 @@ export class WageringService implements BonusWageringCommands {
    * a partial void must not erase the whole round's contribution.
    */
   private async reverseRound(tx: DrizzleTx, stake: RoundStake, amount: string) {
-    const progressReversed = moneyDivide(
-      moneyScaleBy(stake.weightedTotal, amount),
-      stake.bonusStake,
-    );
+    // A grant that funded none of this round bought no progress with it, and the proportion below
+    // would divide by its zero bonus stake.
+    const progressReversed =
+      moneyCompare(stake.bonusStake, ZERO) <= 0
+        ? ZERO
+        : moneyDivide(moneyScaleBy(stake.weightedTotal, amount), stake.bonusStake);
     const [row] = await tx
       .update(promoGrant)
       .set({
