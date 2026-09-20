@@ -191,6 +191,8 @@ export type PlayerOffer = z.infer<typeof PlayerOfferSchema>;
  */
 export const PlayerGrantSchema = z.object({
   id: UuidSchema,
+  /** The offer this bonus came from, so a client can show its state on that offer's card. */
+  offerId: UuidSchema.nullable(),
   currency: CurrencyTickerSchema,
   source: BonusGrantSourceSchema,
   status: BonusGrantStatusSchema,
@@ -208,7 +210,6 @@ export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const AdminGrantSchema = PlayerGrantSchema.extend({
   userId: UuidSchema,
-  offerId: UuidSchema.nullable(),
   sourceRef: z.string(),
 });
 
