@@ -238,10 +238,12 @@ export const promoGrant = pgTable(
     index('promo_grant_user_id_currency_expires_at_idx')
       .on(t.userId, t.currency, t.expiresAt)
       .where(sql`${t.status} in ('pending', 'active')`),
-    // The expiry sweep, over live rows only.
+    // The expiry sweep, over live rows only. The same two statuses the sweep asks for: a
+    // narrower predicate cannot serve `status in ('pending', 'active')` and the sweep falls back
+    // to a sequential scan of the whole table every five minutes.
     index('promo_grant_expires_at_idx')
       .on(t.expiresAt)
-      .where(sql`${t.status} = 'active'`),
+      .where(sql`${t.status} in ('pending', 'active')`),
     // Money invariants the engine must never be able to break, held where no caller can route
     // around them: a bonus balance cannot go negative and progress cannot pass its requirement.
     check('promo_grant_bonus_balance_non_negative', sql`${t.bonusBalance} >= 0`),

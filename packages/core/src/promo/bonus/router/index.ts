@@ -61,7 +61,7 @@ export function createBonusRouter({
             async () => {
               const closed = await lifecycle.forfeit(
                 input.id,
-                input.reason,
+                'admin',
                 { id: userId, isAdmin: true },
                 input.note,
               );
@@ -70,7 +70,7 @@ export function createBonusRouter({
                 grantId: closed.grantId,
                 currency: closed.currency,
                 forfeitedAmount: closed.forfeitedAmount,
-                reason: input.reason,
+                reason: 'admin',
                 actorId: closed.actorId,
               });
               return grants.getForAdmin(input.id);

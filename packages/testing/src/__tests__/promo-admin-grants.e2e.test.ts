@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
@@ -47,8 +47,19 @@ async function grantBonus(userId: string, amount: string) {
   return outcome.grantId;
 }
 
-const forfeitRows = () =>
-  drizzle().select().from(auditLog).where(eq(auditLog.action, 'promo.bonus.forfeited'));
+const forfeitRows = (grantId: string) =>
+  drizzle()
+    .select()
+    .from(auditLog)
+    .where(and(eq(auditLog.action, 'promo.bonus.forfeited'), eq(auditLog.resourceId, grantId)));
+
+const refusalRows = (grantId: string) =>
+  drizzle()
+    .select()
+    .from(auditLog)
+    .where(
+      and(eq(auditLog.action, 'promo.bonus.forfeit_refused'), eq(auditLog.resourceId, grantId)),
+    );
 
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
@@ -129,7 +140,6 @@ describe('support forfeiting a bonus', () => {
 
     const body = await readJson(
       await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
-        reason: 'admin',
         note: 'Charge-back investigation 4821',
       }),
     );
@@ -140,7 +150,7 @@ describe('support forfeiting a bonus', () => {
       forfeitReason: 'admin',
       bonusBalance: '0.000000000000000000',
     });
-    const audited = await forfeitRows();
+    const audited = await forfeitRows(grantId);
     expect(audited).toHaveLength(1);
     expect(audited[0]?.actorType).toBe('admin');
     expect(JSON.stringify(audited[0]?.after)).toContain('Charge-back investigation 4821');
@@ -153,7 +163,6 @@ describe('support forfeiting a bonus', () => {
     const grantId = await grantBonus(userId, '40');
 
     const res = await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
-      reason: 'admin',
       note: '   ',
     });
 
@@ -167,7 +176,7 @@ describe('support forfeiting a bonus', () => {
       email: `forfeit-twice-${randomUUID()}@example.test`,
     });
     const grantId = await grantBonus(userId, '40');
-    const body = { reason: 'admin', note: 'First forfeit, recorded properly' };
+    const body = { note: 'First forfeit, recorded properly' };
     await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, body);
 
     const res = await admin.post(`/backoffice/promo/grants/${grantId}/forfeit`, body);
@@ -177,24 +186,23 @@ describe('support forfeiting a bonus', () => {
 
   it('tells an admin a grant does not exist rather than that it was already forfeited', async () => {
     const res = await admin.post(`/backoffice/promo/grants/${randomUUID()}/forfeit`, {
-      reason: 'admin',
       note: 'Typed the wrong identifier entirely',
     });
 
     expect(res.status).toBe(404);
   });
 
-  it('leaves a record of a forfeit that took nothing', async () => {
-    const before = (await forfeitRows()).length;
+  it('leaves a record of a forfeit that took nothing, under its own action', async () => {
+    const missing = randomUUID();
 
-    await admin.post(`/backoffice/promo/grants/${randomUUID()}/forfeit`, {
-      reason: 'admin',
+    await admin.post(`/backoffice/promo/grants/${missing}/forfeit`, {
       note: 'Probing an identifier that is not there',
     });
 
-    const after = await forfeitRows();
-    expect(after.length).toBe(before + 1);
-    expect(JSON.stringify(after.at(-1)?.after)).toContain('refused');
+    // A denial must not be filed as a forfeiture: counting forfeitures, or reading a grant's
+    // history in a dispute, would otherwise mix probes in with movements that destroyed money.
+    expect(await refusalRows(missing)).toHaveLength(1);
+    expect(await forfeitRows(missing)).toHaveLength(0);
   });
 
   it('refuses a player forfeiting anything', async () => {
@@ -204,7 +212,6 @@ describe('support forfeiting a bonus', () => {
     const grantId = await grantBonus(userId, '40');
 
     const res = await client.post(`/backoffice/promo/grants/${grantId}/forfeit`, {
-      reason: 'admin',
       note: 'Trying it on from a player session',
     });
 

@@ -43,6 +43,13 @@
       "when": 1789697444067,
       "tag": "0005_third_malice",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789863803430,
+      "tag": "0006_square_argent",
+      "breakpoints": true
     }
   ]
 }
