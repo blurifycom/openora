@@ -18,8 +18,10 @@ import {
   BannerConfigurationImageCountError,
   BannerImageHostNotAllowedError,
   BannerConfigurationHasScheduleError,
+  BannerPlacementHasScheduleError,
   BannerScheduleNotFoundError,
   BannerScheduleInvalidRangeError,
+  BannerScheduleExpiredError,
   BannerScheduleOverlapError,
 } from '../service/cms.service.js';
 
@@ -739,6 +741,43 @@ describe('CmsService.createBannerSchedule (real PG)', () => {
   });
 });
 
+describe('CmsService.unsetDefaultConfiguration schedule guard (real PG)', () => {
+  it('rejects unsetting a default with an active or future schedule in its placement', async () => {
+    const { svc } = makeService();
+    const defaultConfiguration = await makeDefaultConfiguration(svc, 'home-top');
+    const scheduled = await makeSchedulableConfiguration(svc, 'home-top');
+    await insertScheduleDirect({
+      bannerConfigurationId: scheduled.id,
+      startsAt: new Date(Date.now() + 60_000),
+      endsAt: new Date(Date.now() + 120_000),
+    });
+
+    await expect(svc.unsetDefaultConfiguration('home-top', ADMIN_ID)).rejects.toBeInstanceOf(
+      BannerPlacementHasScheduleError,
+    );
+    expect((await configurationById(defaultConfiguration.id))?.isDefault).toBe(true);
+  });
+
+  it('serializes creating a schedule and unsetting the default for the same placement', async () => {
+    const { svc } = makeService();
+    const defaultConfiguration = await makeDefaultConfiguration(svc, 'home-top');
+    const scheduled = await makeSchedulableConfiguration(svc, 'home-top');
+    const startsAt = new Date(Date.now() + 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 120_000).toISOString();
+
+    const results = await Promise.allSettled([
+      svc.createBannerSchedule(scheduled.id, { startsAt, endsAt }, ADMIN_ID),
+      svc.unsetDefaultConfiguration('home-top', ADMIN_ID),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect((await configurationById(defaultConfiguration.id))?.isDefault).toBe(
+      (await scheduleByConfigurationId(scheduled.id)) !== undefined,
+    );
+  });
+});
+
 describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
   it('updates endsAt and emits cms.banner.schedule.updated', async () => {
     const { svc, events } = makeService();
@@ -776,6 +815,30 @@ describe('CmsService.updateBannerScheduleEnd (real PG)', () => {
     const updated = await svc.updateBannerScheduleEnd(target.id, { endsAt: earlyEnd }, ADMIN_ID);
 
     expect(updated.endsAt).toBe(earlyEnd);
+  });
+
+  it('rejects resuming an expired schedule after its placement default was unset', async () => {
+    const { svc } = makeService();
+    const defaultConfiguration = await makeDefaultConfiguration(svc, 'home-top');
+    const target = await makeSchedulableConfiguration(svc, 'home-top');
+    const endsAt = new Date(Date.now() - 60_000);
+    await insertScheduleDirect({
+      bannerConfigurationId: target.id,
+      startsAt: new Date(Date.now() - 120_000),
+      endsAt,
+    });
+
+    await svc.unsetDefaultConfiguration('home-top', ADMIN_ID);
+
+    await expect(
+      svc.updateBannerScheduleEnd(
+        target.id,
+        { endsAt: new Date(Date.now() + 60_000).toISOString() },
+        ADMIN_ID,
+      ),
+    ).rejects.toBeInstanceOf(BannerScheduleExpiredError);
+    expect((await scheduleByConfigurationId(target.id))?.endsAt).toEqual(endsAt);
+    expect((await configurationById(defaultConfiguration.id))?.isDefault).toBe(false);
   });
 
   it('404s a configuration with no attached schedule', async () => {

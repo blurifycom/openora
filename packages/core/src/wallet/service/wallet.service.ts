@@ -22,6 +22,7 @@ import {
   normalizeKycStatus,
   RgLimitExceededError,
   DEFAULT_PAYMENT_PROVIDER,
+  PaymentRejectedError,
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
@@ -1598,9 +1599,9 @@ export class WalletService {
   }
 
   /**
-   * Approve: Pending -> Processing (commit + emit), send to PSP, then Completed on success
-   * or Failed + refund on PSP error. Robust PSP idempotency-key/reconciliation for a
-   * lost-response is deferred - same scope boundary the deposit path declares.
+   * Approve: Pending -> Processing (commit + emit), send to the vendor, then Completed on
+   * success, Failed + refund on a PaymentRejectedError, or held in Processing when the
+   * outcome is unknown (reconciliation settles it).
    */
   async approveWithdrawal(
     adminId: User['id'],
@@ -1658,7 +1659,7 @@ export class WalletService {
     );
   }
 
-  // Phase two: settle a `processing` withdrawal via the PSP (Completed on success, Failed + refund on error).
+  // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
   // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
@@ -1682,6 +1683,12 @@ export class WalletService {
     }
 
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
+    // Stamped before the call: if its response is lost, reconciliation must ask THIS vendor,
+    // not the default one, or "no record there" could be mistaken for "never paid".
+    await this.drizzle.db
+      .update(walletTransaction)
+      .set({ providerName })
+      .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')));
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
@@ -1701,9 +1708,31 @@ export class WalletService {
         network: tx.network,
       });
     } catch (err) {
-      // Payout did not happen - mark failed and return the held funds in one transaction.
-      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
-      throw err;
+      if (err instanceof PaymentRejectedError) {
+        // The vendor refused it, so no payout exists - mark failed and return the held funds.
+        await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+        throw err;
+      }
+      // A timeout or dropped connection looks exactly like a lost response to a payout the
+      // vendor accepted. Refunding here could pay the player twice, so the withdrawal stays
+      // `processing` and reconciliation finds it by `transactionId` (findWithdrawalByReference).
+      logger.error(
+        { err, transactionId: tx.id, providerName },
+        'withdrawal outcome unknown - held in processing for reconciliation',
+      );
+      try {
+        await this.audit.record({
+          actorType: adminId ? 'admin' : 'system',
+          actorId: adminId,
+          action: 'wallet.withdrawal.outcome_unknown',
+          resourceType: 'withdrawal',
+          resourceId: tx.id,
+          after: { userId, amount, currency: tx.currency, providerName },
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, transactionId: tx.id }, 'outcome_unknown audit write failed');
+      }
+      return { transactionId: tx.id, status: 'processing' };
     }
 
     if (result.status === 'failed') {
@@ -1722,14 +1751,24 @@ export class WalletService {
       return { transactionId: tx.id, status: 'processing' };
     }
 
-    await this.drizzle.db
+    // Guarded on `processing`: a vendor webhook can settle the row before this line runs, and
+    // overwriting a webhook-driven `failed` would leave the refund standing next to a payout.
+    const completed = await this.drizzle.db
       .update(walletTransaction)
       .set({
         status: 'completed',
         providerName,
         providerRefId: result.externalId,
       })
-      .where(eq(walletTransaction.id, tx.id));
+      .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+      .returning({ id: walletTransaction.id });
+    if (completed.length === 0) {
+      const [current] = await this.drizzle.db
+        .select({ status: walletTransaction.status })
+        .from(walletTransaction)
+        .where(eq(walletTransaction.id, tx.id));
+      return { transactionId: tx.id, status: current?.status ?? 'processing' };
+    }
     this.events.emit('wallet.withdrawal.completed', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -1929,7 +1968,16 @@ export class WalletService {
         throw err;
       }
 
-      return await this.settleApproved(decided.tx, null);
+      try {
+        return await this.settleApproved(decided.tx, null);
+      } catch (err) {
+        // Refused by the vendor: settleApproved already failed and refunded the row, so report
+        // that instead of falling through to `pending` for a withdrawal nobody can approve now.
+        if (err instanceof PaymentRejectedError) {
+          return { transactionId: args.transactionId, status: 'failed' };
+        }
+        throw err;
+      }
     } catch (err) {
       // Fail closed: any thrown gate leaves the withdrawal pending for a human rather than paying out.
       logger.error({ err, transactionId: args.transactionId }, 'auto-withdrawal evaluation failed');

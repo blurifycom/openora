@@ -82,11 +82,29 @@ import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 let db: TestDb;
 let redis: TestRedis;
 const transports: RedisPubSubRealtimeTransport[] = [];
+const transportServiceNames = new WeakMap<RealtimeTransport, string>();
 
 function makeTransport(): RedisPubSubRealtimeTransport {
-  const transport = new RedisPubSubRealtimeTransport(redis.client, `chat-test-${randomUUID()}`);
+  const serviceName = `chat-test-${randomUUID()}`;
+  const transport = new RedisPubSubRealtimeTransport(redis.client, serviceName);
   transports.push(transport);
+  transportServiceNames.set(transport, serviceName);
   return transport;
+}
+
+async function waitForMessageSubscription(
+  transport: RealtimeTransport,
+  channel: string,
+): Promise<void> {
+  const serviceName = transportServiceNames.get(transport);
+  if (!serviceName) {
+    throw new Error('Expected a test realtime transport');
+  }
+  const key = `oss:rt:${serviceName}:${channel}`;
+  await vi.waitFor(async () => {
+    const subscriptions = await redis.client.sendCommand<string[]>(['PUBSUB', 'NUMSUB', key]);
+    expect(Number(subscriptions[1])).toBeGreaterThan(0);
+  });
 }
 
 function makeService(
@@ -357,7 +375,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     const { svc, transport } = makeService();
     const got: ChatMessage[] = [];
     svc.subscribeMessages(null, (m) => got.push(m));
-    await settle();
+    await waitForMessageSubscription(transport, chatChannel(null));
 
     transport.publish(chatChannel(null), sample);
     await waitFor(() => got.length === 1);

@@ -170,6 +170,7 @@ export {
   PAYMENT_WEBHOOK_VERIFIER,
   PAYMENT_PROVIDERS,
   DEFAULT_PAYMENT_PROVIDER,
+  PaymentRejectedError,
 } from './payment.js';
 
 export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';
@@ -301,6 +302,7 @@ export { ADMIN_PLAYER_ACTIVITY } from './admin-player-activity.js';
 export type {
   IdentityServiceOptions,
   IdentityLockoutOptions,
+  IdentityLoginIpRateLimitOptions,
   SessionCommands,
 } from './identity.js';
 export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js';

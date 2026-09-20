@@ -35,6 +35,10 @@ rather than failing.
   shape. Deciding whether to credit anyone is the ledger's job, not the adapter's.
 - **Carry an idempotency key on every state-changing call.** A thrown call and a lost response
   look identical from here, and the retry must not move funds twice.
+- **Throw `PaymentRejectedError` only when the vendor definitely did not accept a payout.** It is
+  the one failure core refunds on the spot. Any other throw from `processWithdrawal` holds the
+  withdrawal in `processing`, and reconciliation looks it up with `findWithdrawalByReference`
+  (our `transactionId`) instead of refunding into a possible double payout.
 - **Return the vendor's own settlement identifier.** It is what makes crediting idempotent, and
   what an auditor traces.
 - **Say which pairs you serve.** The asset catalog asks the binding whether it can handle a

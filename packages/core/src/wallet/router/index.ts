@@ -12,6 +12,7 @@ import {
   DEFAULT_PAYMENT_PROVIDER,
   RATE_LIMIT_KEYS,
   RgLimitExceededError,
+  PaymentRejectedError,
   makeRateLimitKey,
   type AuditWritePort,
   type JobQueueAdapter,
@@ -305,7 +306,10 @@ export function createWalletRouter({
           userAgent,
         } = await adminGuard.assert(context, 'withdrawal', 'approve');
         return mapErrors(
-          { NOT_FOUND: WithdrawalNotFoundError, CONFLICT: WithdrawalNotPendingError },
+          {
+            NOT_FOUND: WithdrawalNotFoundError,
+            CONFLICT: [WithdrawalNotPendingError, PaymentRejectedError],
+          },
           () => wallet.approveWithdrawal(adminId, input.withdrawalId, { ip, userAgent }),
         );
       }),

@@ -29,6 +29,7 @@ export type DirectAuditAction =
   | 'compliance.country_rule.setting_changed'
   | 'compliance.global_kyc.set'
   | 'wallet.withdrawal.auto_approved'
+  | 'wallet.withdrawal.outcome_unknown'
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted'
   | 'wallet.auto_withdrawal_config.set'

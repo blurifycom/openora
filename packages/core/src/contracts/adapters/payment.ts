@@ -37,6 +37,22 @@ export type PaymentWebhookEvent =
     };
 
 /**
+ * Thrown by `PaymentAdapter.processWithdrawal` when the vendor definitely did not accept
+ * the payout - refused before sending, or rejected with a validation error. It is the only
+ * failure the wallet refunds on the spot.
+ *
+ * Any other throw (timeout, network error, 5xx) cannot be told apart from a lost response
+ * to a payout the vendor accepted and will broadcast, so the wallet holds the withdrawal
+ * in `processing` and leaves it to reconciliation instead of refunding into a double payout.
+ */
+export class PaymentRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentRejectedError';
+  }
+}
+
+/**
  * A balance sitting in a per-player custody container that is not yet in the pooled
  * account withdrawals are paid from. Produced by `PaymentAdapter.listSweepableBalances`
  * and handed back to `sweepToPool` unchanged.
@@ -204,6 +220,19 @@ export type PaymentAdapter = {
    * it needs a direct lookup by `externalId`.
    */
   getWithdrawalStatus?(externalId: string): Promise<{
+    status: 'processing' | 'completed' | 'failed';
+    txHash?: string;
+  } | null>;
+
+  /**
+   * Find a withdrawal by our own transaction id (the `transactionId` handed to
+   * `processWithdrawal`), or null when the vendor has no record of it. This is how a payout
+   * whose response was lost gets its vendor reference back: reconciliation calls it for a
+   * `processing` withdrawal that never stored a `providerRefId`. Implemented by a vendor that
+   * keeps the caller's reference on the transaction.
+   */
+  findWithdrawalByReference?(transactionId: string): Promise<{
+    externalId: string;
     status: 'processing' | 'completed' | 'failed';
     txHash?: string;
   } | null>;
