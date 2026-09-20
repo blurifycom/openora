@@ -481,6 +481,48 @@ describe('ComplianceService global KYC config (real PG)', () => {
   });
 });
 
+describe('ComplianceService.resolveKycRequirement (real PG)', () => {
+  it('is not required when KYC is globally disabled, even for a country requiring it', async () => {
+    const { svc } = makeService();
+    await svc.setGlobalKycConfig(
+      { enabled: false, confirm: true, expectedUpdatedAt: null },
+      randomUUID(),
+    );
+
+    expect(await svc.resolveKycRequirement('FR')).toEqual({
+      required: false,
+      reason: 'global_disabled',
+    });
+  });
+
+  it('is not required for a country whose rule marks it exempt', async () => {
+    const { svc } = makeService();
+    await db.drizzle.db
+      .insert(countryRule)
+      .values({ countryCode: 'DE', action: 'allow', kycRequired: false });
+
+    expect(await svc.resolveKycRequirement('DE')).toEqual({
+      required: false,
+      reason: 'country_exempt',
+    });
+  });
+
+  it('is required for a country with no rule row (schema default)', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.resolveKycRequirement('FR')).toEqual({ required: true, reason: 'required' });
+  });
+
+  it('fails closed - required - when the country could not be resolved', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.resolveKycRequirement(null)).toEqual({
+      required: true,
+      reason: 'country_unknown',
+    });
+  });
+});
+
 describe('ComplianceService per-game geo rules (real PG)', () => {
   it('lets a global block win before the game-specific decision', async () => {
     const { svc } = makeService('US');

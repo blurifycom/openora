@@ -34,8 +34,18 @@ async function nextStreamEventAfterSubscribed<T>(
   publish: () => void,
 ): Promise<T> {
   const pending = stream.next();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  publish();
+  let delivered = false;
+  void pending.then(() => {
+    delivered = true;
+  });
+  // RedisPubSubRealtimeTransport.subscribe() issues the Redis SUBSCRIBE fire-and-forget
+  // (see addSubscriber) - there is no signal here for when it has actually landed, and a
+  // publish before it does is simply lost (no late-subscriber buffering). Retry the publish
+  // instead of gambling on a single fixed delay, which flakes under CI load.
+  for (let attempt = 0; !delivered && attempt < 20; attempt += 1) {
+    publish();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   const { value } = await pending;
   return value;
 }

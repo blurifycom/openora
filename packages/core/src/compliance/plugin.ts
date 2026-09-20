@@ -44,6 +44,13 @@ import { RgLimitGate } from './adapters/rg-limit-gate.js';
 
 const logger = createLogger('compliance');
 
+const KYC_EXEMPTION_ENQUEUE_ATTEMPTS = 3;
+const KYC_EXEMPTION_ENQUEUE_RETRY_DELAY_MS = 250;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new ComplianceService(
     c.get(DRIZZLE),
@@ -56,6 +63,7 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
+const KYC_EXEMPTION_QUEUE = queue('kyc-exemption');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
@@ -71,6 +79,10 @@ const KycDecisionSyncJobSchema = z.object({
   // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
   // watermark `reconcile` compares against, immune to job-processing reordering.
   receivedAt: z.iso.datetime(),
+});
+const KycExemptionJobSchema = z.object({
+  userId: UuidSchema,
+  countryCode: z.string().length(2).nullable(),
 });
 
 export default {
@@ -95,6 +107,7 @@ export default {
     // svcRefs are null at registration (subscriptions wire before router factories run)
     // but set before any real event/job arrives. See create-app.ts boot order.
     let kycRef: KycVerificationService | null = null;
+    let complianceRef: ComplianceService | null = null;
     let rgRef: RgService | null = null;
     let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
@@ -129,6 +142,45 @@ export default {
       kycRef
         .handleDeposit(parsed.data.userId)
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
+    });
+
+    // Country-level KYC exemption is durable work: a registration event can be delivered
+    // at least once and a resolver/database outage must retry rather than strand a player
+    // at pending. The job's database guard makes repeated delivery harmless. The event
+    // dispatcher itself only logs a thrown handler error and still acks the message (no
+    // redelivery), so a transient enqueue failure needs its own bounded retry here -
+    // otherwise it is silently dropped after a single attempt.
+    ctx.events.on('identity.user.registered', async (payload) => {
+      const parsed = domainEventSchemas['identity.user.registered'].safeParse(payload);
+      if (!parsed.success || !jobQueueRef) {
+        return;
+      }
+      const jobQueue = jobQueueRef;
+      const countryCode = parsed.data.countryCode ?? null;
+      for (let attempt = 1; attempt <= KYC_EXEMPTION_ENQUEUE_ATTEMPTS; attempt += 1) {
+        try {
+          await jobQueue.enqueue(
+            KYC_EXEMPTION_QUEUE,
+            { userId: parsed.data.userId, countryCode },
+            {
+              idempotencyKey: `kyc-exemption:${parsed.data.userId}`,
+              orderingKey: parsed.data.userId,
+              attempts: 10,
+              backoff: { type: 'exponential', delayMs: 1_000 },
+            },
+          );
+          return;
+        } catch (err) {
+          if (attempt === KYC_EXEMPTION_ENQUEUE_ATTEMPTS) {
+            logger.error(
+              { err, userId: parsed.data.userId, countryCode, attempts: attempt },
+              'kyc-exemption enqueue failed after retries; player left without an exemption evaluation',
+            );
+            return;
+          }
+          await delay(KYC_EXEMPTION_ENQUEUE_RETRY_DELAY_MS * attempt);
+        }
+      }
     });
 
     const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
@@ -204,6 +256,24 @@ export default {
         }
       },
     });
+    ctx.jobs.worker({
+      queue: KYC_EXEMPTION_QUEUE,
+      schema: KycExemptionJobSchema,
+      options: { serializeByOrderingKey: true },
+      handler: async ({ payload }) => {
+        if (!complianceRef || !kycRef) {
+          throw new Error('compliance services are not initialized');
+        }
+        const { required, reason } = await complianceRef.resolveKycRequirement(payload.countryCode);
+        if (required || (reason !== 'global_disabled' && reason !== 'country_exempt')) {
+          return;
+        }
+        await kycRef.applyExemption(payload.userId, {
+          countryCode: payload.countryCode,
+          reason,
+        });
+      },
+    });
 
     ctx.routers.add('compliance', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
@@ -223,12 +293,15 @@ export default {
       const kyc = new KycVerificationService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
         kycAdapter,
         statusWriter: c.get(KYC_STATUS_WRITER),
         identityReader: c.get(IDENTITY_READER),
         platformConfig,
       });
       kycRef = kyc;
+      const compliance = makeComplianceService(c);
+      complianceRef = compliance;
 
       const rg = new RgService({
         drizzle: c.get(DRIZZLE),
@@ -258,7 +331,7 @@ export default {
         .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
 
       return createComplianceRouter({
-        compliance: makeComplianceService(c),
+        compliance,
         adminGuard: c.get(ADMIN_GUARD),
         audit: c.get(AUDIT_WRITER),
         kyc,

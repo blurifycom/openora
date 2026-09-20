@@ -15,12 +15,15 @@ async function loadDefaults() {
 }
 
 describe('corePlugins', () => {
+  // 60s, not the vitest default: this imports every core plugin's module graph in one
+  // Promise.all, and a CI worker under load has taken >200s just for that import phase
+  // while the same run stays under 2s locally - the assertion itself is instant.
   it('resolves every entry to an importable plugin whose id matches the entry id', async () => {
     const loaded = await loadDefaults();
     for (const { entry, plugin } of loaded) {
       expect(plugin.id, `entry ${entry.id} resolves to a plugin`).toBe(entry.id);
     }
-  }, 20000);
+  }, 60000);
 
   it('is a self-contained dependency graph - every dependsOn is present in the set', async () => {
     const loaded = await loadDefaults();

@@ -688,7 +688,8 @@ export class IdentityService {
       this.emitRegistrationFailed('rate_limited', input, meta);
       throw err;
     }
-    if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
+    const registrationGeo = this.geoCheck ? await this.geoCheck.checkRegistration(ip) : null;
+    if (registrationGeo && !registrationGeo.allowed) {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
@@ -746,6 +747,7 @@ export class IdentityService {
     this.events.emit('identity.user.registered', {
       userId: body.user.id,
       playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+      countryCode: registrationGeo?.countryCode ?? null,
       // Only claimed when the consent row was actually written - a discarded capture
       // must not leave an audit trail implying evidence that does not exist.
       ...(consentStored

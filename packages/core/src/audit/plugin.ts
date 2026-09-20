@@ -1275,6 +1275,11 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
+        // KYC exemptions append their audit record inside the state transaction, then
+        // publish this event for realtime and other consumers after commit.
+        if (topic === 'compliance.kyc.updated' && payload['auditRecorded'] === true) {
+          return;
+        }
         const svc = svcRef;
         void mapEventToRecord(topic, payload)
           .then((record) => svc.record(record))

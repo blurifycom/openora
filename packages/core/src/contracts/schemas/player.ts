@@ -29,7 +29,7 @@ export const KYC_TIERS = ['basic', 'advanced'] as const;
 export const KycTierSchema = z.enum(KYC_TIERS);
 export type KycTier = z.infer<typeof KycTierSchema>;
 
-export const KYC_STATUS_SOURCES = ['vendor', 'manual', 'webhook', 'reverify'] as const;
+export const KYC_STATUS_SOURCES = ['vendor', 'manual', 'webhook', 'reverify', 'exemption'] as const;
 export const KycStatusSourceSchema = z.enum(KYC_STATUS_SOURCES);
 export type KycStatusSource = z.infer<typeof KycStatusSourceSchema>;
 
