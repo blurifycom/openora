@@ -24,6 +24,18 @@ export type BonusGrantTerms = {
    * rather than scored at nothing.
    */
   weightProfileId?: string;
+  /**
+   * Largest single stake allowed while this grant is active, as a decimal string, or absent for
+   * no limit. An anti-abuse control, so it is enforced inside the debit transaction against this
+   * snapshot rather than checked by a caller beforehand.
+   */
+  maxBet?: string | null;
+  /**
+   * Cap on what the grant can ever convert into real money, as a multiple of the granted amount.
+   * Absent means uncapped. Without one a modest bonus can compound into a payout the operator
+   * never priced.
+   */
+  maxWinMultiplier?: string | null;
 };
 
 /**

@@ -40,11 +40,15 @@ export async function seedDefaultWeightProfile(db: DrizzleDb): Promise<void> {
 
   await db
     .insert(promoWeight)
-    .values({
-      profileId,
-      scope: 'default',
-      scopeRef: null,
-      contributionPercent: '100',
-    })
+    .values([
+      {
+          profileId, scope: 'default', scopeRef: null, contributionPercent: '100' },
+      // The headline rule from the specification: casino play clears a wagering requirement,
+      // sportsbook and PvP do not. Seeded rather than left to the default, because resolution
+      // falls through to the default and a bet the operator never weighted would otherwise
+      // count in full.
+      { profileId: profile.id, scope: 'product', scopeRef: 'sportsbook', contributionPercent: '0' },
+      { profileId: profile.id, scope: 'product', scopeRef: 'pvp', contributionPercent: '0' },
+    ])
     .onConflictDoNothing();
 }

@@ -59,7 +59,13 @@ export type BonusWagerOutcome =
       completed: { grantId: string; convertedAmount: string } | null;
     }
   /** Bonus funds could not cover `fromBonus`. The wallet turns this into its own insufficient-funds outcome. */
-  | { ok: false; bonusAvailable: string };
+  | { ok: false; reason: 'insufficient_bonus'; bonusAvailable: string }
+  /**
+   * The stake is larger than the active grant's `maxBet`. A refusal, not a silent pass: the limit
+   * exists so a player cannot turn a wagering requirement into one high-variance spin, and a bet
+   * that quietly ignored it would do exactly that.
+   */
+  | { ok: false; reason: 'max_bet_exceeded'; maxBet: string };
 
 export type BonusSettleArgs = {
   userId: string;

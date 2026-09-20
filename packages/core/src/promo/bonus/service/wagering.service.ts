@@ -27,6 +27,23 @@ import { resolveContributionPercent, weightedStake } from '../shared/wagering-we
 
 const ZERO = '0';
 
+/**
+ * What a completing grant is allowed to turn into real money. Absent multiplier means uncapped;
+ * otherwise the ceiling is that multiple of what was originally granted, truncating, so the cap
+ * is never rounded in the player's favour.
+ */
+function capConversion(
+  balance: string,
+  grantedAmount: string,
+  maxWinMultiplier: string | null | undefined,
+): string {
+  if (maxWinMultiplier === null || maxWinMultiplier === undefined) {
+    return balance;
+  }
+  const ceiling = moneyScaleBy(grantedAmount, maxWinMultiplier);
+  return moneyCompare(balance, ceiling) < 0 ? balance : ceiling;
+}
+
 type RoundStake = {
   grantId: PromoGrant['id'];
   bonusStake: string;
@@ -56,7 +73,7 @@ export class WageringService implements BonusWageringCommands {
 
     if (!grant) {
       return moneyCompare(args.fromBonus, ZERO) > 0
-        ? { ok: false, bonusAvailable: ZERO }
+        ? { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO }
         : {
             ok: true,
             grantId: null,
@@ -67,9 +84,18 @@ export class WageringService implements BonusWageringCommands {
           };
     }
 
+    // Against the terms snapshot, inside the transaction that moves the money. It is an
+    // anti-abuse control - a player who can stake the whole bonus on one spin turns a wagering
+    // requirement into a coin flip - so a preflight read the client could skip is not enough.
+    // It bounds the whole stake, not the bonus part: the limit applies while a bonus is active.
+    const { maxBet } = grant.terms;
+    if (maxBet !== null && maxBet !== undefined && moneyCompare(args.stake, maxBet) > 0) {
+      return { ok: false, reason: 'max_bet_exceeded', maxBet };
+    }
+
     const spent = await this.spendBonus(tx, grant.id, args.fromBonus);
     if (spent === null) {
-      return { ok: false, bonusAvailable: grant.bonusBalance };
+      return { ok: false, reason: 'insufficient_bonus', bonusAvailable: grant.bonusBalance };
     }
 
     const percent = resolveContributionPercent(grant.terms.weights, args.context);
@@ -80,7 +106,12 @@ export class WageringService implements BonusWageringCommands {
     const applied = moneyCompare(weighted, headroom) < 0 ? weighted : headroom;
     const advanced = await this.advanceProgress(tx, grant.id, weighted);
     const completed = advanced?.status === 'completed';
-    const convertedAmount = completed ? spent.balanceAfter : ZERO;
+    // The cap bites here, at the single point where bonus funds become real money, rather than
+    // on every win along the way: what the terms limit is the payout, and winnings that are
+    // still bonus can still be lost back. Anything above it dies with the grant.
+    const convertedAmount = completed
+      ? capConversion(spent.balanceAfter, grant.grantedAmount, grant.terms.maxWinMultiplier)
+      : ZERO;
     const balanceAfter = completed ? ZERO : spent.balanceAfter;
 
     if (completed) {
@@ -101,14 +132,27 @@ export class WageringService implements BonusWageringCommands {
     });
 
     if (completed) {
+      const capped = moneySubtract(spent.balanceAfter, convertedAmount);
       await tx.insert(promoGrantEntry).values({
         grantId: grant.id,
         userId: args.userId,
         currency: args.currency,
         type: 'convert',
         bonusAmount: `-${convertedAmount}`,
-        balanceAfter: ZERO,
+        balanceAfter: capped,
       });
+      // What the cap took has to leave the ledger too, or a grant's entries stop summing to the
+      // balance they explain and the surplus looks like money still owed to the player.
+      if (moneyCompare(capped, ZERO) > 0) {
+        await tx.insert(promoGrantEntry).values({
+          grantId: grant.id,
+          userId: args.userId,
+          currency: args.currency,
+          type: 'forfeit',
+          bonusAmount: `-${capped}`,
+          balanceAfter: ZERO,
+        });
+      }
     }
 
     await this.wagerTracking?.recordWager(tx, {
@@ -285,6 +329,7 @@ export class WageringService implements BonusWageringCommands {
     const [row] = await tx
       .select({
         id: promoGrant.id,
+        grantedAmount: promoGrant.grantedAmount,
         bonusBalance: promoGrant.bonusBalance,
         wageringRequired: promoGrant.wageringRequired,
         wageringProgress: promoGrant.wageringProgress,
