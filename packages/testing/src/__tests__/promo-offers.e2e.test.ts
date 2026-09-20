@@ -341,6 +341,11 @@ describe('a player taking an offer', () => {
       wageringRequired: '250.000000000000000000',
       offerId: offer.id,
     });
+
+    // The offer id has to reach the player too: it is the only thing that ties a live bonus back
+    // to the offer it came from, and without it a bonuses page cannot mark that offer as taken.
+    const listed = await (await client.get('/promo/grants')).json();
+    expect(listed).toMatchObject({ items: [{ offerId: offer.id }] });
   });
 
   it('caps the grant at the offer ceiling', async () => {

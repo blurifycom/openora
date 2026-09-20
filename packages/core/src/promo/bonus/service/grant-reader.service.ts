@@ -22,6 +22,7 @@ const SERIALIZE = { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELD
 
 const COLUMNS = {
   id: promoGrant.id,
+  offerId: promoGrant.offerId,
   currency: promoGrant.currency,
   source: promoGrant.source,
   status: promoGrant.status,
@@ -49,7 +50,6 @@ const ENTRY_COLUMNS = {
 const ADMIN_COLUMNS = {
   ...COLUMNS,
   userId: promoGrant.userId,
-  offerId: promoGrant.offerId,
   sourceRef: promoGrant.sourceRef,
 };
 
