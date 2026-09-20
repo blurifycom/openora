@@ -1,5 +1,7 @@
 import { implement } from '@orpc/server';
+import * as z from 'zod';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
+import type { GameSortCatalog } from '@openora/core/contracts';
 import { gamingContract, gamingAdminContract } from '../contract/index.js';
 import {
   GamingService,
@@ -16,6 +18,8 @@ import {
   GameCategoryService,
   GameCategoryNotFoundError,
   GameCategorySlugTakenError,
+  GameSortConfigInvalidError,
+  CategoryGameNotMemberError,
 } from '../service/game-category.service.js';
 import {
   GameTagService,
@@ -40,6 +44,7 @@ export function createGamingRouter({
   tags,
   bulk,
   adminGuard,
+  sortCatalog,
 }: {
   gaming: GamingService;
   providers: GameProviderService;
@@ -47,6 +52,7 @@ export function createGamingRouter({
   tags: GameTagService;
   bulk: GameBulkService;
   adminGuard: AdminGuard;
+  sortCatalog: GameSortCatalog;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
@@ -160,9 +166,52 @@ export function createGamingRouter({
     updateCategory: os.updateCategory.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
-        { NOT_FOUND: GameCategoryNotFoundError, CONFLICT: GameCategorySlugTakenError },
+        {
+          NOT_FOUND: GameCategoryNotFoundError,
+          CONFLICT: GameCategorySlugTakenError,
+          BAD_REQUEST: GameSortConfigInvalidError,
+        },
         () => categories.updateCategory({ ...input, actorId: userId, ip, userAgent }),
       );
+    }),
+
+    listCategoryGames: os.listCategoryGames.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      const { id, page, limit } = input;
+      return mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>
+        categories.listCategoryGames(id, { page, limit }),
+      );
+    }),
+
+    reorderCategoryGames: os.reorderCategoryGames.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors(
+        {
+          NOT_FOUND: GameCategoryNotFoundError,
+          BAD_REQUEST: [CategoryGameNotMemberError, GameSortConfigInvalidError],
+        },
+        () => categories.reorderCategoryGames({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    updateCategoryPins: os.updateCategoryPins.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+      return mapErrors(
+        {
+          NOT_FOUND: GameCategoryNotFoundError,
+          BAD_REQUEST: CategoryGameNotMemberError,
+        },
+        () => categories.updateCategoryPins({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    getSortOptions: os.getSortOptions.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return sortCatalog.list().map((definition) => ({
+        key: definition.key,
+        directions: [...definition.directions],
+        paramsJsonSchema: z.toJSONSchema(definition.paramsSchema, { unrepresentable: 'any' }),
+      }));
     }),
 
     listAdminTags: os.listAdminTags.handler(async ({ input, context }) => {

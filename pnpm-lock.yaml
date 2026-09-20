@@ -266,6 +266,9 @@ importers:
       redis:
         specifier: 5.12.1
         version: 5.12.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 25.9.2

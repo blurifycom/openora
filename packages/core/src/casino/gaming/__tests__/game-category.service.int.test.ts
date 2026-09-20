@@ -1,23 +1,38 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import * as z from 'zod';
+import { asc, eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
+import {
+  createGameSortCatalog,
+  defineGameSort,
+  type GameSortCatalog,
+} from '@openora/core/contracts';
+import { NO_CLIENT_META, makeEventBus, makeJobQueue } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { gameCategory } from '../schema/index.js';
+import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
+import { createDefaultGameSorts } from '../adapters/sort/index.js';
 import {
   GameCategoryService,
   GameCategoryNotFoundError,
   GameCategorySlugTakenError,
+  GameSortConfigInvalidError,
+  CategoryGameNotMemberError,
 } from '../service/game-category.service.js';
 
 let db: TestDb;
 
 const ACTOR = { actorId: '00000000-0000-4000-8000-000000000001', ...NO_CLIENT_META };
 
-function makeService() {
+function makeService(sortCatalog?: GameSortCatalog) {
   const events = makeEventBus();
-  return { svc: new GameCategoryService(db.drizzle, events), events };
+  const jobQueue = makeJobQueue();
+  const catalog = sortCatalog ?? createGameSortCatalog(createDefaultGameSorts(db.drizzle));
+  return {
+    svc: new GameCategoryService(db.drizzle, events, jobQueue, catalog),
+    events,
+    jobQueue,
+  };
 }
 
 async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert> = {}) {
@@ -26,6 +41,68 @@ async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert>
     .values({ slug: `category-${randomUUID()}`, name: 'Category', ...overrides })
     .returning();
   return row!;
+}
+
+async function seedProvider() {
+  const [row] = await db.drizzle.db
+    .insert(gameProvider)
+    .values({ slug: `provider-${randomUUID()}`, name: 'Provider', isActive: true })
+    .returning();
+  return row!;
+}
+
+async function seedGame(
+  providerId: string,
+  overrides: Partial<typeof game.$inferInsert> = {},
+  categoryIds: string[] = [],
+) {
+  const [row] = await db.drizzle.db
+    .insert(game)
+    .values({
+      name: 'Game',
+      slug: `game-${randomUUID()}`,
+      providerId,
+      aggregator: 'direct',
+      isActive: true,
+      ...overrides,
+    })
+    .returning();
+  if (categoryIds.length > 0) {
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values(categoryIds.map((categoryId) => ({ gameId: row!.id, categoryId })));
+  }
+  return row!;
+}
+
+async function setRank(categoryId: string, gameId: string, rank: number) {
+  await db.drizzle.db
+    .update(gameCategoryGame)
+    .set({ rank })
+    .where(
+      sql`${gameCategoryGame.categoryId} = ${categoryId} AND ${gameCategoryGame.gameId} = ${gameId}`,
+    );
+}
+
+async function pinGame(categoryId: string, gameId: string, position: number) {
+  await db.drizzle.db
+    .update(gameCategoryGame)
+    .set({ pinnedPosition: position })
+    .where(
+      sql`${gameCategoryGame.categoryId} = ${categoryId} AND ${gameCategoryGame.gameId} = ${gameId}`,
+    );
+}
+
+async function memberRows(categoryId: string) {
+  return db.drizzle.db
+    .select({
+      gameId: gameCategoryGame.gameId,
+      position: gameCategoryGame.position,
+      pinnedPosition: gameCategoryGame.pinnedPosition,
+    })
+    .from(gameCategoryGame)
+    .where(eq(gameCategoryGame.categoryId, categoryId))
+    .orderBy(asc(gameCategoryGame.gameId));
 }
 
 const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
@@ -40,7 +117,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${gameCategory} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${gameCategoryGame}, ${game}, ${gameCategory}, ${gameProvider} RESTART IDENTITY CASCADE`,
+  );
 });
 
 describe('GameCategoryService (real PG)', () => {
@@ -173,5 +252,235 @@ describe('GameCategoryService (real PG)', () => {
     await expect(svc.getActiveCategoryBySlug('unknown')).rejects.toBeInstanceOf(
       GameCategoryNotFoundError,
     );
+  });
+});
+
+describe('GameCategoryService.reorderCategoryGames (real PG)', () => {
+  it('switches the category to manual sort, seeds unlisted members from their effective order, and leaves pins untouched', async () => {
+    const category = await seedCategory({ sortKey: 'name', sortDirection: 'asc' });
+    const provider = await seedProvider();
+    const alpha = await seedGame(provider.id, { name: 'Alpha' }, [category.id]);
+    const bravo = await seedGame(provider.id, { name: 'Bravo' }, [category.id]);
+    const charlie = await seedGame(provider.id, { name: 'Charlie' }, [category.id]);
+    await setRank(category.id, alpha.id, 0);
+    await setRank(category.id, bravo.id, 1);
+    await setRank(category.id, charlie.id, 2);
+    await pinGame(category.id, charlie.id, 0);
+
+    const { svc, events } = makeService();
+    const result = await svc.reorderCategoryGames({
+      id: category.id,
+      gameIds: [bravo.id],
+      ...ACTOR,
+    });
+
+    expect(result).toEqual({
+      sortKey: 'manual',
+      sortDirection: null,
+      sortParams: {},
+    });
+    await expect(svc.getCategory(category.id)).resolves.toMatchObject({
+      sortKey: 'manual',
+      sortDirection: null,
+      sortParams: {},
+    });
+
+    const rows = await memberRows(category.id);
+    const byId = new Map(rows.map((r) => [r.gameId, r]));
+    expect(byId.get(bravo.id)?.position).toBe(0);
+    expect(byId.get(alpha.id)?.position).toBe(1);
+    expect(byId.get(charlie.id)?.position).toBe(2);
+    expect(byId.get(charlie.id)?.pinnedPosition).toBe(0);
+
+    const reorderedCall = events.emit.mock.calls.find(
+      ([topic]) => topic === 'gaming.category.games_reordered',
+    );
+    expect(reorderedCall?.[1]).toMatchObject({
+      sortKeyBefore: 'name',
+      sortKeyAfter: 'manual',
+      sortDirectionBefore: 'asc',
+      sortDirectionAfter: null,
+      sortParamsBefore: {},
+      sortParamsAfter: {},
+      // The full pre-drag effective order (rank asc: alpha, bravo, charlie), not only
+      // the members that already had a manual position - and the full resulting order,
+      // not only the dragged ids.
+      before: [alpha.id, bravo.id, charlie.id],
+      after: [bravo.id, alpha.id, charlie.id],
+    });
+  });
+
+  it("audits the full pre-drag order via the name/id fallback on a category's first-ever drag, never an empty list", async () => {
+    const category = await seedCategory({ sortKey: 'manual' });
+    const provider = await seedProvider();
+    const alpha = await seedGame(provider.id, { name: 'Alpha' }, [category.id]);
+    const bravo = await seedGame(provider.id, { name: 'Bravo' }, [category.id]);
+    // Neither game has ever been ranked or manually positioned before.
+
+    const { svc, events } = makeService();
+    await svc.reorderCategoryGames({
+      id: category.id,
+      gameIds: [bravo.id],
+      ...ACTOR,
+    });
+
+    const reorderedCall = events.emit.mock.calls.find(
+      ([topic]) => topic === 'gaming.category.games_reordered',
+    );
+    expect(reorderedCall?.[1]).toMatchObject({
+      before: [alpha.id, bravo.id],
+      after: [bravo.id, alpha.id],
+    });
+  });
+
+  it('rejects when manual is unbound in the sort catalog, writing nothing', async () => {
+    const category = await seedCategory({ sortKey: 'name' });
+    const provider = await seedProvider();
+    const g1 = await seedGame(provider.id, {}, [category.id]);
+    const nameOnlyCatalog = createGameSortCatalog([
+      defineGameSort({
+        key: 'name',
+        directions: ['asc', 'desc'],
+        paramsSchema: z.object({}),
+        async rank({ gameIds }) {
+          return gameIds;
+        },
+      }),
+    ]);
+    const { svc } = makeService(nameOnlyCatalog);
+
+    await expect(
+      svc.reorderCategoryGames({
+        id: category.id,
+        gameIds: [g1.id],
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameSortConfigInvalidError);
+
+    const [row] = await db.drizzle.db
+      .select({ sortKey: gameCategory.sortKey })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, category.id));
+    expect(row).toMatchObject({ sortKey: 'name' });
+  });
+});
+
+describe('GameCategoryService.updateCategoryPins (real PG)', () => {
+  it('replaces all pins in one request and audits ordered by position', async () => {
+    const category = await seedCategory();
+    const provider = await seedProvider();
+    const g1 = await seedGame(provider.id, { name: 'G1' }, [category.id]);
+    const g2 = await seedGame(provider.id, { name: 'G2' }, [category.id]);
+    const { svc, events } = makeService();
+
+    const result = await svc.updateCategoryPins({
+      id: category.id,
+      pins: [
+        { gameId: g2.id, position: 0 },
+        { gameId: g1.id, position: 1 },
+      ],
+      ...ACTOR,
+    });
+    expect(result).toEqual({
+      pins: [
+        { gameId: g2.id, position: 0 },
+        { gameId: g1.id, position: 1 },
+      ],
+    });
+
+    const rows = await memberRows(category.id);
+    const byId = new Map(rows.map((r) => [r.gameId, r.pinnedPosition]));
+    expect(byId.get(g2.id)).toBe(0);
+    expect(byId.get(g1.id)).toBe(1);
+
+    const pinsCall = events.emit.mock.calls.find(
+      ([topic]) => topic === 'gaming.category.pins_updated',
+    );
+    expect(pinsCall?.[1]).toMatchObject({
+      before: [],
+      after: [
+        { gameId: g2.id, position: 0 },
+        { gameId: g1.id, position: 1 },
+      ],
+    });
+  });
+
+  it('swaps two games pinned slots in one request without a constraint violation', async () => {
+    const category = await seedCategory();
+    const provider = await seedProvider();
+    const g1 = await seedGame(provider.id, {}, [category.id]);
+    const g2 = await seedGame(provider.id, {}, [category.id]);
+    await pinGame(category.id, g1.id, 0);
+    await pinGame(category.id, g2.id, 1);
+    const { svc } = makeService();
+
+    await svc.updateCategoryPins({
+      id: category.id,
+      pins: [
+        { gameId: g1.id, position: 1 },
+        { gameId: g2.id, position: 0 },
+      ],
+      ...ACTOR,
+    });
+
+    const rows = await memberRows(category.id);
+    const byId = new Map(rows.map((r) => [r.gameId, r.pinnedPosition]));
+    expect(byId.get(g1.id)).toBe(1);
+    expect(byId.get(g2.id)).toBe(0);
+  });
+
+  it('an empty pins array unpins every game', async () => {
+    const category = await seedCategory();
+    const provider = await seedProvider();
+    const g1 = await seedGame(provider.id, {}, [category.id]);
+    await pinGame(category.id, g1.id, 0);
+    const { svc } = makeService();
+
+    await svc.updateCategoryPins({
+      id: category.id,
+      pins: [],
+      ...ACTOR,
+    });
+
+    const rows = await memberRows(category.id);
+    expect(rows.every((r) => r.pinnedPosition === null)).toBe(true);
+  });
+
+  it('rejects a gameId that is not a member, writing nothing', async () => {
+    const category = await seedCategory();
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id, {}, [category.id]);
+    const outsider = await seedGame(provider.id);
+    const { svc } = makeService();
+
+    await expect(
+      svc.updateCategoryPins({
+        id: category.id,
+        pins: [
+          { gameId: member.id, position: 0 },
+          { gameId: outsider.id, position: 1 },
+        ],
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(CategoryGameNotMemberError);
+
+    const rows = await memberRows(category.id);
+    expect(rows.every((r) => r.pinnedPosition === null)).toBe(true);
+  });
+
+  it('drops a pin when its game is removed from the category', async () => {
+    const category = await seedCategory();
+    const provider = await seedProvider();
+    const g1 = await seedGame(provider.id, {}, [category.id]);
+    await pinGame(category.id, g1.id, 0);
+
+    await db.drizzle.db
+      .delete(gameCategoryGame)
+      .where(
+        sql`${gameCategoryGame.categoryId} = ${category.id} AND ${gameCategoryGame.gameId} = ${g1.id}`,
+      );
+
+    const rows = await memberRows(category.id);
+    expect(rows).toEqual([]);
   });
 });

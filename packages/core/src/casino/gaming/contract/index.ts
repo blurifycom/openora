@@ -9,6 +9,8 @@ import {
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
+  GameSortDirectionSchema,
+  GameSortKeySchema,
   GameTagMetadataSchema,
   GameTagSummarySchema,
   GameTagTypeSchema,
@@ -24,6 +26,7 @@ import {
   createKebabSlugSchema,
   paginated,
   queryArraySchema,
+  queue,
 } from '@openora/core/contracts';
 
 export { GameTypeSchema } from '@openora/core/contracts';
@@ -32,6 +35,7 @@ export { GameProviderAggregatorMappingSchema } from '@openora/core/contracts';
 export { GameCategorySummarySchema } from '@openora/core/contracts';
 export { GameCategorySummaryWithTranslationsSchema } from '@openora/core/contracts';
 export { GameCategoryTranslationsSchema } from '@openora/core/contracts';
+export { GameSortDirectionSchema, GameSortKeySchema } from '@openora/core/contracts';
 export {
   GameTagMetadataSchema,
   GameTagSummarySchema,
@@ -171,6 +175,10 @@ export const GameProviderSchema = GameProviderDetailSchema;
 
 export const GameCategoryDetailSchema = GameCategorySummaryWithTranslationsSchema.extend({
   isActive: z.boolean(),
+  sortKey: GameSortKeySchema,
+  sortDirection: GameSortDirectionSchema.nullable(),
+  sortParams: z.record(z.string(), z.unknown()),
+  rankedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -278,8 +286,125 @@ export const UpdateCategoryInputSchema = z.object({
   icon: z.string().trim().min(1).max(512).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
+  sortKey: GameSortKeySchema.optional(),
+  sortDirection: GameSortDirectionSchema.nullable().optional(),
+  sortParams: z.record(z.string(), z.unknown()).optional(),
 });
 export type UpdateCategoryInput = z.infer<typeof UpdateCategoryInputSchema>;
+
+export const GAME_CATEGORY_GAMES_ORDER_MAX = 2000;
+
+// admin-only: `pinnedPosition` must never appear on a public-facing schema.
+export const CategoryGameItemSchema = GameSchema.pick({
+  id: true,
+  name: true,
+  slug: true,
+  provider: true,
+  thumbnailUrl: true,
+  isActive: true,
+}).extend({
+  position: z.number().int().nullable(),
+  pinnedPosition: z.number().int().nullable(),
+});
+
+export const ListCategoryGamesInputSchema = PageQuerySchema.extend({
+  id: UuidSchema,
+});
+export type ListCategoryGamesInput = z.infer<typeof ListCategoryGamesInputSchema>;
+
+export const CategoryGamesPageSchema = paginated(CategoryGameItemSchema);
+export type CategoryGamesPage = z.infer<typeof CategoryGamesPageSchema>;
+
+export const ReorderCategoryGamesInputSchema = z.object({
+  id: UuidSchema,
+  gameIds: z
+    .array(UuidSchema)
+    .max(GAME_CATEGORY_GAMES_ORDER_MAX)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'gameIds must be unique' }),
+});
+export type ReorderCategoryGamesInput = z.infer<typeof ReorderCategoryGamesInputSchema>;
+
+export const ReorderCategoryGamesOutputSchema = z.object({
+  // A drag always ends in manual sort - see docs/modules/gaming.md. Returned so the caller's config
+  // view stays consistent without a follow-up GET.
+  sortKey: GameSortKeySchema,
+  sortDirection: GameSortDirectionSchema.nullable(),
+  sortParams: z.record(z.string(), z.unknown()),
+});
+
+export const GAME_CATEGORY_PINS_MAX = 100;
+
+const CategoryPinItemSchema = z.object({
+  gameId: UuidSchema,
+  // Capped at the same bound as a manual reorder's gameIds list - a slot can never be
+  // meaningfully further out than the largest category the platform allows, and this
+  // keeps an out-of-range value a 400 rather than a Postgres ::int overflow (500).
+  position: z.number().int().min(0).max(GAME_CATEGORY_GAMES_ORDER_MAX),
+});
+
+export const UpdateCategoryPinsInputSchema = z.object({
+  id: UuidSchema,
+  pins: z
+    .array(CategoryPinItemSchema)
+    .max(GAME_CATEGORY_PINS_MAX)
+    .superRefine((pins, ctx) => {
+      const seenGameIds = new Set<string>();
+      const seenPositions = new Set<number>();
+      for (const [index, pin] of pins.entries()) {
+        if (seenGameIds.has(pin.gameId)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'gameId must be unique',
+            path: [index, 'gameId'],
+          });
+        }
+        seenGameIds.add(pin.gameId);
+        if (seenPositions.has(pin.position)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'position must be unique',
+            path: [index, 'position'],
+          });
+        }
+        seenPositions.add(pin.position);
+      }
+    }),
+});
+export type UpdateCategoryPinsInput = z.infer<typeof UpdateCategoryPinsInputSchema>;
+
+// Echoes the full resulting pinned-slot list (ordered by position), so the caller's
+// config view stays consistent without a follow-up GET - the same rationale as
+// ReorderCategoryGamesOutputSchema above.
+export const UpdateCategoryPinsOutputSchema = z.object({
+  pins: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
+});
+
+export const GameSortOptionSchema = z.object({
+  key: GameSortKeySchema,
+  directions: z.array(GameSortDirectionSchema).min(1),
+  paramsJsonSchema: z.unknown(),
+});
+export type GameSortOption = z.infer<typeof GameSortOptionSchema>;
+
+export const GAME_CATEGORY_RANK_QUEUE = queue('gaming.category.rank');
+
+export const GameCategoryRankJobSchema = z.object({
+  categoryId: UuidSchema,
+});
+export type GameCategoryRankJob = z.infer<typeof GameCategoryRankJobSchema>;
+
+// Durable backstop for a lost post-commit rank enqueue - see docs/modules/gaming.md.
+export const GAME_CATEGORY_RANK_SWEEP_QUEUE = queue('gaming.category.rank-sweep');
+
+export const GameCategoryRankSweepJobSchema = z.object({});
+
+// How often the sweep looks for a category whose rank fell behind its last change.
+export const RANK_SWEEP_INTERVAL_MS = 60_000;
+
+// Cap on how many dirty categories one sweep pass enqueues (oldest rankDirtyAt first),
+// so a large backlog drains gradually across passes instead of compounding every
+// interval - see docs/modules/gaming.md.
+export const RANK_SWEEP_BATCH_LIMIT = 200;
 
 export const GameTagDetailSchema = GameTagSummarySchema.extend({
   createdAt: TimestampSchema,
@@ -466,4 +591,23 @@ export const gamingAdminContract = {
     .route({ method: 'POST', path: '/backoffice/gaming/games/bulk/categories' })
     .input(AddGameCategoriesInputSchema)
     .output(AddGameLinksOutputSchema),
+
+  listCategoryGames: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/categories/{id}/games' })
+    .input(ListCategoryGamesInputSchema)
+    .output(CategoryGamesPageSchema),
+
+  reorderCategoryGames: oc
+    .route({ method: 'PUT', path: '/backoffice/gaming/categories/{id}/games/order' })
+    .input(ReorderCategoryGamesInputSchema)
+    .output(ReorderCategoryGamesOutputSchema),
+
+  updateCategoryPins: oc
+    .route({ method: 'PUT', path: '/backoffice/gaming/categories/{id}/games/pins' })
+    .input(UpdateCategoryPinsInputSchema)
+    .output(UpdateCategoryPinsOutputSchema),
+
+  getSortOptions: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/sort-options' })
+    .output(z.array(GameSortOptionSchema)),
 };

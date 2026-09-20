@@ -53,6 +53,16 @@ export const GameCategoryTranslationsSchema = z.record(
 );
 export type GameCategoryTranslations = z.infer<typeof GameCategoryTranslationsSchema>;
 
+export const GAME_SORT_DIRECTIONS = ['asc', 'desc'] as const;
+export const GameSortDirectionSchema = z.enum(GAME_SORT_DIRECTIONS);
+export type GameSortDirection = z.infer<typeof GameSortDirectionSchema>;
+
+// A sort key names an entry in the operator-extensible GAME_SORT_CATALOG (built-ins:
+// 'manual', 'name') - not a fixed enum, so it is a validated slug shape, not z.enum.
+export const GAME_SORT_KEY_PATTERN = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
+export const GameSortKeySchema = z.string().trim().min(1).max(64).regex(GAME_SORT_KEY_PATTERN);
+export type GameSortKey = z.infer<typeof GameSortKeySchema>;
+
 export const GameCategorySummarySchema = z.object({
   id: UuidSchema,
   slug: z.string(),

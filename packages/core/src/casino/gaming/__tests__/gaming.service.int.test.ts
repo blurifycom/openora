@@ -857,6 +857,26 @@ describe('GamingService unavailable games (real PG)', () => {
       makeService().setGameAvailability({ gameId: randomUUID(), isUnavailable: true }),
     ).rejects.toBeInstanceOf(GameNotFoundError);
   });
+
+  it('marks every category containing the game dirty for a rank sweep on a real flip', async () => {
+    const category = await seedCategory();
+    const created = await seedGame({}, [category.id]);
+    const svc = makeService();
+
+    const before = await db.drizzle.db
+      .select({ rankDirtyAt: gameCategory.rankDirtyAt })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, category.id));
+    expect(before[0]?.rankDirtyAt).toBeNull();
+
+    await svc.setGameAvailability({ gameId: created.id, isUnavailable: true });
+
+    const after = await db.drizzle.db
+      .select({ rankDirtyAt: gameCategory.rankDirtyAt })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, category.id));
+    expect(after[0]?.rankDirtyAt).not.toBeNull();
+  });
 });
 
 describe('GamingService.startRound bonus rollover completion (real PG)', () => {

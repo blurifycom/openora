@@ -4,12 +4,14 @@ import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { GameAdapter, PlayEligibilityPort, WalletCommands } from '@openora/core/contracts';
+import { createGameSortCatalog } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
   makeEventBus,
   makeAdminGuard,
   makeIdentityReader,
+  makeJobQueue,
   testContext,
 } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -22,6 +24,7 @@ import {
   gameTag,
   gameTagGame,
 } from '../schema/index.js';
+import { createDefaultGameSorts } from '../adapters/sort/index.js';
 import { createGamingRouter } from '../router/index.js';
 import { GamingService } from '../service/gaming.service.js';
 import { GameCategoryService } from '../service/game-category.service.js';
@@ -52,11 +55,20 @@ function routerWith(adminGuard: AdminGuard) {
     makeIdentityReader(),
   );
   const providers = new GameProviderService(db.drizzle, events);
-  const categories = new GameCategoryService(db.drizzle, events);
+  const sortCatalog = createGameSortCatalog(createDefaultGameSorts(db.drizzle));
+  const categories = new GameCategoryService(db.drizzle, events, makeJobQueue(), sortCatalog);
   const tags = new GameTagService(db.drizzle, events);
   const bulk = new GameBulkService(db.drizzle, events);
   return {
-    router: createGamingRouter({ gaming, providers, categories, tags, bulk, adminGuard }),
+    router: createGamingRouter({
+      gaming,
+      providers,
+      categories,
+      tags,
+      bulk,
+      adminGuard,
+      sortCatalog,
+    }),
     events,
   };
 }

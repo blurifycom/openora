@@ -1,7 +1,9 @@
 import {
   type EventBus,
+  type DrizzleTx,
   makeNotFoundError,
   makeConflictError,
+  createDomainError,
   DrizzleService,
   findOneOrThrow,
   isUniqueConstraintViolation,
@@ -9,11 +11,20 @@ import {
   serializeRow,
   pageToOffset,
 } from '@openora/core/server';
-import { eq, and, asc, count, ilike, ne, or } from 'drizzle-orm';
-import { gameCategory } from '../schema/index.js';
-import type { CreateCategoryInput, UpdateCategoryInput } from '../contract/index.js';
+import { and, asc, count, eq, ilike, isNotNull, ne, or, sql } from 'drizzle-orm';
+import type { GameSortCatalog, GameSortDirection, JobQueueAdapter } from '@openora/core/contracts';
+import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
+import type {
+  CreateCategoryInput,
+  ReorderCategoryGamesInput,
+  UpdateCategoryInput,
+  UpdateCategoryPinsInput,
+} from '../contract/index.js';
+import { enqueueGameCategoryRank } from './game-sort-ranking.service.js';
 import {
+  categoryGameOrder,
   categorySummaryColumns,
+  providerSummaryColumns,
   toCategorySummary,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
@@ -22,6 +33,14 @@ export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
 export const GameCategorySlugTakenError = makeConflictError(
   'GameCategorySlugTakenError',
   'A category with this slug already exists',
+);
+export const GameSortConfigInvalidError = createDomainError<[message: string]>(
+  'GameSortConfigInvalidError',
+  (message) => message,
+);
+export const CategoryGameNotMemberError = createDomainError<[gameId: string, categoryId: string]>(
+  'CategoryGameNotMemberError',
+  (gameId, categoryId) => `Game ${gameId} is not a member of category ${categoryId}`,
 );
 
 function categorySnapshot(record: typeof gameCategory.$inferSelect) {
@@ -32,6 +51,10 @@ function categorySnapshot(record: typeof gameCategory.$inferSelect) {
     icon: record.icon,
     sortOrder: record.sortOrder,
     isActive: record.isActive,
+    sortKey: record.sortKey,
+    sortDirection: record.sortDirection,
+    sortParams: record.sortParams ?? {},
+    rankedAt: record.rankedAt ? record.rankedAt.toISOString() : null,
   };
 }
 
@@ -40,16 +63,63 @@ function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
   return {
     ...toCategorySummary(record),
     isActive: record.isActive,
+    sortKey: record.sortKey,
+    sortDirection: record.sortDirection,
+    sortParams: record.sortParams ?? {},
+    rankedAt: record.rankedAt ? record.rankedAt.toISOString() : null,
     createdAt: dates.createdAt,
     updatedAt: dates.updatedAt,
   };
+}
+
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The direction to store for a sort-config write. An explicit direction wins once
+ * validated against the definition's `directions`. Explicit `null` resets to the
+ * definition's own default (`directions[0]`) - a deliberate "use the default" signal,
+ * distinct from omitting the field. Omitting it keeps the category's current direction,
+ * unless the key changed or that direction is no longer offered, in which case it also
+ * falls back to the default.
+ */
+function resolveEffectiveDirection(
+  directions: readonly GameSortDirection[],
+  requested: GameSortDirection | null | undefined,
+  keyChanged: boolean,
+  existingDirection: GameSortDirection | null,
+): GameSortDirection {
+  if (requested !== undefined) {
+    return requested ?? (directions[0] as GameSortDirection);
+  }
+  if (!keyChanged && existingDirection !== null && directions.includes(existingDirection)) {
+    return existingDirection;
+  }
+  return directions[0] as GameSortDirection;
 }
 
 export class GameCategoryService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly jobQueue: JobQueueAdapter,
+    private readonly sortCatalog: GameSortCatalog,
   ) {}
+
+  // Locks a category row FOR UPDATE inside the caller's transaction, so a concurrent
+  // PATCH/reorder/pin write serializes rather than racing - shared by every write path
+  // below that needs the current row before deciding what changed.
+  private async lockCategoryRow(tx: DrizzleTx, id: string) {
+    return findOneOrThrow(
+      await tx.select().from(gameCategory).where(eq(gameCategory.id, id)).limit(1).for('update'),
+      new GameCategoryNotFoundError(id),
+    );
+  }
 
   async listActiveCategories({ page, limit }: { page: number; limit: number }) {
     const where = eq(gameCategory.isActive, true);
@@ -175,23 +245,21 @@ export class GameCategoryService {
     actorId,
     ip,
     userAgent,
+    sortKey,
+    sortDirection,
+    sortParams,
     ...patchInput
   }: UpdateCategoryInput & CatalogActor) {
-    const patch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
-    const hasChanges = Object.values(patch).some((value) => value !== undefined);
+    const scalarPatch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
+    const hasScalarChanges = Object.values(scalarPatch).some((value) => value !== undefined);
+    const wantsSortChange =
+      sortKey !== undefined || sortDirection !== undefined || sortParams !== undefined;
+
     const outcome = await this.drizzle.db
       .transaction(async (tx) => {
         // The row lock serializes concurrent PATCHes, so the audited `before` is the
         // state this write replaced, never a snapshot another request already changed.
-        const existing = findOneOrThrow(
-          await tx
-            .select()
-            .from(gameCategory)
-            .where(eq(gameCategory.id, id))
-            .limit(1)
-            .for('update'),
-          new GameCategoryNotFoundError(id),
-        );
+        const existing = await this.lockCategoryRow(tx, id);
         if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
           const [clash] = await tx
             .select({ id: gameCategory.id })
@@ -202,14 +270,25 @@ export class GameCategoryService {
             throw new GameCategorySlugTakenError();
           }
         }
+
+        const sortPatch = wantsSortChange
+          ? this.resolveSortPatch(existing, { sortKey, sortDirection, sortParams })
+          : { changed: false, patch: {} };
+
+        const hasChanges = hasScalarChanges || sortPatch.changed;
         if (!hasChanges) {
-          return { changed: false, before: existing, after: existing };
+          return { changed: false, sortChanged: false, before: existing, after: existing };
         }
+        const patch = {
+          ...scalarPatch,
+          ...sortPatch.patch,
+          ...(sortPatch.changed ? { rankDirtyAt: sql`now()` } : {}),
+        };
         const updated = findOneOrThrow(
           await tx.update(gameCategory).set(patch).where(eq(gameCategory.id, id)).returning(),
           new GameCategoryNotFoundError(id),
         );
-        return { changed: true, before: existing, after: updated };
+        return { changed: true, sortChanged: sortPatch.changed, before: existing, after: updated };
       })
       .catch((error: unknown) => {
         if (isUniqueConstraintViolation(error)) {
@@ -228,6 +307,284 @@ export class GameCategoryService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+    if (outcome.sortChanged) {
+      enqueueGameCategoryRank(this.jobQueue, id);
+    }
     return toCategoryDetail(outcome.after);
+  }
+
+  async listCategoryGames(id: string, { page, limit }: { page: number; limit: number }) {
+    findOneOrThrow(
+      await this.drizzle.db
+        .select({ id: gameCategory.id })
+        .from(gameCategory)
+        .where(eq(gameCategory.id, id))
+        .limit(1),
+      new GameCategoryNotFoundError(id),
+    );
+    const where = eq(gameCategoryGame.categoryId, id);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: game.id,
+          name: game.name,
+          slug: game.slug,
+          provider: providerSummaryColumns,
+          thumbnailUrl: game.thumbnailUrl,
+          isActive: game.isActive,
+          position: gameCategoryGame.position,
+          pinnedPosition: gameCategoryGame.pinnedPosition,
+        })
+        .from(gameCategoryGame)
+        .innerJoin(game, eq(gameCategoryGame.gameId, game.id))
+        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+        .where(where)
+        // Effective order (categoryGameOrder, single owner with the public read path),
+        // not the operator's own manual `position` - see docs/modules/gaming.md.
+        .orderBy(...categoryGameOrder())
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(gameCategoryGame).where(where),
+    ]);
+    return { items: rows, total: Number(n), page, limit };
+  }
+
+  async reorderCategoryGames({
+    id,
+    gameIds,
+    actorId,
+    ip,
+    userAgent,
+  }: ReorderCategoryGamesInput & CatalogActor) {
+    const outcome = await this.drizzle.db.transaction(async (tx) => {
+      // The row lock serializes a concurrent reorder/PATCH/pins write on this category -
+      // last-write-wins, not optimistic concurrency (docs/modules/gaming.md).
+      const category = await this.lockCategoryRow(tx, id);
+      // Dragging any game always ends the category in manual sort - see docs/modules/gaming.md - so
+      // 'manual' must be bound in the catalog regardless of the category's current key.
+      if (!this.sortCatalog.get('manual')) {
+        throw new GameSortConfigInvalidError("Unknown sort key: 'manual'");
+      }
+
+      // The full pre-drag effective order (categoryGameOrder semantics: rank, name, id)
+      // - the same order every reader uses - so `before` below is the complete list the
+      // write actually rewrote, not just the subset that already had a manual position.
+      const memberRows = await tx
+        .select({ gameId: gameCategoryGame.gameId })
+        .from(gameCategoryGame)
+        .innerJoin(game, eq(gameCategoryGame.gameId, game.id))
+        .where(eq(gameCategoryGame.categoryId, id))
+        .orderBy(...categoryGameOrder());
+      const memberIds = new Set(memberRows.map((row) => row.gameId));
+      const missingId = gameIds.find((gameId) => !memberIds.has(gameId));
+      if (missingId !== undefined) {
+        throw new CategoryGameNotMemberError(missingId, id);
+      }
+
+      const sortKeyBefore = category.sortKey;
+      const sortDirectionBefore = category.sortDirection;
+      const sortParamsBefore = category.sortParams ?? {};
+      const before = memberRows.map((row) => row.gameId);
+
+      if (gameIds.length > 0) {
+        await tx.execute(sql`
+          UPDATE game_category_game AS gcg
+          SET position = (v.pos - 1)::int
+          FROM unnest(${sql.param(gameIds)}::uuid[]) WITH ORDINALITY AS v(game_id, pos)
+          WHERE gcg.category_id = ${id} AND gcg.game_id = v.game_id
+            AND gcg.position IS DISTINCT FROM (v.pos - 1)::int
+        `);
+      }
+      const listedIds = new Set(gameIds);
+      // memberIds iterates in the same effective order as memberRows (Set preserves
+      // insertion order), so this is already the pre-drag order minus the dragged ids -
+      // exactly the tail `after` needs below.
+      const unlistedIds = [...memberIds].filter((gameId) => !listedIds.has(gameId));
+      if (unlistedIds.length > 0) {
+        // Seeds every member the drag didn't touch from the category's pre-drag
+        // effective order (rank), never null - keeps its visible position stable
+        // across the switch to manual. Same NULLS-LAST ordering as categoryGameOrder()
+        // (shared/game-catalog.ts) - inlined here in raw SQL rather than shared, since
+        // this query also needs the row id and the != ALL exclusion. See docs/modules/gaming.md.
+        await tx.execute(sql`
+          WITH unlisted AS (
+            SELECT gcg.id, gcg.position AS current_position,
+                   row_number() OVER (ORDER BY gcg.rank, g.name, g.id) AS rn
+            FROM game_category_game gcg
+            JOIN game g ON g.id = gcg.game_id
+            WHERE gcg.category_id = ${id} AND gcg.game_id != ALL(${sql.param(gameIds)}::uuid[])
+          )
+          UPDATE game_category_game AS gcg
+          SET position = (${gameIds.length} + unlisted.rn - 1)::int
+          FROM unlisted
+          WHERE gcg.id = unlisted.id
+            AND unlisted.current_position IS DISTINCT FROM (${gameIds.length} + unlisted.rn - 1)::int
+        `);
+      }
+      await tx
+        .update(gameCategory)
+        .set({
+          sortKey: 'manual',
+          sortDirection: null,
+          sortParams: {},
+          rankDirtyAt: sql`now()`,
+        })
+        .where(eq(gameCategory.id, id));
+      const after = [...gameIds, ...unlistedIds];
+      return {
+        before,
+        after,
+        sortKeyBefore,
+        sortDirectionBefore,
+        sortParamsBefore,
+      };
+    });
+
+    this.events.emit('gaming.category.games_reordered', {
+      categoryId: id,
+      actorId,
+      before: outcome.before,
+      after: outcome.after,
+      sortKeyBefore: outcome.sortKeyBefore,
+      sortKeyAfter: 'manual',
+      sortDirectionBefore: outcome.sortDirectionBefore,
+      sortDirectionAfter: null,
+      sortParamsBefore: outcome.sortParamsBefore,
+      sortParamsAfter: {},
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    enqueueGameCategoryRank(this.jobQueue, id);
+    return {
+      sortKey: 'manual' as const,
+      sortDirection: null,
+      sortParams: {},
+    };
+  }
+
+  async updateCategoryPins({
+    id,
+    pins,
+    actorId,
+    ip,
+    userAgent,
+  }: UpdateCategoryPinsInput & CatalogActor) {
+    const outcome = await this.drizzle.db.transaction(async (tx) => {
+      // The row lock serializes a concurrent pins/reorder/PATCH write on this category -
+      // last-write-wins, not optimistic concurrency (docs/modules/gaming.md).
+      await this.lockCategoryRow(tx, id);
+
+      const memberRows = await tx
+        .select({
+          gameId: gameCategoryGame.gameId,
+          pinnedPosition: gameCategoryGame.pinnedPosition,
+        })
+        .from(gameCategoryGame)
+        .where(eq(gameCategoryGame.categoryId, id));
+      const memberIds = new Set(memberRows.map((row) => row.gameId));
+      const missingId = pins.find((pin) => !memberIds.has(pin.gameId))?.gameId;
+      if (missingId !== undefined) {
+        throw new CategoryGameNotMemberError(missingId, id);
+      }
+
+      const before = memberRows
+        .filter(
+          (row): row is { gameId: string; pinnedPosition: number } => row.pinnedPosition !== null,
+        )
+        .sort((a, b) => a.pinnedPosition - b.pinnedPosition)
+        .map((row) => ({ gameId: row.gameId, position: row.pinnedPosition }));
+
+      // Clears every currently-pinned row first (never the whole category - at most
+      // GAME_CATEGORY_PINS_MAX rows): writing the new slots directly could momentarily
+      // collide with another game's still-current slot on the partial unique index (a
+      // same-request swap in particular) - see docs/modules/gaming.md.
+      await tx
+        .update(gameCategoryGame)
+        .set({ pinnedPosition: null })
+        .where(
+          and(eq(gameCategoryGame.categoryId, id), isNotNull(gameCategoryGame.pinnedPosition)),
+        );
+
+      if (pins.length > 0) {
+        await tx.execute(sql`
+          UPDATE game_category_game AS gcg
+          SET pinned_position = v.position
+          FROM (VALUES ${sql.join(
+            pins.map((pin) => sql`(${pin.gameId}::uuid, ${pin.position}::int)`),
+            sql`, `,
+          )}) AS v(game_id, position)
+          WHERE gcg.category_id = ${id} AND gcg.game_id = v.game_id
+        `);
+      }
+
+      await tx
+        .update(gameCategory)
+        .set({ rankDirtyAt: sql`now()` })
+        .where(eq(gameCategory.id, id));
+
+      const after = [...pins].sort((a, b) => a.position - b.position);
+      return { before, after };
+    });
+
+    this.events.emit('gaming.category.pins_updated', {
+      categoryId: id,
+      actorId,
+      before: outcome.before,
+      after: outcome.after,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    enqueueGameCategoryRank(this.jobQueue, id);
+    return { pins: outcome.after };
+  }
+
+  private resolveSortPatch(
+    existing: typeof gameCategory.$inferSelect,
+    input: {
+      sortKey?: string;
+      sortDirection?: GameSortDirection | null;
+      sortParams?: Record<string, unknown>;
+    },
+  ): { changed: boolean; patch: Partial<typeof gameCategory.$inferInsert> } {
+    const nextKey = input.sortKey ?? existing.sortKey;
+    const definition = this.sortCatalog.get(nextKey);
+    if (!definition) {
+      throw new GameSortConfigInvalidError(`Unknown sort key: ${nextKey}`);
+    }
+    if (
+      input.sortDirection !== undefined &&
+      input.sortDirection !== null &&
+      !definition.directions.includes(input.sortDirection)
+    ) {
+      throw new GameSortConfigInvalidError(
+        `'${input.sortDirection}' is not a valid direction for sort '${nextKey}'`,
+      );
+    }
+    const keyChanged = input.sortKey !== undefined && input.sortKey !== existing.sortKey;
+    const effectiveDirection = resolveEffectiveDirection(
+      definition.directions,
+      input.sortDirection,
+      keyChanged,
+      existing.sortDirection,
+    );
+    // A single-direction sort (eg 'manual') has no real direction concept - store null
+    // rather than a value that would misleadingly imply a choice was made.
+    const storedDirection = definition.directions.length > 1 ? effectiveDirection : null;
+
+    const rawParams = input.sortParams ?? (keyChanged ? {} : (existing.sortParams ?? {}));
+    const parsedParams = definition.paramsSchema.safeParse(rawParams);
+    if (!parsedParams.success || !isJsonObject(parsedParams.data)) {
+      throw new GameSortConfigInvalidError(`Invalid sortParams for sort '${nextKey}'`);
+    }
+
+    const changed =
+      nextKey !== existing.sortKey ||
+      storedDirection !== existing.sortDirection ||
+      !jsonEqual(parsedParams.data, existing.sortParams ?? {});
+
+    return {
+      changed,
+      patch: { sortKey: nextKey, sortDirection: storedDirection, sortParams: parsedParams.data },
+    };
   }
 }

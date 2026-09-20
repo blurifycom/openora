@@ -141,6 +141,13 @@ export {
 } from './lobby-section-catalog.js';
 
 export type {
+  GameSortCatalog,
+  GameSortDefinition,
+  GameSortRankInput,
+} from './game-sort-catalog.js';
+export { createGameSortCatalog, defineGameSort, GAME_SORT_CATALOG } from './game-sort-catalog.js';
+
+export type {
   RealtimeTransport,
   RealtimePresence,
   RealtimeSignal,
