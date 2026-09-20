@@ -170,6 +170,7 @@ export {
   PAYMENT_WEBHOOK_VERIFIER,
   PAYMENT_PROVIDERS,
   DEFAULT_PAYMENT_PROVIDER,
+  PaymentRejectedError,
 } from './payment.js';
 
 export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';

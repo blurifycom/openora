@@ -1,0 +1,1 @@
+CREATE INDEX "banner_schedule_ends_at_idx" ON "banner_schedule" USING btree ("ends_at");
