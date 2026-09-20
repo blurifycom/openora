@@ -57,11 +57,18 @@ export function createBonusRouter({
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {
           const { userId } = await adminGuard.assert(context, 'bonus', 'cancel');
           return mapErrors(
-            { CONFLICT: GrantNotForfeitableError, NOT_FOUND: GrantNotForfeitableNotFoundError },
+            {
+              CONFLICT: GrantNotForfeitableError,
+              // The lifecycle service's not-found (the forfeit target itself) and the reader's
+              // (the post-commit read-back) are separate classes built from separate
+              // `makeNotFoundError('Grant')` calls, so both need naming here or the read-back's
+              // 404 falls through unmapped to a 500.
+              NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
+            },
             async () => {
               const closed = await lifecycle.forfeit(
                 input.id,
-                input.reason,
+                'admin',
                 { id: userId, isAdmin: true },
                 input.note,
               );
@@ -70,7 +77,7 @@ export function createBonusRouter({
                 grantId: closed.grantId,
                 currency: closed.currency,
                 forfeitedAmount: closed.forfeitedAmount,
-                reason: input.reason,
+                reason: 'admin',
                 actorId: closed.actorId,
               });
               return grants.getForAdmin(input.id);

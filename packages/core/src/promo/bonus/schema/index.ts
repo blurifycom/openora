@@ -243,10 +243,12 @@ export const promoGrant = pgTable(
     index('promo_grant_user_id_currency_expires_at_idx')
       .on(t.userId, t.currency, t.expiresAt)
       .where(sql`${t.status} in ('pending', 'active')`),
-    // The expiry sweep, over live rows only.
+    // The expiry sweep, over live rows only. The same two statuses the sweep asks for: a
+    // narrower predicate cannot serve `status in ('pending', 'active')` and the sweep falls back
+    // to a sequential scan of the whole table every five minutes.
     index('promo_grant_expires_at_idx')
       .on(t.expiresAt)
-      .where(sql`${t.status} = 'active'`),
+      .where(sql`${t.status} in ('pending', 'active')`),
     // The player's own grant history: every status, newest first, over the whole table rather
     // than just the live partition the index above serves.
     index('promo_grant_user_id_created_at_idx').on(t.userId, t.createdAt, t.id),

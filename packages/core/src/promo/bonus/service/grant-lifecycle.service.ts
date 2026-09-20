@@ -124,7 +124,14 @@ export class GrantLifecycleService {
       }),
     );
     if (!closed) {
-      await this.recordRefusal(grantId, actor, note, exists.status);
+      // Not the status from the read above: expiry, a conversion, or another forfeit can close
+      // the grant between that read and the claim just failing, and this refusal is itself an
+      // immutable audit row. Read what the grant actually is now, not what it was on the way in.
+      const [current] = await this.drizzle.db
+        .select({ status: promoGrant.status })
+        .from(promoGrant)
+        .where(eq(promoGrant.id, grantId));
+      await this.recordRefusal(grantId, actor, note, current?.status ?? exists.status);
       throw new GrantNotForfeitableError();
     }
     return closed;
@@ -143,10 +150,13 @@ export class GrantLifecycleService {
     await this.audit.record({
       actorId: actor.id,
       actorType: actor.isAdmin ? 'admin' : 'player',
-      action: 'promo.bonus.forfeited',
+      // Its own action, not the successful one. A denial shares the resource type, so counting
+      // forfeitures - or reading a grant's history in a dispute - would otherwise mix probes at
+      // ids that do not exist in with the movements that destroyed real money.
+      action: 'promo.bonus.forfeit_refused',
       resourceType: 'promo_grant',
       resourceId: grantId,
-      after: { outcome: 'refused', status, note },
+      after: { status, note },
     });
   }
 
@@ -169,6 +179,7 @@ export class GrantLifecycleService {
     // forfeited is the column the CHECK constraint protects rather than a derived sum.
     const [locked] = await tx
       .select({
+        status: promoGrant.status,
         bonusBalance: promoGrant.bonusBalance,
         wageringProgress: promoGrant.wageringProgress,
       })
@@ -193,7 +204,6 @@ export class GrantLifecycleService {
       .where(and(eq(promoGrant.id, grantId), inArray(promoGrant.status, LIVE_STATUSES)))
       .returning({
         userId: promoGrant.userId,
-        status: promoGrant.status,
         currency: promoGrant.currency,
         grantedAmount: promoGrant.grantedAmount,
       });
@@ -226,8 +236,10 @@ export class GrantLifecycleService {
       action: outcome.action,
       resourceType: 'promo_grant',
       resourceId: grantId,
+      // From the locked read, not the update's RETURNING: Postgres returns the new row there, so
+      // the audit row would have said the grant was already forfeited before it was forfeited.
       before: {
-        status: claimed.status,
+        status: locked.status,
         bonusBalance: forfeitedAmount,
         wageringProgress: locked.wageringProgress,
       },

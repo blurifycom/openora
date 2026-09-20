@@ -39,7 +39,6 @@ const ADMIN_COLUMNS = {
   ...COLUMNS,
   userId: promoGrant.userId,
   offerId: promoGrant.offerId,
-  source: promoGrant.source,
   sourceRef: promoGrant.sourceRef,
 };
 

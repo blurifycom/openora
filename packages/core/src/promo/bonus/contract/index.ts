@@ -169,9 +169,14 @@ export const AdminGrantSchema = PlayerGrantSchema.extend({
 
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;
 
+/**
+ * A hand-issued forfeiture is always recorded as `admin`; the reason is not the caller's to pick.
+ * The vocabulary also carries `self_exclusion`, `account_closed` and the two the product has not
+ * scheduled, and an admin able to file their own action as a responsible-gambling one puts a
+ * false statement in the record a regulator reads. The note is where the case goes.
+ */
 export const ForfeitGrantInputSchema = z.object({
   id: UuidSchema,
-  reason: BonusForfeitReasonSchema,
   note: z.string().trim().min(10).max(500),
 });
 

@@ -50,6 +50,7 @@ export type DirectAuditAction =
   | 'wallet.wallet_asset.deleted'
   | 'promo.bonus.converted'
   | 'promo.bonus.forfeited'
+  | 'promo.bonus.forfeit_refused'
   | 'promo.bonus.expired'
   | 'promo.offer.claimed'
   | 'promo.offer.created'
