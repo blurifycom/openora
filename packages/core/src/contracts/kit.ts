@@ -16,6 +16,18 @@ export const QueryBooleanSchema = z.preprocess(
   z.boolean(),
 );
 
+// Coerces a query-string list: '?ids[]=a&ids[]=b' arrives as an array, a bare '?ids=a'
+// as a string. Duplicates are dropped so an all-of filter can compare against the count.
+export const queryArraySchema = <T extends z.ZodType<string>>(item: T, max: number) =>
+  z.preprocess(
+    (value) => (value === undefined || Array.isArray(value) ? value : [value]),
+    z
+      .array(item)
+      .min(1)
+      .transform((values) => [...new Set(values)])
+      .refine((values) => values.length <= max, { message: `at most ${max} distinct values` }),
+  );
+
 // kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
 export const KEBAB_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export function createKebabSlugSchema(maxLength: number) {

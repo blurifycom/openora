@@ -1,7 +1,9 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  CountryCodeSchema,
   CurrencyCodeSchema,
+  GAME_TYPES,
   GameBulkIdsSchema,
   GameCategoryNameSchema,
   GameCategorySummaryWithTranslationsSchema,
@@ -21,6 +23,7 @@ import {
   UuidSchema,
   createKebabSlugSchema,
   paginated,
+  queryArraySchema,
 } from '@openora/core/contracts';
 
 export { GameTypeSchema } from '@openora/core/contracts';
@@ -182,7 +185,21 @@ const CatalogFilterSchema = CatalogQueryBaseSchema.extend({
 export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   isActive: QueryBooleanSchema.optional(),
   isUnavailable: QueryBooleanSchema.optional(),
-});
+  categoryIds: queryArraySchema(UuidSchema, 50).optional(),
+  uncategorized: QueryBooleanSchema.optional(),
+  tagIds: queryArraySchema(UuidSchema, 50).optional(),
+  gameTypes: queryArraySchema(GameTypeSchema, GAME_TYPES.length).optional(),
+  geoBlocked: QueryBooleanSchema.optional(),
+  geoBlockedCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
+})
+  .refine(
+    (input) => !(input.uncategorized === true && (input.categoryId || input.categoryIds?.length)),
+    { message: 'uncategorized cannot be combined with a category filter', path: ['uncategorized'] },
+  )
+  .refine((input) => !(input.geoBlocked === false && input.geoBlockedCountries?.length), {
+    message: 'geoBlocked=false cannot be combined with geoBlockedCountries',
+    path: ['geoBlocked'],
+  });
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
 // `active` and `inactive` count each row's own `isActive` flag, matching the admin list filters.
