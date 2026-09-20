@@ -84,15 +84,16 @@ describe('a player reading their own bonuses', () => {
 
     const body = await readJson(await client.get('/promo/grants'));
 
-    expect(body).toHaveLength(1);
-    expect(body[0]).toMatchObject({
+    expect(body.items).toHaveLength(1);
+    expect(body.total).toBe(1);
+    expect(body.items[0]).toMatchObject({
       id: grantId,
       currency: 'USD',
       status: 'active',
       grantedAmount: '120.000000000000000000',
       wageringRequired: '600.000000000000000000',
     });
-    expect(typeof body[0].bonusBalance).toBe('string');
+    expect(typeof body.items[0].bonusBalance).toBe('string');
   });
 
   it('returns an empty list for a player who holds none', async () => {
@@ -101,7 +102,7 @@ describe('a player reading their own bonuses', () => {
     const res = await client.get('/promo/grants');
 
     expect(res.status).toBe(200);
-    expect(await readJson(res)).toEqual([]);
+    expect(await readJson(res)).toMatchObject({ items: [], total: 0 });
   });
 
   it('filters by status', async () => {
@@ -111,8 +112,9 @@ describe('a player reading their own bonuses', () => {
     const active = await readJson(await client.get('/promo/grants?status=active'));
     const expired = await readJson(await client.get('/promo/grants?status=expired'));
 
-    expect(active).toHaveLength(1);
-    expect(expired).toEqual([]);
+    expect(active.items).toHaveLength(1);
+    expect(expired.items).toEqual([]);
+    expect(expired.total).toBe(0);
   });
 
   it('reads one by id', async () => {
@@ -145,9 +147,11 @@ describe('a player reaching for someone else', () => {
     const firstPage = await readJson(await client.get('/promo/grants?limit=1'));
     const secondPage = await readJson(await client.get('/promo/grants?limit=1&page=2'));
 
-    expect(firstPage).toHaveLength(1);
-    expect(secondPage).toHaveLength(1);
-    expect(firstPage[0].id).not.toBe(secondPage[0].id);
+    expect(firstPage.items).toHaveLength(1);
+    expect(secondPage.items).toHaveLength(1);
+    // The count is what tells a client there is a second page at all.
+    expect(firstPage.total).toBe(2);
+    expect(firstPage.items[0].id).not.toBe(secondPage.items[0].id);
   });
 
   it('cannot widen the list past their own grants', async () => {
@@ -157,7 +161,7 @@ describe('a player reaching for someone else', () => {
 
     const body = await readJson(await stranger.client.get(`/promo/grants?userId=${owner.userId}`));
 
-    expect(body).toEqual([]);
+    expect(body).toMatchObject({ items: [], total: 0 });
   });
 
   it('is refused outright when signed out', async () => {

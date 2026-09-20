@@ -1,5 +1,5 @@
-import { and, desc, eq } from 'drizzle-orm';
-import { type PageQuery, type Uuid } from '@openora/core/contracts';
+import { and, count, desc, eq } from 'drizzle-orm';
+import { type PageQuery, type Paginated, type Uuid } from '@openora/core/contracts';
 import {
   makeNotFoundError,
   pageToOffset,
@@ -41,19 +41,23 @@ export class GrantReaderService {
   async list(
     userId: Uuid,
     query: PageQuery & { status?: PlayerGrant['status'] },
-  ): Promise<PlayerGrant[]> {
-    const rows = await this.drizzle.db
-      .select(COLUMNS)
-      .from(promoGrant)
-      .where(
-        query.status === undefined
-          ? eq(promoGrant.userId, userId)
-          : and(eq(promoGrant.userId, userId), eq(promoGrant.status, query.status)),
-      )
-      .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
-      .limit(query.limit)
-      .offset(pageToOffset(query.page, query.limit));
-    return rows.map(toPlayerGrant);
+  ): Promise<Paginated<PlayerGrant>> {
+    const { page, limit } = query;
+    const where =
+      query.status === undefined
+        ? eq(promoGrant.userId, userId)
+        : and(eq(promoGrant.userId, userId), eq(promoGrant.status, query.status));
+    const [rows, [total]] = await Promise.all([
+      this.drizzle.db
+        .select(COLUMNS)
+        .from(promoGrant)
+        .where(where)
+        .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(promoGrant).where(where),
+    ]);
+    return { items: rows.map(toPlayerGrant), total: Number(total?.n ?? 0), page, limit };
   }
 
   /**

@@ -12,6 +12,7 @@ import {
   CurrencyTickerSchema,
   MoneyAmountSchema,
   PageQuerySchema,
+  paginated,
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -85,7 +86,7 @@ export const bonusContract = {
     list: oc
       .route({ method: 'GET', path: '/promo/grants' })
       .input(ListPlayerGrantsInputSchema)
-      .output(z.array(PlayerGrantSchema)),
+      .output(paginated(PlayerGrantSchema)),
 
     get: oc
       .route({ method: 'GET', path: '/promo/grants/{id}' })
