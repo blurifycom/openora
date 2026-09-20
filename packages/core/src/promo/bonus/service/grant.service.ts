@@ -68,6 +68,14 @@ const grantArgsSchema = z.object({
       ),
       expiryDays: z.number().int().positive(),
       weightProfileId: UuidSchema.optional(),
+      // Zod strips what it does not declare, so a limit missing from this schema is a limit
+      // silently dropped on the way to the snapshot the engine enforces against.
+      maxBet: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
+        .nullable()
+        .optional(),
+      maxWinMultiplier: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
+        .nullable()
+        .optional(),
     })
     .default(DEFAULT_GRANT_TERMS),
 });

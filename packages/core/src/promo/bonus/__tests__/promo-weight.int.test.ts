@@ -7,6 +7,7 @@ import type { Uuid } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoWeight, promoWeightProfile } from '../schema/index.js';
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
+import { seedDefaultWeightProfile } from '../seed/index.js';
 
 let db: TestDb;
 let profileId: Uuid;
@@ -156,5 +157,41 @@ describe('promo_weight guards', () => {
     await db.drizzle.db.delete(promoWeightProfile);
 
     expect(await db.drizzle.db.select().from(promoWeight)).toHaveLength(0);
+  });
+});
+
+describe('the profile an operator starts from', () => {
+  beforeEach(async () => {
+    await db.drizzle.db.delete(promoWeightProfile);
+    await seedDefaultWeightProfile(db.drizzle.db);
+  });
+
+  const rowsOfDefault = async () =>
+    db.drizzle.db
+      .select({
+        scope: promoWeight.scope,
+        scopeRef: promoWeight.scopeRef,
+        contributionPercent: promoWeight.contributionPercent,
+      })
+      .from(promoWeight);
+
+  it('excludes sportsbook and PvP, and counts everything else in full', async () => {
+    const rows = await rowsOfDefault();
+
+    // The headline rule from the client: only casino play clears a requirement. Resolution
+    // falls through to the default, so without these two rows a PvP bet would count in full.
+    expect(resolveContributionPercent(rows, { provider: 'aggregator', product: 'pvp' })).toBe(
+      '0.00',
+    );
+    expect(
+      resolveContributionPercent(rows, { provider: 'aggregator', product: 'sportsbook' }),
+    ).toBe('0.00');
+    expect(resolveContributionPercent(rows, CASINO)).toBe('100.00');
+  });
+
+  it('is convergent, so a re-run adds no second copy of a row', async () => {
+    await seedDefaultWeightProfile(db.drizzle.db);
+
+    expect(await rowsOfDefault()).toHaveLength(3);
   });
 });

@@ -53,6 +53,12 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
+export const WalletMaxBetExceededError = createDomainError<[stake: string, maxBet: string]>(
+  'WalletMaxBetExceededError',
+  (stake, maxBet) =>
+    `stake ${stake} is over the ${maxBet} maximum bet the active bonus was granted under`,
+);
+
 export const WalletBonusEngineUnavailableError = createDomainError<[type: string]>(
   'WalletBonusEngineUnavailableError',
   (type) =>
@@ -215,6 +221,12 @@ export class WalletCommandsService implements WalletCommands {
           })
         : undefined;
     if (wagered && !wagered.ok) {
+      // A stake over the grant's max bet is a refused bet, not a short balance. Reporting it as
+      // insufficient funds would tell the player to deposit more, and a client that did would
+      // hit the same wall with a bigger balance.
+      if (wagered.reason === 'max_bet_exceeded') {
+        throw new WalletMaxBetExceededError(amount, wagered.maxBet);
+      }
       return { ok: false, available: moneyAdd(available, wagered.bonusAvailable) };
     }
     if (moneyCompare(fromBonus, '0') > 0 && !wagered) {

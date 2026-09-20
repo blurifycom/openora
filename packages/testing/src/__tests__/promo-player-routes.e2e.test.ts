@@ -127,6 +127,67 @@ describe('a player reading their own bonuses', () => {
   });
 });
 
+describe('a player reading their bonus position', () => {
+  it('sums their live grants per currency', async () => {
+    const { client, userId } = await player();
+    await grantBonus(userId, '40');
+    await grantBonus(userId, '60');
+
+    const body = await readJson(await client.get('/promo/balance'));
+
+    expect(body).toHaveLength(1);
+    expect(body[0]).toMatchObject({
+      currency: 'USD',
+      bonus: '100.000000000000000000',
+      wageringRequired: '500.000000000000000000',
+      activeGrants: 2,
+    });
+  });
+
+  it('shows another player nothing of it', async () => {
+    const owner = await player();
+    const stranger = await player();
+    await grantBonus(owner.userId, '250');
+
+    const body = await readJson(await stranger.client.get('/promo/balance'));
+
+    expect(body).toEqual([]);
+  });
+
+  it('is refused outright when signed out', async () => {
+    const res = await app.app.request('/promo/balance');
+
+    expect(res.status).toBe(401);
+  });
+
+  it('reads the movements behind one of their own grants', async () => {
+    const { client, userId } = await player();
+    const grantId = await grantBonus(userId, '75');
+
+    const body = await readJson(await client.get(`/promo/grants/${grantId}/entries`));
+
+    // The opening credit: bonus-only movements never reach the wallet ledger, so this route is
+    // the only place a player can see them.
+    expect(body.total).toBe(1);
+    expect(body.items[0]).toMatchObject({
+      type: 'grant',
+      bonusAmount: '75.000000000000000000',
+      balanceAfter: '75.000000000000000000',
+    });
+  });
+
+  it('will not read the movements of a grant that is not theirs', async () => {
+    const owner = await player();
+    const stranger = await player();
+    const grantId = await grantBonus(owner.userId, '512.987654');
+
+    const res = await stranger.client.get(`/promo/grants/${grantId}/entries`);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain('512.987654');
+  });
+});
+
 describe('a player reaching for someone else', () => {
   it('cannot read another player’s grant, and is told it does not exist', async () => {
     const owner = await player();

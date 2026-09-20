@@ -8,12 +8,15 @@ import {
   CurrencyTickerSchema,
   JOB_QUEUE,
   MoneyAmountSchema,
+  REALTIME_TRANSPORT,
   UuidSchema,
   WAGER_TRACKING,
   WALLET_READER,
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
+  type RealtimeTransport,
+  type Uuid,
 } from '@openora/core/contracts';
 import {
   ADMIN_GUARD,
@@ -30,7 +33,9 @@ import { GrantReaderService } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { OfferService } from './service/offer.service.js';
 import { WageringService } from './service/wagering.service.js';
-import { createBonusRouter } from './router/index.js';
+import { WeightService } from './service/weight.service.js';
+import { bonusBalanceChannel, createBonusRouter } from './router/index.js';
+import type { BonusBalanceChangeReason } from './contract/index.js';
 
 const logger = createLogger('promo-bonus');
 
@@ -81,6 +86,40 @@ export default {
     let drizzle: DrizzleService | null = null;
     let events: EventBus | null = null;
     let jobs: JobQueueAdapter | null = null;
+    let realtime: RealtimeTransport | null = null;
+
+    /**
+     * A signal, never the figures: the client refetches `GET /promo/balance`, so a dropped or
+     * reordered message costs nothing. Wired to the four changes a player cannot see coming -
+     * a deposit's bonus arriving from a job, a requirement completing, the sweep, an admin
+     * forfeiting. A bet's own progress is answered by the debit response the client already has.
+     */
+    const signalBalance = (
+      userId: Uuid,
+      currency: string,
+      reason: BonusBalanceChangeReason,
+      eventId: string,
+    ) => {
+      void realtime?.publish(bonusBalanceChannel(userId), { eventId, currency, reason });
+    };
+
+    // Subscribed centrally rather than published beside each emit: the four topics already have
+    // one producer each, and a fifth producer added later gets the signal for free instead of
+    // having to remember it.
+    for (const [topic, reason] of [
+      ['promo.bonus.granted', 'granted'],
+      ['promo.bonus.completed', 'completed'],
+      ['promo.bonus.expired', 'expired'],
+      ['promo.bonus.forfeited', 'forfeited'],
+    ] as const) {
+      ctx.events.on(topic, (payload: unknown, envelope) => {
+        const parsed = domainEventSchemas[topic].safeParse(payload);
+        if (!parsed.success || !envelope) {
+          return;
+        }
+        signalBalance(parsed.data.userId, parsed.data.currency, reason, envelope.eventId);
+      });
+    }
 
     const announce = (
       topic: 'promo.bonus.expired' | 'promo.bonus.forfeited',
@@ -231,12 +270,15 @@ export default {
       );
       events = c.get(EVENT_BUS);
       jobs = c.get(JOB_QUEUE);
+      realtime = c.get(REALTIME_TRANSPORT);
       void jobs
         .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
         .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
       return createBonusRouter({
         grants: new GrantReaderService(c.get(DRIZZLE)),
         offers,
+        realtime: c.get(REALTIME_TRANSPORT),
+        weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         lifecycle,
         events,
         adminGuard: c.get(ADMIN_GUARD),

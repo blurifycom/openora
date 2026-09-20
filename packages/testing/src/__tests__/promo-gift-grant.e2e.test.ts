@@ -154,9 +154,16 @@ describe('money the platform gifts', () => {
     await deposit(client, '10');
     await gift(userId, '40');
 
+    // The whole row set is snapshotted, exclusions included: a gift is wagered on the same
+    // terms as any other bonus, so PvP and sportsbook do not clear it either.
     const [grant] = await grantsOf(userId);
-    expect(grant?.terms.weights).toEqual([
-      { scope: 'default', scopeRef: null, contributionPercent: '100.00' },
-    ]);
+    expect(grant?.terms.weights).toEqual(
+      expect.arrayContaining([
+        { scope: 'default', scopeRef: null, contributionPercent: '100.00' },
+        { scope: 'product', scopeRef: 'pvp', contributionPercent: '0.00' },
+        { scope: 'product', scopeRef: 'sportsbook', contributionPercent: '0.00' },
+      ]),
+    );
+    expect(grant?.terms.weights).toHaveLength(3);
   });
 });

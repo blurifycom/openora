@@ -1,4 +1,4 @@
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import { type PageQuery, type Paginated, type Uuid } from '@openora/core/contracts';
 import {
   makeNotFoundError,
@@ -6,8 +6,8 @@ import {
   serializeRow,
   type DrizzleService,
 } from '@openora/core/server';
-import { promoGrant, type PromoGrant } from '../schema/index.js';
-import type { AdminGrant, PlayerGrant } from '../contract/index.js';
+import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
+import type { AdminGrant, BonusBalance, PlayerGrant, PlayerGrantEntry } from '../contract/index.js';
 
 export const GrantNotFoundError = makeNotFoundError('Grant');
 
@@ -33,6 +33,17 @@ const COLUMNS = {
   expiresAt: promoGrant.expiresAt,
   closedAt: promoGrant.closedAt,
   createdAt: promoGrant.createdAt,
+};
+
+const ENTRY_COLUMNS = {
+  id: promoGrantEntry.id,
+  type: promoGrantEntry.type,
+  currency: promoGrantEntry.currency,
+  bonusAmount: promoGrantEntry.bonusAmount,
+  realAmount: promoGrantEntry.realAmount,
+  wageringDelta: promoGrantEntry.wageringDelta,
+  balanceAfter: promoGrantEntry.balanceAfter,
+  createdAt: promoGrantEntry.createdAt,
 };
 
 const ADMIN_COLUMNS = {
@@ -67,6 +78,61 @@ export class GrantReaderService {
       this.drizzle.db.select({ n: count() }).from(promoGrant).where(where),
     ]);
     return { items: rows.map(toPlayerGrant), total: Number(total?.n ?? 0), page, limit };
+  }
+
+  /**
+   * One row per currency the player holds live bonus funds in. Summed from the grants rather
+   * than read off a balance column, because the grants are where the funds are: there is no
+   * second place for the two to disagree.
+   */
+  async balances(userId: Uuid, currency?: string): Promise<BonusBalance[]> {
+    const rows = await this.drizzle.db
+      .select({
+        currency: promoGrant.currency,
+        bonus: sql<string>`sum(${promoGrant.bonusBalance})::text`,
+        wageringRequired: sql<string>`sum(${promoGrant.wageringRequired})::text`,
+        wageringProgress: sql<string>`sum(${promoGrant.wageringProgress})::text`,
+        activeGrants: count(),
+      })
+      .from(promoGrant)
+      .where(
+        and(
+          eq(promoGrant.userId, userId),
+          eq(promoGrant.status, 'active'),
+          currency === undefined ? undefined : eq(promoGrant.currency, currency),
+        ),
+      )
+      .groupBy(promoGrant.currency)
+      .orderBy(asc(promoGrant.currency));
+    return rows.map((row) => ({ ...row, activeGrants: Number(row.activeGrants) }));
+  }
+
+  /** The movements behind one of the caller's own grants; someone else's id is simply missing. */
+  async entries(
+    userId: Uuid,
+    id: PromoGrant['id'],
+    query: PageQuery,
+  ): Promise<Paginated<PlayerGrantEntry>> {
+    const { page, limit } = query;
+    await this.get(userId, id);
+    const where = and(eq(promoGrantEntry.grantId, id), eq(promoGrantEntry.userId, userId));
+    const [rows, [total]] = await Promise.all([
+      this.drizzle.db
+        .select(ENTRY_COLUMNS)
+        .from(promoGrantEntry)
+        .where(where)
+        .orderBy(desc(promoGrantEntry.createdAt), desc(promoGrantEntry.id))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(promoGrantEntry).where(where),
+    ]);
+    const items = rows.map((row) =>
+      serializeRow(row, {
+        dateFields: ['createdAt'],
+        decimalFields: ['bonusAmount', 'realAmount', 'wageringDelta', 'balanceAfter'],
+      }),
+    );
+    return { items, total: Number(total?.n ?? 0), page, limit };
   }
 
   async listForAdmin(userId: Uuid, query: PageQuery): Promise<AdminGrant[]> {
