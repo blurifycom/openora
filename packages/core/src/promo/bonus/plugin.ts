@@ -4,6 +4,7 @@ import {
   BONUS_GRANTS,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
+  type BonusForfeitReason,
   JOB_QUEUE,
   UuidSchema,
   WAGER_TRACKING,
@@ -62,7 +63,7 @@ export default {
     const announce = (
       topic: 'promo.bonus.expired' | 'promo.bonus.forfeited',
       closed: Awaited<ReturnType<GrantLifecycleService['expireDue']>>,
-      reason?: 'self_exclusion' | 'account_closed',
+      reason?: BonusForfeitReason,
     ) => {
       for (const grant of closed) {
         events?.emit(topic, {
@@ -105,11 +106,7 @@ export default {
             ? undefined
             : { id: payload.actorId, isAdmin: payload.actorIsAdmin },
         );
-        announce(
-          'promo.bonus.forfeited',
-          closed,
-          payload.reason === 'account_closed' ? 'account_closed' : 'self_exclusion',
-        );
+        announce('promo.bonus.forfeited', closed, payload.reason);
       },
     });
 
@@ -135,12 +132,13 @@ export default {
         const actorIsAdmin =
           topic === 'player.account.closed' ||
           ('initiatedBy' in parsed.data && parsed.data.initiatedBy !== 'player');
+        // No queue idempotency key on purpose. It would have to be derived from the player and
+        // the reason, and a player who excludes themselves, lets the cool-off lapse, takes a new
+        // bonus and excludes themselves again produces the same key - which BullMQ drops
+        // silently, leaving the second bonus active. The durable guard is the `status = 'active'`
+        // claim inside `forfeitAllFor`, which already makes a redelivery write nothing twice.
         void jobs
-          .enqueue(
-            FORFEIT_QUEUE,
-            { userId, reason, actorId: actorId ?? null, actorIsAdmin },
-            { idempotencyKey: `promo-bonus-forfeit:${reason}:${userId}` },
-          )
+          .enqueue(FORFEIT_QUEUE, { userId, reason, actorId: actorId ?? null, actorIsAdmin })
           .catch((err: unknown) =>
             logger.error({ err, userId }, 'promo bonus forfeit enqueue failed'),
           );

@@ -100,7 +100,10 @@ export class GrantLifecycleService {
     // The balance under the lock the update is about to take, so the amount recorded as
     // forfeited is the column the CHECK constraint protects rather than a derived sum.
     const [locked] = await tx
-      .select({ bonusBalance: promoGrant.bonusBalance })
+      .select({
+        bonusBalance: promoGrant.bonusBalance,
+        wageringProgress: promoGrant.wageringProgress,
+      })
       .from(promoGrant)
       .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')))
       .for('update');
@@ -114,6 +117,9 @@ export class GrantLifecycleService {
         status: outcome.status,
         closedAt: sql`now()`,
         bonusBalance: ZERO,
+        // The requirement dies with the funds. A terminal grant still reporting progress reads,
+        // on the backoffice screen the rule is written for, as a bonus part-way to converting.
+        wageringProgress: ZERO,
         ...(outcome.reason === undefined ? {} : { forfeitReason: outcome.reason }),
       })
       .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')))
@@ -121,7 +127,6 @@ export class GrantLifecycleService {
         userId: promoGrant.userId,
         currency: promoGrant.currency,
         grantedAmount: promoGrant.grantedAmount,
-        wageringProgress: promoGrant.wageringProgress,
       });
     if (!claimed) {
       return null;
@@ -152,12 +157,16 @@ export class GrantLifecycleService {
       action: outcome.action,
       resourceType: 'promo_grant',
       resourceId: grantId,
-      before: { status: 'active', bonusBalance: forfeitedAmount },
+      before: {
+        status: 'active',
+        bonusBalance: forfeitedAmount,
+        wageringProgress: locked.wageringProgress,
+      },
       after: {
         status: outcome.status,
         bonusBalance: ZERO,
         forfeitedAmount,
-        wageringProgress: claimed.wageringProgress,
+        wageringProgress: ZERO,
         ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
       },
     });
