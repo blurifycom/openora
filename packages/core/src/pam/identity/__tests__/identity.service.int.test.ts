@@ -380,6 +380,31 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
     );
   });
 
+  it('locking one account does not block a different account signing in from the same IP', async () => {
+    const lockedAccount = await seedUser({ email: 'locked@b.dev', failedLoginAttempts: 4 });
+    const okAccount = await seedUser({ email: 'ok@b.dev', failedLoginAttempts: 0 });
+    const events = makeEventBus();
+    const limiter = allowLimiter();
+    const ipHeaders = { 'x-real-ip': '203.0.113.60' };
+    const svc = buildService({ events, limiter });
+
+    signInEmailMock.mockResolvedValueOnce(jsonResponse({ message: 'Invalid' }, 401));
+    await expect(
+      svc.login({ email: 'locked@b.dev', password: 'wrongpass1' }, ipHeaders, new Headers()),
+    ).rejects.toMatchObject({ data: { code: 'ACCOUNT_LOCKED' } });
+    expect((await readUser(lockedAccount.id)).lockoutUntil?.getTime()).toBeGreaterThan(Date.now());
+
+    signInEmailMock.mockResolvedValueOnce(signInSuccess(okAccount.id));
+    const result = await svc.login(
+      { email: 'ok@b.dev', password: 'rightpass1' },
+      ipHeaders,
+      new Headers(),
+    );
+
+    expect(result).toMatchObject({ session: { token: 'tok' } });
+    expect((await readUser(okAccount.id)).failedLoginAttempts).toBe(0);
+  });
+
   it('bypasses lockout for admins if configured with bypassForAdmins: true', async () => {
     const account = await seedUser({
       email: 'admin@b.dev',

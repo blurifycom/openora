@@ -58,7 +58,9 @@ export function getSessionId(context: unknown): string | undefined {
 }
 
 // Extracts IP only from headers; does not trust X-Forwarded-For without a
-// validated proxy boundary. Geo/rate-limit checks use this - a spoofed
+// validated proxy boundary. Behind `createApp` those headers are already sanitized:
+// X-Real-IP is the socket peer unless that peer is a configured trusted proxy (see
+// runtime/client-address.ts). Geo/rate-limit checks use this - a spoofed
 // X-Forwarded-For bypasses both. Use extractClientMeta({ headers, trustForwarded: true })
 // only when Node receives requests exclusively through a trusted reverse proxy
 // (Cloudflare, nginx, etc configured to strip and replace the header).
