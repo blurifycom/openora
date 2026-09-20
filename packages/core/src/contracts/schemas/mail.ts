@@ -1,6 +1,5 @@
 import * as z from 'zod';
-import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
-import { CurrencyCodeSchema } from './igaming-config.js';
+import { CurrencyTickerSchema, MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { RgInitiatorSchema } from './compliance.js';
 
 export const MAIL_TEMPLATE_KEYS = [
@@ -31,9 +30,13 @@ export const MAIL_TEMPLATE_KEYS = [
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
 
+// Ticker, not the ISO-4217 code: a wallet holds crypto as well as fiat, and a four-letter
+// ticker (USDT, USDC, DOGE) failed the three-character rule - the mail job then failed its
+// retries in the queue and the player was never told their money moved. This is the string
+// the mail prints; the money path validates the amount and the wallet's currency itself.
 const WithdrawalDetailsShape = {
   amount: MoneyAmountSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   transactionId: UuidSchema,
   occurredAt: TimestampSchema,
 } as const;
@@ -48,7 +51,7 @@ export const EmailTemplateDataSchemas = {
     period: z.string(),
     type: z.string(),
     amount: MoneyAmountSchema.nullable(),
-    currency: CurrencyCodeSchema.nullable(),
+    currency: CurrencyTickerSchema.nullable(),
     minutes: z.number().int().nullable(),
     initiatedBy: RgInitiatorSchema,
   }),
