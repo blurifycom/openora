@@ -56,6 +56,7 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
+const KYC_EXEMPTION_QUEUE = queue('kyc-exemption');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
@@ -71,6 +72,10 @@ const KycDecisionSyncJobSchema = z.object({
   // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
   // watermark `reconcile` compares against, immune to job-processing reordering.
   receivedAt: z.iso.datetime(),
+});
+const KycExemptionJobSchema = z.object({
+  userId: UuidSchema,
+  countryCode: z.string().length(2).nullable(),
 });
 
 export default {
@@ -132,30 +137,25 @@ export default {
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
     });
 
-    // Country-level KYC exemption: a fresh registration from a country (or while KYC is
-    // globally off) that doesn't require KYC is auto-approved at the basic tier instead
-    // of landing on `pending`. Errors are swallowed - the player staying `pending` is the
-    // safe direction, not a thrown error surfacing on the registration request.
-    ctx.events.on('identity.user.registered', (payload) => {
+    // Country-level KYC exemption is durable work: a registration event can be delivered
+    // at least once and a resolver/database outage must retry rather than strand a player
+    // at pending. The job's database guard makes repeated delivery harmless.
+    ctx.events.on('identity.user.registered', async (payload) => {
       const parsed = domainEventSchemas['identity.user.registered'].safeParse(payload);
-      if (!parsed.success || !complianceRef || !kycRef) {
+      if (!parsed.success || !jobQueueRef) {
         return;
       }
       const countryCode = parsed.data.countryCode ?? null;
-      const userId = parsed.data.userId;
-      const compliance = complianceRef;
-      const kyc = kycRef;
-      void (async () => {
-        try {
-          const { required, reason } = await compliance.resolveKycRequirement(countryCode);
-          if (required || (reason !== 'global_disabled' && reason !== 'country_exempt')) {
-            return;
-          }
-          await kyc.applyExemption(userId, { countryCode, reason });
-        } catch (err) {
-          logger.error({ err, userId }, 'KYC exemption apply failed');
-        }
-      })();
+      await jobQueueRef.enqueue(
+        KYC_EXEMPTION_QUEUE,
+        { userId: parsed.data.userId, countryCode },
+        {
+          idempotencyKey: `kyc-exemption:${parsed.data.userId}`,
+          orderingKey: parsed.data.userId,
+          attempts: 10,
+          backoff: { type: 'exponential', delayMs: 1_000 },
+        },
+      );
     });
 
     const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
@@ -231,6 +231,24 @@ export default {
         }
       },
     });
+    ctx.jobs.worker({
+      queue: KYC_EXEMPTION_QUEUE,
+      schema: KycExemptionJobSchema,
+      options: { serializeByOrderingKey: true },
+      handler: async ({ payload }) => {
+        if (!complianceRef || !kycRef) {
+          throw new Error('compliance services are not initialized');
+        }
+        const { required, reason } = await complianceRef.resolveKycRequirement(payload.countryCode);
+        if (required || (reason !== 'global_disabled' && reason !== 'country_exempt')) {
+          return;
+        }
+        await kycRef.applyExemption(payload.userId, {
+          countryCode: payload.countryCode,
+          reason,
+        });
+      },
+    });
 
     ctx.routers.add('compliance', (c) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
@@ -250,6 +268,7 @@ export default {
       const kyc = new KycVerificationService({
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
         kycAdapter,
         statusWriter: c.get(KYC_STATUS_WRITER),
         identityReader: c.get(IDENTITY_READER),

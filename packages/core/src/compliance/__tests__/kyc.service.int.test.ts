@@ -12,7 +12,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
-import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
+import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { kycVerification } from '../schema/index.js';
 import { KycVerificationService } from '../service/kyc.service.js';
@@ -23,6 +23,7 @@ type AdapterResult = { referenceId: string; status: KycVendorStatus; verificatio
 
 function makeService(options: { adapter?: Partial<AdapterResult>; config?: PlatformConfig } = {}) {
   const events = makeEventBus();
+  const audit = makeAuditWriter();
   const adapterResult: AdapterResult = {
     referenceId: randomUUID(),
     status: 'approved',
@@ -36,12 +37,13 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
   const svc = new KycVerificationService({
     drizzle: db.drizzle,
     events: events,
+    audit,
     kycAdapter,
     statusWriter,
     identityReader: makeIdentityReader(),
     ...(options.config ? { platformConfig: options.config } : {}),
   });
-  return { svc, events, kycAdapter, statusWriter, adapterResult };
+  return { svc, events, audit, kycAdapter, statusWriter, adapterResult };
 }
 
 const passportSubmission = {
@@ -532,7 +534,7 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
     expect(statusWriter.setStatus).not.toHaveBeenCalled();
   });
 
-  it('never re-KYCs a player whose only basic-tier history is an exemption', async () => {
+  it('re-KYCs an exempt player when cumulative deposits cross the threshold', async () => {
     const { svc, statusWriter } = makeService({ config });
     const { userId } = await seedPlayer();
     await svc.applyExemption(userId, { countryCode: 'DE', reason: 'country_exempt' });
@@ -541,14 +543,19 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
 
     await svc.handleDeposit(userId);
 
-    expect(statusWriter.setStatus).not.toHaveBeenCalled();
-    expect(await verificationsOf(userId)).toHaveLength(1);
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'resubmission_requested',
+      expect.objectContaining({ source: 'reverify' }),
+      expect.anything(),
+    );
+    expect(await verificationsOf(userId)).toHaveLength(2);
   });
 });
 
 describe('KycVerificationService.applyExemption (real PG)', () => {
   it('auto-approves the basic tier with a triggeredBy of exemption', async () => {
-    const { svc, statusWriter } = makeService();
+    const { svc, audit, events, statusWriter } = makeService();
     const { userId } = await seedPlayer({ kycStatus: 'not_started' });
 
     await svc.applyExemption(userId, { countryCode: 'DE', reason: 'country_exempt' });
@@ -567,6 +574,18 @@ describe('KycVerificationService.applyExemption (real PG)', () => {
       'approved',
       expect.objectContaining({ source: 'exemption' }),
       expect.anything(),
+    );
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'compliance.kyc.updated',
+        resourceId: expect.any(String),
+        after: expect.objectContaining({ source: 'exemption' }),
+      }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.kyc.updated',
+      expect.objectContaining({ source: 'exemption', auditRecorded: true }),
     );
   });
 

@@ -67,6 +67,7 @@ function build(guard: AdminGuard) {
   const kyc = new KycVerificationService({
     drizzle: db.drizzle,
     events,
+    audit: makeAuditWriter(),
     kycAdapter: mock<KycAdapter>({}),
     statusWriter,
     identityReader: makeIdentityReader(),

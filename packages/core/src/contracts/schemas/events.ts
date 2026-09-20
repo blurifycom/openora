@@ -123,6 +123,9 @@ export const KycStatusUpdatedSchema = z.object({
   previousStatus: KycStatusSchema,
   reason: z.string().nullable(),
   source: KycStatusSourceSchema,
+  // The originating state transaction has already appended the matching audit record.
+  // Consumers still receive the event, while audit's event subscriber must not duplicate it.
+  auditRecorded: z.literal(true).optional(),
   // Forward-compatible (ADR-0016): every deployment binds RedisStreamsBroker (ADR-0030/
   // 0032), so a durable backlog survives a restart. A pre-tiering (v4) payload in that
   // backlog at rollout has no `tier` at all - everything WAS basic-only before tiering,
@@ -1043,9 +1046,9 @@ export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof doma
 // Bump an entry only when its payload shape changes in a non-additive way, in the SAME commit
 // that edits the schema above. Events not listed default to version 1.
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
-  // v3: actorId is nullable - null marks a system-driven flip (vendor/webhook/reverify),
-  // which the audit writer records as actorType 'system'.
-  'compliance.kyc.updated': 5,
+  // v6: source adds `exemption` and auditRecorded identifies a transition whose audit row
+  // was atomically appended by the originating state transaction.
+  'compliance.kyc.updated': 6,
   'compliance.kyc.submitted': 2,
   'compliance.kyc.reverify_required': 2,
   'compliance.kyc.high_risk_signal_detected': 2,

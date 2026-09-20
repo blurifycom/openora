@@ -13,6 +13,7 @@ import {
 import {
   normalizeKycStatus,
   type KycAdapter,
+  type AuditWritePort,
   type KycCheckResult,
   type KycDocument,
   type KycRiskSignals,
@@ -23,6 +24,7 @@ import {
   type KycStatus,
   type PlatformConfig,
   type IdentityReader,
+  type Player,
   type User,
   ClientMeta,
 } from '@openora/core/contracts';
@@ -171,6 +173,7 @@ export function toPlayerSummaryView(view: PlayerKycView): PlayerKycSummaryView {
 export type KycVerificationDeps = {
   drizzle: DrizzleService;
   events: EventBus;
+  audit: AuditWritePort;
   kycAdapter: KycAdapter;
   statusWriter: KycStatusWriter;
   identityReader: IdentityReader;
@@ -181,6 +184,7 @@ export type KycVerificationDeps = {
 export class KycVerificationService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
+  private readonly audit: AuditWritePort;
   private readonly kycAdapter: KycAdapter;
   private readonly statusWriter: KycStatusWriter;
   private readonly identityReader: IdentityReader;
@@ -190,6 +194,7 @@ export class KycVerificationService {
   constructor(deps: KycVerificationDeps) {
     this.drizzle = deps.drizzle;
     this.events = deps.events;
+    this.audit = deps.audit;
     this.kycAdapter = deps.kycAdapter;
     this.statusWriter = deps.statusWriter;
     this.identityReader = deps.identityReader;
@@ -203,6 +208,7 @@ export class KycVerificationService {
 
   private async emitUpdated(params: {
     userId: User['id'];
+    playerId?: Player['id'];
     tier: KycTier;
     status: KycStatus;
     previousStatus: KycStatus | null;
@@ -210,8 +216,9 @@ export class KycVerificationService {
     actorId: User['id'] | null;
     reason: string | null;
     source: 'vendor' | 'manual' | 'webhook' | 'reverify' | 'exemption';
+    auditRecorded?: true;
   }) {
-    if (params.tier === 'basic' && !params.playerTransition) {
+    if (params.tier === 'basic' && !params.playerTransition && !params.playerId) {
       return;
     }
     if (params.tier === 'advanced' && params.previousStatus === params.status) {
@@ -221,6 +228,7 @@ export class KycVerificationService {
       userId: params.userId,
       playerId:
         params.playerTransition?.playerId ??
+        params.playerId ??
         (await this.identityReader.getPlayerIdByUserIdSafe(params.userId)),
       actorId: params.actorId,
       status: params.status,
@@ -229,6 +237,7 @@ export class KycVerificationService {
       reason: params.reason,
       source: params.source,
       tier: params.tier,
+      ...(params.auditRecorded ? { auditRecorded: true } : {}),
     });
   }
 
@@ -607,13 +616,6 @@ export class KycVerificationService {
       return;
     }
 
-    // A country/global exemption, not a real decision - re-KYC has nothing to re-verify
-    // against, so a high-roller who was only ever exempted never gets threshold-triggered.
-    const latestBasic = await this.latestVerification(userId, 'basic');
-    if (latestBasic?.triggeredBy === 'exemption') {
-      return;
-    }
-
     const [deposited] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
       .from(walletTransaction)
@@ -897,59 +899,85 @@ export class KycVerificationService {
     userId: User['id'],
     params: { countryCode: string | null; reason: 'global_disabled' | 'country_exempt' },
   ): Promise<void> {
-    await this.drizzle.db.transaction(async (trx) => {
-      const current = await this.requirePlayerRowForUpdate(userId, trx);
-      const existing = await this.latestVerification(userId, 'basic', trx);
-      if (existing) {
-        return;
-      }
+    const outcome = await this.drizzle.db.transaction((trx) =>
+      withAdvisoryXactLock(trx, `kyc-submit:${userId}:basic`, async () => {
+        const current = await this.requirePlayerRowForUpdate(userId, trx);
+        const existing = await this.latestVerification(userId, 'basic', trx);
+        if (existing) {
+          return null;
+        }
 
-      const decisionReason =
-        params.reason === 'global_disabled'
-          ? 'KYC is globally disabled'
-          : `Country ${params.countryCode ?? 'unknown'} is exempt from KYC`;
-      findOneOrThrow(
-        await trx
-          .insert(kycVerification)
-          .values({
-            userId,
-            provider: 'exemption',
-            referenceId: `exemption-${params.countryCode ?? 'global'}`,
+        const decisionReason =
+          params.reason === 'global_disabled'
+            ? 'KYC is globally disabled'
+            : `Country ${params.countryCode ?? 'unknown'} is exempt from KYC`;
+        findOneOrThrow(
+          await trx
+            .insert(kycVerification)
+            .values({
+              userId,
+              provider: 'exemption',
+              referenceId: `exemption-${params.countryCode ?? 'global'}`,
+              tier: 'basic',
+              status: 'approved',
+              documentTypes: [],
+              triggeredBy: 'exemption',
+              decisionReason,
+              decidedAt: new Date(),
+            })
+            .returning(),
+          new KycVerificationNotFoundError(userId),
+        );
+        const playerTransition = await this.statusWriter.setStatus(
+          userId,
+          'approved',
+          { actorId: null, source: 'exemption' },
+          trx,
+        );
+        await this.audit.recordInTransaction(trx, {
+          actorType: 'system',
+          action: 'compliance.kyc.updated',
+          resourceType: 'player',
+          resourceId: playerTransition?.playerId ?? current.id,
+          before: { kycStatus: current.kycStatus, tier: 'basic' },
+          after: {
+            kycStatus: 'approved',
             tier: 'basic',
-            status: 'approved',
-            documentTypes: [],
-            triggeredBy: 'exemption',
-            decisionReason,
-            decidedAt: new Date(),
-          })
-          .returning(),
-        new KycVerificationNotFoundError(userId),
-      );
-      const playerTransition = await this.statusWriter.setStatus(
-        userId,
-        'approved',
-        { actorId: null, source: 'exemption' },
-        trx,
-      );
-      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): emitted here, inside the transaction, so it can never be dropped
-      // by a crash between commit and a post-commit emit.
-      await this.emitUpdated({
-        userId,
-        tier: 'basic',
-        status: 'approved',
-        previousStatus: current.kycStatus,
-        playerTransition,
-        actorId: null,
-        reason: decisionReason,
-        source: 'exemption',
-      });
+            reason: decisionReason,
+            source: 'exemption',
+          },
+        });
+        return {
+          decisionReason,
+          playerId: playerTransition?.playerId ?? current.id,
+          previousStatus: current.kycStatus,
+          playerTransition,
+        };
+      }),
+    );
+    if (!outcome) {
+      return;
+    }
+    // The audit record above committed with the KYC state. This post-commit event remains
+    // available to realtime/tag consumers; auditRecorded prevents its subscriber from
+    // appending a duplicate audit row.
+    await this.emitUpdated({
+      userId,
+      playerId: outcome.playerId,
+      tier: 'basic',
+      status: 'approved',
+      previousStatus: outcome.previousStatus,
+      playerTransition: outcome.playerTransition,
+      actorId: null,
+      reason: outcome.decisionReason,
+      source: 'exemption',
+      auditRecorded: true,
     });
   }
 
   private async requirePlayerRowForUpdate(userId: User['id'], tx: DrizzleTx) {
     const rows = await tx
-      .select({ kycStatus: player.kycStatus })
+      .select({ id: player.id, kycStatus: player.kycStatus })
       .from(player)
       .where(eq(player.userId, userId))
       .for('update');
