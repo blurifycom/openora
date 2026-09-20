@@ -146,6 +146,28 @@ describe('an admin configuring offers', () => {
     expect(after?.terms).toEqual(granted?.terms);
   });
 
+  it('renames an offer without resetting the fields the patch never named', async () => {
+    const offer = await createOffer({
+      status: 'active',
+      requiresOptIn: true,
+      rules: { firstDepositOnly: true, excludedCountries: [] },
+    });
+
+    const patched = await readJson(
+      await admin.patch(`/backoffice/promo/offers/${offer.id}`, { name: 'Sign-Up Bonus 2026' }),
+    );
+
+    // A partial patch that refilled these with their create-time defaults would drop a live
+    // offer to `draft` and turn an opt-in, first-deposit-only offer into one that matches every
+    // depositor's deposit.
+    expect(patched).toMatchObject({
+      name: 'Sign-Up Bonus 2026',
+      status: 'active',
+      requiresOptIn: true,
+      rules: { firstDepositOnly: true },
+    });
+  });
+
   it('refuses a player reaching for the admin surface', async () => {
     const { client } = await registerAndMaterializePlayer(app, {
       email: `offers-player-${randomUUID()}@example.test`,
@@ -169,6 +191,41 @@ describe('a player taking an offer', () => {
     const listed = body.find((o: { id: string }) => o.id === offer.id);
     expect(listed).toMatchObject({ optedIn: false, accumulatedDeposit: '0' });
     expect(listed.wageringMultiplier).toBe('5');
+  });
+
+  it('shows a first-deposit-only offer to a player who has not deposited, and lets them take it', async () => {
+    const offer = await createOffer({
+      requiresOptIn: true,
+      rules: { firstDepositOnly: true, excludedCountries: [] },
+    });
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `offers-first-${randomUUID()}@example.test`,
+    });
+
+    const listed = await readJson(await client.get('/promo/offers'));
+    const optIn = await client.post(`/promo/offers/${offer.id}/opt-in`, {});
+
+    // The rule is about the deposit that is coming, so a player with none yet qualifies. Left to
+    // an absent fact it fails closed, and the marquee sign-up offer is invisible to everyone.
+    expect(listed.some((o: { id: string }) => o.id === offer.id)).toBe(true);
+    expect(optIn.status).toBe(200);
+  });
+
+  it('hides a first-deposit-only offer from a player who has already deposited', async () => {
+    const offer = await createOffer({
+      requiresOptIn: true,
+      rules: { firstDepositOnly: true, excludedCountries: [] },
+    });
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `offers-second-${randomUUID()}@example.test`,
+    });
+    await deposit(client, '50');
+
+    const listed = await readJson(await client.get('/promo/offers'));
+    const optIn = await client.post(`/promo/offers/${offer.id}/opt-in`, {});
+
+    expect(listed.some((o: { id: string }) => o.id === offer.id)).toBe(false);
+    expect(optIn.status).toBe(409);
   });
 
   it('takes it once, however many times they ask', async () => {

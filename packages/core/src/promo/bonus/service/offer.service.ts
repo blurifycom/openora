@@ -11,6 +11,7 @@ import {
   makeConflictError,
   makeNotFoundError,
   moneyAdd,
+  moneyScaleBy,
   moneyCompare,
   pageToOffset,
   serializeRow,
@@ -51,6 +52,16 @@ const DATE_FIELDS = ['validFrom', 'validUntil', 'createdAt', 'updatedAt'] as con
 const MONEY_FIELDS = ['matchPercent', 'maxGrantAmount', 'minDeposit'] as const;
 
 type OfferContext = { isFirstDeposit?: boolean };
+
+/** A bonus this deposit created, for the caller that owns the commit to announce afterwards. */
+export type GrantedBonus = {
+  userId: Uuid;
+  grantId: Uuid;
+  currency: string;
+  grantedAmount: string;
+  wageringRequired: string;
+  offerId: Uuid;
+};
 
 export class OfferService {
   constructor(
@@ -139,6 +150,19 @@ export class OfferService {
     });
   }
 
+  /**
+   * Before any deposit, "this is a first depositor" means they have not deposited yet. The fact
+   * has to be supplied or a first-deposit-only offer fails its own rule and becomes invisible to
+   * the very players it is for.
+   */
+  private async offerFacts(userId: Uuid, context: OfferContext): Promise<OfferContext> {
+    if (context.isFirstDeposit !== undefined) {
+      return context;
+    }
+    const lifetime = await this.wallet.getLifetimeDeposit(userId);
+    return { ...context, isFirstDeposit: moneyCompare(lifetime, '0') === 0 };
+  }
+
   /** The offers open to this player right now, with what their deposits have put toward each. */
   async listForPlayer(userId: Uuid, context: OfferContext = {}): Promise<PlayerOffer[]> {
     const rows = await this.drizzle.db
@@ -152,17 +176,19 @@ export class OfferService {
       .orderBy(asc(promoOffer.minDeposit));
 
     const at = new Date();
+    const facts = await this.offerFacts(userId, context);
     return rows
-      .filter(({ offer }) => offerIneligibility({ offer: toOffer(offer), at, ...context }) === null)
+      .filter(({ offer }) => offerIneligibility({ offer: toOffer(offer), at, ...facts }) === null)
       .map(({ offer, optIn }) =>
         toPlayerOffer(offer, optIn?.accumulatedDeposit ?? '0', optIn !== null),
       );
   }
 
   async optIn(userId: Uuid, offerId: Uuid, context: OfferContext = {}): Promise<PlayerOffer> {
+    const facts = await this.offerFacts(userId, context);
     return this.drizzle.db.transaction(async (tx) => {
       const offer = await this.requireOffer(tx, offerId);
-      const refusal = offerIneligibility({ offer: toOffer(offer), at: new Date(), ...context });
+      const refusal = offerIneligibility({ offer: toOffer(offer), at: new Date(), ...facts });
       if (refusal !== null) {
         throw new OfferNotEligibleError();
       }
@@ -201,13 +227,17 @@ export class OfferService {
     tx: DrizzleTx,
     deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
     context: OfferContext = {},
-  ): Promise<void> {
+  ): Promise<GrantedBonus[]> {
     // The deposit has already committed by the time this job runs, so a lifetime total equal to
     // this deposit means there was nothing before it. Asking the wallet keeps the fact where it
     // is owned rather than snapshotting it onto an event.
     const lifetime = await this.wallet.getLifetimeDeposit(deposit.userId);
     const isFirstDeposit = moneyCompare(lifetime, deposit.amount) === 0;
     const at = new Date();
+    // Reported rather than emitted here: the deposit and the grant commit together on the
+    // caller's transaction, and a notification promising a bonus that then rolled back is worse
+    // than a late one.
+    const granted: GrantedBonus[] = [];
 
     for (const { optIn, offer } of await this.claimsFor(tx, deposit)) {
       if (offer.currency !== deposit.currency) {
@@ -250,7 +280,7 @@ export class OfferService {
         continue;
       }
 
-      const granted = await this.grants.grant(tx, {
+      const created = await this.grants.grant(tx, {
         userId: deposit.userId,
         currency: offer.currency,
         amount,
@@ -262,20 +292,30 @@ export class OfferService {
         offerId: offer.id,
         terms: offer.terms,
       });
-      if (!granted.ok) {
+      if (!created.ok) {
         // The accumulator stays where it was: banking a total the grant refused would pay the
         // match on all of it the next time a deposit lands.
         this.logger.error(
-          { userId: deposit.userId, offerId: offer.id, reason: granted.reason },
+          { userId: deposit.userId, offerId: offer.id, reason: created.reason },
           'promo offer grant refused',
         );
         continue;
       }
       await tx
         .update(promoOptIn)
-        .set({ accumulatedDeposit: accumulated, grantId: granted.grantId })
+        .set({ accumulatedDeposit: accumulated, grantId: created.grantId })
         .where(eq(promoOptIn.id, optIn.id));
+      granted.push({
+        userId: deposit.userId,
+        grantId: created.grantId,
+        currency: offer.currency,
+        grantedAmount: amount,
+        wageringRequired: moneyScaleBy(amount, offer.terms.wageringMultiplier),
+        offerId: offer.id,
+      });
     }
+
+    return granted;
   }
 
   /**

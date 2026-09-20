@@ -198,7 +198,13 @@ export default {
           throw new Error('promo-offer-deposit: service not constructed');
         }
         const service = offers;
-        await drizzle.db.transaction((tx) => service.applyDeposit(tx, payload));
+        const granted = await drizzle.db.transaction((tx) => service.applyDeposit(tx, payload));
+        // After the commit: the criterion is that a player is told about the credit and what it
+        // obliges them to wager, and an announcement ahead of the commit could promise a bonus
+        // the transaction then rolled back.
+        for (const bonus of granted) {
+          events?.emit('promo.bonus.granted', { ...bonus, source: 'deposit' });
+        }
       },
     });
 

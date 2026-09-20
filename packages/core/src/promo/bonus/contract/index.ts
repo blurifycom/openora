@@ -101,8 +101,20 @@ export const CreatePromoOfferInputSchema = PromoOfferSchema.omit({
 
 export type CreatePromoOfferInput = z.infer<typeof CreatePromoOfferInputSchema>;
 
-export const UpdatePromoOfferInputSchema = CreatePromoOfferInputSchema.partial()
-  .omit({ key: true })
+/**
+ * Built from the row shape rather than from `CreatePromoOfferInputSchema`. `.partial()` makes a
+ * field optional but leaves a `.default()` on it intact, so partialling the create schema would
+ * have filled every omitted field with its create-time default: a PATCH that renamed a live offer
+ * would drop it back to `draft`, and one that paused an opt-in, first-deposit-only offer would
+ * clear both rules, so re-activating it matched every depositor's deposit.
+ */
+export const UpdatePromoOfferInputSchema = PromoOfferSchema.omit({
+  id: true,
+  key: true,
+  createdAt: true,
+  updatedAt: true,
+})
+  .partial()
   .extend({ id: UuidSchema });
 
 export type UpdatePromoOfferInput = z.infer<typeof UpdatePromoOfferInputSchema>;
