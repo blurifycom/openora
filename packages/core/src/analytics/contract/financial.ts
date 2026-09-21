@@ -27,8 +27,10 @@ export type MoneyByCurrency = z.infer<typeof MoneyByCurrencySchema>;
 export const FinancialSummarySchema = z.object({
   deposits: z.array(MoneyByCurrencyRailSchema),
   withdrawals: z.array(MoneyByCurrencyRailSchema),
-  netRevenue: z.array(MoneyByCurrencySchema),
+  netDeposits: z.array(MoneyByCurrencySchema),
+  ggr: z.array(MoneyByCurrencySchema),
   bonusCost: z.array(MoneyByCurrencySchema),
+  ngr: z.array(MoneyByCurrencySchema),
 });
 export type FinancialSummary = z.infer<typeof FinancialSummarySchema>;
 

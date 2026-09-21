@@ -12,7 +12,7 @@ function fakeCache(get: unknown = undefined): CacheAdapter {
 }
 
 describe('FinancialAnalyticsService.summary', () => {
-  it('splits deposits and withdrawals by currency and rail and computes net revenue and bonus cost', async () => {
+  it('splits deposits and withdrawals by currency and rail and computes net deposits, GGR, bonus cost and NGR', async () => {
     const drizzle = makeDrizzle({
       select: [
         [
@@ -21,8 +21,14 @@ describe('FinancialAnalyticsService.summary', () => {
         ],
         [{ currency: 'USD', rail: 'crypto', total: '120.00' }],
         [
-          { currency: 'USD', netRevenue: '350.00', bonusCost: '30.00' },
-          { currency: 'EUR', netRevenue: '75.00', bonusCost: '0' },
+          {
+            currency: 'USD',
+            netDeposits: '350.00',
+            ggr: '90.00',
+            bonusCost: '30.00',
+            ngr: '60.00',
+          },
+          { currency: 'EUR', netDeposits: '75.00', ggr: '0', bonusCost: '0', ngr: '0' },
         ],
       ],
     });
@@ -35,9 +41,13 @@ describe('FinancialAnalyticsService.summary', () => {
       { currency: 'EUR', rail: null, total: '75.00' },
     ]);
     expect(result.withdrawals).toEqual([{ currency: 'USD', rail: 'crypto', total: '120.00' }]);
-    expect(result.netRevenue).toEqual([
+    expect(result.netDeposits).toEqual([
       { currency: 'USD', total: '350.00' },
       { currency: 'EUR', total: '75.00' },
+    ]);
+    expect(result.ngr).toEqual([
+      { currency: 'USD', total: '60.00' },
+      { currency: 'EUR', total: '0' },
     ]);
     expect(result.bonusCost).toEqual([
       { currency: 'USD', total: '30.00' },
@@ -46,7 +56,14 @@ describe('FinancialAnalyticsService.summary', () => {
   });
 
   it('serves a repeat query from cache without touching the database', async () => {
-    const cached = { deposits: [], withdrawals: [], netRevenue: [], bonusCost: [] };
+    const cached = {
+      deposits: [],
+      withdrawals: [],
+      netDeposits: [],
+      ggr: [],
+      bonusCost: [],
+      ngr: [],
+    };
     const cache = fakeCache(cached);
     const drizzle = makeDrizzle();
     const service = new FinancialAnalyticsService(drizzle, cache);
