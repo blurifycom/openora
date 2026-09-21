@@ -93,7 +93,7 @@ The visible order is preserved across the switch. The dragged `gameIds` get posi
 
 Input validates:
 
-- **`gameIds`** - must be unique, at most 2000 items, and every id must be a member of the category. Non-members are rejected with `CategoryGameNotMemberError`; duplicates fail validation before the request reaches the handler.
+- **`gameIds`** - must be unique, 1 to 2000 items, and every id must be a member of the category. Non-members are rejected with `CategoryGameNotMemberError`; duplicates fail validation before the request reaches the handler.
 
 Output returns:
 

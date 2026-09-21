@@ -368,13 +368,43 @@ describe('gaming category reorder e2e (PUT /backoffice/gaming/categories/{id}/ga
     expect(items.every((g) => g.position === null)).toBe(true);
   });
 
-  it('denies the reorder route to a player', async () => {
+  it('rejects an empty gameIds list without switching the category to manual sort', async () => {
     const category = await createCategory();
-    const res = await player.put(`/backoffice/gaming/categories/${category.id}/games/order`, {
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id);
+    await addGameToCategory(member.id, category.id);
+    const nameSort = await admin.patch(`/backoffice/gaming/categories/${category.id}`, {
+      id: category.id,
+      sortKey: 'name',
+    });
+    expect(nameSort.status).toBe(200);
+
+    const res = await admin.put(`/backoffice/gaming/categories/${category.id}/games/order`, {
       id: category.id,
       gameIds: [],
     });
+    expect(res.status).toBe(400);
+
+    expect((await categoryDetail(category.id)).sortKey).toBe('name');
+    const listed = await admin.get(`/backoffice/gaming/categories/${category.id}/games`);
+    const items = (await readJson(listed)).items as Array<{ position: number | null }>;
+    expect(items.every((g) => g.position === null)).toBe(true);
+  });
+
+  it('denies the reorder route to a player', async () => {
+    const category = await createCategory();
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id);
+    await addGameToCategory(member.id, category.id);
+    const res = await player.put(`/backoffice/gaming/categories/${category.id}/games/order`, {
+      id: category.id,
+      gameIds: [member.id],
+    });
     expect(res.status).toBe(403);
+    expect((await categoryDetail(category.id)).sortKey).toBe('manual');
+    const listed = await admin.get(`/backoffice/gaming/categories/${category.id}/games`);
+    const items = (await readJson(listed)).items as Array<{ position: number | null }>;
+    expect(items.every((g) => g.position === null)).toBe(true);
   });
 });
 

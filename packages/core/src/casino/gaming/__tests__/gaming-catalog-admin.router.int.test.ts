@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import * as z from 'zod';
 import { eq, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { GameAdapter, PlayEligibilityPort, WalletCommands } from '@openora/core/contracts';
-import { createGameSortCatalog } from '@openora/core/contracts';
+import type {
+  GameAdapter,
+  GameSortCatalog,
+  PlayEligibilityPort,
+  WalletCommands,
+} from '@openora/core/contracts';
+import { createGameSortCatalog, defineGameSort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -47,8 +53,12 @@ function makeWalletCommands(): WalletCommands {
   });
 }
 
-function routerWith(adminGuard: AdminGuard) {
+function routerWith(
+  adminGuard: AdminGuard,
+  sortCatalog: GameSortCatalog = createGameSortCatalog(createDefaultGameSorts(db.drizzle)),
+) {
   const events = makeEventBus();
+  const jobQueue = makeJobQueue();
   const gaming = new GamingService(
     db.drizzle,
     events,
@@ -61,8 +71,7 @@ function routerWith(adminGuard: AdminGuard) {
     makeIdentityReader(),
   );
   const providers = new GameProviderService(db.drizzle, events);
-  const sortCatalog = createGameSortCatalog(createDefaultGameSorts(db.drizzle));
-  const categories = new GameCategoryService(db.drizzle, events, makeJobQueue(), sortCatalog);
+  const categories = new GameCategoryService(db.drizzle, events, jobQueue, sortCatalog);
   const tags = new GameTagService(db.drizzle, events);
   const bulk = new GameBulkService(db.drizzle, events);
   return {
@@ -76,6 +85,7 @@ function routerWith(adminGuard: AdminGuard) {
       sortCatalog,
     }),
     events,
+    jobQueue,
   };
 }
 
@@ -534,5 +544,66 @@ describe('gaming catalog router authz', () => {
     ).resolves.toMatchObject({
       id: system.id,
     });
+  });
+});
+
+describe('gaming category sort-config route', () => {
+  const weightedSort = defineGameSort({
+    key: 'weighted',
+    directions: ['desc', 'asc'],
+    paramsSchema: z.object({
+      window: z.string(),
+      min: z.number(),
+      filter: z.object({ volatility: z.string(), rtp: z.number() }),
+    }),
+    async rank({ gameIds }) {
+      return gameIds;
+    },
+  });
+  const weightedParams = { window: '7d', min: 96, filter: { volatility: 'high', rtp: 97 } };
+
+  const readCategory = async (id: string) => {
+    const [row] = await db.drizzle.db
+      .select({
+        rankDirtyAt: gameCategory.rankDirtyAt,
+        storedParams: sql<string>`${gameCategory.sortParams}::text`,
+      })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, id));
+    return row!;
+  };
+
+  it('treats a resubmitted sort config as unchanged despite jsonb reordering its keys', async () => {
+    const [category] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({ slug: `weighted-${randomUUID()}`, name: 'Weighted' })
+      .returning();
+    const catalog = createGameSortCatalog([...createDefaultGameSorts(db.drizzle), weightedSort]);
+    const first = routerWith(allowingGuard(), catalog);
+    await call(
+      first.router.updateCategory,
+      { id: category!.id, sortKey: 'weighted', sortParams: weightedParams },
+      { context: CTX },
+    );
+    await db.drizzle.db
+      .update(gameCategory)
+      .set({ rankDirtyAt: null })
+      .where(eq(gameCategory.id, category!.id));
+    expect((await readCategory(category!.id)).storedParams).toBe(
+      '{"min": 96, "filter": {"rtp": 97, "volatility": "high"}, "window": "7d"}',
+    );
+
+    const { router, events, jobQueue } = routerWith(allowingGuard(), catalog);
+    await expect(
+      call(
+        router.updateCategory,
+        { id: category!.id, sortKey: 'weighted', sortParams: weightedParams },
+        { context: CTX },
+      ),
+    ).resolves.toMatchObject({ sortKey: 'weighted', sortParams: weightedParams });
+
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(jobQueue.enqueue).not.toHaveBeenCalled();
+    expect((await readCategory(category!.id)).rankDirtyAt).toBeNull();
   });
 });

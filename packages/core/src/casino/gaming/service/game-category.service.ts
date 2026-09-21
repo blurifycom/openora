@@ -11,6 +11,7 @@ import {
   serializeRow,
   pageToOffset,
 } from '@openora/core/server';
+import { isDeepStrictEqual } from 'node:util';
 import { and, asc, count, eq, ilike, isNotNull, ne, or, sql } from 'drizzle-orm';
 import {
   GameSortParamsSchema,
@@ -76,10 +77,6 @@ function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
     createdAt: dates.createdAt,
     updatedAt: dates.updatedAt,
   };
-}
-
-function jsonEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /**
@@ -587,7 +584,7 @@ export class GameCategoryService {
     const changed =
       nextKey !== existing.sortKey ||
       storedDirection !== existing.sortDirection ||
-      !jsonEqual(parsedParams.data, existing.sortParams ?? {});
+      !isDeepStrictEqual(parsedParams.data, existing.sortParams ?? {});
 
     return {
       changed,

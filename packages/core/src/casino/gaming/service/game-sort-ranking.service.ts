@@ -13,13 +13,7 @@ import { isGamePlayable } from '../../shared/game-catalog.js';
 
 const logger = createLogger('gaming');
 
-/**
- * Enqueues a `gaming.category.rank` run for `categoryId`. No `idempotencyKey` - a key
- * derived only from `categoryId` would dedupe every later, genuinely new trigger against
- * the first job that ever ran with it (BullMQ retains a completed jobId) - see
- * docs/modules/gaming.md. This is the fast path only; `GameSortRankingService.sweep()`
- * is the durable backstop for a lost enqueue.
- */
+// No idempotencyKey: BullMQ retains a completed jobId, so a categoryId-derived key would dedupe every later rank trigger.
 export function enqueueGameCategoryRank(
   jobQueue: JobQueueAdapter,
   categoryId: GameCategory['id'],

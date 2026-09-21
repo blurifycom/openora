@@ -324,6 +324,7 @@ export const ReorderCategoryGamesInputSchema = z.object({
   id: UuidSchema,
   gameIds: z
     .array(UuidSchema)
+    .min(1)
     .max(GAME_CATEGORY_GAMES_ORDER_MAX)
     .refine((ids) => new Set(ids).size === ids.length, { message: 'gameIds must be unique' }),
 });
