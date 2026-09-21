@@ -1,8 +1,7 @@
 import { implement } from '@orpc/server';
-import * as z from 'zod';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
-import type { GameSortCatalog } from '@openora/core/contracts';
-import { gamingContract, gamingAdminContract, GameSortOptionSchema } from '../contract/index.js';
+import { GameSortService, GameSortConfigInvalidError } from '../service/game-sort.service.js';
+import { gamingContract, gamingAdminContract } from '../contract/index.js';
 import {
   GamingService,
   GameNotFoundError,
@@ -18,7 +17,6 @@ import {
   GameCategoryService,
   GameCategoryNotFoundError,
   GameCategorySlugTakenError,
-  GameSortConfigInvalidError,
   CategoryGameNotMemberError,
 } from '../service/game-category.service.js';
 import {
@@ -44,7 +42,7 @@ export function createGamingRouter({
   tags,
   bulk,
   adminGuard,
-  sortCatalog,
+  sorts,
 }: {
   gaming: GamingService;
   providers: GameProviderService;
@@ -52,7 +50,7 @@ export function createGamingRouter({
   tags: GameTagService;
   bulk: GameBulkService;
   adminGuard: AdminGuard;
-  sortCatalog: GameSortCatalog;
+  sorts: GameSortService;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
 
@@ -207,13 +205,7 @@ export function createGamingRouter({
 
     getSortOptions: os.getSortOptions.handler(async ({ context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      return sortCatalog.list().map((definition) => ({
-        key: definition.key,
-        directions: [...definition.directions],
-        paramsJsonSchema: GameSortOptionSchema.shape.paramsJsonSchema.parse(
-          z.toJSONSchema(definition.paramsSchema, { unrepresentable: 'any' }),
-        ),
-      }));
+      return sorts.listOptions();
     }),
 
     listAdminTags: os.listAdminTags.handler(async ({ input, context }) => {

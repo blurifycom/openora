@@ -19,6 +19,7 @@ import {
   GameProviderSummarySchema,
   GameTypeSchema,
   IdInputSchema,
+  JsonSchemaDocumentSchema,
   MoneyAmountSchema,
   PageQuerySchema,
   QueryBooleanSchema,
@@ -388,7 +389,7 @@ export const UpdateCategoryPinsOutputSchema = z.object({
 export const GameSortOptionSchema = z.object({
   key: GameSortKeySchema,
   directions: z.array(GameSortDirectionSchema).min(1),
-  paramsJsonSchema: z.record(z.string(), z.json()),
+  paramsJsonSchema: JsonSchemaDocumentSchema,
 });
 export type GameSortOption = z.infer<typeof GameSortOptionSchema>;
 

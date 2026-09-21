@@ -898,9 +898,15 @@ export class GamingService {
         await markCategoriesRankDirty(
           tx,
           categoryRankTriggerIds(
-            { name: beforeRow.name, isActive: beforeRow.isActive, categoryIds: before.categoryIds },
+            {
+              name: beforeRow.name,
+              isActive: beforeRow.isActive,
+              providerId: beforeRow.providerId,
+              categoryIds: before.categoryIds,
+            },
             {
               name: patch.name ?? beforeRow.name,
+              providerId: patch.providerId ?? beforeRow.providerId,
               isActive: patch.isActive ?? beforeRow.isActive,
               categoryIds: anticipatedAfterCategoryIds,
             },

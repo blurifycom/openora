@@ -36,14 +36,12 @@ export function countWhere(condition: SQL | undefined) {
   return sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
 }
 
-export type GameCategoryTriggerSnapshot = {
-  name: string;
-  isActive: boolean;
-  categoryIds: readonly string[];
+export type GameCategoryTriggerSnapshot = Pick<Game, 'name' | 'isActive' | 'providerId'> & {
+  categoryIds: readonly GameCategory['id'][];
 };
 
 // The category ids whose rank could have moved because of a game write - the union of
-// before/after membership, but only when the game's name, active state, or category
+// before/after membership, but only when the game's provider, name, active state, or category
 // membership actually changed (a name/active change matters because a definition can
 // order or filter on either, and an active flip also moves the playable/unplayable
 // split pins are placed within). Shared by the gaming.game.updated event handler
@@ -59,10 +57,22 @@ export function categoryRankTriggerIds(
     before.categoryIds.length !== after.categoryIds.length ||
     before.categoryIds.some((id) => !afterCategoryIds.has(id)) ||
     after.categoryIds.some((id) => !beforeCategoryIds.has(id));
-  if (before.name === after.name && before.isActive === after.isActive && !membershipChanged) {
+  if (
+    before.name === after.name &&
+    before.isActive === after.isActive &&
+    before.providerId === after.providerId &&
+    !membershipChanged
+  ) {
     return [];
   }
   return [...new Set([...before.categoryIds, ...after.categoryIds])];
+}
+
+export function rankDirtyPatch() {
+  return {
+    rankSeq: sql`${gameCategory.rankSeq} + 1`,
+    rankDirtyAt: sql`greatest(clock_timestamp(), ${gameCategory.rankedAt} + interval '1 microsecond')`,
+  };
 }
 
 // Marks every category in `categoryIds` dirty for the rank sweep, inside the caller's
@@ -76,7 +86,7 @@ export async function markCategoriesRankDirty(
   }
   await tx
     .update(gameCategory)
-    .set({ rankDirtyAt: sql`now()` })
+    .set(rankDirtyPatch())
     .where(inArray(gameCategory.id, [...categoryIds]));
 }
 

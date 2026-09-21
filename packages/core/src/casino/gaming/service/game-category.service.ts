@@ -11,15 +11,9 @@ import {
   serializeRow,
   pageToOffset,
 } from '@openora/core/server';
-import { isDeepStrictEqual } from 'node:util';
 import { and, asc, count, eq, ilike, isNotNull, ne, or, sql } from 'drizzle-orm';
-import {
-  GameSortParamsSchema,
-  type GameSortCatalog,
-  type GameSortDirection,
-  type GameSortParams,
-  type JobQueueAdapter,
-} from '@openora/core/contracts';
+import type { JobQueueAdapter } from '@openora/core/contracts';
+import { GameSortService } from './game-sort.service.js';
 import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
 import type {
   CreateCategoryInput,
@@ -27,9 +21,10 @@ import type {
   UpdateCategoryInput,
   UpdateCategoryPinsInput,
 } from '../contract/index.js';
-import { enqueueGameCategoryRank } from './game-sort-ranking.service.js';
+import { enqueueGameCategoryRank } from './game-sort-trigger.service.js';
 import {
   categoryGameOrder,
+  rankDirtyPatch,
   categorySummaryColumns,
   providerSummaryColumns,
   toCategorySummary,
@@ -40,10 +35,6 @@ export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
 export const GameCategorySlugTakenError = makeConflictError(
   'GameCategorySlugTakenError',
   'A category with this slug already exists',
-);
-export const GameSortConfigInvalidError = createDomainError<[message: string]>(
-  'GameSortConfigInvalidError',
-  (message) => message,
 );
 export const CategoryGameNotMemberError = createDomainError<[gameId: string, categoryId: string]>(
   'CategoryGameNotMemberError',
@@ -79,35 +70,12 @@ function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
   };
 }
 
-/**
- * The direction to store for a sort-config write. An explicit direction wins once
- * validated against the definition's `directions`. Explicit `null` resets to the
- * definition's own default (`directions[0]`) - a deliberate "use the default" signal,
- * distinct from omitting the field. Omitting it keeps the category's current direction,
- * unless the key changed or that direction is no longer offered, in which case it also
- * falls back to the default.
- */
-function resolveEffectiveDirection(
-  directions: readonly GameSortDirection[],
-  requested: GameSortDirection | null | undefined,
-  keyChanged: boolean,
-  existingDirection: GameSortDirection | null,
-): GameSortDirection {
-  if (requested !== undefined) {
-    return requested ?? (directions[0] as GameSortDirection);
-  }
-  if (!keyChanged && existingDirection !== null && directions.includes(existingDirection)) {
-    return existingDirection;
-  }
-  return directions[0] as GameSortDirection;
-}
-
 export class GameCategoryService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly jobQueue: JobQueueAdapter,
-    private readonly sortCatalog: GameSortCatalog,
+    private readonly sorts: GameSortService,
   ) {}
 
   // Locks a category row FOR UPDATE inside the caller's transaction, so a concurrent
@@ -271,7 +239,7 @@ export class GameCategoryService {
         }
 
         const sortPatch = wantsSortChange
-          ? this.resolveSortPatch(existing, { sortKey, sortDirection, sortParams })
+          ? this.sorts.resolvePatch(existing, { sortKey, sortDirection, sortParams })
           : { changed: false, patch: {} };
 
         const hasChanges = hasScalarChanges || sortPatch.changed;
@@ -281,7 +249,7 @@ export class GameCategoryService {
         const patch = {
           ...scalarPatch,
           ...sortPatch.patch,
-          ...(sortPatch.changed ? { rankDirtyAt: sql`now()` } : {}),
+          ...(sortPatch.changed ? rankDirtyPatch() : {}),
         };
         const updated = findOneOrThrow(
           await tx.update(gameCategory).set(patch).where(eq(gameCategory.id, id)).returning(),
@@ -361,9 +329,7 @@ export class GameCategoryService {
       const category = await this.lockCategoryRow(tx, id);
       // Dragging any game always ends the category in manual sort - see docs/modules/gaming.md - so
       // 'manual' must be bound in the catalog regardless of the category's current key.
-      if (!this.sortCatalog.get('manual')) {
-        throw new GameSortConfigInvalidError("Unknown sort key: 'manual'");
-      }
+      this.sorts.requireDefinition('manual');
 
       // The full pre-drag effective order (categoryGameOrder semantics: rank, name, id)
       // - the same order every reader uses - so `before` below is the complete list the
@@ -426,7 +392,7 @@ export class GameCategoryService {
           sortKey: 'manual',
           sortDirection: null,
           sortParams: {},
-          rankDirtyAt: sql`now()`,
+          ...rankDirtyPatch(),
         })
         .where(eq(gameCategory.id, id));
       const after = [...gameIds, ...unlistedIds];
@@ -516,10 +482,7 @@ export class GameCategoryService {
         `);
       }
 
-      await tx
-        .update(gameCategory)
-        .set({ rankDirtyAt: sql`now()` })
-        .where(eq(gameCategory.id, id));
+      await tx.update(gameCategory).set(rankDirtyPatch()).where(eq(gameCategory.id, id));
 
       const after = [...pins].sort((a, b) => a.position - b.position);
       return { before, after };
@@ -535,60 +498,5 @@ export class GameCategoryService {
     });
     enqueueGameCategoryRank(this.jobQueue, id);
     return { pins: outcome.after };
-  }
-
-  private resolveSortPatch(
-    existing: typeof gameCategory.$inferSelect,
-    input: {
-      sortKey?: string;
-      sortDirection?: GameSortDirection | null;
-      sortParams?: GameSortParams;
-    },
-  ): { changed: boolean; patch: Partial<typeof gameCategory.$inferInsert> } {
-    const nextKey = input.sortKey ?? existing.sortKey;
-    const definition = this.sortCatalog.get(nextKey);
-    if (!definition) {
-      throw new GameSortConfigInvalidError(`Unknown sort key: ${nextKey}`);
-    }
-    if (
-      input.sortDirection !== undefined &&
-      input.sortDirection !== null &&
-      !definition.directions.includes(input.sortDirection)
-    ) {
-      throw new GameSortConfigInvalidError(
-        `'${input.sortDirection}' is not a valid direction for sort '${nextKey}'`,
-      );
-    }
-    const keyChanged = input.sortKey !== undefined && input.sortKey !== existing.sortKey;
-    const effectiveDirection = resolveEffectiveDirection(
-      definition.directions,
-      input.sortDirection,
-      keyChanged,
-      existing.sortDirection,
-    );
-    // A single-direction sort (eg 'manual') has no real direction concept - store null
-    // rather than a value that would misleadingly imply a choice was made.
-    const storedDirection = definition.directions.length > 1 ? effectiveDirection : null;
-
-    const rawParams = input.sortParams ?? (keyChanged ? {} : (existing.sortParams ?? {}));
-    // The definition's own schema gives the params meaning; the second parse guarantees
-    // whatever it produced still fits the stored shape (JSON object, byte-capped).
-    const definitionParams = definition.paramsSchema.safeParse(rawParams);
-    const parsedParams = definitionParams.success
-      ? GameSortParamsSchema.safeParse(definitionParams.data)
-      : definitionParams;
-    if (!parsedParams.success) {
-      throw new GameSortConfigInvalidError(`Invalid sortParams for sort '${nextKey}'`);
-    }
-
-    const changed =
-      nextKey !== existing.sortKey ||
-      storedDirection !== existing.sortDirection ||
-      !isDeepStrictEqual(parsedParams.data, existing.sortParams ?? {});
-
-    return {
-      changed,
-      patch: { sortKey: nextKey, sortDirection: storedDirection, sortParams: parsedParams.data },
-    };
   }
 }

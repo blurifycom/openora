@@ -1,3 +1,7 @@
+import * as z from 'zod';
+import { createGameSortCatalog, defineGameSort } from '@openora/core/contracts';
+import { GameSortService } from '../service/game-sort.service.js';
+import { GameSortRankingService } from '../service/game-sort-ranking.service.js';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
@@ -1607,5 +1611,50 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
     });
 
     expect(result.betAmount).toBe('0.000000000000000001');
+  });
+});
+
+describe('provider changes during ranking', () => {
+  it('invalidates an in-flight playable pin projection through the game update service', async () => {
+    const category = await seedCategory({ sortKey: 'provider_switch' });
+    const alpha = await seedGame({ name: 'Alpha' }, [category.id]);
+    const bravo = await seedGame({ name: 'Bravo' }, [category.id]);
+    const inactive = await seedProvider({ isActive: false });
+    await db.drizzle.db
+      .update(gameCategoryGame)
+      .set({ pinnedPosition: 0 })
+      .where(eq(gameCategoryGame.gameId, bravo.id));
+    const gaming = makeService();
+    let calls = 0;
+    const definition = defineGameSort({
+      key: 'provider_switch',
+      directions: ['asc'],
+      paramsSchema: z.object({}),
+      async rank() {
+        calls += 1;
+        if (calls === 1) {
+          await gaming.updateGame({ id: bravo.id, providerId: inactive.id, ...ACTOR });
+        }
+        return [alpha.id, bravo.id];
+      },
+    });
+    const ranking = new GameSortRankingService(
+      db.drizzle,
+      new GameSortService(createGameSortCatalog([definition])),
+    );
+    await ranking.rank(category.id);
+    const [updated] = await db.drizzle.db
+      .select()
+      .from(gameCategory)
+      .where(eq(gameCategory.id, category.id));
+    expect(updated?.rankSeq).toBe(3);
+    expect(calls).toBe(2);
+    const ranks = await db.drizzle.db
+      .select({ gameId: gameCategoryGame.gameId, rank: gameCategoryGame.rank })
+      .from(gameCategoryGame)
+      .where(eq(gameCategoryGame.categoryId, category.id));
+    expect(ranks.find(({ gameId }) => gameId === alpha.id)?.rank).toBe(0);
+    expect(ranks.find(({ gameId }) => gameId === bravo.id)?.rank).toBe(1);
+    expect(updated?.rankedAt).not.toBeNull();
   });
 });

@@ -97,14 +97,7 @@ export const gameCategory = pgTable(
     // stored null here); populated for a multi-direction sort like 'name'.
     sortDirection: gameSortDirectionEnum(),
     sortParams: zodJsonb(GameSortParamsSchema, 'game_category.sort_params')().notNull().default({}),
-    // Rank-job run-vs-run fencing token - see docs/modules/gaming.md. Concurrent admin
-    // writes to sort config/order/pins are last-write-wins, serialized by the row lock
-    // each write path takes (GameCategoryService.lockCategoryRow); this token guards
-    // only the rank job's own concurrent runs, a separate concern.
     rankSeq: integer().notNull().default(0),
-    // Set to now() by any write that changes what a category's rank should be (sort
-    // config, reorder, membership/name). The rank-sweep job re-ranks while this is
-    // newer than rankedAt - see docs/modules/gaming.md and GameSortRankingService.
     rankDirtyAt: timestamp({ withTimezone: true }),
     rankedAt: timestamp({ withTimezone: true }),
     updatedAt: timestamp({ withTimezone: true })

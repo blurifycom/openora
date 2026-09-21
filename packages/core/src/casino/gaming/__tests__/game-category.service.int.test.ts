@@ -1,3 +1,4 @@
+import { GameSortService, GameSortConfigInvalidError } from '../service/game-sort.service.js';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
@@ -16,7 +17,6 @@ import {
   GameCategoryService,
   GameCategoryNotFoundError,
   GameCategorySlugTakenError,
-  GameSortConfigInvalidError,
   CategoryGameNotMemberError,
 } from '../service/game-category.service.js';
 
@@ -29,7 +29,7 @@ function makeService(sortCatalog?: GameSortCatalog) {
   const jobQueue = makeJobQueue();
   const catalog = sortCatalog ?? createGameSortCatalog(createDefaultGameSorts(db.drizzle));
   return {
-    svc: new GameCategoryService(db.drizzle, events, jobQueue, catalog),
+    svc: new GameCategoryService(db.drizzle, events, jobQueue, new GameSortService(catalog)),
     events,
     jobQueue,
   };

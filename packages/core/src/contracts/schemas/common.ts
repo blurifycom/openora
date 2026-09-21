@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const UuidSchema = z.uuid();
 export const TimestampSchema = z.iso.datetime();
+export const JsonSchemaDocumentSchema = z.record(z.string(), z.json());
+export type JsonSchemaDocument = z.infer<typeof JsonSchemaDocumentSchema>;
 
 export type Uuid = z.infer<typeof UuidSchema>;
 

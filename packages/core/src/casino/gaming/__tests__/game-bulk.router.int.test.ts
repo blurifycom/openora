@@ -1,3 +1,4 @@
+import { GameSortService } from '../service/game-sort.service.js';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { asc, eq, inArray, sql } from 'drizzle-orm';
@@ -56,7 +57,12 @@ function routerWith(adminGuard: AdminGuard) {
   );
   const providers = new GameProviderService(db.drizzle, events);
   const sortCatalog = createGameSortCatalog(createDefaultGameSorts(db.drizzle));
-  const categories = new GameCategoryService(db.drizzle, events, makeJobQueue(), sortCatalog);
+  const categories = new GameCategoryService(
+    db.drizzle,
+    events,
+    makeJobQueue(),
+    new GameSortService(sortCatalog),
+  );
   const tags = new GameTagService(db.drizzle, events);
   const bulk = new GameBulkService(db.drizzle, events);
   return {
@@ -67,7 +73,7 @@ function routerWith(adminGuard: AdminGuard) {
       tags,
       bulk,
       adminGuard,
-      sortCatalog,
+      sorts: new GameSortService(sortCatalog),
     }),
     events,
   };
