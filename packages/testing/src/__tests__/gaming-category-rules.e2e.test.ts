@@ -1,9 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
-import { GAMING_COMMANDS, JOB_QUEUE, queue } from '@openora/core/contracts';
+import {
+  GAME_CATEGORY_RULE_CATALOG,
+  GAMING_COMMANDS,
+  JOB_QUEUE,
+  queue,
+} from '@openora/core/contracts';
+import { GAME_CATEGORY_RULE_MATCH_MAX } from '@openora/core/casino/contracts/gaming';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import {
   asAdmin,
@@ -165,6 +171,45 @@ describe('rule-based category membership e2e', () => {
     });
     expect(remove.status).toBe(200);
     expect(await categoryGameIds(category.id)).toEqual([]);
+  });
+
+  it('saves an over-cap rule with its evaluation error, preserving the previous members', async () => {
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id);
+    const category = await createCategory({
+      membershipMode: 'rule',
+      membershipRule: [providers(provider.id)],
+    });
+    const broadProvider = await seedProvider();
+    await drizzle().execute(sql`
+      INSERT INTO game (name, slug, provider_id, aggregator)
+      SELECT 'Broad rule game', ${broadProvider.id} || '-' || n, ${broadProvider.id}::uuid, 'direct'
+      FROM generate_series(1, ${GAME_CATEGORY_RULE_MATCH_MAX + 1}) AS n
+    `);
+    const rule = [providers(broadProvider.id)];
+
+    const updated = await admin.patch(`/backoffice/gaming/categories/${category.id}`, {
+      id: category.id,
+      membershipRule: rule,
+    });
+
+    expect(updated.status).toBe(200);
+    const detail = await readJson(updated);
+    expect(detail.membershipRule).toEqual(rule);
+    expect(detail.membershipEvaluatedAt).toBe(category.membershipEvaluatedAt);
+    expect(detail.membershipAttemptedAt).not.toBeNull();
+    expect(detail.membershipLastError).toContain('exceeding the 5000-game cap');
+    expect(await categoryGameIds(category.id)).toEqual([member.id]);
+    const preview = await admin.post('/backoffice/gaming/categories/rule-preview', { rule });
+    expect(preview.status).toBe(400);
+    expect(
+      (
+        await player.patch(`/backoffice/gaming/categories/${category.id}`, {
+          id: category.id,
+          membershipRule: rule,
+        })
+      ).status,
+    ).toBe(403);
   });
 
   it('rejects rule mode without a rule, an unknown tag, an unknown rule key and an empty rule (400)', async () => {
@@ -441,6 +486,54 @@ describe('an operator-supplied rule kind, rebound via GAME_CATEGORY_RULE_CATALOG
 
   afterAll(async () => {
     await customApp?.close();
+  });
+
+  it('resolves once per successful configuration save, after validating its parameters', async () => {
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id, { gameType: 'original' });
+    const definition = customApp.container.get(GAME_CATEGORY_RULE_CATALOG).get('test_game_type');
+    if (!definition) {
+      throw new Error('Custom rule was not registered');
+    }
+    const resolve = vi.spyOn(definition, 'resolve');
+    try {
+      const created = await customAdmin.post('/backoffice/gaming/categories', {
+        slug: `e2e-custom-rule-${randomUUID()}`,
+        name: 'Single Evaluation',
+        membershipMode: 'rule',
+        membershipRule: [
+          providers(provider.id),
+          { key: 'test_game_type', params: { gameType: 'original' } },
+        ],
+      });
+      expect(created.status).toBe(200);
+      const category = await readJson(created);
+      expect(category.membershipLastError).toBeNull();
+      expect(await categoryGameIds(category.id)).toEqual([member.id]);
+      expect(resolve).toHaveBeenCalledTimes(1);
+
+      resolve.mockClear();
+      const updated = await customAdmin.patch(`/backoffice/gaming/categories/${category.id}`, {
+        id: category.id,
+        membershipRule: [
+          providers(provider.id),
+          { key: 'test_game_type', params: { gameType: 'casino' } },
+        ],
+      });
+      expect(updated.status).toBe(200);
+      expect(await categoryGameIds(category.id)).toEqual([]);
+      expect(resolve).toHaveBeenCalledTimes(1);
+
+      resolve.mockClear();
+      const rejected = await customAdmin.patch(`/backoffice/gaming/categories/${category.id}`, {
+        id: category.id,
+        membershipRule: [{ key: 'test_game_type', params: { gameType: 'invalid' } }],
+      });
+      expect(rejected.status).toBe(400);
+      expect(resolve).not.toHaveBeenCalled();
+    } finally {
+      resolve.mockRestore();
+    }
   });
 
   it('is offered, validated and resolved end to end, narrowing a built-in clause', async () => {

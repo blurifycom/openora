@@ -193,7 +193,8 @@ export function createGamingRouter({
           NOT_FOUND: GameCategoryNotFoundError,
           CONFLICT: [GameCategorySlugTakenError, GameCategoryUpdateContendedError],
           BAD_REQUEST: [
-                      GameCategoryRuleRequiredError,
+            GameSortConfigInvalidError,
+            GameCategoryRuleRequiredError,
             GameCategoryRuleInvalidError,
             GameCategoryRuleTooBroadError,
           ],

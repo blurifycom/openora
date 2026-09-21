@@ -409,7 +409,7 @@ export const GameCategoryRuleOptionSchema = z.object({
   // Previewing a rule with this kind of clause also needs report:view. False for every built-in.
   exposesReporting: z.boolean(),
   // A JSON Schema document (z.toJSONSchema of the definition's paramsSchema).
-  paramsJsonSchema: z.json(),
+  paramsJsonSchema: JsonSchemaDocumentSchema,
 });
 export type GameCategoryRuleOption = z.infer<typeof GameCategoryRuleOptionSchema>;
 
@@ -475,9 +475,8 @@ export type EvaluateCategoryMembershipOutput = z.infer<
   typeof EvaluateCategoryMembershipOutputSchema
 >;
 
-// The most games one rule may match. A broader rule is rejected when saved, the way a
-// bulk action past its own game cap is - it bounds the link writes, the audit payload
-// and the rank job of a rule-mode category.
+// The most games one rule may match. Preview and evaluation reject a broader result
+// before any membership writes, bounding the links, audit payload and rank job.
 export const GAME_CATEGORY_RULE_MATCH_MAX = 5000;
 
 // Cap on how many rule categories one membership-sweep pass enqueues, least recently

@@ -1,5 +1,4 @@
 import { eq, inArray } from 'drizzle-orm';
-import * as z from 'zod';
 import {
   createDomainError,
   createLogger,
@@ -16,6 +15,7 @@ import type {
 import { game, gameProvider } from '../schema/index.js';
 import { GAME_CATEGORY_RULE_MATCH_MAX, type PreviewCategoryRuleInput } from '../contract/index.js';
 import { providerSummaryColumns } from '../../shared/game-catalog.js';
+import { paramsJsonSchema } from '../../shared/catalog-options.js';
 
 const logger = createLogger('gaming');
 
@@ -99,8 +99,8 @@ export class GameCategoryRuleService {
 
   /**
    * Checks `rule` for saving and returns it as it will be stored: every key bound, every
-   * params object parsed by its definition and still plain JSON, every `validate` passed,
-   * and the match within the cap right now.
+   * params object parsed by its definition and still plain JSON, every `validate` passed.
+   * Resolution and the match cap belong to evaluation after the configuration commits.
    */
   async normalizeRule(rule: GameCategoryRule): Promise<GameCategoryRule> {
     const normalized: GameCategoryRule = [];
@@ -117,7 +117,6 @@ export class GameCategoryRuleService {
       }
       normalized.push(stored.data);
     }
-    await this.resolveGameIds(normalized);
     return normalized;
   }
 
@@ -162,14 +161,7 @@ export class GameCategoryRuleService {
     return this.ruleCatalog.list().map((definition) => ({
       key: definition.key,
       exposesReporting: definition.exposesReporting === true,
-      // Through JSON so the document is exactly what goes over the wire.
-      paramsJsonSchema: z
-        .json()
-        .parse(
-          JSON.parse(
-            JSON.stringify(z.toJSONSchema(definition.paramsSchema, { unrepresentable: 'any' })),
-          ),
-        ),
+      paramsJsonSchema: paramsJsonSchema(definition.paramsSchema),
     }));
   }
 

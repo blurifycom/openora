@@ -11,14 +11,14 @@ import {
 import type { JobQueueAdapter } from '@openora/core/contracts';
 import { game, gameCategory, gameCategoryGame, type GameCategory } from '../schema/index.js';
 import { SYSTEM_ACTOR_ID, type GameCategoryMembershipJob } from '../contract/index.js';
-import type { CatalogActor } from '../../shared/game-catalog.js';
+import { rankDirtyPatch, type CatalogActor } from '../../shared/game-catalog.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
 import {
   GameCategoryRuleInvalidError,
   isUnresolvableRuleError,
   type GameCategoryRuleService,
 } from './game-category-rule.service.js';
-import { enqueueGameCategoryRank } from './game-sort-ranking.service.js';
+import { enqueueGameCategoryRank } from './game-sort-trigger.service.js';
 
 const logger = createLogger('gaming');
 
@@ -63,7 +63,7 @@ type EvaluateArgs = {
   actor?: CatalogActor;
 };
 
-type EvaluationSnapshot = Pick<GameCategory, 'membershipRule'> & { version: string };
+type EvaluationSnapshot = Pick<GameCategory, 'membershipRule' | 'membershipSeq'>;
 
 type LockedDiff =
   | { status: 'gone' }
@@ -98,7 +98,7 @@ export class GameCategoryMembershipService {
    */
   async evaluate({ categoryId, trigger, actor }: EvaluateArgs) {
     for (let attempt = 0; attempt < MAX_EVALUATE_ATTEMPTS; attempt += 1) {
-      const snapshot = await this.readEvaluationSnapshot(categoryId);
+      const snapshot = await this.claimEvaluation(categoryId);
       const outcome = await this.evaluateOnce(categoryId, snapshot);
       if (outcome === 'stale') {
         if (attempt === MAX_EVALUATE_ATTEMPTS - 1) {
@@ -154,6 +154,9 @@ export class GameCategoryMembershipService {
     snapshot: EvaluationSnapshot,
   ): Promise<Applied | 'stale'> {
     const matchedIds = await this.resolveOrRecordFailure(categoryId, snapshot);
+    if (matchedIds === 'stale') {
+      return 'stale';
+    }
     const currentIds = await this.memberIds(this.drizzle.db, categoryId);
     const toAdd = diffMembership(currentIds, matchedIds).toAdd;
 
@@ -169,23 +172,30 @@ export class GameCategoryMembershipService {
     });
   }
 
-  private async readEvaluationSnapshot(categoryId: GameCategory['id']) {
+  private async claimEvaluation(categoryId: GameCategory['id']) {
     const [snapshot] = await this.drizzle.db
-      .select({
-        membershipMode: gameCategory.membershipMode,
-        membershipRule: gameCategory.membershipRule,
-        version: sql<string>`${gameCategory}.xmin::text`,
+      .update(gameCategory)
+      .set({
+        membershipSeq: sql`${gameCategory.membershipSeq} + 1`,
+        updatedAt: sql`${gameCategory.updatedAt}`,
       })
+      .where(and(eq(gameCategory.id, categoryId), eq(gameCategory.membershipMode, 'rule')))
+      .returning({
+        membershipRule: gameCategory.membershipRule,
+        membershipSeq: gameCategory.membershipSeq,
+      });
+    if (snapshot) {
+      return snapshot;
+    }
+    const [existing] = await this.drizzle.db
+      .select({ id: gameCategory.id })
       .from(gameCategory)
       .where(eq(gameCategory.id, categoryId))
       .limit(1);
-    if (!snapshot) {
+    if (!existing) {
       throw new GameCategoryNotFoundError(categoryId);
     }
-    if (snapshot.membershipMode !== 'rule') {
-      throw new GameCategoryNotRuleManagedError(categoryId);
-    }
-    return snapshot;
+    throw new GameCategoryNotRuleManagedError(categoryId);
   }
 
   // A null rule in rule mode is a stored value that no longer parses (zodJsonb reads it
@@ -201,7 +211,9 @@ export class GameCategoryMembershipService {
       }
       return await this.rules.resolveGameIds(rule);
     } catch (err) {
-      await this.recordFailedAttempt(categoryId, snapshot, err);
+      if (!(await this.recordFailedAttempt(categoryId, snapshot, err))) {
+        return 'stale';
+      }
       throw err;
     }
   }
@@ -225,7 +237,7 @@ export class GameCategoryMembershipService {
       .select({
         mode: gameCategory.membershipMode,
         rule: gameCategory.membershipRule,
-        version: sql<string>`${gameCategory}.xmin::text`,
+        membershipSeq: gameCategory.membershipSeq,
       })
       .from(gameCategory)
       .where(eq(gameCategory.id, categoryId))
@@ -236,7 +248,7 @@ export class GameCategoryMembershipService {
     }
     if (
       locked.mode !== 'rule' ||
-      locked.version !== snapshot.version ||
+      locked.membershipSeq !== snapshot.membershipSeq ||
       !isDeepStrictEqual(locked.rule, snapshot.membershipRule)
     ) {
       return { status: 'stale' };
@@ -278,7 +290,7 @@ export class GameCategoryMembershipService {
         membershipAttemptedAt: sql`now()`,
         membershipLastError: null,
         updatedAt: sql`${gameCategory.updatedAt}`,
-        ...(changed ? { rankDirtyAt: sql`now()` } : {}),
+        ...(changed ? rankDirtyPatch() : {}),
       })
       .where(eq(gameCategory.id, categoryId))
       .returning({ evaluatedAt: gameCategory.membershipEvaluatedAt });
@@ -357,7 +369,7 @@ export class GameCategoryMembershipService {
         ? err.message
         : 'The rule could not be evaluated';
     try {
-      await this.drizzle.db
+      const recorded = await this.drizzle.db
         .update(gameCategory)
         .set({
           membershipAttemptedAt: sql`now()`,
@@ -368,14 +380,17 @@ export class GameCategoryMembershipService {
           and(
             eq(gameCategory.id, categoryId),
             eq(gameCategory.membershipMode, 'rule'),
-            sql`${gameCategory}.xmin::text = ${snapshot.version}`,
+            eq(gameCategory.membershipSeq, snapshot.membershipSeq),
           ),
-        );
+        )
+        .returning({ id: gameCategory.id });
+      return recorded.length > 0;
     } catch (recordErr) {
       logger.error(
         { err: recordErr, categoryId },
         'gaming.category.membership: could not record a failed attempt',
       );
+      return true;
     }
   }
 

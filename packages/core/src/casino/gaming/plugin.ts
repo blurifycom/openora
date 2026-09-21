@@ -147,8 +147,12 @@ export default {
       requireTriggers().gameAvailabilityChanged(payload);
       requireMembership().triggers.gameAvailabilityChanged(payload);
     });
-    ctx.events.on('gaming.games.created', (payload) => requireMembership().triggers.gamesCreated(payload));
-    ctx.events.on('gaming.tag.deleted', (payload) => requireMembership().triggers.tagDeleted(payload));
+    ctx.events.on('gaming.games.created', (payload) =>
+      requireMembership().triggers.gamesCreated(payload),
+    );
+    ctx.events.on('gaming.tag.deleted', (payload) =>
+      requireMembership().triggers.tagDeleted(payload),
+    );
 
     ctx.jobs.worker({
       queue: GAME_CATEGORY_RANK_QUEUE,
@@ -194,7 +198,14 @@ export default {
       return createGamingRouter({
         gaming: gamingService(c),
         providers: new GameProviderService(c.get(DRIZZLE), c.get(EVENT_BUS)),
-        categories: new GameCategoryService(c.get(DRIZZLE), c.get(EVENT_BUS), jobQueue, sorts, rules, membership),
+        categories: new GameCategoryService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          jobQueue,
+          sorts,
+          rules,
+          membership,
+        ),
         tags: new GameTagService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         bulk: new GameBulkService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         adminGuard: c.get(ADMIN_GUARD),

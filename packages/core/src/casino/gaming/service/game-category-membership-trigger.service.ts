@@ -1,17 +1,24 @@
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { createLogger, DrizzleService, type EventBus } from '@openora/core/server';
-import type { GameCategoryRuleChange, JobQueueAdapter } from '@openora/core/contracts';
+import {
+  domainEventSchemas,
+  type GameCategoryRuleChange,
+  type JobQueueAdapter,
+} from '@openora/core/contracts';
 import { game, gameCategory, gameTagGame, type GameCategory } from '../schema/index.js';
 import {
   GAMES_CREATED_EVENT_BATCH,
   GAME_CATEGORY_MEMBERSHIP_QUEUE,
+  GAME_CATEGORY_MEMBERSHIP_SWEEP_QUEUE,
   MEMBERSHIP_EVENT_DEBOUNCE_MS,
   MEMBERSHIP_SWEEP_BATCH_LIMIT,
+  MEMBERSHIP_SWEEP_CRON,
   type GameCategoryMembershipJob,
 } from '../contract/index.js';
 import type { GameCategoryRuleService } from './game-category-rule.service.js';
 
 const logger = createLogger('gaming');
+const playabilityChange = { providerIds: [], tagIds: [], playabilityChanged: true } as const;
 
 type GameMembershipSnapshot = {
   providerId: string;
@@ -68,6 +75,85 @@ export class GameCategoryMembershipTriggerService {
   private readonly pendingChanges: GameCategoryRuleChange[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
+  gameUpdated(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.game.updated'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const change = membershipChangeForGameUpdate(parsed.data.before, parsed.data.after);
+    if (change) {
+      this.enqueueAffected(change);
+    }
+  }
+
+  gamesCreated(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.games.created'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    void this.changeForGames(parsed.data.gameIds)
+      .then((change) => this.enqueueAffected(change))
+      .catch((err: unknown) => {
+        logger.error({ err }, 'gaming.games.created membership-trigger lookup failed');
+      });
+  }
+
+  tagDeleted(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.tag.deleted'].safeParse(payload);
+    if (parsed.success) {
+      this.enqueueAffected({
+        providerIds: [],
+        tagIds: [parsed.data.tagId],
+        playabilityChanged: false,
+      });
+    }
+  }
+
+  gamesBulkUpdated(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.games.bulk_updated'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    if (parsed.data.operation === 'add_tags') {
+      this.enqueueAffected({
+        providerIds: [],
+        tagIds: parsed.data.tagIds,
+        playabilityChanged: false,
+      });
+      return;
+    }
+    if (parsed.data.operation === 'set_active') {
+      this.enqueueAffected(playabilityChange);
+    }
+  }
+
+  providerUpdated(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.provider.updated'].safeParse(payload);
+    if (parsed.success && parsed.data.before.isActive !== parsed.data.after.isActive) {
+      this.enqueueAffected(playabilityChange);
+    }
+  }
+
+  gameAvailabilityChanged(payload: unknown) {
+    const parsed = domainEventSchemas['gaming.game.availability_changed'].safeParse(payload);
+    if (parsed.success && parsed.data.before.isUnavailable !== parsed.data.after.isUnavailable) {
+      this.enqueueAffected(playabilityChange);
+    }
+  }
+
+  scheduleSweep() {
+    void this.jobQueue
+      .schedule(
+        GAME_CATEGORY_MEMBERSHIP_SWEEP_QUEUE,
+        'gaming-category-membership-sweep',
+        {},
+        { cron: MEMBERSHIP_SWEEP_CRON },
+      )
+      .catch((err: unknown) => {
+        logger.error({ err }, 'gaming.category.membership-sweep schedule failed');
+      });
+  }
+
   /**
    * Queues an event-triggered evaluation for every rule-mode category `change` reaches.
    * Changes within `MEMBERSHIP_EVENT_DEBOUNCE_MS` are merged and looked up once, so a
@@ -83,7 +169,19 @@ export class GameCategoryMembershipTriggerService {
       const changes = this.pendingChanges.splice(0);
       this.flushTimer = null;
       void this.affectedCategoryIds(mergeChanges(changes))
-        .then((categoryIds) => {
+        .then(async (categoryIds) => {
+          if (categoryIds.length === 0) {
+            return;
+          }
+          await this.drizzle.db
+            .update(gameCategory)
+            .set({
+              membershipSeq: sql`${gameCategory.membershipSeq} + 1`,
+              updatedAt: sql`${gameCategory.updatedAt}`,
+            })
+            .where(
+              and(inArray(gameCategory.id, categoryIds), eq(gameCategory.membershipMode, 'rule')),
+            );
           for (const categoryId of categoryIds) {
             this.enqueue(categoryId, 'event');
           }

@@ -74,7 +74,7 @@ const shiftStoredRule = async () => {
     UPDATE game_category
     SET membership_rule = jsonb_build_array(
       jsonb_build_object('key', 'test_shifting', 'params', jsonb_build_object('n', ${shiftingCalls}::int))
-    )
+    ), membership_seq = membership_seq + 1
     WHERE id = ${shiftingCategoryId}
   `);
 };
@@ -679,8 +679,8 @@ describe('gaming catalog router authz', () => {
         call(router.updateCategory, { id: category.id, membershipMode: 'rule' }, { context: CTX }),
       ).rejects.toMatchObject({ code: 'CONFLICT' });
 
-      // One validate + one resolve per attempt: exactly three attempts, then nothing written.
-      expect(shiftingCalls).toBe(6);
+      // One validation per attempt: exactly three attempts, then nothing written.
+      expect(shiftingCalls).toBe(3);
       const [row] = await db.drizzle.db
         .select({ mode: gameCategory.membershipMode })
         .from(gameCategory)

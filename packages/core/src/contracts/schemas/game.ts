@@ -99,16 +99,10 @@ export const GAME_CATEGORY_RULE_PARAMS_MAX_BYTES = 4096;
 // Opaque to core, like GameSortParamsSchema: each rule definition's own paramsSchema gives
 // it meaning, checked when the rule is saved - the catalog is bound at runtime. Stored as
 // jsonb and carried on category events and audit rows, hence JSON-only and byte-capped.
-export const GameCategoryRuleParamsSchema = z
-  .record(z.string().min(1).max(64), z.json())
-  .refine(
-    (params) =>
-      new TextEncoder().encode(JSON.stringify(params)).length <=
-      GAME_CATEGORY_RULE_PARAMS_MAX_BYTES,
-    {
-      message: `Rule params must serialize to at most ${GAME_CATEGORY_RULE_PARAMS_MAX_BYTES} bytes`,
-    },
-  );
+export const GameCategoryRuleParamsSchema = createBoundedJsonParamsSchema({
+  maxBytes: GAME_CATEGORY_RULE_PARAMS_MAX_BYTES,
+  label: 'Rule params',
+});
 
 export const GameCategoryRuleClauseSchema = z
   .object({

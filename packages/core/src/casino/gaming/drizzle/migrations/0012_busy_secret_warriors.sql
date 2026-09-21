@@ -1,0 +1,1 @@
+ALTER TABLE "game_category" ADD COLUMN "membership_seq" integer DEFAULT 0 NOT NULL;

@@ -411,7 +411,13 @@ export class GameCategoryService {
           ...scalarPatch,
           ...sortPatch.patch,
           ...(sortPatch.changed ? rankDirtyPatch() : {}),
-          ...(membershipChanged ? { membershipMode: nextMode, membershipRule: nextRule } : {}),
+          ...(membershipChanged
+            ? {
+                membershipMode: nextMode,
+                membershipRule: nextRule,
+                membershipSeq: sql`${gameCategory.membershipSeq} + 1`,
+              }
+            : {}),
           // A manual category is not evaluated: a rule's last attempt or error would only
           // mislead. The rule itself is kept, for a later switch back.
           ...(modeChanged && nextMode === 'manual'

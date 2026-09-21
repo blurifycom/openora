@@ -20,6 +20,7 @@ import {
   gameTag,
   gameTagGame,
 } from '../schema/index.js';
+import { GameSortService } from '../service/game-sort.service.js';
 import { createDefaultGameSorts } from '../adapters/sort/index.js';
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 import { createDefaultGameCategoryRules } from '../adapters/rules/index.js';
@@ -70,7 +71,7 @@ function makeServices(extraRules: Parameters<typeof makeRuleCatalog>[0] = []) {
     db.drizzle,
     events,
     jobQueue,
-    createGameSortCatalog(createDefaultGameSorts(db.drizzle)),
+    new GameSortService(createGameSortCatalog(createDefaultGameSorts(db.drizzle))),
     rules,
     membership,
   );
@@ -773,7 +774,7 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
     });
   });
 
-  it('rejects a rule matching more games than the cap, on save and on evaluation', async () => {
+  it('records an over-cap result after saving and rejects it on explicit evaluation', async () => {
     const { membership, categories, rules } = makeServices();
     const provider = await seedProvider();
     await db.drizzle.db.execute(sql`
@@ -782,15 +783,17 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
       FROM generate_series(1, ${GAME_CATEGORY_RULE_MATCH_MAX + 1}) AS n
     `);
 
-    await expect(
-      categories.createCategory({
-        slug: `category-${randomUUID()}`,
-        name: 'Category',
-        membershipMode: 'rule',
-        membershipRule: [providers(provider.id)],
-        ...ACTOR,
-      }),
-    ).rejects.toThrow(GameCategoryRuleTooBroadError);
+    const saved = await categories.createCategory({
+      slug: `category-${randomUUID()}`,
+      name: 'Category',
+      membershipMode: 'rule',
+      membershipRule: [providers(provider.id)],
+      ...ACTOR,
+    });
+    expect(saved.membershipEvaluatedAt).toBeNull();
+    expect(saved.membershipAttemptedAt).not.toBeNull();
+    expect(saved.membershipLastError).toMatch(/exceeding the 5000-game cap/);
+    expect(await memberIds(saved.id)).toEqual([]);
     // A ranking clause after it does not rescue a filter that is too broad.
     await expect(rules.resolveGameIds([providers(provider.id), mostPlayed(1)])).rejects.toThrow(
       GameCategoryRuleTooBroadError,

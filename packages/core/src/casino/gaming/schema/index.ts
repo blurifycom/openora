@@ -119,6 +119,8 @@ export const gameCategory = pgTable(
     // Kept when the mode goes back to 'manual', so switching to 'rule' again needs no
     // re-entry; only read while the mode is 'rule'.
     membershipRule: zodJsonb(GameCategoryRuleSchema.nullable(), 'game_category.membership_rule')(),
+    // Fences evaluation runs and rule/input changes independently of sorting writes.
+    membershipSeq: integer().notNull().default(0),
     // When the games last matched the rule: successful evaluations only.
     membershipEvaluatedAt: timestamp({ withTimezone: true }),
     // Every evaluation, failed ones included - orders the sweep, so a rule that never
