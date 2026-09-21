@@ -4,7 +4,14 @@ import { sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
-import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameTag,
+  gameTagGame,
+} from '../schema/index.js';
 import { GameCatalogReaderService } from '../adapters/game-catalog-reader.service.js';
 
 let db: TestDb;
@@ -59,6 +66,18 @@ async function seedGame(
   return row;
 }
 
+async function seedTag(gameId: string, overrides: Partial<typeof gameTag.$inferInsert> = {}) {
+  const tag = findOneOrThrow(
+    await db.drizzle.db
+      .insert(gameTag)
+      .values({ name: `tag-${randomUUID()}`, visibility: 'visible', ...overrides })
+      .returning(),
+    new Error('seedTag: query returned no row'),
+  );
+  await db.drizzle.db.insert(gameTagGame).values({ gameId, tagId: tag.id });
+  return tag;
+}
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
   reader = new GameCatalogReaderService(db.drizzle);
@@ -70,7 +89,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${gameCategoryGame}, ${game}, ${gameCategory}, ${gameProvider} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${gameTagGame}, ${gameTag}, ${gameCategoryGame}, ${game}, ${gameCategory}, ${gameProvider} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -108,7 +127,23 @@ describe('GameCatalogReaderService.getPlayableGames (real PG)', () => {
         name: 'Studio',
         logoUrl: 'https://cdn/logo.png',
       },
+      tags: [],
     });
+  });
+
+  it('attaches only the visible tags, ordered by name', async () => {
+    const provider = await seedProvider();
+    const playable = await seedGame(provider.id);
+    await seedTag(playable.id, { name: 'Zeta', metadata: { color: '#ff0000' } });
+    await seedTag(playable.id, { name: 'Alpha' });
+    await seedTag(playable.id, { name: 'Hidden', visibility: 'invisible' });
+
+    const games = await reader.getPlayableGames([playable.id]);
+
+    expect(games.get(playable.id)?.tags).toEqual([
+      expect.objectContaining({ name: 'Alpha', visibility: 'visible', metadata: null }),
+      expect.objectContaining({ name: 'Zeta', metadata: { color: '#ff0000' } }),
+    ]);
   });
 
   it('iterates in the order the ids were given', async () => {
@@ -143,6 +178,18 @@ describe('GameCatalogReaderService.listPlayableGamesInCategory (real PG)', () =>
     const games = await reader.listPlayableGamesInCategory(category.id, { limit: 2 });
 
     expect(games.map((g) => g.name)).toEqual(['Alpha', 'Bravo']);
+  });
+
+  it('attaches the visible tags of each listed game', async () => {
+    const provider = await seedProvider();
+    const category = await seedCategory();
+    const tagged = await seedGame(provider.id, { name: 'Alpha' }, [category.id]);
+    await seedGame(provider.id, { name: 'Bravo' }, [category.id]);
+    const tag = await seedTag(tagged.id, { name: 'New' });
+
+    const games = await reader.listPlayableGamesInCategory(category.id, { limit: 10 });
+
+    expect(games.map((g) => g.tags.map((t) => t.id))).toEqual([[tag.id], []]);
   });
 
   it('returns nothing for an inactive category, an unknown or malformed id, or a limit below 1', async () => {

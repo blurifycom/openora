@@ -12,6 +12,7 @@ import type {
   GameCategorySummary,
   GameCategorySummaryWithTranslations,
   GameProviderSummary,
+  GameTagSummary,
 } from '../schemas/game.js';
 
 export type CatalogGame = {
@@ -20,6 +21,7 @@ export type CatalogGame = {
   slug: string;
   provider: GameProviderSummary;
   thumbnailUrl: string | null;
+  tags: GameTagSummary[];
 };
 
 export type CatalogCategoryWithGameCount = GameCategorySummaryWithTranslations & {

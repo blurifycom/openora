@@ -16,6 +16,8 @@ import {
   groupRows,
   playableGameCondition,
   providerSummaryColumns,
+  tagsByGameIds,
+  toGameTagSummary,
 } from '../../shared/game-catalog.js';
 
 const catalogGameColumns = {
@@ -53,6 +55,16 @@ function mapInIdOrder<Row extends { id: string }>(ids: readonly string[], rows: 
   return inIdOrder(ids, new Map(rows.map((row) => [row.id, row])));
 }
 
+type CatalogGameRow = Omit<CatalogGame, 'tags'>;
+
+async function withTags(db: DrizzleDb, rows: CatalogGameRow[]): Promise<CatalogGame[]> {
+  const tags = await tagsByGameIds(
+    db,
+    rows.map((row) => row.id),
+  );
+  return rows.map((row) => ({ ...row, tags: (tags.get(row.id) ?? []).map(toGameTagSummary) }));
+}
+
 function selectActiveCategoriesWithGameCount(db: DrizzleDb, where?: SQL) {
   return db
     .select({ ...categorySummaryColumns, gameCount: countWhere(playableGameCondition()) })
@@ -77,7 +89,7 @@ export class GameCatalogReaderService implements GameCatalogReader {
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
       .where(and(inArray(game.id, ids), playableGameCondition()));
-    return mapInIdOrder(ids, rows);
+    return mapInIdOrder(ids, await withTags(this.drizzle.db, rows));
   }
 
   async listPlayableGamesInCategory(
@@ -87,7 +99,7 @@ export class GameCatalogReaderService implements GameCatalogReader {
     if (!isUuid(categoryId) || limit < 1) {
       return [];
     }
-    return this.drizzle.db
+    const rows = await this.drizzle.db
       .select(catalogGameColumns)
       .from(game)
       .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
@@ -102,6 +114,7 @@ export class GameCatalogReaderService implements GameCatalogReader {
       )
       .orderBy(asc(game.name), asc(game.id))
       .limit(limit);
+    return withTags(this.drizzle.db, rows);
   }
 
   async getActiveCategories(
