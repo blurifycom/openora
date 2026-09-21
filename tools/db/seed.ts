@@ -23,6 +23,7 @@ import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
+import { seedRankLadder } from '@openora/core/promo/seed/gamification';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
 import { seedDemoData } from '@openora/testing/seed-demo-data';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
@@ -50,6 +51,8 @@ async function main() {
   console.log('  Auto-withdrawal config ready.');
   await seedDefaultWeightProfile(db);
   console.log('  Default wager-weight profile ready.');
+  await seedRankLadder(db);
+  console.log('  Rank ladder ready.');
   await seedChatCommands(db);
   console.log('  Chat command config ready.');
 
