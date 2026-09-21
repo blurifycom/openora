@@ -7,7 +7,8 @@ The game catalog, category ordering, and round management module. `docs/catalog.
 - **The game catalog** - providers, categories, tags, games, and category membership.
 - **Game rounds** - a player's engagement with a game; started by the player, concluded by the provider.
 - **Category ordering** - every category has a configurable sort with a materialized, job-written effective order, manual drag-and-drop positioning, and pinned slots.
-- **Read ports** - `GAME_CATALOG_READER` for cross-module access (lobby sections, promotions) and `GAMING_COMMANDS` for wallet integration (`accumulateExternalRound`, `setGameAvailability`).
+- **Rule-based category membership** - a category can be populated by a rule instead of by hand: a pipeline of clauses over an operator-extensible catalog of rule kinds (built-ins: providers, tags, most played); see below.
+- **Read ports** - `GAME_CATALOG_READER` for cross-module access (lobby sections, promotions) and `GAMING_COMMANDS` for wallet integration (`accumulateExternalRound`, `setGameAvailability`) and catalogue imports (`notifyGamesCreated`).
 
 ## Per-category game ordering
 
@@ -118,18 +119,105 @@ The list is returned in the same effective order players see (`categoryGameOrder
 
 The lobby module's own `lobby_category`/`lobby_category_game`/`featured_slot` system is unaffected and unaware of gaming sorts. A lobby section that surfaces a gaming category still reads it through `GAME_CATALOG_READER`, so it inherits the category's configured order automatically - but the lobby layout itself is cached (by default 30 seconds), so a re-rank triggered here can take up to that TTL to become visible in lobby sections.
 
+## Rule-based category membership
+
+A category's `membershipMode` is `manual` (the default: an admin adds and removes games) or `rule` (`GameCategoryMembershipService` owns the category's `game_category_game` rows). A rule is **materialized** into the same link table a manual category uses, so every reader - the public list, `GAME_CATALOG_READER`, the lobby, sorting, pins - works unchanged and never evaluates a rule at request time.
+
+Three services split the work, mirroring how sorts are laid out: `GameCategoryRuleService` runs rules against the catalog and never writes (resolve, save-time checks, preview, options); `GameCategoryMembershipService` writes what a rule resolves to (`evaluate`, and the job entry point); `GameCategoryMembershipTriggerService` decides when a category is re-evaluated (event matching, the debounce, the sweep, `notifyGamesCreated`).
+
+### The rule: an ordered pipeline of clauses
+
+`membershipRule` (`GameCategoryRuleSchema` in `@openora/core/contracts`) is a list of 1-10 clauses, `{ key, params }`. Each `key` names a **rule definition** in `GAME_CATEGORY_RULE_CATALOG`; `params` is that definition's own shape. The clauses run in order as a pipeline: the first matches over the whole catalogue, and every later clause only narrows what the one before it left. So clauses AND together, a ranking clause belongs last, and the same key may appear twice (two `tags` clauses require a tag from each).
+
+```json
+[
+  { "key": "providers", "params": { "providerIds": ["..."] } },
+  { "key": "tags", "params": { "tagIds": ["..."] } },
+  { "key": "most_played", "params": { "periodDays": 7, "limit": 20 } }
+]
+```
+
+Built-in definitions (`createDefaultGameCategoryRules()`):
+
+| Key           | Params                                | Matches                                                                                                |
+| ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `providers`   | `providerIds` (1-50)                  | a game of ANY listed provider                                                                          |
+| `tags`        | `tagIds` (1-50)                       | a game carrying ANY listed tag                                                                         |
+| `most_played` | `periodDays` (1-365), `limit` (1-500) | the `limit` most-played of the games it is given, by completed rounds in the window, most played first |
+
+`providers` and `tags` match a game whether or not it is playable, exactly as a manual category can hold an inactive game; readers already hide unplayable games from players. `most_played` declares no `isAffectedBy`: it aggregates the round table, so it is refreshed by the sweep (which its rolling window needs anyway) and on demand, never by a burst of catalogue events. It ranks **playable games only**, so an inactive game never takes a slot a player would see as a gap. Ties break on game id, and a game with no completed round in the window never qualifies, so a quiet catalogue yields fewer than `limit` games rather than arbitrary ones.
+
+`most_played` counts come from `ADMIN_GAME_REPORTING.listGamePerformance` - the same aggregation as the game performance report, so an overlay that rebinds the report also drives it. A round count is currency-neutral, so there is nothing to convert on a multi-currency catalogue. A money-based ranking (revenue, volume) is deliberately not built in: it would sum amounts across currencies unconverted. An operator who wants one writes it as a definition in an overlay, where the currency policy is theirs to choose.
+
+A rule may match at most `GAME_CATEGORY_RULE_MATCH_MAX` (5,000) games - checked after every clause, not only the last, so a ranking clause does not rescue a filter that is too broad.
+
+### Rule definitions and the GAME_CATEGORY_RULE_CATALOG seam
+
+The catalog mirrors `GAME_SORT_CATALOG`: a non-sealed token the gaming plugin binds to the three built-ins, which an overlay rebinds to add its own kinds (new releases, a game type, a metadata attribute such as RTP, an exclusion) alongside or instead of them. `defineGameCategoryRule()` takes:
+
+- **`key`** - a slug in the same shape as a sort key.
+- **`paramsSchema`** - a real Zod schema. Params are JSON (`z.json()`, since they live in a `jsonb` column and on audit events) and are parsed with it when a rule is saved; the parsed value is what is stored, so it must still be plain JSON and again before every run; `GET /backoffice/gaming/category-rule-options` publishes its JSON Schema for a rule-builder UI.
+- **`resolve({ params, candidateIds, now })`** - returns matching game ids, best first, from any source it likes. `candidateIds` is `null` for a rule's first clause (query the catalogue rather than loading it) and otherwise the games left so far. The result is de-duplicated, stripped of malformed ids and cut down to `candidateIds`, so a careless definition cannot widen the set or fail the link writes.
+- **`validate(params)`** (optional) - a problem only a lookup can find, as a message, or `null`; a throw is treated as a rule that cannot be saved. The built-ins use it to reject a provider or tag id that does not exist.
+- **`isAffectedBy(params, change)`** (optional) - whether a catalogue change (`providerIds`, `tagIds`, `playabilityChanged`) could alter the match, for event-driven re-evaluation. A definition without it is refreshed by the sweep and on demand only.
+- **`exposesReporting`** (optional) - set when the result reveals reporting data an admin with only `game-config:view` must not infer, such as a revenue ranking. Previewing a rule with such a clause needs `report:view` on top of `game-config:view`. No built-in sets it: `most_played` shows only which games are popular, with no figures, and that is what the resulting category shows players anyway.
+
+**A rule that does not resolve never empties a category.** An unknown key, params its definition refuses, a failed `validate`, or a rule past the match cap is a `400` when the rule is saved or previewed (`GameCategoryRuleInvalidError`, `GameCategoryRuleTooBroadError`), and again on a bare switch to rule mode that reuses a stored rule. If a saved rule stops resolving later - the overlay that supplied a kind was removed, a `resolve()` throws, the cap was outgrown - the evaluation is abandoned, the category keeps the games it had, a warning is logged, and the job is not retried; the next sweep tries again. The same goes for a stored rule that no longer parses against `GameCategoryRuleSchema` (the column reads it as `null`): it is a rule that does not resolve, never a manual category - so a change to that schema needs a backfill for the rules already saved. A category reports its state on three fields:
+
+- **`membershipEvaluatedAt`** - when its games last matched the rule; written by successful evaluations only.
+- **`membershipAttemptedAt`** - every evaluation, failed ones included (a run that gave up after three stale attempts counts too). The sweep orders by it (least recently attempted first), so a rule that never resolves goes to the back instead of holding a batch slot on every pass.
+- **`membershipLastError`** - why the last evaluation failed (this module's own message, never a definition's raw error), cleared by the next success. Switching the category back to manual clears this and `membershipAttemptedAt`, keeping the stored rule.
+
+So a stuck rule shows an old `membershipEvaluatedAt` next to a recent `membershipAttemptedAt` and a reason, never as freshly evaluated.
+
+### Mode switches and the manual-write guard
+
+- **manual -> rule** needs a rule in the same PATCH, or one stored earlier. The category is evaluated before the PATCH returns and its hand-picked games are **replaced** by the rule's matches.
+- **rule -> manual** keeps the current games and the stored rule. The games become ordinary manual rows an admin can remove.
+- **While a category is in rule mode** no manual write may add or remove its games: `PATCH /backoffice/gaming/games/{id}` whose `categoryIds` would add or drop a rule-mode category, and `POST /backoffice/gaming/games/bulk/categories` naming one, are rejected whole with `409 CONFLICT` (`GameCategoryRuleManagedError`). On the single-game `PATCH`, re-sending a rule-mode category the game is already in is not a change and is accepted; the bulk route has no such case and rejects any rule-mode category it names. Reordering and pinning stay available - they arrange members, they do not choose them. A pin on a game the rule later drops goes with the row.
+
+`game_category_game.source` (`manual` | `rule`) records who wrote each row. Nothing reads it yet: it exists so a later "manual additions on top of a rule" feature can tell the two apart without a backfill that could not recover the answer. Today a rule-mode category holds only `rule` rows (the first evaluation converts or removes whatever was there), and a switch back to manual relabels them `manual`.
+
+### When a rule is re-evaluated
+
+Evaluation is a diff inside one transaction - insert the new matches, delete the stale rows, leave the rest (and their `position`/`pinnedPosition`) untouched - followed by a rank run when anything moved. It is idempotent, so every trigger below is safe to repeat.
+
+| Trigger                                                                                                                   | Re-evaluates                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| category created in, switched to, or re-ruled in rule mode                                                                | that category, synchronously                                                                    |
+| `POST /backoffice/gaming/categories/{id}/membership/evaluate`                                                             | that category, synchronously                                                                    |
+| `gaming.game.updated` (provider, tags or `isActive` changed)                                                              | rules naming a moved provider/tag; a provider or `isActive` change is also a playability change |
+| `gaming.games.bulk_updated` `add_tags`                                                                                    | rules naming an added tag                                                                       |
+| `gaming.tag.deleted`                                                                                                      | rules naming the tag                                                                            |
+| `gaming.games.bulk_updated` `set_active`, `gaming.provider.updated` (`isActive` flip), `gaming.game.availability_changed` | no built-in; an overlay kind whose `isAffectedBy` reads `playabilityChanged`                    |
+| `gaming.games.created`                                                                                                    | rules naming the new games' providers/tags                                                      |
+| the `gaming.category.membership-sweep` schedule (hourly, `MEMBERSHIP_SWEEP_CRON`)                                         | every rule-mode category                                                                        |
+
+Which rules a change reaches is each clause's own `isAffectedBy`; the right-hand column describes the built-ins. `gaming.tag.created`/`updated` and `gaming.provider.created` cannot change any built-in's match set and are not subscribed. Event-driven runs go through the `gaming.category.membership` queue, one job per affected category; changes arriving within `MEMBERSHIP_EVENT_DEBOUNCE_MS` are merged per process and looked up once, so a sync flipping a thousand games costs one category scan and one job per affected category. The sweep takes at most `MEMBERSHIP_SWEEP_BATCH_LIMIT` categories per pass, least recently attempted first.
+
+**Core has no game-insert path.** Games arrive from whatever imports the catalogue - an aggregator sync overlay, a seed - writing `game` rows directly. Such an importer should call `GAMING_COMMANDS.notifyGamesCreated?.({ gameIds })` after it commits; that emits `gaming.games.created` (in batches of 1,000 ids). The method is optional on the port type so an overlay that already rebinds `GAMING_COMMANDS` keeps compiling; core's binding always provides it. An importer that does not is still covered by the sweep, which is also the only trigger a `most_played` clause has as its rolling window moves and as new rounds complete (round completion deliberately does not trigger an evaluation - it is the hot money path).
+
+### Lock order
+
+Every writer of `game_category_game` takes locks in the order **game rows, then the `game_category` row, then the link rows**. `updateGame` holds its game `FOR UPDATE` and then takes `FOR KEY SHARE` on the categories it touches; the bulk add does the same over its scope. The evaluator's link inserts would lock game rows (the foreign-key check) _after_ the category, so it instead reads the rule and the current members unlocked, locks the games it is about to insert `FOR KEY SHARE`, then locks the category `FOR UPDATE` and re-computes the diff; if the locked state disagrees with the unlocked read (rule edited, mode switched, another match appeared) it restarts, at most three times. The category `FOR UPDATE` conflicts with the `FOR KEY SHARE` the manual writers take, which is what makes the rule-mode guard race-free against a concurrent mode switch. For the same reason a mode switch evaluates _after_ its config transaction commits, not inside it, and a PATCH checks its rule (`normalizeRule`: definition code, on its own pooled connections) _before_ opening that transaction. Under the row lock it only confirms that the rule it checked is still the one in play, and restarts when a concurrent PATCH changed it - at most three times, then `409` (`GameCategoryUpdateContendedError`).
+
 ## Admin routes
 
-| Method | Path                                             | Purpose                                                                          |
-| ------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |
-| GET    | `/backoffice/gaming/categories`                  | List all categories (active, inactive, with counts)                              |
-| GET    | `/backoffice/gaming/categories/{id}`             | Read a category's full config (sort key, direction, params)                      |
-| POST   | `/backoffice/gaming/categories`                  | Create a category (slug, name, translations, sort config defaults to `'manual'`) |
-| PATCH  | `/backoffice/gaming/categories/{id}`             | Update a category's config, including sort key/direction/params                  |
-| GET    | `/backoffice/gaming/categories/{id}/games`       | Paginated list of category members with `position` and `pinnedPosition`          |
-| PUT    | `/backoffice/gaming/categories/{id}/games/order` | Reorder games (switches to `'manual'` sort)                                      |
-| PUT    | `/backoffice/gaming/categories/{id}/games/pins`  | Update pinned slots (replace-all write)                                          |
-| GET    | `/backoffice/gaming/sort-options`                | List available sort definitions with their JSON Schemas for a config UI          |
+| Method | Path                                                     | Purpose                                                                          |
+| ------ | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| GET    | `/backoffice/gaming/categories`                          | List all categories (active, inactive, with counts)                              |
+| GET    | `/backoffice/gaming/categories/{id}`                     | Read a category's full config (sort key, direction, params)                      |
+| POST   | `/backoffice/gaming/categories`                          | Create a category (slug, name, translations, sort config defaults to `'manual'`) |
+| PATCH  | `/backoffice/gaming/categories/{id}`                     | Update a category's config, including sort key/direction/params                  |
+| GET    | `/backoffice/gaming/categories/{id}/games`               | Paginated list of category members with `position` and `pinnedPosition`          |
+| PUT    | `/backoffice/gaming/categories/{id}/games/order`         | Reorder games (switches to `'manual'` sort)                                      |
+| PUT    | `/backoffice/gaming/categories/{id}/games/pins`          | Update pinned slots (replace-all write)                                          |
+| GET    | `/backoffice/gaming/sort-options`                        | List available sort definitions with their JSON Schemas for a config UI          |
+| GET    | `/backoffice/gaming/category-rule-options`               | List the bound rule kinds with their params JSON Schemas for a rule-builder UI   |
+| POST   | `/backoffice/gaming/categories/rule-preview`             | Match count and first page for an unsaved rule; writes nothing                   |
+| POST   | `/backoffice/gaming/categories/{id}/membership/evaluate` | Re-evaluate a rule-mode category now                                             |
+
+`POST`/`PATCH` on a category also accept `membershipMode` and `membershipRule`. The preview needs `game-config:view`, plus `report:view` when a clause's definition sets `exposesReporting` - none of the built-ins does.
 
 ## Audited events
 
@@ -138,6 +226,8 @@ Every admin change to sort config, order, or pins emits an event carrying the ac
 - **`gaming.category.updated`** - `sortKey`, `sortDirection`, `sortParams`, etc. changed. Carries before/after snapshots of the full category config.
 - **`gaming.category.games_reordered`** - Manual reorder via the PUT route. Carries `before`/`after` as the full ordered game-id lists (every member, not only previously-positioned ones), `sortKeyBefore`/`sortKeyAfter` to show the mode switch, and `sortDirectionBefore`/`sortDirectionAfter` plus `sortParamsBefore`/`sortParamsAfter` to show the direction/params reset a reorder always performs.
 - **`gaming.category.pins_updated`** - Pins replaced via the PUT route. Carries `before`/`after` as ordered lists of `{ gameId, position }` objects.
+
+- **`gaming.category.membership_evaluated`** - one evaluation of a rule-mode category that changed its games, or that an admin asked for. Carries `trigger` (`admin` | `event` | `schedule`), `matchedCount`, `addedGameIds`, `removedGameIds` and `relabeledCount` (rows kept but handed from `manual` to `rule` ownership). `actorId` is the admin for an on-demand or mode-switch run and the system actor (the zero UUID) otherwise; a scheduled or event-driven run that adds, removes and relabels nothing emits nothing. A mode or rule change itself is on `gaming.category.updated`, whose snapshots now carry `membershipMode` and `membershipRule` (defaulting to `manual`/`null` when replaying an older event).
 
 An event recorded before this feature carries no sort fields at all. The schemas default `sortKey` to `'manual'`, `sortDirection` to `null` and `sortParams` to `{}` on parse, so replaying an older event still parses and reports what those categories actually were.
 

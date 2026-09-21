@@ -69,7 +69,8 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       .leftJoin(gameRound, and(...joinConditions))
       .where(where)
       .groupBy(game.id, game.name, game.gameType)
-      .orderBy(order(sortColumns[filter.sortBy ?? 'volume']));
+      // game.id breaks ties so equal metrics always come back in the same order.
+      .orderBy(order(sortColumns[filter.sortBy ?? 'volume']), asc(game.id));
 
     return rows.map((r) => ({
       gameId: r.gameId,

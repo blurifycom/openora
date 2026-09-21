@@ -14,6 +14,9 @@ import {
   jsonb,
 } from 'drizzle-orm/pg-core';
 import {
+  GAME_CATEGORY_GAME_SOURCES,
+  GAME_CATEGORY_MEMBERSHIP_MODES,
+  GameCategoryRuleSchema,
   GameCategoryTranslationsSchema,
   GameSortParamsSchema,
   GameTagMetadataSchema,
@@ -36,6 +39,14 @@ export const gameTypeEnum = pgEnum('game_type', GAME_TYPES);
 export const gameTagTypeEnum = pgEnum('game_tag_type', GAME_TAG_TYPES);
 export const gameTagVisibilityEnum = pgEnum('game_tag_visibility', GAME_TAG_VISIBILITIES);
 export const gameSortDirectionEnum = pgEnum('game_sort_direction', GAME_SORT_DIRECTIONS);
+export const gameCategoryMembershipModeEnum = pgEnum(
+  'game_category_membership_mode',
+  GAME_CATEGORY_MEMBERSHIP_MODES,
+);
+export const gameCategoryGameSourceEnum = pgEnum(
+  'game_category_game_source',
+  GAME_CATEGORY_GAME_SOURCES,
+);
 
 export const gameProvider = pgTable(
   'game_provider',
@@ -102,12 +113,32 @@ export const gameCategory = pgTable(
     rankedAt: timestamp({ withTimezone: true }),
     // Rank runs failed since the last success; the sweep backs off on it.
     rankFailures: integer().notNull().default(0),
+    // 'rule': GameCategoryMembershipService owns this category's game_category_game rows
+    // and every manual membership write is rejected - see docs/modules/gaming.md.
+    membershipMode: gameCategoryMembershipModeEnum().notNull().default('manual'),
+    // Kept when the mode goes back to 'manual', so switching to 'rule' again needs no
+    // re-entry; only read while the mode is 'rule'.
+    membershipRule: zodJsonb(GameCategoryRuleSchema.nullable(), 'game_category.membership_rule')(),
+    // When the games last matched the rule: successful evaluations only.
+    membershipEvaluatedAt: timestamp({ withTimezone: true }),
+    // Every evaluation, failed ones included - orders the sweep, so a rule that never
+    // resolves goes to the back instead of holding a batch slot on every pass.
+    membershipAttemptedAt: timestamp({ withTimezone: true }),
+    // Why the last evaluation failed; null once one succeeds. Set only from this
+    // module's own error messages, never from a definition's thrown error.
+    membershipLastError: text(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('game_category_slug_key').on(t.slug)],
+  (t) => [
+    uniqueIndex('game_category_slug_key').on(t.slug),
+    check(
+      'game_category_membership_rule_check',
+      sql`${t.membershipMode} = 'manual' OR ${t.membershipRule} IS NOT NULL`,
+    ),
+  ],
 );
 
 export const game = pgTable(
@@ -183,6 +214,10 @@ export const gameCategoryGame = pgTable(
     // Fixed slot (0-based), exempt from automatic re-sorting - see docs/modules/gaming.md. Only the
     // pins route writes it; cascades away with the row on membership removal.
     pinnedPosition: integer(),
+    // 'rule' rows are written by GameCategoryMembershipService only. Recorded now so a
+    // later "manual additions on top of a rule" feature can tell the two apart without
+    // a backfill - see docs/modules/gaming.md.
+    source: gameCategoryGameSourceEnum().notNull().default('manual'),
   },
   (t) => [
     uniqueIndex('game_category_game_key').on(t.gameId, t.categoryId),

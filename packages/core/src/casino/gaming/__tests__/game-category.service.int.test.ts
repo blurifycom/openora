@@ -5,12 +5,17 @@ import * as z from 'zod';
 import { asc, eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
+  createGameCategoryRuleCatalog,
   createGameSortCatalog,
   defineGameSort,
   type GameSortCatalog,
 } from '@openora/core/contracts';
 import { NO_CLIENT_META, makeEventBus, makeJobQueue } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
+import { GameCategoryMembershipService } from '../service/game-category-membership.service.js';
+import { GameCategoryRuleService } from '../service/game-category-rule.service.js';
+import { DrizzleAdminGameReporting } from '../admin-reporting.js';
+import { createDefaultGameCategoryRules } from '../adapters/rules/index.js';
 import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
 import { createDefaultGameSorts } from '../adapters/sort/index.js';
 import {
@@ -22,14 +27,28 @@ import {
 
 let db: TestDb;
 
+function makeRuleCatalog() {
+  return createGameCategoryRuleCatalog(
+    createDefaultGameCategoryRules(db.drizzle, new DrizzleAdminGameReporting(db.drizzle)),
+  );
+}
+
 const ACTOR = { actorId: '00000000-0000-4000-8000-000000000001', ...NO_CLIENT_META };
 
 function makeService(sortCatalog?: GameSortCatalog) {
   const events = makeEventBus();
   const jobQueue = makeJobQueue();
   const catalog = sortCatalog ?? createGameSortCatalog(createDefaultGameSorts(db.drizzle));
+  const rules = new GameCategoryRuleService(db.drizzle, makeRuleCatalog());
   return {
-    svc: new GameCategoryService(db.drizzle, events, jobQueue, new GameSortService(catalog)),
+    svc: new GameCategoryService(
+      db.drizzle,
+      events,
+      jobQueue,
+      new GameSortService(catalog),
+      rules,
+      new GameCategoryMembershipService(db.drizzle, events, jobQueue, rules),
+    ),
     events,
     jobQueue,
   };

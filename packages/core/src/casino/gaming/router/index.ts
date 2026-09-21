@@ -17,8 +17,21 @@ import {
   GameCategoryService,
   GameCategoryNotFoundError,
   GameCategorySlugTakenError,
+  GameCategoryRuleRequiredError,
+  GameCategoryUpdateContendedError,
   CategoryGameNotMemberError,
 } from '../service/game-category.service.js';
+import {
+  GameCategoryMembershipService,
+  GameCategoryMembershipContendedError,
+  GameCategoryNotRuleManagedError,
+  GameCategoryRuleManagedError,
+} from '../service/game-category-membership.service.js';
+import {
+  GameCategoryRuleService,
+  GameCategoryRuleInvalidError,
+  GameCategoryRuleTooBroadError,
+} from '../service/game-category-rule.service.js';
 import {
   GameTagService,
   GameTagNameTakenError,
@@ -39,6 +52,8 @@ export function createGamingRouter({
   gaming,
   providers,
   categories,
+  rules,
+  membership,
   tags,
   bulk,
   adminGuard,
@@ -47,6 +62,8 @@ export function createGamingRouter({
   gaming: GamingService;
   providers: GameProviderService;
   categories: GameCategoryService;
+  rules: GameCategoryRuleService;
+  membership: GameCategoryMembershipService;
   tags: GameTagService;
   bulk: GameBulkService;
   adminGuard: AdminGuard;
@@ -156,8 +173,16 @@ export function createGamingRouter({
 
     createCategory: os.createCategory.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
-      return mapErrors({ CONFLICT: GameCategorySlugTakenError }, () =>
-        categories.createCategory({ ...input, actorId: userId, ip, userAgent }),
+      return mapErrors(
+        {
+          CONFLICT: GameCategorySlugTakenError,
+          BAD_REQUEST: [
+            GameCategoryRuleRequiredError,
+            GameCategoryRuleInvalidError,
+            GameCategoryRuleTooBroadError,
+          ],
+        },
+        () => categories.createCategory({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 
@@ -166,8 +191,12 @@ export function createGamingRouter({
       return mapErrors(
         {
           NOT_FOUND: GameCategoryNotFoundError,
-          CONFLICT: GameCategorySlugTakenError,
-          BAD_REQUEST: GameSortConfigInvalidError,
+          CONFLICT: [GameCategorySlugTakenError, GameCategoryUpdateContendedError],
+          BAD_REQUEST: [
+                      GameCategoryRuleRequiredError,
+            GameCategoryRuleInvalidError,
+            GameCategoryRuleTooBroadError,
+          ],
         },
         () => categories.updateCategory({ ...input, actorId: userId, ip, userAgent }),
       );
@@ -201,6 +230,43 @@ export function createGamingRouter({
         },
         () => categories.updateCategoryPins({ ...input, actorId: userId, ip, userAgent }),
       );
+    }),
+
+    previewCategoryRule: os.previewCategoryRule.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      // No built-in kind sets this. An overlay's kind whose order reveals reporting data
+      // (a revenue ranking, say) does, and previewing it needs that report's permission.
+      if (rules.exposesReporting(input.rule)) {
+        await adminGuard.assert(context, 'report', 'view');
+      }
+      return mapErrors(
+        { BAD_REQUEST: [GameCategoryRuleInvalidError, GameCategoryRuleTooBroadError] },
+        () => rules.preview(input),
+      );
+    }),
+
+    evaluateCategoryMembership: os.evaluateCategoryMembership.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+        return mapErrors(
+          {
+            NOT_FOUND: GameCategoryNotFoundError,
+            CONFLICT: [GameCategoryNotRuleManagedError, GameCategoryMembershipContendedError],
+            BAD_REQUEST: [GameCategoryRuleInvalidError, GameCategoryRuleTooBroadError],
+          },
+          () =>
+            membership.evaluate({
+              categoryId: input.id,
+              trigger: 'admin',
+              actor: { actorId: userId, ip, userAgent },
+            }),
+        );
+      },
+    ),
+
+    getCategoryRuleOptions: os.getCategoryRuleOptions.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return rules.listRuleOptions();
     }),
 
     getSortOptions: os.getSortOptions.handler(async ({ context }) => {
@@ -254,7 +320,11 @@ export function createGamingRouter({
             GameCategoryNotFoundError,
             GameTagNotFoundError,
           ],
-          CONFLICT: [GameSlugTakenError, GameAggregatorNotMappedError],
+          CONFLICT: [
+            GameSlugTakenError,
+            GameAggregatorNotMappedError,
+            GameCategoryRuleManagedError,
+          ],
         },
         () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
       );
@@ -294,7 +364,11 @@ export function createGamingRouter({
     addGameCategories: os.addGameCategories.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
-        { NOT_FOUND: GameCategoryNotFoundError, BAD_REQUEST: GameBulkTooManyGamesError },
+        {
+          NOT_FOUND: GameCategoryNotFoundError,
+          CONFLICT: GameCategoryRuleManagedError,
+          BAD_REQUEST: GameBulkTooManyGamesError,
+        },
         () => bulk.addGameCategories({ ...input, actorId: userId, ip, userAgent }),
       );
     }),

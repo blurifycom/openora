@@ -5,7 +5,7 @@ import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { GameAdapter, PlayEligibilityPort, WalletCommands } from '@openora/core/contracts';
-import { createGameSortCatalog } from '@openora/core/contracts';
+import { createGameCategoryRuleCatalog, createGameSortCatalog } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -31,11 +31,21 @@ import { GamingService } from '../service/gaming.service.js';
 import { GameCategoryService } from '../service/game-category.service.js';
 import { GameTagService } from '../service/game-tag.service.js';
 import { GameProviderService } from '../service/game-provider.service.js';
+import { GameCategoryMembershipService } from '../service/game-category-membership.service.js';
+import { GameCategoryRuleService } from '../service/game-category-rule.service.js';
+import { DrizzleAdminGameReporting } from '../admin-reporting.js';
+import { createDefaultGameCategoryRules } from '../adapters/rules/index.js';
 import { GameBulkService } from '../service/game-bulk.service.js';
 
 const CTX = testContext();
 
 let db: TestDb;
+
+function makeRuleCatalog() {
+  return createGameCategoryRuleCatalog(
+    createDefaultGameCategoryRules(db.drizzle, new DrizzleAdminGameReporting(db.drizzle)),
+  );
+}
 
 const unrestricted: PlayEligibilityPort = mock<PlayEligibilityPort>({
   isRestricted: vi.fn().mockResolvedValue(false),
@@ -57,11 +67,16 @@ function routerWith(adminGuard: AdminGuard) {
   );
   const providers = new GameProviderService(db.drizzle, events);
   const sortCatalog = createGameSortCatalog(createDefaultGameSorts(db.drizzle));
+  const jobQueue = makeJobQueue();
+  const rules = new GameCategoryRuleService(db.drizzle, makeRuleCatalog());
+  const membership = new GameCategoryMembershipService(db.drizzle, events, jobQueue, rules);
   const categories = new GameCategoryService(
     db.drizzle,
     events,
-    makeJobQueue(),
+    jobQueue,
     new GameSortService(sortCatalog),
+    rules,
+    membership,
   );
   const tags = new GameTagService(db.drizzle, events);
   const bulk = new GameBulkService(db.drizzle, events);
@@ -70,6 +85,8 @@ function routerWith(adminGuard: AdminGuard) {
       gaming,
       providers,
       categories,
+      rules,
+      membership,
       tags,
       bulk,
       adminGuard,

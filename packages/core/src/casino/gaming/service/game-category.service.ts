@@ -1,9 +1,10 @@
 import {
   type EventBus,
   type DrizzleTx,
-  makeNotFoundError,
   makeConflictError,
   createDomainError,
+  makeNotFoundError,
+  createLogger,
   DrizzleService,
   findOneOrThrow,
   isUniqueConstraintViolation,
@@ -12,7 +13,8 @@ import {
   pageToOffset,
 } from '@openora/core/server';
 import { and, asc, count, eq, ilike, isNotNull, ne, or, sql } from 'drizzle-orm';
-import type { JobQueueAdapter } from '@openora/core/contracts';
+import { isDeepStrictEqual } from 'node:util';
+import type { GameCategoryRule, JobQueueAdapter } from '@openora/core/contracts';
 import { GameSortService } from './game-sort.service.js';
 import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
 import type {
@@ -22,6 +24,7 @@ import type {
   UpdateCategoryPinsInput,
 } from '../contract/index.js';
 import { enqueueGameCategoryRank } from './game-sort-trigger.service.js';
+import type { GameCategoryRuleService } from './game-category-rule.service.js';
 import {
   categoryGameOrder,
   rankDirtyPatch,
@@ -31,15 +34,33 @@ import {
   type CatalogActor,
 } from '../../shared/game-catalog.js';
 
+const logger = createLogger('gaming');
+
 export const GameCategoryNotFoundError = makeNotFoundError('GameCategory');
+export const GameCategoryRuleRequiredError = createDomainError<[]>(
+  'GameCategoryRuleRequiredError',
+  () => 'A category in rule mode needs a membershipRule',
+);
+
+// What this service needs of GameCategoryMembershipService. Declared here rather than
+// imported: that service imports this file's errors, and the two must not form a cycle.
+export type CategoryMembershipEvaluator = {
+  evaluate(args: { categoryId: string; trigger: 'admin'; actor: CatalogActor }): Promise<unknown>;
+};
 export const GameCategorySlugTakenError = makeConflictError(
   'GameCategorySlugTakenError',
   'A category with this slug already exists',
+);
+export const GameCategoryUpdateContendedError = makeConflictError(
+  'GameCategoryUpdateContendedError',
+  'The category kept changing while its rule was being checked; retry the update',
 );
 export const CategoryGameNotMemberError = createDomainError<[gameId: string, categoryId: string]>(
   'CategoryGameNotMemberError',
   (gameId, categoryId) => `Game ${gameId} is not a member of category ${categoryId}`,
 );
+
+const MAX_UPDATE_ATTEMPTS = 3;
 
 function categorySnapshot(record: typeof gameCategory.$inferSelect) {
   return {
@@ -53,6 +74,8 @@ function categorySnapshot(record: typeof gameCategory.$inferSelect) {
     sortDirection: record.sortDirection,
     sortParams: record.sortParams ?? {},
     rankedAt: record.rankedAt ? record.rankedAt.toISOString() : null,
+    membershipMode: record.membershipMode,
+    membershipRule: record.membershipRule ?? null,
   };
 }
 
@@ -65,6 +88,15 @@ function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
     sortDirection: record.sortDirection,
     sortParams: record.sortParams ?? {},
     rankedAt: record.rankedAt ? record.rankedAt.toISOString() : null,
+    membershipMode: record.membershipMode,
+    membershipRule: record.membershipRule ?? null,
+    membershipEvaluatedAt: record.membershipEvaluatedAt
+      ? record.membershipEvaluatedAt.toISOString()
+      : null,
+    membershipAttemptedAt: record.membershipAttemptedAt
+      ? record.membershipAttemptedAt.toISOString()
+      : null,
+    membershipLastError: record.membershipLastError,
     createdAt: dates.createdAt,
     updatedAt: dates.updatedAt,
   };
@@ -76,6 +108,8 @@ export class GameCategoryService {
     private readonly events: EventBus,
     private readonly jobQueue: JobQueueAdapter,
     private readonly sorts: GameSortService,
+    private readonly rules: GameCategoryRuleService,
+    private readonly membership: CategoryMembershipEvaluator,
   ) {}
 
   // Locks a category row FOR UPDATE inside the caller's transaction, so a concurrent
@@ -164,10 +198,16 @@ export class GameCategoryService {
     translations,
     icon,
     sortOrder,
+    membershipMode,
+    membershipRule,
     actorId,
     ip,
     userAgent,
   }: CreateCategoryInput & CatalogActor) {
+    if (membershipMode === 'rule' && membershipRule === undefined) {
+      throw new GameCategoryRuleRequiredError();
+    }
+    const rule = membershipRule ? await this.rules.normalizeRule(membershipRule) : null;
     let record: typeof gameCategory.$inferSelect;
     try {
       record = await this.drizzle.db.transaction(async (tx) => {
@@ -187,6 +227,8 @@ export class GameCategoryService {
             translations: translations ?? {},
             icon: icon ?? null,
             sortOrder: sortOrder ?? 0,
+            membershipMode: membershipMode ?? 'manual',
+            membershipRule: rule,
           })
           .returning();
         return created;
@@ -204,7 +246,25 @@ export class GameCategoryService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
+    if (record.membershipMode === 'rule') {
+      return this.evaluateAfterWrite(record.id, { actorId, ip, userAgent });
+    }
     return toCategoryDetail(record);
+  }
+
+  // A category that just entered rule mode, or whose rule just changed, is populated
+  // before the write returns, so the caller never sees the old games under the new rule.
+  // Runs after the config commit, not inside it: the evaluator locks games before the
+  // category (docs/modules/gaming.md), the opposite of a transaction that already holds
+  // the category row. A failure here is logged, not thrown - the config write is already
+  // committed and audited, and the membership sweep retries the evaluation.
+  private async evaluateAfterWrite(id: string, actor: CatalogActor) {
+    try {
+      await this.membership.evaluate({ categoryId: id, trigger: 'admin', actor });
+    } catch (err) {
+      logger.error({ err, categoryId: id }, 'gaming.category.membership: evaluation failed');
+    }
+    return this.getCategory(id);
   }
 
   async updateCategory({
@@ -215,6 +275,8 @@ export class GameCategoryService {
     sortKey,
     sortDirection,
     sortParams,
+    membershipMode,
+    membershipRule,
     ...patchInput
   }: UpdateCategoryInput & CatalogActor) {
     const scalarPatch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
@@ -222,40 +284,151 @@ export class GameCategoryService {
     const wantsSortChange =
       sortKey !== undefined || sortDirection !== undefined || sortParams !== undefined;
 
-    const outcome = await this.drizzle.db
+    for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt += 1) {
+      const normalized = await this.normalizeMembershipPatch(id, membershipMode, membershipRule);
+      const outcome = await this.applyCategoryUpdate({
+        id,
+        scalarPatch,
+        hasScalarChanges,
+        sort: wantsSortChange ? { sortKey, sortDirection, sortParams } : null,
+        membershipMode,
+        membershipRule,
+        normalized,
+      });
+      if (outcome === 'stale') {
+        continue;
+      }
+      return this.finishCategoryUpdate(id, outcome, { actorId, ip, userAgent });
+    }
+    throw new GameCategoryUpdateContendedError();
+  }
+
+  // Runs the rule catalog - arbitrary definition code, on its own pooled connections -
+  // BEFORE the update transaction, never inside it: holding the category row lock and a
+  // connection across that would let a handful of concurrent PATCHes exhaust the pool.
+  // Returns the rule that was checked next to its normalized form, so the transaction
+  // can confirm under the lock that it is still the rule in play.
+  private async normalizeMembershipPatch(
+    id: string,
+    membershipMode: UpdateCategoryInput['membershipMode'],
+    membershipRule: UpdateCategoryInput['membershipRule'],
+  ) {
+    if (membershipMode === undefined && membershipRule === undefined) {
+      return null;
+    }
+    const existing = findOneOrThrow(
+      await this.drizzle.db
+        .select({ mode: gameCategory.membershipMode, rule: gameCategory.membershipRule })
+        .from(gameCategory)
+        .where(eq(gameCategory.id, id))
+        .limit(1),
+      new GameCategoryNotFoundError(id),
+    );
+    const input = membershipRule ?? existing.rule;
+    const switchesToRule = membershipMode === 'rule' && existing.mode !== 'rule';
+    if (input === null || (membershipRule === undefined && !switchesToRule)) {
+      return null;
+    }
+    return { input, rule: await this.rules.normalizeRule(input) };
+  }
+
+  private async applyCategoryUpdate({
+    id,
+    scalarPatch,
+    hasScalarChanges,
+    sort,
+    membershipMode,
+    membershipRule,
+    normalized,
+  }: {
+    id: string;
+    scalarPatch: Partial<typeof gameCategory.$inferInsert>;
+    hasScalarChanges: boolean;
+    sort: Pick<UpdateCategoryInput, 'sortKey' | 'sortDirection' | 'sortParams'> | null;
+    membershipMode: UpdateCategoryInput['membershipMode'];
+    membershipRule: UpdateCategoryInput['membershipRule'];
+    normalized: { input: GameCategoryRule; rule: GameCategoryRule } | null;
+  }) {
+    return this.drizzle.db
       .transaction(async (tx) => {
         // The row lock serializes concurrent PATCHes, so the audited `before` is the
         // state this write replaced, never a snapshot another request already changed.
         const existing = await this.lockCategoryRow(tx, id);
-        if (patchInput.slug !== undefined && patchInput.slug !== existing.slug) {
+        if (scalarPatch.slug !== undefined && scalarPatch.slug !== existing.slug) {
           const [clash] = await tx
             .select({ id: gameCategory.id })
             .from(gameCategory)
-            .where(and(eq(gameCategory.slug, patchInput.slug), ne(gameCategory.id, id)))
+            .where(and(eq(gameCategory.slug, scalarPatch.slug), ne(gameCategory.id, id)))
             .limit(1);
           if (clash) {
             throw new GameCategorySlugTakenError();
           }
         }
 
-        const sortPatch = wantsSortChange
-          ? this.sorts.resolvePatch(existing, { sortKey, sortDirection, sortParams })
+        const sortPatch = sort
+          ? this.sorts.resolvePatch(existing, sort)
           : { changed: false, patch: {} };
 
-        const hasChanges = hasScalarChanges || sortPatch.changed;
+        const nextMode = membershipMode ?? existing.membershipMode;
+        const modeChanged = nextMode !== existing.membershipMode;
+        const candidateRule = membershipRule ?? existing.membershipRule;
+        if (nextMode === 'rule' && !candidateRule) {
+          throw new GameCategoryRuleRequiredError();
+        }
+        // Also on a bare switch to rule mode: the stored rule may name a provider, a tag
+        // or a rule kind removed since it was saved, and evaluating it blind would empty
+        // the category.
+        const needsCheck =
+          candidateRule !== null &&
+          (membershipRule !== undefined || (modeChanged && nextMode === 'rule'));
+        // The rule checked before this transaction must be the one in play now that the
+        // row is locked - a concurrent PATCH may have replaced the stored rule or mode.
+        if (needsCheck && !(normalized && isDeepStrictEqual(normalized.input, candidateRule))) {
+          return 'stale' as const;
+        }
+        const nextRule = needsCheck && normalized ? normalized.rule : candidateRule;
+        const ruleChanged = !isDeepStrictEqual(nextRule, existing.membershipRule);
+        const membershipChanged = modeChanged || ruleChanged;
+
+        const hasChanges = hasScalarChanges || sortPatch.changed || membershipChanged;
         if (!hasChanges) {
-          return { changed: false, sortChanged: false, before: existing, after: existing };
+          return {
+            changed: false as const,
+            sortChanged: false,
+            needsEvaluation: false,
+            before: existing,
+            after: existing,
+          };
+        }
+        if (modeChanged && nextMode === 'manual') {
+          // The games stay; from here on they are an admin's to add and remove.
+          await tx
+            .update(gameCategoryGame)
+            .set({ source: 'manual' })
+            .where(eq(gameCategoryGame.categoryId, id));
         }
         const patch = {
           ...scalarPatch,
           ...sortPatch.patch,
           ...(sortPatch.changed ? rankDirtyPatch() : {}),
+          ...(membershipChanged ? { membershipMode: nextMode, membershipRule: nextRule } : {}),
+          // A manual category is not evaluated: a rule's last attempt or error would only
+          // mislead. The rule itself is kept, for a later switch back.
+          ...(modeChanged && nextMode === 'manual'
+            ? { membershipAttemptedAt: null, membershipLastError: null }
+            : {}),
         };
         const updated = findOneOrThrow(
           await tx.update(gameCategory).set(patch).where(eq(gameCategory.id, id)).returning(),
           new GameCategoryNotFoundError(id),
         );
-        return { changed: true, sortChanged: sortPatch.changed, before: existing, after: updated };
+        return {
+          changed: true as const,
+          sortChanged: sortPatch.changed,
+          needsEvaluation: membershipChanged && nextMode === 'rule',
+          before: existing,
+          after: updated,
+        };
       })
       .catch((error: unknown) => {
         if (isUniqueConstraintViolation(error)) {
@@ -263,6 +436,13 @@ export class GameCategoryService {
         }
         throw error;
       });
+  }
+
+  private async finishCategoryUpdate(
+    id: string,
+    outcome: Exclude<Awaited<ReturnType<GameCategoryService['applyCategoryUpdate']>>, 'stale'>,
+    { actorId, ip, userAgent }: CatalogActor,
+  ) {
     if (!outcome.changed) {
       return toCategoryDetail(outcome.after);
     }
@@ -276,6 +456,9 @@ export class GameCategoryService {
     });
     if (outcome.sortChanged) {
       enqueueGameCategoryRank(this.jobQueue, id);
+    }
+    if (outcome.needsEvaluation) {
+      return this.evaluateAfterWrite(id, { actorId, ip, userAgent });
     }
     return toCategoryDetail(outcome.after);
   }

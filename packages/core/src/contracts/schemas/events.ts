@@ -10,6 +10,8 @@ import {
   GameAddedCategoryLinksSchema,
   GameAddedTagLinksSchema,
   GameBulkIdsSchema,
+  GameCategoryMembershipModeSchema,
+  GameCategoryRuleSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
   GameSortDirectionSchema,
@@ -102,7 +104,8 @@ const providerGeoRuleEventState = gameGeoRuleEventState
 // A category's full config snapshot, shared by gaming.category.created (spread at the
 // top level) and gaming.category.updated (before/after) - see the domainEventSchemas
 // entries below. Older events predate per-category sorting; the sort fields default so
-// they replay at the catalog's own defaults rather than failing to parse.
+// they replay at the catalog's own defaults rather than failing to parse. The same
+// holds for the membership fields: an older event replays as a manual category.
 const gameCategorySnapshotSchema = z.object({
   slug: z.string(),
   name: z.string(),
@@ -114,6 +117,8 @@ const gameCategorySnapshotSchema = z.object({
   sortDirection: GameSortDirectionSchema.nullable().default(null),
   sortParams: GameSortParamsSchema.default({}),
   rankedAt: z.string().nullable().default(null),
+  membershipMode: GameCategoryMembershipModeSchema.default('manual'),
+  membershipRule: GameCategoryRuleSchema.nullable().default(null),
 });
 
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
@@ -551,6 +556,26 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
     before: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
     after: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
+  }),
+  // One evaluation of a rule-mode category that changed its membership, or that an admin
+  // asked for. actorId is the admin for an on-demand or mode-switch run and the system
+  // actor (zero UUID) for an event-driven or scheduled one.
+  'gaming.category.membership_evaluated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema,
+    trigger: z.enum(['admin', 'event', 'schedule']),
+    matchedCount: z.number().int().nonnegative(),
+    // Rows kept but handed from 'manual' to 'rule' ownership on the first evaluation.
+    relabeledCount: z.number().int().nonnegative().default(0),
+    addedGameIds: z.array(UuidSchema),
+    removedGameIds: z.array(UuidSchema),
+  }),
+  // New catalogue rows. Core has no game-insert path of its own: whatever imports games
+  // (an aggregator sync overlay, a seed) reports them through GAMING_COMMANDS so
+  // rule-mode categories pick them up without waiting for the membership sweep.
+  'gaming.games.created': z.object({
+    // Matches GAMES_CREATED_EVENT_BATCH in the gaming module contract, which batches to it.
+    gameIds: z.array(UuidSchema).min(1).max(1000),
   }),
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })
