@@ -11,6 +11,7 @@ import {
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
+import { seedRankLadder } from '@openora/core/promo/seed/gamification';
 import { user, session, account, verification } from '@openora/core/pam/schema/identity';
 
 export type SeedMinimalOptions = {
@@ -52,6 +53,7 @@ export async function seedMinimal(
     await seedIam(drizzleSvc.db);
     await seedTag(drizzleSvc.db);
     await seedDefaultWeightProfile(drizzleSvc.db);
+    await seedRankLadder(drizzleSvc.db);
     return await seedDemoData({
       db: drizzleSvc.db,
       auth,

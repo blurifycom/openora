@@ -718,6 +718,11 @@
       "types": "./dist/promo/bonus/seed/index.d.ts",
       "import": "./dist/promo/bonus/seed/index.js",
       "default": "./dist/promo/bonus/seed/index.js"
+    },
+    "./promo/seed/gamification": {
+      "types": "./dist/promo/gamification/seed/index.d.ts",
+      "import": "./dist/promo/gamification/seed/index.js",
+      "default": "./dist/promo/gamification/seed/index.js"
     }
   },
   "publishConfig": {
