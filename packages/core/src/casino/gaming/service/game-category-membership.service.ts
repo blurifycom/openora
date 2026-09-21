@@ -8,7 +8,7 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import type { GameCategoryRule, JobQueueAdapter } from '@openora/core/contracts';
+import type { JobQueueAdapter } from '@openora/core/contracts';
 import { game, gameCategory, gameCategoryGame, type GameCategory } from '../schema/index.js';
 import { SYSTEM_ACTOR_ID, type GameCategoryMembershipJob } from '../contract/index.js';
 import type { CatalogActor } from '../../shared/game-catalog.js';
@@ -63,10 +63,7 @@ type EvaluateArgs = {
   actor?: CatalogActor;
 };
 
-type StoredRule =
-  | { status: 'gone' }
-  | { status: 'manual' }
-  | { status: 'rule'; rule: GameCategoryRule | null };
+type EvaluationSnapshot = Pick<GameCategory, 'membershipRule'> & { version: string };
 
 type LockedDiff =
   | { status: 'gone' }
@@ -101,8 +98,16 @@ export class GameCategoryMembershipService {
    */
   async evaluate({ categoryId, trigger, actor }: EvaluateArgs) {
     for (let attempt = 0; attempt < MAX_EVALUATE_ATTEMPTS; attempt += 1) {
-      const outcome = await this.evaluateOnce(categoryId);
+      const snapshot = await this.readEvaluationSnapshot(categoryId);
+      const outcome = await this.evaluateOnce(categoryId, snapshot);
       if (outcome === 'stale') {
+        if (attempt === MAX_EVALUATE_ATTEMPTS - 1) {
+          await this.recordFailedAttempt(
+            categoryId,
+            snapshot,
+            new GameCategoryMembershipContendedError(categoryId),
+          );
+        }
         continue;
       }
       this.publish(categoryId, trigger, actor, outcome);
@@ -113,9 +118,7 @@ export class GameCategoryMembershipService {
         evaluatedAt: outcome.evaluatedAt.toISOString(),
       };
     }
-    const contended = new GameCategoryMembershipContendedError(categoryId);
-    await this.recordFailedAttempt(categoryId, contended);
-    throw contended;
+    throw new GameCategoryMembershipContendedError(categoryId);
   }
 
   /**
@@ -146,20 +149,16 @@ export class GameCategoryMembershipService {
   // the bulk actions take them in. Inserting a link locks its game row, so the rule is
   // resolved and the games to insert are read first, unlocked, then locked before the
   // category; the run is 'stale' and retried when the locked re-read disagrees.
-  private async evaluateOnce(categoryId: GameCategory['id']): Promise<Applied | 'stale'> {
-    const stored = await this.readRule(categoryId);
-    if (stored.status === 'gone') {
-      throw new GameCategoryNotFoundError(categoryId);
-    }
-    if (stored.status === 'manual') {
-      throw new GameCategoryNotRuleManagedError(categoryId);
-    }
-    const matchedIds = await this.resolveOrRecordFailure(categoryId, stored.rule);
+  private async evaluateOnce(
+    categoryId: GameCategory['id'],
+    snapshot: EvaluationSnapshot,
+  ): Promise<Applied | 'stale'> {
+    const matchedIds = await this.resolveOrRecordFailure(categoryId, snapshot);
     const currentIds = await this.memberIds(this.drizzle.db, categoryId);
     const toAdd = diffMembership(currentIds, matchedIds).toAdd;
 
     return this.drizzle.db.transaction(async (tx) => {
-      const locked = await this.lockAndDiff(tx, categoryId, stored.rule, matchedIds, toAdd);
+      const locked = await this.lockAndDiff(tx, { categoryId, snapshot, matchedIds, toAdd });
       if (locked.status === 'gone') {
         throw new GameCategoryNotFoundError(categoryId);
       }
@@ -170,47 +169,64 @@ export class GameCategoryMembershipService {
     });
   }
 
-  private async readRule(categoryId: GameCategory['id']): Promise<StoredRule> {
-    const [category] = await this.drizzle.db
-      .select({ mode: gameCategory.membershipMode, rule: gameCategory.membershipRule })
+  private async readEvaluationSnapshot(categoryId: GameCategory['id']) {
+    const [snapshot] = await this.drizzle.db
+      .select({
+        membershipMode: gameCategory.membershipMode,
+        membershipRule: gameCategory.membershipRule,
+        version: sql<string>`${gameCategory}.xmin::text`,
+      })
       .from(gameCategory)
       .where(eq(gameCategory.id, categoryId))
       .limit(1);
-    if (!category) {
-      return { status: 'gone' };
+    if (!snapshot) {
+      throw new GameCategoryNotFoundError(categoryId);
     }
-    return category.mode === 'rule'
-      ? { status: 'rule', rule: category.rule }
-      : { status: 'manual' };
+    if (snapshot.membershipMode !== 'rule') {
+      throw new GameCategoryNotRuleManagedError(categoryId);
+    }
+    return snapshot;
   }
 
   // A null rule in rule mode is a stored value that no longer parses (zodJsonb reads it
   // as null): a rule that does not resolve, never a manual category.
   private async resolveOrRecordFailure(
     categoryId: GameCategory['id'],
-    rule: GameCategoryRule | null,
+    snapshot: EvaluationSnapshot,
   ) {
     try {
+      const rule = snapshot.membershipRule;
       if (!rule) {
         throw new GameCategoryRuleInvalidError('The stored rule no longer matches its contract');
       }
       return await this.rules.resolveGameIds(rule);
     } catch (err) {
-      await this.recordFailedAttempt(categoryId, err);
+      await this.recordFailedAttempt(categoryId, snapshot, err);
       throw err;
     }
   }
 
   private async lockAndDiff(
     tx: DrizzleTx,
-    categoryId: GameCategory['id'],
-    rule: GameCategoryRule | null,
-    matchedIds: readonly string[],
-    toAdd: readonly string[],
+    {
+      categoryId,
+      snapshot,
+      matchedIds,
+      toAdd,
+    }: {
+      categoryId: GameCategory['id'];
+      snapshot: EvaluationSnapshot;
+      matchedIds: readonly string[];
+      toAdd: readonly string[];
+    },
   ): Promise<LockedDiff> {
     const lockedGameIds = await this.lockGames(tx, toAdd);
     const [locked] = await tx
-      .select({ mode: gameCategory.membershipMode, rule: gameCategory.membershipRule })
+      .select({
+        mode: gameCategory.membershipMode,
+        rule: gameCategory.membershipRule,
+        version: sql<string>`${gameCategory}.xmin::text`,
+      })
       .from(gameCategory)
       .where(eq(gameCategory.id, categoryId))
       .limit(1)
@@ -218,7 +234,11 @@ export class GameCategoryMembershipService {
     if (!locked) {
       return { status: 'gone' };
     }
-    if (locked.mode !== 'rule' || !isDeepStrictEqual(locked.rule, rule)) {
+    if (
+      locked.mode !== 'rule' ||
+      locked.version !== snapshot.version ||
+      !isDeepStrictEqual(locked.rule, snapshot.membershipRule)
+    ) {
       return { status: 'stale' };
     }
     // A game to add that was deleted since the unlocked read is no longer a match.
@@ -327,7 +347,11 @@ export class GameCategoryMembershipService {
   // so a stuck rule never looks fresh and moves to the back of the sweep. Only this
   // module's own messages are stored. Best effort: a failure here is logged, not thrown,
   // so the caller still sees the error that mattered.
-  private async recordFailedAttempt(categoryId: GameCategory['id'], err: unknown) {
+  private async recordFailedAttempt(
+    categoryId: GameCategory['id'],
+    snapshot: EvaluationSnapshot,
+    err: unknown,
+  ) {
     const reason =
       isUnresolvableRuleError(err) || err instanceof GameCategoryMembershipContendedError
         ? err.message
@@ -340,7 +364,13 @@ export class GameCategoryMembershipService {
           membershipLastError: reason.slice(0, MEMBERSHIP_LAST_ERROR_MAX),
           updatedAt: sql`${gameCategory.updatedAt}`,
         })
-        .where(and(eq(gameCategory.id, categoryId), eq(gameCategory.membershipMode, 'rule')));
+        .where(
+          and(
+            eq(gameCategory.id, categoryId),
+            eq(gameCategory.membershipMode, 'rule'),
+            sql`${gameCategory}.xmin::text = ${snapshot.version}`,
+          ),
+        );
     } catch (recordErr) {
       logger.error(
         { err: recordErr, categoryId },

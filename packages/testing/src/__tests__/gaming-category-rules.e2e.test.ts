@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { GAMING_COMMANDS, JOB_QUEUE, queue } from '@openora/core/contracts';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
@@ -485,5 +486,35 @@ describe('an operator-supplied rule kind, rebound via GAME_CATEGORY_RULE_CATALOG
     );
     expect(evaluated.status).toBe(400);
     expect(await categoryGameIds(category.id)).toEqual([original.id]);
+  });
+
+  it('keeps membership when an empty first clause precedes an unavailable rule kind', async () => {
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id, { gameType: 'original' });
+    const created = await customAdmin.post('/backoffice/gaming/categories', {
+      slug: `e2e-custom-rule-${randomUUID()}`,
+      name: 'Custom Rule Category',
+      membershipMode: 'rule',
+      membershipRule: [
+        providers(provider.id),
+        { key: 'test_game_type', params: { gameType: 'original' } },
+      ],
+    });
+    expect(created.status).toBe(200);
+    const category = await readJson(created);
+    expect(await categoryGameIds(category.id)).toEqual([member.id]);
+    const other = await seedProvider();
+    await drizzle().update(game).set({ providerId: other.id }).where(eq(game.id, member.id));
+
+    const evaluated = await admin.post(
+      `/backoffice/gaming/categories/${category.id}/membership/evaluate`,
+      { id: category.id },
+    );
+
+    expect(evaluated.status).toBe(400);
+    expect(await categoryGameIds(category.id)).toEqual([member.id]);
+    const detail = await readJson(await admin.get(`/backoffice/gaming/categories/${category.id}`));
+    expect(detail.membershipEvaluatedAt).toBe(category.membershipEvaluatedAt);
+    expect(detail.membershipLastError).toContain('test_game_type');
   });
 });

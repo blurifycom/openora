@@ -395,6 +395,45 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     expect(await memberIds(category.id)).toEqual([member.id]);
   });
 
+  it.each(['missing kind', 'invalid params'] as const)(
+    'keeps membership when an empty first clause precedes a clause with %s',
+    async (failure) => {
+      const withKind = makeServices([namePrefixRule()]);
+      const [listed, other] = [await seedProvider(), await seedProvider()];
+      const member = await seedGame(listed.id, { name: 'Mega Reels' });
+      const category = await withKind.categories.createCategory({
+        slug: `category-${randomUUID()}`,
+        name: 'Category',
+        membershipMode: 'rule',
+        membershipRule: [providers(listed.id), { key: 'name_prefix', params: { prefix: 'Mega' } }],
+        ...ACTOR,
+      });
+      await db.drizzle.db.update(game).set({ providerId: other.id }).where(eq(game.id, member.id));
+      const { membership, categories, events, jobQueue } = makeServices(
+        failure === 'missing kind'
+          ? []
+          : [
+              defineGameCategoryRule({
+                ...namePrefixRule(),
+                paramsSchema: z.object({ prefix: z.string().min(10) }).strict(),
+              }),
+            ],
+      );
+
+      await expect(
+        membership.evaluate({ categoryId: category.id, trigger: 'admin', actor: ACTOR }),
+      ).rejects.toThrow(GameCategoryRuleInvalidError);
+
+      expect(await memberIds(category.id)).toEqual([member.id]);
+      const after = await categories.getCategory(category.id);
+      expect(after.membershipEvaluatedAt).toBe(category.membershipEvaluatedAt);
+      expect(after.membershipAttemptedAt).not.toBeNull();
+      expect(after.membershipLastError).toContain('name_prefix');
+      expect(events.emit).not.toHaveBeenCalled();
+      expect(jobQueue.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
   it('refuses a rule whose validate throws or whose parsed params are not plain JSON', async () => {
     const { rules } = makeServices([
       defineGameCategoryRule({

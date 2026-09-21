@@ -693,7 +693,7 @@ describe('gaming catalog router authz', () => {
       expect(links).toEqual([{ gameId: member.id }]);
     });
 
-    it('an on-demand evaluation gives up with 409 after three stale attempts, games untouched', async () => {
+    it('an on-demand evaluation gives up with 409 without stamping a newer configuration', async () => {
       const { router } = routerWith(allowingGuard());
       const { category, member } = await seedShiftingCategory('rule');
 
@@ -702,7 +702,6 @@ describe('gaming catalog router authz', () => {
       ).rejects.toMatchObject({ code: 'CONFLICT' });
 
       expect(shiftingCalls).toBe(3);
-      // The give-up is recorded as an attempt with its reason, like a rule that fails.
       const [status] = await db.drizzle.db
         .select({
           evaluatedAt: gameCategory.membershipEvaluatedAt,
@@ -712,8 +711,8 @@ describe('gaming catalog router authz', () => {
         .from(gameCategory)
         .where(eq(gameCategory.id, category.id));
       expect(status?.evaluatedAt).toBeNull();
-      expect(status?.attemptedAt).not.toBeNull();
-      expect(status?.lastError).toMatch(/kept changing/);
+      expect(status?.attemptedAt).toBeNull();
+      expect(status?.lastError).toBeNull();
       const links = await db.drizzle.db
         .select({ gameId: gameCategoryGame.gameId })
         .from(gameCategoryGame)

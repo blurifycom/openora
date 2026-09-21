@@ -73,15 +73,15 @@ export class GameCategoryRuleService {
    * ids and cut down to its candidates, and the match cap applies after every clause.
    */
   async resolveGameIds(rule: GameCategoryRule, now: Date = new Date()): Promise<string[]> {
+    const clauses = rule.map((clause) => this.bindClause(clause));
     let candidateIds: string[] | null = null;
-    for (const clause of rule) {
-      const { definition, params } = this.bindClause(clause);
+    for (const { definition, params } of clauses) {
       let resolved: string[];
       try {
         resolved = await definition.resolve({ params, candidateIds, now });
       } catch (err) {
-        logger.warn({ err, ruleKey: clause.key }, 'gaming.category.rule: resolve threw');
-        throw new GameCategoryRuleInvalidError(`${clause.key}: the rule could not be resolved`);
+        logger.warn({ err, ruleKey: definition.key }, 'gaming.category.rule: resolve threw');
+        throw new GameCategoryRuleInvalidError(`${definition.key}: the rule could not be resolved`);
       }
       const allowed: ReadonlySet<string> | null = candidateIds ? new Set(candidateIds) : null;
       candidateIds = [...new Set(resolved)].filter(
