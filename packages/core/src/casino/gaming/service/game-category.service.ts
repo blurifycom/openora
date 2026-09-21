@@ -12,7 +12,13 @@ import {
   pageToOffset,
 } from '@openora/core/server';
 import { and, asc, count, eq, ilike, isNotNull, ne, or, sql } from 'drizzle-orm';
-import type { GameSortCatalog, GameSortDirection, JobQueueAdapter } from '@openora/core/contracts';
+import {
+  GameSortParamsSchema,
+  type GameSortCatalog,
+  type GameSortDirection,
+  type GameSortParams,
+  type JobQueueAdapter,
+} from '@openora/core/contracts';
 import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
 import type {
   CreateCategoryInput,
@@ -74,10 +80,6 @@ function toCategoryDetail(record: typeof gameCategory.$inferSelect) {
 
 function jsonEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -543,7 +545,7 @@ export class GameCategoryService {
     input: {
       sortKey?: string;
       sortDirection?: GameSortDirection | null;
-      sortParams?: Record<string, unknown>;
+      sortParams?: GameSortParams;
     },
   ): { changed: boolean; patch: Partial<typeof gameCategory.$inferInsert> } {
     const nextKey = input.sortKey ?? existing.sortKey;
@@ -572,8 +574,13 @@ export class GameCategoryService {
     const storedDirection = definition.directions.length > 1 ? effectiveDirection : null;
 
     const rawParams = input.sortParams ?? (keyChanged ? {} : (existing.sortParams ?? {}));
-    const parsedParams = definition.paramsSchema.safeParse(rawParams);
-    if (!parsedParams.success || !isJsonObject(parsedParams.data)) {
+    // The definition's own schema gives the params meaning; the second parse guarantees
+    // whatever it produced still fits the stored shape (JSON object, byte-capped).
+    const definitionParams = definition.paramsSchema.safeParse(rawParams);
+    const parsedParams = definitionParams.success
+      ? GameSortParamsSchema.safeParse(definitionParams.data)
+      : definitionParams;
+    if (!parsedParams.success) {
       throw new GameSortConfigInvalidError(`Invalid sortParams for sort '${nextKey}'`);
     }
 

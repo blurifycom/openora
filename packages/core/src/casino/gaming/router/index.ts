@@ -2,7 +2,7 @@ import { implement } from '@orpc/server';
 import * as z from 'zod';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
 import type { GameSortCatalog } from '@openora/core/contracts';
-import { gamingContract, gamingAdminContract } from '../contract/index.js';
+import { gamingContract, gamingAdminContract, GameSortOptionSchema } from '../contract/index.js';
 import {
   GamingService,
   GameNotFoundError,
@@ -210,7 +210,9 @@ export function createGamingRouter({
       return sortCatalog.list().map((definition) => ({
         key: definition.key,
         directions: [...definition.directions],
-        paramsJsonSchema: z.toJSONSchema(definition.paramsSchema, { unrepresentable: 'any' }),
+        paramsJsonSchema: GameSortOptionSchema.shape.paramsJsonSchema.parse(
+          z.toJSONSchema(definition.paramsSchema, { unrepresentable: 'any' }),
+        ),
       }));
     }),
 

@@ -63,6 +63,19 @@ export const GAME_SORT_KEY_PATTERN = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
 export const GameSortKeySchema = z.string().trim().min(1).max(64).regex(GAME_SORT_KEY_PATTERN);
 export type GameSortKey = z.infer<typeof GameSortKeySchema>;
 
+export const GAME_SORT_PARAMS_MAX_BYTES = 4096;
+
+// Opaque to core: each sort definition's own paramsSchema gives it meaning. It is stored as
+// jsonb and rides on every category event and audit row, hence JSON-only and byte-capped.
+export const GameSortParamsSchema = z
+  .record(z.string().min(1).max(64), z.json())
+  .refine(
+    (params) =>
+      new TextEncoder().encode(JSON.stringify(params)).length <= GAME_SORT_PARAMS_MAX_BYTES,
+    { message: `Sort params must serialize to at most ${GAME_SORT_PARAMS_MAX_BYTES} bytes` },
+  );
+export type GameSortParams = z.infer<typeof GameSortParamsSchema>;
+
 export const GameCategorySummarySchema = z.object({
   id: UuidSchema,
   slug: z.string(),

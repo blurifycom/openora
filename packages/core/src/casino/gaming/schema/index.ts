@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   GameCategoryTranslationsSchema,
+  GameSortParamsSchema,
   GameTagMetadataSchema,
   GAME_SORT_DIRECTIONS,
   GAME_TAG_TYPES,
@@ -95,7 +96,7 @@ export const gameCategory = pgTable(
     // Null for a single-direction sort (manual has exactly one, so it is always
     // stored null here); populated for a multi-direction sort like 'name'.
     sortDirection: gameSortDirectionEnum(),
-    sortParams: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    sortParams: zodJsonb(GameSortParamsSchema, 'game_category.sort_params')().notNull().default({}),
     // Rank-job run-vs-run fencing token - see docs/modules/gaming.md. Concurrent admin
     // writes to sort config/order/pins are last-write-wins, serialized by the row lock
     // each write path takes (GameCategoryService.lockCategoryRow); this token guards

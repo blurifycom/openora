@@ -14,6 +14,7 @@ import {
   GameProviderAggregatorMappingSchema,
   GameSortDirectionSchema,
   GameSortKeySchema,
+  GameSortParamsSchema,
   GameTagSnapshotSchema,
 } from './game.js';
 import {
@@ -111,7 +112,7 @@ const gameCategorySnapshotSchema = z.object({
   isActive: z.boolean(),
   sortKey: GameSortKeySchema.default('manual'),
   sortDirection: GameSortDirectionSchema.nullable().default(null),
-  sortParams: z.record(z.string(), z.unknown()).default({}),
+  sortParams: GameSortParamsSchema.default({}),
   rankedAt: z.string().nullable().default(null),
 });
 
@@ -540,8 +541,8 @@ export const domainEventSchemas = {
     sortKeyAfter: GameSortKeySchema.default('manual'),
     sortDirectionBefore: GameSortDirectionSchema.nullable().default(null),
     sortDirectionAfter: GameSortDirectionSchema.nullable().default(null),
-    sortParamsBefore: z.record(z.string(), z.unknown()).default({}),
-    sortParamsAfter: z.record(z.string(), z.unknown()).default({}),
+    sortParamsBefore: GameSortParamsSchema.default({}),
+    sortParamsAfter: GameSortParamsSchema.default({}),
   }),
   // A backoffice replace-all write of a category's pinned slots. before/after are the
   // full pinned-slot lists, ordered by position, so a search recovers exactly what moved.

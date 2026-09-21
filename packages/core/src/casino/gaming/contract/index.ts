@@ -11,6 +11,7 @@ import {
   GameProviderAggregatorMappingSchema,
   GameSortDirectionSchema,
   GameSortKeySchema,
+  GameSortParamsSchema,
   GameTagMetadataSchema,
   GameTagSummarySchema,
   GameTagTypeSchema,
@@ -35,7 +36,11 @@ export { GameProviderAggregatorMappingSchema } from '@openora/core/contracts';
 export { GameCategorySummarySchema } from '@openora/core/contracts';
 export { GameCategorySummaryWithTranslationsSchema } from '@openora/core/contracts';
 export { GameCategoryTranslationsSchema } from '@openora/core/contracts';
-export { GameSortDirectionSchema, GameSortKeySchema } from '@openora/core/contracts';
+export {
+  GameSortDirectionSchema,
+  GameSortKeySchema,
+  GameSortParamsSchema,
+} from '@openora/core/contracts';
 export {
   GameTagMetadataSchema,
   GameTagSummarySchema,
@@ -177,7 +182,7 @@ export const GameCategoryDetailSchema = GameCategorySummaryWithTranslationsSchem
   isActive: z.boolean(),
   sortKey: GameSortKeySchema,
   sortDirection: GameSortDirectionSchema.nullable(),
-  sortParams: z.record(z.string(), z.unknown()),
+  sortParams: GameSortParamsSchema,
   rankedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -288,7 +293,7 @@ export const UpdateCategoryInputSchema = z.object({
   isActive: z.boolean().optional(),
   sortKey: GameSortKeySchema.optional(),
   sortDirection: GameSortDirectionSchema.nullable().optional(),
-  sortParams: z.record(z.string(), z.unknown()).optional(),
+  sortParams: GameSortParamsSchema.optional(),
 });
 export type UpdateCategoryInput = z.infer<typeof UpdateCategoryInputSchema>;
 
@@ -329,7 +334,7 @@ export const ReorderCategoryGamesOutputSchema = z.object({
   // view stays consistent without a follow-up GET.
   sortKey: GameSortKeySchema,
   sortDirection: GameSortDirectionSchema.nullable(),
-  sortParams: z.record(z.string(), z.unknown()),
+  sortParams: GameSortParamsSchema,
 });
 
 export const GAME_CATEGORY_PINS_MAX = 100;
@@ -382,7 +387,7 @@ export const UpdateCategoryPinsOutputSchema = z.object({
 export const GameSortOptionSchema = z.object({
   key: GameSortKeySchema,
   directions: z.array(GameSortDirectionSchema).min(1),
-  paramsJsonSchema: z.unknown(),
+  paramsJsonSchema: z.record(z.string(), z.json()),
 });
 export type GameSortOption = z.infer<typeof GameSortOptionSchema>;
 
