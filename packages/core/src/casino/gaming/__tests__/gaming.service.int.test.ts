@@ -4,7 +4,7 @@ import { GameSortService } from '../service/game-sort.service.js';
 import { GameSortRankingService } from '../service/game-sort-ranking.service.js';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
   GameGeoCheckPort,
@@ -1098,6 +1098,33 @@ describe('GamingService updateGame (real PG)', () => {
 
     const cleared = await svc.updateGame({ id: created.id, categoryIds: [], ...ACTOR });
     expect(cleared.categories).toEqual([]);
+  });
+
+  it('keeps the position and pin of a category link the new set keeps', async () => {
+    const table = await seedCategory({ slug: 'table-games', name: 'Table Games' });
+    const blackjack = await seedCategory({ slug: 'blackjack', name: 'Blackjack' });
+    const created = await seedGame({}, [table.id]);
+    await db.drizzle.db
+      .update(gameCategoryGame)
+      .set({ position: 3, pinnedPosition: 0 })
+      .where(eq(gameCategoryGame.gameId, created.id));
+
+    await makeService().updateGame({
+      id: created.id,
+      categoryIds: [table.id, blackjack.id],
+      ...ACTOR,
+    });
+
+    const [kept] = await db.drizzle.db
+      .select({
+        position: gameCategoryGame.position,
+        pinnedPosition: gameCategoryGame.pinnedPosition,
+      })
+      .from(gameCategoryGame)
+      .where(
+        and(eq(gameCategoryGame.gameId, created.id), eq(gameCategoryGame.categoryId, table.id)),
+      );
+    expect(kept).toEqual({ position: 3, pinnedPosition: 0 });
   });
 
   it('replaces the tag set, including invisible tags for admin results', async () => {

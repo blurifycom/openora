@@ -915,13 +915,30 @@ export class GamingService {
         if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
-        if (uniqueCategoryIds !== undefined) {
-          await tx.delete(gameCategoryGame).where(eq(gameCategoryGame.gameId, id));
-          if (uniqueCategoryIds.length > 0) {
-            await tx
-              .insert(gameCategoryGame)
-              .values(uniqueCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
-          }
+        // Only the links that moved are written: a kept link keeps its row, and with it
+        // its position, pin and rank.
+        const keptCategoryIds = new Set(before.categoryIds);
+        const nextCategoryIds = new Set(anticipatedAfterCategoryIds);
+        const removedCategoryIds = before.categoryIds.filter(
+          (categoryId) => !nextCategoryIds.has(categoryId),
+        );
+        const addedCategoryIds = anticipatedAfterCategoryIds.filter(
+          (categoryId) => !keptCategoryIds.has(categoryId),
+        );
+        if (removedCategoryIds.length > 0) {
+          await tx
+            .delete(gameCategoryGame)
+            .where(
+              and(
+                eq(gameCategoryGame.gameId, id),
+                inArray(gameCategoryGame.categoryId, removedCategoryIds),
+              ),
+            );
+        }
+        if (addedCategoryIds.length > 0) {
+          await tx
+            .insert(gameCategoryGame)
+            .values(addedCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
         }
         if (uniqueTagIds !== undefined) {
           await tx.delete(gameTagGame).where(eq(gameTagGame.gameId, id));
