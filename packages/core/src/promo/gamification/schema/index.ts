@@ -67,6 +67,8 @@ export const promoPlayerRank = pgTable(
     currency: text().notNull(),
     lifetimeWagered: money().notNull().default('0'),
     tierId: uuid().references(() => promoRankTier.id),
+    /** Last counted wager. A periodic bonus goes only to a player active in the period it pays. */
+    lastWageredAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

@@ -1,0 +1,1 @@
+ALTER TABLE "promo_player_rank" ADD COLUMN "last_wagered_at" timestamp with time zone;

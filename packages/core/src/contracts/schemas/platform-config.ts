@@ -225,8 +225,10 @@ export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
 
 /**
  * When the rank payouts run. Static config, not a DB row: a schedule is registered with the job
- * queue at boot. `payoutCron` settles level-up bonuses, off the quarter-hour ticks the wallet
- * custody sweep owns.
+ * queue at boot. Only the hour moves - the period a daily, weekly or monthly job pays is always
+ * the last complete UTC day, ISO week or calendar month, so a schedule that fires twice in a
+ * period still pays it once. `payoutCron` settles level-up bonuses, off the quarter-hour ticks
+ * the wallet custody sweep owns.
  */
 export const RANK_PAYOUT_DEFAULT_CRON = '3,13,23,33,43,53 * * * *';
 
@@ -235,6 +237,9 @@ export const PromoConfigSchema = z
     ranks: z
       .object({
         payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
+        dailyCron: CronExpressionSchema.default('0 0 * * *'),
+        weeklyCron: CronExpressionSchema.default('0 0 * * 1'),
+        monthlyCron: CronExpressionSchema.default('0 0 1 * *'),
       })
       .strict()
       .prefault({}),
@@ -393,7 +398,7 @@ export const PlatformConfigSchema = z
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
     /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
-    /** Rank payout schedules. Absent = the built-in defaults. */
+    /** Rank payout schedules. Absent = the built-in defaults, all in UTC. */
     promo: PromoConfigSchema.prefault({}),
   })
   .strict()

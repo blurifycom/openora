@@ -214,6 +214,18 @@ describe('recording a wager toward the rank ladder', () => {
     expect(await rankOf(userId)).toBeUndefined();
   });
 
+  it('stamps the time of the last counted wager', async () => {
+    const userId = randomUUID();
+
+    await wager(userId, '1');
+
+    const [row] = await db.drizzle.db
+      .select({ lastWageredAt: promoPlayerRank.lastWageredAt })
+      .from(promoPlayerRank)
+      .where(eq(promoPlayerRank.userId, userId));
+    expect(row?.lastWageredAt).toBeInstanceOf(Date);
+  });
+
   it('owes a level-up bonus for every tier one wager crosses, at the amount each paid then', async () => {
     const userId = randomUUID();
 

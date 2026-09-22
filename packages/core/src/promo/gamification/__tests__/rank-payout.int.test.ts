@@ -5,7 +5,12 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import type { BonusGrantCommands, PlayEligibilityPort } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
-import { promoRankConfig, promoRankLevelUp, promoRankTier } from '../schema/index.js';
+import {
+  promoPlayerRank,
+  promoRankConfig,
+  promoRankLevelUp,
+  promoRankTier,
+} from '../schema/index.js';
 import { seedRankLadder } from '../seed/index.js';
 import { RankPayoutService } from '../service/rank-payout.service.js';
 
@@ -15,6 +20,10 @@ const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const logger = { warn: vi.fn(), error: vi.fn() };
 
 const LEVEL_UP_TERMS = { wageringMultiplier: '3', expiryDays: 7 };
+const DAILY_TERMS = { wageringMultiplier: '1', expiryDays: 1 };
+const NOW = new Date('2026-09-22T00:00:00Z');
+const YESTERDAY_NOON = new Date('2026-09-21T12:00:00Z');
+const TWO_DAYS_AGO = new Date('2026-09-20T12:00:00Z');
 
 const service = () =>
   new RankPayoutService(
@@ -55,6 +64,18 @@ const levelUp = async (id: string) => {
   return row;
 };
 
+const holding = async (key: string, lastWageredAt: Date | null) => {
+  const userId = randomUUID();
+  await db.drizzle.db.insert(promoPlayerRank).values({
+    userId,
+    currency: 'USDT',
+    lifetimeWagered: '0',
+    tierId: await tierId(key),
+    lastWageredAt,
+  });
+  return userId;
+};
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
 });
@@ -66,6 +87,7 @@ beforeEach(async () => {
   grant.mockImplementation(async () => ({ ok: true, grantId: randomUUID(), created: true }));
   isRestricted.mockResolvedValue(false);
   await db.drizzle.db.delete(promoRankLevelUp);
+  await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
   await seedRankLadder(db.drizzle.db, {
@@ -77,11 +99,12 @@ beforeEach(async () => {
         name: 'Silver',
         wagerThreshold: '100',
         rakebackPercent: '3',
+        dailyBonus: '0.5',
       },
     ],
     config: {
       eligibleProducts: [],
-      rewards: { levelUp: LEVEL_UP_TERMS },
+      rewards: { levelUp: LEVEL_UP_TERMS, daily: DAILY_TERMS },
     },
   });
 });
@@ -174,6 +197,69 @@ describe('settling owed level-up bonuses', () => {
 
     expect((await levelUp(failing))?.settledAt).toBeNull();
     expect(await levelUp(paying)).toMatchObject({ outcome: 'granted' });
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('paying a periodic bonus', () => {
+  it('pays the rank amount for the last complete day to a player active in it', async () => {
+    const userId = await holding('silver', YESTERDAY_NOON);
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(expect.anything(), {
+      userId,
+      currency: 'USDT',
+      amount: '0.500000000000000000',
+      source: 'rank',
+      sourceRef: 'rank-daily:2026-09-21',
+      actor: { type: 'system' },
+      terms: DAILY_TERMS,
+    });
+    expect(granted).toHaveLength(1);
+  });
+
+  it('skips a player idle in the period, a rank that pays nothing, and a blocked player', async () => {
+    await holding('silver', TWO_DAYS_AGO);
+    await holding('silver', null);
+    await holding('bronze', YESTERDAY_NOON);
+    const blocked = await holding('silver', YESTERDAY_NOON);
+    isRestricted.mockImplementation(async (userId) => userId === blocked);
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('pays nothing for a kind with no terms configured', async () => {
+    await holding('silver', YESTERDAY_NOON);
+
+    const granted = await service().payPeriodic('weekly', NOW);
+
+    expect(granted).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('does not announce a grant the guard matched to an earlier run', async () => {
+    await holding('silver', YESTERDAY_NOON);
+    grant.mockResolvedValue({ ok: true, grantId: randomUUID(), created: false });
+
+    expect(await service().payPeriodic('daily', NOW)).toEqual([]);
+  });
+
+  it('keeps paying the rest when one player fails', async () => {
+    const first = await holding('silver', YESTERDAY_NOON);
+    await holding('silver', YESTERDAY_NOON);
+    grant.mockImplementation(async (_tx, args) =>
+      args.userId === first
+        ? { ok: false, reason: 'currency_unsupported' }
+        : { ok: true, grantId: randomUUID(), created: true },
+    );
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toHaveLength(1);
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
 });

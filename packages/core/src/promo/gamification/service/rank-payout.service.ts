@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, isNotNull, isNull } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   DomainEventPayload,
@@ -7,11 +7,14 @@ import type {
 } from '@openora/core/contracts';
 import { moneyScaleBy, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import {
+  promoPlayerRank,
   promoRankConfig,
   promoRankLevelUp,
+  promoRankTier,
   type RankRewardTerms,
   type RankRewards,
 } from '../schema/index.js';
+import { lastCompletePeriod, type RankPeriodKind } from '../shared/rank-period.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
 
@@ -22,8 +25,15 @@ type Logger = {
 
 const BATCH = 500;
 
+const PERIOD_BONUS = {
+  daily: promoRankTier.dailyBonus,
+  weekly: promoRankTier.weeklyBonus,
+  monthly: promoRankTier.monthlyBonus,
+} as const;
+
 /**
- * Pays what a rank earns: the level-up bonuses `RankService.recordWager` recorded. Every payout is a grant through BONUS_GRANTS, whose
+ * Pays what a rank earns: the level-up bonuses `RankService.recordWager` recorded, and the
+ * daily, weekly and monthly bonuses. Every payout is a grant through BONUS_GRANTS, whose
  * `(user, source, source_ref)` index is the guard that makes a re-run or a second worker pay
  * nothing twice.
  *
@@ -31,7 +41,7 @@ const BATCH = 500;
  * later: a bonus waiting at the end of a block is an incentive to come back and play. If the
  * block cannot be checked at all, nothing is paid.
  *
- * Returns the grants it created, for the caller to announce once they are committed.
+ * Each method returns the grants it created, for the caller to announce once they are committed.
  */
 export class RankPayoutService {
   constructor(
@@ -70,6 +80,69 @@ export class RankPayoutService {
       }
     }
     return granted;
+  }
+
+  /** Pays the bonus of the given kind for the last complete period to every player who earned it. */
+  async payPeriodic(kind: RankPeriodKind, now: Date): Promise<Granted[]> {
+    const terms = await this.termsFor(kind);
+    if (!terms) {
+      return [];
+    }
+    const period = lastCompletePeriod(kind, now);
+    const bonus = PERIOD_BONUS[kind];
+    const granted: Granted[] = [];
+    let after = '00000000-0000-0000-0000-000000000000';
+
+    for (;;) {
+      // ponytail: "active in the period" is read as "wagered since it started", so a player whose
+      // only bets came after it ended still qualifies until the next period closes; add per-period
+      // activity rows if that matters
+      const due = await this.drizzle.db
+        .select({
+          userId: promoPlayerRank.userId,
+          amount: bonus,
+          currency: promoRankTier.currency,
+        })
+        .from(promoPlayerRank)
+        .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+        .where(
+          and(
+            gt(promoPlayerRank.userId, after),
+            isNotNull(bonus),
+            gte(promoPlayerRank.lastWageredAt, period.start),
+          ),
+        )
+        .orderBy(asc(promoPlayerRank.userId))
+        .limit(BATCH);
+
+      for (const player of due) {
+        if (player.amount === null || (await this.isBlocked(player.userId))) {
+          continue;
+        }
+        const payout = { ...player, amount: player.amount };
+        try {
+          const paid = await this.drizzle.db.transaction((tx) =>
+            this.grant(tx, payout, period.sourceRef, terms),
+          );
+          if (paid) {
+            granted.push(paid);
+          }
+        } catch (err) {
+          // One player's failure - an amount an admin changed between two runs of the same
+          // period, say - must not cost everyone after them their bonus.
+          this.logger.error(
+            { err, userId: player.userId, sourceRef: period.sourceRef },
+            'rank periodic payout failed',
+          );
+        }
+      }
+
+      const last = due.at(-1);
+      if (!last || due.length < BATCH) {
+        return granted;
+      }
+      after = last.userId;
+    }
   }
 
   private async settleLevelUp(tx: DrizzleTx, id: Uuid, terms: RankRewardTerms) {

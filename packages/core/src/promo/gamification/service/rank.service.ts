@@ -111,11 +111,13 @@ export class RankService implements WagerTrackingCommands {
         userId: args.userId,
         currency: lowest.currency,
         lifetimeWagered: amount,
+        lastWageredAt: sql`now()`,
       })
       .onConflictDoUpdate({
         target: promoPlayerRank.userId,
         set: {
           lifetimeWagered: sql`${promoPlayerRank.lifetimeWagered} + ${amount}::numeric`,
+          lastWageredAt: sql`now()`,
           updatedAt: sql`now()`,
         },
       })

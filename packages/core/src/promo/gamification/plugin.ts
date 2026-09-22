@@ -53,7 +53,10 @@ export default {
           logger.warn({ kind: payload.kind }, 'rank payout skipped - service not constructed');
           return;
         }
-        const granted = await payouts.settleLevelUps();
+        const granted =
+          payload.kind === 'levelUp'
+            ? await payouts.settleLevelUps()
+            : await payouts.payPeriodic(payload.kind, new Date());
         // After each grant's own commit: announcing a bonus the transaction then rolled back
         // would tell a player about money they do not have.
         for (const grant of granted) {
@@ -74,7 +77,12 @@ export default {
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {},
       ).ranks;
       const jobs = c.get(JOB_QUEUE);
-      for (const [kind, cron] of [['levelUp', schedule.payoutCron]] as const) {
+      for (const [kind, cron] of [
+        ['levelUp', schedule.payoutCron],
+        ['daily', schedule.dailyCron],
+        ['weekly', schedule.weeklyCron],
+        ['monthly', schedule.monthlyCron],
+      ] as const) {
         void jobs
           .schedule(PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
           .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));

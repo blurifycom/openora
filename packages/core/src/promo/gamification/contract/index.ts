@@ -83,8 +83,8 @@ const BONUS_FIELDS = ['dailyBonus', 'weeklyBonus', 'monthlyBonus', 'levelUpBonus
 // digit is the exact test for "above zero" - and it never rounds the way a float would.
 const isAbsentOrPositive = (amount: string | null) => amount === null || /[1-9]/.test(amount);
 
-/** What a rank pays out on a schedule: the level-up bonuses owed. */
-export const RANK_PAYOUT_KINDS = ['levelUp'] as const;
+/** What a rank pays out on a schedule: the level-up bonuses owed, and each periodic bonus. */
+export const RANK_PAYOUT_KINDS = ['levelUp', 'daily', 'weekly', 'monthly'] as const;
 export const RankPayoutKindSchema = z.enum(RANK_PAYOUT_KINDS);
 export type RankPayoutKind = z.infer<typeof RankPayoutKindSchema>;
 

@@ -43,6 +43,13 @@
       "when": 1790084780112,
       "tag": "0005_rank_level_up",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790084829254,
+      "tag": "0006_rank_last_wagered_at",
+      "breakpoints": true
     }
   ]
 }
