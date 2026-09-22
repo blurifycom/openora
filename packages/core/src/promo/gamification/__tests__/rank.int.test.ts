@@ -146,5 +146,19 @@ describe('recording a wager toward the rank ladder', () => {
     expect((await rankOf(userId))?.lifetimeWagered).toBe('30.000000000000000000');
   });
 
-  it.skip('a bonus-funded stake accrues separately and does not count toward lifetime wagered (blocked: bonus-funded stake is not on the port yet)', () => {});
+  it.skip('counts a bonus-funded stake in full toward lifetime wagered, tracking its bonus part on its own counter (blocked: WagerTrackingArgs carries no bonusAmount)', async () => {
+    const userId = randomUUID();
+    const partlyBonusFunded = {
+      userId,
+      currency: 'USDT',
+      amount: '100',
+      weightedAmount: '100',
+      bonusAmount: '40',
+      context: CASINO,
+    };
+
+    await db.drizzle.db.transaction((tx) => ranks.recordWager(tx, partlyBonusFunded));
+
+    expect((await rankOf(userId))?.lifetimeWagered).toBe('100.000000000000000000');
+  });
 });
