@@ -75,6 +75,11 @@ export function rankDirtyPatch() {
   };
 }
 
+// True while a category has a change its materialized ranks do not reflect yet.
+export function isRankDirty(): SQL {
+  return sql`${gameCategory.rankDirtyAt} IS NOT NULL AND (${gameCategory.rankedAt} IS NULL OR ${gameCategory.rankedAt} < ${gameCategory.rankDirtyAt})`;
+}
+
 // Marks every category in `categoryIds` dirty for the rank sweep, inside the caller's
 // own transaction - a no-op for an empty list. See docs/modules/gaming.md.
 export async function markCategoriesRankDirty(

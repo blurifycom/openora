@@ -100,6 +100,8 @@ export const gameCategory = pgTable(
     rankSeq: integer().notNull().default(0),
     rankDirtyAt: timestamp({ withTimezone: true }),
     rankedAt: timestamp({ withTimezone: true }),
+    // Rank runs failed since the last success; the sweep backs off on it.
+    rankFailures: integer().notNull().default(0),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),

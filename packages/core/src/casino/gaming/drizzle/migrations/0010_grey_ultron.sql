@@ -1,0 +1,1 @@
+ALTER TABLE "game_category" ADD COLUMN "rank_failures" integer DEFAULT 0 NOT NULL;

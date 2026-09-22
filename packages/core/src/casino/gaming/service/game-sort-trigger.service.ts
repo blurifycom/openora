@@ -1,10 +1,12 @@
-import { asc, sql } from 'drizzle-orm';
+import { and, asc, sql } from 'drizzle-orm';
 import { createLogger, type DrizzleService } from '@openora/core/server';
 import { domainEventSchemas, type JobQueueAdapter } from '@openora/core/contracts';
 import { gameCategory, type GameCategory } from '../schema/index.js';
 import {
   GAME_CATEGORY_RANK_QUEUE,
   GAME_CATEGORY_RANK_SWEEP_QUEUE,
+  RANK_RETRY_BASE_MS,
+  RANK_RETRY_MAX_MS,
   RANK_SWEEP_BATCH_LIMIT,
   RANK_SWEEP_INTERVAL_MS,
 } from '../contract/index.js';
@@ -12,9 +14,16 @@ import {
   categoryIdsForGameIds,
   categoryIdsForProviderIds,
   categoryRankTriggerIds,
+  isRankDirty,
 } from '../../shared/game-catalog.js';
 
 const logger = createLogger('gaming');
+
+// A claim stamps rankDirtyAt, so for a failed category it is the time of its last attempt.
+// The exponent is capped so power() cannot overflow on a long failure streak.
+function retryDue() {
+  return sql`(${gameCategory.rankFailures} = 0 OR ${gameCategory.rankDirtyAt} <= now() - make_interval(secs => least(${RANK_RETRY_BASE_MS / 1000}::float8 * power(2, least(${gameCategory.rankFailures} - 1, 30)), ${RANK_RETRY_MAX_MS / 1000}::float8)))`;
+}
 
 // BullMQ retains completed job IDs, so category IDs cannot serve as enqueue idempotency keys.
 export function enqueueGameCategoryRank(
@@ -110,9 +119,7 @@ export class GameSortTriggerService {
     const dirty = await this.drizzle.db
       .select({ id: gameCategory.id })
       .from(gameCategory)
-      .where(
-        sql`${gameCategory.rankDirtyAt} IS NOT NULL AND (${gameCategory.rankedAt} IS NULL OR ${gameCategory.rankedAt} < ${gameCategory.rankDirtyAt})`,
-      )
+      .where(and(isRankDirty(), retryDue()))
       .orderBy(asc(gameCategory.rankDirtyAt), asc(gameCategory.id))
       .limit(RANK_SWEEP_BATCH_LIMIT);
     this.enqueueCategories(dirty.map(({ id }) => id));

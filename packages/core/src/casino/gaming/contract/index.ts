@@ -413,6 +413,11 @@ export const RANK_SWEEP_INTERVAL_MS = 60_000;
 // interval - see docs/modules/gaming.md.
 export const RANK_SWEEP_BATCH_LIMIT = 200;
 
+// After a failed rank run the sweep waits RANK_RETRY_BASE_MS, doubling per consecutive
+// failure up to RANK_RETRY_MAX_MS, so a sort that keeps failing is not retried every pass.
+export const RANK_RETRY_BASE_MS = 120_000;
+export const RANK_RETRY_MAX_MS = 3_600_000;
+
 export const GameTagDetailSchema = GameTagSummarySchema.extend({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

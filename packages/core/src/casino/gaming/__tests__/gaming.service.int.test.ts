@@ -1643,7 +1643,7 @@ describe('GamingService.accumulateExternalRound (real PG)', () => {
 
 describe('provider changes during ranking', () => {
   it('invalidates an in-flight playable pin projection through the game update service', async () => {
-    const category = await seedCategory({ sortKey: 'provider_switch' });
+    const category = await seedCategory({ sortKey: 'provider_switch', rankDirtyAt: new Date() });
     const alpha = await seedGame({ name: 'Alpha' }, [category.id]);
     const bravo = await seedGame({ name: 'Bravo' }, [category.id]);
     const inactive = await seedProvider({ isActive: false });

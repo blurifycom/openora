@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { createLogger, DrizzleService } from '@openora/core/server';
 import { GameSortService } from './game-sort.service.js';
 import {
@@ -8,7 +8,7 @@ import {
   gameProvider,
   type GameCategory,
 } from '../schema/index.js';
-import { isGamePlayable, rankDirtyPatch } from '../../shared/game-catalog.js';
+import { isGamePlayable, isRankDirty, rankDirtyPatch } from '../../shared/game-catalog.js';
 
 const logger = createLogger('gaming');
 
@@ -69,11 +69,13 @@ export class GameSortRankingService {
     }
   }
 
+  // Claims only a dirty category, so a job queued behind one that already ranked the
+  // current version returns without recomputing.
   private async claim(categoryId: GameCategory['id']) {
     const [claim] = await this.drizzle.db
       .update(gameCategory)
       .set({ ...rankDirtyPatch(), updatedAt: sql`${gameCategory.updatedAt}` })
-      .where(eq(gameCategory.id, categoryId))
+      .where(and(eq(gameCategory.id, categoryId), isRankDirty()))
       .returning({
         rankSeq: gameCategory.rankSeq,
         sortKey: gameCategory.sortKey,
@@ -165,6 +167,13 @@ export class GameSortRankingService {
         return 'stale';
       }
       if (orderedIds === null) {
+        await tx
+          .update(gameCategory)
+          .set({
+            rankFailures: sql`${gameCategory.rankFailures} + 1`,
+            updatedAt: sql`${gameCategory.updatedAt}`,
+          })
+          .where(eq(gameCategory.id, categoryId));
         return 'failed';
       }
       if (orderedIds.length > 0) {
@@ -180,6 +189,7 @@ export class GameSortRankingService {
         .update(gameCategory)
         .set({
           rankedAt: sql`${gameCategory.rankDirtyAt}`,
+          rankFailures: 0,
           updatedAt: sql`${gameCategory.updatedAt}`,
         })
         .where(eq(gameCategory.id, categoryId));

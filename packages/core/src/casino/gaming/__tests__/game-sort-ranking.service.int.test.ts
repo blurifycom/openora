@@ -28,11 +28,17 @@ async function seedProvider() {
   );
 }
 
+// Seeded dirty, as a write that changes a category leaves it - a clean category is not ranked.
 async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert> = {}) {
   return findOneOrThrow(
     await db.drizzle.db
       .insert(gameCategory)
-      .values({ slug: `category-${randomUUID()}`, name: 'Category', ...overrides })
+      .values({
+        slug: `category-${randomUUID()}`,
+        name: 'Category',
+        rankDirtyAt: new Date(),
+        ...overrides,
+      })
       .returning(),
     new Error('seedCategory: query returned no row'),
   );
@@ -167,6 +173,7 @@ describe('GameSortRankingService (real PG)', () => {
       .update(gameCategory)
       .set({ sortKey: 'since-removed-sort' })
       .where(eq(gameCategory.id, category.id));
+    await markDirty(category.id);
 
     await expect(svc.rank(category.id)).resolves.toBeUndefined();
     expect(await ranksFor(category.id)).toEqual(before);
@@ -193,7 +200,7 @@ describe('GameSortRankingService (real PG)', () => {
     expect(rows.find((r) => r.gameId === g1.id)?.rank).toBeNull();
   });
 
-  it('a run invalidated by a newer completed run recomputes before writing', async () => {
+  it('a run invalidated by a newer completed run stops without recomputing', async () => {
     const provider = await seedProvider();
     const category = await seedCategory({ sortKey: 'racing' });
     const first = await seedGame(provider.id, { name: 'First' }, [category.id]);
@@ -233,7 +240,7 @@ describe('GameSortRankingService (real PG)', () => {
     releaseFirstCall();
     await runA;
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(2);
     const rows = await ranksFor(category.id);
     expect(rows.find((r) => r.gameId === second.id)?.rank).toBe(0);
     expect(rows.find((r) => r.gameId === first.id)?.rank).toBe(1);
@@ -349,7 +356,7 @@ describe('GameSortRankingService (real PG)', () => {
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
   });
 
-  it('leaves a failed explicit run dirty for the periodic sweep without stamping success', async () => {
+  it('leaves a failed explicit run dirty, and the sweep retries it only after a backoff', async () => {
     const provider = await seedProvider();
     const category = await seedCategory({ sortKey: 'throwing2' });
     await seedGame(provider.id, { name: 'A' }, [category.id]);
@@ -372,9 +379,87 @@ describe('GameSortRankingService (real PG)', () => {
     const svc = new GameSortRankingService(db.drizzle, new GameSortService(catalog));
 
     await svc.rank(category.id);
-    expect((await categoryRow(category.id)).rankedAt).toEqual(successAt);
+    const failed = await categoryRow(category.id);
+    expect(failed.rankedAt).toEqual(successAt);
+    expect(failed.rankFailures).toBe(1);
+    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    expect(jobQueue.enqueue).not.toHaveBeenCalled();
+
+    await db.drizzle.db
+      .update(gameCategory)
+      .set({ rankDirtyAt: sql`${gameCategory.rankDirtyAt} - interval '3 minutes'` })
+      .where(eq(gameCategory.id, category.id));
     await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
     expect(jobQueue.enqueue).toHaveBeenCalledWith(expect.anything(), { categoryId: category.id });
+  });
+
+  it('doubles the sweep backoff per consecutive failure and resets it on success', async () => {
+    const provider = await seedProvider();
+    const category = await seedCategory({ sortKey: 'flaky' });
+    const member = await seedGame(provider.id, {}, [category.id]);
+    let failing = true;
+    const flaky = defineGameSort({
+      key: 'flaky',
+      directions: ['asc'],
+      paramsSchema: EmptyParamsSchema,
+      async rank({ gameIds }) {
+        if (failing) {
+          throw new Error('dependency down');
+        }
+        return gameIds;
+      },
+    });
+    const jobQueue = makeJobQueue();
+    const svc = new GameSortRankingService(
+      db.drizzle,
+      new GameSortService(createGameSortCatalog([flaky])),
+    );
+    const sweepEnqueues = async (lastAttemptAgo: string) => {
+      await db.drizzle.db
+        .update(gameCategory)
+        .set({ rankDirtyAt: sql`now() - ${lastAttemptAgo}::interval` })
+        .where(eq(gameCategory.id, category.id));
+      jobQueue.enqueue.mockClear();
+      await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+      return jobQueue.enqueue.mock.calls.length > 0;
+    };
+
+    await svc.rank(category.id);
+    await svc.rank(category.id);
+    expect((await categoryRow(category.id)).rankFailures).toBe(2);
+    expect(await sweepEnqueues('3 minutes')).toBe(false);
+    expect(await sweepEnqueues('5 minutes')).toBe(true);
+
+    failing = false;
+    await svc.rank(category.id);
+    expect((await categoryRow(category.id)).rankFailures).toBe(0);
+    expect((await ranksFor(category.id)).find(({ gameId }) => gameId === member.id)?.rank).toBe(0);
+  });
+
+  it('skips a category that is already ranked', async () => {
+    const provider = await seedProvider();
+    const category = await seedCategory({ sortKey: 'counting' });
+    await seedGame(provider.id, {}, [category.id]);
+    let calls = 0;
+    const counting = defineGameSort({
+      key: 'counting',
+      directions: ['asc'],
+      paramsSchema: EmptyParamsSchema,
+      async rank({ gameIds }) {
+        calls += 1;
+        return gameIds;
+      },
+    });
+    const svc = new GameSortRankingService(
+      db.drizzle,
+      new GameSortService(createGameSortCatalog([counting])),
+    );
+    await svc.rank(category.id);
+    const ranked = await categoryRow(category.id);
+    await svc.rank(category.id);
+    await svc.rank(category.id);
+    expect(calls).toBe(1);
+    expect((await categoryRow(category.id)).rankSeq).toBe(ranked.rankSeq);
   });
 
   it('never materializes stale results while waiting for a retry to compute', async () => {
@@ -664,6 +749,7 @@ describe('GameSortRankingService (real PG)', () => {
         .update(gameCategory)
         .set({ sortKey: 'manual', sortDirection: null })
         .where(eq(gameCategory.id, category.id));
+      await markDirty(category.id);
       const svc2 = makeRankingService(jobQueue).svc;
       await svc2.rank(category.id);
       expect(await orderFor(category.id)).toEqual([bravo.id, alpha.id]);
@@ -695,6 +781,7 @@ describe('GameSortRankingService (real PG)', () => {
       expect(await orderFor(category.id)).toEqual([alpha.id, bravo.id]);
 
       await db.drizzle.db.update(game).set({ isActive: true }).where(eq(game.id, bravo.id));
+      await markDirty(category.id);
       const svc2 = makeRankingService(jobQueue).svc;
       await svc2.rank(category.id);
       expect(await orderFor(category.id)).toEqual([bravo.id, alpha.id]);
@@ -717,6 +804,7 @@ describe('GameSortRankingService (real PG)', () => {
         .update(gameProvider)
         .set({ isActive: false })
         .where(eq(gameProvider.id, providerB.id));
+      await markDirty(category.id);
       const svc2 = makeRankingService(jobQueue).svc;
       await svc2.rank(category.id);
       expect(await orderFor(category.id)).toEqual([bravo.id, alpha.id, charlie.id]);
