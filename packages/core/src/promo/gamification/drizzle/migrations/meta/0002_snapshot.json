@@ -61,12 +61,8 @@
           "name": "promo_player_rank_tier_id_promo_rank_tier_id_fk",
           "tableFrom": "promo_player_rank",
           "tableTo": "promo_rank_tier",
-          "columnsFrom": [
-            "tier_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tier_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -76,9 +72,7 @@
         "promo_player_rank_userId_unique": {
           "name": "promo_player_rank_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -183,16 +177,12 @@
         "promo_rank_tier_key_unique": {
           "name": "promo_rank_tier_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "key"
-          ]
+          "columns": ["key"]
         },
         "promo_rank_tier_position_unique": {
           "name": "promo_rank_tier_position_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "position"
-          ]
+          "columns": ["position"]
         }
       },
       "policies": {},
