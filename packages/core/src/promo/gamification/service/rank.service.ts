@@ -73,7 +73,12 @@ export class RankService implements WagerTrackingCommands {
     if (amount === null) {
       // ponytail: a wager with no rate is not counted; store unconverted wagers and replay them if this shows up in logs
       this.logger.warn(
-        { userId: args.userId, from: args.currency, to: lowest.currency },
+        {
+          userId: args.userId,
+          from: args.currency,
+          to: lowest.currency,
+          amount: args.weightedAmount,
+        },
         'rank wager skipped - no exchange rate',
       );
       return;
