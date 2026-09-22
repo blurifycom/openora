@@ -22,12 +22,18 @@ import type {
   DisplayCurrencyInfo,
 } from '../contract/index.js';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
+import { phoneMatchesCountryCallingCode } from './phone-country.js';
 
 export const ProfileUserNotFoundError = makeNotFoundError('User');
 
 export const UnsupportedDisplayCurrencyError = createDomainError<[currency: string]>(
   'UnsupportedDisplayCurrencyError',
   (currency) => `Display currency not supported: ${currency}`,
+);
+
+export const PhoneCountryMismatchError = createDomainError<[country: string]>(
+  'PhoneCountryMismatchError',
+  (country) => `Phone number does not match the calling code for country ${country}`,
 );
 
 const VALUE_COMPARISON_CURRENCY = 'USD';
@@ -107,7 +113,22 @@ export class ProfileService implements PlayerProvisioning {
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
     // The zone has its own validation and its own timestamp, so it is written separately.
     const { timezone, ...fields } = data;
-    const { email, username } = await this.ensureProfile(userId);
+    const { row, identity } = await this.ensureProfileRow(userId);
+    const { email, username } = identity;
+
+    // The effective phone/country is this request's value if it sent one, else whatever is
+    // already on the row - a PATCH carrying only `phone` is still checked against the stored
+    // `country`, not silently exempted from the check by omitting one side of it.
+    const effectivePhone = 'phone' in fields ? fields.phone : row.phone;
+    const effectiveCountry = 'country' in fields ? fields.country : row.country;
+    if (
+      effectivePhone &&
+      effectiveCountry &&
+      !phoneMatchesCountryCallingCode(effectivePhone, effectiveCountry)
+    ) {
+      throw new PhoneCountryMismatchError(effectiveCountry);
+    }
+
     if (timezone !== undefined) {
       await this.recordTimezone(userId, timezone);
     }

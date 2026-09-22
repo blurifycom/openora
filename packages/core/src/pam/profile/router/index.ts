@@ -1,7 +1,11 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type OssContext } from '@openora/core/server';
 import { profileContract } from '../contract/index.js';
-import { ProfileService, UnsupportedDisplayCurrencyError } from '../service/profile.service.js';
+import {
+  ProfileService,
+  UnsupportedDisplayCurrencyError,
+  PhoneCountryMismatchError,
+} from '../service/profile.service.js';
 
 export function createProfileRouter(profile: ProfileService) {
   const os = implement(profileContract).$context<OssContext>();
@@ -10,7 +14,9 @@ export function createProfileRouter(profile: ProfileService) {
     get: os.get.handler(({ context }) => profile.getMyProfile(getUserId(context))),
 
     update: os.update.handler(({ input, context }) =>
-      profile.updateMyProfile(getUserId(context), input),
+      mapErrors({ BAD_REQUEST: PhoneCountryMismatchError }, () =>
+        profile.updateMyProfile(getUserId(context), input),
+      ),
     ),
 
     getDisplayCurrency: os.getDisplayCurrency.handler(({ context }) =>
