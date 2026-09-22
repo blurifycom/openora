@@ -22,7 +22,7 @@ let app: TestApp;
 let admin: TestClient;
 let adminId: string;
 let support: TestClient;
-let seeded: { tiers: ReturnType<typeof editable>[] };
+let seeded: { currency: string; tiers: ReturnType<typeof editable>[] };
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
@@ -70,6 +70,8 @@ const RAISED_SILVER_THRESHOLD = '20000.000000000000000000';
 
 const editable = (tier: {
   id: string;
+  key: string;
+  name: string;
   wagerThreshold: string;
   rakebackPercent: string;
   dailyBonus: string | null;
@@ -78,6 +80,8 @@ const editable = (tier: {
   levelUpBonus: string | null;
 }) => ({
   id: tier.id,
+  key: tier.key,
+  name: tier.name,
   wagerThreshold: tier.wagerThreshold,
   rakebackPercent: tier.rakebackPercent,
   dailyBonus: tier.dailyBonus,
@@ -88,8 +92,19 @@ const editable = (tier: {
 
 async function currentPayload() {
   const body = await readJson(await admin.get('/backoffice/promo/ranks'));
-  return { tiers: body.tiers.map(editable) };
+  return { currency: body.currency, tiers: body.tiers.map(editable) };
 }
+
+const recordWager = (userId: string, weightedAmount: string) =>
+  drizzle().transaction((tx) =>
+    app.container.get(WAGER_TRACKING).recordWager(tx, {
+      userId,
+      currency: 'USDT',
+      amount: weightedAmount,
+      weightedAmount,
+      context: { provider: 'aggregator', product: 'casino' },
+    }),
+  );
 
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
@@ -116,10 +131,7 @@ afterAll(async () => {
 // The ladder is shared reference data in one test database, so a file that edits it hands the
 // next file a ladder it never seeded.
 afterEach(async () => {
-  for (const tier of seeded.tiers) {
-    const { id, ...values } = tier;
-    await drizzle().update(promoRankTier).set(values).where(eq(promoRankTier.id, id));
-  }
+  await admin.put('/backoffice/promo/ranks', seeded);
 });
 
 describe('an operator configuring the rank ladder', () => {
@@ -143,6 +155,7 @@ describe('an operator configuring the rank ladder', () => {
     });
 
     const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
       tiers: payload.tiers.map((tier: { id: string }) =>
         tier.id === silver.id
           ? { ...tier, wagerThreshold: '12345' }
@@ -176,6 +189,7 @@ describe('an operator configuring the rank ladder', () => {
     const before = await ladderRows();
 
     const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
       tiers: payload.tiers.map((tier: { position?: number }, index: number) =>
         index === 2 ? { ...tier, wagerThreshold: '1' } : tier,
       ),
@@ -191,6 +205,7 @@ describe('an operator configuring the rank ladder', () => {
     const payload = await currentPayload();
 
     const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
       tiers: payload.tiers.map((tier: unknown, index: number) =>
         index === 0 ? { ...(tier as object), wagerThreshold: '10' } : tier,
       ),
@@ -200,13 +215,75 @@ describe('an operator configuring the rank ladder', () => {
     expect(await auditCount()).toBe(auditedBefore);
   });
 
-  it('refuses a set that leaves out a tier', async () => {
+  it('adds a tier, renames another and keeps them in the order they were sent', async () => {
     const auditedBefore = await auditCount();
     const payload = await currentPayload();
+    const renamed = { ...payload.tiers[0], name: 'Starter' };
+    const added = {
+      key: `diamond-${randomUUID().slice(0, 8)}`,
+      name: 'Diamond',
+      wagerThreshold: '9000000',
+      rakebackPercent: '12',
+      dailyBonus: null,
+      weeklyBonus: null,
+      monthlyBonus: null,
+      levelUpBonus: null,
+    };
 
-    const res = await admin.put('/backoffice/promo/ranks', { tiers: payload.tiers.slice(0, -1) });
+    const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
+      tiers: [renamed, ...payload.tiers.slice(1), added],
+    });
+    const body = await readJson(res);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(body.tiers).toHaveLength(payload.tiers.length + 1);
+    expect(body.tiers[0]).toMatchObject({ name: 'Starter', position: 0 });
+    expect(body.tiers.at(-1)).toMatchObject({ key: added.key, position: payload.tiers.length });
+    expect(await auditCount()).toBe(auditedBefore + 1);
+  });
+
+  it('removes a tier nobody holds', async () => {
+    const payload = await currentPayload();
+
+    const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
+      tiers: payload.tiers.slice(0, -1),
+    });
+    const body = await readJson(res);
+
+    expect(res.status).toBe(200);
+    expect(body.tiers).toHaveLength(payload.tiers.length - 1);
+  });
+
+  it('refuses to remove a tier a player holds', async () => {
+    const auditedBefore = await auditCount();
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rank-holder-${randomUUID()}@example.test`,
+    });
+    await recordWager(userId, '12000');
+    const payload = await currentPayload();
+
+    const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
+      tiers: payload.tiers.filter((_: unknown, index: number) => index !== 1),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await auditCount()).toBe(auditedBefore);
+  });
+
+  it('refuses to change the currency once a player has wagered', async () => {
+    const auditedBefore = await auditCount();
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rank-wagered-${randomUUID()}@example.test`,
+    });
+    await recordWager(userId, '1');
+    const payload = await currentPayload();
+
+    const res = await admin.put('/backoffice/promo/ranks', { ...payload, currency: 'EUR' });
+
+    expect(res.status).toBe(409);
     expect(await auditCount()).toBe(auditedBefore);
   });
 
@@ -215,6 +292,7 @@ describe('an operator configuring the rank ladder', () => {
     const payload = await currentPayload();
 
     const res = await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
       tiers: [...payload.tiers.slice(0, -1), { ...payload.tiers.at(-1), id: randomUUID() }],
     });
 
@@ -260,6 +338,7 @@ describe('an operator configuring the rank ladder', () => {
     const payload = await currentPayload();
 
     await admin.put('/backoffice/promo/ranks', {
+      currency: payload.currency,
       tiers: payload.tiers.map((tier: { id: string }, index: number) =>
         index === 1 ? { ...tier, wagerThreshold: '20000' } : tier,
       ),

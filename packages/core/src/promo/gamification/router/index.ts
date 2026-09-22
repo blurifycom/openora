@@ -3,8 +3,11 @@ import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora
 import { gamificationContract } from '../contract/index.js';
 import {
   RankAdminService,
+  RankLadderCurrencyHeldError,
   RankLadderInvalidError,
   RankLadderMismatchError,
+  RankTierHeldError,
+  RankTierKeyTakenError,
 } from '../service/rank-admin.service.js';
 import { RankLadderNotConfiguredError, RankService } from '../service/rank.service.js';
 
@@ -40,6 +43,7 @@ export function createGamificationRouter({
           return mapErrors(
             {
               BAD_REQUEST: [RankLadderMismatchError, RankLadderInvalidError],
+              CONFLICT: [RankTierHeldError, RankLadderCurrencyHeldError, RankTierKeyTakenError],
               NOT_FOUND: RankLadderNotConfiguredError,
             },
             () => admin.set(userId, input),

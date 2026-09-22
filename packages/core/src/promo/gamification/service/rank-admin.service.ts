@@ -1,8 +1,15 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import type { AuditWritePort, Uuid } from '@openora/core/contracts';
-import { createDomainError, moneyCompare, type DrizzleService } from '@openora/core/server';
-import { promoRankTier, type PromoRankTier } from '../schema/index.js';
-import type { RankLadder, SetRankLadderInput } from '../contract/index.js';
+import {
+  createDomainError,
+  makeConflictError,
+  moneyCompare,
+  uniqueConstraintName,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
+import { promoPlayerRank, promoRankTier, type PromoRankTier } from '../schema/index.js';
+import type { RankLadder, SetRankLadderInput, SubmittedRankTier } from '../contract/index.js';
 import { RankLadderNotConfiguredError } from './rank.service.js';
 
 export const RankLadderMismatchError = createDomainError<[detail: string]>(
@@ -13,6 +20,21 @@ export const RankLadderMismatchError = createDomainError<[detail: string]>(
 export const RankLadderInvalidError = createDomainError<[reason: string]>(
   'RankLadderInvalidError',
   (reason) => `the ladder would be invalid: ${reason}`,
+);
+
+export const RankTierHeldError = makeConflictError(
+  'RankTierHeldError',
+  'a tier players already hold cannot be removed',
+);
+
+export const RankLadderCurrencyHeldError = makeConflictError(
+  'RankLadderCurrencyHeldError',
+  'the ladder currency cannot change once a player has wagered toward it',
+);
+
+export const RankTierKeyTakenError = makeConflictError(
+  'RankTierKeyTakenError',
+  'another tier already goes by that key',
 );
 
 const TIER_COLUMNS = {
@@ -28,29 +50,21 @@ const TIER_COLUMNS = {
   levelUpBonus: promoRankTier.levelUpBonus,
 };
 
-type LockedTier = Pick<PromoRankTier, keyof typeof TIER_COLUMNS | 'currency'>;
+type LadderRow = Pick<PromoRankTier, keyof typeof TIER_COLUMNS | 'currency'>;
 
-function assertSameTiers(locked: readonly LockedTier[], input: SetRankLadderInput) {
-  const known = new Set(locked.map((tier) => tier.id));
-  const sent = new Set(input.tiers.map((tier) => tier.id));
-  const unknown = [...sent].filter((id) => !known.has(id));
-  const missing = [...known].filter((id) => !sent.has(id));
-  if (unknown.length > 0 || missing.length > 0) {
-    throw new RankLadderMismatchError(
-      [
-        missing.length > 0 ? `missing ${missing.join(', ')}` : '',
-        unknown.length > 0 ? `unknown ${unknown.join(', ')}` : '',
-      ]
-        .filter(Boolean)
-        .join('; '),
-    );
+function assertKnownTiers(known: ReadonlySet<string>, tiers: readonly SubmittedRankTier[]) {
+  const unknown = tiers.flatMap((tier) =>
+    tier.id !== undefined && !known.has(tier.id) ? [tier.id] : [],
+  );
+  if (unknown.length > 0) {
+    throw new RankLadderMismatchError(`unknown ${unknown.join(', ')}`);
   }
 }
 
 function assertLadderHolds(tiers: readonly { wagerThreshold: string }[]) {
   const [lowest, ...rest] = tiers;
   if (!lowest) {
-    throw new RankLadderNotConfiguredError('default');
+    throw new RankLadderInvalidError('a ladder holds at least one tier');
   }
   if (moneyCompare(lowest.wagerThreshold, '0') !== 0) {
     throw new RankLadderInvalidError(
@@ -67,8 +81,12 @@ function assertLadderHolds(tiers: readonly { wagerThreshold: string }[]) {
 }
 
 /**
- * The operator's side of the rank ladder. Only the numbers are editable: a tier's key, name,
- * position and currency are fixed, because the player-facing surface is keyed off them.
+ * The operator's side of the rank ladder: read it, and replace it as one validated set. Tiers may
+ * be added, renamed, reordered and removed, because what a ladder is called and how many rungs it
+ * has is an operator's decision rather than the platform's.
+ *
+ * Two things a ladder cannot do once players are on it, since neither can be applied backwards:
+ * lose a tier somebody holds, or change the currency their lifetime wagering was counted in.
  *
  * An edit applies from the next bet onward. Raising a threshold never demotes anyone, since
  * `RankService.recordWager` only ever moves a player up.
@@ -80,12 +98,15 @@ export class RankAdminService {
   ) {}
 
   async get() {
-    return toLadder(
-      await this.drizzle.db
-        .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
-        .from(promoRankTier)
-        .orderBy(asc(promoRankTier.position)),
-    );
+    const tiers = await this.drizzle.db
+      .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
+      .from(promoRankTier)
+      .orderBy(asc(promoRankTier.position));
+    const [lowest] = tiers;
+    if (!lowest) {
+      throw new RankLadderNotConfiguredError('default');
+    }
+    return toLadder(lowest.currency, tiers);
   }
 
   async set(adminId: Uuid, input: SetRankLadderInput) {
@@ -95,23 +116,29 @@ export class RankAdminService {
         .from(promoRankTier)
         .orderBy(asc(promoRankTier.position))
         .for('update');
-      const before = toLadder(locked);
+      const [lowest] = locked;
+      const before = toLadder(lowest?.currency ?? input.currency, locked);
 
-      assertSameTiers(locked, input);
-      const edits = new Map(input.tiers.map((tier) => [tier.id, tier]));
-      const after = locked.map((tier) => ({ ...tier, ...edits.get(tier.id) }));
-      assertLadderHolds(after);
-
-      for (const tier of after) {
-        await tx.update(promoRankTier).set(editable(tier)).where(eq(promoRankTier.id, tier.id));
+      assertKnownTiers(new Set(locked.map((tier) => tier.id)), input.tiers);
+      assertLadderHolds(input.tiers);
+      if (lowest && lowest.currency !== input.currency) {
+        await assertNobodyWagered(tx);
       }
 
-      const ladder = toLadder(
-        await tx
-          .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
-          .from(promoRankTier)
-          .orderBy(asc(promoRankTier.position)),
-      );
+      const kept = new Set(input.tiers.flatMap((tier) => (tier.id === undefined ? [] : [tier.id])));
+      const removed = locked.filter((tier) => !kept.has(tier.id)).map((tier) => tier.id);
+      if (removed.length > 0) {
+        await assertNobodyHolds(tx, removed);
+        await tx.delete(promoRankTier).where(inArray(promoRankTier.id, removed));
+      }
+
+      await writeTiers(tx, input);
+
+      const saved = await tx
+        .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
+        .from(promoRankTier)
+        .orderBy(asc(promoRankTier.position));
+      const ladder = toLadder(input.currency, saved);
       await this.audit.recordInTransaction(tx, {
         actorId: adminId,
         actorType: 'admin',
@@ -126,22 +153,48 @@ export class RankAdminService {
   }
 }
 
-const editable = (tier: LockedTier) => ({
-  wagerThreshold: tier.wagerThreshold,
-  rakebackPercent: tier.rakebackPercent,
-  dailyBonus: tier.dailyBonus,
-  weeklyBonus: tier.weeklyBonus,
-  monthlyBonus: tier.monthlyBonus,
-  levelUpBonus: tier.levelUpBonus,
-});
-
-function toLadder(tiers: readonly LockedTier[]): RankLadder {
-  const [lowest] = tiers;
-  if (!lowest) {
-    throw new RankLadderNotConfiguredError('default');
+async function assertNobodyHolds(tx: DrizzleTx, tierIds: readonly string[]) {
+  const [held] = await tx
+    .select({ tierId: promoPlayerRank.tierId })
+    .from(promoPlayerRank)
+    .where(inArray(promoPlayerRank.tierId, [...tierIds]))
+    .limit(1);
+  if (held) {
+    throw new RankTierHeldError();
   }
-  return {
-    currency: lowest.currency,
-    tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
-  };
 }
+
+async function assertNobodyWagered(tx: DrizzleTx) {
+  const [wagered] = await tx.select({ id: promoPlayerRank.id }).from(promoPlayerRank).limit(1);
+  if (wagered) {
+    throw new RankLadderCurrencyHeldError();
+  }
+}
+
+/**
+ * Two tiers swapping keys in one save collide on the unique key: Postgres checks it per
+ * statement, and the ladder is written row by row. The operator is told that rather than being
+ * handed a constraint name.
+ */
+async function writeTiers(tx: DrizzleTx, input: SetRankLadderInput) {
+  try {
+    for (const [position, tier] of input.tiers.entries()) {
+      const values = { ...tier, position, currency: input.currency };
+      if (tier.id === undefined) {
+        await tx.insert(promoRankTier).values(values);
+        continue;
+      }
+      await tx.update(promoRankTier).set(values).where(eq(promoRankTier.id, tier.id));
+    }
+  } catch (err) {
+    if (uniqueConstraintName(err) === null) {
+      throw err;
+    }
+    throw new RankTierKeyTakenError();
+  }
+}
+
+const toLadder = (currency: string, tiers: readonly LadderRow[]): RankLadder => ({
+  currency,
+  tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
+});

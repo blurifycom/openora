@@ -15,7 +15,7 @@ export const promoRankTier = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     key: text().notNull().unique(),
     name: text().notNull(),
-    position: integer().notNull().unique(),
+    position: integer().notNull(),
     currency: text().notNull(),
     wagerThreshold: money().notNull(),
     rakebackPercent: decimal({
