@@ -40,30 +40,34 @@ export type RankLadder = z.infer<typeof RankLadderSchema>;
 
 const MAX_TIERS = 50;
 
-const EditableTierSchema = RankTierSchema.pick({
-  id: true,
-  wagerThreshold: true,
-  rakebackPercent: true,
-  dailyBonus: true,
-  weeklyBonus: true,
-  monthlyBonus: true,
-  levelUpBonus: true,
+/**
+ * A tier as an operator submits it. No `id` means a tier to create; position is the entry's place
+ * in the array, so a ladder is reordered by reordering it.
+ */
+const SubmittedTierSchema = RankTierSchema.omit({ id: true, position: true }).extend({
+  id: UuidSchema.optional(),
 });
+
+export type SubmittedRankTier = z.infer<typeof SubmittedTierSchema>;
 
 /**
  * The ladder is replaced as one set: a per-tier surface would let an operator save thresholds
- * that no longer increase. The tiers themselves are fixed - a key, name, position or currency is
- * never editable, because the player-facing images and translations are keyed off `key`.
+ * that no longer increase, and it could not express a tier being added, removed or moved.
  */
 export const SetRankLadderInputSchema = z.object({
+  currency: CurrencyTickerSchema,
   tiers: z
-    .array(EditableTierSchema)
+    .array(SubmittedTierSchema)
     .min(1)
     .max(MAX_TIERS)
     .refine(
-      (tiers) => new Set(tiers.map((tier) => tier.id)).size === tiers.length,
-      'two entries target the same tier',
+      (tiers) => new Set(tiers.map((tier) => tier.key)).size === tiers.length,
+      'two tiers share a key',
     )
+    .refine((tiers) => {
+      const ids = tiers.flatMap((tier) => (tier.id === undefined ? [] : [tier.id]));
+      return new Set(ids).size === ids.length;
+    }, 'two entries target the same tier')
     .refine(
       (tiers) =>
         tiers.every((tier) => BONUS_FIELDS.every((field) => isAbsentOrPositive(tier[field]))),
