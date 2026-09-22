@@ -14,16 +14,7 @@ import {
 let db: TestDb;
 let app: TestApp;
 
-const LADDER_KEYS = [
-  'bronze',
-  'silver',
-  'gold',
-  'crystal',
-  'master',
-  'champion',
-  'titan',
-  'legend',
-];
+const LADDER_KEYS = ['bronze', 'silver', 'gold', 'platinum'];
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {

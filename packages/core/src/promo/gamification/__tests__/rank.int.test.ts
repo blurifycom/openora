@@ -16,6 +16,11 @@ const audit = makeAuditWriter();
 let ranks: RankService;
 
 const CASINO = { provider: 'aggregator', product: 'casino' };
+const LADDER = [
+  { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1' },
+  { key: 'silver', name: 'Silver', wagerThreshold: '10000', rakebackPercent: '3' },
+  { key: 'gold', name: 'Gold', wagerThreshold: '50000', rakebackPercent: '5' },
+];
 const PARALLEL_BETS = 20;
 
 const wager = (userId: string, weightedAmount: string, currency = 'USDT') =>
@@ -49,7 +54,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
-  await seedRankLadder(db.drizzle.db);
+  await seedRankLadder(db.drizzle.db, LADDER);
 });
 
 describe('recording a wager toward the rank ladder', () => {
