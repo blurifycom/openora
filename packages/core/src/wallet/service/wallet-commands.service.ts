@@ -18,7 +18,6 @@ import {
   makeConflictError,
   moneyToNumber,
   type DrizzleDb,
-  type EventBus,
 } from '@openora/core/server';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import {
@@ -51,11 +50,11 @@ export const WalletCommandAmountError = createDomainError<[operation: string, am
 // a port the wallet module owns. Every move writes a `wallet_transaction` ledger row
 // (status `completed`, internal settlement so no provider ref) so gameplay shows in
 // transaction history. The `balance >= amount` guard in the UPDATE makes concurrent
-// debits safe (a lost race updates zero rows and we report the shortfall). A move that
-// actually changed a balance also emits `wallet.balance.changed` - best-effort (see
-// messaging-and-microservices rule) and fired before the caller's own transaction
-// commits, since this service does not own that boundary; the channel is a UI-refresh
-// signal only, so a later rollback just costs one harmless refetch.
+// debits safe (a lost race updates zero rows and we report the shortfall). This service
+// does not own the caller's transaction boundary, so it never emits `wallet.balance.changed`
+// itself - a move that actually changed the balance instead returns the ledger row's id as
+// `transactionId` on the outcome, and the caller emits the event once its own transaction
+// commits (see GamingService.startRound/endRound).
 export const WalletRgRestrictedError = makeConflictError(
   'WalletRgRestrictedError',
   'wager is restricted by an active responsible-gambling exclusion',
@@ -71,7 +70,6 @@ export class WalletCommandsService implements WalletCommands {
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
     private readonly rgLimits?: RgLimitsPort,
-    private readonly events?: EventBus,
   ) {}
 
   // Completed ledger row shared by every gameplay move. `direction` is required (not
@@ -204,25 +202,22 @@ export class WalletCommandsService implements WalletCommands {
       providerRef,
     );
 
-    this.events?.emit('wallet.balance.changed', {
-      userId,
-      amount,
-      currency: debitCurrency,
-      transactionId: ledgerRow.id,
-      type,
-      direction: 'debit',
-    });
-
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
         userId,
         currency: debitCurrency,
         amount,
       });
-      return { ok: true, newBalance, currency: debitCurrency, completedBonusCredits };
+      return {
+        ok: true,
+        newBalance,
+        currency: debitCurrency,
+        completedBonusCredits,
+        transactionId: ledgerRow.id,
+      };
     }
 
-    return { ok: true, newBalance, currency: debitCurrency };
+    return { ok: true, newBalance, currency: debitCurrency, transactionId: ledgerRow.id };
   }
 
   async credit(
@@ -275,15 +270,6 @@ export class WalletCommandsService implements WalletCommands {
       throw new Error('wallet credit: no row');
     }
 
-    this.events?.emit('wallet.balance.changed', {
-      userId,
-      amount,
-      currency: creditRow.currency,
-      transactionId: ledgerRow.id,
-      type,
-      direction: 'credit',
-    });
-
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {
         walletId: row.id,
@@ -294,7 +280,7 @@ export class WalletCommandsService implements WalletCommands {
       });
     }
 
-    return { ok: true, newBalance: credited.amount };
+    return { ok: true, newBalance: credited.amount, transactionId: ledgerRow.id };
   }
 
   private async resolveOrOpenWallet(

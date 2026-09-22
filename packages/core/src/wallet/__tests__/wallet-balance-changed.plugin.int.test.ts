@@ -66,6 +66,7 @@ describe('wallet plugin wallet.balance.changed wiring', () => {
     await handlers[0]?.(
       {
         userId,
+        playerId: null,
         amount: '10',
         currency: 'USD',
         transactionId: randomUUID(),
@@ -88,11 +89,20 @@ describe('wallet plugin wallet.balance.changed wiring', () => {
     });
   });
 
-  it('ignores a payload that fails schema validation', async () => {
+  it('ignores a payload that fails schema validation, even with a valid envelope', async () => {
     const { registry, realtime } = boot();
     const handlers = registry.events.getAll().get('wallet.balance.changed') ?? [];
 
-    await handlers[0]?.({ userId: 'not-a-uuid' }, undefined);
+    await handlers[0]?.(
+      { userId: 'not-a-uuid' },
+      {
+        eventId: randomUUID(),
+        topic: 'wallet.balance.changed',
+        payload: {},
+        occurredAt: new Date().toISOString(),
+        schemaVersion: 1,
+      },
+    );
 
     expect(realtime.publish).not.toHaveBeenCalled();
   });

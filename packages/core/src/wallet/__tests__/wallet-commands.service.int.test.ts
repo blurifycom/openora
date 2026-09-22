@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { PlayEligibilityPort, RgLimitsPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
+import { mock, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import {
@@ -530,48 +530,24 @@ describe('WalletCommandsService ledger sequence (real PG)', () => {
   });
 });
 
-describe('WalletCommandsService wallet.balance.changed event (real PG)', () => {
-  it('debit emits it with the debited amount and direction', async () => {
-    const w = await seedWallet({ balance: '100' });
-    const events = makeEventBus();
-    const withEvents = new WalletCommandsService(
-      eligibility(false),
-      audit,
-      undefined,
-      undefined,
-      events,
-    );
+describe('WalletCommandsService outcome transactionId (real PG)', () => {
+  // The caller (eg GamingService) reads this field to know whether to emit
+  // wallet.balance.changed once its own transaction commits - see the class comment on
+  // WalletCommandsService for why the port itself never emits that event.
 
-    const res = await withEvents.debit(db.drizzle.db, {
-      userId: w.userId,
-      amount: '10',
-      type: 'bet',
-    });
+  it('debit returns the ledger row id on a real bet', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
 
     const rows = await txRows(w.id);
-    expect(res.ok).toBe(true);
-    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
-      userId: w.userId,
-      amount: '10',
-      currency: 'USD',
-      transactionId: rows[0]?.id,
-      type: 'bet',
-      direction: 'debit',
-    });
+    expect(res).toMatchObject({ ok: true, transactionId: rows[0]?.id });
   });
 
-  it('credit emits it with the credited amount and direction', async () => {
+  it('credit returns the ledger row id on a real win', async () => {
     const w = await seedWallet({ balance: '50' });
-    const events = makeEventBus();
-    const withEvents = new WalletCommandsService(
-      eligibility(false),
-      audit,
-      undefined,
-      undefined,
-      events,
-    );
 
-    const res = await withEvents.credit(db.drizzle.db, {
+    const res = await svc.credit(db.drizzle.db, {
       userId: w.userId,
       amount: '20',
       currency: 'USD',
@@ -579,81 +555,51 @@ describe('WalletCommandsService wallet.balance.changed event (real PG)', () => {
     });
 
     const rows = await txRows(w.id);
-    expect(res.ok).toBe(true);
-    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
-      userId: w.userId,
-      amount: '20',
-      currency: 'USD',
-      transactionId: rows[0]?.id,
-      type: 'win',
-      direction: 'credit',
-    });
+    expect(res).toMatchObject({ ok: true, transactionId: rows[0]?.id });
   });
 
-  it('a 0-amount loss never emits - nothing moved', async () => {
+  it('a 0-amount loss returns no transactionId - nothing moved', async () => {
     const w = await seedWallet({ balance: '100' });
-    const events = makeEventBus();
-    const withEvents = new WalletCommandsService(
-      eligibility(false),
-      audit,
-      undefined,
-      undefined,
-      events,
-    );
 
-    await withEvents.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
 
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ ok: true });
+    expect((res as { transactionId?: string }).transactionId).toBeUndefined();
   });
 
-  it('a replayed debit (same providerRef) emits only once', async () => {
+  it('a replayed debit (same providerRef) returns no transactionId on the replay', async () => {
     const w = await seedWallet({ balance: '100' });
-    const events = makeEventBus();
-    const withEvents = new WalletCommandsService(
-      eligibility(false),
-      audit,
-      undefined,
-      undefined,
-      events,
-    );
     const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-evt-debit-1' };
 
-    await withEvents.debit(db.drizzle.db, {
+    const first = await svc.debit(db.drizzle.db, {
       userId: w.userId,
       amount: '10',
       type: 'bet',
       providerRef,
     });
-    await withEvents.debit(db.drizzle.db, {
+    const second = await svc.debit(db.drizzle.db, {
       userId: w.userId,
       amount: '10',
       type: 'bet',
       providerRef,
     });
 
-    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({ ok: true, transactionId: expect.any(String) });
+    expect((second as { transactionId?: string }).transactionId).toBeUndefined();
   });
 
-  it('a replayed credit (same providerRef) emits only once', async () => {
+  it('a replayed credit (same providerRef) returns no transactionId on the replay', async () => {
     const w = await seedWallet({ balance: '50' });
-    const events = makeEventBus();
-    const withEvents = new WalletCommandsService(
-      eligibility(false),
-      audit,
-      undefined,
-      undefined,
-      events,
-    );
     const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-evt-credit-1' };
 
-    await withEvents.credit(db.drizzle.db, {
+    const first = await svc.credit(db.drizzle.db, {
       userId: w.userId,
       amount: '20',
       currency: 'USD',
       type: 'win',
       providerRef,
     });
-    await withEvents.credit(db.drizzle.db, {
+    const second = await svc.credit(db.drizzle.db, {
       userId: w.userId,
       amount: '20',
       currency: 'USD',
@@ -661,14 +607,7 @@ describe('WalletCommandsService wallet.balance.changed event (real PG)', () => {
       providerRef,
     });
 
-    expect(events.emit).toHaveBeenCalledTimes(1);
-  });
-
-  it('never emits when the caller passes no events bus', async () => {
-    const w = await seedWallet({ balance: '100' });
-
-    await expect(
-      svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
-    ).resolves.toMatchObject({ ok: true });
+    expect(first).toMatchObject({ ok: true, transactionId: expect.any(String) });
+    expect((second as { transactionId?: string }).transactionId).toBeUndefined();
   });
 });

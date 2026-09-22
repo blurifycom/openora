@@ -427,6 +427,7 @@ export const domainEventSchemas = {
   // own operations keep their existing dedicated topics above; this is the one topic for
   // everything that moves money through WALLET_COMMANDS instead.
   'wallet.balance.changed': walletTxnBase.extend({
+    playerId: UuidSchema.nullable(),
     type: WalletTransactionTypeSchema,
     direction: z.enum(['credit', 'debit']),
   }),

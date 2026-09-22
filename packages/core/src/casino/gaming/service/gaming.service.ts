@@ -511,33 +511,55 @@ export class GamingService {
       throw new GameGeoRestrictedError(geoDecision);
     }
 
-    const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
-      // The same currency the RG pre-check above weighed. Left off, the debit falls on the
-      // player's active currency, and the two would then judge different moves.
-      const outcome = await this.walletCommands.debit(tx, {
+    const { round, completedBonusCredits, betTransactionId } = await this.drizzle.db.transaction(
+      async (tx) => {
+        // The same currency the RG pre-check above weighed. Left off, the debit falls on the
+        // player's active currency, and the two would then judge different moves.
+        const outcome = await this.walletCommands.debit(tx, {
+          userId,
+          amount: betAmount,
+          currency,
+          type: 'bet',
+        });
+        if (!outcome.ok) {
+          throw new InsufficientBalanceError(outcome.available, betAmount);
+        }
+        const insertedRound = findOneOrThrow(
+          await tx
+            .insert(gameRound)
+            .values({
+              gameId,
+              userId,
+              currency,
+              betAmount,
+              status: 'active',
+            })
+            .returning(),
+          new GameRoundNotFoundError(gameId),
+        );
+        return {
+          round: insertedRound,
+          completedBonusCredits: outcome.completedBonusCredits ?? [],
+          betTransactionId: outcome.transactionId,
+        };
+      },
+    );
+
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
+    // Emitted only after the transaction above committed - see the module-level comment
+    // on WalletCommandsService for why the port itself never emits this.
+    if (betTransactionId) {
+      this.events.emit('wallet.balance.changed', {
         userId,
+        playerId,
         amount: betAmount,
         currency,
+        transactionId: betTransactionId,
         type: 'bet',
+        direction: 'debit',
       });
-      if (!outcome.ok) {
-        throw new InsufficientBalanceError(outcome.available, betAmount);
-      }
-      const insertedRound = findOneOrThrow(
-        await tx
-          .insert(gameRound)
-          .values({
-            gameId,
-            userId,
-            currency,
-            betAmount,
-            status: 'active',
-          })
-          .returning(),
-        new GameRoundNotFoundError(gameId),
-      );
-      return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
-    });
+    }
 
     for (const credit of completedBonusCredits) {
       this.events.emit('wallet.bonus_rollover.completed', {
@@ -554,7 +576,7 @@ export class GamingService {
       roundId: round.id,
       gameId,
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       currency,
     });
 
@@ -584,7 +606,7 @@ export class GamingService {
     // The provider's number, never the caller's: the win is credited off this alone.
     const winAmount = outcome?.winAmount ?? '0';
 
-    const paid = await this.drizzle.db.transaction(async (tx) => {
+    const { paid, winTransactionId } = await this.drizzle.db.transaction(async (tx) => {
       // `status = 'active'` is the payout guard: two concurrent end-round calls both
       // reach here, only one updates a row, so the win is credited exactly once.
       const settled = await tx
@@ -599,8 +621,9 @@ export class GamingService {
         )
         .returning({ id: gameRound.id });
       if (settled.length === 0) {
-        return false;
+        return { paid: false, winTransactionId: undefined };
       }
+      let winTransactionId: string | undefined;
       if (Number(winAmount) > 0) {
         // The bet already opened this currency's balance, so `allowNewCurrency` only
         // covers a player whose active currency moved between start and settlement.
@@ -614,14 +637,31 @@ export class GamingService {
         if (!credited.ok) {
           throw new WinCreditFailedError(roundId, credited.reason);
         }
+        winTransactionId = credited.transactionId;
       }
-      return true;
+      return { paid: true, winTransactionId };
     });
+
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+
+    // Emitted only after the transaction above committed - see the module-level comment
+    // on WalletCommandsService for why the port itself never emits this.
+    if (winTransactionId) {
+      this.events.emit('wallet.balance.changed', {
+        userId,
+        playerId,
+        amount: winAmount,
+        currency: round.currency,
+        transactionId: winTransactionId,
+        type: 'win',
+        direction: 'credit',
+      });
+    }
 
     this.events.emit('gaming.round.ended', {
       roundId,
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
     });
 
     return { success: true, winAmount: paid ? winAmount : round.winAmount };

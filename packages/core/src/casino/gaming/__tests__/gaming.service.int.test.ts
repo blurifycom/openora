@@ -932,6 +932,68 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
   });
 });
 
+describe('GamingService.startRound wallet.balance.changed event (real PG)', () => {
+  it('emits it, after the round is persisted, for the bet debit', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a6', name: 'Aces' });
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      newBalance: '90',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000d1',
+    });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      mock<GameAdapter>({
+        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
+        endRound: vi.fn(),
+      }),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+    const userId = '00000000-0000-0000-0000-000000000406';
+
+    await startRound(svc, userId, created.id, 'USD', '10');
+
+    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
+      userId,
+      playerId: null,
+      amount: '10',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000d1',
+      type: 'bet',
+      direction: 'debit',
+    });
+  });
+
+  it('never emits it when the debit outcome carries no transactionId', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a7', name: 'Aces' });
+    const events = makeEventBus();
+    // The real WalletCommandsService only omits transactionId for a no-op move (loss,
+    // replay) - gaming never debits either, but the caller must still honor the
+    // contract rather than assume it is always set.
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      mock<GameAdapter>({
+        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
+        endRound: vi.fn(),
+      }),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+    const userId = '00000000-0000-0000-0000-000000000407';
+
+    await startRound(svc, userId, created.id, 'USD', '10');
+
+    expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
+  });
+});
+
 describe('GamingService updateGame (real PG)', () => {
   const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
     events.emit.mock.calls.map(([topic]) => topic);
@@ -1192,6 +1254,82 @@ describe('GamingService.endRound (real PG)', () => {
     const [unsettled] = await db.drizzle.db.select().from(gameRound);
     expect(unsettled?.status).toBe('active');
     expect(Number(unsettled?.winAmount)).toBe(0);
+  });
+});
+
+describe('GamingService.endRound wallet.balance.changed event (real PG)', () => {
+  const userId = '00000000-0000-0000-0000-000000000502';
+
+  it('emits it, after the round is settled, for the win credit', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands(
+      { ok: true, newBalance: '0', currency: 'USD' },
+      { ok: true, newBalance: '42.50', transactionId: '00000000-0000-0000-0000-0000000000e1' },
+    );
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      settlingProvider('42.50'),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+
+    await svc.endRound(userId, round.id);
+
+    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
+      userId,
+      playerId: null,
+      amount: '42.50',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000e1',
+      type: 'win',
+      direction: 'credit',
+    });
+  });
+
+  it('never emits it when the provider reports no win', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      settlingProvider(),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+
+    await svc.endRound(userId, round.id);
+
+    expect(walletCommands.credit).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
+  });
+
+  it('never emits it when the credit outcome carries no transactionId', async () => {
+    const created = await seedGame();
+    const round = await seedRound(created.id, userId);
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands(
+      { ok: true, newBalance: '0', currency: 'USD' },
+      { ok: true, newBalance: '42.50' },
+    );
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      settlingProvider('42.50'),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+
+    await svc.endRound(userId, round.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
   });
 });
 
