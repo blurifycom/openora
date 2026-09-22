@@ -1,0 +1,2 @@
+ALTER TABLE "promo_grant" DROP CONSTRAINT "promo_grant_forfeit_reason_requires_forfeited";--> statement-breakpoint
+ALTER TABLE "promo_grant" ADD CONSTRAINT "promo_grant_forfeit_reason_matches_status" CHECK (("promo_grant"."status" = 'forfeited') = ("promo_grant"."forfeit_reason" is not null));

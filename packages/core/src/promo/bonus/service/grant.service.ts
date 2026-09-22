@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import {
+  BonusGrantSourceSchema,
   CurrencyTickerInputSchema,
   MoneyAmountSchema,
   UuidSchema,
@@ -17,7 +18,6 @@ import {
   moneyScaleBy,
   type DrizzleTx,
 } from '@openora/core/server';
-import { BonusGrantSourceSchema } from '../contract/index.js';
 import {
   promoGrant,
   promoWeight,
@@ -35,29 +35,40 @@ export const GrantConflictError = makeConflictError(
 // a fat finger rather than an offer. Both are refused before anything reaches the ledger.
 const MAX_WAGERING_MULTIPLIER = '1000';
 
-const grantArgsSchema = z.object({
-  userId: UuidSchema,
-  currency: CurrencyTickerInputSchema,
-  amount: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero'),
-  source: BonusGrantSourceSchema,
-  sourceRef: z.string().min(1),
-  actor: z.union([
-    z.object({ type: z.literal('admin'), id: UuidSchema }),
-    z.object({ type: z.literal('system') }),
-  ]),
-  offerId: UuidSchema.optional(),
-  terms: z.object({
-    wageringMultiplier: MoneyAmountSchema.refine(
-      isPositiveMoney,
-      'must be greater than zero',
-    ).refine(
-      (v) => moneyCompare(v, MAX_WAGERING_MULTIPLIER) <= 0,
-      `must not exceed ${MAX_WAGERING_MULTIPLIER}`,
-    ),
-    expiryDays: z.number().int().positive(),
-    weightProfileId: UuidSchema,
-  }),
-});
+const grantArgsSchema = z
+  .object({
+    userId: UuidSchema,
+    currency: CurrencyTickerInputSchema,
+    amount: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero'),
+    source: BonusGrantSourceSchema,
+    sourceRef: z.string().min(1),
+    actor: z.union([
+      z.object({ type: z.literal('admin'), id: UuidSchema }),
+      z.object({ type: z.literal('system') }),
+    ]),
+    offerId: UuidSchema.optional(),
+    terms: z.object({
+      wageringMultiplier: MoneyAmountSchema.refine(
+        isPositiveMoney,
+        'must be greater than zero',
+      ).refine(
+        (v) => moneyCompare(v, MAX_WAGERING_MULTIPLIER) <= 0,
+        `must not exceed ${MAX_WAGERING_MULTIPLIER}`,
+      ),
+      expiryDays: z.number().int().positive(),
+      weightProfileId: UuidSchema,
+    }),
+  })
+  .refine((a) => a.source !== 'manual' || a.actor.type === 'admin', {
+    message: 'a manual grant must name the admin who issued it',
+    path: ['actor'],
+  })
+  // Each input fits `numeric(38,18)` on its own, but their product need not: the requirement
+  // would overflow at the insert instead of being refused here.
+  .refine(
+    (a) => MoneyAmountSchema.safeParse(moneyScaleBy(a.amount, a.terms.wageringMultiplier)).success,
+    { message: 'wagering requirement is too large to store', path: ['amount'] },
+  );
 
 /**
  * Creates the bonuses a player holds. Bound to BONUS_GRANTS, and always called on the caller's
@@ -69,6 +80,13 @@ export class GrantService implements BonusGrantCommands {
   async grant(tx: DrizzleTx, rawArgs: BonusGrantArgs): Promise<BonusGrantOutcome> {
     const args = grantArgsSchema.parse(rawArgs);
     const wageringRequired = moneyScaleBy(args.amount, args.terms.wageringMultiplier);
+
+    // A retry resolves before any live configuration is read, so a profile deleted since the
+    // first call cannot turn an exact replay into an error.
+    const replayed = await this.findReplay(tx, args, wageringRequired);
+    if (replayed) {
+      return replayed;
+    }
     const terms = await this.snapshotTerms(tx, args.terms);
 
     // The unique index is the idempotency guard. A read-then-write check would let two
@@ -92,7 +110,12 @@ export class GrantService implements BonusGrantCommands {
       .returning({ id: promoGrant.id });
 
     if (!inserted) {
-      return this.resolveReplay(tx, args, wageringRequired);
+      // Lost the race to a concurrent replay; the unique index held, the winner's row is there.
+      const winner = await this.findReplay(tx, args, wageringRequired);
+      if (!winner) {
+        throw new GrantConflictError();
+      }
+      return winner;
     }
 
     await this.audit.recordInTransaction(tx, {
@@ -122,11 +145,11 @@ export class GrantService implements BonusGrantCommands {
    * different payouts sharing one source reference would otherwise return success while crediting
    * nothing, and the caller would record a payout that never happened.
    */
-  private async resolveReplay(
+  private async findReplay(
     tx: DrizzleTx,
     args: z.infer<typeof grantArgsSchema>,
     wageringRequired: string,
-  ): Promise<BonusGrantOutcome> {
+  ): Promise<BonusGrantOutcome | undefined> {
     const [existing] = await tx
       .select({
         id: promoGrant.id,
@@ -143,7 +166,7 @@ export class GrantService implements BonusGrantCommands {
         ),
       );
     if (!existing) {
-      throw new GrantConflictError();
+      return undefined;
     }
     const matches =
       existing.currency === args.currency &&

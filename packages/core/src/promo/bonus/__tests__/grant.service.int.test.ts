@@ -260,6 +260,42 @@ describe('GrantService.grant', () => {
     expect(await rows()).toHaveLength(0);
   });
 
+  it('rejects a manual grant with no admin behind it', async () => {
+    await expect(grant(args({ source: 'manual', actor: { type: 'system' } }))).rejects.toThrow(
+      /admin/,
+    );
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it('rejects an amount whose requirement would overflow the column', async () => {
+    await expect(
+      grant(args({ amount: '99999999999999999999', terms: termsWith('2') })),
+    ).rejects.toThrow(/too large/);
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it('a replay still returns the first grant after its weight profile was deleted', async () => {
+    const a = args();
+    const first = await grant(a);
+    await db.drizzle.db
+      .delete(promoWeightProfile)
+      .where(eq(promoWeightProfile.id, weightProfileId));
+
+    expect(await grant(a)).toEqual({ ...first, created: false });
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('the database refuses a forfeit without a reason, and a reason without a forfeit', async () => {
+    await grant(args());
+    const [row] = await rows();
+    const set = (values: Partial<typeof promoGrant.$inferInsert>) =>
+      db.drizzle.db.update(promoGrant).set(values).where(eq(promoGrant.id, row!.id));
+
+    await expect(set({ status: 'forfeited' })).rejects.toThrow();
+    await expect(set({ forfeitReason: 'admin' })).rejects.toThrow();
+    await expect(set({ status: 'forfeited', forfeitReason: 'admin' })).resolves.toBeDefined();
+  });
+
   it('rolls the audit write back with the grant when the transaction fails', async () => {
     const a = args();
     await expect(

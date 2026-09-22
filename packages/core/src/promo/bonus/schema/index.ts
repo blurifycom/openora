@@ -16,18 +16,15 @@ import {
   CONTRIBUTION_PERCENT_SCALE,
   MONEY_PRECISION,
   MONEY_SCALE,
-  type BonusGrantSource,
-  type BonusGrantTerms,
-} from '@openora/core/contracts';
-import {
   BONUS_FORFEIT_REASONS,
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
-  WAGER_WEIGHT_SCOPES,
   type BonusForfeitReason,
+  type BonusGrantSource,
   type BonusGrantStatus,
-  type WagerWeightScope,
-} from '../contract/index.js';
+  type BonusGrantTerms,
+} from '@openora/core/contracts';
+import { WAGER_WEIGHT_SCOPES, type WagerWeightScope } from '../contract/index.js';
 import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
@@ -151,9 +148,11 @@ export const promoGrant = pgTable(
       'promo_grant_progress_within_requirement',
       sql`${t.wageringProgress} >= 0 AND ${t.wageringProgress} <= ${t.wageringRequired}`,
     ),
+    // Both directions: a reason on a live grant is a lie, and a forfeit without one leaves the
+    // regulator nothing to read.
     check(
-      'promo_grant_forfeit_reason_requires_forfeited',
-      sql`${t.forfeitReason} is null or ${t.status} = 'forfeited'`,
+      'promo_grant_forfeit_reason_matches_status',
+      sql`(${t.status} = 'forfeited') = (${t.forfeitReason} is not null)`,
     ),
   ],
 );
