@@ -19,6 +19,7 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import {
   makeIdentityReader,
   mock,
+  makeRateLimiter,
   makeRealtimeTransport,
   makeEventBus,
   makeAdminGuard,
@@ -106,6 +107,7 @@ function build(adminGuard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({ enqueue: vi.fn(async () => ({ id: 'job-1' })) }),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
+    limiter: makeRateLimiter(),
     realtime: makeRealtimeTransport(),
     rg,
     rgMonitoring,

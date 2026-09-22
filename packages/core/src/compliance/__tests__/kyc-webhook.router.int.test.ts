@@ -19,6 +19,7 @@ import {
 import {
   mock,
   makeAuditWriter,
+  makeRateLimiter,
   makeRealtimeTransport,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
@@ -88,6 +89,7 @@ function build(opts: {
     webhookVerifier: opts.webhookVerifier,
     jobQueue: opts.jobQueue,
     kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
+    limiter: makeRateLimiter(),
     realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),

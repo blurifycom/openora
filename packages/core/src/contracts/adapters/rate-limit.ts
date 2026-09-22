@@ -28,6 +28,7 @@ export const RATE_LIMIT_KEYS = {
   CHAT_ROOM_JOIN: 'chat-room-join',
   CHAT_SEND: 'chat-send',
   REPORT_ACCESS_DENIED: 'report-access-denied',
+  GEO_CHECK_IP: 'geo-check-ip',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];

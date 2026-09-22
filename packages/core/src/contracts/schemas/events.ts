@@ -220,6 +220,9 @@ export const domainEventSchemas = {
     email: z.email(),
     reason: z.string().nullable().optional(),
     attemptsRemaining: z.number().int().optional(),
+    // Carried only by the country gate, which is the one refusal that turns on where the
+    // caller is rather than on what they sent.
+    countryCode: CountryCodeSchema.nullable().optional(),
   }),
   'identity.user.logout': authContextBase.extend({
     userId: UuidSchema,
@@ -913,6 +916,14 @@ export const domainEventSchemas = {
     countryCode: CountryCodeSchema,
     action: GeoRuleActionSchema,
     actorId: UuidSchema.optional(),
+  }),
+
+  // A country rule refused a request. `countryCode` is null when the address resolved to
+  // no country and the fail-closed branch denied it, which is a different operational
+  // fact from a named blocked country and has to stay distinguishable in the audit trail.
+  'compliance.geo.access_blocked': authContextBase.extend({
+    countryCode: CountryCodeSchema.nullable(),
+    reason: z.string(),
   }),
 
   'compliance.game-geo-rule.upserted': authContextBase.extend({

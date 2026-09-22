@@ -99,6 +99,19 @@ export async function mapEventToRecord(
     };
   }
 
+  // No actor: the subject is the request's own origin, and there is no account yet on the
+  // registration, login and page-gate paths that produce this.
+  if (topic === 'compliance.geo.access_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'geo-access',
+      resourceId: str(p['countryCode']),
+      result: 'failure',
+      after: { countryCode: p['countryCode'] ?? null, reason: p['reason'] ?? null },
+    };
+  }
+
   if (topic === 'compliance.geo-rule.added') {
     return {
       ...base,
@@ -1199,6 +1212,7 @@ export async function mapEventToRecord(
 }
 
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
+  'compliance.geo.access_blocked',
   'identity.user.registered',
   'identity.user.registration.failed',
   'identity.user.login',

@@ -287,6 +287,20 @@ export class ComplianceService {
     private readonly igaming: IgamingConfig | null = null,
   ) {}
 
+  private deny(ipAddress: string | null, countryCode: string | null, reason: string) {
+    this.events.emit('compliance.geo.access_blocked', { countryCode, reason, ip: ipAddress });
+    return { allowed: false, countryCode, reason };
+  }
+
+  /**
+   * The single country-rule decision every caller shares: registration, login, game
+   * launch and any page-level gate a consumer builds on `GET /compliance/geo-check`.
+   *
+   * Fail-closed on an unresolved country whenever any block rule exists, so a lookup
+   * outage cannot silently reopen a blacklisted jurisdiction. A denial is emitted here
+   * rather than by each caller, so no enforcement point can be added without its audit
+   * trail.
+   */
   async geoCheck(ipAddress: string | null) {
     if (!this.geoIp) {
       return { allowed: true, countryCode: null, reason: null };
@@ -303,12 +317,12 @@ export class ComplianceService {
         .where(eq(countryRule.action, 'block'))
         .limit(1);
       return blacklistedRule || this.igaming?.blockedCountries.length
-        ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
+        ? this.deny(ipAddress, null, 'Geolocation could not be determined')
         : { allowed: true, countryCode: null, reason: null };
     }
 
     if (this.igaming?.blockedCountries.includes(countryCode)) {
-      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
+      return this.deny(ipAddress, countryCode, `Country ${countryCode} is blocked`);
     }
 
     const [rule] = await this.drizzle.db
@@ -317,7 +331,7 @@ export class ComplianceService {
       .where(eq(countryRule.countryCode, countryCode));
 
     if (rule?.action === 'block') {
-      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
+      return this.deny(ipAddress, countryCode, `Country ${countryCode} is blocked`);
     }
 
     return { allowed: true, countryCode, reason: null };
@@ -380,7 +394,7 @@ export class ComplianceService {
     return { allowed: true as const, countryCode, reason: null };
   }
 
-  async checkRegistration(ipAddress: string | null) {
+  async checkAccess(ipAddress: string | null) {
     const result = await this.geoCheck(ipAddress);
     return { allowed: result.allowed, countryCode: result.countryCode };
   }

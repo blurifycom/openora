@@ -2,20 +2,25 @@ import { createHash } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import {
   AdminGuard,
+  assertRateLimit,
   createEventStreamGenerator,
   getUserId,
   mapErrors,
   type OssContext,
 } from '@openora/core/server';
 import { GameBulkTooManyGamesError } from '@openora/core/contracts';
-import type {
-  AuditWritePort,
-  JobQueueAdapter,
-  KycAdapter,
-  KycWebhookVerifier,
-  QueueName,
-  RealtimeTransport,
-  User,
+import {
+  RATE_LIMIT_KEYS,
+  makeRateLimitKey,
+  type AuditWritePort,
+  type JobQueueAdapter,
+  type KycAdapter,
+  type KycWebhookVerifier,
+  type QueueName,
+  type RateLimitKey,
+  type RateLimiterAdapter,
+  type RealtimeTransport,
+  type User,
 } from '@openora/core/contracts';
 import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
@@ -53,6 +58,11 @@ import {
   NoPendingLimitChangeError,
 } from '../service/rg-self-service.service.js';
 
+// Volume throttle on the module's one anonymous route, sized for a browser rather than for
+// a credential-guessing surface. Deliberately left on the default fail-open: a consumer that
+// gates page access on this answer goes dark if a limiter outage starts denying it.
+const GEO_CHECK_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
+
 export function kycStatusChannel(userId: User['id']): string {
   return `compliance:kyc-status:${userId}`;
 }
@@ -77,6 +87,7 @@ export function createComplianceRouter({
   webhookVerifier,
   jobQueue,
   kycDecisionSyncQueue,
+  limiter,
   realtime,
   rg,
   rgMonitoring,
@@ -93,6 +104,7 @@ export function createComplianceRouter({
   webhookVerifier: KycWebhookVerifier;
   jobQueue: JobQueueAdapter;
   kycDecisionSyncQueue: QueueName;
+  limiter: RateLimiterAdapter<RateLimitKey>;
   realtime: RealtimeTransport;
 }) {
   const os = implement(complianceContract).$context<OssContext>();
@@ -112,8 +124,13 @@ export function createComplianceRouter({
       );
     }),
 
-    geoCheck: os.geoCheck.handler(({ context }) => {
+    geoCheck: os.geoCheck.handler(async ({ context }) => {
       const { ip } = context.clientMeta;
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.GEO_CHECK_IP, ip ?? 'unknown'),
+        GEO_CHECK_RATE_LIMIT,
+      );
       return compliance.geoCheck(ip ?? '127.0.0.1');
     }),
 

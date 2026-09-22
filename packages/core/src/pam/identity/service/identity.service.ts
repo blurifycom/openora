@@ -688,7 +688,7 @@ export class IdentityService {
       this.emitRegistrationFailed('rate_limited', input, meta);
       throw err;
     }
-    const registrationGeo = this.geoCheck ? await this.geoCheck.checkRegistration(ip) : null;
+    const registrationGeo = this.geoCheck ? await this.geoCheck.checkAccess(ip) : null;
     if (registrationGeo && !registrationGeo.allowed) {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
@@ -891,6 +891,21 @@ export class IdentityService {
     }
 
     await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
+
+    // Ahead of the credential check, unlike the RG gate below: a country rule turns on where
+    // the caller is, not on the account, so refusing here reveals nothing a probe could not
+    // learn without an email address, and costs the account no lockout budget.
+    const accessGeo = this.geoCheck ? await this.geoCheck.checkAccess(ip) : null;
+    if (accessGeo && !accessGeo.allowed) {
+      this.events.emit('identity.user.login.failed', {
+        email,
+        reason: 'geo_blocked',
+        countryCode: accessGeo.countryCode,
+        ip,
+        userAgent,
+      });
+      throw new ORPCError('FORBIDDEN', { message: 'Login is unavailable' });
+    }
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate
