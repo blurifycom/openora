@@ -46,7 +46,7 @@ import {
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
 import { GameBulkService, GameBulkTooManyGamesError } from '../service/game-bulk.service.js';
-import { RgLimitExceededError } from '@openora/core/contracts';
+import { RgLimitExceededError, type GameCategoryRule } from '@openora/core/contracts';
 
 export function createGamingRouter({
   gaming,
@@ -70,6 +70,19 @@ export function createGamingRouter({
   sorts: GameSortService;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
+
+  // No built-in kind sets `exposesReporting`. An overlay's kind whose order reveals
+  // reporting data (a revenue ranking, say) does, and every path that resolves such a rule
+  // for an admin - preview, a write that evaluates it, an on-demand evaluation - needs that
+  // report's permission, or the resulting members would leak the ranking.
+  async function assertRuleReportingAccess(
+    context: OssContext,
+    rule: GameCategoryRule | null,
+  ): Promise<void> {
+    if (rule !== null && rules.exposesReporting(rule)) {
+      await adminGuard.assert(context, 'report', 'view');
+    }
+  }
 
   return os.router({
     listGames: os.listGames.handler(({ input }) => gaming.listGamesPublic(input)),
@@ -173,6 +186,9 @@ export function createGamingRouter({
 
     createCategory: os.createCategory.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
+      if (input.membershipMode === 'rule') {
+        await assertRuleReportingAccess(context, input.membershipRule ?? null);
+      }
       return mapErrors(
         {
           CONFLICT: GameCategorySlugTakenError,
@@ -199,7 +215,18 @@ export function createGamingRouter({
             GameCategoryRuleTooBroadError,
           ],
         },
-        () => categories.updateCategory({ ...input, actorId: userId, ip, userAgent }),
+        async () => {
+          if (input.membershipMode !== undefined || input.membershipRule !== undefined) {
+            const stored = await categories.getCategory(input.id);
+            if ((input.membershipMode ?? stored.membershipMode) === 'rule') {
+              await assertRuleReportingAccess(
+                context,
+                input.membershipRule ?? stored.membershipRule,
+              );
+            }
+          }
+          return categories.updateCategory({ ...input, actorId: userId, ip, userAgent });
+        },
       );
     }),
 
@@ -235,11 +262,7 @@ export function createGamingRouter({
 
     previewCategoryRule: os.previewCategoryRule.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
-      // No built-in kind sets this. An overlay's kind whose order reveals reporting data
-      // (a revenue ranking, say) does, and previewing it needs that report's permission.
-      if (rules.exposesReporting(input.rule)) {
-        await adminGuard.assert(context, 'report', 'view');
-      }
+      await assertRuleReportingAccess(context, input.rule);
       return mapErrors(
         { BAD_REQUEST: [GameCategoryRuleInvalidError, GameCategoryRuleTooBroadError] },
         () => rules.preview(input),
@@ -255,12 +278,15 @@ export function createGamingRouter({
             CONFLICT: [GameCategoryNotRuleManagedError, GameCategoryMembershipContendedError],
             BAD_REQUEST: [GameCategoryRuleInvalidError, GameCategoryRuleTooBroadError],
           },
-          () =>
-            membership.evaluate({
+          async () => {
+            const stored = await categories.getCategory(input.id);
+            await assertRuleReportingAccess(context, stored.membershipRule);
+            return membership.evaluate({
               categoryId: input.id,
               trigger: 'admin',
               actor: { actorId: userId, ip, userAgent },
-            }),
+            });
+          },
         );
       },
     ),

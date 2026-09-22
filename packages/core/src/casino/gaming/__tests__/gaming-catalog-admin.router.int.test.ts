@@ -634,6 +634,62 @@ describe('gaming catalog router authz', () => {
     ).resolves.toMatchObject({ total: 0 });
   });
 
+  it('needs report:view to create, switch to or evaluate a reporting-kind rule', async () => {
+    const writeOnly = routerWith(
+      makeAdminGuard({ allow: ['game-config:create', 'game-config:update'] }),
+    ).router;
+    const revenueRank = [{ key: 'test_revenue_rank', params: {} }];
+    const [stored] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({
+        slug: `revenue-${randomUUID()}`,
+        name: 'Revenue',
+        membershipMode: 'rule',
+        membershipRule: revenueRank,
+      })
+      .returning();
+    const [manual] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({ slug: `manual-${randomUUID()}`, name: 'Manual' })
+      .returning();
+
+    await expect(
+      call(
+        writeOnly.createCategory,
+        {
+          slug: `revenue-${randomUUID()}`,
+          name: 'Revenue',
+          membershipMode: 'rule',
+          membershipRule: revenueRank,
+        },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(
+        writeOnly.updateCategory,
+        { id: manual!.id, membershipMode: 'rule', membershipRule: revenueRank },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(writeOnly.updateCategory, { id: stored!.id, membershipMode: 'rule' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(writeOnly.evaluateCategoryMembership, { id: stored!.id }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(writeOnly.updateCategory, { id: stored!.id, name: 'Renamed' }, { context: CTX }),
+    ).resolves.toMatchObject({ name: 'Renamed' });
+
+    const withReports = routerWith(
+      makeAdminGuard({ allow: ['game-config:update', 'report:view'] }),
+    ).router;
+    await expect(
+      call(withReports.evaluateCategoryMembership, { id: stored!.id }, { context: CTX }),
+    ).resolves.toBeDefined();
+  });
+
   describe('when the rule keeps changing underneath a write', () => {
     async function seedShiftingCategory(mode: 'manual' | 'rule') {
       const [provider] = await db.drizzle.db

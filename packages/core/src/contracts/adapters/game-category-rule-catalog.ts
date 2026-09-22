@@ -38,9 +38,10 @@ export type GameCategoryRuleDefinition<Params = unknown> = {
   paramsSchema: z.ZodType<Params>;
   /**
    * True when the order or content of `resolve()` reveals reporting data an admin with
-   * only `game-config:view` must not infer - a revenue ranking, say. Previewing a rule
-   * with such a clause also needs `report:view`. No built-in sets it: which games are
-   * most played is what the resulting category shows players anyway.
+   * only `game-config:view` must not infer - a revenue ranking, say. Previewing, saving in
+   * rule mode, or re-evaluating a rule with such a clause also needs `report:view`. No
+   * built-in sets it: which games are most played is what the resulting category shows
+   * players anyway.
    */
   exposesReporting?: boolean;
   /**
