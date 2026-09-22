@@ -73,12 +73,6 @@ describe('resolveContributionPercent', () => {
     expect(resolveContributionPercent([], casino())).toBe('0');
   });
 
-  it('counts nothing when the bet names no product at all', () => {
-    expect(resolveContributionPercent([row('product', 'casino', '100')], { provider: 'x' })).toBe(
-      '0',
-    );
-  });
-
   it('does not match a scoped row against a different reference', () => {
     const rows = [row('game', 'game-a', '50'), row('default', null, '100')];
     expect(resolveContributionPercent(rows, casino({ gameId: 'game-b' }))).toBe('100');

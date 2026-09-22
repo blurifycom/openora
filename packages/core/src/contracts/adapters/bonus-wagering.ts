@@ -21,8 +21,11 @@ export type BonusWagerArgs = {
   /** Part of the stake the real balance could not cover. `'0'` when the player paid it all in cash. */
   fromBonus: string;
   context: WagerContext;
-  /** Provider round this bet belongs to. `settle` finds the funding grant by it. */
-  externalRoundId?: string;
+  /**
+   * Provider round this bet belongs to. `settle` finds the funding grant by it, so a bet without
+   * one could spend bonus funds whose win or reversal then lands entirely on the real balance.
+   */
+  externalRoundId: string;
 };
 
 export type BonusWagerOutcome =
