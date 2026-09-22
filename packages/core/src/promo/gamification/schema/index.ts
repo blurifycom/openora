@@ -2,11 +2,13 @@ import { sql } from 'drizzle-orm';
 import {
   check,
   decimal,
+  index,
   integer,
   jsonb,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import {
@@ -100,3 +102,33 @@ export const promoRankConfig = pgTable('promo_rank_config', {
 });
 
 export type PromoRankConfig = typeof promoRankConfig.$inferSelect;
+
+/**
+ * A level-up bonus a player has earned and the payout job has yet to settle. Written in the bet's
+ * transaction with the amount the tier paid at that moment, so an amount an admin fills in later
+ * is never paid backwards. Unique per player and tier: a rank's bonus is earned once.
+ */
+export const promoRankLevelUp = pgTable(
+  'promo_rank_level_up',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    // No foreign key: an admin may remove a tier the player has since climbed past, and the bonus
+    // it earned is still owed. The amount is on the row, so the tier is not needed to pay it.
+    tierId: uuid().notNull(),
+    currency: text().notNull(),
+    amount: money().notNull(),
+    reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp({ withTimezone: true }),
+    /** `granted`, or why nothing was: `restricted` for a player under an RG block. */
+    outcome: text(),
+    grantId: uuid(),
+  },
+  (t) => [
+    uniqueIndex('promo_rank_level_up_user_id_tier_id_idx').on(t.userId, t.tierId),
+    index('promo_rank_level_up_unsettled_idx')
+      .on(t.reachedAt)
+      .where(sql`${t.settledAt} is null`),
+    check('promo_rank_level_up_amount_positive', sql`${t.amount} > 0`),
+  ],
+);

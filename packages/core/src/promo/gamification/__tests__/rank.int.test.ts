@@ -5,7 +5,12 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type { ExchangeRateReader, WagerContext } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
-import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
+import {
+  promoPlayerRank,
+  promoRankConfig,
+  promoRankLevelUp,
+  promoRankTier,
+} from '../schema/index.js';
 import { seedRankLadder } from '../seed/index.js';
 import { RankService } from '../service/rank.service.js';
 
@@ -44,6 +49,14 @@ const wager = (userId: string, amount: string, currency = 'USDT', context: Wager
     ranks.recordWager(tx, { userId, currency, amount, weightedAmount: amount, context }),
   );
 
+const levelUpsOf = (userId: string) =>
+  db.drizzle.db
+    .select({ tier: promoRankTier.key, amount: promoRankLevelUp.amount })
+    .from(promoRankLevelUp)
+    .innerJoin(promoRankTier, eq(promoRankTier.id, promoRankLevelUp.tierId))
+    .where(eq(promoRankLevelUp.userId, userId))
+    .orderBy(promoRankTier.position);
+
 const rankOf = async (userId: string) => {
   const [row] = await db.drizzle.db
     .select({ lifetimeWagered: promoPlayerRank.lifetimeWagered, tier: promoRankTier.key })
@@ -62,6 +75,7 @@ afterAll(() => db.drop());
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  await db.drizzle.db.delete(promoRankLevelUp);
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
@@ -198,6 +212,38 @@ describe('recording a wager toward the rank ladder', () => {
     await wager(userId, '100');
 
     expect(await rankOf(userId)).toBeUndefined();
+  });
+
+  it('owes a level-up bonus for every tier one wager crosses, at the amount each paid then', async () => {
+    const userId = randomUUID();
+
+    await wager(userId, '60000');
+    await db.drizzle.db
+      .update(promoRankTier)
+      .set({ levelUpBonus: '999' })
+      .where(eq(promoRankTier.key, 'gold'));
+
+    expect(await levelUpsOf(userId)).toEqual([
+      { tier: 'silver', amount: '10.000000000000000000' },
+      { tier: 'gold', amount: '25.500000000000000000' },
+    ]);
+  });
+
+  it('owes nothing for a tier reached while it had no level-up amount, even once one is set', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db
+      .update(promoRankTier)
+      .set({ levelUpBonus: null })
+      .where(eq(promoRankTier.key, 'silver'));
+
+    await wager(userId, '10000');
+    await db.drizzle.db
+      .update(promoRankTier)
+      .set({ levelUpBonus: '10' })
+      .where(eq(promoRankTier.key, 'silver'));
+    await wager(userId, '1');
+
+    expect(await levelUpsOf(userId)).toEqual([]);
   });
 
   it.skip('counts a bonus-funded stake in full toward lifetime wagered, tracking its bonus part on its own counter (blocked: WagerTrackingArgs carries no bonusAmount)', async () => {

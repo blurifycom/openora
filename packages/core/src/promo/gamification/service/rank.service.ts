@@ -14,6 +14,7 @@ import {
 import {
   promoPlayerRank,
   promoRankConfig,
+  promoRankLevelUp,
   promoRankTier,
   type PromoPlayerRank,
   type PromoRankTier,
@@ -52,7 +53,8 @@ export class RankService implements WagerTrackingCommands {
   ) {}
 
   /**
-   * Adds a bet's stake to the player's lifetime wagered and moves them up the ladder.
+   * Adds a bet's stake to the player's lifetime wagered and moves them up the ladder, recording a
+   * level-up bonus for every tier crossed for the payout job to settle.
    *
    * Counts the raw stake, not the bonus engine's weighted one: that weight comes from whichever
    * bonus the player holds, and a player's standing must not depend on it. What counts is decided
@@ -76,6 +78,7 @@ export class RankService implements WagerTrackingCommands {
         id: promoRankTier.id,
         position: promoRankTier.position,
         wagerThreshold: promoRankTier.wagerThreshold,
+        levelUpBonus: promoRankTier.levelUpBonus,
         currency: promoRankTier.currency,
       })
       .from(promoRankTier)
@@ -129,6 +132,26 @@ export class RankService implements WagerTrackingCommands {
       .update(promoPlayerRank)
       .set({ tierId: reached.id })
       .where(eq(promoPlayerRank.userId, args.userId));
+
+    // Every tier crossed earns its bonus, not only the one landed on. The amount is taken now,
+    // so one an admin fills in later is never paid backwards.
+    const earned = ladder.flatMap((tier) =>
+      tier.position > (current?.position ?? -1) &&
+      tier.position <= reached.position &&
+      tier.levelUpBonus !== null
+        ? [
+            {
+              userId: args.userId,
+              tierId: tier.id,
+              currency: lowest.currency,
+              amount: tier.levelUpBonus,
+            },
+          ]
+        : [],
+    );
+    if (earned.length > 0) {
+      await tx.insert(promoRankLevelUp).values(earned).onConflictDoNothing();
+    }
 
     // The rank a player holds is audited; the wager that moved them is not. One row per bet would
     // bury every other player-state change in the log.
