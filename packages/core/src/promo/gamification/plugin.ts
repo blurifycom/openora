@@ -1,4 +1,4 @@
-import { EXCHANGE_RATE_READER, WAGER_TRACKING } from '@openora/core/contracts';
+import { AUDIT_WRITER, EXCHANGE_RATE_READER, WAGER_TRACKING } from '@openora/core/contracts';
 import {
   DRIZZLE,
   createLogger,
@@ -12,11 +12,11 @@ import { createGamificationRouter } from './router/index.js';
 const logger = createLogger('promo-gamification');
 
 const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RankService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new RankService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), c.get(AUDIT_WRITER), logger);
 
 export default {
   id: 'gamification',
-  dependsOn: ['exchange-rate'],
+  dependsOn: ['exchange-rate', 'audit'],
   register(ctx) {
     ctx.provide(WAGER_TRACKING, rankService);
     ctx.routers.add('promo-gamification', (c) =>
