@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type { ExchangeRateReader } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoPlayerRank, promoRankTier } from '../schema/index.js';
@@ -12,6 +12,7 @@ import { RankService } from '../service/rank.service.js';
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const logger = { warn: vi.fn() };
+const audit = makeAuditWriter();
 let ranks: RankService;
 
 const CASINO = { provider: 'aggregator', product: 'casino' };
@@ -39,7 +40,7 @@ const rankOf = async (userId: string) => {
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  ranks = new RankService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
+  ranks = new RankService(db.drizzle, mock<ExchangeRateReader>({ convert }), audit, logger);
 });
 
 afterAll(() => db.drop());
@@ -133,7 +134,7 @@ describe('recording a wager toward the rank ladder', () => {
 
     expect(await rankOf(userId)).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(
-      { userId, from: 'BTC', to: 'USDT' },
+      { userId, from: 'BTC', to: 'USDT', amount: '10' },
       expect.any(String),
     );
   });
@@ -144,6 +145,24 @@ describe('recording a wager toward the rank ladder', () => {
     await Promise.all(Array.from({ length: PARALLEL_BETS }, () => wager(userId, '1.5')));
 
     expect((await rankOf(userId))?.lifetimeWagered).toBe('30.000000000000000000');
+  });
+
+  it('records the rank a player reached, and nothing for a wager that leaves it alone', async () => {
+    const userId = randomUUID();
+
+    await wager(userId, '10000');
+    const [, promotion] = audit.recordInTransaction.mock.calls.at(-1) ?? [];
+    await wager(userId, '1');
+
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(promotion).toMatchObject({
+      actorType: 'system',
+      action: 'promo.rank.changed',
+      resourceType: 'promo_player_rank',
+      resourceId: userId,
+      before: { tierId: null },
+      after: { tierId: expect.any(String) },
+    });
   });
 
   it.skip('counts a bonus-funded stake in full toward lifetime wagered, tracking its bonus part on its own counter (blocked: WagerTrackingArgs carries no bonusAmount)', async () => {

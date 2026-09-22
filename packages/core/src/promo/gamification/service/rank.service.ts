@@ -1,5 +1,6 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import type {
+  AuditWritePort,
   ExchangeRateReader,
   WagerTrackingArgs,
   WagerTrackingCommands,
@@ -41,6 +42,7 @@ export class RankService implements WagerTrackingCommands {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly rates: ExchangeRateReader,
+    private readonly audit: AuditWritePort,
     private readonly logger: { warn: (context: object, message: string) => void },
   ) {}
 
@@ -107,6 +109,16 @@ export class RankService implements WagerTrackingCommands {
       .update(promoPlayerRank)
       .set({ tierId: reached.id })
       .where(eq(promoPlayerRank.userId, args.userId));
+    // The rank a player holds is audited; the wager that moved them is not. One row per bet would
+    // bury every other player-state change in the log.
+    await this.audit.recordInTransaction(tx, {
+      actorType: 'system',
+      action: 'promo.rank.changed',
+      resourceType: 'promo_player_rank',
+      resourceId: args.userId,
+      before: { tierId: current?.id ?? null },
+      after: { tierId: reached.id },
+    });
   }
 
   async getForPlayer(userId: PromoPlayerRank['userId']) {
