@@ -1,40 +1,31 @@
 import type { DrizzleDb } from '@openora/core/server';
 import { promoRankTier } from '../schema/index.js';
 
-const LADDER = [
-  ['bronze', 'Bronze', '0', '1', '0.10', null, null],
-  ['silver', 'Silver', '10000', '3', '0.50', null, '5'],
-  ['gold', 'Gold', '50000', '5', '2', '10', '25'],
-  ['crystal', 'Crystal', '250000', '7', '10', '50', '150'],
-  ['master', 'Master', '1000000', '10', '25', '150', '500'],
-  ['champion', 'Champion', '2500000', '10', '75', '400', '1500'],
-  ['titan', 'Titan', '10000000', '10', '200', '1000', '5000'],
-  ['legend', 'Legend', '50000000', '10', '500', '3000', '15000'],
-] as const;
+export type RankTierSeed = {
+  key: string;
+  name: string;
+  wagerThreshold: string;
+  rakebackPercent: string;
+  dailyBonus?: string | null;
+  weeklyBonus?: string | null;
+  monthlyBonus?: string | null;
+  levelUpBonus?: string | null;
+};
+
+const LADDER_CURRENCY = 'USDT';
 
 /**
- * The default rank ladder. Idempotent and never overwrites a tier an operator has already edited.
+ * Seeds a ladder in array order, lowest tier first. What a tier costs and pays is an operator's
+ * pricing, so the ladder is passed in rather than shipped with the package.
+ *
+ * Idempotent, and it never overwrites a tier an operator has already edited.
  */
-export async function seedRankLadder(db: DrizzleDb): Promise<void> {
+export async function seedRankLadder(db: DrizzleDb, tiers: RankTierSeed[]): Promise<void> {
+  if (tiers.length === 0) {
+    return;
+  }
   await db
     .insert(promoRankTier)
-    .values(
-      LADDER.map(
-        (
-          [key, name, wagerThreshold, rakebackPercent, dailyBonus, weeklyBonus, monthlyBonus],
-          position,
-        ) => ({
-          key,
-          name,
-          position,
-          currency: 'USDT',
-          wagerThreshold,
-          rakebackPercent,
-          dailyBonus,
-          weeklyBonus,
-          monthlyBonus,
-        }),
-      ),
-    )
+    .values(tiers.map((tier, position) => ({ ...tier, position, currency: LADDER_CURRENCY })))
     .onConflictDoNothing();
 }
