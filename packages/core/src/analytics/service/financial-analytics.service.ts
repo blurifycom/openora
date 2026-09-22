@@ -12,6 +12,10 @@ import type {
 const ANALYTICS_CACHE_TTL_MS = 60_000;
 const DEFAULT_GGR_RANGE_DAYS = 30;
 const COMPLETED_STATUS = 'completed';
+const SUMMARY_TYPES = ['deposit', 'withdrawal', 'bonus', 'bet', 'bet_reversal', 'win'] as const;
+
+const sumOf = (type: (typeof SUMMARY_TYPES)[number]) =>
+  sql`coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = ${type}), 0)`;
 
 const GRANULARITY_INTERVALS: Record<Granularity, string> = {
   day: '1 day',
@@ -101,18 +105,20 @@ export class FinancialAnalyticsService {
       db
         .select({
           currency: walletTransaction.currency,
-          netRevenue: sql<string>`
-            coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = 'deposit'), 0)
-            - coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = 'withdrawal'), 0)
-            - coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = 'bonus'), 0)
+          netDeposits: sql<string>`
+            ${sumOf('deposit')} - ${sumOf('withdrawal')} - ${sumOf('bonus')}
           `,
-          bonusCost: sql<string>`coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = 'bonus'), 0)`,
+          ggr: sql<string>`${sumOf('bet')} - ${sumOf('bet_reversal')} - ${sumOf('win')}`,
+          bonusCost: sql<string>`${sumOf('bonus')}`,
+          ngr: sql<string>`
+            ${sumOf('bet')} - ${sumOf('bet_reversal')} - ${sumOf('win')} - ${sumOf('bonus')}
+          `,
         })
         .from(walletTransaction)
         .where(
           and(
             eq(walletTransaction.status, COMPLETED_STATUS),
-            inArray(walletTransaction.type, ['deposit', 'withdrawal', 'bonus']),
+            inArray(walletTransaction.type, SUMMARY_TYPES),
             ...baseConditions,
           ),
         )
@@ -122,8 +128,10 @@ export class FinancialAnalyticsService {
     return {
       deposits,
       withdrawals,
-      netRevenue: byCurrency.map((r) => ({ currency: r.currency, total: r.netRevenue })),
+      netDeposits: byCurrency.map((r) => ({ currency: r.currency, total: r.netDeposits })),
+      ggr: byCurrency.map((r) => ({ currency: r.currency, total: r.ggr })),
       bonusCost: byCurrency.map((r) => ({ currency: r.currency, total: r.bonusCost })),
+      ngr: byCurrency.map((r) => ({ currency: r.currency, total: r.ngr })),
     };
   }
 

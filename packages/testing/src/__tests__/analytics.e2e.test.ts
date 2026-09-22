@@ -58,7 +58,7 @@ async function walletIdFor(
 async function insertTransaction(
   container: Container<CoreTokenCatalog>,
   walletId: string,
-  type: 'bonus' | 'bet' | 'win',
+  type: 'bonus' | 'bet' | 'win' | 'bet_reversal',
   amount: string,
   currency = 'USD',
 ) {
@@ -109,6 +109,32 @@ describe('analytics e2e', () => {
 
     const usdBonus = body.bonusCost.find((b: { currency: string }) => b.currency === 'USD');
     expect(Number(usdBonus.total)).toBeGreaterThanOrEqual(30);
+  });
+
+  it('reports NGR as GGR less bonus cost, apart from the net deposit cash flow', async () => {
+    const email = `ngr-e2e-${randomUUID()}@example.com`;
+    const userId = await registerPlayer(app, { email });
+    await deposit(await asPlayer(app.app, { email }), '1');
+    const walletId = await walletIdFor(app.container, userId);
+    for (const [type, amount] of [
+      ['bet', '100'],
+      ['bet_reversal', '10'],
+      ['win', '40'],
+      ['bonus', '20'],
+    ] as const) {
+      await insertTransaction(app.container, walletId, type, amount, 'LTC');
+    }
+
+    const res = await admin.get('/analytics/financial/summary?currency=LTC');
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+
+    const ltc = (rows: { currency: string; total: string }[]) =>
+      Number(rows.find((row) => row.currency === 'LTC')?.total);
+    expect(ltc(body.ggr)).toBe(50);
+    expect(ltc(body.bonusCost)).toBe(20);
+    expect(ltc(body.ngr)).toBe(30);
+    expect(ltc(body.netDeposits)).toBe(-20);
   });
 
   it('computes a GGR trend from completed bet/win transactions only', async () => {
