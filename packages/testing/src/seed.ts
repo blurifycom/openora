@@ -11,10 +11,14 @@ import {
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
-import { seedRankLadder } from '@openora/core/promo/seed/gamification';
+import { seedRankLadder, type RankTierSeed } from '@openora/core/promo/seed/gamification';
 import { user, session, account, verification } from '@openora/core/pam/schema/identity';
 
-const EXAMPLE_RANK_LADDER = [
+/**
+ * A ladder for local development and the test harness. Deliberately short and round: an
+ * operator's real thresholds and payouts are their own pricing, not something this package ships.
+ */
+export const EXAMPLE_RANK_LADDER: RankTierSeed[] = [
   { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1', dailyBonus: '1' },
   {
     key: 'silver',
