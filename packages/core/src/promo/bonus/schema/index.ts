@@ -206,6 +206,9 @@ export const promoGrantEntry = pgTable(
       .where(sql`${t.externalRoundId} is not null`),
     // A grant's own history, oldest first.
     index('promo_grant_entry_grant_id_created_at_idx').on(t.grantId, t.createdAt),
+    // A player's bonus history across every grant, oldest first. Without this, the history view
+    // scans and sorts the whole ledger instead of walking an index.
+    index('promo_grant_entry_user_id_created_at_idx').on(t.userId, t.createdAt),
   ],
 );
 

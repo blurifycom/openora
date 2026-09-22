@@ -436,6 +436,31 @@ describe('the grant ledger', () => {
     expect(await entries()).toHaveLength(1);
   });
 
+  it('refuses to update a ledger row directly, the FK guard alone is not the boundary', async () => {
+    const outcome = await grant(args());
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
+
+    await expect(
+      db.drizzle.db
+        .update(promoGrantEntry)
+        .set({ bonusAmount: '999' })
+        .where(eq(promoGrantEntry.grantId, outcome.grantId)),
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it('refuses to delete a ledger row directly', async () => {
+    const outcome = await grant(args());
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
+
+    await expect(
+      db.drizzle.db.delete(promoGrantEntry).where(eq(promoGrantEntry.grantId, outcome.grantId)),
+    ).rejects.toThrow(/append-only/);
+  });
+
   it('rolls back with the grant when the caller fails', async () => {
     const a = args();
     await expect(
