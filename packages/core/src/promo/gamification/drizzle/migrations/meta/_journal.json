@@ -15,6 +15,13 @@
       "when": 1789988447441,
       "tag": "0001_perpetual_orphan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790063398058,
+      "tag": "0002_dark_sunset_bain",
+      "breakpoints": true
     }
   ]
 }

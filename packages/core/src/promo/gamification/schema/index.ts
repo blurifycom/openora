@@ -9,13 +9,6 @@ import {
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
 
-export const gamification = pgTable('gamification', {
-  id: uuid().primaryKey().defaultRandom(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
-
-export type Gamification = typeof gamification.$inferSelect;
-
 export const promoRankTier = pgTable(
   'promo_rank_tier',
   {
