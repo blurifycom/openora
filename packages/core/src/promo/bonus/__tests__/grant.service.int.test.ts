@@ -70,8 +70,23 @@ afterAll(async () => {
   await db.drop();
 });
 
+// Test cleanup needs to delete ledger rows between cases; the append-only trigger that
+// production relies on would refuse it, so cleanup lifts it for exactly this statement.
+const wipeLedger = async () => {
+  await db.drizzle.db.execute(
+    sql`ALTER TABLE promo_grant_entry DISABLE TRIGGER promo_grant_entry_append_only`,
+  );
+  try {
+    await db.drizzle.db.delete(promoGrantEntry);
+  } finally {
+    await db.drizzle.db.execute(
+      sql`ALTER TABLE promo_grant_entry ENABLE TRIGGER promo_grant_entry_append_only`,
+    );
+  }
+};
+
 beforeEach(async () => {
-  await db.drizzle.db.delete(promoGrantEntry);
+  await wipeLedger();
   await db.drizzle.db.delete(promoGrant);
   await db.drizzle.db.delete(promoWeight);
   await db.drizzle.db.delete(promoWeightProfile);
@@ -447,7 +462,11 @@ describe('the grant ledger', () => {
         .update(promoGrantEntry)
         .set({ bonusAmount: '999' })
         .where(eq(promoGrantEntry.grantId, outcome.grantId)),
-    ).rejects.toThrow(/append-only/);
+    ).rejects.toThrow(
+      expect.objectContaining({
+        cause: expect.objectContaining({ message: expect.stringMatching(/append-only/) }),
+      }),
+    );
   });
 
   it('refuses to delete a ledger row directly', async () => {
@@ -458,7 +477,11 @@ describe('the grant ledger', () => {
 
     await expect(
       db.drizzle.db.delete(promoGrantEntry).where(eq(promoGrantEntry.grantId, outcome.grantId)),
-    ).rejects.toThrow(/append-only/);
+    ).rejects.toThrow(
+      expect.objectContaining({
+        cause: expect.objectContaining({ message: expect.stringMatching(/append-only/) }),
+      }),
+    );
   });
 
   it('rolls back with the grant when the caller fails', async () => {
