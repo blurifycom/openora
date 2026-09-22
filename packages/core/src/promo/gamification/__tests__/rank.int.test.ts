@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, mock } from '../../../testing/mock.js';
-import type { ExchangeRateReader } from '@openora/core/contracts';
+import type { ExchangeRateReader, WagerContext } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
 import { seedRankLadder } from '../seed/index.js';
@@ -20,22 +20,28 @@ const LADDER = {
   currency: 'USDT',
   tiers: [
     { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1' },
-    { key: 'silver', name: 'Silver', wagerThreshold: '10000', rakebackPercent: '3' },
-    { key: 'gold', name: 'Gold', wagerThreshold: '50000', rakebackPercent: '5' },
+    {
+      key: 'silver',
+      name: 'Silver',
+      wagerThreshold: '10000',
+      rakebackPercent: '3',
+      levelUpBonus: '10',
+    },
+    {
+      key: 'gold',
+      name: 'Gold',
+      wagerThreshold: '50000',
+      rakebackPercent: '5',
+      levelUpBonus: '25.5',
+    },
   ],
   config: { eligibleProducts: [], rewards: {} },
 };
 const PARALLEL_BETS = 20;
 
-const wager = (userId: string, weightedAmount: string, currency = 'USDT') =>
+const wager = (userId: string, amount: string, currency = 'USDT', context: WagerContext = CASINO) =>
   db.drizzle.db.transaction((tx) =>
-    ranks.recordWager(tx, {
-      userId,
-      currency,
-      amount: weightedAmount,
-      weightedAmount,
-      context: CASINO,
-    }),
+    ranks.recordWager(tx, { userId, currency, amount, weightedAmount: amount, context }),
   );
 
 const rankOf = async (userId: string) => {
@@ -63,15 +69,15 @@ beforeEach(async () => {
 });
 
 describe('recording a wager toward the rank ladder', () => {
-  it('accrues the exact weighted amount of a ladder-currency wager, not the stake', async () => {
+  it('accrues the exact stake of a ladder-currency wager, not the bonus-weighted amount', async () => {
     const userId = randomUUID();
 
     await db.drizzle.db.transaction((tx) =>
       ranks.recordWager(tx, {
         userId,
         currency: 'USDT',
-        amount: '100',
-        weightedAmount: '12.345678901234567891',
+        amount: '12.345678901234567891',
+        weightedAmount: '0',
         context: CASINO,
       }),
     );
@@ -83,7 +89,7 @@ describe('recording a wager toward the rank ladder', () => {
     expect(convert).not.toHaveBeenCalled();
   });
 
-  it('leaves no row for a zero weighted amount', async () => {
+  it('leaves no row for a zero stake', async () => {
     const userId = randomUUID();
 
     await wager(userId, '0');
@@ -173,6 +179,25 @@ describe('recording a wager toward the rank ladder', () => {
       before: { tierId: null },
       after: { tierId: expect.any(String) },
     });
+  });
+
+  it('counts only the products the ladder is configured for', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.update(promoRankConfig).set({ eligibleProducts: ['casino'] });
+
+    await wager(userId, '5', 'USDT', { provider: 'aggregator', product: 'pvp' });
+    await wager(userId, '7', 'USDT', CASINO);
+
+    expect((await rankOf(userId))?.lifetimeWagered).toBe('7.000000000000000000');
+  });
+
+  it('counts nothing while the ladder has no settings', async () => {
+    const userId = randomUUID();
+    await db.drizzle.db.delete(promoRankConfig);
+
+    await wager(userId, '100');
+
+    expect(await rankOf(userId)).toBeUndefined();
   });
 
   it.skip('counts a bonus-funded stake in full toward lifetime wagered, tracking its bonus part on its own counter (blocked: WagerTrackingArgs carries no bonusAmount)', async () => {

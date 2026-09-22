@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { WAGER_TRACKING } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { auditLog } from '@openora/core/audit/schema';
@@ -57,6 +58,17 @@ async function adminWithRole(roleKey: string) {
 // audit_log is append-only, so a test counts what its own call added rather than clearing rows.
 const auditRows = () => drizzle().select().from(auditLog).where(eq(auditLog.action, CONFIG_ACTION));
 
+const wager = (userId: string, amount: string, product: string) =>
+  drizzle().transaction((tx) =>
+    app.container.get(WAGER_TRACKING).recordWager(tx, {
+      userId,
+      currency: 'USDT',
+      amount,
+      weightedAmount: amount,
+      context: { provider: 'aggregator', product },
+    }),
+  );
+
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
   process.env['AUTH_SECRET'] ??= process.env['BETTER_AUTH_SECRET'];
@@ -89,13 +101,21 @@ describe('an operator configuring what a rank counts and pays', () => {
     expect(await readJson(res)).toEqual(EXAMPLE_RANK_LADDER.config);
   });
 
-  it('saves new settings and audits them', async () => {
+  it('saves new settings, audits them, and stops counting products left out', async () => {
     const auditedBefore = (await auditRows()).length;
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `rank-config-player-${randomUUID()}@example.test`,
+    });
 
     const res = await admin.put(CONFIG_PATH, CASINO_ONLY);
+    await wager(userId, '40', 'sportsbook');
+    await wager(userId, '60', 'casino');
 
     expect(res.status).toBe(200);
     expect(await readJson(await admin.get(CONFIG_PATH))).toEqual(CASINO_ONLY);
+    expect((await readJson(await client.get('/promo/ranks'))).lifetimeWagered).toBe(
+      '60.000000000000000000',
+    );
     const audited = await auditRows();
     expect(audited).toHaveLength(auditedBefore + 1);
     expect(audited.at(-1)).toMatchObject({ actorType: 'admin', after: CASINO_ONLY });

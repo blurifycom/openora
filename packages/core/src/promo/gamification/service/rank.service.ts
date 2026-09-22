@@ -13,6 +13,7 @@ import {
 } from '@openora/core/server';
 import {
   promoPlayerRank,
+  promoRankConfig,
   promoRankTier,
   type PromoPlayerRank,
   type PromoRankTier,
@@ -24,6 +25,10 @@ type LadderRung = Pick<PromoRankTier, 'id' | 'position' | 'wagerThreshold'>;
 
 const tierFor = <T extends LadderRung>(ladder: readonly T[], lifetime: string) =>
   ladder.filter((tier) => moneyCompare(tier.wagerThreshold, lifetime) <= 0).at(-1);
+
+// An empty list counts every bet. A bet always names its product, so there is no third case.
+const countsToward = (eligibleProducts: readonly string[], product: string) =>
+  eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
 const TIER_COLUMNS = {
   id: promoRankTier.id,
@@ -47,12 +52,23 @@ export class RankService implements WagerTrackingCommands {
   ) {}
 
   /**
-   * Adds a bet's weighted stake to the player's lifetime wagered and moves them up the ladder.
+   * Adds a bet's stake to the player's lifetime wagered and moves them up the ladder.
+   *
+   * Counts the raw stake, not the bonus engine's weighted one: that weight comes from whichever
+   * bonus the player holds, and a player's standing must not depend on it. What counts is decided
+   * by the ladder's own `eligibleProducts`.
+   *
    * Not idempotent on its own: call it only inside the wallet's debit transaction, below its
    * duplicate-bet guard, so a replayed bet never reaches it.
    */
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
-    if (moneyCompare(args.weightedAmount, '0') <= 0) {
+    if (moneyCompare(args.amount, '0') <= 0) {
+      return;
+    }
+    const [config] = await tx
+      .select({ eligibleProducts: promoRankConfig.eligibleProducts })
+      .from(promoRankConfig);
+    if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
       return;
     }
     const ladder = await tx
@@ -70,8 +86,8 @@ export class RankService implements WagerTrackingCommands {
     }
     const amount =
       args.currency === lowest.currency
-        ? args.weightedAmount
-        : await this.rates.convert(args.weightedAmount, args.currency, lowest.currency);
+        ? args.amount
+        : await this.rates.convert(args.amount, args.currency, lowest.currency);
     if (amount === null) {
       // ponytail: a wager with no rate is not counted; store unconverted wagers and replay them if this shows up in logs
       this.logger.warn(
@@ -79,7 +95,7 @@ export class RankService implements WagerTrackingCommands {
           userId: args.userId,
           from: args.currency,
           to: lowest.currency,
-          amount: args.weightedAmount,
+          amount: args.amount,
         },
         'rank wager skipped - no exchange rate',
       );
@@ -88,7 +104,11 @@ export class RankService implements WagerTrackingCommands {
 
     const [rank] = await tx
       .insert(promoPlayerRank)
-      .values({ userId: args.userId, currency: lowest.currency, lifetimeWagered: amount })
+      .values({
+        userId: args.userId,
+        currency: lowest.currency,
+        lifetimeWagered: amount,
+      })
       .onConflictDoUpdate({
         target: promoPlayerRank.userId,
         set: {
@@ -109,6 +129,7 @@ export class RankService implements WagerTrackingCommands {
       .update(promoPlayerRank)
       .set({ tierId: reached.id })
       .where(eq(promoPlayerRank.userId, args.userId));
+
     // The rank a player holds is audited; the wager that moved them is not. One row per bet would
     // bury every other player-state change in the log.
     await this.audit.recordInTransaction(tx, {
