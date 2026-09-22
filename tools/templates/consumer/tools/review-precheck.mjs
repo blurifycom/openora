@@ -9,7 +9,6 @@
 // the output. It informs and never fails - the review verdict is the gate. Per-repo settings
 // live under `reviewPrecheck` in .rulesync/sync.json.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 // oxlint-disable no-console
 
@@ -43,15 +42,17 @@ const git = (...gitArgs) =>
   });
 const gitOk = (...gitArgs) => spawnSync('git', gitArgs, { stdio: 'ignore' }).status === 0;
 
+// Read from the trusted base revision, never the head branch: a PR that widened its own
+// extraSkipGlobs to skip review of its own changes must not be able to trust itself.
 const config = (() => {
   const path = '.rulesync/sync.json';
-  if (!existsSync(path)) {
+  if (!gitOk('cat-file', '-e', `${args.base}:${path}`)) {
     return {};
   }
   try {
-    return JSON.parse(readFileSync(path, 'utf8')).reviewPrecheck ?? {};
+    return JSON.parse(git('show', `${args.base}:${path}`)).reviewPrecheck ?? {};
   } catch (err) {
-    return die(`${path} is not valid JSON: ${err.message}`);
+    return die(`${path} is not valid JSON at ${args.base}: ${err.message}`);
   }
 })();
 
@@ -266,20 +267,36 @@ for (const dir of touchedLocaleDirs) {
       continue;
     }
     const headKeys = files.map((path) => ({ path, keys: keysAt(args.head, path) }));
-    const baseUnion = new Set(files.flatMap((path) => [...keysAt(mergeBase, path)]));
+    const baseKeys = files.map((path) => ({ path, keys: keysAt(mergeBase, path) }));
+    const baseUnion = new Set(baseKeys.flatMap(({ keys }) => [...keys]));
+    const headUnion = new Set(headKeys.flatMap(({ keys }) => [...keys]));
     const newKeys = new Set(
       headKeys.flatMap(({ keys }) => [...keys]).filter((key) => !baseUnion.has(key)),
     );
+    const shown = (keys) => {
+      const list = [...keys];
+      return `${list.slice(0, 5).join(', ')}${list.length > 5 ? ` (+${list.length - 5} more)` : ''}`;
+    };
     for (const { path, keys } of headKeys) {
-      const missing = [...newKeys].filter((key) => !keys.has(key));
-      if (missing.length > 0) {
-        const shown = missing.slice(0, 5).join(', ');
-        const more = missing.length > 5 ? ` (+${missing.length - 5} more)` : '';
+      const addedElsewhere = [...newKeys].filter((key) => !keys.has(key));
+      if (addedElsewhere.length > 0) {
         report(
           'i18n-parity',
           'WARN',
           `${path}:1`,
-          `missing ${missing.length} key(s) a sibling locale added: ${shown}${more}`,
+          `missing ${addedElsewhere.length} key(s) a sibling locale added: ${shown(addedElsewhere)}`,
+        );
+      }
+      // Dropped from this locale alone: still present in base and in a sibling at head, so a
+      // sibling-only removal never floods the union but still breaks per-file parity.
+      const priorKeys = baseKeys.find((entry) => entry.path === path)?.keys ?? new Set();
+      const droppedHere = [...priorKeys].filter((key) => !keys.has(key) && headUnion.has(key));
+      if (droppedHere.length > 0) {
+        report(
+          'i18n-parity',
+          'WARN',
+          `${path}:1`,
+          `dropped ${droppedHere.length} key(s) a sibling locale still has: ${shown(droppedHere)}`,
         );
       }
     }
@@ -382,6 +399,14 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       const pattern = patterns.find((re) => re.test(text));
       return pattern ? [`${file}:${line} - /${pattern.source}/`] : [];
     }),
+    // A removed line can delete a guard or a limit check as easily as an added line can
+    // introduce one - a path with no added domain keyword can still lose one.
+    ...[...removed.entries()].flatMap(([file, texts]) =>
+      texts.flatMap((text) => {
+        const pattern = patterns.find((re) => re.test(text));
+        return pattern ? [`${file} - /${pattern.source}/ (removed)`] : [];
+      }),
+    ),
   ];
   findings.set(`domain:${domain}`, [
     `DOMAIN: ${domain} hits ${hits.length}`,

@@ -46,12 +46,15 @@ commit('base', {
   }),
   'apps/web/src/mod/locales/en.json': JSON.stringify({ title: 'Title' }),
   'apps/web/src/mod/locales/de.json': JSON.stringify({ title: 'Titel' }),
+  'apps/web/src/other/locales/en.json': JSON.stringify({ title: 'Title', greeting: 'Hi' }),
+  'apps/web/src/other/locales/fr.json': JSON.stringify({ title: 'Titre', greeting: 'Salut' }),
   'apps/web/src/mod/tone.ts': 'export const TONE: Record<Kind, Tone> = {};\n',
   'apps/web/src/other.ts': 'export const other = 1;\n',
 });
 git('checkout', '-q', '-b', 'feature');
 const firstFeature = commit('feature', {
   'apps/web/src/mod/locales/en.json': JSON.stringify({ title: 'Title', added: 'Added' }),
+  'apps/web/src/other/locales/fr.json': JSON.stringify({ title: 'Titre' }),
   'apps/web/src/mod/tone.ts': 'export const TONE: Partial<Record<Kind, Tone>> = {};\n',
   'apps/web/src/mod/page.tsx': [
     "import { a as b } from './x';",
@@ -70,7 +73,7 @@ const firstFeature = commit('feature', {
 
 test('scopes reviewable files and names every skipped one with its reason', () => {
   const out = precheck('--base', 'dev', '--head', 'feature');
-  assert.match(out[0], /^SCOPE: files 5 .* reviewable 2 .* skipped 3 mode full$/);
+  assert.match(out[0], /^SCOPE: files 6 .* reviewable 2 .* skipped 4 mode full$/);
   assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +9/-0'));
   assert.ok(out.includes('SKIPPED: pnpm-lock.yaml - lockfile'));
   assert.ok(out.includes('SKIPPED: apps/web/src/mod/__tests__/page.test.tsx - test'));
@@ -98,6 +101,14 @@ test('flags locale keys a sibling added and t() keys no locale file has', () => 
   assert.doesNotMatch(out, /en\.json:1 - i18n-parity/);
   assert.match(out, /page\.tsx:8 - i18n-missing-key - `nope\.key`/);
   assert.doesNotMatch(out, /`added` not in/);
+});
+
+test('flags a key dropped from one locale while a sibling still has it', () => {
+  const out = precheck('--base', 'dev', '--head', 'feature').join('\n');
+  assert.match(
+    out,
+    /fr\.json:1 - i18n-parity - dropped 1 key\(s\) a sibling locale still has: greeting/,
+  );
 });
 
 test('counts domain hits so a reviewer can short-circuit on zero', () => {
@@ -130,4 +141,30 @@ test('a --since that is not an ancestor falls back to a full review and says so'
   const out = precheck('--base', 'dev', '--head', 'feature', '--since', stray);
   assert.match(out[0], /mode full$/);
   assert.ok(out.some((row) => row.startsWith('NOTE: --since')));
+});
+
+test('a PR cannot widen its own skip policy: extraSkipGlobs is read from the base revision', () => {
+  git('checkout', '-q', '-b', 'spoof-base', 'dev');
+  git('checkout', '-q', '-b', 'spoof-head');
+  commit('widen own skip policy and touch code', {
+    '.rulesync/sync.json': JSON.stringify({ reviewPrecheck: { extraSkipGlobs: ['apps/**'] } }),
+    'apps/web/src/mod/tone.ts': 'export const TONE: Record<Kind, Tone> = { x: 1 };\n',
+  });
+  const out = precheck('--base', 'spoof-base', '--head', 'spoof-head');
+  assert.ok(out.some((row) => row.startsWith('REVIEWABLE: apps/web/src/mod/tone.ts')));
+  assert.ok(!out.some((row) => row.startsWith('SKIPPED: apps/web/src/mod/tone.ts')));
+});
+
+test('a removed line can lose a domain hit as easily as an added line can gain one', () => {
+  git('checkout', '-q', '-b', 'guard-base', 'dev');
+  commit('add a guard', {
+    'apps/web/src/mod/route.ts': 'export function h() {\n  adminGuard.assert();\n}\n',
+  });
+  git('checkout', '-q', '-b', 'guard-removed');
+  commit('remove the guard', { 'apps/web/src/mod/route.ts': 'export function h() {}\n' });
+  const out = precheck('--base', 'guard-base', '--head', 'guard-removed').join('\n');
+  assert.match(
+    out,
+    /DOMAIN-HIT: security apps\/web\/src\/mod\/route\.ts - \/.*guard.*\/ \(removed\)/,
+  );
 });
