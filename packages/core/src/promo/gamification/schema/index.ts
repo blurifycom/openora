@@ -1,11 +1,21 @@
 import { sql } from 'drizzle-orm';
-import { check, decimal, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  decimal,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import {
   CONTRIBUTION_PERCENT_PRECISION,
   CONTRIBUTION_PERCENT_SCALE,
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
+import type { RankConfig } from '../contract/index.js';
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
 
@@ -65,3 +75,28 @@ export const promoPlayerRank = pgTable(
 );
 
 export type PromoPlayerRank = typeof promoPlayerRank.$inferSelect;
+
+export type RankRewards = RankConfig['rewards'];
+export type RankRewardTerms = NonNullable<RankRewards[keyof RankRewards]>;
+
+/**
+ * Ladder-wide settings, one row. Absent means the ladder pays nothing and counts nothing: an
+ * operator who has not decided what counts toward a rank has not launched ranks.
+ */
+export const promoRankConfig = pgTable('promo_rank_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  // Unique, so the table can only ever hold the one row.
+  singletonKey: text().notNull().unique().default('global'),
+  /** Products whose stakes count toward a rank. Empty counts every product. */
+  eligibleProducts: text().array().notNull().default([]),
+  /** Terms each reward kind is granted under. A kind with no terms is not paid. */
+  rewards: jsonb().$type<RankRewards>().notNull().default({}),
+  updatedBy: uuid(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export type PromoRankConfig = typeof promoRankConfig.$inferSelect;

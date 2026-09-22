@@ -83,6 +83,36 @@ const BONUS_FIELDS = ['dailyBonus', 'weeklyBonus', 'monthlyBonus', 'levelUpBonus
 // digit is the exact test for "above zero" - and it never rounds the way a float would.
 const isAbsentOrPositive = (amount: string | null) => amount === null || /[1-9]/.test(amount);
 
+const MAX_EXPIRY_DAYS = 365;
+
+const RankRewardTermsSchema = z.object({
+  /**
+   * Wagering requirement as a multiple of the reward, as a decimal string above zero. Its upper
+   * bound is the bonus engine's, checked by the service, since comparing it needs decimal math.
+   */
+  wageringMultiplier: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  expiryDays: z.number().int().positive().max(MAX_EXPIRY_DAYS),
+});
+
+/**
+ * Ladder-wide settings. A reward kind left out is not paid, whatever amount a tier carries for
+ * it - an amount without terms is a bonus nobody decided how to wager.
+ */
+export const RankConfigSchema = z.object({
+  /** Products whose stakes count toward a rank. Empty counts every product. */
+  eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
+  rewards: z
+    .object({
+      levelUp: RankRewardTermsSchema,
+      daily: RankRewardTermsSchema,
+      weekly: RankRewardTermsSchema,
+      monthly: RankRewardTermsSchema,
+    })
+    .partial(),
+});
+
+export type RankConfig = z.infer<typeof RankConfigSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -96,6 +126,17 @@ export const gamificationContract = {
         .route({ method: 'PUT', path: '/backoffice/promo/ranks' })
         .input(SetRankLadderInputSchema)
         .output(RankLadderSchema),
+
+      config: {
+        get: oc
+          .route({ method: 'GET', path: '/backoffice/promo/ranks/config' })
+          .output(RankConfigSchema),
+
+        set: oc
+          .route({ method: 'PUT', path: '/backoffice/promo/ranks/config' })
+          .input(RankConfigSchema)
+          .output(RankConfigSchema),
+      },
     },
   },
 };

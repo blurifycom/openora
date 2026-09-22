@@ -3,6 +3,8 @@ import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora
 import { gamificationContract } from '../contract/index.js';
 import {
   RankAdminService,
+  RankConfigInvalidError,
+  RankConfigNotSetError,
   RankLadderCurrencyHeldError,
   RankLadderInvalidError,
   RankLadderMismatchError,
@@ -49,6 +51,20 @@ export function createGamificationRouter({
             () => admin.set(userId, input),
           );
         }),
+
+        config: {
+          get: os.admin.ranks.config.get.handler(async ({ context }) => {
+            await adminGuard.assert(context, 'bonus', 'view');
+            return mapErrors({ NOT_FOUND: RankConfigNotSetError }, () => admin.getConfig());
+          }),
+
+          set: os.admin.ranks.config.set.handler(async ({ input, context }) => {
+            const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+            return mapErrors({ BAD_REQUEST: RankConfigInvalidError }, () =>
+              admin.setConfig(userId, input),
+            );
+          }),
+        },
       },
     },
   });

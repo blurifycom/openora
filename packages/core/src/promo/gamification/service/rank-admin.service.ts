@@ -3,13 +3,24 @@ import type { AuditWritePort, Uuid } from '@openora/core/contracts';
 import {
   createDomainError,
   makeConflictError,
+  makeNotFoundError,
   moneyCompare,
   uniqueConstraintName,
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import { promoPlayerRank, promoRankTier, type PromoRankTier } from '../schema/index.js';
-import type { RankLadder, SetRankLadderInput, SubmittedRankTier } from '../contract/index.js';
+import {
+  promoPlayerRank,
+  promoRankConfig,
+  promoRankTier,
+  type PromoRankTier,
+} from '../schema/index.js';
+import type {
+  RankConfig,
+  RankLadder,
+  SetRankLadderInput,
+  SubmittedRankTier,
+} from '../contract/index.js';
 import { RankLadderNotConfiguredError } from './rank.service.js';
 
 export const RankLadderMismatchError = createDomainError<[detail: string]>(
@@ -21,6 +32,17 @@ export const RankLadderInvalidError = createDomainError<[reason: string]>(
   'RankLadderInvalidError',
   (reason) => `the ladder would be invalid: ${reason}`,
 );
+
+export const RankConfigNotSetError = makeNotFoundError('RankConfig');
+
+export const RankConfigInvalidError = createDomainError<[reason: string]>(
+  'RankConfigInvalidError',
+  (reason) => `the rank config would be invalid: ${reason}`,
+);
+
+// The bonus engine refuses a grant above this, so a config that asks for more would be accepted
+// here and then fail every payout.
+const MAX_WAGERING_MULTIPLIER = '1000';
 
 export const RankTierHeldError = makeConflictError(
   'RankTierHeldError',
@@ -149,6 +171,59 @@ export class RankAdminService {
         after: { tiers: ladder.tiers },
       });
       return ladder;
+    });
+  }
+
+  async getConfig(): Promise<RankConfig> {
+    const [config] = await this.drizzle.db
+      .select({
+        eligibleProducts: promoRankConfig.eligibleProducts,
+        rewards: promoRankConfig.rewards,
+      })
+      .from(promoRankConfig);
+    if (!config) {
+      throw new RankConfigNotSetError('global');
+    }
+    return config;
+  }
+
+  async setConfig(adminId: Uuid, input: RankConfig): Promise<RankConfig> {
+    for (const terms of Object.values(input.rewards)) {
+      if (moneyCompare(terms.wageringMultiplier, MAX_WAGERING_MULTIPLIER) > 0) {
+        throw new RankConfigInvalidError(
+          `a wagering multiplier is at most ${MAX_WAGERING_MULTIPLIER}`,
+        );
+      }
+    }
+    const config = {
+      eligibleProducts: [...new Set(input.eligibleProducts)],
+      rewards: input.rewards,
+    };
+    return this.drizzle.db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({
+          eligibleProducts: promoRankConfig.eligibleProducts,
+          rewards: promoRankConfig.rewards,
+        })
+        .from(promoRankConfig)
+        .for('update');
+      await tx
+        .insert(promoRankConfig)
+        .values({ ...config, updatedBy: adminId })
+        .onConflictDoUpdate({
+          target: promoRankConfig.singletonKey,
+          set: { ...config, updatedBy: adminId },
+        });
+      await this.audit.recordInTransaction(tx, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'promo.rank_config.set',
+        resourceType: 'promo_rank_config',
+        resourceId: null,
+        before: before ?? null,
+        after: config,
+      });
+      return config;
     });
   }
 }

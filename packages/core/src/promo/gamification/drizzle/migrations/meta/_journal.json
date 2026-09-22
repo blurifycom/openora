@@ -29,6 +29,13 @@
       "when": 1790076834238,
       "tag": "0003_unique_wallop",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790084657960,
+      "tag": "0004_rank_config",
+      "breakpoints": true
     }
   ]
 }

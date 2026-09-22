@@ -1,6 +1,8 @@
 export { RankService, RankLadderNotConfiguredError } from './service/rank.service.js';
 export {
   RankAdminService,
+  RankConfigInvalidError,
+  RankConfigNotSetError,
   RankLadderCurrencyHeldError,
   RankLadderInvalidError,
   RankLadderMismatchError,

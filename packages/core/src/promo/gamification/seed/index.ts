@@ -1,5 +1,6 @@
 import type { DrizzleDb } from '@openora/core/server';
-import { promoRankTier } from '../schema/index.js';
+import type { RankConfig } from '../contract/index.js';
+import { promoRankConfig, promoRankTier } from '../schema/index.js';
 
 export type RankTierSeed = {
   key: string;
@@ -12,20 +13,29 @@ export type RankTierSeed = {
   levelUpBonus?: string | null;
 };
 
-const LADDER_CURRENCY = 'USDT';
+export type RankLadderSeed = {
+  /** What thresholds and bonuses are counted and paid in. Wagers in other currencies convert. */
+  currency: string;
+  /** Lowest tier first; the first must start at zero. */
+  tiers: RankTierSeed[];
+  config: RankConfig;
+};
 
 /**
- * Seeds a ladder in array order, lowest tier first. What a tier costs and pays is an operator's
- * pricing, so the ladder is passed in rather than shipped with the package.
+ * Seeds a ladder and its settings. What a tier costs and pays, and in which currency, is an
+ * operator's pricing, so it is passed in rather than shipped with the package.
  *
- * Idempotent, and it never overwrites a tier an operator has already edited.
+ * Idempotent, and it never overwrites a tier or a setting an operator has already edited.
  */
-export async function seedRankLadder(db: DrizzleDb, tiers: RankTierSeed[]): Promise<void> {
-  if (tiers.length === 0) {
+export async function seedRankLadder(db: DrizzleDb, ladder: RankLadderSeed): Promise<void> {
+  if (ladder.tiers.length === 0) {
     return;
   }
   await db
     .insert(promoRankTier)
-    .values(tiers.map((tier, position) => ({ ...tier, position, currency: LADDER_CURRENCY })))
+    .values(
+      ladder.tiers.map((tier, position) => ({ ...tier, position, currency: ladder.currency })),
+    )
     .onConflictDoNothing();
+  await db.insert(promoRankConfig).values(ladder.config).onConflictDoNothing();
 }

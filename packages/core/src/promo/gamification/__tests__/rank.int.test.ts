@@ -5,7 +5,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, mock } from '../../../testing/mock.js';
 import type { ExchangeRateReader } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
-import { promoPlayerRank, promoRankTier } from '../schema/index.js';
+import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
 import { seedRankLadder } from '../seed/index.js';
 import { RankService } from '../service/rank.service.js';
 
@@ -16,11 +16,15 @@ const audit = makeAuditWriter();
 let ranks: RankService;
 
 const CASINO = { provider: 'aggregator', product: 'casino' };
-const LADDER = [
-  { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1' },
-  { key: 'silver', name: 'Silver', wagerThreshold: '10000', rakebackPercent: '3' },
-  { key: 'gold', name: 'Gold', wagerThreshold: '50000', rakebackPercent: '5' },
-];
+const LADDER = {
+  currency: 'USDT',
+  tiers: [
+    { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1' },
+    { key: 'silver', name: 'Silver', wagerThreshold: '10000', rakebackPercent: '3' },
+    { key: 'gold', name: 'Gold', wagerThreshold: '50000', rakebackPercent: '5' },
+  ],
+  config: { eligibleProducts: [], rewards: {} },
+};
 const PARALLEL_BETS = 20;
 
 const wager = (userId: string, weightedAmount: string, currency = 'USDT') =>
@@ -54,6 +58,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
+  await db.drizzle.db.delete(promoRankConfig);
   await seedRankLadder(db.drizzle.db, LADDER);
 });
 

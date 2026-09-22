@@ -58,7 +58,8 @@ export type DirectAuditAction =
   | 'promo.offer.archived'
   | 'promo.weight_profile.created'
   | 'promo.weight_profile.set'
-  | 'promo.rank_ladder.set';
+  | 'promo.rank_ladder.set'
+  | 'promo.rank_config.set';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain
