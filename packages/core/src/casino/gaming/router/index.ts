@@ -74,7 +74,9 @@ export function createGamingRouter({
   // No built-in kind sets `exposesReporting`. An overlay's kind whose order reveals
   // reporting data (a revenue ranking, say) does, and every path that resolves such a rule
   // for an admin - preview, a write that evaluates it, an on-demand evaluation - needs that
-  // report's permission, or the resulting members would leak the ranking.
+  // report's permission, or the resulting members would leak the ranking. A write checks
+  // any rule it sends, in either mode: storing one on a manual category and switching it to
+  // rule mode in a racing request would otherwise pass two checks that each saw half of it.
   async function assertRuleReportingAccess(
     context: OssContext,
     rule: GameCategoryRule | null,
@@ -186,9 +188,7 @@ export function createGamingRouter({
 
     createCategory: os.createCategory.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
-      if (input.membershipMode === 'rule') {
-        await assertRuleReportingAccess(context, input.membershipRule ?? null);
-      }
+      await assertRuleReportingAccess(context, input.membershipRule ?? null);
       return mapErrors(
         {
           CONFLICT: GameCategorySlugTakenError,
@@ -216,14 +216,11 @@ export function createGamingRouter({
           ],
         },
         async () => {
-          if (input.membershipMode !== undefined || input.membershipRule !== undefined) {
+          if (input.membershipRule !== undefined) {
+            await assertRuleReportingAccess(context, input.membershipRule);
+          } else if (input.membershipMode === 'rule') {
             const stored = await categories.getCategory(input.id);
-            if ((input.membershipMode ?? stored.membershipMode) === 'rule') {
-              await assertRuleReportingAccess(
-                context,
-                input.membershipRule ?? stored.membershipRule,
-              );
-            }
+            await assertRuleReportingAccess(context, stored.membershipRule);
           }
           return categories.updateCategory({ ...input, actorId: userId, ip, userAgent });
         },

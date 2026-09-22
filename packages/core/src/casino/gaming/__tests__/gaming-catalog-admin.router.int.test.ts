@@ -634,7 +634,7 @@ describe('gaming catalog router authz', () => {
     ).resolves.toMatchObject({ total: 0 });
   });
 
-  it('needs report:view to create, switch to or evaluate a reporting-kind rule', async () => {
+  it('needs report:view to send, switch to or evaluate a reporting-kind rule', async () => {
     const writeOnly = routerWith(
       makeAdminGuard({ allow: ['game-config:create', 'game-config:update'] }),
     ).router;
@@ -651,6 +651,16 @@ describe('gaming catalog router authz', () => {
     const [manual] = await db.drizzle.db
       .insert(gameCategory)
       .values({ slug: `manual-${randomUUID()}`, name: 'Manual' })
+      .returning();
+    // Manual, but already holding a reporting rule a report:view admin stored earlier.
+    const [dormant] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({
+        slug: `dormant-${randomUUID()}`,
+        name: 'Dormant',
+        membershipMode: 'manual',
+        membershipRule: revenueRank,
+      })
       .returning();
 
     await expect(
@@ -672,9 +682,30 @@ describe('gaming catalog router authz', () => {
         { context: CTX },
       ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Sent without rule mode, a reporting rule is still refused: stored on a manual
+    // category, a racing mode switch would otherwise evaluate it unchecked.
     await expect(
-      call(writeOnly.updateCategory, { id: stored!.id, membershipMode: 'rule' }, { context: CTX }),
+      call(
+        writeOnly.createCategory,
+        { slug: `revenue-${randomUUID()}`, name: 'Revenue', membershipRule: revenueRank },
+        { context: CTX },
+      ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(
+        writeOnly.updateCategory,
+        { id: manual!.id, membershipRule: revenueRank },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(writeOnly.updateCategory, { id: dormant!.id, membershipMode: 'rule' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const [stillManual] = await db.drizzle.db
+      .select({ membershipMode: gameCategory.membershipMode })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, dormant!.id));
+    expect(stillManual).toEqual({ membershipMode: 'manual' });
     await expect(
       call(writeOnly.evaluateCategoryMembership, { id: stored!.id }, { context: CTX }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
