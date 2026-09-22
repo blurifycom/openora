@@ -95,6 +95,8 @@ export const WalletBalanceChangeReasonSchema = z.enum([
   'withdrawal',
   'adjustment',
   'swap',
+  // Any WALLET_COMMANDS move (bet/win, gift/rain/tip, ...) - see wallet.balance.changed.
+  'gameplay',
 ]);
 export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
 

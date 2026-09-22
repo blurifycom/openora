@@ -38,6 +38,7 @@ import {
   KycTierSchema,
   PlayerStatusSchema,
 } from './player.js';
+import { WalletTransactionTypeSchema } from './wallet-tx.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -421,6 +422,14 @@ export const domainEventSchemas = {
       reason: z.string(),
     })
     .extend(authContextBase.shape),
+  // Any WALLET_COMMANDS debit/credit that actually moved a balance - gaming bet/win, chat
+  // gift/rain/tip, and any future cross-module mover through the same port. WalletService's
+  // own operations keep their existing dedicated topics above; this is the one topic for
+  // everything that moves money through WALLET_COMMANDS instead.
+  'wallet.balance.changed': walletTxnBase.extend({
+    type: WalletTransactionTypeSchema,
+    direction: z.enum(['credit', 'debit']),
+  }),
   // A reconciliation run's open-findings count exceeded the operator's configured
   // threshold. System-driven (no player/admin actor) - the resource is the run itself,
   // never a finding's payload (an address or tx hash must never reach the audit log

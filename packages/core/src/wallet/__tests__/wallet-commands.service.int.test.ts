@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { PlayEligibilityPort, RgLimitsPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeAuditWriter } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import {
@@ -527,5 +527,148 @@ describe('WalletCommandsService ledger sequence (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(130);
     const rows = await txRows(w.id);
     expect(rows.map((r) => r.type).sort()).toEqual(['bet', 'deposit', 'win']);
+  });
+});
+
+describe('WalletCommandsService wallet.balance.changed event (real PG)', () => {
+  it('debit emits it with the debited amount and direction', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const events = makeEventBus();
+    const withEvents = new WalletCommandsService(
+      eligibility(false),
+      audit,
+      undefined,
+      undefined,
+      events,
+    );
+
+    const res = await withEvents.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+    });
+
+    const rows = await txRows(w.id);
+    expect(res.ok).toBe(true);
+    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
+      userId: w.userId,
+      amount: '10',
+      currency: 'USD',
+      transactionId: rows[0]?.id,
+      type: 'bet',
+      direction: 'debit',
+    });
+  });
+
+  it('credit emits it with the credited amount and direction', async () => {
+    const w = await seedWallet({ balance: '50' });
+    const events = makeEventBus();
+    const withEvents = new WalletCommandsService(
+      eligibility(false),
+      audit,
+      undefined,
+      undefined,
+      events,
+    );
+
+    const res = await withEvents.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+    });
+
+    const rows = await txRows(w.id);
+    expect(res.ok).toBe(true);
+    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      transactionId: rows[0]?.id,
+      type: 'win',
+      direction: 'credit',
+    });
+  });
+
+  it('a 0-amount loss never emits - nothing moved', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const events = makeEventBus();
+    const withEvents = new WalletCommandsService(
+      eligibility(false),
+      audit,
+      undefined,
+      undefined,
+      events,
+    );
+
+    await withEvents.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('a replayed debit (same providerRef) emits only once', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const events = makeEventBus();
+    const withEvents = new WalletCommandsService(
+      eligibility(false),
+      audit,
+      undefined,
+      undefined,
+      events,
+    );
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-evt-debit-1' };
+
+    await withEvents.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+    await withEvents.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('a replayed credit (same providerRef) emits only once', async () => {
+    const w = await seedWallet({ balance: '50' });
+    const events = makeEventBus();
+    const withEvents = new WalletCommandsService(
+      eligibility(false),
+      audit,
+      undefined,
+      undefined,
+      events,
+    );
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-evt-credit-1' };
+
+    await withEvents.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+    await withEvents.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('never emits when the caller passes no events bus', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
+    ).resolves.toMatchObject({ ok: true });
   });
 });

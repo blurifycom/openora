@@ -18,6 +18,7 @@ import {
   makeConflictError,
   moneyToNumber,
   type DrizzleDb,
+  type EventBus,
 } from '@openora/core/server';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import {
@@ -50,7 +51,11 @@ export const WalletCommandAmountError = createDomainError<[operation: string, am
 // a port the wallet module owns. Every move writes a `wallet_transaction` ledger row
 // (status `completed`, internal settlement so no provider ref) so gameplay shows in
 // transaction history. The `balance >= amount` guard in the UPDATE makes concurrent
-// debits safe (a lost race updates zero rows and we report the shortfall).
+// debits safe (a lost race updates zero rows and we report the shortfall). A move that
+// actually changed a balance also emits `wallet.balance.changed` - best-effort (see
+// messaging-and-microservices rule) and fired before the caller's own transaction
+// commits, since this service does not own that boundary; the channel is a UI-refresh
+// signal only, so a later rollback just costs one harmless refetch.
 export const WalletRgRestrictedError = makeConflictError(
   'WalletRgRestrictedError',
   'wager is restricted by an active responsible-gambling exclusion',
@@ -66,6 +71,7 @@ export class WalletCommandsService implements WalletCommands {
     private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
     private readonly rgLimits?: RgLimitsPort,
+    private readonly events?: EventBus,
   ) {}
 
   // Completed ledger row shared by every gameplay move. `direction` is required (not
@@ -189,7 +195,23 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, available };
     }
 
-    await this.writeLedgerRow(txn, debitRow, type, amount, 'debit', providerRef);
+    const { row: ledgerRow } = await this.writeLedgerRow(
+      txn,
+      debitRow,
+      type,
+      amount,
+      'debit',
+      providerRef,
+    );
+
+    this.events?.emit('wallet.balance.changed', {
+      userId,
+      amount,
+      currency: debitCurrency,
+      transactionId: ledgerRow.id,
+      type,
+      direction: 'debit',
+    });
 
     if (type === 'bet') {
       const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
@@ -235,7 +257,7 @@ export class WalletCommandsService implements WalletCommands {
 
     // Unlike debit(), credit() takes no row lock, so the ledger row is inserted (and its
     // conflict resolved) before the balance mutation rather than after.
-    const { replayed } = await this.writeLedgerRow(
+    const { row: ledgerRow, replayed } = await this.writeLedgerRow(
       txn,
       creditRow,
       type,
@@ -252,6 +274,15 @@ export class WalletCommandsService implements WalletCommands {
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
+
+    this.events?.emit('wallet.balance.changed', {
+      userId,
+      amount,
+      currency: creditRow.currency,
+      transactionId: ledgerRow.id,
+      type,
+      direction: 'credit',
+    });
 
     if (type === 'gift' || type === 'rain') {
       await this.createBonusCredit(txn, {

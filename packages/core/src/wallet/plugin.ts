@@ -162,6 +162,13 @@ export default {
         envelope.eventId,
       );
     });
+    ctx.events.on('wallet.balance.changed', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.balance.changed'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(parsed.data.userId, parsed.data.currency, 'gameplay', envelope.eventId);
+    });
 
     // One memoized instance backs the cron worker and the router factory below - lazily
     // constructed (subscriptions/workers wire before router factories run), matching
@@ -228,6 +235,7 @@ export default {
           c.get(AUDIT_WRITER),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
           c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
+          c.get(EVENT_BUS),
         ),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
