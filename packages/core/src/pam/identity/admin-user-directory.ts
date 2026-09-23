@@ -2,6 +2,7 @@ import type {
   AdminUserDirectory,
   AdminUserListOptions,
   ClientMeta,
+  KycStatus,
   MailRecipientDirectory,
   PlayerIdSearchOptions,
 } from '@openora/core/contracts';
@@ -226,6 +227,20 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       )
       .limit(limit);
     return rows.map((r) => r.id);
+  }
+
+  async findUserIdsByKycStatus(status: KycStatus, limit = 1000) {
+    // player.kycStatus is free text and still carries the deprecated `verified` alias for
+    // `approved` on older rows - match both so a caller asking for `approved` doesn't silently
+    // miss legacy-verified players, same normalization as lookupPlayers' read boundary.
+    const matches: KycStatus[] =
+      normalizeKycStatus(status) === 'approved' ? ['approved', 'verified'] : [status];
+    const rows = await this.drizzle.db
+      .select({ userId: player.userId })
+      .from(player)
+      .where(inArray(player.kycStatus, matches))
+      .limit(limit);
+    return rows.map((r) => r.userId);
   }
 }
 

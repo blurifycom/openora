@@ -89,6 +89,12 @@ export type AdminUserDirectory = {
    */
   findPlayerIds(query: string, limit?: number, options?: PlayerIdSearchOptions): Promise<string[]>;
   /**
+   * Resolves every player userId at a given KYC status, capped at `limit` (default 1000, the
+   * same cap as `findPlayerIds`). Lets a caller outside pam (eg the wallet withdrawal-queue
+   * summary) narrow a SQL aggregate by KYC without loading and enriching every matching row.
+   */
+  findUserIdsByKycStatus(status: KycStatus, limit?: number): Promise<string[]>;
+  /**
    * Exact-match resolution by display name (case-insensitive) - for callers that
    * already have a complete, known username (not a partial search term), eg chat
    * commands' /donate, /block, /ignore. Distinct from findPlayerIds' capped fuzzy

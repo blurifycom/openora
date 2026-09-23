@@ -85,4 +85,61 @@ describe('withdrawal queue summary', () => {
       { currency: 'USD', amount: expect.stringMatching(/^5(\.0+)?$/) },
     ]);
   });
+
+  it('narrows the aggregate by kycStatus through the directory-resolved userId set', async () => {
+    const since = new Date(Date.now() - 1000).toISOString();
+    const { client: overriddenPlayer, userId: overriddenUserId } =
+      await registerAndMaterializePlayer(testApp, {
+        email: `withdrawal-summary-kyc-overridden-${randomUUID()}@e2e.test`,
+      });
+    const { client: pendingPlayer } = await registerAndMaterializePlayer(testApp, {
+      email: `withdrawal-summary-kyc-pending-${randomUUID()}@e2e.test`,
+    });
+    const admin = await asAdmin(testApp.app);
+    // A manual KYC decision is stored as `manually_overridden`, distinct from `approved`
+    // (docs/standards/compliance.md) - exercises that the summary's kycStatus filter matches
+    // on the stored status, not a looser "counts as approved" alias.
+    const kycRes = await admin.post(`/compliance/players/${overriddenUserId}/kyc/override`, {
+      tier: 'basic',
+      status: 'approved',
+      reason: 'e2e: kyc-filtered withdrawal summary',
+    });
+    expect(kycRes.status).toBe(200);
+
+    for (const client of [overriddenPlayer, pendingPlayer]) {
+      await client.post('/wallet/deposit', {
+        idempotencyKey: randomUUID(),
+        amount: '10',
+        currency: 'USD',
+      });
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '4',
+        currency: 'USD',
+      });
+    }
+
+    const overriddenOnly = object(
+      await (
+        await admin.get(
+          `/wallet/withdrawals/summary?dateFrom=${since}&currency=USD&kycStatus=manually_overridden`,
+        )
+      ).json(),
+    );
+    expect(overriddenOnly['pendingCount']).toBe(1);
+    expect(overriddenOnly['queuedTotals']).toEqual([
+      { currency: 'USD', amount: expect.stringMatching(/^4(\.0+)?$/) },
+    ]);
+
+    const approvedOnly = object(
+      await (
+        await admin.get(
+          `/wallet/withdrawals/summary?dateFrom=${since}&currency=USD&kycStatus=approved`,
+        )
+      ).json(),
+    );
+    expect(approvedOnly['pendingCount']).toBe(0);
+    expect(approvedOnly['queuedTotals']).toEqual([]);
+    expect(approvedOnly['avgPendingWaitSeconds']).toBeNull();
+  });
 });

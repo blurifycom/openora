@@ -1512,21 +1512,15 @@ export class WalletService {
   }
 
   /**
-   * Every withdrawal the queue filters match, KYC filter included. Shared by the list and its
-   * summary so the headline figures always describe exactly the rows the list can page through.
-   * `statuses` narrows the read in SQL; the directory is only consulted when the caller needs
-   * player enrichment or the KYC filter does, since it is one lookup per distinct player.
+   * The withdrawal-type + status/currency/rail/amount/date conditions shared by the queue
+   * list and its summary. Excludes the KYC filter: that one needs the player directory, so
+   * each caller resolves it against its own data shape (row-level for the list, a bounded
+   * userId set for the summary's SQL aggregate).
    */
-  private async matchingWithdrawals(
-    filters: WithdrawalQueueSummaryFilter &
-      Pick<WithdrawalQueueFilter, 'status' | 'sortBy' | 'sortOrder'>,
-    {
-      statuses,
-      withPlayers,
-    }: { statuses?: readonly WalletTransaction['status'][]; withPlayers: boolean },
+  private withdrawalConditions(
+    filters: WithdrawalQueueSummaryFilter & Pick<WithdrawalQueueFilter, 'status'>,
+    statuses?: readonly WalletTransaction['status'][],
   ) {
-    const db = this.drizzle.db;
-
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
     if (filters.status) {
       conditions.push(eq(walletTransaction.status, filters.status));
@@ -1552,6 +1546,25 @@ export class WalletService {
     if (filters.dateTo) {
       conditions.push(lte(walletTransaction.createdAt, new Date(filters.dateTo)));
     }
+    return conditions;
+  }
+
+  /**
+   * Every withdrawal the queue filters match, KYC filter included. Backs the paged list,
+   * which needs every matching row anyway to enrich, KYC-filter and paginate in memory.
+   * `statuses` narrows the read in SQL; the directory is only consulted when the caller needs
+   * player enrichment or the KYC filter does, since it is one lookup per distinct player.
+   */
+  private async matchingWithdrawals(
+    filters: WithdrawalQueueSummaryFilter &
+      Pick<WithdrawalQueueFilter, 'status' | 'sortBy' | 'sortOrder'>,
+    {
+      statuses,
+      withPlayers,
+    }: { statuses?: readonly WalletTransaction['status'][]; withPlayers: boolean },
+  ) {
+    const db = this.drizzle.db;
+    const conditions = this.withdrawalConditions(filters, statuses);
 
     // Bounded queue: fetch all SQL-matching rows, then enrich + kycStatus-filter + paginate in memory,
     // else DB-side pagination makes `total` wrong once kycStatus prunes.
@@ -1596,36 +1609,75 @@ export class WalletService {
     return { matching, byUserId };
   }
 
+  // The empty result for a bounded-out or unreachable KYC filter - never invented, always
+  // "found nothing in the pending/on-hold queue".
+  private static readonly EMPTY_WITHDRAWAL_SUMMARY: WithdrawalQueueSummary = {
+    pendingCount: 0,
+    onHoldCount: 0,
+    queuedTotals: [],
+    avgPendingWaitSeconds: null,
+  };
+
+  /**
+   * Aggregates in SQL rather than materializing the queue: the header this backs refreshes
+   * far more often than an admin opens the list, so it must stay cheap however deep the
+   * pending/on-hold queue grows. The KYC filter has no SQL representation in this module (KYC
+   * lives in pam), so it resolves to a bounded userId set first and narrows the aggregate by it.
+   */
   async summarizeWithdrawals(
     filters: WithdrawalQueueSummaryFilter,
   ): Promise<WithdrawalQueueSummary> {
-    const { matching } = await this.matchingWithdrawals(filters, {
-      statuses: QUEUED_WITHDRAWAL_STATUSES,
-      withPlayers: false,
-    });
-    const pending = matching.filter((r) => r.tx.status === 'pending');
-    const onHold = matching.filter((r) => r.tx.status === 'on_hold');
+    const db = this.drizzle.db;
+    let kycUserIds: string[] | undefined;
+    if (filters.kycStatus) {
+      // No directory bound => cannot verify KYC => fail closed to an empty (not all-matching) queue.
+      if (!this.directory) {
+        return WalletService.EMPTY_WITHDRAWAL_SUMMARY;
+      }
+      kycUserIds = await this.directory.findUserIdsByKycStatus(filters.kycStatus);
+      if (kycUserIds.length === 0) {
+        return WalletService.EMPTY_WITHDRAWAL_SUMMARY;
+      }
+    }
 
-    const totals = [...pending, ...onHold].reduce(
-      (byCurrency, r) =>
-        byCurrency.set(r.tx.currency, moneyAdd(byCurrency.get(r.tx.currency) ?? '0', r.tx.amount)),
-      new Map<string, string>(),
-    );
+    const conditions = this.withdrawalConditions(filters, QUEUED_WITHDRAWAL_STATUSES);
+    if (kycUserIds) {
+      conditions.push(inArray(wallet.userId, kycUserIds));
+    }
 
-    const now = Date.now();
-    const avgPendingWaitSeconds =
-      pending.length === 0
-        ? null
-        : pending.reduce((sum, r) => sum + (now - r.tx.createdAt.getTime()) / 1000, 0) /
-          pending.length;
+    const [[overall], totalsRows] = await Promise.all([
+      db
+        .select({
+          pendingCount: sql<string>`count(*) filter (where ${walletTransaction.status} = 'pending')`,
+          onHoldCount: sql<string>`count(*) filter (where ${walletTransaction.status} = 'on_hold')`,
+          avgPendingWaitSeconds: sql<
+            string | null
+          >`avg(extract(epoch from now() - ${walletTransaction.createdAt})) filter (where ${walletTransaction.status} = 'pending')`,
+        })
+        .from(walletTransaction)
+        .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+        .where(and(...conditions)),
+      db
+        .select({
+          currency: walletTransaction.currency,
+          total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+        })
+        .from(walletTransaction)
+        .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+        .where(and(...conditions))
+        .groupBy(walletTransaction.currency),
+    ]);
 
     return {
-      pendingCount: pending.length,
-      onHoldCount: onHold.length,
-      queuedTotals: [...totals]
-        .map(([currency, amount]) => ({ currency, amount }))
+      pendingCount: Number(overall?.pendingCount ?? 0),
+      onHoldCount: Number(overall?.onHoldCount ?? 0),
+      queuedTotals: totalsRows
+        .map((r) => ({ currency: r.currency, amount: r.total }))
         .sort((a, b) => a.currency.localeCompare(b.currency)),
-      avgPendingWaitSeconds,
+      avgPendingWaitSeconds:
+        overall?.avgPendingWaitSeconds === null || overall?.avgPendingWaitSeconds === undefined
+          ? null
+          : Number(overall.avgPendingWaitSeconds),
     };
   }
 
