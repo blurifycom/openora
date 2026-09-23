@@ -30,8 +30,11 @@ import {
   type BonusGrantTerms,
   type PromoOfferStatus,
 } from '@openora/core/contracts';
-import { WAGER_WEIGHT_SCOPES,
-  type PromoOfferRules, type WagerWeightScope } from '../contract/index.js';
+import {
+  WAGER_WEIGHT_SCOPES,
+  type PromoOfferRules,
+  type WagerWeightScope,
+} from '../contract/index.js';
 import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
