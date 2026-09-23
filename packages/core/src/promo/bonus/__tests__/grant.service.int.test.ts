@@ -70,17 +70,19 @@ afterAll(async () => {
   await db.drop();
 });
 
-// Test cleanup needs to delete ledger rows between cases; the append-only trigger that
-// production relies on would refuse it, so cleanup lifts it for exactly this statement.
+// Test cleanup needs to delete ledger rows between cases; the append-only trigger and the
+// balance-matches-the-ledger constraint trigger that production relies on would both refuse
+// it (the latter because the parent grant row, deleted next, is still there mid-cleanup), so
+// cleanup lifts both for exactly this statement.
 const wipeLedger = async () => {
   await db.drizzle.db.execute(
-    sql`ALTER TABLE promo_grant_entry DISABLE TRIGGER promo_grant_entry_append_only`,
+    sql`ALTER TABLE promo_grant_entry DISABLE TRIGGER promo_grant_entry_append_only, DISABLE TRIGGER promo_grant_entry_balance_matches_ledger`,
   );
   try {
     await db.drizzle.db.delete(promoGrantEntry);
   } finally {
     await db.drizzle.db.execute(
-      sql`ALTER TABLE promo_grant_entry ENABLE TRIGGER promo_grant_entry_append_only`,
+      sql`ALTER TABLE promo_grant_entry ENABLE TRIGGER promo_grant_entry_append_only, ENABLE TRIGGER promo_grant_entry_balance_matches_ledger`,
     );
   }
 };
@@ -494,5 +496,25 @@ describe('the grant ledger', () => {
     ).rejects.toThrow('caller failed after the grant');
 
     expect(await entries()).toHaveLength(0);
+  });
+
+  it('refuses a bonus_balance drift from the ledger, the append-only trigger alone is not the boundary', async () => {
+    const outcome = await grant(args());
+    if (!outcome.ok) {
+      throw new Error('grant was refused');
+    }
+
+    // No corresponding entry backs this: the sum of this grant's entries still equals its
+    // original credit, so a bare balance write is exactly the drift the deferred constraint
+    // trigger exists to catch.
+    await expect(
+      db.drizzle.db.transaction((tx) =>
+        tx.update(promoGrant).set({ bonusBalance: '0' }).where(eq(promoGrant.id, outcome.grantId)),
+      ),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        cause: expect.objectContaining({ message: expect.stringMatching(/ledger mismatch/) }),
+      }),
+    );
   });
 });

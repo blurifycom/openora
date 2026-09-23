@@ -10,6 +10,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
 import {
   CONTRIBUTION_PERCENT_PRECISION,
@@ -134,6 +135,10 @@ export const promoGrant = pgTable(
     // The idempotency guard. A replayed deposit or a re-run daily job hits this, not a
     // read-then-write check that two concurrent callers would both pass.
     uniqueIndex('promo_grant_user_id_source_source_ref_idx').on(t.userId, t.source, t.sourceRef),
+    // The composite FK target on promo_grant_entry. Redundant with the primary key on its own,
+    // but it lets Postgres enforce that an entry's denormalised userId/currency can never drift
+    // from the grant it belongs to.
+    uniqueIndex('promo_grant_id_user_id_currency_idx').on(t.id, t.userId, t.currency),
     // FIFO consumption order and the balance read. Partial, because a terminal grant is never
     // consumed again and long-term they are almost the whole table.
     index('promo_grant_user_id_currency_created_at_idx')
@@ -176,11 +181,11 @@ export const promoGrantEntry = pgTable(
   'promo_grant_entry',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Same module, so a real FK. Restrict, not cascade: a ledger a single DELETE can erase is
-    // not a ledger, and a grant that has to go away gets a forfeit or expire entry instead.
-    grantId: uuid()
-      .notNull()
-      .references(() => promoGrant.id, { onDelete: 'restrict' }),
+    // Same module, so a real FK - the composite below, not a bare reference on this column
+    // alone, so userId/currency can never drift from the grant they are denormalised from.
+    // Restrict, not cascade: a ledger a single DELETE can erase is not a ledger, and a grant
+    // that has to go away gets a forfeit or expire entry instead.
+    grantId: uuid().notNull(),
     userId: uuid().notNull(),
     // Denormalised from the grant so the ledger reads as money on its own terms.
     currency: text().notNull(),
@@ -200,6 +205,12 @@ export const promoGrantEntry = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    // The composite FK: an entry's userId and currency must match the grant it belongs to, so
+    // a writer can never attach a grant's entry to the wrong player or currency.
+    foreignKey({
+      columns: [t.grantId, t.userId, t.currency],
+      foreignColumns: [promoGrant.id, promoGrant.userId, promoGrant.currency],
+    }).onDelete('restrict'),
     // Win and reversal attribution: find this round's stake rows without joining the grant.
     index('promo_grant_entry_user_id_external_round_id_idx')
       .on(t.userId, t.externalRoundId)
