@@ -72,6 +72,9 @@ beforeEach(async () => {
       .returning(),
     new Error('seed profile: query returned no row'),
   ).id;
+  // A profile with no positive weight can never progress a grant's wagering requirement, so
+  // the fixture always carries a usable default; the empty/unusable case gets its own profile.
+  await seedWeight('default', null, '100');
 });
 
 describe('GrantService.grant', () => {
@@ -107,7 +110,9 @@ describe('GrantService.grant', () => {
       wageringMultiplier: '35',
       expiryDays: 7,
       weightProfileId,
-      weights: [{ scope: 'product', scopeRef: 'casino', contributionPercent: '100.00' }],
+      weights: expect.arrayContaining([
+        { scope: 'product', scopeRef: 'casino', contributionPercent: '100.00' },
+      ]),
     });
   });
 
@@ -134,11 +139,39 @@ describe('GrantService.grant', () => {
     expect(scoreOf(row!.terms, '50')).toBe('50.000000000000000000');
   });
 
-  it('snapshots an empty weight set for a profile with no rows, so no bet counts', async () => {
-    await grant(args());
+  it('refuses a grant on a weight profile with no positive weight, which could never progress', async () => {
+    const emptyProfileId = findOneOrThrow(
+      await db.drizzle.db
+        .insert(promoWeightProfile)
+        .values({ name: `empty-profile-${randomUUID()}` })
+        .returning(),
+      new Error('seed profile: query returned no row'),
+    ).id;
 
-    const [row] = await rows();
-    expect(row?.terms.weights).toEqual([]);
+    await expect(
+      grant(
+        args({
+          terms: { wageringMultiplier: '35', expiryDays: 7, weightProfileId: emptyProfileId },
+        }),
+      ),
+    ).rejects.toThrow(/no positive weight/i);
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it('refuses a grant on a weight profile whose only rows are zero, which could never progress', async () => {
+    await db.drizzle.db.insert(promoWeight).values({
+      profileId: weightProfileId,
+      scope: 'product',
+      scopeRef: 'casino',
+      contributionPercent: '0',
+    });
+    await db.drizzle.db
+      .update(promoWeight)
+      .set({ contributionPercent: '0' })
+      .where(eq(promoWeight.profileId, weightProfileId));
+
+    await expect(grant(args())).rejects.toThrow(/no positive weight/i);
+    expect(await rows()).toHaveLength(0);
   });
 
   it('refuses a grant whose weight profile does not exist', async () => {
@@ -260,10 +293,22 @@ describe('GrantService.grant', () => {
     expect(await rows()).toHaveLength(0);
   });
 
+  it('rejects an expiry past the sane ceiling', async () => {
+    await expect(grant(args({ terms: termsWith('35', 3651) }))).rejects.toThrow();
+    expect(await rows()).toHaveLength(0);
+  });
+
   it('rejects a manual grant with no admin behind it', async () => {
     await expect(grant(args({ source: 'manual', actor: { type: 'system' } }))).rejects.toThrow(
       /admin/,
     );
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it('rejects a non-manual grant that names an admin actor, which would misattribute it in the audit trail', async () => {
+    await expect(
+      grant(args({ source: 'deposit', actor: { type: 'admin', id: randomUUID() } })),
+    ).rejects.toThrow(/admin/);
     expect(await rows()).toHaveLength(0);
   });
 

@@ -30,10 +30,18 @@ export const GrantConflictError = makeConflictError(
   'GrantConflictError',
   'A different grant already exists for this source reference',
 );
+export const UnusableWeightProfileError = makeConflictError(
+  'UnusableWeightProfileError',
+  'This weight profile has no positive weight, so no wager could ever progress a grant on it',
+);
 
 // A requirement of zero converts the moment it is created, and a multiplier in the thousands is
 // a fat finger rather than an offer. Both are refused before anything reaches the ledger.
 const MAX_WAGERING_MULTIPLIER = '1000';
+
+// Past this, `days => N` still fits `make_interval`'s int4 argument, but nothing this platform
+// grants runs longer than a decade; a bigger value is a fat finger, not an offer.
+const MAX_EXPIRY_DAYS = 3650;
 
 const grantArgsSchema = z
   .object({
@@ -55,12 +63,12 @@ const grantArgsSchema = z
         (v) => moneyCompare(v, MAX_WAGERING_MULTIPLIER) <= 0,
         `must not exceed ${MAX_WAGERING_MULTIPLIER}`,
       ),
-      expiryDays: z.number().int().positive(),
+      expiryDays: z.number().int().positive().max(MAX_EXPIRY_DAYS),
       weightProfileId: UuidSchema,
     }),
   })
-  .refine((a) => a.source !== 'manual' || a.actor.type === 'admin', {
-    message: 'a manual grant must name the admin who issued it',
+  .refine((a) => (a.source === 'manual') === (a.actor.type === 'admin'), {
+    message: 'a manual grant must name the admin who issued it, and no other source may name one',
     path: ['actor'],
   })
   // Each input fits `numeric(38,18)` on its own, but their product need not: the requirement
@@ -202,6 +210,10 @@ export class GrantService implements BonusGrantCommands {
         ? [{ scope: r.scope, scopeRef: r.scopeRef, contributionPercent: r.contributionPercent }]
         : [],
     );
+    const hasUsableWeight = weights.some((w) => moneyCompare(w.contributionPercent, '0') > 0);
+    if (!hasUsableWeight) {
+      throw new UnusableWeightProfileError();
+    }
     return { ...terms, weights };
   }
 }
