@@ -57,6 +57,13 @@
       "when": 1790167022293,
       "tag": "0007_rank_payout_anchors",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790171640579,
+      "tag": "0008_rank_payout_currency",
+      "breakpoints": true
     }
   ]
 }

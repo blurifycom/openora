@@ -1,0 +1,1 @@
+ALTER TABLE "promo_rank_config" ADD COLUMN "payout_currency" text;

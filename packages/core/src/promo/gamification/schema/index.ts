@@ -95,6 +95,8 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   eligibleProducts: text().array().notNull().default([]),
   /** Terms each reward kind is granted under. A kind with no terms is not paid. */
   rewards: jsonb().$type<RankRewards>().notNull().default({}),
+  /** What rewards are credited in, when that is not the ladder's own currency. */
+  payoutCurrency: text(),
   /** When each periodic payout closes, and so what window it pays for. All UTC. */
   payoutAnchors: jsonb()
     .$type<RankPayoutAnchors>()

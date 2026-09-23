@@ -125,6 +125,14 @@ export const DEFAULT_PAYOUT_ANCHORS: RankPayoutAnchors = {
 };
 
 export const RankConfigSchema = z.object({
+  /**
+   * What a rank reward is actually credited in, when that differs from the ladder's own
+   * currency. An operator whose ladder is priced in a unit it cannot pay out - a fiat ticker on
+   * a crypto-only wallet, say - names the currency the money lands in here, and the amount is
+   * converted at the rate of the moment it is granted. Absent means the ladder pays in the
+   * currency it is priced in, which is the common case and converts nothing.
+   */
+  payoutCurrency: CurrencyTickerSchema.nullish(),
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   rewards: z

@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
-import type { BonusGrantCommands, PlayEligibilityPort } from '@openora/core/contracts';
+import type {
+  BonusGrantCommands,
+  ExchangeRateReader,
+  PlayEligibilityPort,
+} from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
@@ -18,6 +22,7 @@ import { RankPayoutService } from '../service/rank-payout.service.js';
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
+const convert = vi.fn<ExchangeRateReader['convert']>();
 const logger = { warn: vi.fn(), error: vi.fn() };
 
 const LEVEL_UP_TERMS = { wageringMultiplier: '3', expiryDays: 7 };
@@ -31,6 +36,7 @@ const service = () =>
     db.drizzle,
     mock<BonusGrantCommands>({ grant }),
     mock<PlayEligibilityPort>({ isRestricted }),
+    mock<ExchangeRateReader>({ convert }),
     logger,
   );
 
@@ -48,7 +54,7 @@ const tierId = async (key: string) => {
 const owe = async (userId: string, key: string, amount: string) => {
   const [row] = await db.drizzle.db
     .insert(promoRankLevelUp)
-    .values({ userId, tierId: await tierId(key), currency: 'USDT', amount })
+    .values({ userId, tierId: await tierId(key), currency: 'USD', amount })
     .returning({ id: promoRankLevelUp.id });
   return row?.id ?? '';
 };
@@ -69,7 +75,7 @@ const holding = async (key: string, lastWageredAt: Date | null) => {
   const userId = randomUUID();
   await db.drizzle.db.insert(promoPlayerRank).values({
     userId,
-    currency: 'USDT',
+    currency: 'USD',
     lifetimeWagered: '0',
     tierId: await tierId(key),
     lastWageredAt,
@@ -87,12 +93,13 @@ beforeEach(async () => {
   vi.clearAllMocks();
   grant.mockImplementation(async () => ({ ok: true, grantId: randomUUID(), created: true }));
   isRestricted.mockResolvedValue(false);
+  convert.mockResolvedValue(null);
   await db.drizzle.db.delete(promoRankLevelUp);
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
   await seedRankLadder(db.drizzle.db, {
-    currency: 'USDT',
+    currency: 'USD',
     tiers: [
       { key: 'bronze', name: 'Bronze', wagerThreshold: '0', rakebackPercent: '1' },
       {
@@ -121,7 +128,7 @@ describe('settling owed level-up bonuses', () => {
     expect(grant).toHaveBeenCalledTimes(1);
     expect(grant).toHaveBeenCalledWith(expect.anything(), {
       userId,
-      currency: 'USDT',
+      currency: 'USD',
       amount: '10.000000000000000000',
       source: 'rank',
       sourceRef: `rank-level-up:${await tierId('silver')}`,
@@ -181,6 +188,7 @@ describe('settling owed level-up bonuses', () => {
       db.drizzle,
       mock<BonusGrantCommands>({ grant }),
       undefined,
+      mock<ExchangeRateReader>({ convert }),
       logger,
     );
 
@@ -211,7 +219,7 @@ describe('paying a periodic bonus', () => {
 
     expect(grant).toHaveBeenCalledWith(expect.anything(), {
       userId,
-      currency: 'USDT',
+      currency: 'USD',
       amount: '0.500000000000000000',
       source: 'rank',
       sourceRef: 'rank-daily:2026-09-21T00',
@@ -258,6 +266,42 @@ describe('paying a periodic bonus', () => {
       expect.anything(),
       expect.objectContaining({ userId, sourceRef: 'rank-daily:2026-09-20T06' }),
     );
+  });
+
+  it('credits the payout currency the operator named, converted at the rate of the payout', async () => {
+    const userId = await holding('silver', YESTERDAY_NOON);
+    await db.drizzle.db.update(promoRankConfig).set({ payoutCurrency: 'USDT' });
+    convert.mockResolvedValue('0.480000000000000000');
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(convert).toHaveBeenCalledWith('0.500000000000000000', 'USD', 'USDT');
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId,
+        currency: 'USDT',
+        amount: '0.480000000000000000',
+      }),
+    );
+    expect(granted[0]).toMatchObject({
+      currency: 'USDT',
+      grantedAmount: '0.480000000000000000',
+      // The requirement follows the amount that was actually credited, not the priced one.
+      wageringRequired: '0.480000000000000000',
+    });
+  });
+
+  it('pays nothing at all when the payout currency has no rate', async () => {
+    await holding('silver', YESTERDAY_NOON);
+    await db.drizzle.db.update(promoRankConfig).set({ payoutCurrency: 'USDT' });
+    convert.mockResolvedValue(null);
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledTimes(1);
   });
 
   it('pays nothing for a kind with no terms configured', async () => {
