@@ -16,6 +16,8 @@ import {
   gameRound,
 } from '@openora/core/casino/schema/gaming';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
+import { BONUS_GRANTS } from '@openora/core/contracts';
+import { promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
 import {
   setupTestDb,
   bootTestApp,
@@ -156,6 +158,62 @@ describe('gaming stake debit e2e', () => {
     });
 
     expect(res.status).toBe(400);
+
+    const rounds = await client.get('/gaming/rounds');
+    const roundsBody = (await readJson(rounds)) as unknown[];
+    expect(roundsBody).toHaveLength(0);
+  });
+
+  it("refuses a stake over an active bonus grant's max bet, not as a short balance, and starts no round", async () => {
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-maxbet-${randomUUID()}@example.com`,
+    });
+    await deposit(client, '100');
+
+    const [profile] = await app.container
+      .get(DRIZZLE)
+      .db.insert(promoWeightProfile)
+      .values({ name: `maxbet-e2e-${randomUUID()}` })
+      .returning();
+    if (!profile) {
+      throw new Error('seed weight profile: insert returned no row');
+    }
+    await app.container.get(DRIZZLE).db.insert(promoWeight).values({
+      profileId: profile.id,
+      scope: 'product',
+      scopeRef: 'casino',
+      contributionPercent: '100',
+    });
+
+    const grantOutcome = await app.container.get(DRIZZLE).db.transaction((tx) =>
+      app.container.get(BONUS_GRANTS).grant(tx, {
+        userId,
+        currency: 'USD',
+        amount: '10',
+        source: 'deposit',
+        sourceRef: randomUUID(),
+        actor: { type: 'system' },
+        terms: {
+          wageringMultiplier: '5',
+          expiryDays: 30,
+          weightProfileId: profile.id,
+          maxBet: '5',
+        },
+      }),
+    );
+    if (!grantOutcome.ok) {
+      throw new Error('seed grant: grant was refused');
+    }
+
+    const res = await client.post('/gaming/rounds/start', {
+      gameId,
+      currency: 'USD',
+      betAmount: '30',
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/maximum bet/i);
+    expect(await balanceOf(app.container, userId)).toBe('100.000000000000000000');
 
     const rounds = await client.get('/gaming/rounds');
     const roundsBody = (await readJson(rounds)) as unknown[];

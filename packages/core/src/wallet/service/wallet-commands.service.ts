@@ -1,4 +1,5 @@
 import {
+  MaxBetExceededError,
   RgLimitExceededError,
   type AuditWritePort,
   type PlayEligibilityPort,
@@ -55,12 +56,6 @@ export const WalletCommandAmountError = createDomainError<[operation: string, am
 export const WalletRgRestrictedError = makeConflictError(
   'WalletRgRestrictedError',
   'wager is restricted by an active responsible-gambling exclusion',
-);
-
-export const WalletMaxBetExceededError = createDomainError<[stake: string, maxBet: string]>(
-  'WalletMaxBetExceededError',
-  (stake, maxBet) =>
-    `stake ${stake} is over the ${maxBet} maximum bet the active bonus was granted under`,
 );
 
 export const WalletBonusEngineUnavailableError = createDomainError<[type: string]>(
@@ -239,7 +234,7 @@ export class WalletCommandsService implements WalletCommands {
       // insufficient funds would tell the player to deposit more, and a client that did would
       // hit the same wall with a bigger balance.
       if (wagered.reason === 'max_bet_exceeded') {
-        throw new WalletMaxBetExceededError(amount, wagered.maxBet);
+        throw new MaxBetExceededError(amount, wagered.maxBet);
       }
       return { ok: false, available: moneyAdd(available, wagered.bonusAvailable) };
     }

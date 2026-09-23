@@ -67,6 +67,24 @@ export type BonusWagerOutcome =
    */
   | { ok: false; reason: 'max_bet_exceeded'; maxBet: string };
 
+/**
+ * A stake refused because it is over the active grant's `maxBet`. Shared here rather than
+ * module-local, the same as `RgLimitExceededError` beside `RG_LIMITS`: the wallet throws it from
+ * inside `debit`, but whatever router sits above the caller (a game round, a sportsbook slip) is
+ * the one that has to map it to a response, and it can only do that against a class it can import.
+ */
+export class MaxBetExceededError extends Error {
+  readonly stake: string;
+  readonly maxBet: string;
+
+  constructor(stake: string, maxBet: string) {
+    super(`stake ${stake} is over the ${maxBet} maximum bet the active bonus was granted under`);
+    this.name = 'MaxBetExceededError';
+    this.stake = stake;
+    this.maxBet = maxBet;
+  }
+}
+
 export type BonusSettleArgs = {
   userId: string;
   currency: string;
