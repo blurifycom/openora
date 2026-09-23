@@ -8,6 +8,7 @@ import {
   CurrencyTickerSchema,
   JOB_QUEUE,
   MoneyAmountSchema,
+  PLAY_ELIGIBILITY,
   UuidSchema,
   WAGER_TRACKING,
   WALLET_READER,
@@ -73,6 +74,7 @@ const DepositJobSchema = z.object({
 export default {
   id: 'bonus',
   dependsOn: ['audit'],
+  requiresPorts: [PLAY_ELIGIBILITY],
   register(ctx) {
     ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER)));
     ctx.provideSealed(
@@ -245,6 +247,7 @@ export default {
         c.get(AUDIT_WRITER),
         c.get(BONUS_GRANTS),
         c.get(WALLET_READER),
+        c.get(PLAY_ELIGIBILITY),
         logger,
       );
       events = c.get(EVENT_BUS);

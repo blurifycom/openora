@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type { Uuid, WalletReader } from '@openora/core/contracts';
+import type { PlayEligibilityPort, Uuid, WalletReader } from '@openora/core/contracts';
 import { mock, makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -21,6 +21,7 @@ let db: TestDb;
 let offers: OfferService;
 let lifetimeDeposit = '0';
 let firstDepositOverride: boolean | undefined;
+let restricted = false;
 const logged: object[] = [];
 
 const offerRow = (over: Partial<typeof promoOffer.$inferInsert> = {}) => ({
@@ -66,11 +67,15 @@ beforeAll(async () => {
     getLifetimeDeposit: vi.fn(async () => lifetimeDeposit),
     isFirstDeposit: vi.fn(async () => firstDepositOverride ?? false),
   });
+  const playEligibility = mock<PlayEligibilityPort>({
+    isRestricted: vi.fn(async () => restricted),
+  });
   offers = new OfferService(
     db.drizzle,
     makeAuditWriter(),
     new GrantService(makeAuditWriter()),
     wallet,
+    playEligibility,
     { error: (context) => logged.push(context) },
   );
 });
@@ -87,6 +92,7 @@ beforeEach(async () => {
   logged.length = 0;
   lifetimeDeposit = '0';
   firstDepositOverride = undefined;
+  restricted = false;
 });
 
 describe('a deposit applied to a claim', () => {
@@ -276,5 +282,52 @@ describe('a deposit applied to a claim', () => {
     await holder;
 
     expect(optInResolvedAt).toBeGreaterThanOrEqual(lockReleasedAt);
+  });
+
+  it('refuses to open a claim for a restricted player', async () => {
+    const offer = await seedOffer({ minDeposit: '0' });
+    const userId = randomUUID();
+    restricted = true;
+
+    await expect(offers.optIn(userId, offer.id)).rejects.toThrow();
+
+    expect(await optInsOf(userId)).toHaveLength(0);
+  });
+
+  it('re-evaluates eligibility at credit time: a restricted player earns no grant', async () => {
+    // ELG-07. The deposit itself is the wallet's concern and already committed before this job
+    // runs - applyDeposit only ever decides the bonus, never the real-balance credit.
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '20', matchPercent: '50' });
+    await claim(userId, offer.id);
+    lifetimeDeposit = '50';
+    restricted = true;
+
+    await apply(userId, '50', randomUUID());
+
+    expect(await grantsOf(userId)).toHaveLength(0);
+    // Still banked, so the deposit is not lost if the restriction lifts in time.
+    const [optIn] = await optInsOf(userId);
+    expect(optIn?.accumulatedDeposit).toBe('50.000000000000000000');
+  });
+
+  it('closes the race: a delayed deposit job running after self-exclusion grants nothing', async () => {
+    // The opt-in and the deposit both happened while the player was still eligible; only this
+    // job - delayed behind the forfeit sweep that already ran and found no grant to forfeit -
+    // processes after the exclusion landed. The forfeit sweep has no way to know a grant would
+    // appear later; re-checking eligibility here, rather than trusting the state at opt-in time,
+    // is what closes that window.
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '20', matchPercent: '100' });
+    await claim(userId, offer.id);
+    lifetimeDeposit = '100';
+    restricted = true; // the exclusion that landed before this delayed job runs
+
+    await apply(userId, '100', randomUUID());
+
+    expect(await grantsOf(userId)).toHaveLength(0);
+    // The deposit still fully banked: only the grant step was withheld.
+    const [optIn] = await optInsOf(userId);
+    expect(optIn?.accumulatedDeposit).toBe('100.000000000000000000');
   });
 });

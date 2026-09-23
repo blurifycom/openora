@@ -3,6 +3,7 @@ import {
   type AuditWritePort,
   type BonusGrantCommands,
   type PageQuery,
+  type PlayEligibilityPort,
   type Uuid,
   type WalletReader,
 } from '@openora/core/contracts';
@@ -69,6 +70,7 @@ export class OfferService {
     private readonly audit: AuditWritePort,
     private readonly grants: BonusGrantCommands,
     private readonly wallet: WalletReader,
+    private readonly playEligibility: PlayEligibilityPort,
     private readonly logger: { error: (context: object, message: string) => void },
   ) {}
 
@@ -185,6 +187,11 @@ export class OfferService {
   }
 
   async optIn(userId: Uuid, offerId: Uuid, context: OfferContext = {}): Promise<PlayerOffer> {
+    // Checked before the offer is even read: a self-excluded or banned player is not open to any
+    // offer, and there is no lock to take on their behalf.
+    if (await this.playEligibility.isRestricted(userId)) {
+      throw new OfferNotEligibleError();
+    }
     const facts = await this.offerFacts(userId, context);
     return this.drizzle.db.transaction(async (tx) => {
       const offer = await this.requireOffer(tx, offerId);
@@ -236,6 +243,10 @@ export class OfferService {
     const isFirstDeposit = this.wallet.isFirstDeposit
       ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId)
       : moneyCompare(await this.wallet.getLifetimeDeposit(deposit.userId), deposit.amount) === 0;
+    // Re-evaluated here rather than trusted from opt-in time: this job can run after a
+    // self-exclusion or ban that landed between the opt-in and this deposit settling, and the
+    // forfeit sweep that reacted to that exclusion has no way to know a grant would appear later.
+    const isRestricted = await this.playEligibility.isRestricted(deposit.userId);
     const at = new Date();
     // Reported rather than emitted here: the deposit and the grant commit together on the
     // caller's transaction, and a notification promising a bonus that then rolled back is worse
@@ -280,6 +291,17 @@ export class OfferService {
 
       const amount = grantAmountFor(accumulated, offer.matchPercent, offer.maxGrantAmount);
       if (moneyCompare(amount, '0') <= 0) {
+        continue;
+      }
+
+      if (isRestricted) {
+        // The deposit already credited the player's real balance; only the bonus is withheld.
+        // Banked like a below-minimum deposit rather than dropped, so the progress is not lost
+        // if the restriction lifts before this offer's window closes.
+        await tx
+          .update(promoOptIn)
+          .set({ accumulatedDeposit: accumulated })
+          .where(eq(promoOptIn.id, optIn.id));
         continue;
       }
 
