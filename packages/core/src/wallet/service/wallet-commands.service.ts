@@ -52,9 +52,9 @@ export const WalletCommandAmountError = createDomainError<[operation: string, am
 // transaction history. The `balance >= amount` guard in the UPDATE makes concurrent
 // debits safe (a lost race updates zero rows and we report the shortfall). This service
 // does not own the caller's transaction boundary, so it never emits `wallet.balance.changed`
-// itself - a move that actually changed the balance instead returns the ledger row's id as
-// `transactionId` on the outcome, and the caller emits the event once its own transaction
-// commits (see GamingService.startRound/endRound).
+// itself - a move that actually changed the balance instead returns `moved: true` with the
+// ledger row's id as `transactionId` on the outcome, and the caller emits the event once
+// its own transaction commits (see GamingService.startRound/endRound).
 export const WalletRgRestrictedError = makeConflictError(
   'WalletRgRestrictedError',
   'wager is restricted by an active responsible-gambling exclusion',
@@ -161,13 +161,13 @@ export class WalletCommandsService implements WalletCommands {
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, debitRow, 'loss', '0', 'debit', providerRef);
-      return { ok: true, newBalance: available, currency: debitCurrency };
+      return { ok: true, moved: false, newBalance: available, currency: debitCurrency };
     }
 
     // Must run before checkWager below - a replay must never re-evaluate the wager limit
     // against spend it already committed.
     if (providerRef && (await this.findByProviderRef(txn, providerRef))) {
-      return { ok: true, newBalance: available, currency: debitCurrency };
+      return { ok: true, moved: false, newBalance: available, currency: debitCurrency };
     }
 
     if (type === 'bet' && this.rgLimits) {
@@ -210,14 +210,21 @@ export class WalletCommandsService implements WalletCommands {
       });
       return {
         ok: true,
+        moved: true,
+        transactionId: ledgerRow.id,
         newBalance,
         currency: debitCurrency,
         completedBonusCredits,
-        transactionId: ledgerRow.id,
       };
     }
 
-    return { ok: true, newBalance, currency: debitCurrency, transactionId: ledgerRow.id };
+    return {
+      ok: true,
+      moved: true,
+      transactionId: ledgerRow.id,
+      newBalance,
+      currency: debitCurrency,
+    };
   }
 
   async credit(
@@ -262,7 +269,7 @@ export class WalletCommandsService implements WalletCommands {
     );
     if (replayed) {
       const currentBalance = await readWalletBalance(txn, row.id, balanceKey(currency));
-      return { ok: true, newBalance: currentBalance };
+      return { ok: true, moved: false, newBalance: currentBalance };
     }
 
     const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
@@ -280,7 +287,7 @@ export class WalletCommandsService implements WalletCommands {
       });
     }
 
-    return { ok: true, newBalance: credited.amount, transactionId: ledgerRow.id };
+    return { ok: true, moved: true, transactionId: ledgerRow.id, newBalance: credited.amount };
   }
 
   private async resolveOrOpenWallet(

@@ -55,7 +55,7 @@ const unrestricted = eligibility(false);
 
 function makeWalletCommands(
   debitResult: WalletDebitOutcome,
-  creditResult: WalletCreditOutcome = { ok: true, newBalance: '0' },
+  creditResult: WalletCreditOutcome = { ok: true, moved: false, newBalance: '0' },
 ): WalletCommands {
   return mock<WalletCommands>({
     debit: vi.fn().mockResolvedValue(debitResult),
@@ -69,7 +69,7 @@ function makeService({
     endRound: vi.fn(),
   }),
   playEligibility = unrestricted,
-  walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
+  walletCommands = makeWalletCommands({ ok: true, moved: false, newBalance: '0', currency: 'USD' }),
   rgLimits,
   gameGeoCheck,
   events = noopEvents,
@@ -311,7 +311,12 @@ describe('GamingService.startRound (real PG)', () => {
   it('denies a blocked game before debit, round insertion, or provider launch', async () => {
     const created = await seedGame({ name: 'Blocked' });
     const launchGame = vi.fn();
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const gameGeoCheck = mock<GameGeoCheckPort>({
       checkGame: vi.fn().mockResolvedValue({
         allowed: false,
@@ -350,7 +355,12 @@ describe('GamingService.startRound (real PG)', () => {
   it('refuses a wager over the players own limit before touching the provider', async () => {
     const created = await seedGame({ name: 'Limited' });
     const launchGame = vi.fn();
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '0',
+      currency: 'USD',
+    });
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
       walletCommands,
@@ -408,7 +418,12 @@ describe('GamingService.startRound (real PG)', () => {
 
   it('404s an inactive game without touching the wallet or provider', async () => {
     const created = await seedGame({ name: 'Dark', isActive: false });
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const launchGame = vi.fn();
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
@@ -425,7 +440,12 @@ describe('GamingService.startRound (real PG)', () => {
 
   it('404s a vendor-unavailable game without touching the wallet or provider', async () => {
     const created = await seedGame({ name: 'Down', isUnavailable: true });
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const launchGame = vi.fn();
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
@@ -446,7 +466,12 @@ describe('GamingService.startRound (real PG)', () => {
       .update(gameProvider)
       .set({ isActive: false })
       .where(eq(gameProvider.id, created.providerId));
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const launchGame = vi.fn();
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
@@ -463,7 +488,12 @@ describe('GamingService.startRound (real PG)', () => {
 
   it('debits the stake and persists the round on sufficient balance', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a1', name: 'Aces' });
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const launchGame = vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' });
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
@@ -835,6 +865,8 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     const events = makeEventBus();
     const walletCommands = makeWalletCommands({
       ok: true,
+      moved: true,
+      transactionId: '00000000-0000-0000-0000-0000000000d3',
       newBalance: '60',
       currency: 'USD',
       completedBonusCredits: [
@@ -877,6 +909,8 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     const launchGame = vi.fn().mockRejectedValue(new Error('provider unavailable'));
     const walletCommands = makeWalletCommands({
       ok: true,
+      moved: true,
+      transactionId: '00000000-0000-0000-0000-0000000000d4',
       newBalance: '0',
       currency: 'USD',
       completedBonusCredits: [
@@ -909,7 +943,12 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
   it('emits no wallet.bonus_rollover.completed event when the debit completed no credit', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a4', name: 'Aces' });
     const events = makeEventBus();
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const svc = new GamingService(
       db.drizzle,
       events,
@@ -938,6 +977,7 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
     const events = makeEventBus();
     const walletCommands = makeWalletCommands({
       ok: true,
+      moved: true,
       newBalance: '90',
       currency: 'USD',
       transactionId: '00000000-0000-0000-0000-0000000000d1',
@@ -968,13 +1008,18 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
     });
   });
 
-  it('never emits it when the debit outcome carries no transactionId', async () => {
+  it('never emits it when the debit outcome reports nothing moved', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a7', name: 'Aces' });
     const events = makeEventBus();
-    // The real WalletCommandsService only omits transactionId for a no-op move (loss,
+    // The real WalletCommandsService only reports `moved: false` for a no-op move (loss,
     // replay) - gaming never debits either, but the caller must still honor the
-    // contract rather than assume it is always set.
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
+    // contract rather than assume every success moved money.
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '90',
+      currency: 'USD',
+    });
     const svc = new GamingService(
       db.drizzle,
       events,
@@ -1199,7 +1244,12 @@ describe('GamingService.endRound (real PG)', () => {
   it('credits the provider-reported win to the round currency and records it on the round', async () => {
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '0',
+      currency: 'USD',
+    });
     const svc = makeService({ provider: settlingProvider('42.50'), walletCommands });
 
     expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '42.50' });
@@ -1216,7 +1266,12 @@ describe('GamingService.endRound (real PG)', () => {
   it('credits nothing when the provider reports no outcome', async () => {
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '0',
+      currency: 'USD',
+    });
     const svc = makeService({ provider: settlingProvider(), walletCommands });
 
     expect(await svc.endRound(userId, round.id)).toEqual({ success: true, winAmount: '0' });
@@ -1227,7 +1282,12 @@ describe('GamingService.endRound (real PG)', () => {
   it('pays a win once - a replayed end never asks the provider or credits again', async () => {
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '0',
+      currency: 'USD',
+    });
     const provider = settlingProvider('7');
     const svc = makeService({ provider, walletCommands });
 
@@ -1244,7 +1304,7 @@ describe('GamingService.endRound (real PG)', () => {
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
     const walletCommands = makeWalletCommands(
-      { ok: true, newBalance: '0', currency: 'USD' },
+      { ok: true, moved: false, newBalance: '0', currency: 'USD' },
       { ok: false, reason: 'wallet not found' },
     );
     const svc = makeService({ provider: settlingProvider('7'), walletCommands });
@@ -1265,8 +1325,13 @@ describe('GamingService.endRound wallet.balance.changed event (real PG)', () => 
     const round = await seedRound(created.id, userId);
     const events = makeEventBus();
     const walletCommands = makeWalletCommands(
-      { ok: true, newBalance: '0', currency: 'USD' },
-      { ok: true, newBalance: '42.50', transactionId: '00000000-0000-0000-0000-0000000000e1' },
+      { ok: true, moved: false, newBalance: '0', currency: 'USD' },
+      {
+        ok: true,
+        moved: true,
+        newBalance: '42.50',
+        transactionId: '00000000-0000-0000-0000-0000000000e1',
+      },
     );
     const svc = new GamingService(
       db.drizzle,
@@ -1294,7 +1359,12 @@ describe('GamingService.endRound wallet.balance.changed event (real PG)', () => 
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
     const events = makeEventBus();
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' });
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: false,
+      newBalance: '0',
+      currency: 'USD',
+    });
     const svc = new GamingService(
       db.drizzle,
       events,
@@ -1310,13 +1380,13 @@ describe('GamingService.endRound wallet.balance.changed event (real PG)', () => 
     expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
   });
 
-  it('never emits it when the credit outcome carries no transactionId', async () => {
+  it('never emits it when the credit outcome reports nothing moved', async () => {
     const created = await seedGame();
     const round = await seedRound(created.id, userId);
     const events = makeEventBus();
     const walletCommands = makeWalletCommands(
-      { ok: true, newBalance: '0', currency: 'USD' },
-      { ok: true, newBalance: '42.50' },
+      { ok: true, moved: false, newBalance: '0', currency: 'USD' },
+      { ok: true, moved: false, newBalance: '42.50' },
     );
     const svc = new GamingService(
       db.drizzle,

@@ -111,8 +111,8 @@ describe('bonus-rollover QA concurrency probe: two simultaneous bets against ONE
           svc.debit(txn, { userId: w.userId, amount: '70', type: 'bet' }),
         ),
       ]);
-      if (!r1.ok || !r2.ok) {
-        throw new Error(`trial ${trial}: expected both debits ok`);
+      if (!r1.ok || !r1.moved || !r2.ok || !r2.moved) {
+        throw new Error(`trial ${trial}: expected both debits to move the balance`);
       }
 
       const [row] = await db.drizzle.db

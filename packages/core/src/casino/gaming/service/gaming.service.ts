@@ -537,10 +537,11 @@ export class GamingService {
             .returning(),
           new GameRoundNotFoundError(gameId),
         );
+        const moved = outcome.moved ? outcome : undefined;
         return {
           round: insertedRound,
-          completedBonusCredits: outcome.completedBonusCredits ?? [],
-          betTransactionId: outcome.transactionId,
+          completedBonusCredits: moved?.completedBonusCredits ?? [],
+          betTransactionId: moved?.transactionId,
         };
       },
     );
@@ -637,7 +638,7 @@ export class GamingService {
         if (!credited.ok) {
           throw new WinCreditFailedError(roundId, credited.reason);
         }
-        winTransactionId = credited.transactionId;
+        winTransactionId = credited.moved ? credited.transactionId : undefined;
       }
       return { paid: true, winTransactionId };
     });

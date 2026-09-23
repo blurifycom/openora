@@ -530,8 +530,8 @@ describe('WalletCommandsService ledger sequence (real PG)', () => {
   });
 });
 
-describe('WalletCommandsService outcome transactionId (real PG)', () => {
-  // The caller (eg GamingService) reads this field to know whether to emit
+describe('WalletCommandsService outcome moved/transactionId (real PG)', () => {
+  // The caller (eg GamingService) reads `moved` to know whether to emit
   // wallet.balance.changed once its own transaction commits - see the class comment on
   // WalletCommandsService for why the port itself never emits that event.
 
@@ -541,7 +541,7 @@ describe('WalletCommandsService outcome transactionId (real PG)', () => {
     const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
 
     const rows = await txRows(w.id);
-    expect(res).toMatchObject({ ok: true, transactionId: rows[0]?.id });
+    expect(res).toMatchObject({ ok: true, moved: true, transactionId: rows[0]?.id });
   });
 
   it('credit returns the ledger row id on a real win', async () => {
@@ -555,7 +555,7 @@ describe('WalletCommandsService outcome transactionId (real PG)', () => {
     });
 
     const rows = await txRows(w.id);
-    expect(res).toMatchObject({ ok: true, transactionId: rows[0]?.id });
+    expect(res).toMatchObject({ ok: true, moved: true, transactionId: rows[0]?.id });
   });
 
   it('a 0-amount loss returns no transactionId - nothing moved', async () => {
@@ -563,8 +563,12 @@ describe('WalletCommandsService outcome transactionId (real PG)', () => {
 
     const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
 
-    expect(res).toMatchObject({ ok: true });
-    expect((res as { transactionId?: string }).transactionId).toBeUndefined();
+    expect(res).toEqual({
+      ok: true,
+      moved: false,
+      newBalance: expect.any(String),
+      currency: 'USD',
+    });
   });
 
   it('a replayed debit (same providerRef) returns no transactionId on the replay', async () => {
@@ -584,8 +588,9 @@ describe('WalletCommandsService outcome transactionId (real PG)', () => {
       providerRef,
     });
 
-    expect(first).toMatchObject({ ok: true, transactionId: expect.any(String) });
-    expect((second as { transactionId?: string }).transactionId).toBeUndefined();
+    expect(first).toMatchObject({ ok: true, moved: true, transactionId: expect.any(String) });
+    expect(second).toMatchObject({ ok: true, moved: false });
+    expect(second).not.toHaveProperty('transactionId');
   });
 
   it('a replayed credit (same providerRef) returns no transactionId on the replay', async () => {
@@ -607,7 +612,8 @@ describe('WalletCommandsService outcome transactionId (real PG)', () => {
       providerRef,
     });
 
-    expect(first).toMatchObject({ ok: true, transactionId: expect.any(String) });
-    expect((second as { transactionId?: string }).transactionId).toBeUndefined();
+    expect(first).toMatchObject({ ok: true, moved: true, transactionId: expect.any(String) });
+    expect(second).toMatchObject({ ok: true, moved: false });
+    expect(second).not.toHaveProperty('transactionId');
   });
 });
