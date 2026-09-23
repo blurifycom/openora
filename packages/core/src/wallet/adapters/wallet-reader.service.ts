@@ -36,10 +36,13 @@ function toProviderTransaction(
 }
 
 export class WalletReaderService implements WalletReader {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly defaultCurrency?: string,
+  ) {}
 
   getBalances(userId: string): Promise<WalletBalancesReading> {
-    return readWalletBalances(this.drizzle.db, userId);
+    return readWalletBalances(this.drizzle.db, userId, this.defaultCurrency);
   }
 
   async getLifetimeDeposit(userId: string): Promise<string> {
@@ -116,6 +119,6 @@ export class WalletReaderService implements WalletReader {
   }
 
   getBalance(userId: string): Promise<{ balance: string; currency: string }> {
-    return resolveWalletBalance(this.drizzle.db, userId);
+    return resolveWalletBalance(this.drizzle.db, userId, this.defaultCurrency);
   }
 }

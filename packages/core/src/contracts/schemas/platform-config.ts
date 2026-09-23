@@ -5,7 +5,7 @@ import {
   ResponsibleGamingSchema,
   defaultResponsibleGamingConfig,
 } from './igaming-config.js';
-import { MoneyAmountSchema } from './common.js';
+import { CurrencyTickerInputSchema, MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
 /**
@@ -73,6 +73,12 @@ export const WalletConfigSchema = z
      * core code change.
      */
     cryptoCurrencies: z.array(z.string().min(1)).optional(),
+    /**
+     * Active currency reported for a player who has no wallet row yet - before their first
+     * deposit or credit creates one. Absent = USD. A crypto-only operator sets its settlement
+     * coin here so a new player is never shown a fiat balance the operator does not offer.
+     */
+    defaultCurrency: CurrencyTickerInputSchema.optional(),
     /**
      * Vendor-side account each provider's sweeps move player funds into, keyed by the
      * provider name in `wallet_asset.providerName` (`default` for the single bound
