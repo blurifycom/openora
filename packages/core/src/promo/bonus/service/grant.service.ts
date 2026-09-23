@@ -54,7 +54,7 @@ export const DEFAULT_WEIGHT_PROFILE_NAME = 'default';
  */
 export const DEFAULT_GRANT_TERMS = { wageringMultiplier: '1', expiryDays: 30 } as const;
 
-const grantArgsSchema =  z
+const grantArgsSchema = z
   .object({
     userId: UuidSchema,
     currency: CurrencyTickerInputSchema,
