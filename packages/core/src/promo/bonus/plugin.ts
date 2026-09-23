@@ -38,7 +38,10 @@ const EXPIRY_QUEUE = queue('promo-bonus-expiry');
 const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
 const DEPOSIT_QUEUE = queue('promo-offer-deposit');
 const EXPIRY_CRON = '*/15 * * * *';
-const FORFEIT_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
+// Shared by every money-adjacent job in this plugin - a bare enqueue() takes the driver's
+// default of one attempt, which turns one transient failure into a bonus the player earned and
+// never receives. Each handler's own database guard is what makes the retry itself safe.
+const MONEY_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
 const EmptyJobPayloadSchema = z.object({});
 
@@ -174,7 +177,7 @@ export default {
               actorId: initiatedBy === 'system' ? null : actorId,
               actorIsAdmin: initiatedBy === 'admin',
             },
-            FORFEIT_RETRY,
+            MONEY_JOB_RETRY,
           )
           .catch((err: unknown) =>
             logger.error({ err, userId }, 'promo bonus forfeit enqueue failed'),
@@ -227,7 +230,7 @@ export default {
         .enqueue(
           DEPOSIT_QUEUE,
           { userId, amount, currency, transactionId },
-          { idempotencyKey: `promo-offer-deposit:${transactionId}` },
+          { idempotencyKey: `promo-offer-deposit:${transactionId}`, ...MONEY_JOB_RETRY },
         )
         .catch((err: unknown) =>
           logger.error({ err, userId }, 'promo offer deposit enqueue failed'),

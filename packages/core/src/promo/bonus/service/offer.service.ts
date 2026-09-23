@@ -228,11 +228,14 @@ export class OfferService {
     deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
     context: OfferContext = {},
   ): Promise<GrantedBonus[]> {
-    // The deposit has already committed by the time this job runs, so a lifetime total equal to
-    // this deposit means there was nothing before it. Asking the wallet keeps the fact where it
-    // is owned rather than snapshotting it onto an event.
-    const lifetime = await this.wallet.getLifetimeDeposit(deposit.userId);
-    const isFirstDeposit = moneyCompare(lifetime, deposit.amount) === 0;
+    // The deposit has already committed by the time this job runs, and a second deposit can
+    // commit and have its own job run first. Comparing the running lifetime total to this
+    // deposit's amount would then answer for whichever deposit happened to be summed last, not
+    // for this one - `isFirstDeposit` instead compares this transaction's own committed
+    // `created_at` against every other completed deposit, which does not move once written.
+    const isFirstDeposit = this.wallet.isFirstDeposit
+      ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId)
+      : moneyCompare(await this.wallet.getLifetimeDeposit(deposit.userId), deposit.amount) === 0;
     const at = new Date();
     // Reported rather than emitted here: the deposit and the grant commit together on the
     // caller's transaction, and a notification promising a bonus that then rolled back is worse
@@ -327,10 +330,19 @@ export class OfferService {
     tx: DrizzleTx,
     deposit: { userId: Uuid; currency: string },
   ): Promise<{ optIn: PromoOptInRow; offer: PromoOfferRow }[]> {
+    // Scoped to this deposit's currency: an automatic offer in another currency could never be
+    // satisfied by this deposit, and opening a claim on it anyway would leave a row that later
+    // blocks re-denominating that offer for a player who could never have earned a bonus from it.
     const automatic = await tx
       .select({ id: promoOffer.id })
       .from(promoOffer)
-      .where(and(eq(promoOffer.status, 'active'), eq(promoOffer.requiresOptIn, false)));
+      .where(
+        and(
+          eq(promoOffer.status, 'active'),
+          eq(promoOffer.requiresOptIn, false),
+          eq(promoOffer.currency, deposit.currency),
+        ),
+      );
     if (automatic.length > 0) {
       await tx
         .insert(promoOptIn)
@@ -348,8 +360,12 @@ export class OfferService {
       .for('update', { of: promoOptIn });
   }
 
+  // Locked: `update()` reads this to decide whether a currency change is safe, and a concurrent
+  // `optIn()` racing between that read and the write would let a claim land under the currency
+  // being replaced, then get skipped by every later deposit because it no longer matches the
+  // offer it claims against.
   private async requireOffer(tx: DrizzleTx, id: Uuid): Promise<PromoOfferRow> {
-    const [row] = await tx.select().from(promoOffer).where(eq(promoOffer.id, id));
+    const [row] = await tx.select().from(promoOffer).where(eq(promoOffer.id, id)).for('update');
     if (!row) {
       throw new OfferNotFoundError(id);
     }

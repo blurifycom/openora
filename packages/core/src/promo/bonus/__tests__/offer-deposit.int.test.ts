@@ -20,6 +20,7 @@ import { OfferService } from '../service/offer.service.js';
 let db: TestDb;
 let offers: OfferService;
 let lifetimeDeposit = '0';
+let firstDepositOverride: boolean | undefined;
 const logged: object[] = [];
 
 const offerRow = (over: Partial<typeof promoOffer.$inferInsert> = {}) => ({
@@ -63,6 +64,7 @@ beforeAll(async () => {
   db = await createTestDb([migrate]);
   const wallet = mock<WalletReader>({
     getLifetimeDeposit: vi.fn(async () => lifetimeDeposit),
+    isFirstDeposit: vi.fn(async () => firstDepositOverride ?? false),
   });
   offers = new OfferService(
     db.drizzle,
@@ -84,6 +86,7 @@ beforeEach(async () => {
   await db.drizzle.db.insert(promoWeightProfile).values({ name: 'default' }).onConflictDoNothing();
   logged.length = 0;
   lifetimeDeposit = '0';
+  firstDepositOverride = undefined;
 });
 
 describe('a deposit applied to a claim', () => {
@@ -214,5 +217,64 @@ describe('a deposit applied to a claim', () => {
     await apply(userId, '50', randomUUID());
 
     expect(await grantsOf(userId)).toHaveLength(0);
+  });
+
+  it('trusts isFirstDeposit over a lifetime total inflated by a later deposit processed first', async () => {
+    // A second deposit's job ran first, so the running lifetime total already includes it -
+    // comparing it against this (earlier) deposit's own amount would wrongly say "not first".
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '20', rules: { firstDepositOnly: true } });
+    await claim(userId, offer.id);
+    lifetimeDeposit = '150'; // this deposit (50) plus a later one (100) already summed in
+    firstDepositOverride = true; // the immutable fact: this transaction really was first
+
+    await apply(userId, '50', randomUUID());
+
+    expect(await grantsOf(userId)).toHaveLength(1);
+  });
+
+  it('does not open an automatic claim on an offer in a currency this deposit cannot satisfy', async () => {
+    const userId = randomUUID();
+    const eurOffer = await seedOffer({
+      currency: 'EUR',
+      requiresOptIn: false,
+      minDeposit: '10',
+    });
+    lifetimeDeposit = '50';
+
+    await apply(userId, '50', randomUUID(), 'USD');
+
+    expect(await optInsOf(userId)).toHaveLength(0);
+
+    // Re-denominating the EUR offer is still possible: no claim was ever opened against it.
+    await db.drizzle.db
+      .update(promoOffer)
+      .set({ currency: 'GBP' })
+      .where(eq(promoOffer.id, eurOffer.id));
+    const [after] = await db.drizzle.db
+      .select()
+      .from(promoOffer)
+      .where(eq(promoOffer.id, eurOffer.id));
+    expect(after?.currency).toBe('GBP');
+  });
+
+  it('serializes an opt-in against a concurrent offer edit holding the row lock', async () => {
+    const offer = await seedOffer({ minDeposit: '0' });
+    const userId = randomUUID();
+    let lockReleasedAt = 0;
+
+    const holder = db.drizzle.db.transaction(async (tx) => {
+      await tx.select().from(promoOffer).where(eq(promoOffer.id, offer.id)).for('update');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      lockReleasedAt = Date.now();
+    });
+    // Give the holder a head start so it is the one to acquire the lock first.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await offers.optIn(userId, offer.id);
+    const optInResolvedAt = Date.now();
+    await holder;
+
+    expect(optInResolvedAt).toBeGreaterThanOrEqual(lockReleasedAt);
   });
 });

@@ -50,6 +50,16 @@ export type WalletReader = {
   ): Promise<WalletProviderTransaction | null>;
   /** Current balance in the player's active wallet currency. Optional for the same reason as getWithdrawalCountsInWindow above. */
   getBalance?(userId: string): Promise<{ balance: string; currency: string }>;
+  /**
+   * Whether this completed deposit transaction is the earliest completed deposit this player
+   * has ever made, decided from each deposit's own committed `created_at` rather than a live sum.
+   * A first-deposit-only bonus is awarded from an at-least-once job that can run for an earlier
+   * deposit after a later one already settled; comparing the running lifetime total to the
+   * deposit's own amount at that point answers a question that has already moved on. Optional
+   * for the same reason as getWithdrawalCountsInWindow above - a caller without it falls back to
+   * the lifetime-total comparison.
+   */
+  isFirstDeposit?(userId: string, transactionId: string): Promise<boolean>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

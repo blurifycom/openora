@@ -101,6 +101,64 @@ describe('WalletReaderService.findByProviderRef (real PG)', () => {
   });
 });
 
+describe('WalletReaderService.isFirstDeposit (real PG)', () => {
+  it('is true for a player whose only completed deposit is this one', async () => {
+    const w = await seedWallet();
+    const [txn] = await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId: w.id,
+        type: 'deposit',
+        amount: '50',
+        currency: 'USD',
+        status: 'completed',
+        direction: 'credit',
+        rail: 'fiat',
+      })
+      .returning();
+
+    expect(await svc.isFirstDeposit(w.userId, txn?.id ?? '')).toBe(true);
+  });
+
+  it('stays true for the earlier deposit even when the later one was recorded and checked first', async () => {
+    const w = await seedWallet();
+    const [earlier] = await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId: w.id,
+        type: 'deposit',
+        amount: '50',
+        currency: 'USD',
+        status: 'completed',
+        direction: 'credit',
+        rail: 'fiat',
+      })
+      .returning();
+    const [later] = await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId: w.id,
+        type: 'deposit',
+        amount: '100',
+        currency: 'USD',
+        status: 'completed',
+        direction: 'credit',
+        rail: 'fiat',
+      })
+      .returning();
+
+    // A running-total comparison, computed after both rows exist, would say neither deposit is
+    // first. Each transaction's own committed created_at settles it regardless of read order.
+    expect(await svc.isFirstDeposit(w.userId, later?.id ?? '')).toBe(false);
+    expect(await svc.isFirstDeposit(w.userId, earlier?.id ?? '')).toBe(true);
+  });
+
+  it('is false for an unknown or not-yet-completed transaction', async () => {
+    const w = await seedWallet();
+    expect(await svc.isFirstDeposit(w.userId, randomUUID())).toBe(false);
+  });
+});
+
 describe('WalletReaderService.getBalance (real PG)', () => {
   it('returns a zero USD balance for a user with no wallet row', async () => {
     expect(await svc.getBalance(randomUUID())).toEqual({ balance: '0', currency: 'USD' });
