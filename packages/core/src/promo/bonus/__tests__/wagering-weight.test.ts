@@ -83,9 +83,12 @@ describe('resolveContributionPercent', () => {
     expect(resolveContributionPercent(rows, casino({ gameId: 'game-a' }))).toBe('100');
   });
 
-  it('is case sensitive on a product, so a vendor casing change cannot silently re-weight', () => {
-    const rows = [row('product', 'casino', '100')];
-    expect(resolveContributionPercent(rows, casino({ product: 'Casino' }))).toBe('0');
+  it('counts nothing for a product outside the canonical set, even under a positive default', () => {
+    const rows = [row('product', 'casino', '100'), row('default', null, '100')];
+    for (const product of ['sports', 'Casino', '']) {
+      const uncheckedAdapterContext = { provider: 'aggregator', product } as WagerContext;
+      expect(resolveContributionPercent(rows, uncheckedAdapterContext)).toBe('0');
+    }
   });
 });
 

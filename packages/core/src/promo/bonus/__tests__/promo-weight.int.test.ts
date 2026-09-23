@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { findOneOrThrow, uniqueConstraintName } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type { Uuid } from '@openora/core/contracts';
+import type { Uuid, WagerContext } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoWeight, promoWeightProfile } from '../schema/index.js';
 import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
@@ -11,7 +11,7 @@ import { resolveContributionPercent, weightedStake } from '../shared/wagering-we
 let db: TestDb;
 let profileId: Uuid;
 
-const CASINO = { provider: 'aggregator', product: 'casino' };
+const CASINO: WagerContext = { provider: 'aggregator', product: 'casino' };
 
 async function seedProfile(): Promise<Uuid> {
   const row = findOneOrThrow(
@@ -105,6 +105,14 @@ describe('wagering weights stored in Postgres', () => {
     expect(weightedStake('100', resolveContributionPercent(await rowsOf(), CASINO))).toBe(
       '0.000000000000000000',
     );
+  });
+
+  it('scores an unknown product at zero even when the stored default is positive', async () => {
+    await seedWeight('default', null, '100');
+    const product: string = 'sports';
+    const unmappedVendorBucket = { provider: 'aggregator', product } as WagerContext;
+
+    expect(resolveContributionPercent(await rowsOf(), unmappedVendorBucket)).toBe('0');
   });
 
   it('reads only its own profile, so two profiles can weight the same game differently', async () => {

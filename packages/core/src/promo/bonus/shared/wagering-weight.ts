@@ -1,4 +1,4 @@
-import type { WagerContext } from '@openora/core/contracts';
+import { isWagerProduct, type WagerContext } from '@openora/core/contracts';
 import { moneyDivide, moneyScaleBy } from '@openora/core/server';
 import type { WagerWeightScope } from '../contract/index.js';
 
@@ -25,12 +25,16 @@ const resolutionOrder: ReadonlyArray<{
  *
  * Returns `'0'` when nothing matches, including when the profile has no default row: a bet the
  * operator never weighted must not advance a requirement, because the failure mode in the other
- * direction releases a player's bonus early and cannot be taken back.
+ * direction releases a player's bonus early and cannot be taken back. An unknown product counts
+ * nothing for the same reason, even under a positive default.
  */
 export function resolveContributionPercent(
   rows: readonly WagerWeightRow[],
   context: WagerContext,
 ): string {
+  if (!isWagerProduct(context.product)) {
+    return '0';
+  }
   for (const level of resolutionOrder) {
     const ref = level.scope === 'default' ? null : level.ref(context);
     if (level.scope !== 'default' && ref === undefined) {
