@@ -30,7 +30,8 @@ const logger = createLogger('promo-bonus');
 
 const EXPIRY_QUEUE = queue('promo-bonus-expiry');
 const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
-const EXPIRY_CRON = '*/5 * * * *';
+const EXPIRY_CRON = '*/15 * * * *';
+const FORFEIT_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
 const EmptyJobPayloadSchema = z.object({});
 
@@ -128,17 +129,31 @@ export default {
           return;
         }
         const { userId, actorId } = parsed.data;
-        // A player excluding themselves is the actor; an account closure is always an admin.
-        const actorIsAdmin =
-          topic === 'player.account.closed' ||
-          ('initiatedBy' in parsed.data && parsed.data.initiatedBy !== 'player');
+        // Account closure is always an admin action. A self-exclusion names its own initiator,
+        // which is 'player', 'admin' or 'system' - a rule-triggered exclusion is nobody's admin
+        // action, and recording it as one puts the wrong name on a regulator-facing audit row.
+        const initiatedBy: 'player' | 'admin' | 'system' =
+          topic === 'player.account.closed'
+            ? 'admin'
+            : 'initiatedBy' in parsed.data
+              ? parsed.data.initiatedBy
+              : 'system';
         // No queue idempotency key on purpose. It would have to be derived from the player and
         // the reason, and a player who excludes themselves, lets the cool-off lapse, takes a new
         // bonus and excludes themselves again produces the same key - which BullMQ drops
         // silently, leaving the second bonus active. The durable guard is the `status = 'active'`
         // claim inside `forfeitAllFor`, which already makes a redelivery write nothing twice.
         void jobs
-          .enqueue(FORFEIT_QUEUE, { userId, reason, actorId: actorId ?? null, actorIsAdmin })
+          .enqueue(
+            FORFEIT_QUEUE,
+            {
+              userId,
+              reason,
+              actorId: initiatedBy === 'system' ? null : actorId,
+              actorIsAdmin: initiatedBy === 'admin',
+            },
+            FORFEIT_RETRY,
+          )
           .catch((err: unknown) =>
             logger.error({ err, userId }, 'promo bonus forfeit enqueue failed'),
           );

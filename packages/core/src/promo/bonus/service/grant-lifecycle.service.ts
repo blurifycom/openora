@@ -13,6 +13,7 @@ type ClosedGrant = {
   userId: Uuid;
   currency: string;
   forfeitedAmount: string;
+  /** The admin who forfeited it, for the `promo.bonus.forfeited` event; null otherwise. */
   actorId: Uuid | null;
 };
 
@@ -176,7 +177,9 @@ export class GrantLifecycleService {
       userId: claimed.userId,
       currency: claimed.currency,
       forfeitedAmount,
-      actorId: outcome.actor?.id ?? null,
+      // The event's actorId names the admin who forfeited it, null otherwise - a player's own
+      // id here would tell downstream consumers an admin forfeited their own self-exclusion.
+      actorId: outcome.actor?.isAdmin ? outcome.actor.id : null,
     };
   }
 }

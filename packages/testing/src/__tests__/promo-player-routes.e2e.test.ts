@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
 import { BONUS_GRANTS } from '@openora/core/contracts';
 import { promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
 import {
@@ -8,13 +8,17 @@ import {
   bootTestApp,
   seedMinimal,
   registerAndMaterializePlayer,
+  asAdmin,
   type TestDb,
   type TestApp,
   type TestClient,
 } from '../index.js';
 
+const JOB_WAIT = { timeout: 15000, interval: 100 };
+
 let db: TestDb;
 let app: TestApp;
+let admin: TestClient;
 let weightProfileId: string;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
@@ -55,6 +59,7 @@ beforeAll(async () => {
   db = await setupTestDb();
   app = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
   await seedMinimal(app.container, { playerCount: 0 });
+  admin = await asAdmin(app.app);
 
   const [profile] = await drizzle()
     .insert(promoWeightProfile)
@@ -168,5 +173,37 @@ describe('a player reaching for someone else', () => {
     const res = await app.app.request('/promo/grants');
 
     expect(res.status).toBe(401);
+  });
+});
+
+describe('self-exclusion forfeiting every active grant', () => {
+  it('forfeits immediately and records the system as the actor, not an admin', async () => {
+    const { userId } = await player();
+    const grantId = await grantBonus(userId, '50');
+
+    // A system-triggered exclusion (a rule, not a person) is not an admin action. Emitted
+    // directly, the same technique tag.e2e.test.ts uses to drive an event handler without a
+    // route to trigger it from.
+    app.container.get(EVENT_BUS).emit('rg.self_exclusion.activated', {
+      userId,
+      playerId: null,
+      exclusionId: randomUUID(),
+      isPermanent: true,
+      durationMonths: null,
+      expiresAt: null,
+      initiatedBy: 'system',
+      actorId: randomUUID(),
+      reason: 'rg rule triggered',
+    });
+
+    await vi.waitFor(async () => {
+      const grantRes = await admin.get(
+        `/audit/logs?resourceId=${grantId}&action=promo.bonus.forfeited`,
+      );
+      const grantBody = await readJson(grantRes);
+      expect(grantBody.items).toHaveLength(1);
+      expect(grantBody.items[0].actorType).toBe('system');
+      expect(grantBody.items[0].actorId).toBeNull();
+    }, JOB_WAIT);
   });
 });

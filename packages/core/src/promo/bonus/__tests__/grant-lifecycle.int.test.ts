@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
@@ -50,6 +50,21 @@ const expireNow = (id: string) =>
     .set({ expiresAt: new Date(Date.now() - 1000) })
     .where(eq(promoGrant.id, id));
 
+// Test cleanup needs to delete ledger rows between cases; the append-only trigger that
+// production relies on would refuse it, so cleanup lifts it for exactly this statement.
+const wipeLedger = async () => {
+  await db.drizzle.db.execute(
+    sql`ALTER TABLE promo_grant_entry DISABLE TRIGGER promo_grant_entry_append_only`,
+  );
+  try {
+    await db.drizzle.db.delete(promoGrantEntry);
+  } finally {
+    await db.drizzle.db.execute(
+      sql`ALTER TABLE promo_grant_entry ENABLE TRIGGER promo_grant_entry_append_only`,
+    );
+  }
+};
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
   audit = makeAuditWriter();
@@ -62,7 +77,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.delete(promoGrantEntry);
+  await wipeLedger();
   await db.drizzle.db.delete(promoGrant);
   await db.drizzle.db.delete(promoWeight);
   await db.drizzle.db.delete(promoWeightProfile);
@@ -183,12 +198,18 @@ describe('forfeiting every grant a player holds', () => {
     const userId = randomUUID();
     await grant({ userId });
 
-    await lifecycle.forfeitAllFor(userId, 'self_exclusion', { id: userId, isAdmin: false });
+    const closed = await lifecycle.forfeitAllFor(userId, 'self_exclusion', {
+      id: userId,
+      isAdmin: false,
+    });
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ actorType: 'player', actorId: userId }),
     );
+    // The event names the admin who forfeited it, never the player: a self-exclusion is not an
+    // admin action, and publishing the player's own id here would say otherwise.
+    expect(closed[0]?.actorId).toBeNull();
   });
 
   it('names the admin when one took the grant away', async () => {
@@ -196,11 +217,25 @@ describe('forfeiting every grant a player holds', () => {
     const actorId = randomUUID();
     await grant({ userId });
 
-    await lifecycle.forfeitAllFor(userId, 'admin', { id: actorId, isAdmin: true });
+    const closed = await lifecycle.forfeitAllFor(userId, 'admin', { id: actorId, isAdmin: true });
 
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ actorType: 'admin', actorId, action: 'promo.bonus.forfeited' }),
     );
+    expect(closed[0]?.actorId).toBe(actorId);
+  });
+
+  it('records no actor when the system forfeited the grant on its own', async () => {
+    const userId = randomUUID();
+    await grant({ userId });
+
+    const closed = await lifecycle.forfeitAllFor(userId, 'withdrawal_while_active');
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorType: 'system' }),
+    );
+    expect(closed[0]?.actorId).toBeNull();
   });
 });
