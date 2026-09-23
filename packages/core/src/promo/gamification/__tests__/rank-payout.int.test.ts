@@ -7,6 +7,7 @@ import type {
   BonusGrantCommands,
   ExchangeRateReader,
   PlayEligibilityPort,
+  WalletReader,
 } from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import {
@@ -23,6 +24,7 @@ let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
+const getBalances = vi.fn<WalletReader['getBalances']>();
 const logger = { warn: vi.fn(), error: vi.fn() };
 
 const LEVEL_UP_TERMS = { wageringMultiplier: '3', expiryDays: 7 };
@@ -37,6 +39,7 @@ const service = () =>
     mock<BonusGrantCommands>({ grant }),
     mock<PlayEligibilityPort>({ isRestricted }),
     mock<ExchangeRateReader>({ convert }),
+    mock<WalletReader>({ getBalances }),
     logger,
   );
 
@@ -94,6 +97,7 @@ beforeEach(async () => {
   grant.mockImplementation(async () => ({ ok: true, grantId: randomUUID(), created: true }));
   isRestricted.mockResolvedValue(false);
   convert.mockResolvedValue(null);
+  getBalances.mockResolvedValue({ activeCurrency: 'USD', balances: [] });
   await db.drizzle.db.delete(promoRankLevelUp);
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
@@ -114,6 +118,7 @@ beforeEach(async () => {
       eligibleProducts: [],
       rewards: { levelUp: LEVEL_UP_TERMS, daily: DAILY_TERMS },
       payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
+      payInPlayerCurrency: false,
     },
   });
 });
@@ -189,6 +194,7 @@ describe('settling owed level-up bonuses', () => {
       mock<BonusGrantCommands>({ grant }),
       undefined,
       mock<ExchangeRateReader>({ convert }),
+      mock<WalletReader>({ getBalances }),
       logger,
     );
 
@@ -292,10 +298,60 @@ describe('paying a periodic bonus', () => {
     });
   });
 
+  it('credits the currency the player actually plays in, when the operator asked for that', async () => {
+    const userId = await holding('silver', YESTERDAY_NOON);
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payInPlayerCurrency: true, payoutCurrency: 'USDT' });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    convert.mockResolvedValue('0.000008000000000000');
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(convert).toHaveBeenCalledWith('0.500000000000000000', 'USD', 'BTC');
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId, currency: 'BTC', amount: '0.000008000000000000' }),
+    );
+  });
+
+  it('falls back to the operator currency when the player has no rate of their own', async () => {
+    await holding('silver', YESTERDAY_NOON);
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payInPlayerCurrency: true, payoutCurrency: 'USDT' });
+    getBalances.mockResolvedValue({ activeCurrency: 'XYZ', balances: [] });
+    convert.mockImplementation(async (amount, _from, to) => (to === 'USDT' ? amount : null));
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ currency: 'USDT' }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'XYZ' }),
+      expect.any(String),
+    );
+  });
+
+  it('pays in the ladder currency without asking the wallet when told to', async () => {
+    await holding('silver', YESTERDAY_NOON);
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(getBalances).not.toHaveBeenCalled();
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ currency: 'USD' }),
+    );
+  });
+
   it('pays nothing at all when the payout currency has no rate', async () => {
     await holding('silver', YESTERDAY_NOON);
     await db.drizzle.db.update(promoRankConfig).set({ payoutCurrency: 'USDT' });
     convert.mockResolvedValue(null);
+    getBalances.mockResolvedValue({ activeCurrency: 'USD', balances: [] });
 
     const granted = await service().payPeriodic('daily', NOW);
 

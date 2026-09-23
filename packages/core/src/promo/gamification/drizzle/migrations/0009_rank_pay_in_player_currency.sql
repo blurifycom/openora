@@ -1,0 +1,1 @@
+ALTER TABLE "promo_rank_config" ADD COLUMN "pay_in_player_currency" boolean DEFAULT false NOT NULL;

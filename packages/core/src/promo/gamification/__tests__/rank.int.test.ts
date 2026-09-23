@@ -41,7 +41,12 @@ const LADDER = {
       levelUpBonus: '25.5',
     },
   ],
-  config: { eligibleProducts: [], rewards: {}, payoutAnchors: DEFAULT_PAYOUT_ANCHORS },
+  config: {
+    eligibleProducts: [],
+    rewards: {},
+    payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
+    payInPlayerCurrency: false,
+  },
 };
 const PARALLEL_BETS = 20;
 

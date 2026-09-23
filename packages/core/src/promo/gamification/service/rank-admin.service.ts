@@ -180,6 +180,8 @@ export class RankAdminService {
         eligibleProducts: promoRankConfig.eligibleProducts,
         rewards: promoRankConfig.rewards,
         payoutAnchors: promoRankConfig.payoutAnchors,
+        payoutCurrency: promoRankConfig.payoutCurrency,
+        payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
       })
       .from(promoRankConfig);
     if (!config) {
@@ -200,6 +202,8 @@ export class RankAdminService {
       eligibleProducts: [...new Set(input.eligibleProducts)],
       rewards: input.rewards,
       payoutAnchors: input.payoutAnchors,
+      payoutCurrency: input.payoutCurrency ?? null,
+      payInPlayerCurrency: input.payInPlayerCurrency,
     };
     return this.drizzle.db.transaction(async (tx) => {
       const [before] = await tx
@@ -207,6 +211,8 @@ export class RankAdminService {
           eligibleProducts: promoRankConfig.eligibleProducts,
           rewards: promoRankConfig.rewards,
           payoutAnchors: promoRankConfig.payoutAnchors,
+          payoutCurrency: promoRankConfig.payoutCurrency,
+          payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
         })
         .from(promoRankConfig)
         .for('update');

@@ -27,6 +27,8 @@ const drizzle = () => app.container.get(DRIZZLE).db;
 const CONFIG_ACTION = 'promo.rank_config.set';
 const CONFIG_PATH = '/backoffice/promo/ranks/config';
 const CASINO_ONLY = {
+  payoutCurrency: 'USDT',
+  payInPlayerCurrency: true,
   payoutAnchors: { dailyHour: 6, weeklyDay: 5, monthlyDay: 15 },
   eligibleProducts: ['casino'],
   rewards: {
@@ -99,7 +101,10 @@ describe('an operator configuring what a rank counts and pays', () => {
     const res = await admin.get(CONFIG_PATH);
 
     expect(res.status).toBe(200);
-    expect(await readJson(res)).toEqual(EXAMPLE_RANK_LADDER.config);
+    expect(await readJson(res)).toEqual({
+      ...EXAMPLE_RANK_LADDER.config,
+      payoutCurrency: null,
+    });
   });
 
   it('saves new settings, audits them, and stops counting products left out', async () => {
@@ -132,7 +137,10 @@ describe('an operator configuring what a rank counts and pays', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await readJson(await admin.get(CONFIG_PATH))).toEqual(EXAMPLE_RANK_LADDER.config);
+    expect(await readJson(await admin.get(CONFIG_PATH))).toEqual({
+      ...EXAMPLE_RANK_LADDER.config,
+      payoutCurrency: null,
+    });
     expect(await auditRows()).toHaveLength(auditedBefore);
   });
 

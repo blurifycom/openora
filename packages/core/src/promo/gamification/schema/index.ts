@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   decimal,
   index,
@@ -97,6 +98,8 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   rewards: jsonb().$type<RankRewards>().notNull().default({}),
   /** What rewards are credited in, when that is not the ladder's own currency. */
   payoutCurrency: text(),
+  /** Credit a reward in the currency the player plays in, falling back to the two above. */
+  payInPlayerCurrency: boolean().notNull().default(false),
   /** When each periodic payout closes, and so what window it pays for. All UTC. */
   payoutAnchors: jsonb()
     .$type<RankPayoutAnchors>()

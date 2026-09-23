@@ -64,6 +64,13 @@
       "when": 1790171640579,
       "tag": "0008_rank_payout_currency",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790172569191,
+      "tag": "0009_rank_pay_in_player_currency",
+      "breakpoints": true
     }
   ]
 }

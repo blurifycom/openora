@@ -6,6 +6,7 @@ import {
   JOB_QUEUE,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
+  WALLET_READER,
   PromoConfigSchema,
   WAGER_TRACKING,
   queue,
@@ -71,6 +72,7 @@ export default {
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.get(EXCHANGE_RATE_READER),
+        c.get(WALLET_READER),
         logger,
       );
       events = c.get(EVENT_BUS);

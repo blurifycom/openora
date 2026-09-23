@@ -133,6 +133,14 @@ export const RankConfigSchema = z.object({
    * currency it is priced in, which is the common case and converts nothing.
    */
   payoutCurrency: CurrencyTickerSchema.nullish(),
+  /**
+   * Credit a reward in the currency the player actually plays in, rather than one fixed
+   * currency. A bonus is attributed to the currency it was granted in and can only be wagered
+   * by bets in that same currency, so a player who only ever bets in one coin cannot use a
+   * bonus paid in another. Falls back to `payoutCurrency` - and then to the ladder's own - when
+   * the player's currency is unknown or has no rate.
+   */
+  payInPlayerCurrency: z.boolean().prefault(false),
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   rewards: z

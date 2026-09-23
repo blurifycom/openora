@@ -5,6 +5,7 @@ import type {
   DomainEventPayload,
   PlayEligibilityPort,
   Uuid,
+  WalletReader,
 } from '@openora/core/contracts';
 import { moneyScaleBy, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import {
@@ -18,6 +19,9 @@ import {
 import { lastCompletePeriod, type RankPeriodKind } from '../shared/rank-period.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
+
+/** What a reward is credited in, in the order the operator asked for it. */
+type PayoutSettings = { currency: string | null; inPlayerCurrency: boolean };
 
 type Logger = {
   warn: (context: object, message: string) => void;
@@ -50,6 +54,7 @@ export class RankPayoutService {
     private readonly grants: BonusGrantCommands | undefined,
     private readonly eligibility: PlayEligibilityPort | undefined,
     private readonly rates: ExchangeRateReader,
+    private readonly wallet: WalletReader,
     private readonly logger: Logger,
   ) {}
 
@@ -62,7 +67,7 @@ export class RankPayoutService {
     if (!settings) {
       return [];
     }
-    const { terms, payoutCurrency } = settings;
+    const { terms, payout } = settings;
     const owed = await this.drizzle.db
       .select({ id: promoRankLevelUp.id })
       .from(promoRankLevelUp)
@@ -74,7 +79,7 @@ export class RankPayoutService {
     for (const { id } of owed) {
       try {
         const paid = await this.drizzle.db.transaction((tx) =>
-          this.settleLevelUp(tx, id, terms, payoutCurrency),
+          this.settleLevelUp(tx, id, terms, payout),
         );
         if (paid) {
           granted.push(paid);
@@ -97,7 +102,7 @@ export class RankPayoutService {
     if (!settings) {
       return [];
     }
-    const { terms, anchors, paidThrough, payoutCurrency } = settings;
+    const { terms, anchors, paidThrough, payout } = settings;
     const period = lastCompletePeriod(kind, now, anchors);
     const settled = paidThrough[kind];
     if (settled !== undefined && new Date(settled) >= period.end) {
@@ -133,10 +138,10 @@ export class RankPayoutService {
         if (player.amount === null || (await this.isBlocked(player.userId))) {
           continue;
         }
-        const payout = { ...player, amount: player.amount };
+        const owed = { ...player, amount: player.amount };
         try {
           const paid = await this.drizzle.db.transaction((tx) =>
-            this.grant(tx, payout, period.sourceRef, terms, payoutCurrency),
+            this.grant(tx, owed, period.sourceRef, terms, payout),
           );
           if (paid) {
             granted.push(paid);
@@ -166,7 +171,7 @@ export class RankPayoutService {
     tx: DrizzleTx,
     id: Uuid,
     terms: RankRewardTerms,
-    payoutCurrency: string | null,
+    payout: PayoutSettings,
   ) {
     const [row] = await tx
       .select({
@@ -191,24 +196,24 @@ export class RankPayoutService {
       await settle('restricted');
       return null;
     }
-    const paid = await this.grant(tx, row, `rank-level-up:${row.tierId}`, terms, payoutCurrency);
+    const paid = await this.grant(tx, row, `rank-level-up:${row.tierId}`, terms, payout);
     await settle('granted', paid?.grantId ?? null);
     return paid;
   }
 
   private async grant(
     tx: DrizzleTx,
-    payout: { userId: Uuid; currency: string; amount: string },
+    owed: { userId: Uuid; currency: string; amount: string },
     sourceRef: string,
     terms: RankRewardTerms,
-    payoutCurrency: string | null,
+    payout: PayoutSettings,
   ): Promise<Granted | null> {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
-    const paid = await this.inPayoutCurrency(payout, payoutCurrency);
+    const paid = await this.inPayoutCurrency(owed, payout);
     const outcome = await this.grants.grant(tx, {
-      userId: payout.userId,
+      userId: owed.userId,
       currency: paid.currency,
       amount: paid.amount,
       source: 'rank',
@@ -223,7 +228,7 @@ export class RankPayoutService {
       return null;
     }
     return {
-      userId: payout.userId,
+      userId: owed.userId,
       grantId: outcome.grantId,
       currency: paid.currency,
       grantedAmount: paid.amount,
@@ -234,25 +239,47 @@ export class RankPayoutService {
   }
 
   /**
-   * The reward as it will be credited. A ladder priced in something the wallet cannot hold pays
-   * in the operator's payout currency, converted at the rate of this moment - the amount owed is
-   * a value, and the rate that turns it into money is the rate when the money moves.
+   * The reward as it will be credited. What a rank owes is a value, priced in the ladder's
+   * currency; the rate that turns it into money is the rate of the moment the money moves.
    *
-   * No rate means no payout: the caller's transaction is left to roll back and the next run
-   * tries again, rather than crediting a figure nobody can justify.
+   * A bonus can only be wagered by bets in the currency it was granted in, so paying in the
+   * currency the player actually plays in is what makes the reward usable at all. The operator's
+   * fixed payout currency is the fallback, and the ladder's own is the last resort.
    */
   private async inPayoutCurrency(
-    payout: { currency: string; amount: string },
-    payoutCurrency: string | null,
+    owed: { userId: Uuid; currency: string; amount: string },
+    payout: PayoutSettings,
   ) {
-    if (payoutCurrency === null || payoutCurrency === payout.currency) {
-      return payout;
+    const targets = await this.payoutOrder(owed.userId, payout);
+    if (targets.length === 0) {
+      // Nothing to convert into: the ladder pays in the currency it is priced in.
+      return owed;
     }
-    const amount = await this.rates.convert(payout.amount, payout.currency, payoutCurrency);
-    if (amount === null) {
-      throw new Error(`no rate to pay a rank reward in ${payoutCurrency}`);
+    for (const target of targets) {
+      if (target === owed.currency) {
+        return owed;
+      }
+      const amount = await this.rates.convert(owed.amount, owed.currency, target);
+      if (amount !== null) {
+        return { userId: owed.userId, currency: target, amount };
+      }
+      this.logger.warn(
+        { userId: owed.userId, from: owed.currency, to: target },
+        'rank payout currency skipped - no rate',
+      );
     }
-    return { currency: payoutCurrency, amount };
+    throw new Error(`no rate to pay a rank reward owed in ${owed.currency}`);
+  }
+
+  /** The currencies to try, best first. */
+  private async payoutOrder(userId: Uuid, payout: PayoutSettings) {
+    const player = payout.inPlayerCurrency
+      ? // Answers for a player with no wallet too, with the platform's default currency.
+        (await this.wallet.getBalances(userId)).activeCurrency
+      : null;
+    return [player, payout.currency].flatMap((currency) =>
+      currency === null || currency === undefined ? [] : [currency],
+    );
   }
 
   private async settingsFor(kind: keyof RankRewards) {
@@ -269,6 +296,7 @@ export class RankPayoutService {
         anchors: promoRankConfig.payoutAnchors,
         paidThrough: promoRankConfig.paidThrough,
         payoutCurrency: promoRankConfig.payoutCurrency,
+        payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
       })
       .from(promoRankConfig);
     const terms = config?.rewards[kind];
@@ -280,7 +308,10 @@ export class RankPayoutService {
       terms,
       anchors: config.anchors,
       paidThrough: config.paidThrough,
-      payoutCurrency: config.payoutCurrency,
+      payout: {
+        currency: config.payoutCurrency,
+        inPlayerCurrency: config.payInPlayerCurrency,
+      },
     };
   }
 
