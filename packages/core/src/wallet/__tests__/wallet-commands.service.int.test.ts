@@ -529,3 +529,91 @@ describe('WalletCommandsService ledger sequence (real PG)', () => {
     expect(rows.map((r) => r.type).sort()).toEqual(['bet', 'deposit', 'win']);
   });
 });
+
+describe('WalletCommandsService outcome moved/transactionId (real PG)', () => {
+  // The caller (eg GamingService) reads `moved` to know whether to emit
+  // wallet.balance.changed once its own transaction commits - see the class comment on
+  // WalletCommandsService for why the port itself never emits that event.
+
+  it('debit returns the ledger row id on a real bet', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
+
+    const rows = await txRows(w.id);
+    expect(res).toMatchObject({ ok: true, moved: true, transactionId: rows[0]?.id });
+  });
+
+  it('credit returns the ledger row id on a real win', async () => {
+    const w = await seedWallet({ balance: '50' });
+
+    const res = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+    });
+
+    const rows = await txRows(w.id);
+    expect(res).toMatchObject({ ok: true, moved: true, transactionId: rows[0]?.id });
+  });
+
+  it('a 0-amount loss returns no transactionId - nothing moved', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
+
+    expect(res).toEqual({
+      ok: true,
+      moved: false,
+      newBalance: expect.any(String),
+      currency: 'USD',
+    });
+  });
+
+  it('a replayed debit (same providerRef) returns no transactionId on the replay', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-evt-debit-1' };
+
+    const first = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+    const second = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'bet',
+      providerRef,
+    });
+
+    expect(first).toMatchObject({ ok: true, moved: true, transactionId: expect.any(String) });
+    expect(second).toMatchObject({ ok: true, moved: false });
+    expect(second).not.toHaveProperty('transactionId');
+  });
+
+  it('a replayed credit (same providerRef) returns no transactionId on the replay', async () => {
+    const w = await seedWallet({ balance: '50' });
+    const providerRef = { providerName: 'aggregator-x', providerRefId: 'ref-evt-credit-1' };
+
+    const first = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+    const second = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+      providerRef,
+    });
+
+    expect(first).toMatchObject({ ok: true, moved: true, transactionId: expect.any(String) });
+    expect(second).toMatchObject({ ok: true, moved: false });
+    expect(second).not.toHaveProperty('transactionId');
+  });
+});

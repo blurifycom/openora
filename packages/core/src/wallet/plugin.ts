@@ -162,6 +162,13 @@ export default {
         envelope.eventId,
       );
     });
+    ctx.events.on('wallet.balance.changed', (payload, envelope) => {
+      const parsed = domainEventSchemas['wallet.balance.changed'].safeParse(payload);
+      if (!parsed.success || !envelope) {
+        return;
+      }
+      publishBalanceChanged(parsed.data.userId, parsed.data.currency, 'gameplay', envelope.eventId);
+    });
 
     // One memoized instance backs the cron worker and the router factory below - lazily
     // constructed (subscriptions/workers wire before router factories run), matching

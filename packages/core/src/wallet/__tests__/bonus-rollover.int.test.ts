@@ -218,8 +218,8 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
 
     const res1 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '40', type: 'bet' });
-    if (!res1.ok) {
-      throw new Error('expected res1.ok');
+    if (!res1.ok || !res1.moved) {
+      throw new Error('expected res1 to move the balance');
     }
     expect(res1.completedBonusCredits).toEqual([
       { id: older.id, currency: 'USD', creditedAmount: older.creditedAmount },
@@ -232,8 +232,8 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     expect(Number(rows.find((r) => r.id === newer.id)!.rolloverProgress)).toBe(10);
 
     const res2 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
-    if (!res2.ok) {
-      throw new Error('expected res2.ok');
+    if (!res2.ok || !res2.moved) {
+      throw new Error('expected res2 to move the balance');
     }
     expect(res2.completedBonusCredits).toEqual([]);
     rows = await creditsFor(w.userId);
@@ -241,8 +241,8 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     expect(Number(rows.find((r) => r.id === newer.id)!.rolloverProgress)).toBe(40);
 
     const res3 = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '20', type: 'bet' });
-    if (!res3.ok) {
-      throw new Error('expected res3.ok');
+    if (!res3.ok || !res3.moved) {
+      throw new Error('expected res3 to move the balance');
     }
     expect(res3.completedBonusCredits).toEqual([
       { id: newer.id, currency: 'USD', creditedAmount: newer.creditedAmount },
@@ -298,8 +298,8 @@ describe('WalletCommandsService bonus rollover progress waterfall (real PG)', ()
     const svc = new WalletCommandsService(unrestricted, makeAuditWriter());
 
     const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
-    if (!res.ok) {
-      throw new Error('expected res.ok');
+    if (!res.ok || !res.moved) {
+      throw new Error('expected res to move the balance');
     }
     expect(res.completedBonusCredits).toEqual([]);
 

@@ -21,13 +21,23 @@ export type WalletDebitArgs = {
   providerRef?: WalletProviderRef;
 };
 
+/**
+ * `moved: true` means this call changed the balance and wrote the `wallet_transaction` row
+ * `transactionId` names; the caller emits `wallet.balance.changed` with it once its own
+ * transaction commits, since this port never emits it itself (see WalletCommandsService).
+ * `moved: false` is a success that moved nothing: the informational `loss` row or a
+ * replayed `providerRef`.
+ */
 export type WalletDebitOutcome =
   | {
       ok: true;
+      moved: true;
+      transactionId: string;
       newBalance: string;
       currency: string;
       completedBonusCredits?: Array<{ id: string; currency: string; creditedAmount: string }>;
     }
+  | { ok: true; moved: false; newBalance: string; currency: string }
   | { ok: false; available: string };
 
 export type WalletCreditArgs = {
@@ -42,7 +52,11 @@ export type WalletCreditArgs = {
   providerRef?: WalletProviderRef;
 };
 
-export type WalletCreditOutcome = { ok: true; newBalance: string } | { ok: false; reason: string };
+/** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
+export type WalletCreditOutcome =
+  | { ok: true; moved: true; transactionId: string; newBalance: string }
+  | { ok: true; moved: false; newBalance: string }
+  | { ok: false; reason: string };
 
 export type WalletCommands = {
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;

@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import {
   loadExtensions,
   DRIZZLE,
+  EVENT_BUS,
   type Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
@@ -159,5 +160,104 @@ describe('gaming stake debit e2e', () => {
     const rounds = await client.get('/gaming/rounds');
     const roundsBody = (await readJson(rounds)) as unknown[];
     expect(roundsBody).toHaveLength(0);
+  });
+});
+
+describe('gaming wallet.balance.changed e2e', () => {
+  it('emits the event for the bet debit with the ledger row the request wrote', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `balance-changed-${randomUUID()}@example.com`,
+    });
+    await deposit(client, '100');
+    const seen: Array<{ userId: string; transactionId: string; direction: string }> = [];
+    const off = app.container.get(EVENT_BUS).on('wallet.balance.changed', (payload) => {
+      if (payload.userId === userId) {
+        seen.push(payload);
+      }
+    });
+
+    try {
+      const res = await client.post('/gaming/rounds/start', {
+        gameId,
+        currency: 'USD',
+        betAmount: '25',
+      });
+      expect(res.status).toBe(200);
+
+      const [walletRow] = await app.container
+        .get(DRIZZLE)
+        .db.select()
+        .from(wallet)
+        .where(eq(wallet.userId, userId));
+      const betRows = (
+        await app.container
+          .get(DRIZZLE)
+          .db.select()
+          .from(walletTransaction)
+          .where(eq(walletTransaction.walletId, walletRow?.id ?? ''))
+      ).filter((r) => r.type === 'bet');
+      expect(betRows).toHaveLength(1);
+
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      expect(seen[0]).toMatchObject({
+        userId,
+        amount: '25',
+        currency: 'USD',
+        transactionId: betRows[0]?.id,
+        type: 'bet',
+        direction: 'debit',
+      });
+    } finally {
+      off();
+    }
+  });
+
+  it('emits no credit event when ending a round that pays no win', async () => {
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `balance-changed-nowin-${randomUUID()}@example.com`,
+    });
+    await deposit(client, '100');
+    const bus = app.container.get(EVENT_BUS);
+    const seen: Array<{ direction: string }> = [];
+    const endedRoundIds: string[] = [];
+    const offBalance = bus.on('wallet.balance.changed', (payload) => {
+      if (payload.userId === userId) {
+        seen.push(payload);
+      }
+    });
+    const offEnded = bus.on('gaming.round.ended', (payload) => {
+      endedRoundIds.push(payload.roundId);
+    });
+
+    try {
+      const start = await client.post('/gaming/rounds/start', {
+        gameId,
+        currency: 'USD',
+        betAmount: '10',
+      });
+      expect(start.status).toBe(200);
+      const { roundId } = (await readJson(start)) as { roundId: string };
+
+      const end = await client.post(`/gaming/rounds/${roundId}/end`, {});
+      expect(end.status).toBe(200);
+
+      const [round] = await app.container
+        .get(DRIZZLE)
+        .db.select()
+        .from(gameRound)
+        .where(eq(gameRound.id, roundId));
+      expect(round?.status).not.toBe('active');
+      expect(await balanceOf(app.container, userId)).toBe('90.000000000000000000');
+      // endRound emits any balance event before gaming.round.ended, so once that arrives
+      // a stray credit event would already have landed.
+      await vi.waitFor(() => {
+        expect(endedRoundIds).toContain(roundId);
+        expect(seen).toHaveLength(1);
+      });
+      expect(seen).toEqual([expect.objectContaining({ type: 'bet', direction: 'debit' })]);
+    } finally {
+      offBalance();
+      offEnded();
+    }
   });
 });
