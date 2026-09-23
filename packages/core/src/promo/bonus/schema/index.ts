@@ -149,6 +149,9 @@ export const promoGrant = pgTable(
     index('promo_grant_expires_at_idx')
       .on(t.expiresAt)
       .where(sql`${t.status} = 'active'`),
+    // The player's own grant history: every status, newest first, over the whole table rather
+    // than just the live partition the index above serves.
+    index('promo_grant_user_id_created_at_idx').on(t.userId, t.createdAt, t.id),
     // Money invariants the engine must never be able to break, held where no caller can route
     // around them: a bonus balance cannot go negative and progress cannot pass its requirement.
     check('promo_grant_bonus_balance_non_negative', sql`${t.bonusBalance} >= 0`),
