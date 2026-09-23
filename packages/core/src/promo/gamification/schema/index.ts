@@ -102,6 +102,8 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   payInPlayerCurrency: boolean().notNull().default(false),
   /** Pay a periodic bonus only to players who wagered in the period it covers. */
   periodicRequiresActivity: boolean().notNull().default(true),
+  /** How much a player must wager inside the period to qualify. Null means any bet counts. */
+  periodicMinimumWager: money(),
   /** When each periodic payout closes, and so what window it pays for. All UTC. */
   payoutAnchors: jsonb()
     .$type<RankPayoutAnchors>()
@@ -122,6 +124,45 @@ export const promoRankConfig = pgTable('promo_rank_config', {
 });
 
 export type PromoRankConfig = typeof promoRankConfig.$inferSelect;
+
+/**
+ * How much a player wagered inside one payout period, in the ladder's currency. One row per
+ * player per period per kind - written in the bet's own transaction, read by the payout that
+ * settles that period.
+ *
+ * A period of its own rather than a single "last wagered" stamp, because "played in the period"
+ * is a question about a window that has closed, and a bet placed a minute after it closed must
+ * not answer for it. It is also what an operator's minimum-wager threshold is measured against.
+ */
+export const promoRankPeriodWager = pgTable(
+  'promo_rank_period_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    kind: text().$type<RankPayoutKind>().notNull(),
+    /** The period's own key, the same one the payout is granted under. */
+    periodKey: text().notNull(),
+    currency: text().notNull(),
+    wagered: money().notNull().default('0'),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    // The accumulator's guard: one row per player, kind and period, upserted per bet.
+    uniqueIndex('promo_rank_period_wager_user_id_kind_period_key_idx').on(
+      t.userId,
+      t.kind,
+      t.periodKey,
+    ),
+    // What the payout reads: everyone who wagered in the period it is settling.
+    index('promo_rank_period_wager_kind_period_key_idx').on(t.kind, t.periodKey),
+    check('promo_rank_period_wager_non_negative', sql`${t.wagered} >= 0`),
+  ],
+);
+
+export type PromoRankPeriodWager = typeof promoRankPeriodWager.$inferSelect;
 
 /**
  * A level-up bonus a player has earned and the payout job has yet to settle. Written in the bet's

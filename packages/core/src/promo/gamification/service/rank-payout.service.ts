@@ -12,11 +12,12 @@ import {
   promoPlayerRank,
   promoRankConfig,
   promoRankLevelUp,
+  promoRankPeriodWager,
   promoRankTier,
   type RankRewardTerms,
   type RankRewards,
 } from '../schema/index.js';
-import { lastCompletePeriod, type RankPeriodKind } from '../shared/rank-period.js';
+import { lastCompletePeriod, type RankPeriod, type RankPeriodKind } from '../shared/rank-period.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
 
@@ -102,7 +103,7 @@ export class RankPayoutService {
     if (!settings) {
       return [];
     }
-    const { terms, anchors, paidThrough, payout, requiresActivity } = settings;
+    const { terms, anchors, paidThrough, payout, requiresActivity, minimumWager } = settings;
     const period = lastCompletePeriod(kind, now, anchors);
     const settled = paidThrough[kind];
     if (settled !== undefined && new Date(settled) >= period.end) {
@@ -113,26 +114,10 @@ export class RankPayoutService {
     let after = '00000000-0000-0000-0000-000000000000';
 
     for (;;) {
-      // ponytail: "active in the period" is read as "wagered since it started", so a player whose
-      // only bets came after it ended still qualifies until the next period closes; add per-period
-      // activity rows if that matters
-      const due = await this.drizzle.db
-        .select({
-          userId: promoPlayerRank.userId,
-          amount: bonus,
-          currency: promoRankTier.currency,
-        })
-        .from(promoPlayerRank)
-        .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
-        .where(
-          and(
-            gt(promoPlayerRank.userId, after),
-            isNotNull(bonus),
-            ...(requiresActivity ? [gte(promoPlayerRank.lastWageredAt, period.start)] : []),
-          ),
-        )
-        .orderBy(asc(promoPlayerRank.userId))
-        .limit(BATCH);
+      const due = await this.playersOwed(kind, period, bonus, after, {
+        requiresActivity,
+        minimumWager,
+      });
 
       for (const player of due) {
         if (player.amount === null || (await this.isBlocked(player.userId))) {
@@ -165,6 +150,57 @@ export class RankPayoutService {
       }
       after = last.userId;
     }
+  }
+
+  /**
+   * Everyone a period owes: the players holding a rank that carries an amount and, when the
+   * operator asks for it, who wagered enough inside the period the payout is settling.
+   */
+  private playersOwed(
+    kind: RankPeriodKind,
+    period: RankPeriod,
+    bonus: (typeof PERIOD_BONUS)[RankPeriodKind],
+    after: string,
+    activity: { requiresActivity: boolean; minimumWager: string | null },
+  ) {
+    const ranked = this.drizzle.db
+      .select({
+        userId: promoPlayerRank.userId,
+        amount: bonus,
+        currency: promoRankTier.currency,
+      })
+      .from(promoPlayerRank)
+      .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId));
+    const holdsAnAmount = [gt(promoPlayerRank.userId, after), isNotNull(bonus)];
+
+    if (!activity.requiresActivity) {
+      return ranked
+        .where(and(...holdsAnAmount))
+        .orderBy(asc(promoPlayerRank.userId))
+        .limit(BATCH);
+    }
+
+    // "Played in the period" is a question about the window that closed, answered by what the
+    // player wagered inside it - not by whether they have played since.
+    return ranked
+      .innerJoin(
+        promoRankPeriodWager,
+        and(
+          eq(promoRankPeriodWager.userId, promoPlayerRank.userId),
+          eq(promoRankPeriodWager.kind, kind),
+          eq(promoRankPeriodWager.periodKey, period.sourceRef),
+        ),
+      )
+      .where(
+        and(
+          ...holdsAnAmount,
+          ...(activity.minimumWager === null
+            ? []
+            : [gte(promoRankPeriodWager.wagered, activity.minimumWager)]),
+        ),
+      )
+      .orderBy(asc(promoPlayerRank.userId))
+      .limit(BATCH);
   }
 
   private async settleLevelUp(
@@ -308,6 +344,7 @@ export class RankPayoutService {
         payoutCurrency: promoRankConfig.payoutCurrency,
         payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
         periodicRequiresActivity: promoRankConfig.periodicRequiresActivity,
+        periodicMinimumWager: promoRankConfig.periodicMinimumWager,
       })
       .from(promoRankConfig);
     const terms = config?.rewards[kind];
@@ -324,6 +361,7 @@ export class RankPayoutService {
         inPlayerCurrency: config.payInPlayerCurrency,
       },
       requiresActivity: config.periodicRequiresActivity,
+      minimumWager: config.periodicMinimumWager,
     };
   }
 

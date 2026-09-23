@@ -13,6 +13,7 @@ import { migrate } from '../migrate.js';
 import {
   promoPlayerRank,
   promoRankConfig,
+  promoRankPeriodWager,
   promoRankLevelUp,
   promoRankTier,
 } from '../schema/index.js';
@@ -74,6 +75,14 @@ const levelUp = async (id: string) => {
   return row;
 };
 
+const DAILY_PERIOD_KEY = 'rank-daily:2026-09-21T00';
+
+/** What the player wagered inside the period the daily payout settles. */
+const wageredInPeriod = (userId: string, wagered: string, periodKey = DAILY_PERIOD_KEY) =>
+  db.drizzle.db
+    .insert(promoRankPeriodWager)
+    .values({ userId, kind: 'daily', periodKey, currency: 'USD', wagered });
+
 const holding = async (key: string, lastWageredAt: Date | null) => {
   const userId = randomUUID();
   await db.drizzle.db.insert(promoPlayerRank).values({
@@ -83,6 +92,13 @@ const holding = async (key: string, lastWageredAt: Date | null) => {
     tierId: await tierId(key),
     lastWageredAt,
   });
+  return userId;
+};
+
+/** Holds the rank and wagered inside the period the daily payout settles. */
+const played = async (key: string, wagered = '5') => {
+  const userId = await holding(key, YESTERDAY_NOON);
+  await wageredInPeriod(userId, wagered);
   return userId;
 };
 
@@ -99,6 +115,7 @@ beforeEach(async () => {
   convert.mockResolvedValue(null);
   getBalances.mockResolvedValue({ activeCurrency: 'USD', balances: [] });
   await db.drizzle.db.delete(promoRankLevelUp);
+  await db.drizzle.db.delete(promoRankPeriodWager);
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
@@ -220,7 +237,7 @@ describe('settling owed level-up bonuses', () => {
 
 describe('paying a periodic bonus', () => {
   it('pays the rank amount for the last complete day to a player active in it', async () => {
-    const userId = await holding('silver', YESTERDAY_NOON);
+    const userId = await played('silver');
 
     const granted = await service().payPeriodic('daily', NOW);
 
@@ -239,8 +256,8 @@ describe('paying a periodic bonus', () => {
   it('skips a player idle in the period, a rank that pays nothing, and a blocked player', async () => {
     await holding('silver', TWO_DAYS_AGO);
     await holding('silver', null);
-    await holding('bronze', YESTERDAY_NOON);
-    const blocked = await holding('silver', YESTERDAY_NOON);
+    await played('bronze');
+    const blocked = await played('silver');
     isRestricted.mockImplementation(async (userId) => userId === blocked);
 
     const granted = await service().payPeriodic('daily', NOW);
@@ -250,7 +267,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('pays a closed period once, and skips it on every later run', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
 
     const first = await service().payPeriodic('daily', NOW);
     const second = await service().payPeriodic('daily', NOW);
@@ -265,6 +282,7 @@ describe('paying a periodic bonus', () => {
     await db.drizzle.db
       .update(promoRankConfig)
       .set({ payoutAnchors: { dailyHour: 6, weeklyDay: 1, monthlyDay: 1 } });
+    await wageredInPeriod(userId, '5', 'rank-daily:2026-09-20T06');
 
     // 04:00 is before the 06:00 anchor, so the day that closed is the one before yesterday.
     await service().payPeriodic('daily', new Date('2026-09-22T04:00:00Z'));
@@ -276,7 +294,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('credits the payout currency the operator named, converted at the rate of the payout', async () => {
-    const userId = await holding('silver', YESTERDAY_NOON);
+    const userId = await played('silver');
     await db.drizzle.db.update(promoRankConfig).set({ payoutCurrency: 'USDT' });
     convert.mockResolvedValue('0.480000000000000000');
 
@@ -300,7 +318,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('credits the currency the player actually plays in, when the operator asked for that', async () => {
-    const userId = await holding('silver', YESTERDAY_NOON);
+    const userId = await played('silver');
     await db.drizzle.db
       .update(promoRankConfig)
       .set({ payInPlayerCurrency: true, payoutCurrency: 'USDT' });
@@ -317,7 +335,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('falls back to the operator currency when the player has no rate of their own', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
     await db.drizzle.db
       .update(promoRankConfig)
       .set({ payInPlayerCurrency: true, payoutCurrency: 'USDT' });
@@ -337,7 +355,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('pays in the ladder currency without asking the wallet when told to', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
 
     await service().payPeriodic('daily', NOW);
 
@@ -349,7 +367,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('pays nothing at all when the payout currency has no rate', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
     await db.drizzle.db.update(promoRankConfig).set({ payoutCurrency: 'USDT' });
     convert.mockResolvedValue(null);
     getBalances.mockResolvedValue({ activeCurrency: 'USD', balances: [] });
@@ -359,6 +377,28 @@ describe('paying a periodic bonus', () => {
     expect(granted).toEqual([]);
     expect(grant).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays only the players who wagered at least the minimum set for the period', async () => {
+    const enough = await played('silver', '25');
+    await played('silver', '24.999999999999999999');
+    await db.drizzle.db.update(promoRankConfig).set({ periodicMinimumWager: '25' });
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toHaveLength(1);
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: enough }),
+    );
+  });
+
+  it('does not let a bet placed after the period pay for it', async () => {
+    const userId = await holding('silver', new Date('2026-09-22T09:00:00Z'));
+    // The bet landed in the day that is still open, not the one being settled.
+    await wageredInPeriod(userId, '100', 'rank-daily:2026-09-22T00');
+
+    expect(await service().payPeriodic('daily', NOW)).toEqual([]);
   });
 
   it('pays a player who has not played, once the operator stops requiring activity', async () => {
@@ -375,7 +415,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('carries the stake cap and the conversion cap the operator set into the grant', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
     await db.drizzle.db.update(promoRankConfig).set({
       rewards: {
         daily: { ...DAILY_TERMS, maxBet: '0.25', maxWinMultiplier: '10' },
@@ -398,7 +438,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('leaves both caps off the grant when the operator set neither', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
 
     await service().payPeriodic('daily', NOW);
 
@@ -409,7 +449,7 @@ describe('paying a periodic bonus', () => {
   });
 
   it('pays nothing for a kind with no terms configured', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
 
     const granted = await service().payPeriodic('weekly', NOW);
 
@@ -418,15 +458,15 @@ describe('paying a periodic bonus', () => {
   });
 
   it('does not announce a grant the guard matched to an earlier run', async () => {
-    await holding('silver', YESTERDAY_NOON);
+    await played('silver');
     grant.mockResolvedValue({ ok: true, grantId: randomUUID(), created: false });
 
     expect(await service().payPeriodic('daily', NOW)).toEqual([]);
   });
 
   it('keeps paying the rest when one player fails', async () => {
-    const first = await holding('silver', YESTERDAY_NOON);
-    await holding('silver', YESTERDAY_NOON);
+    const first = await played('silver');
+    await played('silver');
     grant.mockImplementation(async (_tx, args) =>
       args.userId === first
         ? { ok: false, reason: 'currency_unsupported' }

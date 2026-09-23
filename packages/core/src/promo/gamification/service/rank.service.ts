@@ -12,10 +12,12 @@ import {
   type DrizzleTx,
 } from '@openora/core/server';
 import type { PlayerRank, RankLadder } from '../contract/index.js';
+import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
 import {
   promoPlayerRank,
   promoRankConfig,
   promoRankLevelUp,
+  promoRankPeriodWager,
   promoRankTier,
   type PromoPlayerRank,
   type PromoRankTier,
@@ -69,7 +71,10 @@ export class RankService implements WagerTrackingCommands {
       return;
     }
     const [config] = await tx
-      .select({ eligibleProducts: promoRankConfig.eligibleProducts })
+      .select({
+        eligibleProducts: promoRankConfig.eligibleProducts,
+        payoutAnchors: promoRankConfig.payoutAnchors,
+      })
       .from(promoRankConfig);
     if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
       return;
@@ -105,6 +110,32 @@ export class RankService implements WagerTrackingCommands {
       );
       return;
     }
+
+    // What the player wagered inside each open period, for the payouts that settle them. Upserted
+    // per bet under the period's own key, so a bet placed after a period closed lands on the new
+    // one and can never answer for the old.
+    await tx
+      .insert(promoRankPeriodWager)
+      .values(
+        RANK_PERIOD_KINDS.map((kind) => ({
+          userId: args.userId,
+          kind,
+          periodKey: openPeriodKey(kind, new Date(), config.payoutAnchors),
+          currency: lowest.currency,
+          wagered: amount,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [
+          promoRankPeriodWager.userId,
+          promoRankPeriodWager.kind,
+          promoRankPeriodWager.periodKey,
+        ],
+        set: {
+          wagered: sql`${promoRankPeriodWager.wagered} + ${amount}::numeric`,
+          updatedAt: sql`now()`,
+        },
+      });
 
     const [rank] = await tx
       .insert(promoPlayerRank)

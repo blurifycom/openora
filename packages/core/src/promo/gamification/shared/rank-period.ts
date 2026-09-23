@@ -1,6 +1,9 @@
 import type { RankPayoutAnchors } from '../contract/index.js';
 
-export type RankPeriodKind = 'daily' | 'weekly' | 'monthly';
+/** The kinds that pay for a period, and therefore accumulate one. */
+export const RANK_PERIOD_KINDS = ['daily', 'weekly', 'monthly'] as const;
+
+export type RankPeriodKind = (typeof RANK_PERIOD_KINDS)[number];
 
 export type RankPeriod = {
   /** Inclusive. */
@@ -21,6 +24,24 @@ const hourKey = (date: Date) => String(date.getUTCHours()).padStart(2, '0');
 const isoWeekday = (date: Date) => date.getUTCDay() || 7;
 
 /**
+ * The key of the period `now` falls inside - the one still being wagered toward. It is the same
+ * key the payout will ask for once that period closes, so a counter written during the period
+ * and the payout that reads it always agree.
+ */
+export function openPeriodKey(kind: RankPeriodKind, now: Date, anchors: RankPayoutAnchors): string {
+  // The open period begins where the last complete one ended.
+  const start = lastCompletePeriod(kind, now, anchors).end;
+  return keyFor(kind, start);
+}
+
+function keyFor(kind: RankPeriodKind, start: Date) {
+  if (kind === 'daily') {
+    return `rank-daily:${isoDate(start)}T${hourKey(start)}`;
+  }
+  return `rank-${kind}:${isoDate(start)}`;
+}
+
+/**
  * The last period that has fully closed by `now`, from the operator's anchors. The anchor sets
  * both the moment a period closes and the window it covers, so a payout can never run at one
  * time and pay for another. Everything is UTC: a rank does not move with the reader's clock.
@@ -33,20 +54,20 @@ export function lastCompletePeriod(
   if (kind === 'daily') {
     const end = atHour(now, anchors.dailyHour);
     const start = new Date(end.getTime() - DAY_MS);
-    return { start, end, sourceRef: `rank-daily:${isoDate(start)}T${hourKey(start)}` };
+    return { start, end, sourceRef: keyFor('daily', start) };
   }
 
   if (kind === 'weekly') {
     const end = lastWeekdayAtHour(now, anchors.weeklyDay, anchors.dailyHour);
     const start = new Date(end.getTime() - 7 * DAY_MS);
-    return { start, end, sourceRef: `rank-weekly:${isoDate(start)}` };
+    return { start, end, sourceRef: keyFor('weekly', start) };
   }
 
   const end = lastMonthDayAtHour(now, anchors.monthlyDay, anchors.dailyHour);
   const start = new Date(
     Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, end.getUTCDate(), end.getUTCHours()),
   );
-  return { start, end, sourceRef: `rank-monthly:${isoDate(start)}` };
+  return { start, end, sourceRef: keyFor('monthly', start) };
 }
 
 /** The most recent `hour:00` that is not in the future. */

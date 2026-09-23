@@ -78,6 +78,13 @@
       "when": 1790173774969,
       "tag": "0010_rank_reward_caps",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790174237316,
+      "tag": "0011_rank_period_wager",
+      "breakpoints": true
     }
   ]
 }

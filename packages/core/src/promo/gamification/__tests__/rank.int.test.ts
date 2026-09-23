@@ -9,6 +9,7 @@ import {
   promoPlayerRank,
   promoRankConfig,
   promoRankLevelUp,
+  promoRankPeriodWager,
   promoRankTier,
 } from '../schema/index.js';
 import { DEFAULT_PAYOUT_ANCHORS } from '../contract/index.js';
@@ -83,6 +84,7 @@ afterAll(() => db.drop());
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.drizzle.db.delete(promoRankLevelUp);
+  await db.drizzle.db.delete(promoRankPeriodWager);
   await db.drizzle.db.delete(promoPlayerRank);
   await db.drizzle.db.delete(promoRankTier);
   await db.drizzle.db.delete(promoRankConfig);
@@ -219,6 +221,25 @@ describe('recording a wager toward the rank ladder', () => {
     await wager(userId, '100');
 
     expect(await rankOf(userId)).toBeUndefined();
+  });
+
+  it('accumulates the stake into the day, week and month it was placed in', async () => {
+    const userId = randomUUID();
+
+    await wager(userId, '10');
+    await wager(userId, '5');
+
+    const rows = await db.drizzle.db
+      .select({ kind: promoRankPeriodWager.kind, wagered: promoRankPeriodWager.wagered })
+      .from(promoRankPeriodWager)
+      .where(eq(promoRankPeriodWager.userId, userId))
+      .orderBy(promoRankPeriodWager.kind);
+
+    expect(rows).toEqual([
+      { kind: 'daily', wagered: '15.000000000000000000' },
+      { kind: 'monthly', wagered: '15.000000000000000000' },
+      { kind: 'weekly', wagered: '15.000000000000000000' },
+    ]);
   });
 
   it('stamps the time of the last counted wager', async () => {

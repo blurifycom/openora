@@ -160,6 +160,15 @@ export const RankConfigSchema = z.object({
    * months.
    */
   periodicRequiresActivity: z.boolean().prefault(true),
+  /**
+   * How much a player has to wager inside the period to qualify for its bonus, in the ladder's
+   * currency. Absent means any single bet qualifies, which is what "played" meant before there
+   * was a number to put on it.
+   */
+  periodicMinimumWager: MoneyAmountSchema.refine(
+    isAbsentOrPositive,
+    'must be above zero',
+  ).nullish(),
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   rewards: z
