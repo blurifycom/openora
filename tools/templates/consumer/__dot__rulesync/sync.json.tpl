@@ -12,6 +12,11 @@
     "ossFromRoot": "{{ossFromRoot}}",
     "mrTarget": "{{mrTarget}}"
   },
+  "reviewPrecheck": {
+    "reactCompilerPaths": ["apps/web", "apps/backoffice"],
+    "extraSkipGlobs": [],
+    "domainPatterns": { "security": [], "compliance": [] }
+  },
   "consumerOwned": [
     ".rulesync/rules/overview.md",
     ".rulesync/mcp.json",

@@ -26,7 +26,7 @@ If the behavior genuinely cannot be expressed from the outside, STOP - it's an O
 
 ## 2. Ground first
 
-- Read `.claude/rules/overview.md` (what you may and may not touch), `.claude/rules/oss-boundaries.md`, and `.claude/rules/db-conventions.md` + `docs/standards/database.md` (if the extension owns tables).
+- Read `CLAUDE.md` / `AGENTS.md` (the rendered `overview` rule: what you may and may not touch), `.claude/rules/oss-boundaries.md`, and `.claude/rules/db-conventions.md` + `docs/standards/database.md` (if the extension owns tables).
 - Inspect what already exists with the `oss` MCP: `catalog-overview`, `list-adapters` (token + default binding to swap), `list-routes` (collision check), `list-slots`, `list-events`.
 - For a domain rule you can't safely assume (a limit, a KYC threshold, a jurisdiction behavior), spawn `expert` before scaffolding.
 
