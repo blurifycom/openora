@@ -256,6 +256,28 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
 });
 export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
 
+// The queue's headline figures describe every withdrawal the filters match, so they drop the
+// page, sort and status: the counts split by status themselves.
+export const WithdrawalQueueSummaryFilterSchema = WithdrawalQueueFilterSchema.omit({
+  page: true,
+  limit: true,
+  status: true,
+  sortBy: true,
+  sortOrder: true,
+});
+export type WithdrawalQueueSummaryFilter = z.infer<typeof WithdrawalQueueSummaryFilterSchema>;
+
+export const WithdrawalQueueSummarySchema = z.object({
+  pendingCount: z.number().int().nonnegative(),
+  onHoldCount: z.number().int().nonnegative(),
+  // One total per currency: amounts in different currencies are never summed together.
+  queuedTotals: z.array(
+    z.object({ currency: WalletCurrencyCodeSchema, amount: MoneyAmountSchema }),
+  ),
+  avgPendingWaitSeconds: z.number().nonnegative().nullable(),
+});
+export type WithdrawalQueueSummary = z.infer<typeof WithdrawalQueueSummarySchema>;
+
 export const AutoWithdrawalRuleSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -640,6 +662,11 @@ export const walletContract = {
       .route({ method: 'GET', path: '/wallet/withdrawals' })
       .input(WithdrawalQueueFilterSchema)
       .output(paginated(WithdrawalQueueItemSchema)),
+
+    summary: oc
+      .route({ method: 'GET', path: '/wallet/withdrawals/summary' })
+      .input(WithdrawalQueueSummaryFilterSchema)
+      .output(WithdrawalQueueSummarySchema),
 
     approve: oc
       .route({ method: 'POST', path: '/wallet/withdrawals/{withdrawalId}/approve' })

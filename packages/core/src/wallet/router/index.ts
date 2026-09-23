@@ -299,6 +299,11 @@ export function createWalletRouter({
         return wallet.listWithdrawals(input);
       }),
 
+      summary: os.withdrawals.summary.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'withdrawal', 'view');
+        return wallet.summarizeWithdrawals(input);
+      }),
+
       approve: os.withdrawals.approve.handler(async ({ input, context }) => {
         const {
           userId: adminId,

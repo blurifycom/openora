@@ -79,6 +79,8 @@ import type {
   TransactionResult,
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
+  WithdrawalQueueSummary,
+  WithdrawalQueueSummaryFilter,
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
@@ -576,6 +578,9 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
+
+// A withdrawal still waiting on a decision: the queue summary counts and totals only these.
+const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -1506,13 +1511,28 @@ export class WalletService {
     return auto ?? { transactionId, status };
   }
 
-  async listWithdrawals(filters: WithdrawalQueueFilter) {
+  /**
+   * Every withdrawal the queue filters match, KYC filter included. Shared by the list and its
+   * summary so the headline figures always describe exactly the rows the list can page through.
+   * `statuses` narrows the read in SQL; the directory is only consulted when the caller needs
+   * player enrichment or the KYC filter does, since it is one lookup per distinct player.
+   */
+  private async matchingWithdrawals(
+    filters: WithdrawalQueueSummaryFilter &
+      Pick<WithdrawalQueueFilter, 'status' | 'sortBy' | 'sortOrder'>,
+    {
+      statuses,
+      withPlayers,
+    }: { statuses?: readonly WalletTransaction['status'][]; withPlayers: boolean },
+  ) {
     const db = this.drizzle.db;
-    const { page, limit } = filters;
 
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
     if (filters.status) {
       conditions.push(eq(walletTransaction.status, filters.status));
+    }
+    if (statuses) {
+      conditions.push(inArray(walletTransaction.status, [...statuses]));
     }
     if (filters.currency) {
       conditions.push(eq(walletTransaction.currency, filters.currency));
@@ -1553,7 +1573,9 @@ export class WalletService {
       .orderBy(wdDir(WD_SORT_COLS[wdSortBy]), desc(walletTransaction.id));
 
     const userIds = [...new Set(rows.map((r) => r.userId))];
-    const summaries = this.directory ? await this.directory.lookupPlayers(userIds) : [];
+    const needsPlayers = withPlayers || filters.kycStatus !== undefined;
+    const summaries =
+      this.directory && needsPlayers ? await this.directory.lookupPlayers(userIds) : [];
     const byUserId = new Map(summaries.map((s) => [s.userId, s]));
 
     // Normalize both sides before comparing: the ADMIN_USER_DIRECTORY port's return type
@@ -1570,6 +1592,47 @@ export class WalletService {
             : false;
         })
       : rows;
+
+    return { matching, byUserId };
+  }
+
+  async summarizeWithdrawals(
+    filters: WithdrawalQueueSummaryFilter,
+  ): Promise<WithdrawalQueueSummary> {
+    const { matching } = await this.matchingWithdrawals(filters, {
+      statuses: QUEUED_WITHDRAWAL_STATUSES,
+      withPlayers: false,
+    });
+    const pending = matching.filter((r) => r.tx.status === 'pending');
+    const onHold = matching.filter((r) => r.tx.status === 'on_hold');
+
+    const totals = [...pending, ...onHold].reduce(
+      (byCurrency, r) =>
+        byCurrency.set(r.tx.currency, moneyAdd(byCurrency.get(r.tx.currency) ?? '0', r.tx.amount)),
+      new Map<string, string>(),
+    );
+
+    const now = Date.now();
+    const avgPendingWaitSeconds =
+      pending.length === 0
+        ? null
+        : pending.reduce((sum, r) => sum + (now - r.tx.createdAt.getTime()) / 1000, 0) /
+          pending.length;
+
+    return {
+      pendingCount: pending.length,
+      onHoldCount: onHold.length,
+      queuedTotals: [...totals]
+        .map(([currency, amount]) => ({ currency, amount }))
+        .sort((a, b) => a.currency.localeCompare(b.currency)),
+      avgPendingWaitSeconds,
+    };
+  }
+
+  async listWithdrawals(filters: WithdrawalQueueFilter) {
+    const db = this.drizzle.db;
+    const { page, limit } = filters;
+    const { matching, byUserId } = await this.matchingWithdrawals(filters, { withPlayers: true });
 
     const start = pageToOffset(page, limit);
     const pageRows = matching.slice(start, start + limit);
