@@ -17,7 +17,7 @@ import {
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
-import type { RankConfig } from '../contract/index.js';
+import type { RankConfig, RankPayoutAnchors, RankPayoutKind } from '../contract/index.js';
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
 
@@ -95,6 +95,17 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   eligibleProducts: text().array().notNull().default([]),
   /** Terms each reward kind is granted under. A kind with no terms is not paid. */
   rewards: jsonb().$type<RankRewards>().notNull().default({}),
+  /** When each periodic payout closes, and so what window it pays for. All UTC. */
+  payoutAnchors: jsonb()
+    .$type<RankPayoutAnchors>()
+    .notNull()
+    .default({ dailyHour: 0, weeklyDay: 1, monthlyDay: 1 }),
+  /**
+   * The end of the last period each kind was paid for. A payout runs only for a period that
+   * ends after its watermark, so moving an anchor cannot pay the same stretch of time twice and
+   * a late or repeated tick cannot reach back into a period already settled.
+   */
+  paidThrough: jsonb().$type<Partial<Record<RankPayoutKind, string>>>().notNull().default({}),
   updatedBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true })

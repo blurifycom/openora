@@ -77,11 +77,13 @@ export default {
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {},
       ).ranks;
       const jobs = c.get(JOB_QUEUE);
+      // The periodic kinds share one tick: each run pays only a period that has closed since
+      // the last, so when a player is actually paid is the anchor in the ladder's settings.
       for (const [kind, cron] of [
         ['levelUp', schedule.payoutCron],
-        ['daily', schedule.dailyCron],
-        ['weekly', schedule.weeklyCron],
-        ['monthly', schedule.monthlyCron],
+        ['daily', schedule.periodicCron],
+        ['weekly', schedule.periodicCron],
+        ['monthly', schedule.periodicCron],
       ] as const) {
         void jobs
           .schedule(PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })

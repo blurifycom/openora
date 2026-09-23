@@ -11,6 +11,7 @@ import {
   promoRankLevelUp,
   promoRankTier,
 } from '../schema/index.js';
+import { DEFAULT_PAYOUT_ANCHORS } from '../contract/index.js';
 import { seedRankLadder } from '../seed/index.js';
 import { RankService } from '../service/rank.service.js';
 
@@ -40,7 +41,7 @@ const LADDER = {
       levelUpBonus: '25.5',
     },
   ],
-  config: { eligibleProducts: [], rewards: {} },
+  config: { eligibleProducts: [], rewards: {}, payoutAnchors: DEFAULT_PAYOUT_ANCHORS },
 };
 const PARALLEL_BETS = 20;
 

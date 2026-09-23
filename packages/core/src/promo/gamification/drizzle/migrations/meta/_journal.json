@@ -50,6 +50,13 @@
       "when": 1790084829254,
       "tag": "0006_rank_last_wagered_at",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790167022293,
+      "tag": "0007_rank_payout_anchors",
+      "breakpoints": true
     }
   ]
 }

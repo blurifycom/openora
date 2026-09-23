@@ -1,9 +1,11 @@
+import type { RankPayoutAnchors } from '../contract/index.js';
+
 export type RankPeriodKind = 'daily' | 'weekly' | 'monthly';
 
 export type RankPeriod = {
   /** Inclusive. */
   start: Date;
-  /** Exclusive. */
+  /** Exclusive: the instant the period closed. */
   end: Date;
   /** The grant's `sourceRef`: one payout per player per period, however often the job runs. */
   sourceRef: string;
@@ -13,32 +15,59 @@ const DAY_MS = 86_400_000;
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
-// ISO 8601: a week belongs to the year its Thursday falls in.
-function isoWeek(monday: Date) {
-  const thursday = new Date(monday.getTime() + 3 * DAY_MS);
-  const year = thursday.getUTCFullYear();
-  const week = Math.floor((thursday.getTime() - Date.UTC(year, 0, 1)) / (7 * DAY_MS)) + 1;
-  return `${year}-W${String(week).padStart(2, '0')}`;
-}
+const hourKey = (date: Date) => String(date.getUTCHours()).padStart(2, '0');
+
+/** ISO-8601 weekday of a date: 1 is Monday, 7 is Sunday. */
+const isoWeekday = (date: Date) => date.getUTCDay() || 7;
 
 /**
- * The last UTC period that has fully ended by `now`: yesterday, last ISO week (Monday to Monday)
- * or last calendar month. The period is fixed, whatever time the operator schedules the payout
- * for, so a job that runs twice - or at an odd hour - still pays each period once.
+ * The last period that has fully closed by `now`, from the operator's anchors. The anchor sets
+ * both the moment a period closes and the window it covers, so a payout can never run at one
+ * time and pay for another. Everything is UTC: a rank does not move with the reader's clock.
  */
-export function lastCompletePeriod(kind: RankPeriodKind, now: Date): RankPeriod {
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+export function lastCompletePeriod(
+  kind: RankPeriodKind,
+  now: Date,
+  anchors: RankPayoutAnchors,
+): RankPeriod {
   if (kind === 'daily') {
-    const start = new Date(today - DAY_MS);
-    return { start, end: new Date(today), sourceRef: `rank-daily:${isoDate(start)}` };
+    const end = atHour(now, anchors.dailyHour);
+    const start = new Date(end.getTime() - DAY_MS);
+    return { start, end, sourceRef: `rank-daily:${isoDate(start)}T${hourKey(start)}` };
   }
+
   if (kind === 'weekly') {
-    const daysSinceMonday = (now.getUTCDay() + 6) % 7;
-    const end = new Date(today - daysSinceMonday * DAY_MS);
+    const end = lastWeekdayAtHour(now, anchors.weeklyDay, anchors.dailyHour);
     const start = new Date(end.getTime() - 7 * DAY_MS);
-    return { start, end, sourceRef: `rank-weekly:${isoWeek(start)}` };
+    return { start, end, sourceRef: `rank-weekly:${isoDate(start)}` };
   }
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-  return { start, end, sourceRef: `rank-monthly:${isoDate(start).slice(0, 7)}` };
+
+  const end = lastMonthDayAtHour(now, anchors.monthlyDay, anchors.dailyHour);
+  const start = new Date(
+    Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, end.getUTCDate(), end.getUTCHours()),
+  );
+  return { start, end, sourceRef: `rank-monthly:${isoDate(start)}` };
+}
+
+/** The most recent `hour:00` that is not in the future. */
+function atHour(now: Date, hour: number) {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour);
+  return new Date(today <= now.getTime() ? today : today - DAY_MS);
+}
+
+/** The most recent `weekday` at `hour` that is not in the future. */
+function lastWeekdayAtHour(now: Date, weekday: number, hour: number) {
+  const candidate = atHour(now, hour);
+  const back = (isoWeekday(candidate) - weekday + 7) % 7;
+  return new Date(candidate.getTime() - back * DAY_MS);
+}
+
+/** The most recent `dayOfMonth` at `hour` that is not in the future. */
+function lastMonthDayAtHour(now: Date, dayOfMonth: number, hour: number) {
+  const thisMonth = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), dayOfMonth, hour);
+  return new Date(
+    thisMonth <= now.getTime()
+      ? thisMonth
+      : Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, dayOfMonth, hour),
+  );
 }

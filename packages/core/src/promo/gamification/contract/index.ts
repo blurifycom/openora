@@ -103,6 +103,27 @@ const RankRewardTermsSchema = z.object({
  * Ladder-wide settings. A reward kind left out is not paid, whatever amount a tier carries for
  * it - an amount without terms is a bonus nobody decided how to wager.
  */
+/**
+ * When a periodic payout lands, and therefore what period it pays for: the two are one setting,
+ * so a payout can never run on a Friday for a Monday-to-Monday week. All in UTC.
+ */
+export const RankPayoutAnchorsSchema = z.object({
+  /** Hour a day's payout closes on, 0-23. */
+  dailyHour: z.number().int().min(0).max(23),
+  /** Weekday a week closes on, ISO-8601: 1 is Monday, 7 is Sunday. */
+  weeklyDay: z.number().int().min(1).max(7),
+  /** Day of the month a month closes on. Capped at 28, the last day every month has. */
+  monthlyDay: z.number().int().min(1).max(28),
+});
+
+export type RankPayoutAnchors = z.infer<typeof RankPayoutAnchorsSchema>;
+
+export const DEFAULT_PAYOUT_ANCHORS: RankPayoutAnchors = {
+  dailyHour: 0,
+  weeklyDay: 1,
+  monthlyDay: 1,
+};
+
 export const RankConfigSchema = z.object({
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
@@ -114,6 +135,7 @@ export const RankConfigSchema = z.object({
       monthly: RankRewardTermsSchema,
     })
     .partial(),
+  payoutAnchors: RankPayoutAnchorsSchema.prefault(DEFAULT_PAYOUT_ANCHORS),
 });
 
 export type RankConfig = z.infer<typeof RankConfigSchema>;

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, isNotNull, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, isNotNull, isNull, sql } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   DomainEventPayload,
@@ -56,10 +56,11 @@ export class RankPayoutService {
    * up where this one stopped.
    */
   async settleLevelUps(): Promise<Granted[]> {
-    const terms = await this.termsFor('levelUp');
-    if (!terms) {
+    const settings = await this.settingsFor('levelUp');
+    if (!settings) {
       return [];
     }
+    const { terms } = settings;
     const owed = await this.drizzle.db
       .select({ id: promoRankLevelUp.id })
       .from(promoRankLevelUp)
@@ -82,13 +83,22 @@ export class RankPayoutService {
     return granted;
   }
 
-  /** Pays the bonus of the given kind for the last complete period to every player who earned it. */
+  /**
+   * Pays the bonus of the given kind for the last period that closed, to every player who earned
+   * it. Safe to run as often as the operator likes: a period already settled is skipped, so the
+   * job can tick hourly and still pay a monthly bonus exactly once.
+   */
   async payPeriodic(kind: RankPeriodKind, now: Date): Promise<Granted[]> {
-    const terms = await this.termsFor(kind);
-    if (!terms) {
+    const settings = await this.settingsFor(kind);
+    if (!settings) {
       return [];
     }
-    const period = lastCompletePeriod(kind, now);
+    const { terms, anchors, paidThrough } = settings;
+    const period = lastCompletePeriod(kind, now, anchors);
+    const settled = paidThrough[kind];
+    if (settled !== undefined && new Date(settled) >= period.end) {
+      return [];
+    }
     const bonus = PERIOD_BONUS[kind];
     const granted: Granted[] = [];
     let after = '00000000-0000-0000-0000-000000000000';
@@ -139,6 +149,9 @@ export class RankPayoutService {
 
       const last = due.at(-1);
       if (!last || due.length < BATCH) {
+        // Written once the whole period is processed: a run that dies halfway is retried, and
+        // each player's own grant key keeps the retry from paying anybody twice.
+        await this.markPaid(kind, period.end);
         return granted;
       }
       after = last.userId;
@@ -209,7 +222,7 @@ export class RankPayoutService {
     };
   }
 
-  private async termsFor(kind: keyof RankRewards) {
+  private async settingsFor(kind: keyof RankRewards) {
     if (!this.grants || !this.eligibility) {
       this.logger.warn(
         { kind },
@@ -218,14 +231,25 @@ export class RankPayoutService {
       return null;
     }
     const [config] = await this.drizzle.db
-      .select({ rewards: promoRankConfig.rewards })
+      .select({
+        rewards: promoRankConfig.rewards,
+        anchors: promoRankConfig.payoutAnchors,
+        paidThrough: promoRankConfig.paidThrough,
+      })
       .from(promoRankConfig);
     const terms = config?.rewards[kind];
-    if (!terms) {
+    if (!config || !terms) {
       this.logger.warn({ kind }, 'rank payout skipped - no terms configured for this reward');
       return null;
     }
-    return terms;
+    return { terms, anchors: config.anchors, paidThrough: config.paidThrough };
+  }
+
+  /** Moves the kind's watermark forward, so no later run reaches back into a settled period. */
+  private async markPaid(kind: RankPeriodKind, end: Date) {
+    await this.drizzle.db.update(promoRankConfig).set({
+      paidThrough: sql`${promoRankConfig.paidThrough} || ${JSON.stringify({ [kind]: end.toISOString() })}::jsonb`,
+    });
   }
 
   private async isBlocked(userId: Uuid) {

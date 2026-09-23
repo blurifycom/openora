@@ -27,6 +27,7 @@ const drizzle = () => app.container.get(DRIZZLE).db;
 const CONFIG_ACTION = 'promo.rank_config.set';
 const CONFIG_PATH = '/backoffice/promo/ranks/config';
 const CASINO_ONLY = {
+  payoutAnchors: { dailyHour: 6, weeklyDay: 5, monthlyDay: 15 },
   eligibleProducts: ['casino'],
   rewards: {
     levelUp: { wageringMultiplier: '5', expiryDays: 14 },
@@ -127,6 +128,7 @@ describe('an operator configuring what a rank counts and pays', () => {
     const res = await admin.put(CONFIG_PATH, {
       eligibleProducts: [],
       rewards: { daily: { wageringMultiplier: '1000.01', expiryDays: 1 } },
+      payoutAnchors: EXAMPLE_RANK_LADDER.config.payoutAnchors,
     });
 
     expect(res.status).toBe(400);

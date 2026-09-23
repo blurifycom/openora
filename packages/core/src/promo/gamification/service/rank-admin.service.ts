@@ -179,6 +179,7 @@ export class RankAdminService {
       .select({
         eligibleProducts: promoRankConfig.eligibleProducts,
         rewards: promoRankConfig.rewards,
+        payoutAnchors: promoRankConfig.payoutAnchors,
       })
       .from(promoRankConfig);
     if (!config) {
@@ -198,12 +199,14 @@ export class RankAdminService {
     const config = {
       eligibleProducts: [...new Set(input.eligibleProducts)],
       rewards: input.rewards,
+      payoutAnchors: input.payoutAnchors,
     };
     return this.drizzle.db.transaction(async (tx) => {
       const [before] = await tx
         .select({
           eligibleProducts: promoRankConfig.eligibleProducts,
           rewards: promoRankConfig.rewards,
+          payoutAnchors: promoRankConfig.payoutAnchors,
         })
         .from(promoRankConfig)
         .for('update');

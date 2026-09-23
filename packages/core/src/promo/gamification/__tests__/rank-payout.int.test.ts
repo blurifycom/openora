@@ -11,6 +11,7 @@ import {
   promoRankLevelUp,
   promoRankTier,
 } from '../schema/index.js';
+import { DEFAULT_PAYOUT_ANCHORS } from '../contract/index.js';
 import { seedRankLadder } from '../seed/index.js';
 import { RankPayoutService } from '../service/rank-payout.service.js';
 
@@ -105,6 +106,7 @@ beforeEach(async () => {
     config: {
       eligibleProducts: [],
       rewards: { levelUp: LEVEL_UP_TERMS, daily: DAILY_TERMS },
+      payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     },
   });
 });
@@ -212,7 +214,7 @@ describe('paying a periodic bonus', () => {
       currency: 'USDT',
       amount: '0.500000000000000000',
       source: 'rank',
-      sourceRef: 'rank-daily:2026-09-21',
+      sourceRef: 'rank-daily:2026-09-21T00',
       actor: { type: 'system' },
       terms: DAILY_TERMS,
     });
@@ -230,6 +232,32 @@ describe('paying a periodic bonus', () => {
 
     expect(granted).toEqual([]);
     expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('pays a closed period once, and skips it on every later run', async () => {
+    await holding('silver', YESTERDAY_NOON);
+
+    const first = await service().payPeriodic('daily', NOW);
+    const second = await service().payPeriodic('daily', NOW);
+
+    expect(first).toHaveLength(1);
+    expect(second).toEqual([]);
+    expect(grant).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays the window the operator anchored, not the calendar one', async () => {
+    const userId = await holding('silver', YESTERDAY_NOON);
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payoutAnchors: { dailyHour: 6, weeklyDay: 1, monthlyDay: 1 } });
+
+    // 04:00 is before the 06:00 anchor, so the day that closed is the one before yesterday.
+    await service().payPeriodic('daily', new Date('2026-09-22T04:00:00Z'));
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId, sourceRef: 'rank-daily:2026-09-20T06' }),
+    );
   });
 
   it('pays nothing for a kind with no terms configured', async () => {
