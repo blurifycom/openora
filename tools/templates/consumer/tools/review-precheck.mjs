@@ -99,15 +99,60 @@ const numstat = new Map(
     }),
 );
 
+// ---- added and removed lines ---------------------------------------------------------------
+
+const parseDiff = (diffRange) => {
+  const added = [];
+  const removed = new Map();
+  let oldFile;
+  let file;
+  let line = 0;
+  for (const row of git('diff', '-U0', '--no-renames', diffRange).split('\n')) {
+    if (row.startsWith('--- ')) {
+      oldFile = row === '--- /dev/null' ? undefined : row.slice(6);
+    } else if (row.startsWith('+++ ')) {
+      file = row === '+++ /dev/null' ? oldFile : row.slice(6);
+    } else if (row.startsWith('@@')) {
+      line = Number(row.match(/\+(\d+)/)?.[1] ?? 0);
+    } else if (file && row.startsWith('+')) {
+      added.push({ file, line, text: row.slice(1) });
+      line += 1;
+    } else if (file && row.startsWith('-')) {
+      removed.set(file, [...(removed.get(file) ?? []), row.slice(1).trim()]);
+    }
+  }
+  return { added, removed };
+};
+
+// Hunks since the last review, minus what a base-branch merge brought in: an added line counts
+// only where the whole change added it too, a removed line only where the base did not remove it.
+const sinceLastReview = (changeDiff) => {
+  const sinceDiff = parseDiff(`${args.since}..${args.head}`);
+  const mergeBase = (ref) => git('merge-base', ref, args.base).trim();
+  const baseMerged = parseDiff(`${mergeBase(args.since)}..${mergeBase(args.head)}`).removed;
+  const changeAdded = new Set(changeDiff.added.map(({ file, line }) => `${file}:${line}`));
+  return {
+    added: sinceDiff.added.filter(({ file, line }) => changeAdded.has(`${file}:${line}`)),
+    removed: new Map(
+      [...sinceDiff.removed].map(([file, texts]) => [
+        file,
+        texts.filter((text) => !(baseMerged.get(file) ?? []).includes(text)),
+      ]),
+    ),
+  };
+};
+
 const notes = [];
 let mode = 'full';
 let scoped = [...numstat.keys()];
+let diff = parseDiff(range);
 if (args.since) {
   if (gitOk('merge-base', '--is-ancestor', args.since, args.head)) {
     const changedSince = new Set(
       git('diff', '--name-only', '--no-renames', args.since, args.head).split('\n').filter(Boolean),
     );
     scoped = scoped.filter((path) => changedSince.has(path));
+    diff = sinceLastReview(diff);
     mode = 'incremental';
   } else {
     notes.push(`NOTE: --since ${args.since} is not an ancestor of ${args.head} - full review`);
@@ -116,33 +161,9 @@ if (args.since) {
 
 const reviewable = scoped.filter((path) => !skipReason(path));
 const skipped = scoped.filter((path) => skipReason(path));
-
-// ---- added and removed lines ---------------------------------------------------------------
-
-const parseDiff = (paths) => {
-  const added = [];
-  const removed = new Map();
-  if (paths.length === 0) {
-    return { added, removed };
-  }
-  let file;
-  let line = 0;
-  for (const row of git('diff', '-U0', '--no-renames', range, '--', ...paths).split('\n')) {
-    if (row.startsWith('+++ ')) {
-      file = row === '+++ /dev/null' ? undefined : row.slice(6);
-    } else if (row.startsWith('@@')) {
-      line = Number(row.match(/\+(\d+)/)?.[1] ?? 0);
-    } else if (file && row.startsWith('+')) {
-      added.push({ file, line, text: row.slice(1) });
-      line += 1;
-    } else if (file && row.startsWith('-') && !row.startsWith('--- ')) {
-      removed.set(file, [...(removed.get(file) ?? []), row.slice(1).trim()]);
-    }
-  }
-  return { added, removed };
-};
-
-const { added, removed } = parseDiff(reviewable.filter((path) => CODE_FILE.test(path)));
+const codeFiles = new Set(reviewable.filter((path) => CODE_FILE.test(path)));
+const added = diff.added.filter(({ file }) => codeFiles.has(file));
+const removed = new Map([...diff.removed].filter(([file]) => codeFiles.has(file)));
 
 // ---- mechanical checks ---------------------------------------------------------------------
 
@@ -419,7 +440,13 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
 
 // ---- output --------------------------------------------------------------------------------
 
-const lines = (path) => numstat.get(path);
+const lines = (path) =>
+  mode === 'incremental'
+    ? {
+        added: diff.added.filter(({ file }) => file === path).length,
+        deleted: diff.removed.get(path)?.length ?? 0,
+      }
+    : numstat.get(path);
 const totals = scoped.reduce(
   (sum, path) => ({
     added: sum.added + lines(path).added,

@@ -3,7 +3,7 @@
 // and assert on the lines the review skill parses.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
@@ -167,4 +167,20 @@ test('a removed line can lose a domain hit as easily as an added line can gain o
     out,
     /DOMAIN-HIT: security apps\/web\/src\/mod\/route\.ts - \/.*guard.*\/ \(removed\)/,
   );
+});
+
+test('--since reports only hunks added after the last review, not the whole file again', () => {
+  git('checkout', '-q', 'feature');
+  const reviewed = git('rev-parse', 'HEAD');
+  git('checkout', '-q', '-b', 'follow-up');
+  const page = 'apps/web/src/mod/page.tsx';
+  commit('follow-up', {
+    [page]: `const late = value as Late;\n${readFileSync(join(repo, page), 'utf8')}`,
+  });
+  const out = precheck('--base', 'dev', '--head', 'follow-up', '--since', reviewed);
+  const text = out.join('\n');
+  assert.ok(out.includes(`REVIEWABLE: ${page} +1/-0`));
+  assert.match(text, /page\.tsx:1 - type-cast - `as Late`/);
+  assert.doesNotMatch(text, /`as Status`/);
+  assert.ok(out.includes('DOMAIN: compliance hits 0'));
 });

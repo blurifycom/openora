@@ -56,7 +56,7 @@ No `REVIEWABLE:` and no `SKIPPED:` lines: fall back to `git status -s`; if still
 A pull request is reviewed round after round; re-reading the whole change each round is the biggest waste. Unless `--full` or `--ci`:
 
 1. Read `.claude/reviews/<pr>.json` in the main checkout (`{ "sha", "base", "verdict", "findings": [...], "dimensions": [...] }`; no PR number: key it by branch name). Absent and a PR number given: find the latest note carrying `<!-- review:sha=<sha> -->` per `docs/agents/forge.md` and take its SHA; its findings are the inline threads still unresolved.
-2. Found: run the precheck with `--since <sha>`. `mode incremental` narrows `REVIEWABLE:` to files changed since that review (base-branch merges excluded). A `NOTE: --since ... not an ancestor` (force push, rebase) means a full review - say so.
+2. Found: run the precheck with `--since <sha>`. `mode incremental` narrows `REVIEWABLE:`, its line counts, `PRECHECK:`, and `DOMAIN-HIT:` to what changed since that review (base-branch merges excluded). A `NOTE: --since ... not an ancestor` (force push, rebase) means a full review - say so.
 3. Split the prior findings: those on a file in the new `REVIEWABLE:` set go to the owning reviewer to re-verify; the rest carry over unchanged.
 
 ## 2b. Collect task context (mandatory - this is the spec axis)
