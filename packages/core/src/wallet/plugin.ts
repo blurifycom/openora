@@ -238,7 +238,14 @@ export default {
         ),
     );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
-    ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
+    ctx.provide(
+      WALLET_READER,
+      (c) =>
+        new WalletReaderService(
+          c.get(DRIZZLE),
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet?.defaultCurrency : undefined,
+        ),
+    );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.

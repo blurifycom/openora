@@ -248,7 +248,8 @@ function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddr
 }
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
-// reads as their active currency before one is created on first deposit.
+// reads as their active currency before one is created on first deposit, unless
+// `platformConfig.wallet.defaultCurrency` overrides it.
 export const DEFAULT_WALLET_CURRENCY = 'USD';
 
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
@@ -440,11 +441,12 @@ export async function readWalletBalance(
 export async function readWalletBalances(
   txn: DrizzleDb,
   userId: User['id'],
+  defaultCurrency = DEFAULT_WALLET_CURRENCY,
 ): Promise<{ activeCurrency: string; balances: { currency: string; balance: string }[] }> {
   const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
 
   if (!record) {
-    return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
+    return { activeCurrency: defaultCurrency, balances: [] };
   }
 
   const balances = await txn
@@ -459,10 +461,11 @@ export async function readWalletBalances(
 export async function resolveWalletBalance(
   txn: DrizzleDb,
   userId: User['id'],
+  defaultCurrency = DEFAULT_WALLET_CURRENCY,
 ): Promise<{ balance: string; currency: string }> {
   const [record] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
   if (!record) {
-    return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
+    return { balance: '0', currency: defaultCurrency };
   }
   return {
     balance: await readWalletBalance(txn, record.id, record.currency),
@@ -879,11 +882,19 @@ export class WalletService {
   }
 
   getBalance(userId: User['id']) {
-    return resolveWalletBalance(this.drizzle.db, userId);
+    return resolveWalletBalance(
+      this.drizzle.db,
+      userId,
+      this.platformConfig?.wallet?.defaultCurrency,
+    );
   }
 
   async getBalances(userId: User['id']) {
-    return readWalletBalances(this.drizzle.db, userId);
+    return readWalletBalances(
+      this.drizzle.db,
+      userId,
+      this.platformConfig?.wallet?.defaultCurrency,
+    );
   }
 
   // TODO: validate `currency` against a canonical supported-currency list once one

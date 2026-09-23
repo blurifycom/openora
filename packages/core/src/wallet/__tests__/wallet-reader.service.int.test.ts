@@ -106,6 +106,24 @@ describe('WalletReaderService.getBalance (real PG)', () => {
     expect(await svc.getBalance(randomUUID())).toEqual({ balance: '0', currency: 'USD' });
   });
 
+  it('reports the configured default currency for a user with no wallet row', async () => {
+    const configured = new WalletReaderService(db.drizzle, 'USDT');
+    const userId = randomUUID();
+
+    expect(await configured.getBalance(userId)).toEqual({ balance: '0', currency: 'USDT' });
+    expect(await configured.getBalances(userId)).toEqual({
+      activeCurrency: 'USDT',
+      balances: [],
+    });
+  });
+
+  it('keeps an existing wallet on its own active currency when a default is configured', async () => {
+    const w = await seedWallet();
+    const configured = new WalletReaderService(db.drizzle, 'USDT');
+
+    expect((await configured.getBalance(w.userId)).currency).toBe('USD');
+  });
+
   it("returns the wallet's active-currency balance", async () => {
     const w = await seedWallet();
     await db.drizzle.db
