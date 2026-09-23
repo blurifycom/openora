@@ -23,11 +23,24 @@ export const GameCategoryRuleInvalidError = createDomainError<[message: string]>
   'GameCategoryRuleInvalidError',
   (message) => message,
 );
+// A definition's resolve or validate threw - a database timeout, an overlay's upstream
+// down. Unlike an invalid rule, a retry may succeed.
+export const GameCategoryRuleUnavailableError = createDomainError<[message: string]>(
+  'GameCategoryRuleUnavailableError',
+  (message) => message,
+);
 export const GameCategoryRuleTooBroadError = createDomainError<[matchedCount: number]>(
   'GameCategoryRuleTooBroadError',
   (matchedCount) =>
     `The rule matches ${matchedCount} games, exceeding the ${GAME_CATEGORY_RULE_MATCH_MAX}-game cap`,
 );
+
+/**
+ * A caller's permission check on one rule, run by a write or an evaluation on the exact
+ * rule it goes on to store or resolve, so a racing change cannot slip an unchecked rule
+ * past it. Throws to refuse.
+ */
+export type GameCategoryRuleAuthorizer = (rule: GameCategoryRule) => Promise<void>;
 
 /** An error that means the rule itself does not resolve - retrying cannot fix it. */
 export function isUnresolvableRuleError(err: unknown): err is Error {
@@ -76,17 +89,29 @@ export class GameCategoryRuleService {
     const clauses = rule.map((clause) => this.bindClause(clause));
     let candidateIds: string[] | null = null;
     for (const { definition, params } of clauses) {
-      let resolved: string[];
+      let resolved: unknown;
       try {
         resolved = await definition.resolve({ params, candidateIds, now });
       } catch (err) {
         logger.warn({ err, ruleKey: definition.key }, 'gaming.category.rule: resolve threw');
-        throw new GameCategoryRuleInvalidError(`${definition.key}: the rule could not be resolved`);
+        throw new GameCategoryRuleUnavailableError(
+          `${definition.key}: the rule could not be resolved`,
+        );
+      }
+      // Anything but an array is a broken definition, not an empty match: treating it as
+      // one would empty the category.
+      if (!Array.isArray(resolved)) {
+        throw new GameCategoryRuleInvalidError(
+          `${definition.key}: the rule returned no list of game ids`,
+        );
       }
       const allowed: ReadonlySet<string> | null = candidateIds ? new Set(candidateIds) : null;
-      candidateIds = [...new Set(resolved)].filter(
-        (id) => UuidSchema.safeParse(id).success && (allowed === null || allowed.has(id)),
-      );
+      // Lowercased as Postgres returns them, or an uppercase id would match no game row
+      // and its game would be dropped from the category.
+      const ids = resolved
+        .filter((id): id is string => UuidSchema.safeParse(id).success)
+        .map((id) => id.toLowerCase());
+      candidateIds = [...new Set(ids)].filter((id) => allowed === null || allowed.has(id));
       if (candidateIds.length === 0) {
         return [];
       }
@@ -179,13 +204,14 @@ export class GameCategoryRuleService {
     return { definition, params: parsed.data };
   }
 
-  // A throwing `validate` is a rule that cannot be saved, like a throwing `resolve`.
+  // A throwing `validate` could not check the rule, like a throwing `resolve`: the save
+  // fails and may be retried, while a returned issue means the rule itself is invalid.
   private async runValidate(ruleKey: string, validate: () => Promise<string | null> | undefined) {
     try {
       return await validate();
     } catch (err) {
       logger.warn({ err, ruleKey }, 'gaming.category.rule: validate threw');
-      throw new GameCategoryRuleInvalidError(`${ruleKey}: the rule could not be validated`);
+      throw new GameCategoryRuleUnavailableError(`${ruleKey}: the rule could not be validated`);
     }
   }
 }

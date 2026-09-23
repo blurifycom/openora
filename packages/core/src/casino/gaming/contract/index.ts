@@ -6,6 +6,7 @@ import {
   GAME_TYPES,
   GameBulkIdsSchema,
   GameCategoryMembershipModeSchema,
+  GameCategoryMembershipTriggerSchema,
   GameCategoryNameSchema,
   GameCategoryRuleKeySchema,
   GameCategoryRuleSchema,
@@ -475,16 +476,12 @@ export type EvaluateCategoryMembershipOutput = z.infer<
   typeof EvaluateCategoryMembershipOutputSchema
 >;
 
-// The most games one rule may match. Preview and evaluation reject a broader result
-// before any membership writes, bounding the links, audit payload and rank job.
+// The most games one rule may match; preview and evaluation reject a broader result
+// before any membership write.
 export const GAME_CATEGORY_RULE_MATCH_MAX = 5000;
 
-// Cap on how many rule categories one membership-sweep pass enqueues, least recently
-// evaluated first - the same gradual-drain rationale as RANK_SWEEP_BATCH_LIMIT.
 export const MEMBERSHIP_SWEEP_BATCH_LIMIT = 200;
 
-// Catalogue changes arriving inside this window are merged and looked up once, so a sync
-// touching a thousand games costs one category scan and one job per affected category.
 export const MEMBERSHIP_EVENT_DEBOUNCE_MS = 250;
 
 // GAMING_COMMANDS.notifyGamesCreated announces a larger import in events of this size.
@@ -496,7 +493,8 @@ export const GAME_CATEGORY_MEMBERSHIP_QUEUE = queue('gaming.category.membership'
 
 export const GameCategoryMembershipJobSchema = z.object({
   categoryId: UuidSchema,
-  trigger: z.enum(['event', 'schedule']),
+  // The queue carries only the runs no admin asked for; an admin's runs are synchronous.
+  trigger: GameCategoryMembershipTriggerSchema.exclude(['admin']),
 });
 export type GameCategoryMembershipJob = z.infer<typeof GameCategoryMembershipJobSchema>;
 

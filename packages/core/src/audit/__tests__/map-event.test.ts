@@ -252,6 +252,26 @@ describe('mapEventToRecord: gaming.category.membership_evaluated', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.category.membership_evaluation.failed', () => {
+  it('audits a failed admin run as a failure on the category, with its reason', async () => {
+    const categoryId = '55555555-5555-4555-8555-555555555555';
+    const row = await mapEventToRecord('gaming.category.membership_evaluation.failed', {
+      categoryId,
+      actorId: adminId,
+      reason: 'Unknown rule key: removed_kind',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      result: 'failure',
+      after: { reason: 'Unknown rule key: removed_kind' },
+    });
+  });
+});
+
 describe('mapEventToRecord: gaming.category.pins_updated', () => {
   it('audits the category resource with the before/after pinned-slot lists', async () => {
     const categoryId = '55555555-5555-4555-8555-555555555555';

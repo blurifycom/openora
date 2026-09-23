@@ -6,7 +6,8 @@ type ORPCCode =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'CONFLICT'
-  | 'INTERNAL_SERVER_ERROR';
+  | 'INTERNAL_SERVER_ERROR'
+  | 'SERVICE_UNAVAILABLE';
 
 type ErrorClass = new (...args: never[]) => Error;
 

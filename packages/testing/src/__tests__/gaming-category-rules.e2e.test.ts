@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { auditLog } from '@openora/core/audit/schema';
 import {
   GAME_CATEGORY_RULE_CATALOG,
   GAMING_COMMANDS,
@@ -200,6 +201,27 @@ describe('rule-based category membership e2e', () => {
     expect(detail.membershipAttemptedAt).not.toBeNull();
     expect(detail.membershipLastError).toContain('exceeding the 5000-game cap');
     expect(await categoryGameIds(category.id)).toEqual([member.id]);
+    const evaluated = await admin.post(
+      `/backoffice/gaming/categories/${category.id}/membership/evaluate`,
+      { id: category.id },
+    );
+    expect(evaluated.status).toBe(400);
+    await vi.waitFor(async () => {
+      const failures = await drizzle()
+        .select({ result: auditLog.result, after: auditLog.after })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.resourceId, category.id),
+            eq(auditLog.action, 'gaming.category.membership_evaluation.failed'),
+          ),
+        );
+      expect(failures).toHaveLength(2);
+      for (const failure of failures) {
+        expect(failure.result).toBe('failure');
+        expect(String(failure.after?.['reason'])).toContain('exceeding the 5000-game cap');
+      }
+    });
     const preview = await admin.post('/backoffice/gaming/categories/rule-preview', { rule });
     expect(preview.status).toBe(400);
     expect(
@@ -273,8 +295,6 @@ describe('rule-based category membership e2e', () => {
     expect(await categoryGameIds(ruleCategory.id)).toEqual([member.id]);
     expect(await categoryGameIds(manualCategory.id)).toEqual([]);
 
-    // Re-sending the rule category a game is already in, next to a manual one, is fine -
-    // and leaves the kept link's row, pin included, alone.
     const pin = await admin.put(`/backoffice/gaming/categories/${ruleCategory.id}/games/pins`, {
       id: ruleCategory.id,
       pins: [{ gameId: member.id, position: 0 }],
@@ -571,8 +591,6 @@ describe('an operator-supplied rule kind, rebound via GAME_CATEGORY_RULE_CATALOG
     );
     expect((await readJson(listed)).items.map((g: { id: string }) => g.id)).toEqual([original.id]);
 
-    // The default app has no such kind: it refuses to evaluate the category and leaves
-    // its games alone rather than emptying it.
     const evaluated = await admin.post(
       `/backoffice/gaming/categories/${category.id}/membership/evaluate`,
       { id: category.id },

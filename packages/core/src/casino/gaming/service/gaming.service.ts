@@ -866,9 +866,8 @@ export class GamingService {
             ? { toAdd: [], toRemove: [] }
             : diffMembership(before.categoryIds, uniqueCategoryIds);
         if (uniqueCategoryIds !== undefined) {
-          // FOR KEY SHARE conflicts with the FOR UPDATE both a mode switch and the rule
-          // evaluator take, so a category read as manual here stays manual until this
-          // game's links have committed.
+          // FOR KEY SHARE here conflicts with the FOR UPDATE a mode switch or the rule
+          // evaluator takes - see "Lock order" in docs/modules/gaming.md.
           const lookupIds = [...new Set([...uniqueCategoryIds, ...categoryDiff.toRemove])].sort();
           const rows =
             lookupIds.length > 0

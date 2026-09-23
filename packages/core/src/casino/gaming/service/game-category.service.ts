@@ -24,7 +24,10 @@ import type {
   UpdateCategoryPinsInput,
 } from '../contract/index.js';
 import { enqueueGameCategoryRank } from './game-sort-trigger.service.js';
-import type { GameCategoryRuleService } from './game-category-rule.service.js';
+import type {
+  GameCategoryRuleAuthorizer,
+  GameCategoryRuleService,
+} from './game-category-rule.service.js';
 import {
   categoryGameOrder,
   rankDirtyPatch,
@@ -45,8 +48,17 @@ export const GameCategoryRuleRequiredError = createDomainError<[]>(
 // What this service needs of GameCategoryMembershipService. Declared here rather than
 // imported: that service imports this file's errors, and the two must not form a cycle.
 export type CategoryMembershipEvaluator = {
-  evaluate(args: { categoryId: string; trigger: 'admin'; actor: CatalogActor }): Promise<unknown>;
+  evaluate(args: {
+    categoryId: string;
+    trigger: 'admin';
+    actor: CatalogActor;
+    authorizeRule?: GameCategoryRuleAuthorizer;
+  }): Promise<unknown>;
 };
+
+// A caller's permission on the rules a write stores and evaluates; each is checked on the
+// exact rule applied, never on one read before a racing change replaced it.
+type RuleAuthorization = { authorizeRule?: GameCategoryRuleAuthorizer };
 export const GameCategorySlugTakenError = makeConflictError(
   'GameCategorySlugTakenError',
   'A category with this slug already exists',
@@ -203,9 +215,13 @@ export class GameCategoryService {
     actorId,
     ip,
     userAgent,
-  }: CreateCategoryInput & CatalogActor) {
+    authorizeRule,
+  }: CreateCategoryInput & CatalogActor & RuleAuthorization) {
     if (membershipMode === 'rule' && membershipRule === undefined) {
       throw new GameCategoryRuleRequiredError();
+    }
+    if (membershipRule && authorizeRule) {
+      await authorizeRule(membershipRule);
     }
     const rule = membershipRule ? await this.rules.normalizeRule(membershipRule) : null;
     let record: typeof gameCategory.$inferSelect;
@@ -247,20 +263,22 @@ export class GameCategoryService {
       userAgent: userAgent ?? null,
     });
     if (record.membershipMode === 'rule') {
-      return this.evaluateAfterWrite(record.id, { actorId, ip, userAgent });
+      return this.evaluateAfterWrite(record.id, { actorId, ip, userAgent }, authorizeRule);
     }
     return toCategoryDetail(record);
   }
 
-  // A category that just entered rule mode, or whose rule just changed, is populated
-  // before the write returns, so the caller never sees the old games under the new rule.
-  // Runs after the config commit, not inside it: the evaluator locks games before the
-  // category (docs/modules/gaming.md), the opposite of a transaction that already holds
-  // the category row. A failure here is logged, not thrown - the config write is already
-  // committed and audited, and the membership sweep retries the evaluation.
-  private async evaluateAfterWrite(id: string, actor: CatalogActor) {
+  // Runs after the config commit, not inside it - see "Lock order" in docs/modules/gaming.md.
+  // A failure here is logged, not thrown: the config write is already committed and
+  // audited, and the membership sweep retries. A refused `authorizeRule` means a racing
+  // write replaced the rule, so this evaluates its own.
+  private async evaluateAfterWrite(
+    id: string,
+    actor: CatalogActor,
+    authorizeRule: GameCategoryRuleAuthorizer | undefined,
+  ) {
     try {
-      await this.membership.evaluate({ categoryId: id, trigger: 'admin', actor });
+      await this.membership.evaluate({ categoryId: id, trigger: 'admin', actor, authorizeRule });
     } catch (err) {
       logger.error({ err, categoryId: id }, 'gaming.category.membership: evaluation failed');
     }
@@ -277,15 +295,20 @@ export class GameCategoryService {
     sortParams,
     membershipMode,
     membershipRule,
+    authorizeRule,
     ...patchInput
-  }: UpdateCategoryInput & CatalogActor) {
+  }: UpdateCategoryInput & CatalogActor & RuleAuthorization) {
     const scalarPatch: Partial<typeof gameCategory.$inferInsert> = { ...patchInput };
     const hasScalarChanges = Object.values(scalarPatch).some((value) => value !== undefined);
     const wantsSortChange =
       sortKey !== undefined || sortDirection !== undefined || sortParams !== undefined;
 
     for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt += 1) {
-      const normalized = await this.normalizeMembershipPatch(id, membershipMode, membershipRule);
+      const normalized = await this.normalizeMembershipPatch(id, {
+        membershipMode,
+        membershipRule,
+        authorizeRule,
+      });
       const outcome = await this.applyCategoryUpdate({
         id,
         scalarPatch,
@@ -298,20 +321,21 @@ export class GameCategoryService {
       if (outcome === 'stale') {
         continue;
       }
-      return this.finishCategoryUpdate(id, outcome, { actorId, ip, userAgent });
+      return this.finishCategoryUpdate(id, outcome, { actorId, ip, userAgent }, authorizeRule);
     }
     throw new GameCategoryUpdateContendedError();
   }
 
-  // Runs the rule catalog - arbitrary definition code, on its own pooled connections -
-  // BEFORE the update transaction, never inside it: holding the category row lock and a
-  // connection across that would let a handful of concurrent PATCHes exhaust the pool.
-  // Returns the rule that was checked next to its normalized form, so the transaction
-  // can confirm under the lock that it is still the rule in play.
+  // Runs before the update transaction opens, never inside it - see "Lock order" in
+  // docs/modules/gaming.md. Returns the checked rule next to its normalized form so the
+  // transaction can confirm under the lock that it is still the rule in play.
   private async normalizeMembershipPatch(
     id: string,
-    membershipMode: UpdateCategoryInput['membershipMode'],
-    membershipRule: UpdateCategoryInput['membershipRule'],
+    {
+      membershipMode,
+      membershipRule,
+      authorizeRule,
+    }: Pick<UpdateCategoryInput, 'membershipMode' | 'membershipRule'> & RuleAuthorization,
   ) {
     if (membershipMode === undefined && membershipRule === undefined) {
       return null;
@@ -328,6 +352,9 @@ export class GameCategoryService {
     const switchesToRule = membershipMode === 'rule' && existing.mode !== 'rule';
     if (input === null || (membershipRule === undefined && !switchesToRule)) {
       return null;
+    }
+    if (authorizeRule) {
+      await authorizeRule(input);
     }
     return { input, rule: await this.rules.normalizeRule(input) };
   }
@@ -381,8 +408,8 @@ export class GameCategoryService {
         const needsCheck =
           candidateRule !== null &&
           (membershipRule !== undefined || (modeChanged && nextMode === 'rule'));
-        // The rule checked before this transaction must be the one in play now that the
-        // row is locked - a concurrent PATCH may have replaced the stored rule or mode.
+        // Confirms under the lock that the rule checked before this transaction is
+        // still the one in play - see "Lock order" in docs/modules/gaming.md.
         if (needsCheck && !(normalized && isDeepStrictEqual(normalized.input, candidateRule))) {
           return 'stale' as const;
         }
@@ -418,8 +445,6 @@ export class GameCategoryService {
                 membershipSeq: sql`${gameCategory.membershipSeq} + 1`,
               }
             : {}),
-          // A manual category is not evaluated: a rule's last attempt or error would only
-          // mislead. The rule itself is kept, for a later switch back.
           ...(modeChanged && nextMode === 'manual'
             ? { membershipAttemptedAt: null, membershipLastError: null }
             : {}),
@@ -448,6 +473,7 @@ export class GameCategoryService {
     id: string,
     outcome: Exclude<Awaited<ReturnType<GameCategoryService['applyCategoryUpdate']>>, 'stale'>,
     { actorId, ip, userAgent }: CatalogActor,
+    authorizeRule: GameCategoryRuleAuthorizer | undefined,
   ) {
     if (!outcome.changed) {
       return toCategoryDetail(outcome.after);
@@ -464,7 +490,7 @@ export class GameCategoryService {
       enqueueGameCategoryRank(this.jobQueue, id);
     }
     if (outcome.needsEvaluation) {
-      return this.evaluateAfterWrite(id, { actorId, ip, userAgent });
+      return this.evaluateAfterWrite(id, { actorId, ip, userAgent }, authorizeRule);
     }
     return toCategoryDetail(outcome.after);
   }

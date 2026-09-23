@@ -78,6 +78,12 @@ export const GAME_CATEGORY_MEMBERSHIP_MODES = ['manual', 'rule'] as const;
 export const GameCategoryMembershipModeSchema = z.enum(GAME_CATEGORY_MEMBERSHIP_MODES);
 export type GameCategoryMembershipMode = z.infer<typeof GameCategoryMembershipModeSchema>;
 
+// What started a membership evaluation: an admin (on demand, or after a create or
+// update), a catalogue event, or the periodic sweep.
+export const GAME_CATEGORY_MEMBERSHIP_TRIGGERS = ['admin', 'event', 'schedule'] as const;
+export const GameCategoryMembershipTriggerSchema = z.enum(GAME_CATEGORY_MEMBERSHIP_TRIGGERS);
+export type GameCategoryMembershipTrigger = z.infer<typeof GameCategoryMembershipTriggerSchema>;
+
 // Who wrote a game_category_game row: an admin, or the rule evaluator.
 export const GAME_CATEGORY_GAME_SOURCES = ['manual', 'rule'] as const;
 

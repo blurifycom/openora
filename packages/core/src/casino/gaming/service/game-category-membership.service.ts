@@ -8,14 +8,16 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import type { JobQueueAdapter } from '@openora/core/contracts';
+import type { GameCategoryMembershipTrigger, JobQueueAdapter } from '@openora/core/contracts';
 import { game, gameCategory, gameCategoryGame, type GameCategory } from '../schema/index.js';
 import { SYSTEM_ACTOR_ID, type GameCategoryMembershipJob } from '../contract/index.js';
 import { rankDirtyPatch, type CatalogActor } from '../../shared/game-catalog.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
 import {
   GameCategoryRuleInvalidError,
+  GameCategoryRuleUnavailableError,
   isUnresolvableRuleError,
+  type GameCategoryRuleAuthorizer,
   type GameCategoryRuleService,
 } from './game-category-rule.service.js';
 import { enqueueGameCategoryRank } from './game-sort-trigger.service.js';
@@ -39,6 +41,17 @@ export const GameCategoryMembershipContendedError = createDomainError<[categoryI
 const MAX_EVALUATE_ATTEMPTS = 3;
 const MEMBERSHIP_LAST_ERROR_MAX = 500;
 
+// Only this module's own messages leave it, never a definition's raw error.
+function failureReason(err: unknown) {
+  const reason =
+    isUnresolvableRuleError(err) ||
+    err instanceof GameCategoryRuleUnavailableError ||
+    err instanceof GameCategoryMembershipContendedError
+      ? err.message
+      : 'The rule could not be evaluated';
+  return reason.slice(0, MEMBERSHIP_LAST_ERROR_MAX);
+}
+
 export type MembershipDiff = {
   toAdd: string[];
   toRemove: string[];
@@ -59,8 +72,11 @@ export function diffMembership(
 
 type EvaluateArgs = {
   categoryId: GameCategory['id'];
-  trigger: 'admin' | GameCategoryMembershipJob['trigger'];
+  trigger: GameCategoryMembershipTrigger;
   actor?: CatalogActor;
+  // Checked against each claimed rule before it resolves, so a permission binds to the
+  // rule this run evaluates rather than one the caller read earlier.
+  authorizeRule?: GameCategoryRuleAuthorizer;
 };
 
 type EvaluationSnapshot = Pick<GameCategory, 'membershipRule' | 'membershipSeq'>;
@@ -92,21 +108,26 @@ export class GameCategoryMembershipService {
 
   /**
    * Re-materializes one rule-mode category. Throws `GameCategoryNotFoundError` or
-   * `GameCategoryNotRuleManagedError` when there is nothing to evaluate, an unresolvable
-   * rule's error, or `GameCategoryMembershipContendedError` after three stale attempts.
-   * A repeat run with nothing to change writes no link rows.
+   * `GameCategoryNotRuleManagedError` when there is nothing to evaluate, whatever
+   * `authorizeRule` throws, an unresolvable rule's error, or
+   * `GameCategoryMembershipContendedError` after three stale attempts. A repeat run with
+   * nothing to change writes no link rows.
    */
-  async evaluate({ categoryId, trigger, actor }: EvaluateArgs) {
+  async evaluate(args: EvaluateArgs) {
+    const { categoryId, trigger, actor, authorizeRule } = args;
     for (let attempt = 0; attempt < MAX_EVALUATE_ATTEMPTS; attempt += 1) {
       const snapshot = await this.claimEvaluation(categoryId);
-      const outcome = await this.evaluateOnce(categoryId, snapshot);
+      // lockAndDiff applies nothing unless this claim is still current, so the rule
+      // authorized here is the one whose matches are written.
+      if (authorizeRule && snapshot.membershipRule) {
+        await authorizeRule(snapshot.membershipRule);
+      }
+      const outcome = await this.evaluateOnce(args, snapshot);
       if (outcome === 'stale') {
         if (attempt === MAX_EVALUATE_ATTEMPTS - 1) {
-          await this.recordFailedAttempt(
-            categoryId,
-            snapshot,
-            new GameCategoryMembershipContendedError(categoryId),
-          );
+          const contended = new GameCategoryMembershipContendedError(categoryId);
+          await this.recordFailedAttempt(categoryId, snapshot, contended);
+          this.publishFailure(args, contended);
         }
         continue;
       }
@@ -124,7 +145,8 @@ export class GameCategoryMembershipService {
   /**
    * The job entry point, as the system actor. A category deleted or switched to manual
    * after the job was queued is skipped, and so is a rule that does not resolve - no
-   * retry can fix it; the next sweep tries again in case an overlay came back.
+   * retry can fix it; the next sweep tries again in case an overlay came back. A rule
+   * that could not be resolved right now throws, so the queue retries the job.
    */
   async evaluateJob({ categoryId, trigger }: GameCategoryMembershipJob): Promise<void> {
     try {
@@ -145,15 +167,13 @@ export class GameCategoryMembershipService {
     }
   }
 
-  // Lock order is games, then the category, then its link rows - the order updateGame and
-  // the bulk actions take them in. Inserting a link locks its game row, so the rule is
-  // resolved and the games to insert are read first, unlocked, then locked before the
-  // category; the run is 'stale' and retried when the locked re-read disagrees.
+  // See "Lock order" in docs/modules/gaming.md.
   private async evaluateOnce(
-    categoryId: GameCategory['id'],
+    args: EvaluateArgs,
     snapshot: EvaluationSnapshot,
   ): Promise<Applied | 'stale'> {
-    const matchedIds = await this.resolveOrRecordFailure(categoryId, snapshot);
+    const { categoryId } = args;
+    const matchedIds = await this.resolveOrRecordFailure(args, snapshot);
     if (matchedIds === 'stale') {
       return 'stale';
     }
@@ -200,10 +220,7 @@ export class GameCategoryMembershipService {
 
   // A null rule in rule mode is a stored value that no longer parses (zodJsonb reads it
   // as null): a rule that does not resolve, never a manual category.
-  private async resolveOrRecordFailure(
-    categoryId: GameCategory['id'],
-    snapshot: EvaluationSnapshot,
-  ) {
+  private async resolveOrRecordFailure(args: EvaluateArgs, snapshot: EvaluationSnapshot) {
     try {
       const rule = snapshot.membershipRule;
       if (!rule) {
@@ -211,9 +228,10 @@ export class GameCategoryMembershipService {
       }
       return await this.rules.resolveGameIds(rule);
     } catch (err) {
-      if (!(await this.recordFailedAttempt(categoryId, snapshot, err))) {
+      if (!(await this.recordFailedAttempt(args.categoryId, snapshot, err))) {
         return 'stale';
       }
+      this.publishFailure(args, err);
       throw err;
     }
   }
@@ -328,7 +346,6 @@ export class GameCategoryMembershipService {
     };
   }
 
-  // After commit: re-rank when games moved; audit any write, and every run an admin asked for.
   private publish(
     categoryId: GameCategory['id'],
     trigger: EvaluateArgs['trigger'],
@@ -355,25 +372,32 @@ export class GameCategoryMembershipService {
     });
   }
 
-  // Records the attempt and its reason, leaving membershipEvaluatedAt at the last success,
-  // so a stuck rule never looks fresh and moves to the back of the sweep. Only this
-  // module's own messages are stored. Best effort: a failure here is logged, not thrown,
-  // so the caller still sees the error that mattered.
+  private publishFailure({ categoryId, trigger, actor }: EvaluateArgs, err: unknown) {
+    if (trigger !== 'admin') {
+      return;
+    }
+    this.events.emit('gaming.category.membership_evaluation.failed', {
+      categoryId,
+      actorId: actor?.actorId ?? SYSTEM_ACTOR_ID,
+      reason: failureReason(err),
+      ip: actor?.ip ?? null,
+      userAgent: actor?.userAgent ?? null,
+    });
+  }
+
+  // Best effort: a failure here is logged, not thrown, so the caller still sees the
+  // error that mattered.
   private async recordFailedAttempt(
     categoryId: GameCategory['id'],
     snapshot: EvaluationSnapshot,
     err: unknown,
   ) {
-    const reason =
-      isUnresolvableRuleError(err) || err instanceof GameCategoryMembershipContendedError
-        ? err.message
-        : 'The rule could not be evaluated';
     try {
       const recorded = await this.drizzle.db
         .update(gameCategory)
         .set({
           membershipAttemptedAt: sql`now()`,
-          membershipLastError: reason.slice(0, MEMBERSHIP_LAST_ERROR_MAX),
+          membershipLastError: failureReason(err),
           updatedAt: sql`${gameCategory.updatedAt}`,
         })
         .where(

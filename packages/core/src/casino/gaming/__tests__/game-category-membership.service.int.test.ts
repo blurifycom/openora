@@ -7,6 +7,7 @@ import {
   defineGameCategoryRule,
   createGameCategoryRuleCatalog,
   createGameSortCatalog,
+  type AdminGameReporting,
   type GameCategoryRule,
 } from '@openora/core/contracts';
 import { NO_CLIENT_META, makeEventBus, makeJobQueue } from '../../../testing/mock.js';
@@ -43,6 +44,7 @@ import {
   GameCategoryRuleService,
   GameCategoryRuleInvalidError,
   GameCategoryRuleTooBroadError,
+  GameCategoryRuleUnavailableError,
 } from '../service/game-category-rule.service.js';
 
 let db: TestDb;
@@ -251,6 +253,35 @@ describe('GameCategoryMembershipService.evaluate: rule kinds (real PG)', () => {
     expect(await rules.resolveGameIds([mostPlayed(5)])).toEqual([popular.id, highStakes.id]);
   });
 
+  it('most played: a rebound report without a round ranking still drives the rule', async () => {
+    const core = new DrizzleAdminGameReporting(db.drizzle);
+    const reportOnly: AdminGameReporting = {
+      listGamePerformance: (filter) => core.listGamePerformance(filter),
+      getGamePerformanceTrend: (filter) => core.getGamePerformanceTrend(filter),
+      getPlayerStats: (userId) => core.getPlayerStats(userId),
+    };
+    const rules = new GameCategoryRuleService(
+      db.drizzle,
+      createGameCategoryRuleCatalog(createDefaultGameCategoryRules(db.drizzle, reportOnly)),
+    );
+    const provider = await seedProvider();
+    const [most, second, third] = [
+      await seedGame(provider.id),
+      await seedGame(provider.id),
+      await seedGame(provider.id),
+    ];
+    await seedGame(provider.id);
+    await seedRounds(most.id, 3);
+    await seedRounds(second.id, 2);
+    await seedRounds(third.id, 1);
+
+    expect(await rules.resolveGameIds([mostPlayed(2)])).toEqual([most.id, second.id]);
+    expect(await makeServices().rules.resolveGameIds([mostPlayed(2)])).toEqual([
+      most.id,
+      second.id,
+    ]);
+  });
+
   it('most played on top of a filter: ranks only the filtered games', async () => {
     const { membership } = makeServices();
     const [listed, other] = [await seedProvider(), await seedProvider()];
@@ -267,7 +298,6 @@ describe('GameCategoryMembershipService.evaluate: rule kinds (real PG)', () => {
 });
 
 describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () => {
-  // An operator-supplied kind: games whose name starts with a prefix.
   const namePrefixRule = () =>
     defineGameCategoryRule({
       key: 'name_prefix',
@@ -340,6 +370,52 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     expect(await rules.resolveGameIds([{ key: 'sloppy', params: {} }])).toEqual([real.id]);
   });
 
+  it('matches an uppercase id to its game, keeping a member and adding a new one', async () => {
+    const provider = await seedProvider();
+    const [member, added] = [await seedGame(provider.id), await seedGame(provider.id)];
+    const category = await seedRuleCategory([{ key: 'shouting', params: {} }]);
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values({ gameId: member.id, categoryId: category.id, source: 'rule' });
+    const { membership, rules } = makeServices([
+      defineGameCategoryRule({
+        key: 'shouting',
+        paramsSchema: z.object({}).strict(),
+        resolve: async () => [member.id.toUpperCase(), added.id.toUpperCase(), member.id],
+      }),
+    ]);
+
+    expect(await rules.resolveGameIds([{ key: 'shouting', params: {} }])).toEqual([
+      member.id,
+      added.id,
+    ]);
+    await expect(
+      membership.evaluate({ categoryId: category.id, trigger: 'event' }),
+    ).resolves.toMatchObject({ matchedCount: 2, addedCount: 1, removedCount: 0 });
+    expect(await memberIds(category.id)).toEqual([member.id, added.id].sort());
+  });
+
+  it('refuses a result that is not a list, keeping the games', async () => {
+    const provider = await seedProvider();
+    const member = await seedGame(provider.id);
+    const category = await seedRuleCategory([{ key: 'broken', params: {} }]);
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values({ gameId: member.id, categoryId: category.id, source: 'rule' });
+    const { membership } = makeServices([
+      defineGameCategoryRule({
+        key: 'broken',
+        paramsSchema: z.object({}).strict(),
+        resolve: (async () => undefined) as unknown as () => Promise<string[]>,
+      }),
+    ]);
+
+    await expect(
+      membership.evaluate({ categoryId: category.id, trigger: 'event' }),
+    ).rejects.toThrow(GameCategoryRuleInvalidError);
+    expect(await memberIds(category.id)).toEqual([member.id]);
+  });
+
   it('rejects an unknown key and params its definition refuses when a rule is saved', async () => {
     const { categories } = makeServices();
     const base = { name: 'Category', membershipMode: 'rule' as const, ...ACTOR };
@@ -360,7 +436,7 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     ).rejects.toThrow(GameCategoryRuleInvalidError);
   });
 
-  it('a kind that is no longer bound, or throws, leaves the games untouched and is not retried', async () => {
+  it('a kind that is no longer bound is skipped, one that throws is retried, and both keep the games', async () => {
     const withKind = makeServices([namePrefixRule()]);
     const provider = await seedProvider();
     const member = await seedGame(provider.id, { name: 'Mega Reels' });
@@ -377,9 +453,21 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     await expect(
       withoutKind.membership.evaluateJob({ categoryId: category.id, trigger: 'schedule' }),
     ).resolves.toBeUndefined();
+    expect(withoutKind.events.emit).not.toHaveBeenCalled();
     await expect(
       withoutKind.membership.evaluate({ categoryId: category.id, trigger: 'admin', actor: ACTOR }),
     ).rejects.toThrow(GameCategoryRuleInvalidError);
+    expect(withoutKind.events.emit).toHaveBeenCalledTimes(1);
+    expect(withoutKind.events.emit).toHaveBeenCalledWith(
+      'gaming.category.membership_evaluation.failed',
+      {
+        categoryId: category.id,
+        actorId: ACTOR.actorId,
+        reason: 'Unknown rule key: name_prefix',
+        ip: null,
+        userAgent: null,
+      },
+    );
 
     const throwing = makeServices([
       defineGameCategoryRule({
@@ -392,8 +480,11 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     ]);
     await expect(
       throwing.membership.evaluateJob({ categoryId: category.id, trigger: 'schedule' }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(GameCategoryRuleUnavailableError);
     expect(await memberIds(category.id)).toEqual([member.id]);
+    expect((await throwing.categories.getCategory(category.id)).membershipLastError).toBe(
+      'name_prefix: the rule could not be resolved',
+    );
   });
 
   it.each(['missing kind', 'invalid params'] as const)(
@@ -430,12 +521,16 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
       expect(after.membershipEvaluatedAt).toBe(category.membershipEvaluatedAt);
       expect(after.membershipAttemptedAt).not.toBeNull();
       expect(after.membershipLastError).toContain('name_prefix');
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(events.emit).toHaveBeenCalledTimes(1);
+      expect(events.emit).toHaveBeenCalledWith(
+        'gaming.category.membership_evaluation.failed',
+        expect.objectContaining({ categoryId: category.id, reason: after.membershipLastError }),
+      );
       expect(jobQueue.enqueue).not.toHaveBeenCalled();
     },
   );
 
-  it('refuses a rule whose validate throws or whose parsed params are not plain JSON', async () => {
+  it('cannot save a rule whose validate throws, and refuses params that are not plain JSON', async () => {
     const { rules } = makeServices([
       defineGameCategoryRule({
         key: 'flaky_validate',
@@ -453,7 +548,7 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     ]);
 
     await expect(rules.normalizeRule([{ key: 'flaky_validate', params: {} }])).rejects.toThrow(
-      GameCategoryRuleInvalidError,
+      GameCategoryRuleUnavailableError,
     );
     await expect(
       rules.normalizeRule([{ key: 'since', params: { since: '2026-01-01' } }]),
@@ -474,10 +569,11 @@ describe('GameCategoryMembershipService: the rule catalog seam (real PG)', () =>
     ).toEqual([]);
     await triggers.sweep();
     expect(jobQueue.enqueue).toHaveBeenCalledTimes(2);
-    expect(jobQueue.enqueue).toHaveBeenCalledWith(GAME_CATEGORY_MEMBERSHIP_QUEUE, {
-      categoryId: custom.id,
-      trigger: 'schedule',
-    });
+    expect(jobQueue.enqueue).toHaveBeenCalledWith(
+      GAME_CATEGORY_MEMBERSHIP_QUEUE,
+      { categoryId: custom.id, trigger: 'schedule' },
+      { attempts: 3, backoff: { type: 'exponential', delayMs: 5_000 } },
+    );
   });
 
   it('lists every bound kind with its params JSON Schema and reporting flag', async () => {
@@ -717,7 +813,6 @@ describe('GameCategoryService: membership mode switches (real PG)', () => {
     });
     events.emit.mockClear();
 
-    // jsonb does not keep key order, and neither does this client.
     await categories.updateCategory({
       id: created.id,
       membershipRule: [{ key: 'most_played', params: { limit: 5, periodDays: 7 } }],
@@ -766,10 +861,13 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
       playabilityChanged: true,
     });
 
-    // Both triggers land inside the debounce window: merged, looked up once, one job.
     await vi.waitFor(() => {
       expect(jobQueue.enqueue.mock.calls).toEqual([
-        [GAME_CATEGORY_MEMBERSHIP_QUEUE, { categoryId: byA.id, trigger: 'event' }],
+        [
+          GAME_CATEGORY_MEMBERSHIP_QUEUE,
+          { categoryId: byA.id, trigger: 'event' },
+          expect.objectContaining({ attempts: 3 }),
+        ],
       ]);
     });
   });
@@ -794,7 +892,6 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
     expect(saved.membershipAttemptedAt).not.toBeNull();
     expect(saved.membershipLastError).toMatch(/exceeding the 5000-game cap/);
     expect(await memberIds(saved.id)).toEqual([]);
-    // A ranking clause after it does not rescue a filter that is too broad.
     await expect(rules.resolveGameIds([providers(provider.id), mostPlayed(1)])).rejects.toThrow(
       GameCategoryRuleTooBroadError,
     );
@@ -803,7 +900,6 @@ describe('GameCategoryMembershipService: re-evaluation triggers (real PG)', () =
       membership.evaluate({ categoryId: grown.id, trigger: 'schedule' }),
     ).rejects.toThrow(GameCategoryRuleTooBroadError);
     expect(await memberIds(grown.id)).toEqual([]);
-    // The failed run is recorded as an attempt with its reason - never as an evaluation.
     const [recorded] = await db.drizzle.db
       .select({
         evaluatedAt: gameCategory.membershipEvaluatedAt,

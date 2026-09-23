@@ -11,6 +11,7 @@ import {
   GameAddedTagLinksSchema,
   GameBulkIdsSchema,
   GameCategoryMembershipModeSchema,
+  GameCategoryMembershipTriggerSchema,
   GameCategoryRuleSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
@@ -563,12 +564,20 @@ export const domainEventSchemas = {
   'gaming.category.membership_evaluated': authContextBase.extend({
     categoryId: UuidSchema,
     actorId: UuidSchema,
-    trigger: z.enum(['admin', 'event', 'schedule']),
+    trigger: GameCategoryMembershipTriggerSchema,
     matchedCount: z.number().int().nonnegative(),
     // Rows kept but handed from 'manual' to 'rule' ownership on the first evaluation.
     relabeledCount: z.number().int().nonnegative().default(0),
     addedGameIds: z.array(UuidSchema),
     removedGameIds: z.array(UuidSchema),
+  }),
+  // An evaluation an admin asked for (on demand, or after a create or update) that failed
+  // and changed no games. reason is the module's own message, as stored in
+  // membershipLastError, never a rule definition's raw error.
+  'gaming.category.membership_evaluation.failed': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema,
+    reason: z.string().max(500),
   }),
   // New catalogue rows. Core has no game-insert path of its own: whatever imports games
   // (an aggregator sync overlay, a seed) reports them through GAMING_COMMANDS so

@@ -887,6 +887,17 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'gaming.category.membership_evaluation.failed') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      after: { reason: p['reason'] ?? null },
+    };
+  }
+
   if (topic === 'gaming.tag.created') {
     return {
       ...base,
@@ -1237,6 +1248,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.category.games_reordered',
   'gaming.category.pins_updated',
   'gaming.category.membership_evaluated',
+  'gaming.category.membership_evaluation.failed',
   'gaming.game.availability_changed',
   'chat.user.blocked',
   'chat.user.unblocked',

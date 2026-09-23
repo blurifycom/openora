@@ -85,7 +85,6 @@ describe('membershipChangeForGameUpdate', () => {
     expect(membershipChangeForGameUpdate(base, { ...base, providerId: PROVIDER_B })).toEqual({
       providerIds: [PROVIDER_A, PROVIDER_B],
       tagIds: [],
-      // The new provider may be inactive, which flips the game's playability.
       playabilityChanged: true,
     });
   });

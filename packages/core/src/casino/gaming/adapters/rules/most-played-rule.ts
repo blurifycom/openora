@@ -16,9 +16,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * player would see as a gap, and never admits a game with no completed round in the
  * window - a quiet catalogue yields fewer than `limit` games rather than arbitrary ones.
  *
- * Round counts come from ADMIN_GAME_REPORTING, the game performance report's own
- * aggregation, so an overlay that rebinds the report also drives this rule. A count is
- * currency-neutral: rounds in every currency weigh the same.
+ * Round counts come from ADMIN_GAME_REPORTING, so an overlay that rebinds the report also
+ * drives this rule: its `rankGamesByRounds` when bound, which counts and limits in one
+ * query, else the full game performance report. A count is currency-neutral: rounds in
+ * every currency weigh the same.
  */
 export function createMostPlayedRule(drizzle: DrizzleService, reporting: AdminGameReporting) {
   return defineGameCategoryRule({
@@ -41,16 +42,21 @@ export function createMostPlayedRule(drizzle: DrizzleService, reporting: AdminGa
         return [];
       }
       const playableIds = new Set(playable.map((row) => row.id));
-      const performance = await reporting.listGamePerformance({
+      // Always narrowed to the playable candidates, so rounds are counted for those games
+      // only - never the whole round table for a catalogue slice.
+      const range = {
         dateFrom: new Date(now.getTime() - params.periodDays * DAY_MS),
         dateTo: now,
-        sortBy: 'roundsPlayed',
-        sortDir: 'desc',
-        // Always narrowed to the playable candidates, so the report aggregates rounds
-        // for those games only - never the whole round table for a catalogue slice.
         gameIds: [...playableIds],
-      });
-      return performance
+      };
+      const ranked = reporting.rankGamesByRounds
+        ? await reporting.rankGamesByRounds({ ...range, limit: params.limit })
+        : await reporting.listGamePerformance({
+            ...range,
+            sortBy: 'roundsPlayed',
+            sortDir: 'desc',
+          });
+      return ranked
         .filter((row) => row.roundsPlayed > 0 && playableIds.has(row.gameId))
         .slice(0, params.limit)
         .map((row) => row.gameId);

@@ -77,6 +77,20 @@ export type GamePerformanceTrend = {
   points: GamePerformanceTrendPoint[];
 };
 
+export type GameRoundRankingFilter = {
+  dateFrom: Date;
+  dateTo: Date;
+  /** Only these games are counted. An empty list matches nothing. */
+  gameIds: readonly string[];
+  limit: number;
+};
+
+/** A game with at least one completed round in range, and how many it had. */
+export type GameRoundCount = {
+  gameId: string;
+  roundsPlayed: number;
+};
+
 export type PlayerGameStats = {
   totalWagered: string;
   totalBets: number;
@@ -87,6 +101,13 @@ export type AdminGameReporting = {
   /** `null` when no game has `filter.gameId`. */
   getGamePerformanceTrend(filter: GamePerformanceTrendFilter): Promise<GamePerformanceTrend | null>;
   getPlayerStats(userId: string): Promise<PlayerGameStats>;
+  /**
+   * At most `limit` of `filter.gameIds` by completed rounds in range, most played first,
+   * ties by game id; a game with no such round is left out. Counts rounds with the same
+   * scoping as `roundsPlayed` in listGamePerformance. Optional so an overlay that rebinds
+   * this port keeps compiling; without it, a caller ranks from listGamePerformance.
+   */
+  rankGamesByRounds?(filter: GameRoundRankingFilter): Promise<GameRoundCount[]>;
 };
 
 export const ADMIN_GAME_REPORTING: Token<AdminGameReporting> = createToken('ADMIN_GAME_REPORTING');

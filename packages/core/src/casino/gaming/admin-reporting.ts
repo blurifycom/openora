@@ -4,10 +4,12 @@ import type {
   GamePerformanceRow,
   GamePerformanceTrend,
   GamePerformanceTrendFilter,
+  GameRoundCount,
+  GameRoundRankingFilter,
   PlayerGameStats,
 } from '@openora/core/contracts';
 import { DrizzleService } from '@openora/core/server';
-import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { game, gameRound } from './schema/index.js';
 
 // See ADR-0017/0025.
@@ -81,6 +83,33 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       uniquePlayers: Number(r.uniquePlayers),
       roundsPlayed: Number(r.roundsPlayed),
     }));
+  }
+
+  async rankGamesByRounds({
+    dateFrom,
+    dateTo,
+    gameIds,
+    limit,
+  }: GameRoundRankingFilter): Promise<GameRoundCount[]> {
+    if (gameIds.length === 0 || limit <= 0) {
+      return [];
+    }
+    const roundsPlayed = count(gameRound.id);
+    const rows = await this.drizzle.db
+      .select({ gameId: gameRound.gameId, roundsPlayed })
+      .from(gameRound)
+      .where(
+        and(
+          sql`${gameRound.gameId} = ANY(${sql.param([...gameIds])}::uuid[])`,
+          eq(gameRound.status, 'completed'),
+          gte(gameRound.startedAt, dateFrom),
+          lte(gameRound.startedAt, dateTo),
+        ),
+      )
+      .groupBy(gameRound.gameId)
+      .orderBy(desc(roundsPlayed), asc(gameRound.gameId))
+      .limit(limit);
+    return rows.map((row) => ({ gameId: row.gameId, roundsPlayed: Number(row.roundsPlayed) }));
   }
 
   async getGamePerformanceTrend(

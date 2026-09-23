@@ -18,6 +18,11 @@ import {
 import type { GameCategoryRuleService } from './game-category-rule.service.js';
 
 const logger = createLogger('gaming');
+
+const MEMBERSHIP_JOB_RETRY = {
+  attempts: 3,
+  backoff: { type: 'exponential', delayMs: 5_000 },
+} as const;
 const playabilityChange = { providerIds: [], tagIds: [], playabilityChanged: true } as const;
 
 type GameMembershipSnapshot = {
@@ -261,7 +266,7 @@ export class GameCategoryMembershipTriggerService {
   // the category id would dedupe every later trigger against the first completed job.
   private enqueue(categoryId: GameCategory['id'], trigger: GameCategoryMembershipJob['trigger']) {
     this.jobQueue
-      .enqueue(GAME_CATEGORY_MEMBERSHIP_QUEUE, { categoryId, trigger })
+      .enqueue(GAME_CATEGORY_MEMBERSHIP_QUEUE, { categoryId, trigger }, MEMBERSHIP_JOB_RETRY)
       .catch((err: unknown) => {
         logger.error({ err, categoryId }, 'gaming.category.membership enqueue failed');
       });
