@@ -21,11 +21,11 @@ describe('phoneMatchesCountryCallingCode', () => {
     expect(phoneMatchesCountryCallingCode('+441632960001', 'US')).toBe(false);
   });
 
-  it('does not block when the country has no known calling-code metadata', () => {
-    expect(phoneMatchesCountryCallingCode('+14155552671', 'ZZ')).toBe(true);
+  it('rejects an ISO-shaped country with no known calling-code metadata', () => {
+    expect(phoneMatchesCountryCallingCode('+14155552671', 'ZZ')).toBe(false);
   });
 
-  it('does not block when the phone cannot be parsed at all', () => {
-    expect(phoneMatchesCountryCallingCode('not-a-phone-number', 'US')).toBe(true);
+  it('rejects an E.164-shaped phone with no known calling-code metadata', () => {
+    expect(phoneMatchesCountryCallingCode('+99912345678', 'US')).toBe(false);
   });
 });

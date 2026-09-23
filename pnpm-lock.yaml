@@ -157,7 +157,7 @@ importers:
         specifier: 4.13.5
         version: 4.13.5
       libphonenumber-js:
-        specifier: ^1.13.13
+        specifier: 1.13.13
         version: 1.13.13
       pg:
         specifier: 8.21.0

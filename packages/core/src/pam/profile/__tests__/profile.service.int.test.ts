@@ -177,6 +177,39 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
     const [otherRow] = await playersFor(other.id);
     expect(otherRow?.country).toBe('CA');
   });
+
+  it('allows unrelated changes on a legacy row with an inconsistent phone/country pair', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { phone: '+14155552671', country: 'GB' });
+
+    const result = await svc.updateMyProfile(account.id, { firstName: 'Ada' });
+
+    expect(result).toMatchObject({ firstName: 'Ada', phone: '+14155552671', country: 'GB' });
+    expect(await playersFor(account.id)).toMatchObject([
+      { firstName: 'Ada', phone: '+14155552671', country: 'GB' },
+    ]);
+  });
+
+  it('serializes concurrent partial updates so an inconsistent pair cannot be stored', async () => {
+    const svc = makeService();
+    const account = await seedUser(db);
+    await seedPlayer(account.id);
+
+    const results = await Promise.allSettled([
+      svc.updateMyProfile(account.id, { phone: '+441632960001' }),
+      svc.updateMyProfile(account.id, { country: 'US' }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const [row] = await playersFor(account.id);
+    expect(row).toMatchObject(
+      row?.phone === null
+        ? { phone: null, country: 'US' }
+        : { phone: '+441632960001', country: null },
+    );
+  });
 });
 
 describe('ProfileService.getMyDisplayCurrency (real PG)', () => {

@@ -75,8 +75,24 @@ describe('PATCH /profile - phone/country calling-code validation', () => {
 
     const res = await client.patch('/profile', { phone: '+14155552671', country: 'GB' });
 
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(res.status).toBeLessThan(500);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: 'BAD_REQUEST',
+      data: { reason: 'phone_country_mismatch' },
+    });
+    expect(await readProfile(client)).toMatchObject({ phone: null, country: null });
+  });
+
+  it('rejects contract-valid values that have no calling-code metadata', async () => {
+    const { client } = await newPlayer();
+
+    const res = await client.patch('/profile', { phone: '+99912345678', country: 'ZZ' });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: 'BAD_REQUEST',
+      data: { reason: 'phone_country_mismatch' },
+    });
     expect(await readProfile(client)).toMatchObject({ phone: null, country: null });
   });
 

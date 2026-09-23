@@ -11,22 +11,21 @@ import {
  * would reject legitimate combinations libphonenumber-js itself cannot tell apart from the
  * number alone.
  *
- * Returns `true` (no block) when either side can't be resolved - an unrecognised phone shape,
- * or a country code libphonenumber-js has no calling-code metadata for - because that is a
- * validation gap, not evidence of a mismatch, and this check must never make `country` a
- * hard requirement.
+ * When both values are supplied, each must resolve to calling-code metadata. The profile
+ * contract deliberately permits any ISO-shaped country and E.164-shaped phone, but a pair
+ * that this library cannot resolve has not passed the stronger cross-field validation.
  */
 export function phoneMatchesCountryCallingCode(phone: string, country: string): boolean {
   let expectedCallingCode: string;
   try {
     expectedCallingCode = getCountryCallingCode(country as CountryCode);
   } catch {
-    return true;
+    return false;
   }
 
   const parsed = parsePhoneNumberFromString(phone);
   if (!parsed) {
-    return true;
+    return false;
   }
 
   return parsed.countryCallingCode === expectedCallingCode;
