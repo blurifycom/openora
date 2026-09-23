@@ -97,6 +97,19 @@ const RankRewardTermsSchema = z.object({
    */
   wageringMultiplier: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
   expiryDays: z.number().int().positive().max(MAX_EXPIRY_DAYS),
+  /**
+   * Largest single stake allowed while this reward is being wagered. Absent for no limit, which
+   * lets a player put the whole bonus on one spin and turn a wagering requirement into a coin
+   * flip. Enforced by the bonus engine inside the bet, against the terms the grant was made
+   * under, so changing it never touches a bonus a player already holds.
+   */
+  maxBet: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').nullish(),
+  /**
+   * Cap on what this reward can ever convert into real money, as a multiple of the amount
+   * granted. Absent for no cap - and without one, a modest bonus can compound into a payout
+   * nobody priced.
+   */
+  maxWinMultiplier: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').nullish(),
 });
 
 /**
@@ -141,6 +154,12 @@ export const RankConfigSchema = z.object({
    * the player's currency is unknown or has no rate.
    */
   payInPlayerCurrency: z.boolean().prefault(false),
+  /**
+   * Pay a periodic bonus only to players who wagered during the period it covers. Off pays
+   * every player holding a rank that carries an amount, including one who has not played in
+   * months.
+   */
+  periodicRequiresActivity: z.boolean().prefault(true),
   /** Products whose stakes count toward a rank. Empty counts every product. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   rewards: z

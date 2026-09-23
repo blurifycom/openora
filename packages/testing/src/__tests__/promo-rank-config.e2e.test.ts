@@ -29,6 +29,7 @@ const CONFIG_PATH = '/backoffice/promo/ranks/config';
 const CASINO_ONLY = {
   payoutCurrency: 'USDT',
   payInPlayerCurrency: true,
+  periodicRequiresActivity: false,
   payoutAnchors: { dailyHour: 6, weeklyDay: 5, monthlyDay: 15 },
   eligibleProducts: ['casino'],
   rewards: {

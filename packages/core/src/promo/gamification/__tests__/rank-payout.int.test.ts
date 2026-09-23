@@ -119,6 +119,7 @@ beforeEach(async () => {
       rewards: { levelUp: LEVEL_UP_TERMS, daily: DAILY_TERMS },
       payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
       payInPlayerCurrency: false,
+      periodicRequiresActivity: true,
     },
   });
 });
@@ -358,6 +359,53 @@ describe('paying a periodic bonus', () => {
     expect(granted).toEqual([]);
     expect(grant).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays a player who has not played, once the operator stops requiring activity', async () => {
+    await holding('silver', TWO_DAYS_AGO);
+    await holding('silver', null);
+
+    const before = await service().payPeriodic('daily', NOW);
+    await db.drizzle.db.update(promoRankConfig).set({ periodicRequiresActivity: false });
+    await db.drizzle.db.update(promoRankConfig).set({ paidThrough: {} });
+    const after = await service().payPeriodic('daily', NOW);
+
+    expect(before).toEqual([]);
+    expect(after).toHaveLength(2);
+  });
+
+  it('carries the stake cap and the conversion cap the operator set into the grant', async () => {
+    await holding('silver', YESTERDAY_NOON);
+    await db.drizzle.db.update(promoRankConfig).set({
+      rewards: {
+        daily: { ...DAILY_TERMS, maxBet: '0.25', maxWinMultiplier: '10' },
+      },
+    });
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        terms: {
+          wageringMultiplier: DAILY_TERMS.wageringMultiplier,
+          expiryDays: DAILY_TERMS.expiryDays,
+          maxBet: '0.25',
+          maxWinMultiplier: '10',
+        },
+      }),
+    );
+  });
+
+  it('leaves both caps off the grant when the operator set neither', async () => {
+    await holding('silver', YESTERDAY_NOON);
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ terms: DAILY_TERMS }),
+    );
   });
 
   it('pays nothing for a kind with no terms configured', async () => {

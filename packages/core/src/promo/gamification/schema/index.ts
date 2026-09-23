@@ -100,6 +100,8 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   payoutCurrency: text(),
   /** Credit a reward in the currency the player plays in, falling back to the two above. */
   payInPlayerCurrency: boolean().notNull().default(false),
+  /** Pay a periodic bonus only to players who wagered in the period it covers. */
+  periodicRequiresActivity: boolean().notNull().default(true),
   /** When each periodic payout closes, and so what window it pays for. All UTC. */
   payoutAnchors: jsonb()
     .$type<RankPayoutAnchors>()

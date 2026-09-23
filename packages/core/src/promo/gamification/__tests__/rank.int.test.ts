@@ -46,6 +46,7 @@ const LADDER = {
     rewards: {},
     payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     payInPlayerCurrency: false,
+    periodicRequiresActivity: true,
   },
 };
 const PARALLEL_BETS = 20;

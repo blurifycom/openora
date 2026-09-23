@@ -71,6 +71,13 @@
       "when": 1790172569191,
       "tag": "0009_rank_pay_in_player_currency",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790173774969,
+      "tag": "0010_rank_reward_caps",
+      "breakpoints": true
     }
   ]
 }

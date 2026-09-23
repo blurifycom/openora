@@ -56,6 +56,7 @@ export const EXAMPLE_RANK_LADDER: RankLadderSeed = {
   config: {
     payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
     payInPlayerCurrency: false,
+    periodicRequiresActivity: true,
     eligibleProducts: [],
     rewards: {
       levelUp: { wageringMultiplier: '1', expiryDays: 7 },

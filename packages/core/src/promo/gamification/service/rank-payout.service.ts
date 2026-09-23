@@ -102,7 +102,7 @@ export class RankPayoutService {
     if (!settings) {
       return [];
     }
-    const { terms, anchors, paidThrough, payout } = settings;
+    const { terms, anchors, paidThrough, payout, requiresActivity } = settings;
     const period = lastCompletePeriod(kind, now, anchors);
     const settled = paidThrough[kind];
     if (settled !== undefined && new Date(settled) >= period.end) {
@@ -128,7 +128,7 @@ export class RankPayoutService {
           and(
             gt(promoPlayerRank.userId, after),
             isNotNull(bonus),
-            gte(promoPlayerRank.lastWageredAt, period.start),
+            ...(requiresActivity ? [gte(promoPlayerRank.lastWageredAt, period.start)] : []),
           ),
         )
         .orderBy(asc(promoPlayerRank.userId))
@@ -219,7 +219,17 @@ export class RankPayoutService {
       source: 'rank',
       sourceRef,
       actor: { type: 'system' },
-      terms,
+      terms: {
+        wageringMultiplier: terms.wageringMultiplier,
+        expiryDays: terms.expiryDays,
+        // Both are anti-abuse controls the bonus engine enforces inside the bet, against the
+        // snapshot this grant is made under - so an operator loosening them later cannot widen
+        // a bonus a player already holds.
+        ...(terms.maxBet === null || terms.maxBet === undefined ? {} : { maxBet: terms.maxBet }),
+        ...(terms.maxWinMultiplier === null || terms.maxWinMultiplier === undefined
+          ? {}
+          : { maxWinMultiplier: terms.maxWinMultiplier }),
+      },
     });
     if (!outcome.ok) {
       throw new Error(`grant refused: ${outcome.reason}`);
@@ -297,6 +307,7 @@ export class RankPayoutService {
         paidThrough: promoRankConfig.paidThrough,
         payoutCurrency: promoRankConfig.payoutCurrency,
         payInPlayerCurrency: promoRankConfig.payInPlayerCurrency,
+        periodicRequiresActivity: promoRankConfig.periodicRequiresActivity,
       })
       .from(promoRankConfig);
     const terms = config?.rewards[kind];
@@ -312,6 +323,7 @@ export class RankPayoutService {
         currency: config.payoutCurrency,
         inPlayerCurrency: config.payInPlayerCurrency,
       },
+      requiresActivity: config.periodicRequiresActivity,
     };
   }
 
