@@ -33,7 +33,7 @@ Checklist - tick as you go:
 - `--fix` - apply BLOCK/WARN fixes after the review; default report-only.
 - `--post` - publish findings to the pull request as inline diff-line comments + a one-line summary verdict (§8). Requires a pull-request number. Draft-and-confirm by default.
 - `--yes` - with `--post`, skip the confirmation and publish straight away.
-- `--ci` - non-interactive: never ask, never post, never fix; print only the §7 machine block. The model cannot set the process exit code; the CI job derives it from the output, e.g. `claude -p '/review --ci' > review.txt; [ "$(grep -c '^DIMENSION: ' review.txt)" -eq 7 ] && grep -q '^VERDICT: APPROVED' review.txt` - a review that skipped a dimension fails the job even when it approves. An empty diff is APPROVED with zero findings.
+- `--ci` - non-interactive: never ask, never post, never fix; print only the §7 machine block. Implies `--full`: a gate never trusts a prior-review marker, since anyone who can comment on the pull request can post one for the current head. The model cannot set the process exit code; the CI job derives it from the output, e.g. `claude -p '/review --ci' > review.txt; [ "$(grep -c '^DIMENSION: ' review.txt)" -eq 7 ] && grep -q '^VERDICT: APPROVED' review.txt` - a review that skipped a dimension fails the job even when it approves. An empty diff is APPROVED with zero findings.
 
 ## 2. Scope the diff
 
@@ -53,7 +53,7 @@ No `REVIEWABLE:` and no `SKIPPED:` lines: fall back to `git status -s`; if still
 
 ## 2a. Previous review - review only what changed since
 
-A pull request is reviewed round after round; re-reading the whole change each round is the biggest waste. Unless `--full`:
+A pull request is reviewed round after round; re-reading the whole change each round is the biggest waste. Unless `--full` or `--ci`:
 
 1. Read `.claude/reviews/<pr>.json` in the main checkout (`{ "sha", "base", "verdict", "findings": [...], "dimensions": [...] }`; no PR number: key it by branch name). Absent and a PR number given: find the latest note carrying `<!-- review:sha=<sha> -->` per `docs/agents/forge.md` and take its SHA; its findings are the inline threads still unresolved.
 2. Found: run the precheck with `--since <sha>`. `mode incremental` narrows `REVIEWABLE:` to files changed since that review (base-branch merges excluded). A `NOTE: --since ... not an ancestor` (force push, rebase) means a full review - say so.
