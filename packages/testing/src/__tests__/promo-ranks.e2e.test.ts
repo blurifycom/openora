@@ -81,4 +81,14 @@ describe('a player reading their rank', () => {
 
     expect(res.status).toBe(401);
   });
+
+  it('serves the ladder itself to a signed-out visitor, with no player data on it', async () => {
+    const res = await app.app.request('/promo/ranks/ladder');
+    const body = await readJson(res);
+
+    expect(res.status).toBe(200);
+    expect(body.currency).toBe('USDT');
+    expect(body.tiers.map((tier: { key: string }) => tier.key)).toEqual(LADDER_KEYS);
+    expect(Object.keys(body)).toEqual(['currency', 'tiers']);
+  });
 });

@@ -26,6 +26,11 @@ export function createGamificationRouter({
 
   return os.router({
     ranks: {
+      // No `getUserId`: this one is public, and must stay that way.
+      ladder: os.ranks.ladder.handler(() =>
+        mapErrors({ NOT_FOUND: RankLadderNotConfiguredError }, () => ranks.getLadder()),
+      ),
+
       get: os.ranks.get.handler(({ context }) =>
         mapErrors({ NOT_FOUND: RankLadderNotConfiguredError }, () =>
           ranks.getForPlayer(getUserId(context)),

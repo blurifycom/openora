@@ -121,6 +121,12 @@ export type RankConfig = z.infer<typeof RankConfigSchema>;
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
+
+    /**
+     * The ladder on its own, for anyone: what a rank asks for and pays is the operator's own
+     * marketing, and the page that shows it is public. Carries no player data at all.
+     */
+    ladder: oc.route({ method: 'GET', path: '/promo/ranks/ladder' }).output(RankLadderSchema),
   },
 
   admin: {

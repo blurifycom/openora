@@ -11,6 +11,7 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
+import type { PlayerRank, RankLadder } from '../contract/index.js';
 import {
   promoPlayerRank,
   promoRankConfig,
@@ -167,25 +168,34 @@ export class RankService implements WagerTrackingCommands {
     });
   }
 
-  async getForPlayer(userId: PromoPlayerRank['userId']) {
-    const ladder = await this.drizzle.db
+  /** The ladder as an operator configured it. No player data, so anyone may read it. */
+  async getLadder(): Promise<RankLadder> {
+    const tiers = await this.drizzle.db
       .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
       .from(promoRankTier)
       .orderBy(asc(promoRankTier.position));
-    const [lowest] = ladder;
+    const [lowest] = tiers;
     if (!lowest) {
       throw new RankLadderNotConfiguredError('default');
     }
+    return {
+      currency: lowest.currency,
+      tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
+    };
+  }
+
+  async getForPlayer(userId: PromoPlayerRank['userId']): Promise<PlayerRank> {
+    const ladder = await this.getLadder();
     const [row] = await this.drizzle.db
       .select({ lifetimeWagered: promoPlayerRank.lifetimeWagered, tierId: promoPlayerRank.tierId })
       .from(promoPlayerRank)
       .where(eq(promoPlayerRank.userId, userId));
     const lifetimeWagered = row?.lifetimeWagered ?? '0';
     return {
-      currency: lowest.currency,
+      currency: ladder.currency,
       lifetimeWagered,
-      tierId: row?.tierId ?? tierFor(ladder, lifetimeWagered)?.id ?? null,
-      tiers: ladder.map(({ currency: _currency, ...tier }) => tier),
+      tierId: row?.tierId ?? tierFor(ladder.tiers, lifetimeWagered)?.id ?? null,
+      tiers: ladder.tiers,
     };
   }
 }
