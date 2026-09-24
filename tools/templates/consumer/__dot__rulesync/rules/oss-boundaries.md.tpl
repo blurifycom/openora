@@ -23,7 +23,7 @@ description: OSS core is read-only except in an OSS worktree (paired changes); e
 
 When a fix can only live in core, change it in core - in a git worktree of `{{ossDir}}`, the one OSS path the hook lets you write. Works the same from any agent tool; `docs/agents/cross-repo.md` lists how each tool is granted access to `{{ossDir}}`.
 
-**Scope.** In place means small: a core bug, a missing export or field, a contract this repo needs aligned. A new core feature, module, or anything that reshapes a domain goes to a session rooted in the OSS repo - use the `handoff` skill.
+**Scope.** Any core change can be made here, in the worktree: a bug, a missing export or field, a contract alignment, or a new feature or module. Use the `handoff` skill only when the work should run in a separate session rooted in the OSS repo.
 
 **Genericity test - before the first edit.** Core serves every operator, and this session carries this operator's requirements. Write down, for the OSS PR's Why section: why it cannot be an overlay, adapter, or config here, and why another operator would want the same change. If only this operator needs it, core gets only the seam (an adapter token, an event, a config field, a hook) and the behavior stays in this repo. Jurisdiction rules, vendor specifics, and limits or flows only this operator uses never go into core.
 

@@ -29,10 +29,10 @@ disallowed-tools:
 Turn "what we're doing" into a prompt a _stranger_ agent can act on with zero access to this
 chat. The receiver has none of our context, so the prompt must carry all of it.
 
-Common use here: an OSS-core change too large, or too unrelated to this repo's diff, to make in
-place. A small paired change is made here, in an OSS worktree - see "Changing OSS core" in the
-`oss-boundaries` rule. Otherwise the receiver is a teammate or a new agent session rooted in the
-platform checkout, and either way it needs a standalone brief.
+Common use here: an OSS-core change that should run in a separate session. Any paired change can
+be made here, in an OSS worktree - see "Changing OSS core" in the `oss-boundaries` rule. When it
+runs elsewhere, the receiver is a teammate or a new agent session rooted in the platform
+checkout, and either way it needs a standalone brief.
 
 Optional argument = what to hand off / who to (e.g. `the OSS core publish fix`, `to a teammate in
 the platform repo`, a repo path, an issue/MR#). No argument -> hand off the current in-flight task.

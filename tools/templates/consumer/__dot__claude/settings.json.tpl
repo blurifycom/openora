@@ -1,11 +1,11 @@
 {
   "enableAllProjectMcpServers": false,
   "enabledMcpjsonServers": ["oss"],
+  "env": {
+    "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"
+  },
   "permissions": {
-    "deny": [
-      "Edit(./node_modules/**)",
-      "Write(./node_modules/**)"
-    ],
+    "deny": ["Edit(./node_modules/**)"],
     "additionalDirectories": ["{{ossFromRoot}}"]
   },
   "hooks": {
