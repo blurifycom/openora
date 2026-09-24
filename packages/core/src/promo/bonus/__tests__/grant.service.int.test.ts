@@ -15,7 +15,7 @@ let service: GrantService;
 let audit: ReturnType<typeof makeAuditWriter>;
 let weightProfileId: Uuid;
 
-const CASINO = { provider: 'aggregator', product: 'casino' };
+const CASINO = { provider: 'aggregator', product: 'casino' } as const;
 
 const termsWith = (wageringMultiplier: string, expiryDays = 30) => ({
   wageringMultiplier,
