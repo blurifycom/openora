@@ -22,7 +22,7 @@ const logger = { warn: vi.fn() };
 const audit = makeAuditWriter();
 let ranks: RankService;
 
-const CASINO = { provider: 'aggregator', product: 'casino' };
+const CASINO: WagerContext = { provider: 'aggregator', product: 'casino' };
 const LADDER = {
   currency: 'USDT',
   tiers: [
