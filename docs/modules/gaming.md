@@ -225,6 +225,14 @@ Every writer of `game_category_game` takes locks in the order **game rows, then 
 
 `POST`/`PATCH` on a category also accept `membershipMode` and `membershipRule`. The preview needs `game-config:view`. The preview, a create or update that sends a rule or switches to rule mode, and an on-demand evaluation also need `report:view` when a clause's definition sets `exposesReporting` - none of the built-ins does. The check runs on the rule the write stores and the evaluation resolves, re-checked on every retry, so a rule another admin saves meanwhile is never applied on the strength of a check against the one before it.
 
+## Admin game list geo filters
+
+`GET /backoffice/gaming/games` takes three geo filters. Any of them needs `compliance:view` on top of `game-config:view`, and answers 400 when the compliance module is not loaded. A game counts as blocked in a country when it or its provider has a rule for that country, as in `ComplianceService.checkGame`.
+
+- **`geoBlocked`** - `true`: blocked in at least one country. `false`: no game or provider rule at all.
+- **`geoBlockedCountries`** (up to 50) - blocked in every listed country. Not combinable with `geoBlocked=false`.
+- **`geoAvailableCountries`** (up to 50) - no game or provider rule for any listed country. Not combinable with `geoBlocked=true`, and must not share a code with `geoBlockedCountries`. If a listed country is blocked platform-wide, the page is empty; `GET /compliance/blocked-countries` tells the caller why.
+
 ## Audited events
 
 Every admin change to sort config, order, or pins emits an event carrying the actor's id, the before/after state, and optional request-origin metadata.

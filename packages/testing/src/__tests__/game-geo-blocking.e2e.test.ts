@@ -543,3 +543,212 @@ describe('multi-country geo-blocking', () => {
     expect((await player.post(`/gaming/rounds/${roundId}/end`, { roundId })).status).toBe(200);
   });
 });
+
+describe('bulk geo restrict / unrestrict', () => {
+  it('restricts and unrestricts many games for one country in a single call, audited per game', async () => {
+    const first = await seedGame('Bulk geo first');
+    const second = await seedGame('Bulk geo second');
+    const bothGameIds = [first.gameId, second.gameId];
+    const gamesQuery = bothGameIds.map((id) => `gameIds[]=${id}`).join('&');
+
+    const forbiddenRestrict = await player.post('/compliance/game-geo-rules/bulk/restrict', {
+      gameIds: bothGameIds,
+      countryCode: 'US',
+      reason: 'player must not administer geo policy',
+    });
+    expect(forbiddenRestrict.status).toBe(403);
+
+    const restrict = await admin.post('/compliance/game-geo-rules/bulk/restrict', {
+      gameIds: bothGameIds,
+      countryCode: 'US',
+      reason: 'bulk restriction',
+    });
+    expect(restrict.status).toBe(200);
+    expect(await readJson(restrict)).toEqual({
+      changed: 2,
+      unchanged: 0,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+
+    const rulesAfterRestrict = await admin.get(`/compliance/game-geo-rules?${gamesQuery}`);
+    expect(rulesAfterRestrict.status).toBe(200);
+    const rules = (await readJson(rulesAfterRestrict)).items as Array<{
+      id: string;
+      gameId: string;
+      countryCode: string;
+    }>;
+    expect(rules).toHaveLength(2);
+
+    await vi.waitFor(async () => {
+      for (const rule of rules) {
+        expect(await auditEntries(rule.id, 'compliance.game-geo-rule.upserted')).toEqual([
+          expect.objectContaining({
+            actorType: 'admin',
+            resourceType: 'game-geo-rule',
+            resourceId: rule.id,
+            before: null,
+            after: expect.objectContaining({
+              reason: 'bulk restriction',
+              gameId: rule.gameId,
+              countryCode: 'US',
+            }),
+          }),
+        ]);
+      }
+    });
+
+    const restrictAgain = await admin.post('/compliance/game-geo-rules/bulk/restrict', {
+      gameIds: bothGameIds,
+      countryCode: 'US',
+      reason: 'repeat',
+    });
+    expect(await readJson(restrictAgain)).toEqual({
+      changed: 0,
+      unchanged: 2,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+
+    const forbiddenUnrestrict = await player.post('/compliance/game-geo-rules/bulk/unrestrict', {
+      gameIds: bothGameIds,
+      countryCode: 'US',
+      reason: 'player must not administer geo policy',
+    });
+    expect(forbiddenUnrestrict.status).toBe(403);
+
+    const unrestrict = await admin.post('/compliance/game-geo-rules/bulk/unrestrict', {
+      gameIds: bothGameIds,
+      countryCode: 'US',
+      reason: 'bulk restore',
+    });
+    expect(unrestrict.status).toBe(200);
+    expect(await readJson(unrestrict)).toEqual({
+      changed: 2,
+      unchanged: 0,
+      stillBlockedByProvider: 0,
+      globallyBlocked: false,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+
+    await vi.waitFor(async () => {
+      for (const rule of rules) {
+        expect(await auditEntries(rule.id, 'compliance.game-geo-rule.deleted')).toEqual([
+          expect.objectContaining({
+            resourceType: 'game-geo-rule',
+            resourceId: rule.id,
+            after: { state: null, reason: 'bulk restore', gameId: rule.gameId, countryCode: 'US' },
+          }),
+        ]);
+      }
+    });
+
+    const rulesAfterUnrestrict = await admin.get(`/compliance/game-geo-rules?${gamesQuery}`);
+    expect(await readJson(rulesAfterUnrestrict)).toMatchObject({ items: [], total: 0 });
+  });
+
+  it('records exactly one audit row per changed game and none for a game that was already restricted', async () => {
+    const alreadyRestricted = await seedGame('Bulk audit already-restricted');
+    const changedFirst = await seedGame('Bulk audit changed first');
+    const changedSecond = await seedGame('Bulk audit changed second');
+
+    const seedUpsert = await admin.put(`/compliance/game-geo-rules/${alreadyRestricted.gameId}`, {
+      countryCodes: ['DK'],
+      reason: 'pre-existing restriction',
+    });
+    expect(seedUpsert.status).toBe(200);
+    const [preExistingRule] = (await readJson(seedUpsert)) as [{ id: string }];
+
+    const restrict = await admin.post('/compliance/game-geo-rules/bulk/restrict', {
+      gameIds: [alreadyRestricted.gameId, changedFirst.gameId, changedSecond.gameId],
+      countryCode: 'DK',
+      reason: 'bulk audit check',
+    });
+    expect(restrict.status).toBe(200);
+    expect(await readJson(restrict)).toEqual({
+      changed: 2,
+      unchanged: 1,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+
+    const changedRulesRes = await admin.get(
+      `/compliance/game-geo-rules?gameIds[]=${changedFirst.gameId}&gameIds[]=${changedSecond.gameId}`,
+    );
+    const changedRules = (await readJson(changedRulesRes)).items as Array<{
+      id: string;
+      gameId: string;
+    }>;
+    expect(changedRules).toHaveLength(2);
+
+    await vi.waitFor(async () => {
+      for (const rule of changedRules) {
+        expect(await auditEntries(rule.id, 'compliance.game-geo-rule.upserted')).toHaveLength(1);
+      }
+    });
+
+    expect(
+      await auditEntries(preExistingRule.id, 'compliance.game-geo-rule.upserted'),
+    ).toHaveLength(1);
+  });
+
+  it('rejects a bulk call with no gameIds/providerIds, more than 500 gameIds, a malformed country code, or a reason over 500 characters', async () => {
+    const seeded = await seedGame('Bulk validation target');
+    const tooManyGameIds = Array.from({ length: 501 }, () => randomUUID());
+    const tooLongReason = 'x'.repeat(501);
+
+    for (const path of [
+      '/compliance/game-geo-rules/bulk/restrict',
+      '/compliance/game-geo-rules/bulk/unrestrict',
+    ]) {
+      const noTargets = await admin.post(path, {
+        countryCode: 'US',
+        reason: 'no targets given',
+      });
+      expect(noTargets.status).toBe(400);
+
+      const overCap = await admin.post(path, {
+        gameIds: tooManyGameIds,
+        countryCode: 'US',
+        reason: 'too many game ids',
+      });
+      expect(overCap.status).toBe(400);
+
+      const badCountry = await admin.post(path, {
+        gameIds: [seeded.gameId],
+        countryCode: 'USA',
+        reason: 'bad country code',
+      });
+      expect(badCountry.status).toBe(400);
+
+      const reasonTooLong = await admin.post(path, {
+        gameIds: [seeded.gameId],
+        countryCode: 'US',
+        reason: tooLongReason,
+      });
+      expect(reasonTooLong.status).toBe(400);
+    }
+  });
+});
+
+describe('platform-wide blocked-countries read', () => {
+  it('lists the blocked-countries union, guarded by compliance:view', async () => {
+    const forbidden = await player.get('/compliance/blocked-countries');
+    expect(forbidden.status).toBe(403);
+
+    const before = await admin.get('/compliance/blocked-countries');
+    expect(before.status).toBe(200);
+    expect((await readJson(before)).countryCodes as string[]).not.toContain('US');
+
+    const rule = await admin.put('/compliance/country-rules', {
+      countryCode: 'US',
+      blacklisted: true,
+      redirectIp: false,
+      kycRequired: true,
+      expectedUpdatedAt: null,
+      confirm: true,
+    });
+    expect(rule.status).toBe(200);
+
+    const after = await admin.get('/compliance/blocked-countries');
+    expect(after.status).toBe(200);
+    expect(await readJson(after)).toMatchObject({ countryCodes: expect.arrayContaining(['US']) });
+  });
+});

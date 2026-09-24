@@ -11,6 +11,7 @@ export {
   uniqueConstraintName,
   withAdvisoryXactLock,
   withAdvisoryXactLocks,
+  withSharedAdvisoryXactLocks,
   moneyToNumber,
   moneyEquals,
   moneyCompare,
