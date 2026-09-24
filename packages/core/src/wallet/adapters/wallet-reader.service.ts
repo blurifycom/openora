@@ -1,8 +1,9 @@
-import { DrizzleService } from '@openora/core/server';
+import { DrizzleService, sumInPivot } from '@openora/core/server';
 import {
   type WalletReader,
   type WalletBalancesReading,
   type WalletProviderTransaction,
+  type ExchangeRateReader,
 } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, lt, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -35,19 +36,41 @@ function toProviderTransaction(
   };
 }
 
+export type WalletReaderServiceDeps = {
+  drizzle: DrizzleService;
+  defaultCurrency?: string;
+  // Prices getLifetimeDeposit's per-currency sum into pivotCurrency (the platform's
+  // configured exchange-rate pivot, e.g. resolveExchangeRatePivot(platformConfig.exchangeRate))
+  // - a platform with no base currency can hold a player's deposits in several coins at once,
+  // so a raw SUM across them (1 BTC + 20000 DOGE = 20001) is never a valid comparison.
+  // exchangeRateReader stays optional so an fx-less install still resolves (getLifetimeDeposit
+  // then answers null for any player holding a non-pivot-currency deposit).
+  exchangeRateReader?: ExchangeRateReader;
+  pivotCurrency: string;
+};
+
 export class WalletReaderService implements WalletReader {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly defaultCurrency?: string,
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly defaultCurrency: string | undefined;
+  private readonly exchangeRateReader: ExchangeRateReader | undefined;
+  private readonly pivotCurrency: string;
+
+  constructor(deps: WalletReaderServiceDeps) {
+    this.drizzle = deps.drizzle;
+    this.defaultCurrency = deps.defaultCurrency;
+    this.exchangeRateReader = deps.exchangeRateReader;
+    this.pivotCurrency = deps.pivotCurrency;
+  }
 
   getBalances(userId: string): Promise<WalletBalancesReading> {
     return readWalletBalances(this.drizzle.db, userId, this.defaultCurrency);
   }
 
-  async getLifetimeDeposit(userId: string): Promise<string> {
-    const [row] = await this.drizzle.db
-      .select({ total: sum(walletTransaction.amount) })
+  /** Sum of a player's completed deposits, priced into pivotCurrency. Null when at least one
+   * currency's amount could not be priced - never a partial or fabricated total. */
+  async getLifetimeDeposit(userId: string): Promise<string | null> {
+    const rows = await this.drizzle.db
+      .select({ currency: walletTransaction.currency, total: sum(walletTransaction.amount) })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(
@@ -56,8 +79,13 @@ export class WalletReaderService implements WalletReader {
           eq(walletTransaction.type, 'deposit'),
           eq(walletTransaction.status, 'completed'),
         ),
-      );
-    return row?.total ?? '0';
+      )
+      .groupBy(walletTransaction.currency);
+    return sumInPivot(
+      rows.map((row) => ({ currency: row.currency, total: row.total ?? '0' })),
+      this.pivotCurrency,
+      this.exchangeRateReader,
+    );
   }
 
   async getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number> {

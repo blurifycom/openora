@@ -29,8 +29,13 @@ export type WalletBalancesReading = {
 };
 
 export type WalletReader = {
-  /** Sum of all completed deposits for a player, as a decimal string (same as wallet_transaction.amount). Used for high_roller evaluation. */
-  getLifetimeDeposit(userId: string): Promise<string>;
+  /**
+   * Sum of all completed deposits for a player, priced into the implementation's reference
+   * currency (a decimal string, not necessarily the same unit as wallet_transaction.amount -
+   * a player can deposit in several currencies). Null when at least one currency's amount
+   * could not be priced; never a partial or fabricated total. Used for high_roller evaluation.
+   */
+  getLifetimeDeposit(userId: string): Promise<string | null>;
   /** Always answers: a player with no wallet row yet gets an empty `balances` array and the platform's default wallet currency, never a throw. */
   getBalances(userId: string): Promise<WalletBalancesReading>;
   /** Count of completed withdrawals for a player within the last windowDays days. Used for high_risk evaluation. */

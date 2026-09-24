@@ -22,6 +22,7 @@ import {
   PLAY_ELIGIBILITY,
   RG_LIMITS,
   EXCHANGE_RATE_READER,
+  resolveExchangeRatePivot,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
   AUDIT_WRITER,
@@ -243,10 +244,16 @@ export default {
     ctx.provide(
       WALLET_READER,
       (c) =>
-        new WalletReaderService(
-          c.get(DRIZZLE),
-          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet?.defaultCurrency : undefined,
-        ),
+        new WalletReaderService({
+          drizzle: c.get(DRIZZLE),
+          defaultCurrency: c.has(PLATFORM_CONFIG)
+            ? c.get(PLATFORM_CONFIG).wallet?.defaultCurrency
+            : undefined,
+          exchangeRateReader: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+          pivotCurrency: resolveExchangeRatePivot(
+            c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
+          ),
+        }),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
     // Operator-editable currency/network config, readable by a payment adapter without
