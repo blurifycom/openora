@@ -10,7 +10,7 @@ import {
   type TagRule,
   type User,
 } from '@openora/core/contracts';
-import { moneyToNumber, mapConcurrent, type DrizzleTx } from '@openora/core/server';
+import { moneyToNumber, mapConcurrent, createLogger, type DrizzleTx } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 import {
@@ -23,6 +23,7 @@ import {
 const EVAL_CHUNK_SIZE = 100;
 const MULTI_ACCOUNT_REASON = 'identity signal matched another player account';
 const BONUS_ABUSER_REASON = 'multi-account risk rule matched';
+const logger = createLogger('pam-tag-evaluation');
 
 function isPendingKycStatus(status: KycStatus): boolean {
   return status === 'pending' || status === 'resubmission_requested';
@@ -151,7 +152,14 @@ export class TagEvaluationService {
 
     if (highRoller && highRoller.threshold !== null) {
       const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
-      if (moneyToNumber(lifetimeDeposit) >= moneyToNumber(highRoller.threshold)) {
+      if (lifetimeDeposit === null) {
+        // Never tag (or untag - a sticky high_roller stays sticky) off a missing rate: a
+        // fabricated total can't be told apart from a real one once it's compared and assigned.
+        logger.warn(
+          { userId },
+          'onDepositCompleted: could not price lifetime deposits, skipping high_roller evaluation',
+        );
+      } else if (moneyToNumber(lifetimeDeposit) >= moneyToNumber(highRoller.threshold)) {
         await this.tryAssignTag({
           userId,
           tagKey: 'high_roller',
@@ -420,7 +428,9 @@ export class TagEvaluationService {
       return;
     }
     const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
-    if (moneyToNumber(lifetimeDeposit) > 0) {
+    // null still means there was at least one deposit (just one this pricing pass couldn't
+    // total) - this rule only asks "any deposit on file", so an unpriced amount still assigns.
+    if (lifetimeDeposit === null || moneyToNumber(lifetimeDeposit) > 0) {
       await this.tryAssignTag({
         userId,
         tagKey: 'basic_kyc_needed',

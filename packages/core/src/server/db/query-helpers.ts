@@ -134,20 +134,17 @@ function fromUnitsAtScale(units: bigint, scale: number): string {
 }
 
 // A no-base-currency platform holds each row in whatever coin it was made in, so a
-// compliance total (re-KYC cumulative deposits, a high_roller/large_amount threshold) has to
-// price every currency into one before it can be summed or compared. A row this can't price
-// (no quote) is never dropped from the total - dropping it would silently undercount a
-// compliance check - so it forces PIVOT_SUM_UNPRICED_SENTINEL, a value no configured threshold
-// sits above, and the caller's ">= threshold" always fires instead of passing quietly.
-// ponytail: a sentinel rather than a typed { total, unpriced } result - fine while nothing
-// displays this total verbatim to an admin; add the typed flag if that changes.
-export const PIVOT_SUM_UNPRICED_SENTINEL = '999999999999999999';
-
+// compliance total (re-KYC cumulative deposits, a high_roller threshold) has to price every
+// currency into one before it can be summed. A row this can't price (no quote) is never
+// silently dropped from the total - that would undercount a compliance check - so the whole
+// sum reads back as null and the caller decides what "we don't know" means for it. Never
+// guess a value to fill the gap: a fabricated total sums, compares and gets written down like
+// a real one, and nothing downstream can tell the difference.
 export async function sumInPivot(
   rows: readonly { currency: string; total: string }[],
   pivotCurrency: string,
   rates: ExchangeRateReader | undefined,
-): Promise<string> {
+): Promise<string | null> {
   let total = '0';
   for (const row of rows) {
     if (row.currency.toUpperCase() === pivotCurrency.toUpperCase()) {
@@ -156,7 +153,7 @@ export async function sumInPivot(
     }
     const converted = rates ? await rates.convert(row.total, row.currency, pivotCurrency) : null;
     if (converted === null) {
-      return PIVOT_SUM_UNPRICED_SENTINEL;
+      return null;
     }
     total = moneyAdd(total, converted);
   }

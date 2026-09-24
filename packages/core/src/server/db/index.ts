@@ -23,7 +23,6 @@ export {
   moneyCeilToScale,
   mapConcurrent,
   sumInPivot,
-  PIVOT_SUM_UNPRICED_SENTINEL,
 } from './query-helpers.js';
 
 // Transactional outbox - writer binds atomically with the state change; relay publishes to MESSAGE_BROKER. See ADR-0016.

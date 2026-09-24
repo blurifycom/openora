@@ -6,6 +6,7 @@ import {
   findOneOrThrow,
   makeNotFoundError,
   mapConcurrent,
+  reportError,
   serializeRow,
   sumInPivot,
   withAdvisoryXactLock,
@@ -606,6 +607,22 @@ export class KycVerificationService {
     };
   }
 
+  // Names which of `rows`' currencies sumInPivot could not price, for the error log/report
+  // when a re-KYC evaluation has to be skipped - sumInPivot itself only says "some row failed".
+  private async unpricedCurrencies(
+    rows: readonly { currency: string; total: string }[],
+    pivotCurrency: string,
+  ): Promise<string[]> {
+    const others = rows.filter((row) => row.currency.toUpperCase() !== pivotCurrency.toUpperCase());
+    const checked = await mapConcurrent(others, 5, async (row) => ({
+      currency: row.currency,
+      priced: this.exchangeRateReader
+        ? (await this.exchangeRateReader.convert(row.total, row.currency, pivotCurrency)) !== null
+        : false,
+    }));
+    return checked.filter((row) => !row.priced).map((row) => row.currency);
+  }
+
   /**
    * Deposit-event hook: flips a currently-approved player to `resubmission_requested`
    * once cumulative deposits cross a fresh per-currency threshold band. Idempotent twice
@@ -641,9 +658,26 @@ export class KycVerificationService {
         ),
       )
       .groupBy(walletTransaction.currency);
-    const deposited = {
-      total: await sumInPivot(depositsByCurrency, current.currency, this.exchangeRateReader),
-    };
+    const totalDeposits = await sumInPivot(
+      depositsByCurrency,
+      current.currency,
+      this.exchangeRateReader,
+    );
+    // Never write a watermark from a guess: a fabricated total would sum, compare and get
+    // stored exactly like a real one, and no later deposit could tell the difference. Skip
+    // this evaluation and let the next deposit re-check once every currency prices again.
+    if (totalDeposits === null) {
+      const unpriced = await this.unpricedCurrencies(depositsByCurrency, current.currency);
+      const err = new Error(
+        `handleDeposit: no rate for ${unpriced.join(', ')} into ${current.currency}`,
+      );
+      logger.error(
+        { err, userId, unpriced, pivotCurrency: current.currency },
+        'handleDeposit: could not price a deposit currency, skipping re-KYC evaluation',
+      );
+      reportError(err, { userId, extra: { unpriced, pivotCurrency: current.currency } });
+      return;
+    }
 
     const [lastFire] = await this.drizzle.db
       .select({ triggerDeposits: kycVerification.triggerDeposits })
@@ -658,7 +692,6 @@ export class KycVerificationService {
       .orderBy(desc(kycVerification.createdAt))
       .limit(1);
 
-    const totalDeposits = deposited?.total ?? '0';
     const snapshot = {
       totalDeposits,
       currency: current.currency,

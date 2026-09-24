@@ -6,6 +6,7 @@ import {
   DEFAULT_PAYMENT_PROVIDER,
   PaymentRejectedError,
   type AdminUserDirectory,
+  type ExchangeRateReader,
   type PaymentAdapter,
   type AdminPlayerSummary,
   type TagEvaluationCommands,
@@ -85,6 +86,24 @@ function playerIdentityReader() {
 }
 
 const queueService = () => makeService().svc;
+
+// A fake pivot-rate reader: `prices` gives the USD value of one whole unit of a currency,
+// `unpriced` names currencies that answer null (no quote).
+function makeRates(prices: Record<string, string>, unpriced: string[] = []): ExchangeRateReader {
+  return {
+    getRate: vi.fn(async () => null),
+    convert: vi.fn(async (amount: string, from: string, to: string) => {
+      if (from === to) {
+        return amount;
+      }
+      if (unpriced.includes(from)) {
+        return null;
+      }
+      const price = prices[from];
+      return price === undefined ? null : String(Number(amount) * Number(price));
+    }),
+  };
+}
 
 function makeDirectory(summaries: AdminPlayerSummary[]) {
   return mock<AdminUserDirectory>({
@@ -1553,6 +1572,32 @@ describe('WalletService.listWithdrawals (real PG)', () => {
     const byId = new Map(items.map((i) => [i.transactionId, i.riskTags]));
     expect(byId.get(big.id)).toContain('large_amount');
     expect(byId.get(small.id)).not.toContain('large_amount');
+  });
+
+  it('prices the withdrawal into the pivot before tagging large_amount, not the raw face amount', async () => {
+    const w = await seedWallet();
+    // 0.2 BTC at $30000/BTC = $6000 - a small face amount, well over the $5000 pivot threshold.
+    const smallFaceHighValue = await seedTx(w.id, { amount: '0.2', currency: 'BTC' });
+    // 20000 DOGE at $0.1/DOGE = $2000 - a large face amount, under the threshold.
+    const largeFaceLowValue = await seedTx(w.id, { amount: '20000', currency: 'DOGE' });
+    const { svc } = makeService({ rates: makeRates({ BTC: '30000', DOGE: '0.1' }) });
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    const byId = new Map(items.map((i) => [i.transactionId, i.riskTags]));
+    expect(byId.get(smallFaceHighValue.id)).toContain('large_amount');
+    expect(byId.get(largeFaceLowValue.id)).not.toContain('large_amount');
+  });
+
+  it('flags large_amount for a withdrawal in a currency with no rate, instead of dropping it', async () => {
+    const w = await seedWallet();
+    const unpriceable = await seedTx(w.id, { amount: '1', currency: 'ZZZ' });
+    const { svc } = makeService({ rates: makeRates({}, ['ZZZ']) });
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    const byId = new Map(items.map((i) => [i.transactionId, i.riskTags]));
+    expect(byId.get(unpriceable.id)).toContain('large_amount');
   });
 
   it('tags high_frequency once the wallet has three withdrawals in the trailing 24h', async () => {

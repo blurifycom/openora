@@ -1,11 +1,30 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import type { ExchangeRateReader } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletReaderService } from '../adapters/wallet-reader.service.js';
+
+// A fake pivot-rate reader: `prices` gives the USD value of one whole unit of a currency,
+// `unpriced` names currencies that answer null (no quote).
+function makeRates(prices: Record<string, string>, unpriced: string[] = []): ExchangeRateReader {
+  return {
+    getRate: vi.fn(async () => null),
+    convert: vi.fn(async (amount: string, from: string, to: string) => {
+      if (from === to) {
+        return amount;
+      }
+      if (unpriced.includes(from)) {
+        return null;
+      }
+      const price = prices[from];
+      return price === undefined ? null : String(Number(amount) * Number(price));
+    }),
+  };
+}
 
 let db: TestDb;
 let svc: WalletReaderService;
@@ -22,7 +41,7 @@ async function seedWallet() {
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  svc = new WalletReaderService(db.drizzle);
+  svc = new WalletReaderService({ drizzle: db.drizzle, pivotCurrency: 'USD' });
 });
 
 afterAll(async () => {
@@ -165,7 +184,11 @@ describe('WalletReaderService.getBalance (real PG)', () => {
   });
 
   it('reports the configured default currency for a user with no wallet row', async () => {
-    const configured = new WalletReaderService(db.drizzle, 'USDT');
+    const configured = new WalletReaderService({
+      drizzle: db.drizzle,
+      defaultCurrency: 'USDT',
+      pivotCurrency: 'USD',
+    });
     const userId = randomUUID();
 
     expect(await configured.getBalance(userId)).toEqual({ balance: '0', currency: 'USDT' });
@@ -177,7 +200,11 @@ describe('WalletReaderService.getBalance (real PG)', () => {
 
   it('keeps an existing wallet on its own active currency when a default is configured', async () => {
     const w = await seedWallet();
-    const configured = new WalletReaderService(db.drizzle, 'USDT');
+    const configured = new WalletReaderService({
+      drizzle: db.drizzle,
+      defaultCurrency: 'USDT',
+      pivotCurrency: 'USD',
+    });
 
     expect((await configured.getBalance(w.userId)).currency).toBe('USD');
   });
@@ -204,5 +231,54 @@ describe('WalletReaderService.getBalance (real PG)', () => {
     const result = await svc.getBalance(w.userId);
     expect(Number(result.balance)).toBe(5);
     expect(result.currency).toBe('EUR');
+  });
+});
+
+async function seedDeposit(walletId: string, amount: string, currency: string) {
+  await db.drizzle.db.insert(walletTransaction).values({
+    walletId,
+    type: 'deposit',
+    amount,
+    currency,
+    status: 'completed',
+    direction: 'credit',
+    rail: currency === 'USD' ? 'fiat' : 'crypto',
+  });
+}
+
+describe('WalletReaderService.getLifetimeDeposit (real PG)', () => {
+  it('sums deposits held in a single currency with no fx module wired', async () => {
+    const w = await seedWallet();
+    await seedDeposit(w.id, '10', 'USD');
+    await seedDeposit(w.id, '5', 'USD');
+
+    expect(Number(await svc.getLifetimeDeposit(w.userId))).toBe(15);
+  });
+
+  it('prices every currency into the pivot instead of summing raw amounts', async () => {
+    const w = await seedWallet();
+    await seedDeposit(w.id, '1', 'BTC');
+    await seedDeposit(w.id, '20000', 'DOGE');
+    const priced = new WalletReaderService({
+      drizzle: db.drizzle,
+      pivotCurrency: 'USD',
+      exchangeRateReader: makeRates({ BTC: '60000', DOGE: '0.1' }),
+    });
+
+    // Raw would read 20001 (1 BTC + 20000 DOGE) - priced reads 60000 + 2000.
+    expect(Number(await priced.getLifetimeDeposit(w.userId))).toBe(62000);
+  });
+
+  it('returns null, not a partial total, when a currency cannot be priced', async () => {
+    const w = await seedWallet();
+    await seedDeposit(w.id, '1', 'BTC');
+    await seedDeposit(w.id, '1', 'DOGE');
+    const partiallyPriced = new WalletReaderService({
+      drizzle: db.drizzle,
+      pivotCurrency: 'USD',
+      exchangeRateReader: makeRates({ BTC: '60000' }, ['DOGE']),
+    });
+
+    expect(await partiallyPriced.getLifetimeDeposit(w.userId)).toBeNull();
   });
 });
