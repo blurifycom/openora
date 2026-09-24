@@ -223,6 +223,33 @@ export const CronExpressionSchema = z
  */
 export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
 
+/**
+ * How often the rank payout jobs tick. Static config, not a DB row: a schedule is registered with
+ * the job queue at boot. These are not when a player is paid - that is the operator's business
+ * decision, set as anchors in the backoffice and stored with the ladder. A tick pays only a
+ * period that has closed since the last one, so ticking often is cheap and safe.
+ *
+ * Both defaults sit off the quarter-hour ticks the wallet custody sweep owns.
+ */
+export const RANK_PAYOUT_DEFAULT_CRON = '3,13,23,33,43,53 * * * *';
+export const RANK_PERIODIC_DEFAULT_CRON = '17 * * * *';
+
+export const PromoConfigSchema = z
+  .object({
+    ranks: z
+      .object({
+        /** How often owed level-up bonuses are settled. */
+        payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
+        /** How often the daily, weekly and monthly payouts check whether a period has closed. */
+        periodicCron: CronExpressionSchema.default(RANK_PERIODIC_DEFAULT_CRON),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict();
+
+export type PromoConfig = z.infer<typeof PromoConfigSchema>;
+
 export const HostAllowlistEntrySchema = z
   .string()
   .trim()
@@ -373,6 +400,8 @@ export const PlatformConfigSchema = z
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
     /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
+    /** How often the rank payout jobs tick. Absent = the built-in defaults. */
+    promo: PromoConfigSchema.prefault({}),
   })
   .strict()
   .superRefine((cfg, ctx) => {

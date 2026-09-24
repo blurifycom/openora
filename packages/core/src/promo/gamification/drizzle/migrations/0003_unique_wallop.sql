@@ -1,0 +1,1 @@
+ALTER TABLE "promo_rank_tier" DROP CONSTRAINT "promo_rank_tier_position_unique";

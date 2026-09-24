@@ -1,0 +1,2 @@
+ALTER TABLE "promo_rank_config" ADD COLUMN "payout_anchors" jsonb DEFAULT '{"dailyHour":0,"weeklyDay":1,"monthlyDay":1}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "promo_rank_config" ADD COLUMN "paid_through" jsonb DEFAULT '{}'::jsonb NOT NULL;

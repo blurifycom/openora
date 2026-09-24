@@ -8,6 +8,83 @@
       "when": 1789571719723,
       "tag": "0000_aberrant_ogun",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789988447441,
+      "tag": "0001_perpetual_orphan",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790063398058,
+      "tag": "0002_dark_sunset_bain",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790076834238,
+      "tag": "0003_unique_wallop",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790084657960,
+      "tag": "0004_rank_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790084780112,
+      "tag": "0005_rank_level_up",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790084829254,
+      "tag": "0006_rank_last_wagered_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790167022293,
+      "tag": "0007_rank_payout_anchors",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790171640579,
+      "tag": "0008_rank_payout_currency",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790172569191,
+      "tag": "0009_rank_pay_in_player_currency",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790173774969,
+      "tag": "0010_rank_reward_caps",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790174237316,
+      "tag": "0011_rank_period_wager",
+      "breakpoints": true
     }
   ]
 }

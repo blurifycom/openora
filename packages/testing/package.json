@@ -12,6 +12,11 @@
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./seed": {
+      "import": "./dist/seed.js",
+      "require": "./dist/seed.js",
+      "types": "./dist/seed.d.ts"
+    },
     "./seed-demo-data": {
       "import": "./dist/seed-demo-data.js",
       "require": "./dist/seed-demo-data.js",

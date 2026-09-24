@@ -33,6 +33,7 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 | error class or catch                                    | `docs/standards/errors.md`           |
 | money movement or payment settlement                    | `docs/standards/money.md`            |
 | wallet module surface or ledger invariant               | `docs/modules/wallet.md`             |
+| rank ladder, rank rewards, account levels               | `docs/modules/gamification.md`       |
 | deposit address, sweep, reconciliation, custody rules   | `docs/standards/custody.md`          |
 | implementing or binding a payment/custody vendor        | `docs/adapters/`                     |
 | KYC or responsible gambling                             | `docs/standards/compliance.md`       |

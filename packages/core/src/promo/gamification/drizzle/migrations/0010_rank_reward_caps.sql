@@ -1,0 +1,1 @@
+ALTER TABLE "promo_rank_config" ADD COLUMN "periodic_requires_activity" boolean DEFAULT true NOT NULL;

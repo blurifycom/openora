@@ -1,0 +1,209 @@
+{
+  "id": "76f5102c-72ea-4e24-a205-0926b36c2f73",
+  "prevId": "7d51d653-c74b-4269-bee1-df53b29dc16d",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.promo_player_rank": {
+      "name": "promo_player_rank",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lifetime_wagered": {
+          "name": "lifetime_wagered",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "tier_id": {
+          "name": "tier_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "promo_player_rank_tier_id_promo_rank_tier_id_fk": {
+          "name": "promo_player_rank_tier_id_promo_rank_tier_id_fk",
+          "tableFrom": "promo_player_rank",
+          "tableTo": "promo_rank_tier",
+          "columnsFrom": ["tier_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "promo_player_rank_userId_unique": {
+          "name": "promo_player_rank_userId_unique",
+          "nullsNotDistinct": false,
+          "columns": ["user_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "promo_player_rank_lifetime_wagered_non_negative": {
+          "name": "promo_player_rank_lifetime_wagered_non_negative",
+          "value": "\"promo_player_rank\".\"lifetime_wagered\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.promo_rank_tier": {
+      "name": "promo_rank_tier",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wager_threshold": {
+          "name": "wager_threshold",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rakeback_percent": {
+          "name": "rakeback_percent",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "daily_bonus": {
+          "name": "daily_bonus",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "weekly_bonus": {
+          "name": "weekly_bonus",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "monthly_bonus": {
+          "name": "monthly_bonus",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "level_up_bonus": {
+          "name": "level_up_bonus",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "promo_rank_tier_key_unique": {
+          "name": "promo_rank_tier_key_unique",
+          "nullsNotDistinct": false,
+          "columns": ["key"]
+        },
+        "promo_rank_tier_position_unique": {
+          "name": "promo_rank_tier_position_unique",
+          "nullsNotDistinct": false,
+          "columns": ["position"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "promo_rank_tier_bounds": {
+          "name": "promo_rank_tier_bounds",
+          "value": "\"promo_rank_tier\".\"position\" >= 0 AND \"promo_rank_tier\".\"wager_threshold\" >= 0\n        AND \"promo_rank_tier\".\"rakeback_percent\" >= 0 AND \"promo_rank_tier\".\"rakeback_percent\" <= 100\n        AND (\"promo_rank_tier\".\"daily_bonus\" is null OR \"promo_rank_tier\".\"daily_bonus\" > 0)\n        AND (\"promo_rank_tier\".\"weekly_bonus\" is null OR \"promo_rank_tier\".\"weekly_bonus\" > 0)\n        AND (\"promo_rank_tier\".\"monthly_bonus\" is null OR \"promo_rank_tier\".\"monthly_bonus\" > 0)\n        AND (\"promo_rank_tier\".\"level_up_bonus\" is null OR \"promo_rank_tier\".\"level_up_bonus\" > 0)"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
