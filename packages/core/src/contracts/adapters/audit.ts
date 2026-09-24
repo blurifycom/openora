@@ -95,6 +95,15 @@ export type AuditWritePort = {
       correlationId?: string | null;
     } & Partial<ClientMeta>,
   ): Promise<void>;
+  /**
+   * Batch counterpart to `recordInTransaction`: takes the `audit_log` advisory lock once
+   * for the whole batch instead of once per row.
+   */
+  recordEventsInTransaction(
+    tx: unknown,
+    topic: DomainEventName,
+    payloads: Record<string, unknown>[],
+  ): Promise<void>;
 };
 
 export const AUDIT_WRITER: SealedToken<AuditWritePort> =

@@ -237,12 +237,21 @@ export class GamingService {
     gameTypes,
     geoBlocked,
     geoBlockedCountries,
+    geoAvailableCountries,
     ...input
   }: ListAdminGamesInput) {
-    if (!this.gameGeoCheck && (geoBlocked !== undefined || geoBlockedCountries)) {
+    const gameGeoCheck = this.gameGeoCheck;
+    if (
+      !gameGeoCheck &&
+      (geoBlocked !== undefined || geoBlockedCountries || geoAvailableCountries)
+    ) {
       throw new GameGeoFiltersUnavailableError();
     }
     const db = this.drizzle.db;
+    const geoAvailableFilter =
+      geoAvailableCountries && gameGeoCheck
+        ? await this.buildGeoAvailableFilter(geoAvailableCountries, gameGeoCheck)
+        : undefined;
     const anyCategory = this.rowsWhere({
       table: gameCategoryGame,
       column: gameCategoryGame.gameId,
@@ -322,8 +331,45 @@ export class GamingService {
               ),
             })
           : undefined,
+        geoAvailableFilter,
       ],
     });
+  }
+
+  /**
+   * A game is "available" in every listed country when neither it nor its provider carries
+   * a geo rule for that country - the same precedence ComplianceService.checkGame applies at
+   * play time. A country blocked platform-wide can never be available, so that case short
+   * circuits to an always-false filter rather than silently treating the country as open.
+   */
+  private async buildGeoAvailableFilter(
+    countries: string[],
+    gameGeoCheck: GameGeoCheckPort,
+  ): Promise<SQL | undefined> {
+    const globallyBlocked = new Set(await gameGeoCheck.listGloballyBlockedCountries());
+    if (countries.some((countryCode) => globallyBlocked.has(countryCode))) {
+      return sql`false`;
+    }
+    const db = this.drizzle.db;
+    return and(
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(gameGeoRule)
+          .where(and(eq(gameGeoRule.gameId, game.id), inArray(gameGeoRule.countryCode, countries))),
+      ),
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(providerGeoRule)
+          .where(
+            and(
+              eq(providerGeoRule.providerId, game.providerId),
+              inArray(providerGeoRule.countryCode, countries),
+            ),
+          ),
+      ),
+    );
   }
 
   private rowsWhere({

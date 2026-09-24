@@ -203,3 +203,22 @@ export async function withAdvisoryXactLocks<T>(
   }
   return fn();
 }
+
+// Shared variant of withAdvisoryXactLocks: many callers can hold the same key at once; only
+// an exclusive taker blocks them. Must run in a transaction.
+export async function withSharedAdvisoryXactLocks<T>(
+  txn: DrizzleTx,
+  keys: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (keys.length > 0) {
+    const keyList = sql.join(
+      keys.map((key) => sql`${key}`),
+      sql`, `,
+    );
+    await txn.execute(
+      sql`select pg_advisory_xact_lock_shared(lock_id) from (select distinct hashtext(key) as lock_id from unnest(array[${keyList}]::text[]) as key order by lock_id) as locks`,
+    );
+  }
+  return fn();
+}

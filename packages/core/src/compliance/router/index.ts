@@ -20,6 +20,7 @@ import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
   GameGeoRuleNotFoundError,
+  GeoRuleBulkTooManyGamesError,
   GeoRuleGameNotFoundError,
   GeoRuleProviderNotFoundError,
   ProviderGeoRuleNotFoundError,
@@ -161,6 +162,35 @@ export function createComplianceRouter({
     listGameGeoRules: os.listGameGeoRules.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGameGeoRules(input);
+    }),
+
+    bulkRestrictGameGeoRules: os.bulkRestrictGameGeoRules.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ BAD_REQUEST: GeoRuleBulkTooManyGamesError }, () =>
+        compliance.bulkRestrictGameGeoRules(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    bulkUnrestrictGameGeoRules: os.bulkUnrestrictGameGeoRules.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(
+          context,
+          'compliance',
+          'manage-geo',
+        );
+        return mapErrors({ BAD_REQUEST: GeoRuleBulkTooManyGamesError }, () =>
+          compliance.bulkUnrestrictGameGeoRules(input, userId, { ip, userAgent }),
+        );
+      },
+    ),
+
+    getBlockedCountries: os.getBlockedCountries.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return { countryCodes: await compliance.listGloballyBlockedCountries() };
     }),
 
     upsertProviderGeoRules: os.upsertProviderGeoRules.handler(async ({ input, context }) => {

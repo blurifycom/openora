@@ -7,6 +7,7 @@ import {
   KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
+  GameBulkIdsSchema,
   GeoRuleActionSchema,
   NonEmptyReasonSchema,
   PageQuerySchema,
@@ -273,6 +274,45 @@ const GeoCheckOutputSchema = z.object({
   reason: z.string().nullable(),
 });
 
+export const GetBlockedCountriesOutputSchema = z.object({
+  countryCodes: z.array(CountryCodeSchema),
+});
+export type GetBlockedCountriesOutput = z.infer<typeof GetBlockedCountriesOutputSchema>;
+
+export const BulkGameGeoRuleInputSchema = z
+  .object({
+    providerIds: z.array(UuidSchema).max(50).optional(),
+    gameIds: z.array(UuidSchema).max(500).optional(),
+    countryCode: CountryCodeSchema,
+    // Capped here, not on the shared NonEmptyReasonSchema: a bulk reason lands in one audit
+    // row per changed game, so an unbounded string multiplies across up to 5,000 rows.
+    reason: NonEmptyReasonSchema.max(500),
+  })
+  .refine((target) => (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0, {
+    message: 'Provide at least one non-empty providerIds or gameIds',
+    path: ['gameIds'],
+  });
+export type BulkGameGeoRuleInput = z.infer<typeof BulkGameGeoRuleInputSchema>;
+
+export const BulkRestrictGameGeoRulesOutputSchema = z.object({
+  changed: z.number().int().nonnegative(),
+  unchanged: z.number().int().nonnegative(),
+  notFound: GameBulkIdsSchema,
+});
+export type BulkRestrictGameGeoRulesOutput = z.infer<typeof BulkRestrictGameGeoRulesOutputSchema>;
+
+export const BulkUnrestrictGameGeoRulesOutputSchema = BulkRestrictGameGeoRulesOutputSchema.extend({
+  // Games in scope that stay unavailable because their provider still carries the rule -
+  // this bulk op never touches provider_geo_rule rows.
+  stillBlockedByProvider: z.number().int().nonnegative(),
+  // True when countryCode is blocked platform-wide, regardless of what this call changed -
+  // the backoffice must not read an unrestrict as having reopened the market.
+  globallyBlocked: z.boolean(),
+});
+export type BulkUnrestrictGameGeoRulesOutput = z.infer<
+  typeof BulkUnrestrictGameGeoRulesOutputSchema
+>;
+
 export const complianceContract = {
   getLimits: oc
     .route({ method: 'GET', path: '/compliance/limits' })
@@ -313,6 +353,20 @@ export const complianceContract = {
     .route({ method: 'GET', path: '/compliance/game-geo-rules' })
     .input(ListGameGeoRulesInputSchema)
     .output(paginated(GameGeoRuleSchema)),
+
+  bulkRestrictGameGeoRules: oc
+    .route({ method: 'POST', path: '/compliance/game-geo-rules/bulk/restrict' })
+    .input(BulkGameGeoRuleInputSchema)
+    .output(BulkRestrictGameGeoRulesOutputSchema),
+
+  bulkUnrestrictGameGeoRules: oc
+    .route({ method: 'POST', path: '/compliance/game-geo-rules/bulk/unrestrict' })
+    .input(BulkGameGeoRuleInputSchema)
+    .output(BulkUnrestrictGameGeoRulesOutputSchema),
+
+  getBlockedCountries: oc
+    .route({ method: 'GET', path: '/compliance/blocked-countries' })
+    .output(GetBlockedCountriesOutputSchema),
 
   upsertProviderGeoRules: oc
     .route({ method: 'PUT', path: '/compliance/provider-geo-rules/{providerId}' })

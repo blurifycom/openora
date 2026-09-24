@@ -727,7 +727,95 @@ describe('GamingService admin list filters (real PG)', () => {
     await expect(
       svc.listGamesAdmin({ page: 1, limit: 10, geoBlockedCountries: ['DE'] }),
     ).rejects.toBeInstanceOf(GameGeoFiltersUnavailableError);
+    await expect(
+      svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DE'] }),
+    ).rejects.toBeInstanceOf(GameGeoFiltersUnavailableError);
     await expect(svc.listGamesAdmin({ page: 1, limit: 10 })).resolves.toMatchObject({ total: 0 });
+  });
+
+  function geoCheckMock(globallyBlocked: string[] = []) {
+    return mock<GameGeoCheckPort>({
+      listGloballyBlockedCountries: vi.fn().mockResolvedValue(globallyBlocked),
+    });
+  }
+
+  it('geoAvailableCountries excludes a game blocked by its own or its provider rule', async () => {
+    const blockedStudio = await seedProvider();
+    const gameBlockedDk = await seedGame();
+    await seedGame({ providerId: blockedStudio.id });
+    const onlySe = await seedGame();
+    const open = await seedGame();
+    await blockGame(gameBlockedDk.id, ['DK']);
+    await db.drizzle.db
+      .insert(providerGeoRule)
+      .values({ providerId: blockedStudio.id, countryCode: 'DK', reason: 'licence' });
+    await blockGame(onlySe.id, ['SE']);
+    const svc = makeService({ gameGeoCheck: geoCheckMock() });
+
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DK'] })),
+    ).toEqual([onlySe.id, open.id].sort());
+  });
+
+  it('geoAvailableCountries requires availability in every listed country', async () => {
+    const dkOnly = await seedGame();
+    const frOnly = await seedGame();
+    const openBoth = await seedGame();
+    await blockGame(dkOnly.id, ['DK']);
+    await blockGame(frOnly.id, ['FR']);
+    const svc = makeService({ gameGeoCheck: geoCheckMock() });
+
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DK', 'FR'] })),
+    ).toEqual([openBoth.id]);
+  });
+
+  it('geoAvailableCountries combines with categoryIds, isActive, isUnavailable, tagIds, gameTypes, and q', async () => {
+    const hot = await seedTag();
+    const category = await seedCategory();
+    const match = await seedGame({ name: 'Aurora Slots', gameType: 'original', isActive: true }, [
+      category.id,
+    ]);
+    await tagGame(match.id, [hot.id]);
+    const blockedMatch = await seedGame(
+      { name: 'Aurora Blocked', gameType: 'original', isActive: true },
+      [category.id],
+    );
+    await tagGame(blockedMatch.id, [hot.id]);
+    await blockGame(blockedMatch.id, ['DK']);
+    const inactiveMatch = await seedGame(
+      { name: 'Aurora Inactive', gameType: 'original', isActive: false },
+      [category.id],
+    );
+    await tagGame(inactiveMatch.id, [hot.id]);
+    const otherType = await seedGame({ name: 'Aurora Other', gameType: 'casino', isActive: true }, [
+      category.id,
+    ]);
+    await tagGame(otherType.id, [hot.id]);
+    const svc = makeService({ gameGeoCheck: geoCheckMock() });
+
+    const result = await svc.listGamesAdmin({
+      page: 1,
+      limit: 10,
+      q: 'Aurora',
+      categoryIds: [category.id],
+      isActive: true,
+      isUnavailable: false,
+      tagIds: [hot.id],
+      gameTypes: ['original'],
+      geoAvailableCountries: ['DK'],
+    });
+
+    expect(ids(result)).toEqual([match.id]);
+  });
+
+  it('geoAvailableCountries returns an empty page when a requested country is globally blocked', async () => {
+    await seedGame();
+    const svc = makeService({ gameGeoCheck: geoCheckMock(['DK']) });
+
+    await expect(
+      svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DK'] }),
+    ).resolves.toMatchObject({ items: [], total: 0 });
   });
 
   it('combines filters with AND', async () => {
@@ -803,6 +891,32 @@ describe('ListAdminGamesInputSchema', () => {
     expect(ListAdminGamesInputSchema.safeParse({ geoBlockedCountries: ['de'] }).success).toBe(
       false,
     );
+  });
+
+  it('rejects geoBlocked=true combined with geoAvailableCountries', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({ geoBlocked: 'true', geoAvailableCountries: ['DE'] })
+        .success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({ geoBlocked: 'false', geoAvailableCountries: ['DE'] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects a country shared between geoAvailableCountries and geoBlockedCountries', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({
+        geoAvailableCountries: ['DE', 'FR'],
+        geoBlockedCountries: ['FR'],
+      }).success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({
+        geoAvailableCountries: ['DE'],
+        geoBlockedCountries: ['FR'],
+      }).success,
+    ).toBe(true);
   });
 });
 

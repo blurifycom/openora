@@ -1181,6 +1181,12 @@ export async function mapEventToRecord(
   return base;
 }
 
+const AUDIT_RECORDED_INLINE_TOPICS = new Set<DomainEventName>([
+  'compliance.kyc.updated',
+  'compliance.game-geo-rule.upserted',
+  'compliance.game-geo-rule.deleted',
+]);
+
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.registered',
   'identity.user.registration.failed',
@@ -1343,6 +1349,10 @@ export default {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
           svc.recordInTransaction(tx, entry).then(() => undefined),
+        recordEventsInTransaction: async (tx, topic, payloads) => {
+          const records = await Promise.all(payloads.map((p) => mapEventToRecord(topic, p)));
+          await svc.recordEventsInTransaction(tx, records);
+        },
       };
     });
 
@@ -1351,9 +1361,10 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
-        // KYC exemptions append their audit record inside the state transaction, then
-        // publish this event for realtime and other consumers after commit.
-        if (topic === 'compliance.kyc.updated' && payload['auditRecorded'] === true) {
+        // Some writers append the audit record inside their own state transaction, then
+        // publish this event for realtime/other consumers after commit - auditRecorded
+        // marks that the subscriber must not duplicate it.
+        if (AUDIT_RECORDED_INLINE_TOPICS.has(topic) && payload['auditRecorded'] === true) {
           return;
         }
         const svc = svcRef;
