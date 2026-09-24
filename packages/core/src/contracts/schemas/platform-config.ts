@@ -275,6 +275,10 @@ export const HostAllowlistEntrySchema = z
   )
   .transform((hostname) => hostname.toLowerCase());
 
+export function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boolean {
+  return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`));
+}
+
 export const ChatConfigSchema = z
   .object({
     /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
@@ -347,6 +351,13 @@ export const CmsConfigSchema = z
   .strict();
 export type CmsConfig = z.infer<typeof CmsConfigSchema>;
 
+export const GamingConfigSchema = z
+  .object({
+    allowedThumbnailHosts: z.array(HostAllowlistEntrySchema).default([]),
+  })
+  .strict();
+export type GamingConfig = z.infer<typeof GamingConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -400,6 +411,7 @@ export const PlatformConfigSchema = z
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
     /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
+    gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
   })

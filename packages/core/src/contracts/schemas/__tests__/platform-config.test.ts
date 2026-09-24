@@ -17,4 +17,26 @@ describe('definePlatformConfig', () => {
       }),
     ).toThrow(/chat\.allowedAttachmentHosts\.0/);
   });
+
+  it('defaults gaming.allowedThumbnailHosts to an empty list (deny every custom thumbnail)', () => {
+    const config = definePlatformConfig({});
+
+    expect(config.gaming).toEqual({ allowedThumbnailHosts: [] });
+  });
+
+  it('canonicalizes gaming thumbnail hosts before services consume the config', () => {
+    const config = definePlatformConfig({
+      gaming: { allowedThumbnailHosts: ['CDN.EXAMPLE.COM'] },
+    });
+
+    expect(config.gaming.allowedThumbnailHosts).toEqual(['cdn.example.com']);
+  });
+
+  it('rejects gaming thumbnail hosts that include URL components', () => {
+    expect(() =>
+      definePlatformConfig({
+        gaming: { allowedThumbnailHosts: ['https://cdn.example.com/path'] },
+      }),
+    ).toThrow(/gaming\.allowedThumbnailHosts\.0/);
+  });
 });

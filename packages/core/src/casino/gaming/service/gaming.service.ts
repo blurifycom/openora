@@ -33,6 +33,7 @@ import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import {
   RgLimitExceededError,
+  isAllowedHost,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -92,6 +93,11 @@ export const GameAggregatorNotMappedError = createDomainError<
 >(
   'GameAggregatorNotMappedError',
   (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
+);
+
+export const GameThumbnailHostNotAllowedError = createDomainError<[host: string]>(
+  'GameThumbnailHostNotAllowedError',
+  (host) => `Custom thumbnail URL rejected: host not allowed: ${host}`,
 );
 
 export const RgRestrictedError = makeConflictError(
@@ -159,6 +165,7 @@ function toGame(row: {
     tags: row.tags.map(toGameTagSummary),
     gameType: row.game.gameType,
     thumbnailUrl: row.game.thumbnailUrl,
+    customThumbnailUrl: row.game.customThumbnailUrl,
     isActive: row.game.isActive,
     isUnavailable: row.game.isUnavailable,
     metadata: row.game.metadata,
@@ -186,6 +193,7 @@ async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
     providerId: row.providerId,
     aggregator: row.aggregator,
     thumbnailUrl: row.thumbnailUrl,
+    customThumbnailUrl: row.customThumbnailUrl,
     isActive: row.isActive,
     categoryIds: links.map((link) => link.categoryId),
     tagIds: tagLinks.map((link) => link.tagId),
@@ -219,6 +227,7 @@ export class GamingService {
     private readonly identityReader: IdentityReader,
     private readonly rgLimits?: RgLimitsPort,
     private readonly gameGeoCheck?: GameGeoCheckPort,
+    private readonly allowedThumbnailHosts: readonly string[] = [],
   ) {}
 
   async listGamesPublic(input: ListGamesInput) {
@@ -834,6 +843,12 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & CatalogActor) {
+    if (patchInput.customThumbnailUrl !== undefined && patchInput.customThumbnailUrl !== null) {
+      const host = new URL(patchInput.customThumbnailUrl).hostname;
+      if (!isAllowedHost(host, this.allowedThumbnailHosts)) {
+        throw new GameThumbnailHostNotAllowedError(host);
+      }
+    }
     const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
     const uniqueTagIds = tagIds === undefined ? undefined : [...new Set(tagIds)];
     const patch: Partial<typeof game.$inferInsert> = { ...patchInput };

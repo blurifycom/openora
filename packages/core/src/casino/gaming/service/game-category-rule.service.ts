@@ -157,6 +157,7 @@ export class GameCategoryRuleService {
               name: game.name,
               slug: game.slug,
               thumbnailUrl: game.thumbnailUrl,
+              customThumbnailUrl: game.customThumbnailUrl,
               isActive: game.isActive,
               provider: providerSummaryColumns,
             })

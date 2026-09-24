@@ -10,6 +10,7 @@ import {
   GAMING_COMMANDS,
   IDENTITY_READER,
   JOB_QUEUE,
+  PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
   RNG_ADAPTER,
@@ -73,6 +74,7 @@ export default {
         c.get(IDENTITY_READER),
         c.has(RG_LIMITS) ? c.get(RG_LIMITS) : undefined,
         c.has(GAME_GEO_CHECK) ? c.get(GAME_GEO_CHECK) : undefined,
+        c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).gaming.allowedThumbnailHosts : [],
       ));
 
     // Replaceable (not sealed), like GAME_SORT_CATALOG: an overlay can rebind this to add

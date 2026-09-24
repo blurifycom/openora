@@ -10,6 +10,16 @@ The game catalog, category ordering, and round management module. `docs/catalog.
 - **Rule-based category membership** - a category can be populated by a rule instead of by hand: a pipeline of clauses over an operator-extensible catalog of rule kinds (built-ins: providers, tags, most played); see below.
 - **Read ports** - `GAME_CATALOG_READER` for cross-module access (lobby sections, promotions) and `GAMING_COMMANDS` for wallet integration (`accumulateExternalRound`, `setGameAvailability`) and catalogue imports (`notifyGamesCreated`).
 
+## Game thumbnails
+
+Every game carries both `thumbnailUrl` (synced from a catalogue provider or aggregator) and `customThumbnailUrl` (operator-set override). Set `customThumbnailUrl` on `PATCH /backoffice/gaming/games/{id}` to any https URL up to 512 characters once normalized; `null` clears it and omitting the field leaves it untouched. A catalogue sync writes only `thumbnailUrl` and never touches the custom field.
+
+The value is stored and returned normalized (`new URL(v).href`), never the raw input, and a URL carrying credentials (`https://user:pass@host/...`) is rejected outright. Its host must be on `PlatformConfig.gaming.allowedThumbnailHosts` (exact host or subdomain match, same shape as `cms.allowedBannerImageHosts`) - empty by default, so every custom thumbnail is rejected until an operator lists at least one host. This matters because the value is rendered as an `<img src>` to anonymous players: an unlisted host would let an operator (or a compromised admin account) turn it into a tracking pixel against an arbitrary third party.
+
+Both fields are exposed on every game output (admin and public game lists and detail, category games, rule preview, `GAME_CATALOG_READER` `CatalogGame`, lobby `GameSummary` and `FeaturedSlot`), and both are included in `gaming.game.updated` before/after snapshots; legacy events predate this field and carry `customThumbnailUrl: null`.
+
+The consumer resolves precedence: `customThumbnailUrl ?? thumbnailUrl`. Core exposes both and leaves the choice to the consumer so a fallback path always exists.
+
 ## Per-category game ordering
 
 A category's games are ordered by a configurable sort definition. The operator can choose from built-in sorts (`manual`, `name`) or overlay-supplied custom sorts (RTP, volatility, revenue, plays) without forking core. An active category can also have pinned games that hold fixed slots regardless of sort, and the operator can drag and drop to manually reorder any time.

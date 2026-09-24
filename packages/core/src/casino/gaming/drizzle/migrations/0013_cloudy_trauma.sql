@@ -1,0 +1,1 @@
+ALTER TABLE "game" ADD COLUMN "custom_thumbnail_url" text;
