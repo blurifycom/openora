@@ -161,6 +161,14 @@ export const ExchangeRateConfigSchema = z
       .positive()
       .default(15 * 60_000),
     providerTimeoutMs: z.number().int().positive().default(2_000),
+    /**
+     * How long a currency stays refused after a failed vendor call, before another
+     * caller is allowed to retry it. Deliberately independent of `providerTimeoutMs`
+     * (default well above it) - otherwise a vendor outage adds a full timeout stall to
+     * every hot-path call for as long as the outage lasts, instead of failing fast from
+     * cache.
+     */
+    failureCooldownMs: z.number().int().positive().default(30_000),
   })
   .strict();
 
