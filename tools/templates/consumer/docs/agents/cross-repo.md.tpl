@@ -16,6 +16,15 @@ Some changes need both repos: an OSS core change plus this repo's adaptation to 
 
 The full procedure lives in "Changing OSS core" in the `oss-boundaries` rule.
 
+## Example asks
+
+One session covers both halves; start it here with `{{ossDir}}` added (see below).
+
+- "{{trackerKey}}-123: the withdrawal list needs a `currency` filter. Add it to the OSS contract in a worktree, then use it here."
+- "The OSS bug behind {{trackerKey}}-456: fix it in a worktree, link it, and rerun this repo's e2e against it."
+- "Review this branch and its OSS pair."
+- "Both requests merged: bump `@openora/*` and remove the worktree."
+
 ## Giving each tool access to `{{ossDir}}`
 
 Grant the whole `{{ossDir}}`, not only `.worktrees/`: a worktree keeps its git metadata in `{{ossDir}}/.git`, so committing there writes to it. The hook still limits file edits to the worktree.
