@@ -139,10 +139,11 @@ export const promoGrant = pgTable(
     // but it lets Postgres enforce that an entry's denormalised userId/currency can never drift
     // from the grant it belongs to.
     uniqueIndex('promo_grant_id_user_id_currency_idx').on(t.id, t.userId, t.currency),
-    // FIFO consumption order and the balance read. Partial, because a terminal grant is never
-    // consumed again and long-term they are almost the whole table.
-    index('promo_grant_user_id_currency_created_at_idx')
-      .on(t.userId, t.currency, t.createdAt)
+    // Attribution on every bet: the live grants a player holds in one currency, earliest expiry
+    // first. Partial, because a terminal grant is never consumed again and long-term they are
+    // almost the whole table.
+    index('promo_grant_user_id_currency_expires_at_idx')
+      .on(t.userId, t.currency, t.expiresAt)
       .where(sql`${t.status} in ('pending', 'active')`),
     // The expiry sweep, over live rows only.
     index('promo_grant_expires_at_idx')
@@ -200,6 +201,9 @@ export const promoGrantEntry = pgTable(
     balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     // The provider round, on the movements that have one. How a win finds its funding grant.
     externalRoundId: text(),
+    // Qualifies externalRoundId: two providers can mint the same round id independently, and
+    // without this a win from one could settle against a stake from the other.
+    providerName: text(),
     // Cross-module id, no FK (module-boundary rule).
     walletTransactionId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -212,8 +216,10 @@ export const promoGrantEntry = pgTable(
       foreignColumns: [promoGrant.id, promoGrant.userId, promoGrant.currency],
     }).onDelete('restrict'),
     // Win and reversal attribution: find this round's stake rows without joining the grant.
-    index('promo_grant_entry_user_id_external_round_id_idx')
-      .on(t.userId, t.externalRoundId)
+    // Provider and currency qualify the round id, so two providers minting the same id
+    // independently can never settle against each other's stake.
+    index('promo_grant_entry_user_id_currency_provider_name_external_round_id_idx')
+      .on(t.userId, t.currency, t.providerName, t.externalRoundId)
       .where(sql`${t.externalRoundId} is not null`),
     // A grant's own history, oldest first.
     index('promo_grant_entry_grant_id_created_at_idx').on(t.grantId, t.createdAt),

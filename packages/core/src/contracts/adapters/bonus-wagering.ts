@@ -22,6 +22,13 @@ export type BonusWagerArgs = {
   fromBonus: string;
   context: WagerContext;
   /**
+   * The wallet's own provider identity for this bet (`providerRef.providerName`), not
+   * `context.provider` - a weight-resolution concept that need not match it. `settle` looks a
+   * round up by this same identity, so persisting the wrong one would let it find nothing, or
+   * the wrong provider's round.
+   */
+  providerName: string;
+  /**
    * Provider round this bet belongs to. `settle` finds the funding grant by it, so a bet without
    * one could spend bonus funds whose win or reversal then lands entirely on the real balance.
    */
@@ -35,7 +42,11 @@ export type BonusWagerOutcome =
       grantId: string | null;
       /** Part of the stake actually taken from bonus funds. Echoes `fromBonus` on success. */
       bonusSpent: string;
-      /** Stake after the resolved weight, as a decimal string. `'0'` when the bet does not count. */
+      /**
+       * Stake after the resolved weight, as a decimal string. `'0'` when the bet does not count.
+       * Uncapped: a bet that finishes a requirement reports the whole weighted stake, not the part
+       * the grant had room for, because a wager counter measures turnover rather than absorption.
+       */
       weightedAmount: string;
       /** Bonus funds left on the attributed grant once the bet settled. */
       bonusBalanceAfter: string;
@@ -55,16 +66,27 @@ export type BonusSettleArgs = {
   currency: string;
   /** Full amount the provider reported, before the real/bonus split. */
   amount: string;
+  /**
+   * Qualifies `externalRoundId`: two providers can mint the same round id independently, and
+   * without this a win from one could find and settle against a stake taken by the other.
+   */
+  providerName: string;
   externalRoundId: string;
   kind: Extract<WalletTransactionType, 'win' | 'bet_reversal'>;
 };
 
 export type BonusSettleOutcome = {
   /**
-   * Part of `amount` that belongs to the bonus balance, already applied there. The wallet credits
-   * the remainder to the real balance. `'0'` when the round drew no bonus funds.
+   * Part of `amount` that belongs to the bonus balance, already applied there. `'0'` when the
+   * round drew no bonus funds.
    */
   bonusShare: string;
+  /**
+   * Part of `amount` the wallet credits to the real balance. Not simply `amount - bonusShare`: a
+   * reversal is bounded by what the round still has outstanding, so a duplicate rollback callback
+   * reports `'0'` on both shares rather than paying an already-returned stake out as cash.
+   */
+  realShare: string;
 };
 
 export type BonusWageringCommands = {

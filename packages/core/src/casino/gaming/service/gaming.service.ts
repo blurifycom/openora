@@ -12,6 +12,7 @@ import {
   serializeRow,
   uniqueConstraintName,
 } from '@openora/core/server';
+import { randomUUID } from 'node:crypto';
 import {
   type SQL,
   type SQLWrapper,
@@ -199,6 +200,14 @@ function toGameRound(record: typeof gameRound.$inferSelect) {
 function withInactive<T extends { total: number; active: number }>(counts: T) {
   return { ...counts, inactive: counts.total - counts.active };
 }
+
+/** Settlement source for a round the platform ran itself, as opposed to an aggregator's. */
+const INTERNAL_ROUND_PROVIDER = 'internal';
+
+// The platform's own house games are the casino vertical, the same bucket aggregator-supplied
+// casino games weigh into - `product` partitions wagering by vertical (casino, sportsbook, pvp),
+// not by who ran the round.
+const INTERNAL_ROUND_PRODUCT = 'casino';
 
 export class GamingService {
   constructor(
@@ -544,6 +553,11 @@ export class GamingService {
       throw new GameGeoRestrictedError(geoDecision);
     }
 
+    // The round id is minted before the debit rather than read back from the insert: the bonus
+    // engine attributes a win to the grant that funded the stake by this id, and a stake booked
+    // without one can never be settled back.
+    const roundId = randomUUID();
+
     const { round, completedBonusCredits, betTransactionId } = await this.drizzle.db.transaction(
       async (tx) => {
         // The same currency the RG pre-check above weighed. Left off, the debit falls on the
@@ -553,6 +567,12 @@ export class GamingService {
           amount: betAmount,
           currency,
           type: 'bet',
+          context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
+          providerRef: {
+            providerName: INTERNAL_ROUND_PROVIDER,
+            providerRefId: `bet:${roundId}`,
+            externalRoundId: roundId,
+          },
         });
         if (!outcome.ok) {
           throw new InsufficientBalanceError(outcome.available, betAmount);
@@ -561,6 +581,7 @@ export class GamingService {
           await tx
             .insert(gameRound)
             .values({
+              id: roundId,
               gameId,
               userId,
               currency,
@@ -667,6 +688,11 @@ export class GamingService {
           currency: round.currency,
           type: 'win',
           allowNewCurrency: true,
+          providerRef: {
+            providerName: INTERNAL_ROUND_PROVIDER,
+            providerRefId: `win:${roundId}`,
+            externalRoundId: roundId,
+          },
         });
         if (!credited.ok) {
           throw new WinCreditFailedError(roundId, credited.reason);
