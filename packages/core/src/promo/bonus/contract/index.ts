@@ -161,6 +161,25 @@ export const PlayerGrantSchema = z.object({
 
 export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
+export const AdminGrantSchema = PlayerGrantSchema.extend({
+  userId: UuidSchema,
+  offerId: UuidSchema.nullable(),
+  sourceRef: z.string(),
+});
+
+export type AdminGrant = z.infer<typeof AdminGrantSchema>;
+
+/**
+ * A hand-issued forfeiture is always recorded as `admin`; the reason is not the caller's to pick.
+ * The vocabulary also carries `self_exclusion`, `account_closed` and the two the product has not
+ * scheduled, and an admin able to file their own action as a responsible-gambling one puts a
+ * false statement in the record a regulator reads. The note is where the case goes.
+ */
+export const ForfeitGrantInputSchema = z.object({
+  id: UuidSchema,
+  note: z.string().trim().min(10).max(500),
+});
+
 export const ListPlayerGrantsInputSchema = z.object({
   ...PageQuerySchema.shape,
   /** Absent means every status; a terminal grant is never purged, so the history only grows. */
@@ -187,6 +206,18 @@ export const bonusContract = {
   },
 
   admin: {
+    grants: {
+      list: oc
+        .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/grants' })
+        .input(z.object({ userId: UuidSchema, ...PageQuerySchema.shape }))
+        .output(z.array(AdminGrantSchema)),
+
+      forfeit: oc
+        .route({ method: 'POST', path: '/backoffice/promo/grants/{id}/forfeit' })
+        .input(ForfeitGrantInputSchema)
+        .output(AdminGrantSchema),
+    },
+
     offers: {
       list: oc
         .route({ method: 'GET', path: '/backoffice/promo/offers' })
