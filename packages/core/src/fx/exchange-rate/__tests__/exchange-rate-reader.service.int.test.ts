@@ -253,6 +253,41 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
   });
 });
 
+describe('ExchangeRateReaderService.getRate - failure cooldown', () => {
+  function failingProvider() {
+    const getRate = vi.fn(async (): Promise<ExchangeRateQuote> => {
+      throw new Error('vendor unreachable');
+    });
+    return { provider: mock<ExchangeRateProvider>({ getRate }), getRate };
+  }
+
+  it('refuses a failed currency for failureCooldownMs, not providerTimeoutMs, without calling the vendor again', async () => {
+    const { provider, getRate } = failingProvider();
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider: provider, providerTimeoutMs: 10, failureCooldownMs: 60_000 }),
+    );
+
+    expect(await reader.getRate('EUR', 'USD')).toBeNull();
+    await wait(50);
+    expect(await reader.getRate('EUR', 'USD')).toBeNull();
+
+    expect(getRate).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the vendor again once the cooldown has passed', async () => {
+    const { provider, getRate } = failingProvider();
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider: provider, failureCooldownMs: 30 }),
+    );
+
+    await reader.getRate('EUR', 'USD');
+    await wait(80);
+    await reader.getRate('EUR', 'USD');
+
+    expect(getRate).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('ExchangeRateReaderService.getRate - single-flight', () => {
   it('collapses concurrent hard-stale callers for the same leg into one provider call', async () => {
     const providerAsOf = agedIso(0);
