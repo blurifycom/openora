@@ -86,6 +86,45 @@ export type SwapAdapter = {
 
 export const SWAP_ADAPTER: Token<SwapAdapter> = createToken('SWAP_ADAPTER');
 
+/**
+ * `quote_invalid` covers a tampered quote id and one issued to another player - the caller
+ * must not learn which. `no_rate` means the desk could not value the swap to check a limit.
+ */
+export type SwapRefusalReason =
+  | 'quote_missing'
+  | 'quote_invalid'
+  | 'quote_expired'
+  | 'quote_spent'
+  | 'insufficient_inventory'
+  | 'no_rate';
+
+/**
+ * Thrown by `getQuote`/`execute` when the desk refuses a swap the player can retry later or
+ * with a fresh quote. The router answers CONFLICT with `data.reason`; any other throw is a 500.
+ */
+export class SwapRefusedError extends Error {
+  readonly data: { reason: SwapRefusalReason };
+
+  constructor(reason: SwapRefusalReason, message: string) {
+    super(message);
+    this.name = 'SwapRefusedError';
+    this.data = { reason };
+  }
+}
+
+export type SwapLimitReason = 'over_swap_limit' | 'over_daily_limit';
+
+/** Thrown by `getQuote`/`execute` when the swap is larger than the desk allows; the router answers BAD_REQUEST. */
+export class SwapLimitExceededError extends Error {
+  readonly data: { reason: SwapLimitReason };
+
+  constructor(reason: SwapLimitReason, message: string) {
+    super(message);
+    this.name = 'SwapLimitExceededError';
+    this.data = { reason };
+  }
+}
+
 /** Its own token, not a reuse of `PAYMENT_WEBHOOK_VERIFIER`: the swap vendor signs with a different key. Fails closed. */
 export type SwapWebhookVerifier = {
   verify(
