@@ -14,6 +14,7 @@ import {
   promoWeight,
   promoWeightProfile,
 } from '../schema/index.js';
+import { seedDefaultWeightProfile } from '../seed/index.js';
 import { GrantService } from '../service/grant.service.js';
 import { OfferService } from '../service/offer.service.js';
 
@@ -88,7 +89,7 @@ beforeEach(async () => {
   await db.drizzle.db.execute(
     sql`TRUNCATE ${promoOptInDeposit}, ${promoOptIn}, ${promoGrant}, ${promoOffer}, ${promoWeight}, ${promoWeightProfile} CASCADE`,
   );
-  await db.drizzle.db.insert(promoWeightProfile).values({ name: 'default' }).onConflictDoNothing();
+  await seedDefaultWeightProfile(db.drizzle.db);
   logged.length = 0;
   lifetimeDeposit = '0';
   firstDepositOverride = undefined;
