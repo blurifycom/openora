@@ -9,6 +9,7 @@ export const NOTIFICATION_TYPES = [
   'kyc.resubmission_requested',
   'social.friend_request.received',
   'social.friend_request.accepted',
+  'promo.bonus.granted',
   'promo.bonus.completed',
   'chat.rain.received',
   'rg.limit.admin_updated',

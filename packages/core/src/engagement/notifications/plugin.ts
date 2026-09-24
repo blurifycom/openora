@@ -247,6 +247,14 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { transactionId: p.transactionId },
   })),
 
+  mapEvent('promo.bonus.granted', (p) => ({
+    userId: p.userId,
+    type: 'promo.bonus.granted',
+    title: 'Bonus credited',
+    body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
+    data: { grantId: p.grantId },
+  })),
+
   mapEvent('promo.bonus.completed', (p) => ({
     userId: p.userId,
     type: 'promo.bonus.completed',

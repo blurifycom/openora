@@ -4,7 +4,7 @@ import {
   type WalletBalancesReading,
   type WalletProviderTransaction,
 } from '@openora/core/contracts';
-import { and, count, eq, gt, inArray, sum } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, lt, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import {
   providerRefCondition,
@@ -120,5 +120,37 @@ export class WalletReaderService implements WalletReader {
 
   getBalance(userId: string): Promise<{ balance: string; currency: string }> {
     return resolveWalletBalance(this.drizzle.db, userId, this.defaultCurrency);
+  }
+
+  async isFirstDeposit(userId: string, transactionId: string): Promise<boolean> {
+    const [txn] = await this.drizzle.db
+      .select({ createdAt: walletTransaction.createdAt })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.id, transactionId),
+          eq(walletTransaction.type, 'deposit'),
+          eq(walletTransaction.status, 'completed'),
+        ),
+      );
+    if (!txn) {
+      return false;
+    }
+    const [earlier] = await this.drizzle.db
+      .select({ id: walletTransaction.id })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.type, 'deposit'),
+          eq(walletTransaction.status, 'completed'),
+          lt(walletTransaction.createdAt, txn.createdAt),
+        ),
+      )
+      .limit(1);
+    return !earlier;
   }
 }

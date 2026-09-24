@@ -50,6 +50,13 @@
       "when": 1790215340917,
       "tag": "0006_nostalgic_dakota_north",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790216060605,
+      "tag": "0007_lowly_warbird",
+      "breakpoints": true
     }
   ]
 }
