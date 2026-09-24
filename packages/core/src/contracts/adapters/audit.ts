@@ -50,7 +50,14 @@ export type DirectAuditAction =
   | 'wallet.swap.fill_rejected'
   | 'wallet.wallet_asset.created'
   | 'wallet.wallet_asset.updated'
-  | 'wallet.wallet_asset.deleted';
+  | 'wallet.wallet_asset.deleted'
+  | 'promo.bonus.converted'
+  | 'promo.bonus.forfeited'
+  | 'promo.bonus.expired'
+  | 'promo.offer.created'
+  | 'promo.offer.updated'
+  | 'promo.offer.archived'
+  | 'promo.weight_profile.set';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain
