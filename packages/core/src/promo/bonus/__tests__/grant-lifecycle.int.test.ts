@@ -51,16 +51,18 @@ const expireNow = (id: string) =>
     .where(eq(promoGrant.id, id));
 
 // Test cleanup needs to delete ledger rows between cases; the append-only trigger that
-// production relies on would refuse it, so cleanup lifts it for exactly this statement.
+// production relies on would refuse it, and the balance-matches-ledger trigger would refuse
+// it too (the parent grant row, deleted next, is still there mid-cleanup), so cleanup lifts
+// both for exactly this statement.
 const wipeLedger = async () => {
   await db.drizzle.db.execute(
-    sql`ALTER TABLE promo_grant_entry DISABLE TRIGGER promo_grant_entry_append_only`,
+    sql`ALTER TABLE promo_grant_entry DISABLE TRIGGER promo_grant_entry_append_only, DISABLE TRIGGER promo_grant_entry_balance_matches_ledger`,
   );
   try {
     await db.drizzle.db.delete(promoGrantEntry);
   } finally {
     await db.drizzle.db.execute(
-      sql`ALTER TABLE promo_grant_entry ENABLE TRIGGER promo_grant_entry_append_only`,
+      sql`ALTER TABLE promo_grant_entry ENABLE TRIGGER promo_grant_entry_append_only, ENABLE TRIGGER promo_grant_entry_balance_matches_ledger`,
     );
   }
 };
@@ -89,6 +91,15 @@ beforeEach(async () => {
       .returning(),
     new Error('seed profile: query returned no row'),
   ).id;
+  // grant() refuses a profile with no positive weight - the lifecycle tests here don't care how
+  // a bet scores, only that a grant can be created and closed, so a single default weight is
+  // enough to make the profile usable.
+  await db.drizzle.db.insert(promoWeight).values({
+    profileId: weightProfileId,
+    scope: 'default',
+    scopeRef: null,
+    contributionPercent: '100',
+  });
 });
 
 describe('the expiry sweep', () => {
@@ -136,10 +147,23 @@ describe('the expiry sweep', () => {
 
   it('does not sweep a grant that already reached a terminal status', async () => {
     const grantId = await grant();
-    await db.drizzle.db
-      .update(promoGrant)
-      .set({ status: 'completed', bonusBalance: '0' })
-      .where(eq(promoGrant.id, grantId));
+    const row = await rowOf(grantId);
+    await db.drizzle.db.transaction(async (tx) => {
+      await tx
+        .update(promoGrant)
+        .set({ status: 'completed', bonusBalance: '0' })
+        .where(eq(promoGrant.id, grantId));
+      // Zeroes the ledger sum to match the balance this test forces directly, the same way a
+      // real completion's 'convert' entry would.
+      await tx.insert(promoGrantEntry).values({
+        grantId,
+        userId: row.userId,
+        currency: row.currency,
+        type: 'convert',
+        bonusAmount: `-${row.bonusBalance}`,
+        balanceAfter: '0',
+      });
+    });
     await expireNow(grantId);
 
     expect(await lifecycle.expireDue()).toEqual([]);
