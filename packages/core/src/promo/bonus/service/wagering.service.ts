@@ -63,8 +63,7 @@ export class WageringService implements BonusWageringCommands {
             bonusSpent: ZERO,
             weightedAmount: ZERO,
             bonusBalanceAfter: ZERO,
-            completedGrantIds: [],
-            convertedAmount: ZERO,
+            completed: null,
           };
     }
 
@@ -126,8 +125,7 @@ export class WageringService implements BonusWageringCommands {
       bonusSpent: args.fromBonus,
       weightedAmount: weighted,
       bonusBalanceAfter: balanceAfter,
-      completedGrantIds: completed ? [grant.id] : [],
-      convertedAmount,
+      completed: completed ? { grantId: grant.id, convertedAmount } : null,
     };
   }
 

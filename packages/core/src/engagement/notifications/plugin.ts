@@ -247,12 +247,12 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { transactionId: p.transactionId },
   })),
 
-  mapEvent('wallet.bonus_rollover.completed', (p) => ({
+  mapEvent('promo.bonus.completed', (p) => ({
     userId: p.userId,
-    type: 'wallet.bonus_rollover.completed',
+    type: 'promo.bonus.completed',
     title: 'Bonus unlocked',
-    body: `Your ${formatMoneyAmount(p.creditedAmount)} ${p.currency} bonus credit has cleared its rollover requirement and is now fully withdrawable.`,
-    data: null,
+    body: `Your ${formatMoneyAmount(p.convertedAmount)} ${p.currency} bonus has cleared its wagering requirement and is now fully withdrawable.`,
+    data: { grantId: p.grantId },
   })),
 
   mapEvent('chat.user.mentioned', (p) => ({

@@ -675,13 +675,6 @@ export const domainEventSchemas = {
     toAmount: MoneyAmountSchema,
   }),
 
-  'wallet.bonus_rollover.completed': z.object({
-    userId: UuidSchema,
-    creditId: UuidSchema,
-    currency: CurrencyTickerSchema,
-    creditedAmount: MoneyAmountSchema,
-  }),
-
   // Promo. Every one of these fires post-commit and is notification/analytics fan-out only:
   // money and counters move through the BONUS_GRANTS, BONUS_WAGERING and WAGER_TRACKING command
   // ports instead, because the bus is best-effort and a dropped event would be a player's money.

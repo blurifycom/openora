@@ -380,12 +380,12 @@ describe('notificationEventMap', () => {
     );
   });
 
-  it('routes wallet.bonus_rollover.completed through the same amount formatter as every other entry', () => {
-    const input = entryFor('wallet.bonus_rollover.completed').buildNotification({
+  it('routes promo.bonus.completed through the same amount formatter as every other entry', () => {
+    const input = entryFor('promo.bonus.completed').buildNotification({
       userId: randomUUID(),
-      creditId: randomUUID(),
+      grantId: randomUUID(),
       currency: 'EUR',
-      creditedAmount: '1234.500000000000000000',
+      convertedAmount: '1234.500000000000000000',
     });
 
     expect(input.body).toContain('1,234.5');
