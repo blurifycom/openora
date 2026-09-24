@@ -22,12 +22,19 @@ import type {
   DisplayCurrencyInfo,
 } from '../contract/index.js';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
+import { phoneMatchesCountryCallingCode } from './phone-country.js';
 
 export const ProfileUserNotFoundError = makeNotFoundError('User');
 
 export const UnsupportedDisplayCurrencyError = createDomainError<[currency: string]>(
   'UnsupportedDisplayCurrencyError',
   (currency) => `Display currency not supported: ${currency}`,
+);
+
+export const PhoneCountryMismatchError = createDomainError<[country: string]>(
+  'PhoneCountryMismatchError',
+  (country) => `Phone number does not match the calling code for country ${country}`,
+  { reason: 'phone_country_mismatch' },
 );
 
 const VALUE_COMPARISON_CURRENCY = 'USD';
@@ -105,21 +112,64 @@ export class ProfileService implements PlayerProvisioning {
   }
 
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
-    // The zone has its own validation and its own timestamp, so it is written separately.
     const { timezone, ...fields } = data;
-    const { email, username } = await this.ensureProfile(userId);
-    if (timezone !== undefined) {
-      await this.recordTimezone(userId, timezone);
+    const identity = await fetchIdentityByUserId(this.drizzle, userId);
+    if (!identity) {
+      throw new ProfileUserNotFoundError(userId);
     }
-    // Drizzle rejects an empty `set`, so an update carrying only the zone reads the row back.
-    const [record] = Object.keys(fields).length
-      ? await this.drizzle.db
-          .update(player)
-          .set(fields)
-          .where(eq(player.userId, userId))
-          .returning()
-      : await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
-    return toPlayer(record, email, username);
+
+    const record = await this.drizzle.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(player)
+        .where(eq(player.userId, userId))
+        .limit(1)
+        .for('update');
+      let row = locked;
+      if (!row) {
+        const [created] = await tx
+          .insert(player)
+          .values({ userId })
+          .onConflictDoUpdate({ target: player.userId, set: { userId } })
+          .returning();
+        if (!created) {
+          throw new Error('Profile upsert returned no row');
+        }
+        row = created;
+      }
+
+      if ('phone' in fields || 'country' in fields) {
+        const effectivePhone = 'phone' in fields ? fields.phone : row.phone;
+        const effectiveCountry = 'country' in fields ? fields.country : row.country;
+        if (
+          effectivePhone &&
+          effectiveCountry &&
+          !phoneMatchesCountryCallingCode(effectivePhone, effectiveCountry)
+        ) {
+          throw new PhoneCountryMismatchError(effectiveCountry);
+        }
+      }
+
+      const resolvedTimezone = timezone === undefined ? undefined : resolveTimezone(timezone);
+      const updates = {
+        ...fields,
+        ...(resolvedTimezone ? { timezone: resolvedTimezone, timezoneUpdatedAt: new Date() } : {}),
+      };
+      if (!Object.keys(updates).length) {
+        return row;
+      }
+
+      const [updated] = await tx
+        .update(player)
+        .set(updates)
+        .where(eq(player.userId, userId))
+        .returning();
+      if (!updated) {
+        throw new Error('Profile update returned no row');
+      }
+      return updated;
+    });
+    return toPlayer(record, identity.email, identity.username);
   }
 
   async getMyDisplayCurrency(userId: User['id']): Promise<DisplayCurrencyInfo> {

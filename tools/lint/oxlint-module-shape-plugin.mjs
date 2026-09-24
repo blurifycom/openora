@@ -98,6 +98,7 @@ const SERVICE_FILE_ALLOWLIST = new Set([
   'kyc-status-writer.ts',
   'rg-eval.ts',
   'tag-mappers.ts',
+  'phone-country.ts',
 ]);
 
 function filename(context) {
