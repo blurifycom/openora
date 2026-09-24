@@ -1,4 +1,4 @@
-import { MONEY_SCALE, MoneyAmountSchema } from '@openora/core/contracts';
+import { MONEY_SCALE, MoneyAmountSchema, type ExchangeRateReader } from '@openora/core/contracts';
 import { sql } from 'drizzle-orm';
 import type { DrizzleTx } from './drizzle.js';
 
@@ -131,6 +131,36 @@ function fromUnitsAtScale(units: bigint, scale: number): string {
   const digits = units.toString().padStart(scale + 1, '0');
   const whole = digits.slice(0, digits.length - scale) || '0';
   return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
+}
+
+// A no-base-currency platform holds each row in whatever coin it was made in, so a
+// compliance total (re-KYC cumulative deposits, a high_roller/large_amount threshold) has to
+// price every currency into one before it can be summed or compared. A row this can't price
+// (no quote) is never dropped from the total - dropping it would silently undercount a
+// compliance check - so it forces PIVOT_SUM_UNPRICED_SENTINEL, a value no configured threshold
+// sits above, and the caller's ">= threshold" always fires instead of passing quietly.
+// ponytail: a sentinel rather than a typed { total, unpriced } result - fine while nothing
+// displays this total verbatim to an admin; add the typed flag if that changes.
+export const PIVOT_SUM_UNPRICED_SENTINEL = '999999999999999999';
+
+export async function sumInPivot(
+  rows: readonly { currency: string; total: string }[],
+  pivotCurrency: string,
+  rates: ExchangeRateReader | undefined,
+): Promise<string> {
+  let total = '0';
+  for (const row of rows) {
+    if (row.currency.toUpperCase() === pivotCurrency.toUpperCase()) {
+      total = moneyAdd(total, row.total);
+      continue;
+    }
+    const converted = rates ? await rates.convert(row.total, row.currency, pivotCurrency) : null;
+    if (converted === null) {
+      return PIVOT_SUM_UNPRICED_SENTINEL;
+    }
+    total = moneyAdd(total, converted);
+  }
+  return total;
 }
 
 // Escape LIKE wildcards so a caller-supplied value matches literally and a

@@ -1,8 +1,9 @@
-import { DrizzleService } from '@openora/core/server';
+import { DrizzleService, sumInPivot } from '@openora/core/server';
 import {
   type WalletReader,
   type WalletBalancesReading,
   type WalletProviderTransaction,
+  type ExchangeRateReader,
 } from '@openora/core/contracts';
 import { and, count, eq, gt, inArray, lt, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -39,6 +40,12 @@ export class WalletReaderService implements WalletReader {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly defaultCurrency?: string,
+    // Prices getLifetimeDeposit's per-currency sum into pivotCurrency - a platform with no
+    // base currency can hold a player's deposits in several coins at once, so a raw SUM
+    // across them (1 BTC + 20000 DOGE = 20001) is never a valid comparison. Both optional so
+    // an fx-less install still resolves (sumInPivot then falls back to its unpriced sentinel).
+    private readonly exchangeRateReader?: ExchangeRateReader,
+    private readonly pivotCurrency: string = 'USD',
   ) {}
 
   getBalances(userId: string): Promise<WalletBalancesReading> {
@@ -46,8 +53,8 @@ export class WalletReaderService implements WalletReader {
   }
 
   async getLifetimeDeposit(userId: string): Promise<string> {
-    const [row] = await this.drizzle.db
-      .select({ total: sum(walletTransaction.amount) })
+    const rows = await this.drizzle.db
+      .select({ currency: walletTransaction.currency, total: sum(walletTransaction.amount) })
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(
@@ -56,8 +63,13 @@ export class WalletReaderService implements WalletReader {
           eq(walletTransaction.type, 'deposit'),
           eq(walletTransaction.status, 'completed'),
         ),
-      );
-    return row?.total ?? '0';
+      )
+      .groupBy(walletTransaction.currency);
+    return sumInPivot(
+      rows.map((row) => ({ currency: row.currency, total: row.total ?? '0' })),
+      this.pivotCurrency,
+      this.exchangeRateReader,
+    );
   }
 
   async getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number> {

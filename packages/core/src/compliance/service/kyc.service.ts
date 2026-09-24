@@ -7,6 +7,7 @@ import {
   makeNotFoundError,
   mapConcurrent,
   serializeRow,
+  sumInPivot,
   withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
@@ -14,6 +15,7 @@ import {
   normalizeKycStatus,
   type KycAdapter,
   type AuditWritePort,
+  type ExchangeRateReader,
   type KycCheckResult,
   type KycDocument,
   type KycRiskSignals,
@@ -179,6 +181,7 @@ export type KycVerificationDeps = {
   identityReader: IdentityReader;
   platformConfig?: PlatformConfig;
   reKycTrigger?: ReKycTrigger;
+  exchangeRateReader?: ExchangeRateReader;
 };
 
 export class KycVerificationService {
@@ -190,6 +193,7 @@ export class KycVerificationService {
   private readonly identityReader: IdentityReader;
   private readonly platformConfig?: PlatformConfig;
   private readonly reKycTrigger: ReKycTrigger;
+  private readonly exchangeRateReader?: ExchangeRateReader;
 
   constructor(deps: KycVerificationDeps) {
     this.drizzle = deps.drizzle;
@@ -200,6 +204,7 @@ export class KycVerificationService {
     this.identityReader = deps.identityReader;
     this.platformConfig = deps.platformConfig;
     this.reKycTrigger = deps.reKycTrigger ?? new CumulativeDepositReKycTrigger();
+    this.exchangeRateReader = deps.exchangeRateReader;
   }
 
   private get provider() {
@@ -606,6 +611,11 @@ export class KycVerificationService {
    * once cumulative deposits cross a fresh per-currency threshold band. Idempotent twice
    * over: skips unless presently approved, and the watermark stops a re-approved
    * high-roller re-firing on every later deposit.
+   *
+   * A player can deposit in several currencies (no platform base currency), so every
+   * completed deposit is priced into the player's reference currency before it is summed -
+   * filtering to that one currency instead (as this used to) reads $0 forever for a player
+   * who never deposits in it.
    */
   async handleDeposit(userId: User['id']) {
     const [current] = await this.drizzle.db
@@ -616,8 +626,11 @@ export class KycVerificationService {
       return;
     }
 
-    const [deposited] = await this.drizzle.db
-      .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
+    const depositsByCurrency = await this.drizzle.db
+      .select({
+        currency: walletTransaction.currency,
+        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+      })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
       .where(
@@ -625,9 +638,12 @@ export class KycVerificationService {
           eq(wallet.userId, userId),
           eq(walletTransaction.type, 'deposit'),
           eq(walletTransaction.status, 'completed'),
-          eq(walletTransaction.currency, current.currency),
         ),
-      );
+      )
+      .groupBy(walletTransaction.currency);
+    const deposited = {
+      total: await sumInPivot(depositsByCurrency, current.currency, this.exchangeRateReader),
+    };
 
     const [lastFire] = await this.drizzle.db
       .select({ triggerDeposits: kycVerification.triggerDeposits })

@@ -22,6 +22,7 @@ import {
   PLAY_ELIGIBILITY,
   RG_LIMITS,
   EXCHANGE_RATE_READER,
+  resolveExchangeRatePivot,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
   AUDIT_WRITER,
@@ -246,6 +247,10 @@ export default {
         new WalletReaderService(
           c.get(DRIZZLE),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet?.defaultCurrency : undefined,
+          c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+          resolveExchangeRatePivot(
+            c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
+          ),
         ),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
