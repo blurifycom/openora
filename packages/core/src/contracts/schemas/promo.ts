@@ -3,6 +3,7 @@ import * as z from 'zod';
 // Canonical promo value sets. Declared here rather than in the promo module because the
 // isomorphic event and adapter contracts reference them and cannot import from a domain.
 
+/** What caused a grant. Half of its idempotency key. */
 export const BONUS_GRANT_SOURCES = [
   'deposit',
   'manual',
@@ -13,6 +14,11 @@ export const BONUS_GRANT_SOURCES = [
   'rain',
 ] as const;
 
+/**
+ * `pending` is a grant that is claimed but not yet funded, `cancelled` its only exit - nothing
+ * was credited, so there is nothing to lose. Everything after funding ends in `completed`,
+ * `expired` or `forfeited`.
+ */
 export const BONUS_GRANT_STATUSES = [
   'pending',
   'active',
@@ -22,6 +28,7 @@ export const BONUS_GRANT_STATUSES = [
   'cancelled',
 ] as const;
 
+/** Why an active grant was taken away. Recorded on every forfeit, for the regulator. */
 export const BONUS_FORFEIT_REASONS = [
   'self_exclusion',
   'account_closed',
