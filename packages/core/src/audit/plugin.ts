@@ -810,6 +810,10 @@ export async function mapEventToRecord(
         icon: p['icon'] ?? null,
         sortOrder: p['sortOrder'] ?? null,
         isActive: p['isActive'] ?? null,
+        sortKey: p['sortKey'] ?? null,
+        sortDirection: p['sortDirection'] ?? null,
+        sortParams: p['sortParams'] ?? {},
+        rankedAt: p['rankedAt'] ?? null,
       },
     };
   }
@@ -823,6 +827,40 @@ export async function mapEventToRecord(
       resourceId: str(p['categoryId']),
       before: isRecord(p['before']) ? p['before'] : null,
       after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+
+  if (topic === 'gaming.category.games_reordered') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      before: {
+        gameIds: Array.isArray(p['before']) ? p['before'] : [],
+        sortKey: p['sortKeyBefore'] ?? null,
+        sortDirection: p['sortDirectionBefore'] ?? null,
+        sortParams: p['sortParamsBefore'] ?? {},
+      },
+      after: {
+        gameIds: Array.isArray(p['after']) ? p['after'] : [],
+        sortKey: p['sortKeyAfter'] ?? null,
+        sortDirection: p['sortDirectionAfter'] ?? null,
+        sortParams: p['sortParamsAfter'] ?? {},
+      },
+    };
+  }
+
+  if (topic === 'gaming.category.pins_updated') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      before: { pins: Array.isArray(p['before']) ? p['before'] : [] },
+      after: { pins: Array.isArray(p['after']) ? p['after'] : [] },
     };
   }
 
@@ -1173,6 +1211,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.tag.deleted',
   'gaming.game.updated',
   'gaming.games.bulk_updated',
+  'gaming.category.games_reordered',
+  'gaming.category.pins_updated',
   'gaming.game.availability_changed',
   'chat.user.blocked',
   'chat.user.unblocked',

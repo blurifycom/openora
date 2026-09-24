@@ -16,6 +16,7 @@ import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/ind
 import type { CreateProviderInput, UpdateProviderInput } from '../contract/index.js';
 import {
   mappingsByProviderIds,
+  markCategoriesRankDirtyForProviders,
   providerSummaryColumns,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
@@ -295,6 +296,12 @@ export class GameProviderService {
             .returning(),
           new GameProviderNotFoundError(id),
         );
+        // An isActive flip moves the playable/unplayable split in every category
+        // containing one of this provider's games - pins are placed relative to it, so
+        // those categories must re-rank. See docs/modules/gaming.md.
+        if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
+          await markCategoriesRankDirtyForProviders(tx, [id]);
+        }
         if (replaceMappings) {
           await tx
             .delete(gameProviderAggregatorMapping)

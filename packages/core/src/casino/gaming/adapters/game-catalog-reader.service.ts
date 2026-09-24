@@ -11,6 +11,7 @@ import {
 import { type SQL, and, asc, count, eq, inArray } from 'drizzle-orm';
 import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/index.js';
 import {
+  categoryGameOrder,
   categorySummaryColumns,
   countWhere,
   groupRows,
@@ -112,7 +113,7 @@ export class GameCatalogReaderService implements GameCatalogReader {
           playableGameCondition(),
         ),
       )
-      .orderBy(asc(game.name), asc(game.id))
+      .orderBy(...categoryGameOrder())
       .limit(limit);
     return withTags(this.drizzle.db, rows);
   }

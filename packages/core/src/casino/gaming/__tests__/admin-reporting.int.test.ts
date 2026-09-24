@@ -129,6 +129,24 @@ describe('DrizzleAdminGameReporting.listGamePerformance (real PG)', () => {
     expect(rows.map((r) => r.gameId)).not.toContain(casino.id);
   });
 
+  it('limits rows to gameIds, keeping a listed game with no rounds and returning none for an empty list', async () => {
+    const played = await seedGame({ name: 'Played' });
+    const idle = await seedGame({ name: 'Idle' });
+    const other = await seedGame({ name: 'Other' });
+    await seedRound(played.id);
+    await seedRound(other.id);
+
+    const rows = await reporting.listGamePerformance({ gameIds: [played.id, idle.id] });
+
+    expect(new Map(rows.map((r) => [r.gameId, r.roundsPlayed]))).toEqual(
+      new Map([
+        [played.id, 1],
+        [idle.id, 0],
+      ]),
+    );
+    expect(await reporting.listGamePerformance({ gameIds: [] })).toEqual([]);
+  });
+
   it('scopes rounds by dateFrom/dateTo without dropping the game', async () => {
     const g = await seedGame();
     await seedRound(g.id, { betAmount: '10', startedAt: AT('2025-01-01T00:00:00.000Z') });

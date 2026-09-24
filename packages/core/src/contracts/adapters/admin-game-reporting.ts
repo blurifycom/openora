@@ -23,6 +23,8 @@ export type GamePerformanceFilter = {
   dateFrom?: Date;
   dateTo?: Date;
   gameType?: GameType;
+  /** Narrows which games appear at all, like `gameType`. An empty list matches nothing. */
+  gameIds?: readonly string[];
   currency?: string;
   sortBy?: GamePerformanceSortBy;
   sortDir?: 'asc' | 'desc';

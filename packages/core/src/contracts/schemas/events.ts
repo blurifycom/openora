@@ -12,6 +12,9 @@ import {
   GameBulkIdsSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
+  GameSortDirectionSchema,
+  GameSortKeySchema,
+  GameSortParamsSchema,
   GameTagSnapshotSchema,
 } from './game.js';
 import {
@@ -95,6 +98,23 @@ const gameGeoRuleEventState = z.object({
 const providerGeoRuleEventState = gameGeoRuleEventState
   .omit({ gameId: true })
   .extend({ providerId: UuidSchema });
+
+// A category's full config snapshot, shared by gaming.category.created (spread at the
+// top level) and gaming.category.updated (before/after) - see the domainEventSchemas
+// entries below. Older events predate per-category sorting; the sort fields default so
+// they replay at the catalog's own defaults rather than failing to parse.
+const gameCategorySnapshotSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  translations: GameCategoryTranslationsSchema.optional(),
+  icon: z.string().nullable(),
+  sortOrder: z.number().int(),
+  isActive: z.boolean(),
+  sortKey: GameSortKeySchema.default('manual'),
+  sortDirection: GameSortDirectionSchema.nullable().default(null),
+  sortParams: GameSortParamsSchema.default({}),
+  rankedAt: z.string().nullable().default(null),
+});
 
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
@@ -492,35 +512,45 @@ export const domainEventSchemas = {
       isActive: z.boolean(),
     }),
   }),
-  'gaming.category.created': authContextBase.extend({
+  'gaming.category.created': authContextBase.extend(gameCategorySnapshotSchema.shape).extend({
     categoryId: UuidSchema,
-    slug: z.string(),
-    name: z.string(),
-    translations: GameCategoryTranslationsSchema.optional(),
-    icon: z.string().nullable(),
-    sortOrder: z.number().int(),
-    isActive: z.boolean(),
     actorId: UuidSchema,
   }),
   'gaming.category.updated': authContextBase.extend({
     categoryId: UuidSchema,
     actorId: UuidSchema,
-    before: z.object({
-      slug: z.string(),
-      name: z.string(),
-      translations: GameCategoryTranslationsSchema.optional(),
-      icon: z.string().nullable(),
-      sortOrder: z.number().int(),
-      isActive: z.boolean(),
-    }),
-    after: z.object({
-      slug: z.string(),
-      name: z.string(),
-      translations: GameCategoryTranslationsSchema.optional(),
-      icon: z.string().nullable(),
-      sortOrder: z.number().int(),
-      isActive: z.boolean(),
-    }),
+    before: gameCategorySnapshotSchema,
+    after: gameCategorySnapshotSchema,
+  }),
+  // A backoffice manual reorder of a category's games. `before`/`after` are the full
+  // ordered game-id lists (manual position order), so a search recovers exactly what
+  // moved. The rank job re-materializes `rank` from the new positions after commit.
+  // Dragging any game switches the category to manual sort - sortKeyBefore/After record
+  // that transition (docs/modules/gaming.md). Older reordered events predate the switch; default
+  // both to 'manual' rather than fail to parse (every pre-pinning category was already
+  // manual-only, so this replays the truth for them). sortDirectionBefore/After and
+  // sortParamsBefore/After record the reorder's implicit reset of those fields to their
+  // manual-sort defaults - an event that predates them defaults to null/{} (v2's own
+  // implicit truth for every reorder).
+  'gaming.category.games_reordered': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.array(UuidSchema),
+    after: z.array(UuidSchema),
+    sortKeyBefore: GameSortKeySchema.default('manual'),
+    sortKeyAfter: GameSortKeySchema.default('manual'),
+    sortDirectionBefore: GameSortDirectionSchema.nullable().default(null),
+    sortDirectionAfter: GameSortDirectionSchema.nullable().default(null),
+    sortParamsBefore: GameSortParamsSchema.default({}),
+    sortParamsAfter: GameSortParamsSchema.default({}),
+  }),
+  // A backoffice replace-all write of a category's pinned slots. before/after are the
+  // full pinned-slot lists, ordered by position, so a search recovers exactly what moved.
+  'gaming.category.pins_updated': authContextBase.extend({
+    categoryId: UuidSchema,
+    actorId: UuidSchema,
+    before: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
+    after: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
   }),
   'gaming.tag.created': authContextBase
     .extend({ tagId: UuidSchema })
@@ -576,6 +606,11 @@ export const domainEventSchemas = {
       isActive: z.boolean(),
       changedGameIds: z.array(UuidSchema),
       changedProviderIds: z.array(UuidSchema),
+      // The categories the flip actually dirtied, resolved once inside the same
+      // transaction that marked them - lets the fast-path rank-trigger reuse it instead
+      // of resolving the same lookup again after commit. Absent on an event queued
+      // before this field existed; the handler falls back to its own lookup then.
+      affectedCategoryIds: z.array(UuidSchema).optional(),
     }),
     gameBulkEventBase.extend({
       operation: z.literal('add_tags'),
@@ -1153,6 +1188,11 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
   // v3: durationMonths added - the chosen term, explicit for the regulatory export.
   'rg.self_exclusion.activated': 4,
+  // v2: sortKeyBefore/sortKeyAfter added - a reorder now also switches the category to
+  // manual sort (docs/modules/gaming.md).
+  // v3: sortDirectionBefore/After and sortParamsBefore/After added - a reorder also
+  // resets those two fields, which v2 silently dropped from the audit trail.
+  'gaming.category.games_reordered': 3,
 };
 
 export function getEventVersion(event: string): number {

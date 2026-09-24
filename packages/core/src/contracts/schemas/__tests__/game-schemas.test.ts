@@ -5,6 +5,8 @@ import {
   GameCategoryTranslationsSchema,
   GameTagMetadataSchema,
   GAME_TAG_METADATA_MAX_BYTES,
+  GameSortParamsSchema,
+  GAME_SORT_PARAMS_MAX_BYTES,
 } from '../game.js';
 
 describe('game tag metadata', () => {
@@ -35,6 +37,29 @@ describe('game tag metadata', () => {
     const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 8) });
     expect(GameTagMetadataSchema.safeParse(sized(GAME_TAG_METADATA_MAX_BYTES)).success).toBe(true);
     expect(GameTagMetadataSchema.safeParse(sized(GAME_TAG_METADATA_MAX_BYTES + 1)).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('game sort params', () => {
+  it('accepts a JSON object', () => {
+    expect(
+      GameSortParamsSchema.safeParse({ windowDays: 30, region: 'eu', tags: ['hot'] }).success,
+    ).toBe(true);
+  });
+
+  it('rejects values JSON cannot represent', () => {
+    for (const value of [undefined, Number.NaN, new Date(), () => 'x']) {
+      expect(GameSortParamsSchema.safeParse({ window: value }).success).toBe(false);
+    }
+  });
+
+  it('bounds serialized size', () => {
+    // {"t":"..."} adds 8 bytes around the value.
+    const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 8) });
+    expect(GameSortParamsSchema.safeParse(sized(GAME_SORT_PARAMS_MAX_BYTES)).success).toBe(true);
+    expect(GameSortParamsSchema.safeParse(sized(GAME_SORT_PARAMS_MAX_BYTES + 1)).success).toBe(
       false,
     );
   });

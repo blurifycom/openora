@@ -30,7 +30,10 @@ export type CatalogCategoryWithGameCount = GameCategorySummaryWithTranslations &
 
 export type GameCatalogReader = {
   getPlayableGames(gameIds: CatalogGame['id'][]): Promise<Map<CatalogGame['id'], CatalogGame>>;
-  /** Ordered by name. Empty when the category is inactive or `limit` is below 1. */
+  /**
+   * Ordered by the category's configured sort; games not yet ranked come last, by name.
+   * Empty when the category is inactive or `limit` is below 1.
+   */
   listPlayableGamesInCategory(
     categoryId: GameCategorySummary['id'],
     opts: { limit: number },

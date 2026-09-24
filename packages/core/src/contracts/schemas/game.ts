@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { createBoundedJsonParamsSchema } from './bounded-json-params.js';
 import { UuidSchema } from './common.js';
 import { LanguageSchema } from './identity.js';
 
@@ -52,6 +53,26 @@ export const GameCategoryTranslationsSchema = z.record(
   GameCategoryTranslationSchema,
 );
 export type GameCategoryTranslations = z.infer<typeof GameCategoryTranslationsSchema>;
+
+export const GAME_SORT_DIRECTIONS = ['asc', 'desc'] as const;
+export const GameSortDirectionSchema = z.enum(GAME_SORT_DIRECTIONS);
+export type GameSortDirection = z.infer<typeof GameSortDirectionSchema>;
+
+// A sort key names an entry in the operator-extensible GAME_SORT_CATALOG (built-ins:
+// 'manual', 'name') - not a fixed enum, so it is a validated slug shape, not z.enum.
+export const GAME_SORT_KEY_PATTERN = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
+export const GameSortKeySchema = z.string().trim().min(1).max(64).regex(GAME_SORT_KEY_PATTERN);
+export type GameSortKey = z.infer<typeof GameSortKeySchema>;
+
+export const GAME_SORT_PARAMS_MAX_BYTES = 4096;
+
+// Opaque to core: each sort definition's own paramsSchema gives it meaning. It is stored as
+// jsonb and rides on every category event and audit row, hence JSON-only and byte-capped.
+export const GameSortParamsSchema = createBoundedJsonParamsSchema({
+  maxBytes: GAME_SORT_PARAMS_MAX_BYTES,
+  label: 'Sort params',
+});
+export type GameSortParams = z.infer<typeof GameSortParamsSchema>;
 
 export const GameCategorySummarySchema = z.object({
   id: UuidSchema,

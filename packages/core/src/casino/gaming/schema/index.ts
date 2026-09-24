@@ -7,6 +7,7 @@ import {
   decimal,
   timestamp,
   pgEnum,
+  check,
   index,
   integer,
   uniqueIndex,
@@ -14,7 +15,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   GameCategoryTranslationsSchema,
+  GameSortParamsSchema,
   GameTagMetadataSchema,
+  GAME_SORT_DIRECTIONS,
   GAME_TAG_TYPES,
   GAME_TAG_VISIBILITIES,
   GAME_TYPES,
@@ -32,6 +35,7 @@ export const gameRoundStatusEnum = pgEnum('game_round_status', GAME_ROUND_STATUS
 export const gameTypeEnum = pgEnum('game_type', GAME_TYPES);
 export const gameTagTypeEnum = pgEnum('game_tag_type', GAME_TAG_TYPES);
 export const gameTagVisibilityEnum = pgEnum('game_tag_visibility', GAME_TAG_VISIBILITIES);
+export const gameSortDirectionEnum = pgEnum('game_sort_direction', GAME_SORT_DIRECTIONS);
 
 export const gameProvider = pgTable(
   'game_provider',
@@ -84,6 +88,20 @@ export const gameCategory = pgTable(
     icon: text(),
     sortOrder: integer().notNull().default(0),
     isActive: boolean().notNull().default(true),
+    // Names an entry in GAME_SORT_CATALOG; validated against the bound catalog at
+    // write time, not by a DB constraint, so an overlay can add sort keys with no
+    // migration here. 'manual' + no positions/ranks reproduces today's name order,
+    // so this migration changes nothing visible on its own.
+    sortKey: text().notNull().default('manual'),
+    // Null for a single-direction sort (manual has exactly one, so it is always
+    // stored null here); populated for a multi-direction sort like 'name'.
+    sortDirection: gameSortDirectionEnum(),
+    sortParams: zodJsonb(GameSortParamsSchema, 'game_category.sort_params')().notNull().default({}),
+    rankSeq: integer().notNull().default(0),
+    rankDirtyAt: timestamp({ withTimezone: true }),
+    rankedAt: timestamp({ withTimezone: true }),
+    // Rank runs failed since the last success; the sweep backs off on it.
+    rankFailures: integer().notNull().default(0),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
@@ -156,10 +174,25 @@ export const gameCategoryGame = pgTable(
     categoryId: uuid()
       .notNull()
       .references(() => gameCategory.id, { onDelete: 'cascade' }),
+    // Operator-authored manual order; only the reorder route writes it.
+    position: integer(),
+    // Job-materialized effective order for the category's current sort config;
+    // only the rank job (gaming.category.rank) writes it. Every member gets one -
+    // see GameSortRankingService.
+    rank: integer(),
+    // Fixed slot (0-based), exempt from automatic re-sorting - see docs/modules/gaming.md. Only the
+    // pins route writes it; cascades away with the row on membership removal.
+    pinnedPosition: integer(),
   },
   (t) => [
     uniqueIndex('game_category_game_key').on(t.gameId, t.categoryId),
-    index('game_category_game_category_id_idx').on(t.categoryId),
+    // No standalone (category_id) index: the composite below already leads with
+    // category_id, so it serves a category-only lookup just as well.
+    index('game_category_game_category_id_rank_idx').on(t.categoryId, t.rank),
+    uniqueIndex('game_category_game_category_id_pinned_position_key')
+      .on(t.categoryId, t.pinnedPosition)
+      .where(sql`${t.pinnedPosition} IS NOT NULL`),
+    check('game_category_game_pinned_position_check', sql`${t.pinnedPosition} >= 0`),
   ],
 );
 

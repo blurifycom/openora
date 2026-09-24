@@ -59,7 +59,7 @@ describe('mapEventToRecord: cms.banner.schedule.updated', () => {
 });
 
 describe('mapEventToRecord: gaming.category.created', () => {
-  it('includes category translations in the audited snapshot', async () => {
+  it('includes category translations and sort config in the audited snapshot', async () => {
     const categoryId = '55555555-5555-4555-8555-555555555555';
     const row = await mapEventToRecord('gaming.category.created', {
       categoryId,
@@ -69,6 +69,10 @@ describe('mapEventToRecord: gaming.category.created', () => {
       icon: null,
       sortOrder: 0,
       isActive: true,
+      sortKey: 'manual',
+      sortDirection: null,
+      sortParams: {},
+      rankedAt: null,
       actorId: adminId,
     });
 
@@ -76,7 +80,13 @@ describe('mapEventToRecord: gaming.category.created', () => {
       actorType: 'admin',
       resourceType: 'game_category',
       resourceId: categoryId,
-      after: { translations: { de: { name: 'Tischspiele' } } },
+      after: {
+        translations: { de: { name: 'Tischspiele' } },
+        sortKey: 'manual',
+        sortDirection: null,
+        sortParams: {},
+        rankedAt: null,
+      },
     });
   });
 });
@@ -165,6 +175,73 @@ describe('mapEventToRecord: gaming tag catalog mutations', () => {
       resourceId: tagId,
       before: snapshot,
       after: { deleted: true, affectedGameIds: [affectedGameId] },
+    });
+  });
+});
+
+describe('mapEventToRecord: gaming.category.games_reordered', () => {
+  it('audits the category resource with the before/after ordered game-id lists, sort key, direction, and params', async () => {
+    const categoryId = '55555555-5555-4555-8555-555555555555';
+    const gameA = '66666666-6666-4666-8666-666666666666';
+    const gameB = '77777777-7777-4777-8777-777777777777';
+
+    const row = await mapEventToRecord('gaming.category.games_reordered', {
+      categoryId,
+      actorId: adminId,
+      before: [gameA, gameB],
+      after: [gameB, gameA],
+      sortKeyBefore: 'name',
+      sortKeyAfter: 'manual',
+      sortDirectionBefore: 'asc',
+      sortDirectionAfter: null,
+      sortParamsBefore: { window: 7 },
+      sortParamsAfter: {},
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      before: {
+        gameIds: [gameA, gameB],
+        sortKey: 'name',
+        sortDirection: 'asc',
+        sortParams: { window: 7 },
+      },
+      after: { gameIds: [gameB, gameA], sortKey: 'manual', sortDirection: null, sortParams: {} },
+    });
+  });
+});
+
+describe('mapEventToRecord: gaming.category.pins_updated', () => {
+  it('audits the category resource with the before/after pinned-slot lists', async () => {
+    const categoryId = '55555555-5555-4555-8555-555555555555';
+    const gameA = '66666666-6666-4666-8666-666666666666';
+    const gameB = '77777777-7777-4777-8777-777777777777';
+
+    const row = await mapEventToRecord('gaming.category.pins_updated', {
+      categoryId,
+      actorId: adminId,
+      before: [{ gameId: gameA, position: 0 }],
+      after: [
+        { gameId: gameB, position: 0 },
+        { gameId: gameA, position: 1 },
+      ],
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      before: { pins: [{ gameId: gameA, position: 0 }] },
+      after: {
+        pins: [
+          { gameId: gameB, position: 0 },
+          { gameId: gameA, position: 1 },
+        ],
+      },
     });
   });
 });

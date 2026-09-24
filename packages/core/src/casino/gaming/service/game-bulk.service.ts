@@ -12,7 +12,13 @@ import type {
   GameProviderAggregatorMapping,
 } from '@openora/core/contracts';
 import { game, gameCategory, gameProvider, gameTag } from '../schema/index.js';
-import { mappingsByProviderIds, type CatalogActor } from '../../shared/game-catalog.js';
+import {
+  mappingsByProviderIds,
+  markCategoriesRankDirty,
+  markCategoriesRankDirtyForGames,
+  markCategoriesRankDirtyForProviders,
+  type CatalogActor,
+} from '../../shared/game-catalog.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
 import { providerSnapshot } from './game-provider.service.js';
@@ -200,6 +206,13 @@ export class GameBulkService {
           )
         : [];
 
+      // A flipped game or provider moves its categories' playable/unplayable split -
+      // pins are placed relative to it, so those categories must re-rank. See docs/modules/gaming.md.
+      // The ids come back from the marker itself so plugin.ts's fast-path enqueue can
+      // reuse them instead of resolving the same lookup a second time after commit.
+      const dirtiedByGames = await markCategoriesRankDirtyForGames(tx, changedGameIds);
+      const dirtiedByProviders = await markCategoriesRankDirtyForProviders(tx, changedProviderIds);
+
       return {
         gameIds,
         providerIds,
@@ -208,6 +221,7 @@ export class GameBulkService {
         changedGameIds: sortIds(changedGameIds),
         changedProviderIds: sortIds(changedProviderIds),
         changedProviderSnapshots,
+        dirtiedCategoryIds: sortIds([...new Set([...dirtiedByGames, ...dirtiedByProviders])]),
         gamesUpdatedCount: changedGameIds.length,
         gamesUnchangedCount: games.length - changedGameIds.length,
         providersUpdatedCount: changedProviderIds.length,
@@ -225,6 +239,7 @@ export class GameBulkService {
         isActive,
         changedGameIds: outcome.changedGameIds,
         changedProviderIds: outcome.changedProviderIds,
+        affectedCategoryIds: outcome.dirtiedCategoryIds,
         notFound: { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds },
         ip: ip ?? null,
         userAgent: userAgent ?? null,
@@ -378,6 +393,16 @@ export class GameBulkService {
       const matchedGameIds = games.map((row) => row.id);
       let addedLinks: GameAddedCategoryLinks = [];
       if (matchedGameIds.length > 0) {
+        // Marks every target category dirty (locking `game_category`) before inserting
+        // into `game_category_game` below - GameSortRankingService.finalize locks
+        // `game_category` FOR UPDATE first and only then writes `game_category_game`,
+        // so writing the two tables in the opposite order (as this used to, marking
+        // dirty only after the insert) is an ABBA lock-order inversion Postgres resolves
+        // by aborting one side. Every requested category is marked, not only ones that
+        // gain a genuinely new link - the categories are already known to exist (checked
+        // above) and an extra dirty mark is a harmless no-op re-rank. See
+        // docs/modules/gaming.md.
+        await markCategoriesRankDirty(tx, categoryIds);
         const { rows } = await tx.execute<{ game_id: string; category_id: string }>(sql`
           INSERT INTO game_category_game (game_id, category_id)
           SELECT g, c

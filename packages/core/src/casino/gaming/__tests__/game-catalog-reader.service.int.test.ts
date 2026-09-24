@@ -192,6 +192,27 @@ describe('GameCatalogReaderService.listPlayableGamesInCategory (real PG)', () =>
     expect(games.map((g) => g.tags.map((t) => t.id))).toEqual([[tag.id], []]);
   });
 
+  it('orders ranked games first by rank, then falls back to name for games with no rank yet', async () => {
+    const provider = await seedProvider();
+    const category = await seedCategory();
+    const zeta = await seedGame(provider.id, { name: 'Zeta' }, [category.id]);
+    const alpha = await seedGame(provider.id, { name: 'Alpha' }, [category.id]);
+    const bravo = await seedGame(provider.id, { name: 'Bravo' }, [category.id]);
+    // zeta and alpha are ranked (zeta first); bravo has no rank yet.
+    await db.drizzle.db
+      .update(gameCategoryGame)
+      .set({ rank: 0 })
+      .where(sql`${gameCategoryGame.gameId} = ${zeta.id}`);
+    await db.drizzle.db
+      .update(gameCategoryGame)
+      .set({ rank: 1 })
+      .where(sql`${gameCategoryGame.gameId} = ${alpha.id}`);
+
+    const games = await reader.listPlayableGamesInCategory(category.id, { limit: 10 });
+
+    expect(games.map((g) => g.name)).toEqual(['Zeta', 'Alpha', bravo.name]);
+  });
+
   it('returns nothing for an inactive category, an unknown or malformed id, or a limit below 1', async () => {
     const provider = await seedProvider();
     const inactive = await seedCategory({ isActive: false });

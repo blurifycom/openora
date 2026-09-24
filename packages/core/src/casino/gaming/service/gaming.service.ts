@@ -59,8 +59,12 @@ import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
 import {
   categoriesByGameIds,
+  categoryGameOrder,
+  categoryRankTriggerIds,
   countWhere,
   isGamePlayable,
+  markCategoriesRankDirty,
+  markCategoriesRankDirtyForGames,
   playableGameCondition,
   tagsByGameIds,
   toCategorySummary,
@@ -377,6 +381,11 @@ export class GamingService {
     includeInvisibleTags: boolean;
     filters?: (SQL | undefined)[];
   }) {
+    // The public route orders a category listing by the category's configured sort
+    // (categoryGameOrder, shared with GAME_CATALOG_READER so the two never drift), via
+    // an inner join on the membership row itself. The admin list keeps its exists-based
+    // membership check and name order unchanged - it never reads rank or position.
+    const usePublicCategoryJoin = sort === 'public' && categoryId !== undefined;
     const where = and(
       ...filters,
       q
@@ -393,7 +402,7 @@ export class GamingService {
           ? undefined
           : eq(game.isActive, isActive),
       isUnavailable !== undefined ? eq(game.isUnavailable, isUnavailable) : undefined,
-      categoryId
+      categoryId !== undefined && !usePublicCategoryJoin
         ? exists(
             this.drizzle.db
               .select({ gameId: gameCategoryGame.gameId })
@@ -408,26 +417,46 @@ export class GamingService {
               ),
           )
         : undefined,
+      categoryId !== undefined && usePublicCategoryJoin
+        ? eq(gameCategoryGame.categoryId, categoryId)
+        : undefined,
+      usePublicCategoryJoin ? eq(gameCategory.isActive, true) : undefined,
     );
-    const [rows, [{ n }]] = await Promise.all([
-      this.drizzle.db
-        .select({ game, provider: gameProvider })
-        .from(game)
-        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-        .where(where)
-        .orderBy(
-          ...(sort === 'admin'
-            ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
-            : [asc(game.name)]),
-        )
-        .limit(limit)
-        .offset(pageToOffset(page, limit)),
-      this.drizzle.db
-        .select({ n: count() })
-        .from(game)
-        .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-        .where(where),
-    ]);
+    const orderBy = usePublicCategoryJoin
+      ? categoryGameOrder()
+      : sort === 'admin'
+        ? [asc(gameProvider.name), asc(gameProvider.slug), asc(game.name), asc(game.id)]
+        : [asc(game.name)];
+    const gamesQuery = this.drizzle.db
+      .select({ game, provider: gameProvider })
+      .from(game)
+      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
+    const countQuery = this.drizzle.db
+      .select({ n: count() })
+      .from(game)
+      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id));
+    const [rows, [{ n }]] = usePublicCategoryJoin
+      ? await Promise.all([
+          gamesQuery
+            .innerJoin(gameCategoryGame, eq(gameCategoryGame.gameId, game.id))
+            .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
+            .where(where)
+            .orderBy(...orderBy)
+            .limit(limit)
+            .offset(pageToOffset(page, limit)),
+          countQuery
+            .innerJoin(gameCategoryGame, eq(gameCategoryGame.gameId, game.id))
+            .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
+            .where(where),
+        ])
+      : await Promise.all([
+          gamesQuery
+            .where(where)
+            .orderBy(...orderBy)
+            .limit(limit)
+            .offset(pageToOffset(page, limit)),
+          countQuery.where(where),
+        ]);
     const [categories, tags] = await Promise.all([
       categoriesByGameIds(
         this.drizzle.db,
@@ -750,6 +779,9 @@ export class GamingService {
         return false;
       }
       await tx.update(game).set({ isUnavailable }).where(eq(game.id, gameId));
+      // Flips a game's playable/unplayable split within any category it's in - a pinned
+      // slot's meaning depends on that split, so it must re-rank too. See docs/modules/gaming.md.
+      await markCategoriesRankDirtyForGames(tx, [gameId]);
       return true;
     });
     if (changed) {
@@ -854,16 +886,59 @@ export class GamingService {
             throw new GameTagNotFoundError(missing);
           }
         }
+        // Marks the trigger categories dirty (locking `game_category`) before touching
+        // `game_category_game` below - `GameSortRankingService.finalize` locks
+        // `game_category` FOR UPDATE first and only then writes `game_category_game`
+        // for that category, so writing the two tables in the opposite order here would
+        // be an ABBA lock-order inversion Postgres resolves by aborting one side (see
+        // docs/modules/gaming.md). The trigger set is computed from the anticipated
+        // post-write values (the patch already validated above), not a re-read after
+        // the write, precisely so this can run before any category-membership write.
+        const anticipatedAfterCategoryIds = uniqueCategoryIds ?? before.categoryIds;
+        await markCategoriesRankDirty(
+          tx,
+          categoryRankTriggerIds(
+            {
+              name: beforeRow.name,
+              isActive: beforeRow.isActive,
+              providerId: beforeRow.providerId,
+              categoryIds: before.categoryIds,
+            },
+            {
+              name: patch.name ?? beforeRow.name,
+              providerId: patch.providerId ?? beforeRow.providerId,
+              isActive: patch.isActive ?? beforeRow.isActive,
+              categoryIds: anticipatedAfterCategoryIds,
+            },
+          ),
+        );
         if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
-        if (uniqueCategoryIds !== undefined) {
-          await tx.delete(gameCategoryGame).where(eq(gameCategoryGame.gameId, id));
-          if (uniqueCategoryIds.length > 0) {
-            await tx
-              .insert(gameCategoryGame)
-              .values(uniqueCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
-          }
+        // Only the links that moved are written: a kept link keeps its row, and with it
+        // its position, pin and rank.
+        const keptCategoryIds = new Set(before.categoryIds);
+        const nextCategoryIds = new Set(anticipatedAfterCategoryIds);
+        const removedCategoryIds = before.categoryIds.filter(
+          (categoryId) => !nextCategoryIds.has(categoryId),
+        );
+        const addedCategoryIds = anticipatedAfterCategoryIds.filter(
+          (categoryId) => !keptCategoryIds.has(categoryId),
+        );
+        if (removedCategoryIds.length > 0) {
+          await tx
+            .delete(gameCategoryGame)
+            .where(
+              and(
+                eq(gameCategoryGame.gameId, id),
+                inArray(gameCategoryGame.categoryId, removedCategoryIds),
+              ),
+            );
+        }
+        if (addedCategoryIds.length > 0) {
+          await tx
+            .insert(gameCategoryGame)
+            .values(addedCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
         }
         if (uniqueTagIds !== undefined) {
           await tx.delete(gameTagGame).where(eq(gameTagGame.gameId, id));
@@ -877,7 +952,8 @@ export class GamingService {
           await tx.select().from(game).where(eq(game.id, id)).limit(1),
           new GameNotFoundError(id),
         );
-        return { before, after: await gameAuditSnapshot(tx, afterRow) };
+        const after = await gameAuditSnapshot(tx, afterRow);
+        return { before, after };
       })
       .catch((error: unknown) => {
         // The transaction also writes category and tag links: only a slug collision maps

@@ -36,6 +36,135 @@ export function countWhere(condition: SQL | undefined) {
   return sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
 }
 
+export type GameCategoryTriggerSnapshot = Pick<Game, 'name' | 'isActive' | 'providerId'> & {
+  categoryIds: readonly GameCategory['id'][];
+};
+
+// The category ids whose rank could have moved because of a game write - the union of
+// before/after membership, but only when the game's provider, name, active state, or category
+// membership actually changed (a name/active change matters because a definition can
+// order or filter on either, and an active flip also moves the playable/unplayable
+// split pins are placed within). Shared by the gaming.game.updated event handler
+// (plugin.ts, the fast path) and updateGame's own in-transaction dirty-marking
+// (gaming.service.ts, the durable marker the sweep reads) - see docs/modules/gaming.md.
+export function categoryRankTriggerIds(
+  before: GameCategoryTriggerSnapshot,
+  after: GameCategoryTriggerSnapshot,
+): string[] {
+  const beforeCategoryIds = new Set(before.categoryIds);
+  const afterCategoryIds = new Set(after.categoryIds);
+  const membershipChanged =
+    before.categoryIds.length !== after.categoryIds.length ||
+    before.categoryIds.some((id) => !afterCategoryIds.has(id)) ||
+    after.categoryIds.some((id) => !beforeCategoryIds.has(id));
+  if (
+    before.name === after.name &&
+    before.isActive === after.isActive &&
+    before.providerId === after.providerId &&
+    !membershipChanged
+  ) {
+    return [];
+  }
+  return [...new Set([...before.categoryIds, ...after.categoryIds])];
+}
+
+export function rankDirtyPatch() {
+  return {
+    rankSeq: sql`${gameCategory.rankSeq} + 1`,
+    rankDirtyAt: sql`greatest(clock_timestamp(), ${gameCategory.rankedAt} + interval '1 microsecond')`,
+  };
+}
+
+// True while a category has a change its materialized ranks do not reflect yet.
+export function isRankDirty(): SQL {
+  return sql`${gameCategory.rankDirtyAt} IS NOT NULL AND (${gameCategory.rankedAt} IS NULL OR ${gameCategory.rankedAt} < ${gameCategory.rankDirtyAt})`;
+}
+
+// Marks every category in `categoryIds` dirty for the rank sweep, inside the caller's
+// own transaction - a no-op for an empty list. See docs/modules/gaming.md.
+export async function markCategoriesRankDirty(
+  tx: DrizzleTx,
+  categoryIds: readonly GameCategory['id'][],
+) {
+  if (categoryIds.length === 0) {
+    return;
+  }
+  await tx
+    .update(gameCategory)
+    .set(rankDirtyPatch())
+    .where(inArray(gameCategory.id, [...categoryIds]));
+}
+
+// The distinct categories any of `gameIds` currently belongs to - one query, no N+1.
+// Shared by the durable dirty-marking below and plugin.ts's fast-path enqueue (a plain
+// read there, not inside a transaction) - see docs/modules/gaming.md.
+export async function categoryIdsForGameIds(
+  db: DrizzleDb | DrizzleTx,
+  gameIds: readonly Game['id'][],
+): Promise<string[]> {
+  if (gameIds.length === 0) {
+    return [];
+  }
+  const rows = await db
+    .selectDistinct({ categoryId: gameCategoryGame.categoryId })
+    .from(gameCategoryGame)
+    .where(inArray(gameCategoryGame.gameId, [...gameIds]));
+  return rows.map((row) => row.categoryId);
+}
+
+// The distinct categories containing any game of `providerIds` - one query, no N+1.
+// Same sharing rationale as categoryIdsForGameIds above.
+export async function categoryIdsForProviderIds(
+  db: DrizzleDb | DrizzleTx,
+  providerIds: readonly GameProvider['id'][],
+): Promise<string[]> {
+  if (providerIds.length === 0) {
+    return [];
+  }
+  const rows = await db
+    .selectDistinct({ categoryId: gameCategoryGame.categoryId })
+    .from(gameCategoryGame)
+    .innerJoin(game, eq(gameCategoryGame.gameId, game.id))
+    .where(inArray(game.providerId, [...providerIds]));
+  return rows.map((row) => row.categoryId);
+}
+
+// Marks every category containing one of `gameIds` dirty, inside the caller's own
+// transaction - a no-op when nothing matches. Returns the resolved category ids so a
+// caller that also needs them (eg to carry on an emitted event) doesn't have to look
+// them up a second time after commit. See docs/modules/gaming.md.
+export async function markCategoriesRankDirtyForGames(
+  tx: DrizzleTx,
+  gameIds: readonly Game['id'][],
+): Promise<string[]> {
+  const categoryIds = await categoryIdsForGameIds(tx, gameIds);
+  await markCategoriesRankDirty(tx, categoryIds);
+  return categoryIds;
+}
+
+// Marks every category containing a game of `providerIds` dirty, inside the caller's
+// own transaction - a no-op when nothing matches. Same return-the-ids rationale as
+// markCategoriesRankDirtyForGames above.
+export async function markCategoriesRankDirtyForProviders(
+  tx: DrizzleTx,
+  providerIds: readonly GameProvider['id'][],
+): Promise<string[]> {
+  const categoryIds = await categoryIdsForProviderIds(tx, providerIds);
+  await markCategoriesRankDirty(tx, categoryIds);
+  return categoryIds;
+}
+
+// The order every reader of a category's games uses: by the category's materialized
+// `rank` (job-written, NULL until the first rank run), falling back to name for a game
+// not yet ranked. Single owner - the public list-games route and GAME_CATALOG_READER
+// must never drift apart in ordering. Plain `asc(rank)` relies on Postgres' own default
+// (NULLS LAST for ASC) to put an unranked game after every ranked one - a leading
+// `rank IS NULL` term is behaviourally identical but defeats the `(category_id, rank)`
+// index, forcing a seq scan + sort of the whole category on every page.
+export function categoryGameOrder() {
+  return [asc(gameCategoryGame.rank), asc(game.name), asc(game.id)] as const;
+}
+
 export const providerSummaryColumns = {
   id: gameProvider.id,
   slug: gameProvider.slug,

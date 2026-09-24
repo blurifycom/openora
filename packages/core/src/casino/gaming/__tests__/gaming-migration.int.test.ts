@@ -101,7 +101,9 @@ describe('gaming catalog migration 0005 (real PG)', () => {
 
     const categories = await db.drizzle.db.select({ slug: gameCategory.slug }).from(gameCategory);
     expect(categories.map((c) => c.slug).sort()).toEqual(['slots', 'table-games']);
-    const links = await db.drizzle.db.select().from(gameCategoryGame);
+    const links = await db.drizzle.db
+      .select({ gameId: gameCategoryGame.gameId, categoryId: gameCategoryGame.categoryId })
+      .from(gameCategoryGame);
     expect(links).toHaveLength(4);
 
     const enforced = await nullability();
@@ -184,7 +186,7 @@ describe('gaming catalog migration 0005 (real PG)', () => {
 
     expect(inserted).toMatchObject({ slug: 'custom-slug', aggregator: 'hub' });
     const links = await db.drizzle.db
-      .select()
+      .select({ gameId: gameCategoryGame.gameId, categoryId: gameCategoryGame.categoryId })
       .from(gameCategoryGame)
       .where(eq(gameCategoryGame.gameId, inserted!.id));
     expect(links).toEqual([]);

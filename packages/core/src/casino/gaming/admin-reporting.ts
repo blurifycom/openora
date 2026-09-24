@@ -30,7 +30,14 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       // sum - the operator UI shows a disclaimer in that case; this is intentional.
       filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
-    const where = filter.gameType ? eq(game.gameType, filter.gameType) : undefined;
+    if (filter.gameIds?.length === 0) {
+      return [];
+    }
+    const where = and(
+      filter.gameType ? eq(game.gameType, filter.gameType) : undefined,
+      // One array parameter: the list can run to thousands of ids.
+      filter.gameIds ? sql`${game.id} = ANY(${sql.param([...filter.gameIds])}::uuid[])` : undefined,
+    );
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
     // GGR - can be negative when a game pays out more than it takes in over the range.
