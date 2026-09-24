@@ -195,6 +195,44 @@ describe('DrizzleAdminGameReporting.listGamePerformance (real PG)', () => {
   });
 });
 
+describe('DrizzleAdminGameReporting.rankGamesByRounds (real PG)', () => {
+  const range = {
+    dateFrom: AT('2026-01-01T00:00:00.000Z'),
+    dateTo: AT('2026-01-31T00:00:00.000Z'),
+  };
+
+  it('ranks the listed games by completed rounds in range, most first, ties by id, up to the limit', async () => {
+    const [busy, tieA, tieB, quiet, unlisted] = [
+      await seedGame(),
+      await seedGame(),
+      await seedGame(),
+      await seedGame(),
+      await seedGame(),
+    ];
+    for (let i = 0; i < 3; i += 1) {
+      await seedRound(busy.id);
+      await seedRound(unlisted.id);
+    }
+    await seedRound(tieA.id);
+    await seedRound(tieB.id);
+    await seedRound(quiet.id, { status: 'active' });
+    await seedRound(quiet.id, { startedAt: AT('2025-12-31T00:00:00.000Z') });
+    const [first, second] = [tieA.id, tieB.id].sort();
+    const gameIds = [busy.id, tieA.id, tieB.id, quiet.id];
+
+    expect(await reporting.rankGamesByRounds({ ...range, gameIds, limit: 10 })).toEqual([
+      { gameId: busy.id, roundsPlayed: 3 },
+      { gameId: first, roundsPlayed: 1 },
+      { gameId: second, roundsPlayed: 1 },
+    ]);
+    expect(await reporting.rankGamesByRounds({ ...range, gameIds, limit: 2 })).toEqual([
+      { gameId: busy.id, roundsPlayed: 3 },
+      { gameId: first, roundsPlayed: 1 },
+    ]);
+    expect(await reporting.rankGamesByRounds({ ...range, gameIds: [], limit: 10 })).toEqual([]);
+  });
+});
+
 describe('DrizzleAdminGameReporting.getGamePerformanceTrend (real PG)', () => {
   const JAN = {
     dateFrom: AT('2026-01-05T00:00:00.000Z'),

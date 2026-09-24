@@ -814,6 +814,8 @@ export async function mapEventToRecord(
         sortDirection: p['sortDirection'] ?? null,
         sortParams: p['sortParams'] ?? {},
         rankedAt: p['rankedAt'] ?? null,
+        membershipMode: p['membershipMode'] ?? null,
+        membershipRule: p['membershipRule'] ?? null,
       },
     };
   }
@@ -861,6 +863,38 @@ export async function mapEventToRecord(
       resourceId: str(p['categoryId']),
       before: { pins: Array.isArray(p['before']) ? p['before'] : [] },
       after: { pins: Array.isArray(p['after']) ? p['after'] : [] },
+    };
+  }
+
+  // actorId = the zero UUID for an event-driven or scheduled evaluation; the admin's id
+  // for an on-demand one.
+  if (topic === 'gaming.category.membership_evaluated') {
+    const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
+    const actorId = str(p['actorId']);
+    return {
+      ...base,
+      actorType: actorId === SYSTEM_ACTOR ? 'system' : 'admin',
+      actorId,
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      before: { removedGameIds: Array.isArray(p['removedGameIds']) ? p['removedGameIds'] : [] },
+      after: {
+        trigger: p['trigger'] ?? null,
+        matchedCount: p['matchedCount'] ?? null,
+        relabeledCount: p['relabeledCount'] ?? 0,
+        addedGameIds: Array.isArray(p['addedGameIds']) ? p['addedGameIds'] : [],
+      },
+    };
+  }
+
+  if (topic === 'gaming.category.membership_evaluation.failed') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game_category',
+      resourceId: str(p['categoryId']),
+      after: { reason: p['reason'] ?? null },
     };
   }
 
@@ -1213,6 +1247,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.games.bulk_updated',
   'gaming.category.games_reordered',
   'gaming.category.pins_updated',
+  'gaming.category.membership_evaluated',
+  'gaming.category.membership_evaluation.failed',
   'gaming.game.availability_changed',
   'chat.user.blocked',
   'chat.user.unblocked',

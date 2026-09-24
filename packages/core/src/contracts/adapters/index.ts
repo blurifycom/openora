@@ -73,6 +73,7 @@ export type {
   GamingCommands,
   GamingAccumulateExternalRoundArgs,
   GamingSetGameAvailabilityArgs,
+  GamingNotifyGamesCreatedArgs,
   GamingAccumulateExternalRoundOutcome,
 } from './gaming-commands.js';
 export { GAMING_COMMANDS } from './gaming-commands.js';
@@ -146,6 +147,18 @@ export type {
   GameSortRankInput,
 } from './game-sort-catalog.js';
 export { createGameSortCatalog, defineGameSort, GAME_SORT_CATALOG } from './game-sort-catalog.js';
+
+export type {
+  GameCategoryRuleCatalog,
+  GameCategoryRuleChange,
+  GameCategoryRuleDefinition,
+  GameCategoryRuleResolveInput,
+} from './game-category-rule-catalog.js';
+export {
+  createGameCategoryRuleCatalog,
+  defineGameCategoryRule,
+  GAME_CATEGORY_RULE_CATALOG,
+} from './game-category-rule-catalog.js';
 
 export type {
   RealtimeTransport,
@@ -317,6 +330,8 @@ export type {
   GamePerformanceTrendPoint,
   GamePerformanceTrend,
   AdminGameReporting,
+  GameRoundCount,
+  GameRoundRankingFilter,
   PlayerGameStats,
 } from './admin-game-reporting.js';
 export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GAME_CATEGORY_RULE_PARAMS_MAX_BYTES,
+  GameCategoryRuleSchema,
+  ProvidersRuleParamsSchema,
+  TagsRuleParamsSchema,
+  MostPlayedRuleParamsSchema,
   GameCategorySummarySchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
@@ -113,5 +118,68 @@ describe('game category translations', () => {
     if (result.success) {
       expect(result.data.translations).toEqual({});
     }
+  });
+});
+
+describe('game category rule', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+
+  it('accepts an ordered clause list, defaulting params and allowing a repeated key', () => {
+    const result = GameCategoryRuleSchema.safeParse([
+      { key: 'tags', params: { tagIds: [id] } },
+      { key: 'tags', params: { tagIds: [id] } },
+      { key: 'operator_defined' },
+    ]);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data[2]).toEqual({ key: 'operator_defined', params: {} });
+    }
+  });
+
+  it("caps a clause's params at the byte limit and to JSON values", () => {
+    const big = 'x'.repeat(GAME_CATEGORY_RULE_PARAMS_MAX_BYTES);
+    expect(GameCategoryRuleSchema.safeParse([{ key: 'tags', params: { note: big } }]).success).toBe(
+      false,
+    );
+    expect(
+      GameCategoryRuleSchema.safeParse([{ key: 'tags', params: { at: new Date() } }]).success,
+    ).toBe(false);
+  });
+
+  it('rejects an empty rule, too many clauses, a malformed key and an unknown clause field', () => {
+    const clause = { key: 'tags', params: {} };
+    expect(GameCategoryRuleSchema.safeParse([]).success).toBe(false);
+    expect(GameCategoryRuleSchema.safeParse(Array.from({ length: 11 }, () => clause)).success).toBe(
+      false,
+    );
+    expect(GameCategoryRuleSchema.safeParse([{ key: 'Top-N', params: {} }]).success).toBe(false);
+    expect(GameCategoryRuleSchema.safeParse([{ ...clause, negate: true }]).success).toBe(false);
+  });
+});
+
+describe('built-in rule params', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+
+  it('bounds the id lists: non-empty, unique, no unknown field', () => {
+    expect(ProvidersRuleParamsSchema.safeParse({ providerIds: [id] }).success).toBe(true);
+    expect(ProvidersRuleParamsSchema.safeParse({ providerIds: [] }).success).toBe(false);
+    expect(TagsRuleParamsSchema.safeParse({ tagIds: [id, id] }).success).toBe(false);
+    expect(TagsRuleParamsSchema.safeParse({ tagIds: [id], gameType: 'casino' }).success).toBe(
+      false,
+    );
+  });
+
+  it('bounds the most-played limit and period, and takes no metric', () => {
+    const params = { periodDays: 7, limit: 10 };
+    expect(MostPlayedRuleParamsSchema.safeParse(params).success).toBe(true);
+    expect(MostPlayedRuleParamsSchema.safeParse({ ...params, limit: 0 }).success).toBe(false);
+    expect(MostPlayedRuleParamsSchema.safeParse({ ...params, limit: 501 }).success).toBe(false);
+    expect(MostPlayedRuleParamsSchema.safeParse({ ...params, periodDays: 366 }).success).toBe(
+      false,
+    );
+    expect(MostPlayedRuleParamsSchema.safeParse({ ...params, metric: 'revenue' }).success).toBe(
+      false,
+    );
   });
 });

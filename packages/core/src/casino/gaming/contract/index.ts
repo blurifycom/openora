@@ -5,7 +5,11 @@ import {
   CurrencyCodeSchema,
   GAME_TYPES,
   GameBulkIdsSchema,
+  GameCategoryMembershipModeSchema,
+  GameCategoryMembershipTriggerSchema,
   GameCategoryNameSchema,
+  GameCategoryRuleKeySchema,
+  GameCategoryRuleSchema,
   GameCategorySummaryWithTranslationsSchema,
   GameCategoryTranslationsSchema,
   GameProviderAggregatorMappingSchema,
@@ -42,6 +46,7 @@ export {
   GameSortKeySchema,
   GameSortParamsSchema,
 } from '@openora/core/contracts';
+export { GameCategoryMembershipModeSchema, GameCategoryRuleSchema } from '@openora/core/contracts';
 export {
   GameTagMetadataSchema,
   GameTagSummarySchema,
@@ -185,6 +190,13 @@ export const GameCategoryDetailSchema = GameCategorySummaryWithTranslationsSchem
   sortDirection: GameSortDirectionSchema.nullable(),
   sortParams: GameSortParamsSchema,
   rankedAt: TimestampSchema.nullable(),
+  membershipMode: GameCategoryMembershipModeSchema,
+  membershipRule: GameCategoryRuleSchema.nullable(),
+  // When the games last matched the rule. Unchanged by a failed evaluation, so a rule
+  // that has stopped resolving shows an old timestamp next to membershipLastError.
+  membershipEvaluatedAt: TimestampSchema.nullable(),
+  membershipAttemptedAt: TimestampSchema.nullable(),
+  membershipLastError: z.string().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -281,6 +293,9 @@ export const CreateCategoryInputSchema = z.object({
   translations: GameCategoryTranslationsSchema.optional(),
   icon: z.string().trim().min(1).max(512).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
+  // 'rule' needs a membershipRule in the same call; the service rejects it otherwise.
+  membershipMode: GameCategoryMembershipModeSchema.optional(),
+  membershipRule: GameCategoryRuleSchema.optional(),
 });
 export type CreateCategoryInput = z.infer<typeof CreateCategoryInputSchema>;
 
@@ -295,6 +310,10 @@ export const UpdateCategoryInputSchema = z.object({
   sortKey: GameSortKeySchema.optional(),
   sortDirection: GameSortDirectionSchema.nullable().optional(),
   sortParams: GameSortParamsSchema.optional(),
+  // Switching to 'rule' needs a rule - sent here or stored by an earlier write.
+  // Switching back to 'manual' keeps both the stored rule and the current games.
+  membershipMode: GameCategoryMembershipModeSchema.optional(),
+  membershipRule: GameCategoryRuleSchema.optional(),
 });
 export type UpdateCategoryInput = z.infer<typeof UpdateCategoryInputSchema>;
 
@@ -386,6 +405,15 @@ export const UpdateCategoryPinsOutputSchema = z.object({
   pins: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
 });
 
+export const GameCategoryRuleOptionSchema = z.object({
+  key: GameCategoryRuleKeySchema,
+  // Previewing a rule with this kind of clause also needs report:view. False for every built-in.
+  exposesReporting: z.boolean(),
+  // A JSON Schema document (z.toJSONSchema of the definition's paramsSchema).
+  paramsJsonSchema: JsonSchemaDocumentSchema,
+});
+export type GameCategoryRuleOption = z.infer<typeof GameCategoryRuleOptionSchema>;
+
 export const GameSortOptionSchema = z.object({
   key: GameSortKeySchema,
   directions: z.array(GameSortDirectionSchema).min(1),
@@ -417,6 +445,67 @@ export const RANK_SWEEP_BATCH_LIMIT = 200;
 // failure up to RANK_RETRY_MAX_MS, so a sort that keeps failing is not retried every pass.
 export const RANK_RETRY_BASE_MS = 120_000;
 export const RANK_RETRY_MAX_MS = 3_600_000;
+
+// Actor recorded on a membership evaluation no admin asked for (event-driven, scheduled).
+export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
+
+export const PreviewCategoryRuleInputSchema = PageQuerySchema.extend({
+  rule: GameCategoryRuleSchema,
+});
+export type PreviewCategoryRuleInput = z.infer<typeof PreviewCategoryRuleInputSchema>;
+
+export const CategoryRulePreviewItemSchema = GameSchema.pick({
+  id: true,
+  name: true,
+  slug: true,
+  provider: true,
+  thumbnailUrl: true,
+  isActive: true,
+});
+
+export const CategoryRulePreviewSchema = paginated(CategoryRulePreviewItemSchema);
+export type CategoryRulePreview = z.infer<typeof CategoryRulePreviewSchema>;
+
+export const EvaluateCategoryMembershipOutputSchema = z.object({
+  matchedCount: z.number().int().nonnegative(),
+  addedCount: z.number().int().nonnegative(),
+  removedCount: z.number().int().nonnegative(),
+  evaluatedAt: TimestampSchema,
+});
+export type EvaluateCategoryMembershipOutput = z.infer<
+  typeof EvaluateCategoryMembershipOutputSchema
+>;
+
+// The most games one rule may match; preview and evaluation reject a broader result
+// before any membership write.
+export const GAME_CATEGORY_RULE_MATCH_MAX = 5000;
+
+export const MEMBERSHIP_SWEEP_BATCH_LIMIT = 200;
+
+export const MEMBERSHIP_EVENT_DEBOUNCE_MS = 250;
+
+// GAMING_COMMANDS.notifyGamesCreated announces a larger import in events of this size.
+// Must match the `.max()` on `gaming.games.created` in contracts/schemas/events.ts - the
+// shared schemas cannot import a module contract, so the value is stated twice.
+export const GAMES_CREATED_EVENT_BATCH = 1000;
+
+export const GAME_CATEGORY_MEMBERSHIP_QUEUE = queue('gaming.category.membership');
+
+export const GameCategoryMembershipJobSchema = z.object({
+  categoryId: UuidSchema,
+  // The queue carries only the runs no admin asked for; an admin's runs are synchronous.
+  trigger: GameCategoryMembershipTriggerSchema.exclude(['admin']),
+});
+export type GameCategoryMembershipJob = z.infer<typeof GameCategoryMembershipJobSchema>;
+
+// Re-evaluates rule-mode categories in batches: the only trigger a most_played clause has as its
+// rolling window moves, and the backstop for a lost event-driven enqueue or a game
+// inserted without GAMING_COMMANDS.notifyGamesCreated - see docs/modules/gaming.md.
+export const GAME_CATEGORY_MEMBERSHIP_SWEEP_QUEUE = queue('gaming.category.membership-sweep');
+
+export const GameCategoryMembershipSweepJobSchema = z.object({});
+
+export const MEMBERSHIP_SWEEP_CRON = '15 * * * *';
 
 export const GameTagDetailSchema = GameTagSummarySchema.extend({
   createdAt: TimestampSchema,
@@ -618,6 +707,20 @@ export const gamingAdminContract = {
     .route({ method: 'PUT', path: '/backoffice/gaming/categories/{id}/games/pins' })
     .input(UpdateCategoryPinsInputSchema)
     .output(UpdateCategoryPinsOutputSchema),
+
+  previewCategoryRule: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/categories/rule-preview' })
+    .input(PreviewCategoryRuleInputSchema)
+    .output(CategoryRulePreviewSchema),
+
+  evaluateCategoryMembership: oc
+    .route({ method: 'POST', path: '/backoffice/gaming/categories/{id}/membership/evaluate' })
+    .input(IdInputSchema)
+    .output(EvaluateCategoryMembershipOutputSchema),
+
+  getCategoryRuleOptions: oc
+    .route({ method: 'GET', path: '/backoffice/gaming/category-rule-options' })
+    .output(z.array(GameCategoryRuleOptionSchema)),
 
   getSortOptions: oc
     .route({ method: 'GET', path: '/backoffice/gaming/sort-options' })

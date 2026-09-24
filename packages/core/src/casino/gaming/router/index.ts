@@ -17,8 +17,23 @@ import {
   GameCategoryService,
   GameCategoryNotFoundError,
   GameCategorySlugTakenError,
+  GameCategoryRuleRequiredError,
+  GameCategoryUpdateContendedError,
   CategoryGameNotMemberError,
 } from '../service/game-category.service.js';
+import {
+  GameCategoryMembershipService,
+  GameCategoryMembershipContendedError,
+  GameCategoryNotRuleManagedError,
+  GameCategoryRuleManagedError,
+} from '../service/game-category-membership.service.js';
+import {
+  GameCategoryRuleService,
+  GameCategoryRuleInvalidError,
+  GameCategoryRuleTooBroadError,
+  GameCategoryRuleUnavailableError,
+  type GameCategoryRuleAuthorizer,
+} from '../service/game-category-rule.service.js';
 import {
   GameTagService,
   GameTagNameTakenError,
@@ -39,6 +54,8 @@ export function createGamingRouter({
   gaming,
   providers,
   categories,
+  rules,
+  membership,
   tags,
   bulk,
   adminGuard,
@@ -47,12 +64,25 @@ export function createGamingRouter({
   gaming: GamingService;
   providers: GameProviderService;
   categories: GameCategoryService;
+  rules: GameCategoryRuleService;
+  membership: GameCategoryMembershipService;
   tags: GameTagService;
   bulk: GameBulkService;
   adminGuard: AdminGuard;
   sorts: GameSortService;
 }) {
   const os = implement({ ...gamingContract, ...gamingAdminContract }).$context<OssContext>();
+
+  // No built-in kind sets `exposesReporting`; an overlay's kind can. Checked on the exact
+  // rule a write stores or an evaluation resolves, not one read earlier - see
+  // docs/modules/gaming.md.
+  function ruleReportingAccess(context: OssContext): GameCategoryRuleAuthorizer {
+    return async (rule) => {
+      if (rules.exposesReporting(rule)) {
+        await adminGuard.assert(context, 'report', 'view');
+      }
+    };
+  }
 
   return os.router({
     listGames: os.listGames.handler(({ input }) => gaming.listGamesPublic(input)),
@@ -156,8 +186,24 @@ export function createGamingRouter({
 
     createCategory: os.createCategory.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'create');
-      return mapErrors({ CONFLICT: GameCategorySlugTakenError }, () =>
-        categories.createCategory({ ...input, actorId: userId, ip, userAgent }),
+      return mapErrors(
+        {
+          CONFLICT: GameCategorySlugTakenError,
+          BAD_REQUEST: [
+            GameCategoryRuleRequiredError,
+            GameCategoryRuleInvalidError,
+            GameCategoryRuleTooBroadError,
+          ],
+          SERVICE_UNAVAILABLE: GameCategoryRuleUnavailableError,
+        },
+        () =>
+          categories.createCategory({
+            ...input,
+            actorId: userId,
+            ip,
+            userAgent,
+            authorizeRule: ruleReportingAccess(context),
+          }),
       );
     }),
 
@@ -166,10 +212,23 @@ export function createGamingRouter({
       return mapErrors(
         {
           NOT_FOUND: GameCategoryNotFoundError,
-          CONFLICT: GameCategorySlugTakenError,
-          BAD_REQUEST: GameSortConfigInvalidError,
+          CONFLICT: [GameCategorySlugTakenError, GameCategoryUpdateContendedError],
+          BAD_REQUEST: [
+            GameSortConfigInvalidError,
+            GameCategoryRuleRequiredError,
+            GameCategoryRuleInvalidError,
+            GameCategoryRuleTooBroadError,
+          ],
+          SERVICE_UNAVAILABLE: GameCategoryRuleUnavailableError,
         },
-        () => categories.updateCategory({ ...input, actorId: userId, ip, userAgent }),
+        () =>
+          categories.updateCategory({
+            ...input,
+            actorId: userId,
+            ip,
+            userAgent,
+            authorizeRule: ruleReportingAccess(context),
+          }),
       );
     }),
 
@@ -201,6 +260,44 @@ export function createGamingRouter({
         },
         () => categories.updateCategoryPins({ ...input, actorId: userId, ip, userAgent }),
       );
+    }),
+
+    previewCategoryRule: os.previewCategoryRule.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      await ruleReportingAccess(context)(input.rule);
+      return mapErrors(
+        {
+          BAD_REQUEST: [GameCategoryRuleInvalidError, GameCategoryRuleTooBroadError],
+          SERVICE_UNAVAILABLE: GameCategoryRuleUnavailableError,
+        },
+        () => rules.preview(input),
+      );
+    }),
+
+    evaluateCategoryMembership: os.evaluateCategoryMembership.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
+        return mapErrors(
+          {
+            NOT_FOUND: GameCategoryNotFoundError,
+            CONFLICT: [GameCategoryNotRuleManagedError, GameCategoryMembershipContendedError],
+            BAD_REQUEST: [GameCategoryRuleInvalidError, GameCategoryRuleTooBroadError],
+            SERVICE_UNAVAILABLE: GameCategoryRuleUnavailableError,
+          },
+          () =>
+            membership.evaluate({
+              categoryId: input.id,
+              trigger: 'admin',
+              actor: { actorId: userId, ip, userAgent },
+              authorizeRule: ruleReportingAccess(context),
+            }),
+        );
+      },
+    ),
+
+    getCategoryRuleOptions: os.getCategoryRuleOptions.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'game-config', 'view');
+      return rules.listRuleOptions();
     }),
 
     getSortOptions: os.getSortOptions.handler(async ({ context }) => {
@@ -254,7 +351,11 @@ export function createGamingRouter({
             GameCategoryNotFoundError,
             GameTagNotFoundError,
           ],
-          CONFLICT: [GameSlugTakenError, GameAggregatorNotMappedError],
+          CONFLICT: [
+            GameSlugTakenError,
+            GameAggregatorNotMappedError,
+            GameCategoryRuleManagedError,
+          ],
         },
         () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
       );
@@ -294,7 +395,11 @@ export function createGamingRouter({
     addGameCategories: os.addGameCategories.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'game-config', 'update');
       return mapErrors(
-        { NOT_FOUND: GameCategoryNotFoundError, BAD_REQUEST: GameBulkTooManyGamesError },
+        {
+          NOT_FOUND: GameCategoryNotFoundError,
+          CONFLICT: GameCategoryRuleManagedError,
+          BAD_REQUEST: GameBulkTooManyGamesError,
+        },
         () => bulk.addGameCategories({ ...input, actorId: userId, ip, userAgent }),
       );
     }),

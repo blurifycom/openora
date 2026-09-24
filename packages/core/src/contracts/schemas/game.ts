@@ -74,6 +74,89 @@ export const GameSortParamsSchema = createBoundedJsonParamsSchema({
 });
 export type GameSortParams = z.infer<typeof GameSortParamsSchema>;
 
+export const GAME_CATEGORY_MEMBERSHIP_MODES = ['manual', 'rule'] as const;
+export const GameCategoryMembershipModeSchema = z.enum(GAME_CATEGORY_MEMBERSHIP_MODES);
+export type GameCategoryMembershipMode = z.infer<typeof GameCategoryMembershipModeSchema>;
+
+// What started a membership evaluation: an admin (on demand, or after a create or
+// update), a catalogue event, or the periodic sweep.
+export const GAME_CATEGORY_MEMBERSHIP_TRIGGERS = ['admin', 'event', 'schedule'] as const;
+export const GameCategoryMembershipTriggerSchema = z.enum(GAME_CATEGORY_MEMBERSHIP_TRIGGERS);
+export type GameCategoryMembershipTrigger = z.infer<typeof GameCategoryMembershipTriggerSchema>;
+
+// Who wrote a game_category_game row: an admin, or the rule evaluator.
+export const GAME_CATEGORY_GAME_SOURCES = ['manual', 'rule'] as const;
+
+// A rule key names an entry in the operator-extensible GAME_CATEGORY_RULE_CATALOG
+// (built-ins: 'providers', 'tags', 'most_played') - not a fixed enum, so it is a validated
+// slug shape like GameSortKeySchema, not z.enum.
+export const GameCategoryRuleKeySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(GAME_SORT_KEY_PATTERN);
+export type GameCategoryRuleKey = z.infer<typeof GameCategoryRuleKeySchema>;
+
+export const GAME_CATEGORY_RULE_CLAUSES_MAX = 10;
+
+export const GAME_CATEGORY_RULE_PARAMS_MAX_BYTES = 4096;
+
+// Opaque to core, like GameSortParamsSchema: each rule definition's own paramsSchema gives
+// it meaning, checked when the rule is saved - the catalog is bound at runtime. Stored as
+// jsonb and carried on category events and audit rows, hence JSON-only and byte-capped.
+export const GameCategoryRuleParamsSchema = createBoundedJsonParamsSchema({
+  maxBytes: GAME_CATEGORY_RULE_PARAMS_MAX_BYTES,
+  label: 'Rule params',
+});
+
+export const GameCategoryRuleClauseSchema = z
+  .object({
+    key: GameCategoryRuleKeySchema,
+    params: GameCategoryRuleParamsSchema.default({}),
+  })
+  .strict();
+export type GameCategoryRuleClause = z.infer<typeof GameCategoryRuleClauseSchema>;
+
+/**
+ * How a rule-mode category is populated: an ordered pipeline of clauses. The first
+ * clause matches over the whole catalogue and every later clause narrows what the one
+ * before it left, so clauses AND together and a ranking clause ('most_played') belongs last.
+ * The same key may appear twice - two 'tags' clauses require a game to carry both.
+ */
+export const GameCategoryRuleSchema = z
+  .array(GameCategoryRuleClauseSchema)
+  .min(1)
+  .max(GAME_CATEGORY_RULE_CLAUSES_MAX);
+export type GameCategoryRule = z.infer<typeof GameCategoryRuleSchema>;
+
+export const GAME_CATEGORY_RULE_IDS_MAX = 50;
+export const GAME_CATEGORY_RULE_MOST_PLAYED_MAX = 500;
+export const GAME_CATEGORY_RULE_PERIOD_DAYS_MAX = 365;
+
+const GameCategoryRuleIdsSchema = z
+  .array(UuidSchema)
+  .min(1)
+  .max(GAME_CATEGORY_RULE_IDS_MAX)
+  .refine((ids) => new Set(ids).size === ids.length, { message: 'ids must be unique' });
+
+// Params of the three built-in rule kinds. Public so a client can type the clauses it sends.
+export const ProvidersRuleParamsSchema = z
+  .object({ providerIds: GameCategoryRuleIdsSchema })
+  .strict();
+export type ProvidersRuleParams = z.infer<typeof ProvidersRuleParamsSchema>;
+
+export const TagsRuleParamsSchema = z.object({ tagIds: GameCategoryRuleIdsSchema }).strict();
+export type TagsRuleParams = z.infer<typeof TagsRuleParamsSchema>;
+
+export const MostPlayedRuleParamsSchema = z
+  .object({
+    periodDays: z.number().int().min(1).max(GAME_CATEGORY_RULE_PERIOD_DAYS_MAX),
+    limit: z.number().int().min(1).max(GAME_CATEGORY_RULE_MOST_PLAYED_MAX),
+  })
+  .strict();
+export type MostPlayedRuleParams = z.infer<typeof MostPlayedRuleParamsSchema>;
+
 export const GameCategorySummarySchema = z.object({
   id: UuidSchema,
   slug: z.string(),

@@ -58,6 +58,10 @@ import { GameProviderNotFoundError } from './game-provider.service.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
 import {
+  GameCategoryRuleManagedError,
+  diffMembership,
+} from './game-category-membership.service.js';
+import {
   categoriesByGameIds,
   categoryGameOrder,
   categoryRankTriggerIds,
@@ -857,18 +861,34 @@ export class GamingService {
             throw new GameSlugTakenError();
           }
         }
+        const categoryDiff =
+          uniqueCategoryIds === undefined
+            ? { toAdd: [], toRemove: [] }
+            : diffMembership(before.categoryIds, uniqueCategoryIds);
         if (uniqueCategoryIds !== undefined) {
+          // FOR KEY SHARE here conflicts with the FOR UPDATE a mode switch or the rule
+          // evaluator takes - see "Lock order" in docs/modules/gaming.md.
+          const lookupIds = [...new Set([...uniqueCategoryIds, ...categoryDiff.toRemove])].sort();
           const rows =
-            uniqueCategoryIds.length > 0
+            lookupIds.length > 0
               ? await tx
-                  .select({ id: gameCategory.id })
+                  .select({ id: gameCategory.id, membershipMode: gameCategory.membershipMode })
                   .from(gameCategory)
-                  .where(inArray(gameCategory.id, uniqueCategoryIds))
+                  .where(inArray(gameCategory.id, lookupIds))
+                  .orderBy(asc(gameCategory.id))
+                  .for('key share')
               : [];
-          const found = new Set(rows.map((r) => r.id));
-          const missing = uniqueCategoryIds.find((categoryId) => !found.has(categoryId));
+          const modeById = new Map(rows.map((r) => [r.id, r.membershipMode]));
+          const missing = uniqueCategoryIds.find((categoryId) => !modeById.has(categoryId));
           if (missing) {
             throw new GameCategoryNotFoundError(missing);
+          }
+          // Re-sending a rule-mode category the game is already in is not a change.
+          const ruleManaged = [...categoryDiff.toAdd, ...categoryDiff.toRemove].find(
+            (categoryId) => modeById.get(categoryId) === 'rule',
+          );
+          if (ruleManaged) {
+            throw new GameCategoryRuleManagedError(ruleManaged);
           }
         }
         if (uniqueTagIds !== undefined) {
@@ -915,30 +935,22 @@ export class GamingService {
         if (hasScalarChanges) {
           await tx.update(game).set(patch).where(eq(game.id, id));
         }
-        // Only the links that moved are written: a kept link keeps its row, and with it
-        // its position, pin and rank.
-        const keptCategoryIds = new Set(before.categoryIds);
-        const nextCategoryIds = new Set(anticipatedAfterCategoryIds);
-        const removedCategoryIds = before.categoryIds.filter(
-          (categoryId) => !nextCategoryIds.has(categoryId),
-        );
-        const addedCategoryIds = anticipatedAfterCategoryIds.filter(
-          (categoryId) => !keptCategoryIds.has(categoryId),
-        );
-        if (removedCategoryIds.length > 0) {
+        // Only the links that moved are written: a kept link - a rule-mode category's
+        // above all - keeps its row, and with it its source, position and pin.
+        if (categoryDiff.toRemove.length > 0) {
           await tx
             .delete(gameCategoryGame)
             .where(
               and(
                 eq(gameCategoryGame.gameId, id),
-                inArray(gameCategoryGame.categoryId, removedCategoryIds),
+                inArray(gameCategoryGame.categoryId, categoryDiff.toRemove),
               ),
             );
         }
-        if (addedCategoryIds.length > 0) {
+        if (categoryDiff.toAdd.length > 0) {
           await tx
             .insert(gameCategoryGame)
-            .values(addedCategoryIds.map((categoryId) => ({ gameId: id, categoryId })));
+            .values(categoryDiff.toAdd.map((categoryId) => ({ gameId: id, categoryId })));
         }
         if (uniqueTagIds !== undefined) {
           await tx.delete(gameTagGame).where(eq(gameTagGame.gameId, id));

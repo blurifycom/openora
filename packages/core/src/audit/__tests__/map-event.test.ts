@@ -214,6 +214,64 @@ describe('mapEventToRecord: gaming.category.games_reordered', () => {
   });
 });
 
+describe('mapEventToRecord: gaming.category.membership_evaluated', () => {
+  const categoryId = '55555555-5555-4555-8555-555555555555';
+  const added = '66666666-6666-4666-8666-666666666666';
+  const removed = '77777777-7777-4777-8777-777777777777';
+  const payload = {
+    categoryId,
+    trigger: 'schedule',
+    matchedCount: 4,
+    addedGameIds: [added],
+    removedGameIds: [removed],
+  };
+
+  it('audits a scheduled run as the system actor with what moved', async () => {
+    const row = await mapEventToRecord('gaming.category.membership_evaluated', {
+      ...payload,
+      actorId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      before: { removedGameIds: [removed] },
+      after: { trigger: 'schedule', matchedCount: 4, relabeledCount: 0, addedGameIds: [added] },
+    });
+  });
+
+  it('audits an on-demand run as the admin who asked for it', async () => {
+    const row = await mapEventToRecord('gaming.category.membership_evaluated', {
+      ...payload,
+      trigger: 'admin',
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId });
+  });
+});
+
+describe('mapEventToRecord: gaming.category.membership_evaluation.failed', () => {
+  it('audits a failed admin run as a failure on the category, with its reason', async () => {
+    const categoryId = '55555555-5555-4555-8555-555555555555';
+    const row = await mapEventToRecord('gaming.category.membership_evaluation.failed', {
+      categoryId,
+      actorId: adminId,
+      reason: 'Unknown rule key: removed_kind',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'game_category',
+      resourceId: categoryId,
+      result: 'failure',
+      after: { reason: 'Unknown rule key: removed_kind' },
+    });
+  });
+});
+
 describe('mapEventToRecord: gaming.category.pins_updated', () => {
   it('audits the category resource with the before/after pinned-slot lists', async () => {
     const categoryId = '55555555-5555-4555-8555-555555555555';

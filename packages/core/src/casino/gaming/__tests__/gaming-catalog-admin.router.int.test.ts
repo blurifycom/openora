@@ -1,5 +1,5 @@
 import { GameSortService } from '../service/game-sort.service.js';
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
 import { eq, sql } from 'drizzle-orm';
@@ -11,7 +11,12 @@ import type {
   PlayEligibilityPort,
   WalletCommands,
 } from '@openora/core/contracts';
-import { createGameSortCatalog, defineGameSort } from '@openora/core/contracts';
+import {
+  createGameCategoryRuleCatalog,
+  createGameSortCatalog,
+  defineGameCategoryRule,
+  defineGameSort,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -37,11 +42,95 @@ import { GamingService } from '../service/gaming.service.js';
 import { GameCategoryService } from '../service/game-category.service.js';
 import { GameTagService } from '../service/game-tag.service.js';
 import { GameProviderService } from '../service/game-provider.service.js';
+import { GameCategoryMembershipService } from '../service/game-category-membership.service.js';
+import { GameCategoryRuleService } from '../service/game-category-rule.service.js';
+import { DrizzleAdminGameReporting } from '../admin-reporting.js';
+import { createDefaultGameCategoryRules } from '../adapters/rules/index.js';
 import { GameBulkService } from '../service/game-bulk.service.js';
 
 const CTX = testContext();
 
 let db: TestDb;
+
+const revenueRankRule = defineGameCategoryRule({
+  key: 'test_revenue_rank',
+  paramsSchema: z.object({}).strict(),
+  exposesReporting: true,
+  resolve: async () => [],
+});
+
+let shiftingCategoryId: string | null = null;
+let shiftingCalls = 0;
+const shiftStoredRule = async () => {
+  shiftingCalls += 1;
+  if (!shiftingCategoryId) {
+    return;
+  }
+  await db.drizzle.db.execute(sql`
+    UPDATE game_category
+    SET membership_rule = jsonb_build_array(
+      jsonb_build_object('key', 'test_shifting', 'params', jsonb_build_object('n', ${shiftingCalls}::int))
+    ), membership_seq = membership_seq + 1
+    WHERE id = ${shiftingCategoryId}
+  `);
+};
+const shiftingRule = defineGameCategoryRule({
+  key: 'test_shifting',
+  paramsSchema: z.object({ n: z.number().int() }).strict(),
+  async validate() {
+    await shiftStoredRule();
+    return null;
+  },
+  async resolve() {
+    await shiftStoredRule();
+    return [];
+  },
+});
+
+let swappingCategoryId: string | null = null;
+const swapToRevenueRank = async () => {
+  if (!swappingCategoryId) {
+    return;
+  }
+  await db.drizzle.db
+    .update(gameCategory)
+    .set({
+      membershipRule: [{ key: 'test_revenue_rank', params: {} }],
+      membershipSeq: sql`${gameCategory.membershipSeq} + 1`,
+    })
+    .where(eq(gameCategory.id, swappingCategoryId));
+  swappingCategoryId = null;
+};
+const swappingRule = defineGameCategoryRule({
+  key: 'test_swap_to_revenue',
+  paramsSchema: z.object({}).strict(),
+  async validate() {
+    await swapToRevenueRank();
+    return null;
+  },
+  async resolve() {
+    await swapToRevenueRank();
+    return [];
+  },
+});
+
+const unavailableRule = defineGameCategoryRule({
+  key: 'test_unavailable',
+  paramsSchema: z.object({}).strict(),
+  async resolve() {
+    throw new Error('upstream down');
+  },
+});
+
+function makeRuleCatalog() {
+  return createGameCategoryRuleCatalog([
+    ...createDefaultGameCategoryRules(db.drizzle, new DrizzleAdminGameReporting(db.drizzle)),
+    revenueRankRule,
+    shiftingRule,
+    swappingRule,
+    unavailableRule,
+  ]);
+}
 
 const unrestricted: PlayEligibilityPort = mock<PlayEligibilityPort>({
   isRestricted: vi.fn().mockResolvedValue(false),
@@ -72,11 +161,15 @@ function routerWith(
     makeIdentityReader(),
   );
   const providers = new GameProviderService(db.drizzle, events);
+  const rules = new GameCategoryRuleService(db.drizzle, makeRuleCatalog());
+  const membership = new GameCategoryMembershipService(db.drizzle, events, jobQueue, rules);
   const categories = new GameCategoryService(
     db.drizzle,
     events,
     jobQueue,
     new GameSortService(sortCatalog),
+    rules,
+    membership,
   );
   const tags = new GameTagService(db.drizzle, events);
   const bulk = new GameBulkService(db.drizzle, events);
@@ -85,6 +178,8 @@ function routerWith(
       gaming,
       providers,
       categories,
+      rules,
+      membership,
       tags,
       bulk,
       adminGuard,
@@ -549,6 +644,334 @@ describe('gaming catalog router authz', () => {
       call(router.getAdminTag, { id: system.id }, { context: CTX }),
     ).resolves.toMatchObject({
       id: system.id,
+    });
+  });
+
+  it('previews a built-in rule with game-config:view alone, but a reporting kind needs report:view too', async () => {
+    const configOnly = routerWith(makeAdminGuard({ allow: ['game-config:view'] })).router;
+    const mostPlayed = [{ key: 'most_played', params: { periodDays: 7, limit: 5 } }];
+    const revenueRank = [{ key: 'test_revenue_rank', params: {} }];
+
+    await expect(
+      call(configOnly.previewCategoryRule, { rule: mostPlayed }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 0 });
+    await expect(
+      call(configOnly.previewCategoryRule, { rule: revenueRank }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const withReports = routerWith(
+      makeAdminGuard({ allow: ['game-config:view', 'report:view'] }),
+    ).router;
+    await expect(
+      call(withReports.previewCategoryRule, { rule: revenueRank }, { context: CTX }),
+    ).resolves.toMatchObject({ total: 0 });
+  });
+
+  it('answers 503, not 400, when a rule cannot be resolved right now, keeping the games', async () => {
+    const { router } = routerWith(allowingGuard());
+    const unavailable = [{ key: 'test_unavailable', params: {} }];
+    const [provider] = await db.drizzle.db
+      .insert(gameProvider)
+      .values({ slug: `down-${randomUUID()}`, name: 'Down', isActive: true })
+      .returning();
+    const [member] = await db.drizzle.db
+      .insert(game)
+      .values({
+        name: 'Kept',
+        slug: `kept-${randomUUID()}`,
+        providerId: provider!.id,
+        aggregator: 'direct',
+        isActive: true,
+      })
+      .returning();
+    const [category] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({
+        slug: `down-${randomUUID()}`,
+        name: 'Down',
+        membershipMode: 'rule',
+        membershipRule: unavailable,
+      })
+      .returning();
+    await db.drizzle.db
+      .insert(gameCategoryGame)
+      .values({ gameId: member!.id, categoryId: category!.id, source: 'rule' });
+
+    await expect(
+      call(router.previewCategoryRule, { rule: unavailable }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503 });
+    await expect(
+      call(router.evaluateCategoryMembership, { id: category!.id }, { context: CTX }),
+    ).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'test_unavailable: the rule could not be resolved',
+    });
+    const links = await db.drizzle.db
+      .select({ gameId: gameCategoryGame.gameId })
+      .from(gameCategoryGame)
+      .where(eq(gameCategoryGame.categoryId, category!.id));
+    expect(links).toEqual([{ gameId: member!.id }]);
+  });
+
+  it('needs report:view to send, switch to or evaluate a reporting-kind rule', async () => {
+    const writeOnly = routerWith(
+      makeAdminGuard({ allow: ['game-config:create', 'game-config:update'] }),
+    ).router;
+    const revenueRank = [{ key: 'test_revenue_rank', params: {} }];
+    const [stored] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({
+        slug: `revenue-${randomUUID()}`,
+        name: 'Revenue',
+        membershipMode: 'rule',
+        membershipRule: revenueRank,
+      })
+      .returning();
+    const [manual] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({ slug: `manual-${randomUUID()}`, name: 'Manual' })
+      .returning();
+    const [dormant] = await db.drizzle.db
+      .insert(gameCategory)
+      .values({
+        slug: `dormant-${randomUUID()}`,
+        name: 'Dormant',
+        membershipMode: 'manual',
+        membershipRule: revenueRank,
+      })
+      .returning();
+
+    await expect(
+      call(
+        writeOnly.createCategory,
+        {
+          slug: `revenue-${randomUUID()}`,
+          name: 'Revenue',
+          membershipMode: 'rule',
+          membershipRule: revenueRank,
+        },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(
+        writeOnly.updateCategory,
+        { id: manual!.id, membershipMode: 'rule', membershipRule: revenueRank },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(
+        writeOnly.createCategory,
+        { slug: `revenue-${randomUUID()}`, name: 'Revenue', membershipRule: revenueRank },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(
+        writeOnly.updateCategory,
+        { id: manual!.id, membershipRule: revenueRank },
+        { context: CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(writeOnly.updateCategory, { id: dormant!.id, membershipMode: 'rule' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const [stillManual] = await db.drizzle.db
+      .select({ membershipMode: gameCategory.membershipMode })
+      .from(gameCategory)
+      .where(eq(gameCategory.id, dormant!.id));
+    expect(stillManual).toEqual({ membershipMode: 'manual' });
+    await expect(
+      call(writeOnly.evaluateCategoryMembership, { id: stored!.id }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(writeOnly.updateCategory, { id: stored!.id, name: 'Renamed' }, { context: CTX }),
+    ).resolves.toMatchObject({ name: 'Renamed' });
+
+    const withReports = routerWith(
+      makeAdminGuard({ allow: ['game-config:update', 'report:view'] }),
+    ).router;
+    await expect(
+      call(withReports.evaluateCategoryMembership, { id: stored!.id }, { context: CTX }),
+    ).resolves.toBeDefined();
+  });
+
+  describe('when a reporting rule replaces the one a caller was authorized for', () => {
+    const revenueRank = [{ key: 'test_revenue_rank', params: {} }];
+    const writeOnly = () => routerWith(makeAdminGuard({ allow: ['game-config:update'] })).router;
+
+    async function seedSwappingCategory(mode: 'manual' | 'rule') {
+      const [provider] = await db.drizzle.db
+        .insert(gameProvider)
+        .values({ slug: `swapping-${randomUUID()}`, name: 'Swapping', isActive: true })
+        .returning();
+      const [member] = await db.drizzle.db
+        .insert(game)
+        .values({
+          name: 'Swapping Game',
+          slug: `swapping-game-${randomUUID()}`,
+          providerId: provider!.id,
+          aggregator: 'direct',
+          isActive: true,
+        })
+        .returning();
+      const [category] = await db.drizzle.db
+        .insert(gameCategory)
+        .values({
+          slug: `swapping-${randomUUID()}`,
+          name: 'Swapping',
+          membershipMode: mode,
+          membershipRule: [{ key: 'test_swap_to_revenue', params: {} }],
+        })
+        .returning();
+      await db.drizzle.db
+        .insert(gameCategoryGame)
+        .values({ gameId: member!.id, categoryId: category!.id });
+      swappingCategoryId = category!.id;
+      return { category: category!, member: member! };
+    }
+
+    async function readState(categoryId: string) {
+      const [row] = await db.drizzle.db
+        .select({
+          mode: gameCategory.membershipMode,
+          rule: gameCategory.membershipRule,
+          lastError: gameCategory.membershipLastError,
+        })
+        .from(gameCategory)
+        .where(eq(gameCategory.id, categoryId));
+      const links = await db.drizzle.db
+        .select({ gameId: gameCategoryGame.gameId })
+        .from(gameCategoryGame)
+        .where(eq(gameCategoryGame.categoryId, categoryId));
+      return { ...row, memberIds: links.map((link) => link.gameId) };
+    }
+
+    afterEach(() => {
+      swappingCategoryId = null;
+    });
+
+    it('a bare switch to rule mode is refused on the rule it would apply', async () => {
+      const { category, member } = await seedSwappingCategory('manual');
+
+      await expect(
+        call(
+          writeOnly().updateCategory,
+          { id: category.id, membershipMode: 'rule' },
+          { context: CTX },
+        ),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+      expect(await readState(category.id)).toEqual({
+        mode: 'manual',
+        rule: revenueRank,
+        lastError: null,
+        memberIds: [member.id],
+      });
+    });
+
+    it('an on-demand evaluation is refused on the rule it claims, writing nothing', async () => {
+      const { category, member } = await seedSwappingCategory('rule');
+      const { router, events } = routerWith(makeAdminGuard({ allow: ['game-config:update'] }));
+
+      await expect(
+        call(router.evaluateCategoryMembership, { id: category.id }, { context: CTX }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+      expect(await readState(category.id)).toEqual({
+        mode: 'rule',
+        rule: revenueRank,
+        lastError: null,
+        memberIds: [member.id],
+      });
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the rule keeps changing underneath a write', () => {
+    async function seedShiftingCategory(mode: 'manual' | 'rule') {
+      const [provider] = await db.drizzle.db
+        .insert(gameProvider)
+        .values({ slug: `shifting-${randomUUID()}`, name: 'Shifting', isActive: true })
+        .returning();
+      const [member] = await db.drizzle.db
+        .insert(game)
+        .values({
+          name: 'Shifting Game',
+          slug: `shifting-game-${randomUUID()}`,
+          providerId: provider!.id,
+          aggregator: 'direct',
+          isActive: true,
+        })
+        .returning();
+      const [category] = await db.drizzle.db
+        .insert(gameCategory)
+        .values({
+          slug: `shifting-${randomUUID()}`,
+          name: 'Shifting',
+          membershipMode: mode,
+          membershipRule: [{ key: 'test_shifting', params: { n: 0 } }],
+        })
+        .returning();
+      await db.drizzle.db
+        .insert(gameCategoryGame)
+        .values({ gameId: member!.id, categoryId: category!.id });
+      shiftingCategoryId = category!.id;
+      shiftingCalls = 0;
+      return { category: category!, member: member! };
+    }
+
+    afterEach(() => {
+      shiftingCategoryId = null;
+    });
+
+    it('a bare switch to rule mode gives up with 409 after three stale attempts', async () => {
+      const { router } = routerWith(allowingGuard());
+      const { category, member } = await seedShiftingCategory('manual');
+
+      await expect(
+        call(router.updateCategory, { id: category.id, membershipMode: 'rule' }, { context: CTX }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+      expect(shiftingCalls).toBe(3);
+      const [row] = await db.drizzle.db
+        .select({ mode: gameCategory.membershipMode })
+        .from(gameCategory)
+        .where(eq(gameCategory.id, category.id));
+      expect(row?.mode).toBe('manual');
+      const links = await db.drizzle.db
+        .select({ gameId: gameCategoryGame.gameId })
+        .from(gameCategoryGame)
+        .where(eq(gameCategoryGame.categoryId, category.id));
+      expect(links).toEqual([{ gameId: member.id }]);
+    });
+
+    it('an on-demand evaluation gives up with 409 without stamping a newer configuration', async () => {
+      const { router } = routerWith(allowingGuard());
+      const { category, member } = await seedShiftingCategory('rule');
+
+      await expect(
+        call(router.evaluateCategoryMembership, { id: category.id }, { context: CTX }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+      expect(shiftingCalls).toBe(3);
+      const [status] = await db.drizzle.db
+        .select({
+          evaluatedAt: gameCategory.membershipEvaluatedAt,
+          attemptedAt: gameCategory.membershipAttemptedAt,
+          lastError: gameCategory.membershipLastError,
+        })
+        .from(gameCategory)
+        .where(eq(gameCategory.id, category.id));
+      expect(status?.evaluatedAt).toBeNull();
+      expect(status?.attemptedAt).toBeNull();
+      expect(status?.lastError).toBeNull();
+      const links = await db.drizzle.db
+        .select({ gameId: gameCategoryGame.gameId })
+        .from(gameCategoryGame)
+        .where(eq(gameCategoryGame.categoryId, category.id));
+      expect(links).toEqual([{ gameId: member.id }]);
     });
   });
 });

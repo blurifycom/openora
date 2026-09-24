@@ -21,6 +21,7 @@ import {
 } from '../../shared/game-catalog.js';
 import { GameCategoryNotFoundError } from './game-category.service.js';
 import { GameTagNotFoundError } from './game-tag.service.js';
+import { GameCategoryRuleManagedError } from './game-category-membership.service.js';
 import { providerSnapshot } from './game-provider.service.js';
 import type {
   AddGameCategoriesInput,
@@ -380,7 +381,7 @@ export class GameBulkService {
       );
 
       const foundCategories = await tx
-        .select({ id: gameCategory.id })
+        .select({ id: gameCategory.id, membershipMode: gameCategory.membershipMode })
         .from(gameCategory)
         .where(inArray(gameCategory.id, categoryIds))
         .for('key share');
@@ -388,6 +389,13 @@ export class GameBulkService {
       const missingCategoryId = categoryIds.find((id) => !foundCategoryIds.has(id));
       if (missingCategoryId) {
         throw new GameCategoryNotFoundError(missingCategoryId);
+      }
+      // The whole call is rejected, like an unknown category id: a rule-mode category's
+      // games are the evaluator's alone. The key-share lock above holds off a concurrent
+      // switch to rule mode until these links have committed.
+      const ruleManaged = foundCategories.find((row) => row.membershipMode === 'rule');
+      if (ruleManaged) {
+        throw new GameCategoryRuleManagedError(ruleManaged.id);
       }
 
       const matchedGameIds = games.map((row) => row.id);
