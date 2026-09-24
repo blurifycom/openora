@@ -44,6 +44,16 @@ const MAX_WAGERING_MULTIPLIER = '1000';
 // grants runs longer than a decade; a bigger value is a fat finger, not an offer.
 const MAX_EXPIRY_DAYS = 3650;
 
+/** The profile a grant scores against when its caller has no offer to name one. */
+export const DEFAULT_WEIGHT_PROFILE_NAME = 'default';
+
+/**
+ * What a grant with no offer behind it is created under - a chat gift, a rain drop. One
+ * turnover of the gifted amount, a month to do it in. An operator narrows both from the
+ * backoffice; the point is that gifted money is never withdrawable the instant it lands.
+ */
+export const DEFAULT_GRANT_TERMS = { wageringMultiplier: '1', expiryDays: 30 } as const;
+
 const grantArgsSchema = z
   .object({
     userId: UuidSchema,
@@ -56,17 +66,19 @@ const grantArgsSchema = z
       z.object({ type: z.literal('system') }),
     ]),
     offerId: UuidSchema.optional(),
-    terms: z.object({
-      wageringMultiplier: MoneyAmountSchema.refine(
-        isPositiveMoney,
-        'must be greater than zero',
-      ).refine(
-        (v) => moneyCompare(v, MAX_WAGERING_MULTIPLIER) <= 0,
-        `must not exceed ${MAX_WAGERING_MULTIPLIER}`,
-      ),
-      expiryDays: z.number().int().positive().max(MAX_EXPIRY_DAYS),
-      weightProfileId: UuidSchema,
-    }),
+    terms: z
+      .object({
+        wageringMultiplier: MoneyAmountSchema.refine(
+          isPositiveMoney,
+          'must be greater than zero',
+        ).refine(
+          (v) => moneyCompare(v, MAX_WAGERING_MULTIPLIER) <= 0,
+          `must not exceed ${MAX_WAGERING_MULTIPLIER}`,
+        ),
+        expiryDays: z.number().int().positive().max(MAX_EXPIRY_DAYS),
+        weightProfileId: UuidSchema.optional(),
+      })
+      .default(DEFAULT_GRANT_TERMS),
   })
   .refine((a) => (a.source === 'manual') === (a.actor.type === 'admin'), {
     message: 'a manual grant must name the admin who issued it, and no other source may name one',
@@ -153,7 +165,7 @@ export class GrantService implements BonusGrantCommands {
         wageringRequired,
         wageringMultiplier: args.terms.wageringMultiplier,
         expiryDays: args.terms.expiryDays,
-        weightProfileId: args.terms.weightProfileId,
+        weightProfileId: terms.weightProfileId,
       },
     });
 
@@ -202,20 +214,28 @@ export class GrantService implements BonusGrantCommands {
   // missing profile, never a half-read set of weights.
   private async snapshotTerms(
     tx: DrizzleTx,
-    terms: BonusGrantArgs['terms'],
+    terms: NonNullable<BonusGrantArgs['terms']>,
   ): Promise<GrantTermsSnapshot> {
     const rows = await tx
       .select({
+        profileId: promoWeightProfile.id,
         scope: promoWeight.scope,
         scopeRef: promoWeight.scopeRef,
         contributionPercent: promoWeight.contributionPercent,
       })
       .from(promoWeightProfile)
       .leftJoin(promoWeight, eq(promoWeight.profileId, promoWeightProfile.id))
-      .where(eq(promoWeightProfile.id, terms.weightProfileId));
+      .where(
+        terms.weightProfileId === undefined
+          ? eq(promoWeightProfile.name, DEFAULT_WEIGHT_PROFILE_NAME)
+          : eq(promoWeightProfile.id, terms.weightProfileId),
+      );
 
-    if (rows.length === 0) {
-      throw new WagerWeightProfileNotFoundError(terms.weightProfileId);
+    const profileId = rows[0]?.profileId;
+    if (profileId === undefined) {
+      throw new WagerWeightProfileNotFoundError(
+        terms.weightProfileId ?? DEFAULT_WEIGHT_PROFILE_NAME,
+      );
     }
     const weights = rows.flatMap((r) =>
       r.scope && r.contributionPercent
@@ -226,6 +246,6 @@ export class GrantService implements BonusGrantCommands {
     if (!hasUsableWeight) {
       throw new UnusableWeightProfileError();
     }
-    return { ...terms, weights };
+    return { ...terms, weightProfileId: profileId, weights };
   }
 }

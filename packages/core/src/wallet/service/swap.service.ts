@@ -5,7 +5,6 @@ import {
   findOneOrThrow,
   isPositiveMoney,
   makeConflictError,
-  moneyCompare,
   moneyEquals,
   type DrizzleService,
   type EventBus,
@@ -28,15 +27,13 @@ import { and, eq } from 'drizzle-orm';
 import * as z from 'zod';
 import { wallet, walletTransaction, type Wallet, type WalletTransaction } from '../schema/index.js';
 import {
-  BonusRolloverLockedError,
   InsufficientBalanceError,
   IdempotencyKeyReuseError,
   WalletNotFoundError,
   balanceKey,
   creditWalletBalance,
-  debitWithdrawableBalance,
   railFor,
-  readLockedBonusAmount,
+  debitWalletBalance,
   readWalletBalance,
 } from './wallet.service.js';
 
@@ -199,20 +196,14 @@ export class SwapService {
         return { row: winner, replayed: true };
       }
 
-      // Bonus-locked funds are not swappable, same as they are not withdrawable. The two
-      // refusals are told apart the way `withdraw` does it: a balance that covers the amount
-      // but a debit that did not land means rollover held it, and telling the player
-      // "insufficient balance" against a balance they can see would be a lie.
-      const debited = await debitWithdrawableBalance(txn, current.id, fromCurrency, fromAmount);
+      // Bonus funds live on their grant and never enter `wallet_balance`, so everything this
+      // row holds is the player's own money and swappable.
+      const debited = await debitWalletBalance(txn, current.id, fromCurrency, fromAmount);
       if (debited.length !== 1) {
-        const [available, locked] = await Promise.all([
-          readWalletBalance(txn, current.id, fromCurrency),
-          readLockedBonusAmount(txn, current.id, fromCurrency),
-        ]);
-        if (moneyCompare(available, fromAmount) < 0) {
-          throw new InsufficientBalanceError(available, fromAmount);
-        }
-        throw new BonusRolloverLockedError(locked);
+        throw new InsufficientBalanceError(
+          await readWalletBalance(txn, current.id, fromCurrency),
+          fromAmount,
+        );
       }
 
       return { row: inserted, replayed: false };

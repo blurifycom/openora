@@ -50,13 +50,13 @@ export type BonusWagerOutcome =
       weightedAmount: string;
       /** Bonus funds left on the attributed grant once the bet settled. */
       bonusBalanceAfter: string;
-      /** Grants this bet pushed over their wagering requirement. */
-      completedGrantIds: string[];
       /**
-       * Bonus funds that just met their requirement and are owed to the real balance. The wallet
+       * The grant this bet pushed over its wagering requirement, and the bonus funds it owes the
+       * real balance. Singular because one bet feeds exactly one grant; a list beside a single
+       * amount would invite a caller to report that amount for every grant in it. The wallet
        * performs the credit itself, so the two modules never call back into each other.
        */
-      convertedAmount: string;
+      completed: { grantId: string; convertedAmount: string } | null;
     }
   /** Bonus funds could not cover `fromBonus`. The wallet turns this into its own insufficient-funds outcome. */
   | { ok: false; bonusAvailable: string };

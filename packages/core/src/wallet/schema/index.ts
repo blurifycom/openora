@@ -52,6 +52,8 @@ export const walletTransactionStatusEnum = pgEnum(
 
 export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 
+// Deprecated, kept for one release - see the comment on `BONUS_CREDIT_SOURCE_TYPES` in
+// contract/index.ts. Not referenced anywhere else.
 export const walletBonusCreditSourceTypeEnum = pgEnum(
   'wallet_bonus_credit_source_type',
   BONUS_CREDIT_SOURCE_TYPES,
@@ -295,6 +297,12 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+// Deprecated, unreferenced by any service or route - chat gifts and rain now grant a
+// `promo_grant` instead (`WalletCommandsService.credit`). Kept so a rolling deploy of the
+// previous release does not 500 on a table that no longer exists; a follow-up migration drops
+// both this table and `wallet_bonus_rollover_config` once a release has fully rolled out. Any
+// row still `active` here represents a player's real locked bonus balance under the old model
+// and needs a data migration into `promo_grant` before that drop, not just a schema change.
 export const walletBonusCredit = pgTable(
   'wallet_bonus_credit',
   {
@@ -332,8 +340,6 @@ export const walletBonusRolloverConfig = pgTable('wallet_bonus_rollover_config',
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// Chain-level behaviour (how the vendor hands out addresses) is deliberately NOT here -
-// that belongs to the bound payment adapter, which owns its own vendor vocabulary.
 export const walletAsset = pgTable(
   'wallet_asset',
   {

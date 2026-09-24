@@ -11,7 +11,8 @@
 import { createDrizzleDb } from '@openora/core/server';
 import { seedRoles } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
-import { seedAutoWithdrawalConfig, seedBonusRolloverConfig } from '@openora/core/wallet/seed';
+import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
+import { seedDefaultWeightProfile } from '@openora/core/promo/seed/bonus';
 // import additional module seeders here as you enable them
 
 async function main() {
@@ -31,7 +32,9 @@ async function main() {
   await seedRoles(db);
   await seedTag(db);
   await seedAutoWithdrawalConfig(db);
-  await seedBonusRolloverConfig(db);
+  // Without it, a bonus with no offer behind it - a gift, a rain drop, a hand-issued grant -
+  // resolves no weight profile and is refused.
+  await seedDefaultWeightProfile(db);
   console.log('Reference data seeded.');
 }
 

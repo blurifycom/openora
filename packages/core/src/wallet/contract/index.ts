@@ -323,6 +323,12 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   excludeRiskFlags: z.array(TagKeySchema),
 });
 
+// Kept only for `schema/index.ts` to type the now-unused `wallet_bonus_credit` /
+// `wallet_bonus_rollover_config` tables and their enums. Chat gifts and rain read and write
+// through `promo/bonus` now (see `WalletCommandsService.credit`); nothing in this module reads
+// or writes these two tables any more. The tables themselves stay for one more release - an old
+// instance mid-rolling-deploy can still hit them - and a follow-up migration drops both once a
+// release has fully rolled out.
 export const BONUS_CREDIT_SOURCE_TYPES = ['gift', 'rain'] as const;
 export const BonusCreditSourceTypeSchema = z.enum(BONUS_CREDIT_SOURCE_TYPES);
 export type BonusCreditSourceType = z.infer<typeof BonusCreditSourceTypeSchema>;
@@ -330,60 +336,6 @@ export type BonusCreditSourceType = z.infer<typeof BonusCreditSourceTypeSchema>;
 export const BONUS_CREDIT_STATUSES = ['active', 'completed'] as const;
 export const BonusCreditStatusSchema = z.enum(BONUS_CREDIT_STATUSES);
 export type BonusCreditStatus = z.infer<typeof BonusCreditStatusSchema>;
-
-export const MAX_BONUS_ROLLOVER_MULTIPLIER = '100';
-
-function decimalStringAtMost(value: string, maximum: string): boolean {
-  const [valueWhole, valueFraction = ''] = value.split('.');
-  const [maximumWhole, maximumFraction = ''] = maximum.split('.');
-  const normalizedValueWhole = (valueWhole ?? '').replace(/^0+(?=\d)/, '');
-  const normalizedMaximumWhole = (maximumWhole ?? '').replace(/^0+(?=\d)/, '');
-
-  if (normalizedValueWhole.length !== normalizedMaximumWhole.length) {
-    return normalizedValueWhole.length < normalizedMaximumWhole.length;
-  }
-  if (normalizedValueWhole !== normalizedMaximumWhole) {
-    return normalizedValueWhole < normalizedMaximumWhole;
-  }
-
-  return valueFraction.padEnd(MONEY_SCALE, '0') <= maximumFraction.padEnd(MONEY_SCALE, '0');
-}
-
-export const BonusCreditSchema = z.object({
-  id: UuidSchema,
-  currency: WalletCurrencyCodeSchema,
-  sourceType: BonusCreditSourceTypeSchema,
-  creditedAmount: MoneyAmountSchema,
-  rolloverMultiplier: MoneyAmountSchema,
-  rolloverRequired: MoneyAmountSchema,
-  rolloverProgress: MoneyAmountSchema,
-  status: BonusCreditStatusSchema,
-  createdAt: TimestampSchema,
-  completedAt: TimestampSchema.nullable(),
-});
-export type BonusCredit = z.infer<typeof BonusCreditSchema>;
-
-export const BonusRolloverStatusSchema = z.object({
-  credits: z.array(BonusCreditSchema),
-});
-
-export const BonusRolloverStatusInputSchema = z
-  .object({ status: BonusCreditStatusSchema.optional() })
-  .default({});
-
-export const BonusRolloverConfigSchema = z.object({
-  id: UuidSchema,
-  multiplier: MoneyAmountSchema,
-  updatedAt: TimestampSchema,
-});
-export type BonusRolloverConfig = z.infer<typeof BonusRolloverConfigSchema>;
-
-export const SetBonusRolloverConfigInputSchema = z.object({
-  multiplier: PositiveMoneyAmountSchema.refine(
-    (value) => decimalStringAtMost(value, MAX_BONUS_ROLLOVER_MULTIPLIER),
-    { message: `must be at most ${MAX_BONUS_ROLLOVER_MULTIPLIER}x` },
-  ),
-});
 
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 
@@ -757,22 +709,6 @@ export const walletContract = {
       .route({ method: 'POST', path: '/wallet/deposits/address' })
       .input(DepositAddressInputSchema)
       .output(DepositAddressSchema),
-  },
-
-  bonusRolloverStatus: oc
-    .route({ method: 'GET', path: '/wallet/bonus-rollover/status' })
-    .input(BonusRolloverStatusInputSchema)
-    .output(BonusRolloverStatusSchema),
-
-  bonusRolloverConfig: {
-    get: oc
-      .route({ method: 'GET', path: '/backoffice/wallet/bonus-rollover-config' })
-      .output(BonusRolloverConfigSchema),
-
-    set: oc
-      .route({ method: 'PATCH', path: '/backoffice/wallet/bonus-rollover-config' })
-      .input(SetBonusRolloverConfigInputSchema)
-      .output(BonusRolloverConfigSchema),
   },
 
   swap: {
