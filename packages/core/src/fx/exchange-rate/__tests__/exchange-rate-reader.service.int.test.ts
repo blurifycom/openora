@@ -88,6 +88,7 @@ function baseDeps(
     freshTtlMs: 60_000,
     hardMaxAgeMs: 120_000,
     providerTimeoutMs: 150,
+    failureCooldownMs: 150,
     ...over,
   };
 }
