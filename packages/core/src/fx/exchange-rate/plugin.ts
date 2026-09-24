@@ -1,4 +1,4 @@
-import { DRIZZLE, createLogger } from '@openora/core/server';
+import { DRIZZLE, createLogger, mapConcurrent } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import {
   CRYPTO_EXCHANGE_RATE_PROVIDER,
@@ -28,6 +28,7 @@ const RateWarmJobSchema = z.object({});
 // Well inside freshTtlMs (60s default) so a warmed coin never crosses into soft-stale
 // between ticks, and its hot-path readers never fall through to a synchronous vendor call.
 const WARM_INTERVAL_MS = 30_000;
+const WARM_CONCURRENCY = 4;
 
 export default {
   id: 'exchange-rate',
@@ -87,15 +88,13 @@ export default {
         }
         const svc = reader;
         const pivot = warmPivot;
-        await Promise.all(
-          warmCurrencies.map(async (currency) => {
-            try {
-              await svc.getRate(currency, pivot);
-            } catch (err) {
-              logger.warn({ err, currency }, 'exchange rate warm-up failed');
-            }
-          }),
-        );
+        await mapConcurrent(warmCurrencies, WARM_CONCURRENCY, async (currency) => {
+          try {
+            await svc.getRate(currency, pivot);
+          } catch (err) {
+            logger.warn({ err, currency }, 'exchange rate warm-up failed');
+          }
+        });
       },
     });
 
