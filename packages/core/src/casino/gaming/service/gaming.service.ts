@@ -336,12 +336,6 @@ export class GamingService {
     });
   }
 
-  /**
-   * A game is "available" in every listed country when neither it nor its provider carries
-   * a geo rule for that country - the same precedence ComplianceService.checkGame applies at
-   * play time. A country blocked platform-wide can never be available, so that case short
-   * circuits to an always-false filter rather than silently treating the country as open.
-   */
   private async buildGeoAvailableFilter(
     countries: string[],
     gameGeoCheck: GameGeoCheckPort,

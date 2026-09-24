@@ -204,8 +204,6 @@ export async function withAdvisoryXactLocks<T>(
   return fn();
 }
 
-// Shared variant of withAdvisoryXactLocks: many callers can hold the same key at once; only
-// an exclusive taker blocks them. Must run in a transaction.
 export async function withSharedAdvisoryXactLocks<T>(
   txn: DrizzleTx,
   keys: readonly string[],

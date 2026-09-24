@@ -217,8 +217,6 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   gameTypes: queryArraySchema(GameTypeSchema, GAME_TYPES.length).optional(),
   geoBlocked: QueryBooleanSchema.optional(),
   geoBlockedCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
-  // "Available in X": the inverse of geoBlockedCountries - a game with no game or provider
-  // rule for any of these countries. See ComplianceService.checkGame for the same precedence.
   geoAvailableCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
 })
   .refine(

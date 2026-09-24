@@ -1361,9 +1361,6 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
-        // Some writers append the audit record inside their own state transaction, then
-        // publish this event for realtime/other consumers after commit - auditRecorded
-        // marks that the subscriber must not duplicate it.
         if (AUDIT_RECORDED_INLINE_TOPICS.has(topic) && payload['auditRecorded'] === true) {
           return;
         }

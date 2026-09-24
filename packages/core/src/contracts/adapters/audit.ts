@@ -96,8 +96,8 @@ export type AuditWritePort = {
     } & Partial<ClientMeta>,
   ): Promise<void>;
   /**
-   * Batch counterpart to `recordInTransaction`: takes the `audit_log` advisory lock once
-   * for the whole batch instead of once per row.
+   * Maps each payload as the audit event subscriber would and appends the rows under one
+   * `audit_log` lock hold, chained in array order.
    */
   recordEventsInTransaction(
     tx: unknown,
