@@ -440,6 +440,26 @@ export async function readWalletBalance(
   return row?.amount ?? '0';
 }
 
+/**
+ * The balance read a debit decides on, taken under a row lock. The `wallet` row lock above a
+ * debit does not cover `wallet_balance`, and a withdrawal or an admin adjustment writes that row
+ * directly - so an unlocked read can be stale by the time the debit acts on it.
+ */
+export async function readWalletBalanceForUpdate(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<string> {
+  const [row] = await txn
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .where(
+      and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, balanceKey(currency))),
+    )
+    .for('update');
+  return row?.amount ?? '0';
+}
+
 export async function readWalletBalances(
   txn: DrizzleDb,
   userId: User['id'],
