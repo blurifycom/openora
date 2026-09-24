@@ -296,3 +296,36 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
     expect(await dir.findPlayerIds(seededPlayer.id.slice(0, 8))).toEqual([]);
   });
 });
+
+describe('DrizzleAdminUserDirectory.findUserIdsByKycStatus (real PG)', () => {
+  it('matches only players at the requested status', async () => {
+    const { dir } = makeDirectory();
+    const approved = await seedUser(db, { email: 'fatima@example.com' });
+    await seedPlayer(approved.id, { username: 'fatima', kycStatus: 'approved' });
+    const pending = await seedUser(db, { email: 'greg@example.com' });
+    await seedPlayer(pending.id, { username: 'greg', kycStatus: 'pending' });
+
+    expect(await dir.findUserIdsByKycStatus('approved')).toEqual([approved.id]);
+    expect(await dir.findUserIdsByKycStatus('pending')).toEqual([pending.id]);
+    expect(await dir.findUserIdsByKycStatus('rejected')).toEqual([]);
+  });
+
+  it('treats the deprecated verified status as approved', async () => {
+    const { dir } = makeDirectory();
+    const legacy = await seedUser(db, { email: 'hank@example.com' });
+    await seedPlayer(legacy.id, { username: 'hank', kycStatus: 'verified' });
+
+    expect(await dir.findUserIdsByKycStatus('approved')).toEqual([legacy.id]);
+    expect(await dir.findUserIdsByKycStatus('verified')).toEqual([legacy.id]);
+  });
+
+  it('caps the result at the given limit', async () => {
+    const { dir } = makeDirectory();
+    for (const email of ['ida@example.com', 'jon@example.com', 'kim@example.com']) {
+      const account = await seedUser(db, { email });
+      await seedPlayer(account.id, { username: email.split('@')[0], kycStatus: 'approved' });
+    }
+
+    expect(await dir.findUserIdsByKycStatus('approved', 2)).toHaveLength(2);
+  });
+});

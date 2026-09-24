@@ -170,11 +170,15 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
       expect(found?.body).not.toContain('operator lowered on a support request');
     });
 
-    const rgEmails = capturedEmailsFor(email).filter(
-      (e) => e.subject === 'Your gambling limit was updated',
-    );
-    expect(rgEmails).toHaveLength(1);
-    expect(rgEmails[0]?.text).not.toContain('operator lowered on a support request');
+    // The email goes out from its own event handler, so the in-app row landing first says
+    // nothing about the mail having been captured yet.
+    await vi.waitFor(() => {
+      const rgEmails = capturedEmailsFor(email).filter(
+        (e) => e.subject === 'Your gambling limit was updated',
+      );
+      expect(rgEmails).toHaveLength(1);
+      expect(rgEmails[0]?.text).not.toContain('operator lowered on a support request');
+    });
 
     const beforeCount = (await readJson(await client.get('/notifications'))).total;
     const selfRes = await client.put('/compliance/limits', {
