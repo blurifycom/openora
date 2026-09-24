@@ -664,6 +664,28 @@ describe('a voided round', () => {
     expect(forfeitEntry?.realAmount).toBe('40.000000000000000000');
   });
 
+  it('pays a win to the real balance when the funding grant already converted', async () => {
+    const { userId } = await player('200');
+    const grantId = await grantBonus(userId, '100', '1');
+    const round = randomUUID();
+    await bet(userId, '100', round);
+    expect((await grantRow(grantId)).status).toBe('completed');
+
+    await credit({
+      userId,
+      amount: '50',
+      currency: 'USD',
+      type: 'win',
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `win-${round}`,
+        externalRoundId: round,
+      },
+    });
+
+    expect(await realBalanceOf(userId)).toBe('250.000000000000000000');
+  });
+
   it('returns the bonus stake and takes back the progress it bought', async () => {
     const { userId } = await player('0');
     const grantId = await grantBonus(userId, '100', '10');

@@ -1,5 +1,21 @@
+import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { ContributionPercentSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_ENTRY_TYPES,
+  BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
+  BonusGrantSourceSchema,
+  BonusGrantStatusSchema,
+  BonusForfeitReasonSchema,
+  ContributionPercentSchema,
+  CurrencyTickerSchema,
+  MoneyAmountSchema,
+  PageQuerySchema,
+  paginated,
+  TimestampSchema,
+  UuidSchema,
+} from '@openora/core/contracts';
 
 /**
  * What a weight row targets, most specific first. A bet resolves against a profile in this
@@ -30,4 +46,51 @@ export const WagerWeightProfileSchema = z.object({
 
 export type WagerWeightProfile = z.infer<typeof WagerWeightProfileSchema>;
 
-export const bonusContract = {};
+/**
+ * A bonus as its holder sees it. Money is a decimal string, never a number: a bonus balance at
+ * eighteen decimal places does not survive a round trip through a JSON number.
+ */
+export const PlayerGrantSchema = z.object({
+  id: UuidSchema,
+  currency: CurrencyTickerSchema,
+  source: BonusGrantSourceSchema,
+  status: BonusGrantStatusSchema,
+  grantedAmount: MoneyAmountSchema,
+  bonusBalance: MoneyAmountSchema,
+  wageringRequired: MoneyAmountSchema,
+  wageringProgress: MoneyAmountSchema,
+  forfeitReason: BonusForfeitReasonSchema.nullable(),
+  expiresAt: TimestampSchema,
+  closedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+});
+
+export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
+
+export const ListPlayerGrantsInputSchema = z.object({
+  ...PageQuerySchema.shape,
+  /** Absent means every status; a terminal grant is never purged, so the history only grows. */
+  status: BonusGrantStatusSchema.optional(),
+});
+
+export {
+  BONUS_FORFEIT_REASONS,
+  BONUS_GRANT_ENTRY_TYPES,
+  BONUS_GRANT_SOURCES,
+  BONUS_GRANT_STATUSES,
+  BonusGrantSourceSchema,
+};
+
+export const bonusContract = {
+  grants: {
+    list: oc
+      .route({ method: 'GET', path: '/promo/grants' })
+      .input(ListPlayerGrantsInputSchema)
+      .output(paginated(PlayerGrantSchema)),
+
+    get: oc
+      .route({ method: 'GET', path: '/promo/grants/{id}' })
+      .input(z.object({ id: UuidSchema }))
+      .output(PlayerGrantSchema),
+  },
+};

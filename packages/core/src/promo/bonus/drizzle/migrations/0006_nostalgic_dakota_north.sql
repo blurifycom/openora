@@ -1,0 +1,1 @@
+CREATE INDEX "promo_grant_user_id_created_at_idx" ON "promo_grant" USING btree ("user_id","created_at","id");
