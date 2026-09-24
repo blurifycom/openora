@@ -159,8 +159,8 @@ function gameGeoRuleLockKey(
   return `game-geo-rule:${gameId}:${countryCode}`;
 }
 
-// One lock per country, not per game, so a bulk write across thousands of games can't
-// exhaust Postgres' lock table. Exclusive for bulk callers, shared for single-target writers.
+// Bulk writers take this exclusive; single-target writers take it shared, before their
+// per-(game, country) keys.
 function gameGeoRuleCountryLockKey(countryCode: string): string {
   return `game-geo-rule-country:${countryCode}`;
 }
@@ -179,11 +179,6 @@ function bulkGameGeoTargetCondition(gameIds: string[], providerIds: string[]): S
   );
 }
 
-// Shared by bulkRestrictGameGeoRules/bulkUnrestrictGameGeoRules: resolves gameIds plus every
-// game of providerIds into the rows that actually exist, and which requested ids didn't
-// resolve to anything. `limit` is the caller's cap + 1: one query answers both "what's in
-// scope" and "is the scope over cap", instead of a separate count that can race against a
-// concurrent write between the two queries.
 async function resolveBulkGeoScope(
   tx: DrizzleTx,
   gameIds: string[],
@@ -218,7 +213,6 @@ async function resolveBulkGeoScope(
   return { games, notFoundGameIds, notFoundProviderIds };
 }
 
-// Re-queries as a plain count only to put an exact matched count in the error message.
 async function assertWithinGeoCap(
   tx: DrizzleTx,
   gameIds: string[],
@@ -375,7 +369,6 @@ export class ComplianceService {
     return { allowed: result.allowed, countryCode: result.countryCode };
   }
 
-  /** Sorted, deduped union of the runtime config's blocked list and a global block rule. */
   async listGloballyBlockedCountries(): Promise<string[]> {
     const rows = await this.drizzle.db
       .select({ countryCode: countryRule.countryCode })
@@ -655,7 +648,6 @@ export class ComplianceService {
         new GeoRuleGameNotFoundError(input.gameId),
       );
 
-      // See gameGeoRuleCountryLockKey.
       return withSharedAdvisoryXactLocks(tx, countryCodes.map(gameGeoRuleCountryLockKey), () =>
         withAdvisoryXactLocks(
           tx,
@@ -752,11 +744,8 @@ export class ComplianceService {
   }
 
   /**
-   * Restricts `countryCode` for many games at once - `gameIds` plus every game of
-   * `providerIds`, deduped. Idempotent: a game that already carries the rule is left
-   * untouched (its reason is NOT overwritten) and counts as `unchanged`, not `changed`.
-   * Never touches `provider_geo_rule`. One `compliance.game-geo-rule.upserted` event per
-   * newly-created rule, in gameId order.
+   * Idempotent: a game that already has the rule keeps it, reason included, and counts as
+   * `unchanged`. Never writes `provider_geo_rule`.
    */
   async bulkRestrictGameGeoRules(
     input: BulkGameGeoRuleInput,
@@ -767,7 +756,6 @@ export class ComplianceService {
     const providerIds = [...new Set(input.providerIds ?? [])].sort();
 
     const outcome = await this.drizzle.db.transaction((tx) =>
-      // See gameGeoRuleCountryLockKey.
       withAdvisoryXactLock(tx, gameGeoRuleCountryLockKey(input.countryCode), async () => {
         const { games, notFoundGameIds, notFoundProviderIds } = await resolveBulkGeoScope(
           tx,
@@ -781,8 +769,6 @@ export class ComplianceService {
           return { upsertPayloads: [], unchangedCount: 0, notFoundGameIds, notFoundProviderIds };
         }
 
-        // ON CONFLICT DO NOTHING is the idempotency guard: an existing rule's row, and its
-        // reason, is left untouched.
         const rows = await tx
           .insert(gameGeoRule)
           .values(
@@ -807,10 +793,6 @@ export class ComplianceService {
           userAgent: meta.userAgent,
         }));
 
-        // Recorded here, as the last step before commit, so the audit_log advisory lock
-        // (taken once for the whole batch by recordEventsInTransaction) is held only
-        // briefly. The events below carry auditRecorded so the subscriber does not also
-        // write these rows one lock at a time.
         await this.audit.recordEventsInTransaction(
           tx,
           'compliance.game-geo-rule.upserted',
@@ -838,11 +820,8 @@ export class ComplianceService {
   }
 
   /**
-   * Unrestricts `countryCode` for many games at once, the inverse of
-   * `bulkRestrictGameGeoRules`. Idempotent: a game with no matching rule is `unchanged`, not
-   * an error (unlike the single-target `deleteGameGeoRules`). Never touches
-   * `provider_geo_rule` - `stillBlockedByProvider` reports how many games in scope stay
-   * unavailable because their provider carries the rule.
+   * Idempotent: a game without the rule counts as `unchanged`, not NOT_FOUND. Never deletes
+   * `provider_geo_rule`; games it keeps blocked are counted in `stillBlockedByProvider`.
    */
   async bulkUnrestrictGameGeoRules(
     input: BulkGameGeoRuleInput,
@@ -915,7 +894,6 @@ export class ComplianceService {
           stillBlockedProviderIds.has(row.providerId),
         ).length;
 
-        // See the matching comment in bulkRestrictGameGeoRules.
         await this.audit.recordEventsInTransaction(
           tx,
           'compliance.game-geo-rule.deleted',
@@ -936,8 +914,6 @@ export class ComplianceService {
       this.events.emit('compliance.game-geo-rule.deleted', { ...payload, auditRecorded: true });
     }
 
-    // A country that's blocked platform-wide stays unavailable regardless of this call -
-    // the backoffice must not read "unrestricted" as "open".
     const globallyBlocked = (await this.listGloballyBlockedCountries()).includes(input.countryCode);
 
     return {

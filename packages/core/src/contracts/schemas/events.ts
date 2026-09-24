@@ -907,8 +907,7 @@ export const domainEventSchemas = {
     before: gameGeoRuleEventState.nullable(),
     after: gameGeoRuleEventState,
     actorId: UuidSchema,
-    // The originating bulk transaction has already appended the matching audit record.
-    // Consumers still receive the event, while audit's event subscriber must not duplicate it.
+    // Set when the writer already appended the audit record; audit's subscriber skips it.
     auditRecorded: z.literal(true).optional(),
   }),
 
@@ -920,8 +919,7 @@ export const domainEventSchemas = {
     before: gameGeoRuleEventState,
     after: z.null(),
     actorId: UuidSchema,
-    // The originating bulk transaction has already appended the matching audit record.
-    // Consumers still receive the event, while audit's event subscriber must not duplicate it.
+    // Set when the writer already appended the audit record; audit's subscriber skips it.
     auditRecorded: z.literal(true).optional(),
   }),
 

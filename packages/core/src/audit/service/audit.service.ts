@@ -231,8 +231,7 @@ export class AuditService {
   static readonly INSERT_CHUNK_SIZE = 1_000;
 
   /**
-   * Batch counterpart to `recordInTransaction`. `records` is inserted in order: each row's
-   * `prevHash` chains to the row before it in the array.
+   * Batch counterpart to `recordInTransaction`; `records` are chained in array order.
    */
   async recordEventsInTransaction(tx: unknown, records: RecordInput[]): Promise<AuditLog[]> {
     if (records.length === 0) {
@@ -247,9 +246,6 @@ export class AuditService {
         .limit(1);
       let prevHash = latest?.hash ?? null;
 
-      // nextval() is PARALLEL UNSAFE, so this query runs on a single worker: generate_series'
-      // row order and nextval()'s per-row evaluation order coincide, giving each row a
-      // strictly larger seq than the one before it.
       const seqRows = await txn.execute<{ seq: string | number }>(
         sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq
             FROM generate_series(1, ${records.length}) AS ord(n)
