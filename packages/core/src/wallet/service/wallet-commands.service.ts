@@ -1,4 +1,5 @@
 import {
+  MaxBetExceededError,
   RgLimitExceededError,
   type AuditWritePort,
   type PlayEligibilityPort,
@@ -229,6 +230,12 @@ export class WalletCommandsService implements WalletCommands {
           })
         : undefined;
     if (wagered && !wagered.ok) {
+      // A stake over the grant's max bet is a refused bet, not a short balance. Reporting it as
+      // insufficient funds would tell the player to deposit more, and a client that did would
+      // hit the same wall with a bigger balance.
+      if (wagered.reason === 'max_bet_exceeded') {
+        throw new MaxBetExceededError(amount, wagered.maxBet);
+      }
       return { ok: false, available: moneyAdd(available, wagered.bonusAvailable) };
     }
     if (moneyCompare(fromBonus, '0') > 0 && !wagered) {

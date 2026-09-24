@@ -1,4 +1,4 @@
-import { oc } from '@orpc/contract';
+import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   BONUS_FORFEIT_REASONS,
@@ -48,6 +48,47 @@ export const WagerWeightProfileSchema = z.object({
 
 export type WagerWeightProfile = z.infer<typeof WagerWeightProfileSchema>;
 
+/** A profile with the rows that score a bet against it. */
+export const WagerWeightProfileDetailSchema = WagerWeightProfileSchema.extend({
+  weights: z.array(WagerWeightSchema.omit({ profileId: true })),
+});
+
+export type WagerWeightProfileDetail = z.infer<typeof WagerWeightProfileDetailSchema>;
+
+export const CreateWagerWeightProfileInputSchema = z.object({
+  name: z.string().min(1).max(120),
+});
+
+export type CreateWagerWeightProfileInput = z.infer<typeof CreateWagerWeightProfileInputSchema>;
+
+/**
+ * The whole row set, replaced in one call. A per-row surface would let an operator save half a
+ * profile, and a bet resolving against a half-saved profile scores at whatever happens to be
+ * there. A `default` row carries no reference; every other scope needs one.
+ */
+export const SetWagerWeightsInputSchema = z.object({
+  id: UuidSchema,
+  weights: z
+    .array(
+      z.object({
+        scope: WagerWeightScopeSchema,
+        scopeRef: z.string().min(1).nullable(),
+        contributionPercent: ContributionPercentSchema,
+      }),
+    )
+    .max(500)
+    .refine(
+      (rows) => rows.every((r) => (r.scope === 'default') === (r.scopeRef === null)),
+      'a default row carries no reference, and every other scope needs one',
+    )
+    .refine(
+      (rows) => new Set(rows.map((r) => `${r.scope}:${r.scopeRef ?? ''}`)).size === rows.length,
+      'two rows target the same scope and reference',
+    ),
+});
+
+export type SetWagerWeightsInput = z.infer<typeof SetWagerWeightsInputSchema>;
+
 /**
  * Who an offer is for. Kept as jsonb on the row rather than as columns: every one of these is a
  * predicate an operator turns on or off, and a new one should not cost a migration - which is
@@ -64,6 +105,10 @@ export const BonusGrantTermsSchema = z.object({
   wageringMultiplier: MoneyAmountSchema,
   expiryDays: z.number().int().positive().max(365),
   weightProfileId: UuidSchema.optional(),
+  /** Largest single stake while the grant is active. Absent or null for no limit. */
+  maxBet: MoneyAmountSchema.nullable().optional(),
+  /** Cap on conversion as a multiple of the granted amount. Absent or null for no cap. */
+  maxWinMultiplier: MoneyAmountSchema.nullable().optional(),
 });
 
 /** An offer as an admin configures it. */
@@ -146,6 +191,8 @@ export type PlayerOffer = z.infer<typeof PlayerOfferSchema>;
  */
 export const PlayerGrantSchema = z.object({
   id: UuidSchema,
+  /** The offer this bonus came from, so a client can show its state on that offer's card. */
+  offerId: UuidSchema.nullable(),
   currency: CurrencyTickerSchema,
   source: BonusGrantSourceSchema,
   status: BonusGrantStatusSchema,
@@ -163,7 +210,6 @@ export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const AdminGrantSchema = PlayerGrantSchema.extend({
   userId: UuidSchema,
-  offerId: UuidSchema.nullable(),
   sourceRef: z.string(),
 });
 
@@ -179,6 +225,60 @@ export const ForfeitGrantInputSchema = z.object({
   id: UuidSchema,
   note: z.string().trim().min(10).max(500),
 });
+
+/**
+ * A player's bonus position in one currency. There is no balance table: the figures are the sum
+ * over their active grants, which is the only place the funds exist.
+ */
+export const BonusBalanceSchema = z.object({
+  currency: CurrencyTickerSchema,
+  bonus: MoneyAmountSchema,
+  wageringRequired: MoneyAmountSchema,
+  wageringProgress: MoneyAmountSchema,
+  activeGrants: z.number().int().nonnegative(),
+});
+
+export type BonusBalance = z.infer<typeof BonusBalanceSchema>;
+
+/**
+ * A change *signal*, never the figures themselves, exactly like the wallet balance stream: a
+ * dropped or reordered message would leave a stale amount on screen that never corrects itself,
+ * and this shape only says what moved so the client refetches `GET /promo/balance`.
+ *
+ * It covers the changes a client cannot see coming - a deposit's bonus landing from a job, the
+ * expiry sweep, an admin forfeiting, a requirement completing. Wagering progress moving on the
+ * player's own bet is not on here: the debit the client just made already answers it.
+ */
+export const BonusBalanceChangeReasonSchema = z.enum([
+  'granted',
+  'completed',
+  'expired',
+  'forfeited',
+]);
+
+export type BonusBalanceChangeReason = z.infer<typeof BonusBalanceChangeReasonSchema>;
+
+export const BonusBalanceUpdateSchema = z.object({
+  eventId: UuidSchema,
+  currency: CurrencyTickerSchema,
+  reason: BonusBalanceChangeReasonSchema,
+});
+
+export type BonusBalanceUpdate = z.infer<typeof BonusBalanceUpdateSchema>;
+
+/** One movement of a player's bonus funds, as they are allowed to see it. */
+export const PlayerGrantEntrySchema = z.object({
+  id: UuidSchema,
+  type: z.enum(BONUS_GRANT_ENTRY_TYPES),
+  currency: CurrencyTickerSchema,
+  bonusAmount: MoneyAmountSchema,
+  realAmount: MoneyAmountSchema,
+  wageringDelta: MoneyAmountSchema,
+  balanceAfter: MoneyAmountSchema,
+  createdAt: TimestampSchema,
+});
+
+export type PlayerGrantEntry = z.infer<typeof PlayerGrantEntrySchema>;
 
 export const ListPlayerGrantsInputSchema = z.object({
   ...PageQuerySchema.shape,
@@ -234,6 +334,33 @@ export const bonusContract = {
         .input(UpdatePromoOfferInputSchema)
         .output(PromoOfferSchema),
     },
+
+    weights: {
+      list: oc
+        .route({ method: 'GET', path: '/backoffice/promo/weight-profiles' })
+        .output(z.array(WagerWeightProfileDetailSchema)),
+
+      create: oc
+        .route({ method: 'POST', path: '/backoffice/promo/weight-profiles' })
+        .input(CreateWagerWeightProfileInputSchema)
+        .output(WagerWeightProfileDetailSchema),
+
+      set: oc
+        .route({ method: 'PUT', path: '/backoffice/promo/weight-profiles/{id}/weights' })
+        .input(SetWagerWeightsInputSchema)
+        .output(WagerWeightProfileDetailSchema),
+    },
+  },
+
+  balance: {
+    get: oc
+      .route({ method: 'GET', path: '/promo/balance' })
+      .input(z.object({ currency: CurrencyTickerSchema.optional() }))
+      .output(z.array(BonusBalanceSchema)),
+
+    stream: oc
+      .route({ method: 'GET', path: '/promo/balance/stream' })
+      .output(eventIterator(BonusBalanceUpdateSchema)),
   },
 
   grants: {
@@ -246,5 +373,15 @@ export const bonusContract = {
       .route({ method: 'GET', path: '/promo/grants/{id}' })
       .input(z.object({ id: UuidSchema }))
       .output(PlayerGrantSchema),
+
+    /**
+     * The movements behind one of the player's own bonuses. The acceptance criterion is that
+     * every credit, debit, conversion and forfeiture is visible in their history, and bonus-only
+     * movements never reach the wallet ledger.
+     */
+    entries: oc
+      .route({ method: 'GET', path: '/promo/grants/{id}/entries' })
+      .input(z.object({ id: UuidSchema, ...PageQuerySchema.shape }))
+      .output(paginated(PlayerGrantEntrySchema)),
   },
 };

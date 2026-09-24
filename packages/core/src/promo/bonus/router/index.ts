@@ -1,12 +1,19 @@
 import { implement } from '@orpc/server';
 import {
+  createEventStreamGenerator,
   getUserId,
   mapErrors,
   type AdminGuard,
   type EventBus,
   type OssContext,
 } from '@openora/core/server';
-import { bonusContract } from '../contract/index.js';
+import type { RealtimeTransport, Uuid } from '@openora/core/contracts';
+import { bonusContract, type BonusBalanceUpdate } from '../contract/index.js';
+
+/** One channel per player: a bonus position is never another player's business. */
+export function bonusBalanceChannel(userId: Uuid): string {
+  return `promo:balance:${userId}`;
+}
 import {
   GrantLifecycleService,
   GrantNotForfeitableError,
@@ -20,18 +27,27 @@ import {
   OfferNotFoundError,
   OfferService,
 } from '../service/offer.service.js';
+import {
+  WagerWeightProfileNameTakenError,
+  WeightProfileNotFoundError,
+  WeightService,
+} from '../service/weight.service.js';
 
 export function createBonusRouter({
   grants,
   offers,
+  weights,
   lifecycle,
   events,
+  realtime,
   adminGuard,
 }: {
   grants: GrantReaderService;
   offers: OfferService;
+  weights: WeightService;
   lifecycle: GrantLifecycleService;
   events: EventBus;
+  realtime: RealtimeTransport;
   adminGuard: AdminGuard;
 }) {
   const os = implement(bonusContract).$context<OssContext>();
@@ -104,6 +120,41 @@ export function createBonusRouter({
           );
         }),
       },
+
+      weights: {
+        list: os.admin.weights.list.handler(async ({ context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return weights.list();
+        }),
+
+        create: os.admin.weights.create.handler(async ({ input, context }) => {
+          const { userId } = await adminGuard.assert(context, 'bonus', 'create');
+          return mapErrors({ CONFLICT: WagerWeightProfileNameTakenError }, () =>
+            weights.create(userId, input),
+          );
+        }),
+
+        set: os.admin.weights.set.handler(async ({ input, context }) => {
+          const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+          return mapErrors({ NOT_FOUND: WeightProfileNotFoundError }, () =>
+            weights.set(userId, input),
+          );
+        }),
+      },
+    },
+
+    balance: {
+      get: os.balance.get.handler(({ input, context }) =>
+        grants.balances(getUserId(context), input.currency),
+      ),
+
+      stream: os.balance.stream.handler(({ context, signal }) =>
+        createEventStreamGenerator(
+          (push) =>
+            realtime.subscribe<BonusBalanceUpdate>(bonusBalanceChannel(getUserId(context)), push),
+          { signal },
+        ),
+      ),
     },
 
     grants: {
@@ -112,6 +163,12 @@ export function createBonusRouter({
       get: os.grants.get.handler(({ input, context }) =>
         mapErrors({ NOT_FOUND: GrantNotFoundError }, () =>
           grants.get(getUserId(context), input.id),
+        ),
+      ),
+
+      entries: os.grants.entries.handler(({ input, context }) =>
+        mapErrors({ NOT_FOUND: GrantNotFoundError }, () =>
+          grants.entries(getUserId(context), input.id, input),
         ),
       ),
     },

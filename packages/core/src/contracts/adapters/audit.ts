@@ -56,6 +56,7 @@ export type DirectAuditAction =
   | 'promo.offer.created'
   | 'promo.offer.updated'
   | 'promo.offer.archived'
+  | 'promo.weight_profile.created'
   | 'promo.weight_profile.set';
 
 /**

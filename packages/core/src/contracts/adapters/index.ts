@@ -64,7 +64,7 @@ export type {
   BonusSettleArgs,
   BonusSettleOutcome,
 } from './bonus-wagering.js';
-export { BONUS_WAGERING } from './bonus-wagering.js';
+export { BONUS_WAGERING, MaxBetExceededError } from './bonus-wagering.js';
 
 export type { WagerTrackingCommands, WagerTrackingArgs } from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';

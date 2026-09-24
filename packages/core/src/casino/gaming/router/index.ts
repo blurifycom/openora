@@ -48,7 +48,7 @@ import {
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
 import { GameBulkService, GameBulkTooManyGamesError } from '../service/game-bulk.service.js';
-import { RgLimitExceededError } from '@openora/core/contracts';
+import { MaxBetExceededError, RgLimitExceededError } from '@openora/core/contracts';
 
 export function createGamingRouter({
   gaming,
@@ -98,7 +98,7 @@ export function createGamingRouter({
         {
           NOT_FOUND: GameNotFoundError,
           CONFLICT: [RgRestrictedError, RgLimitExceededError, GameGeoRestrictedError],
-          BAD_REQUEST: InsufficientBalanceError,
+          BAD_REQUEST: [InsufficientBalanceError, MaxBetExceededError],
         },
         () =>
           gaming.startRound(

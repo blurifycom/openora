@@ -65,7 +65,13 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
   }
 }
 
-async function grantBonus(userId: string, amount: string, multiplier: string, currency = 'USD') {
+async function grantBonus(
+  userId: string,
+  amount: string,
+  multiplier: string,
+  currency = 'USD',
+  terms: { maxBet?: string; maxWinMultiplier?: string } = {},
+) {
   const outcome = await drizzle().transaction((tx) =>
     app.container.get(BONUS_GRANTS).grant(tx, {
       userId,
@@ -74,7 +80,7 @@ async function grantBonus(userId: string, amount: string, multiplier: string, cu
       source: 'deposit',
       sourceRef: randomUUID(),
       actor: { type: 'system' },
-      terms: { wageringMultiplier: multiplier, expiryDays: 30, weightProfileId },
+      terms: { wageringMultiplier: multiplier, expiryDays: 30, weightProfileId, ...terms },
     }),
   );
   if (!outcome.ok) {
@@ -437,6 +443,57 @@ describe('a win on a bonus-funded round', () => {
 
     expect((await grantRow(grantId)).bonusBalance).toBe('100.000000000000000000');
     expect(await realBalanceOf(userId)).toBe('140.000000000000000000');
+  });
+});
+
+describe('the terms a grant was created under', () => {
+  it('refuses a stake over the maximum bet, and leaves the bonus untouched', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10', 'USD', { maxBet: '5' });
+
+    await expect(bet(userId, '5.01', randomUUID())).rejects.toThrow(/maximum bet/i);
+
+    const row = await grantRow(grantId);
+    expect(row.bonusBalance).toBe('100.000000000000000000');
+    expect(row.wageringProgress).toBe('0.000000000000000000');
+  });
+
+  it('allows a stake exactly at the maximum bet', async () => {
+    const { userId } = await player('0');
+    const grantId = await grantBonus(userId, '100', '10', 'USD', { maxBet: '5' });
+
+    const outcome = await bet(userId, '5', randomUUID());
+
+    expect(outcome.ok).toBe(true);
+    expect((await grantRow(grantId)).bonusBalance).toBe('95.000000000000000000');
+  });
+
+  it('converts no more than the maximum win the terms allow, and kills the surplus', async () => {
+    const { userId } = await player('0');
+    // 10 granted at 10x needs 100 wagered. The first stake wins 500 back onto the grant, so by
+    // the time the requirement is met the balance is far past the 2x ceiling.
+    const grantId = await grantBonus(userId, '10', '10', 'USD', { maxWinMultiplier: '2' });
+    const round = randomUUID();
+    await bet(userId, '10', round);
+    await credit({
+      userId,
+      amount: '500',
+      currency: 'USD',
+      type: 'win',
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `win-${round}`,
+        externalRoundId: round,
+      },
+    });
+
+    await bet(userId, '90', randomUUID());
+
+    const row = await grantRow(grantId);
+    expect(row.status).toBe('completed');
+    expect(await realBalanceOf(userId)).toBe('20.000000000000000000');
+    expect(row.bonusBalance).toBe('0.000000000000000000');
+    expect(await ledgerSum(grantId)).toBe(row.bonusBalance);
   });
 
   it('settles only the stake its own provider took, not another provider reusing the same round id', async () => {

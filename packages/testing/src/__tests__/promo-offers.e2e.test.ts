@@ -179,6 +179,87 @@ describe('an admin configuring offers', () => {
   });
 });
 
+describe('an admin configuring wagering weights', () => {
+  const profileName = () => `weights-${randomUUID()}`;
+
+  it('creates a profile and sets its rows in one call', async () => {
+    const created = await readJson(
+      await admin.post('/backoffice/promo/weight-profiles', { name: profileName() }),
+    );
+
+    const saved = await readJson(
+      await admin.put(`/backoffice/promo/weight-profiles/${created.id}/weights`, {
+        weights: [
+          { scope: 'default', scopeRef: null, contributionPercent: '100' },
+          { scope: 'product', scopeRef: 'pvp', contributionPercent: '0' },
+        ],
+      }),
+    );
+
+    expect(created.weights).toEqual([]);
+    expect(saved.weights).toHaveLength(2);
+    const listed = await readJson(await admin.get('/backoffice/promo/weight-profiles'));
+    expect(listed.find((p: { id: string }) => p.id === created.id).weights).toHaveLength(2);
+  });
+
+  it('replaces the row set rather than merging into it', async () => {
+    const created = await readJson(
+      await admin.post('/backoffice/promo/weight-profiles', { name: profileName() }),
+    );
+    await admin.put(`/backoffice/promo/weight-profiles/${created.id}/weights`, {
+      weights: [{ scope: 'product', scopeRef: 'casino', contributionPercent: '100' }],
+    });
+
+    const saved = await readJson(
+      await admin.put(`/backoffice/promo/weight-profiles/${created.id}/weights`, {
+        weights: [{ scope: 'product', scopeRef: 'casino', contributionPercent: '50' }],
+      }),
+    );
+
+    expect(saved.weights).toHaveLength(1);
+    expect(saved.weights[0].contributionPercent).toBe('50.00');
+  });
+
+  it('refuses a default row that carries a reference', async () => {
+    const created = await readJson(
+      await admin.post('/backoffice/promo/weight-profiles', { name: profileName() }),
+    );
+
+    const res = await admin.put(`/backoffice/promo/weight-profiles/${created.id}/weights`, {
+      weights: [{ scope: 'default', scopeRef: 'casino', contributionPercent: '100' }],
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a second profile under the same name', async () => {
+    const name = profileName();
+    await admin.post('/backoffice/promo/weight-profiles', { name });
+
+    const res = await admin.post('/backoffice/promo/weight-profiles', { name });
+
+    expect(res.status).toBe(409);
+  });
+
+  it('answers 404 for a profile that does not exist', async () => {
+    const res = await admin.put(`/backoffice/promo/weight-profiles/${randomUUID()}/weights`, {
+      weights: [],
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses a player reaching for it', async () => {
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `weights-player-${randomUUID()}@example.test`,
+    });
+
+    const res = await client.get('/backoffice/promo/weight-profiles');
+
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('a player taking an offer', () => {
   it('sees the live offers with what their deposits have put toward each', async () => {
     const offer = await createOffer({ minDeposit: '20' });
@@ -260,6 +341,11 @@ describe('a player taking an offer', () => {
       wageringRequired: '250.000000000000000000',
       offerId: offer.id,
     });
+
+    // The offer id has to reach the player too: it is the only thing that ties a live bonus back
+    // to the offer it came from, and without it a bonuses page cannot mark that offer as taken.
+    const listed = await (await client.get('/promo/grants')).json();
+    expect(listed).toMatchObject({ items: [{ offerId: offer.id }] });
   });
 
   it('caps the grant at the offer ceiling', async () => {
