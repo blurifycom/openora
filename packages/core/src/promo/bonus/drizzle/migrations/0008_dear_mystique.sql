@@ -1,0 +1,2 @@
+DROP INDEX "promo_grant_expires_at_idx";--> statement-breakpoint
+CREATE INDEX "promo_grant_expires_at_idx" ON "promo_grant" USING btree ("expires_at") WHERE "promo_grant"."status" in ('pending', 'active');
