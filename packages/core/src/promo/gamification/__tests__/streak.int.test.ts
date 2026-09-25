@@ -68,7 +68,14 @@ beforeEach(async () => {
 
 const record = (userId: string, amount: string, context: WagerContext = CASINO) =>
   db.drizzle.db.transaction((tx) =>
-    streaks.recordWager(tx, { userId, currency: 'USD', amount, weightedAmount: amount, context }),
+    streaks.recordWager(tx, {
+      userId,
+      currency: 'USD',
+      amount,
+      weightedAmount: amount,
+      realAmount: amount,
+      context,
+    }),
   );
 
 describe('recordWager', () => {
