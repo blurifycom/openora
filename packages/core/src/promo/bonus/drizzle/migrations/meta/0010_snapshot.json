@@ -437,16 +437,8 @@
           "name": "promo_grant_entry_grant_id_user_id_currency_promo_grant_id_user_id_currency_fk",
           "tableFrom": "promo_grant_entry",
           "tableTo": "promo_grant",
-          "columnsFrom": [
-            "grant_id",
-            "user_id",
-            "currency"
-          ],
-          "columnsTo": [
-            "id",
-            "user_id",
-            "currency"
-          ],
+          "columnsFrom": ["grant_id", "user_id", "currency"],
+          "columnsTo": ["id", "user_id", "currency"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -593,9 +585,7 @@
         "promo_offer_key_unique": {
           "name": "promo_offer_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "key"
-          ]
+          "columns": ["key"]
         }
       },
       "policies": {},
@@ -679,12 +669,8 @@
           "name": "promo_opt_in_offer_id_promo_offer_id_fk",
           "tableFrom": "promo_opt_in",
           "tableTo": "promo_offer",
-          "columnsFrom": [
-            "offer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["offer_id"],
+          "columnsTo": ["id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -760,12 +746,8 @@
           "name": "promo_opt_in_deposit_opt_in_id_promo_opt_in_id_fk",
           "tableFrom": "promo_opt_in_deposit",
           "tableTo": "promo_opt_in",
-          "columnsFrom": [
-            "opt_in_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["opt_in_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -870,12 +852,8 @@
           "name": "promo_weight_profile_id_promo_weight_profile_id_fk",
           "tableFrom": "promo_weight",
           "tableTo": "promo_weight_profile",
-          "columnsFrom": [
-            "profile_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["profile_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -930,9 +908,7 @@
         "promo_weight_profile_name_unique": {
           "name": "promo_weight_profile_name_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "name"
-          ]
+          "columns": ["name"]
         }
       },
       "policies": {},
@@ -957,60 +933,27 @@
     "public.promo_grant_entry_type": {
       "name": "promo_grant_entry_type",
       "schema": "public",
-      "values": [
-        "grant",
-        "stake",
-        "win",
-        "reversal",
-        "convert",
-        "forfeit",
-        "expire"
-      ]
+      "values": ["grant", "stake", "win", "reversal", "convert", "forfeit", "expire"]
     },
     "public.promo_grant_source": {
       "name": "promo_grant_source",
       "schema": "public",
-      "values": [
-        "deposit",
-        "manual",
-        "streak",
-        "rank",
-        "race",
-        "gift",
-        "rain"
-      ]
+      "values": ["deposit", "manual", "streak", "rank", "race", "gift", "rain"]
     },
     "public.promo_grant_status": {
       "name": "promo_grant_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "active",
-        "completed",
-        "expired",
-        "forfeited",
-        "cancelled"
-      ]
+      "values": ["pending", "active", "completed", "expired", "forfeited", "cancelled"]
     },
     "public.promo_offer_status": {
       "name": "promo_offer_status",
       "schema": "public",
-      "values": [
-        "draft",
-        "active",
-        "paused",
-        "archived"
-      ]
+      "values": ["draft", "active", "paused", "archived"]
     },
     "public.promo_weight_scope": {
       "name": "promo_weight_scope",
       "schema": "public",
-      "values": [
-        "game",
-        "category",
-        "product",
-        "default"
-      ]
+      "values": ["game", "category", "product", "default"]
     }
   },
   "schemas": {},
