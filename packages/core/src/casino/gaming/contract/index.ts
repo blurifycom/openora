@@ -54,15 +54,6 @@ export {
   GameTagVisibilitySchema,
 } from '@openora/core/contracts';
 
-function isHttpsUrlWithoutCredentials(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && url.username === '' && url.password === '';
-  } catch {
-    return false;
-  }
-}
-
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
 export type GameRoundStatus = z.infer<typeof GameRoundStatusSchema>;
@@ -555,13 +546,15 @@ export const UpdateGameInputSchema = z.object({
   aggregator: z.string().trim().min(1).max(64).optional(),
   thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
   customThumbnailUrl: z
-    .string()
-    .trim()
-    .refine(isHttpsUrlWithoutCredentials, {
-      message: 'must be an https URL with no embedded credentials',
-    })
-    .transform((v) => new URL(v).href)
-    .pipe(z.string().max(512, 'must be at most 512 characters once normalized'))
+    .url({ protocol: /^https$/, normalize: true, abort: true })
+    .max(512)
+    .refine(
+      (v) => {
+        const url = new URL(v);
+        return url.username === '' && url.password === '';
+      },
+      { message: 'must not embed credentials' },
+    )
     .nullable()
     .optional(),
   // No isUnavailable: the flag is vendor-set only, an admin must never be able to toggle it.
