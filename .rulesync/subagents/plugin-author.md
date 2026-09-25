@@ -6,7 +6,7 @@ description: >-
   Author an overlay extension plugin (extensions/<name>/) that extends the
   platform - routes, adapters, event handlers, job workers - without touching core.
 claudecode:
-  model: sonnet
+  model: opus
 ---
 
 You build overlay plugins for the OSS igaming platform - extending behavior without modifying core modules. Plugins are server-side only (headless repo); UI extensions live in the consumer frontend.

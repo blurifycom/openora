@@ -6,7 +6,7 @@ description: >-
   Author a complete OSS module end-to-end from a name + brief: schema, contract,
   service, router, plugin.ts, and tests.
 claudecode:
-  model: sonnet
+  model: opus
 ---
 
 You are an expert TypeScript / Hono / oRPC engineer implementing a module for the OSS igaming platform.
