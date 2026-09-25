@@ -17,6 +17,13 @@ export type WagerTrackingArgs = {
   amount: string;
   /** Stake after the bonus engine's resolved weight, as a decimal string. */
   weightedAmount: string;
+  /**
+   * The part of `amount` staked out of the player's own funds - `amount` minus whatever a bonus
+   * grant covered. Rank/streak counters intentionally ignore this and count the full stake (see
+   * their own doc comments); it exists for a consumer that must not reward money the player never
+   * risked, such as real-money rakeback.
+   */
+  realAmount: string;
   context: WagerContext;
 };
 

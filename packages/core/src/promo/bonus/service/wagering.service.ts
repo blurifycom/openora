@@ -83,6 +83,7 @@ export class WageringService implements BonusWageringCommands {
         currency: args.currency,
         amount: args.stake,
         weightedAmount: args.stake,
+        realAmount: args.stake,
         context: args.context,
       });
       return {
@@ -171,6 +172,7 @@ export class WageringService implements BonusWageringCommands {
       currency: args.currency,
       amount: args.stake,
       weightedAmount: weighted,
+      realAmount: moneySubtract(args.stake, args.fromBonus),
       context: args.context,
     });
 
