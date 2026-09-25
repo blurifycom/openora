@@ -269,13 +269,22 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { grantId: p.grantId },
   })),
 
-  mapEvent('promo.bonus.completed', (p) => ({
-    userId: p.userId,
-    type: 'promo.bonus.completed',
-    title: 'Bonus unlocked',
-    body: `Your ${formatMoneyAmount(p.convertedAmount)} ${p.currency} bonus has cleared its wagering requirement and is now fully withdrawable.`,
-    data: { grantId: p.grantId },
-  })),
+  mapEvent(
+    'promo.bonus.completed',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.bonus.completed',
+      title: 'Bonus unlocked',
+      body: `Your ${formatMoneyAmount(p.convertedAmount)} ${p.currency} bonus has cleared its wagering requirement and is now fully withdrawable.`,
+      data: { grantId: p.grantId },
+    }),
+    {
+      email: (p) => ({
+        key: 'bonusUnlocked',
+        data: { convertedAmount: p.convertedAmount, currency: p.currency },
+      }),
+    },
+  ),
 
   mapEvent(
     'promo.race.won',

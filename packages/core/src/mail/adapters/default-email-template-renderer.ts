@@ -196,6 +196,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       text: `You reached the ${data.tierName} tier and won ${prize}. ${data.cashAmount !== null ? 'The cash prize has been credited to your balance. ' : ''}Our team will be in touch about fulfilling any physical prize.`,
     };
   },
+  bonusUnlocked: (data) => ({
+    subject: 'Your bonus has cleared its wagering requirement',
+    text: `Your ${formatMoney(data.convertedAmount, data.currency)} bonus has cleared its wagering requirement and is now part of your withdrawable balance.`,
+  }),
 };
 
 const renderDefaultEmail = (

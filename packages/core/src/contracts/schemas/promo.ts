@@ -12,6 +12,10 @@ export const BONUS_GRANT_SOURCES = [
   'race',
   'gift',
   'rain',
+  // A VIP Cashback grant, computed and credited by a scheduled job off a player's net loss
+  // over a period rather than off a deposit - system-actor like 'streak'/'rank'/'race', not
+  // 'manual' (no admin issued it) and not 'deposit' (no deposit earned it).
+  'cashback',
 ] as const;
 
 /**

@@ -2,9 +2,11 @@ import * as z from 'zod';
 import {
   AUDIT_WRITER,
   BONUS_GRANTS,
+  BONUS_LIFECYCLE,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
   type BonusForfeitReason,
+  type BonusLifecycleCommands,
   CurrencyTickerSchema,
   JOB_QUEUE,
   MoneyAmountSchema,
@@ -30,6 +32,7 @@ import {
   type Plugin,
 } from '@openora/core/server';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
+import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
 import { GrantReaderService } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { OfferService } from './service/offer.service.js';
@@ -85,6 +88,19 @@ export default {
     ctx.provideSealed(
       BONUS_WAGERING,
       (c) => new WageringService(c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined),
+    );
+    // A thin command port over GrantLifecycleService.forfeit - the shape an external
+    // system/job context needs (no admin session to assert, one named grant rather than every
+    // grant a player holds). Constructed off the container directly, not the module-scoped
+    // `lifecycle` variable below: that one is only built lazily when the router resolves, and a
+    // job calling this port must not depend on the router having been requested first.
+    ctx.provide(
+      BONUS_LIFECYCLE,
+      (c): BonusLifecycleCommands =>
+        createBonusLifecyclePort(
+          new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+          c.get(EVENT_BUS),
+        ),
     );
 
     let lifecycle: GrantLifecycleService | null = null;

@@ -78,6 +78,13 @@
       "when": 1790321212163,
       "tag": "0010_narrow_ricochet",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790325601021,
+      "tag": "0011_flat_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

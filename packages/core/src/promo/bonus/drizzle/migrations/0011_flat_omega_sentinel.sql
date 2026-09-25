@@ -1,0 +1,1 @@
+ALTER TYPE "public"."promo_grant_source" ADD VALUE 'cashback';

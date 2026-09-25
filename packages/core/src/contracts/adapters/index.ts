@@ -57,6 +57,9 @@ export type {
 } from './bonus-grants.js';
 export { BONUS_GRANTS } from './bonus-grants.js';
 
+export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
+
 export type {
   BonusWageringCommands,
   BonusWagerArgs,
