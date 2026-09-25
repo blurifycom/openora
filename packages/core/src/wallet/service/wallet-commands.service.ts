@@ -336,6 +336,7 @@ export class WalletCommandsService implements WalletCommands {
       allowNewCurrency,
       allowNewWallet,
       providerRef,
+      terms,
     }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
@@ -386,6 +387,7 @@ export class WalletCommandsService implements WalletCommands {
         source: type,
         sourceRef: providerRef.providerRefId,
         actor: { type: 'system' },
+        terms,
       });
       if (!granted.ok) {
         throw new WalletBonusGrantRefusedError(granted.reason);

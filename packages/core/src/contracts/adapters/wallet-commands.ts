@@ -5,6 +5,7 @@
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 import type { WagerContext } from './wager-context.js';
+import type { BonusGrantTerms } from './bonus-grants.js';
 
 export type WalletProviderRef = {
   providerName: string;
@@ -64,6 +65,12 @@ export type WalletCreditArgs = {
   /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
   allowNewWallet?: boolean;
   providerRef?: WalletProviderRef;
+  /**
+   * Terms a `gift`/`rain` credit's underlying bonus grant is created under. Ignored by any other
+   * credit type. Omit it and the grant falls back to the bonus module's own default terms, same
+   * as before this field existed.
+   */
+  terms?: BonusGrantTerms;
 };
 
 /** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
