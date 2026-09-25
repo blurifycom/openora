@@ -19,6 +19,7 @@ import { player } from '../schema/index.js';
 import type {
   UpdatePlayerProfileInput,
   SetDisplayCurrencyInput,
+  SetDisplayDecimalPlacesInput,
   DisplayCurrencyInfo,
 } from '../contract/index.js';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
@@ -177,6 +178,7 @@ export class ProfileService implements PlayerProvisioning {
     return {
       currency: await this.resolveEffectiveDisplayCurrency(userId, row),
       supported: [...this.supportedDisplayCurrencies],
+      decimalPlaces: row.displayDecimalPlaces,
     };
   }
 
@@ -210,7 +212,54 @@ export class ProfileService implements PlayerProvisioning {
       });
     });
 
-    return { currency: input.currency, supported: [...this.supportedDisplayCurrencies] };
+    return {
+      currency: input.currency,
+      supported: [...this.supportedDisplayCurrencies],
+      decimalPlaces: row.displayDecimalPlaces,
+    };
+  }
+
+  async setMyDisplayDecimalPlaces(
+    userId: User['id'],
+    input: SetDisplayDecimalPlacesInput,
+  ): Promise<DisplayCurrencyInfo> {
+    await this.ensureProfileRow(userId);
+
+    // The row is locked before `before` is read, so two racing picks each audit the value
+    // they actually replaced; the write and its record commit together or not at all.
+    const row = await this.drizzle.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(player)
+        .where(eq(player.userId, userId))
+        .limit(1)
+        .for('update');
+      if (!locked) {
+        throw new ProfileUserNotFoundError(userId);
+      }
+
+      await tx
+        .update(player)
+        .set({ displayDecimalPlaces: input.decimalPlaces })
+        .where(eq(player.id, locked.id));
+
+      await this.audit.recordInTransaction(tx, {
+        actorId: userId,
+        actorType: 'player',
+        action: 'player.display_decimal_places.set',
+        resourceType: 'player',
+        resourceId: locked.id,
+        before: { displayDecimalPlaces: locked.displayDecimalPlaces },
+        after: { displayDecimalPlaces: input.decimalPlaces },
+      });
+      return { ...locked, displayDecimalPlaces: input.decimalPlaces };
+    });
+
+    return {
+      currency: await this.resolveEffectiveDisplayCurrency(userId, row),
+      supported: [...this.supportedDisplayCurrencies],
+      decimalPlaces: row.displayDecimalPlaces,
+    };
   }
 
   private async resolveEffectiveDisplayCurrency(
