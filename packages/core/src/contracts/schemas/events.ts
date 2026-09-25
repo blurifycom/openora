@@ -750,7 +750,7 @@ export const domainEventSchemas = {
   }),
   // One winner's own Rank Challenge tier, emitted per player after the settlement transaction
   // commits - the shape the in-app/email notification maps 1:1, mirroring promo.race.won.
-  'promo.rankChallenge.won': z.object({
+  'promo.rank-challenge.won': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,
     tierKey: z.string(),

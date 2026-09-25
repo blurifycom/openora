@@ -300,10 +300,10 @@ export const notificationEventMap: NotificationMapEntry[] = [
   ),
 
   mapEvent(
-    'promo.rankChallenge.won',
+    'promo.rank-challenge.won',
     (p) => ({
       userId: p.userId,
-      type: 'promo.rankChallenge.won',
+      type: 'promo.rank-challenge.won',
       title: 'You won a Rank Challenge tier',
       body: `You reached the ${p.tierName} tier and won ${describeRankChallengePrize(p)}.`,
       data: { tierId: p.tierId },

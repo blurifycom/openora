@@ -188,7 +188,7 @@ export default {
         // Same rule as every other payout job here: announce only after the settlement
         // transaction that credited the cash (if any) has committed.
         for (const win of won) {
-          events?.emit('promo.rankChallenge.won', win);
+          events?.emit('promo.rank-challenge.won', win);
         }
       },
     });

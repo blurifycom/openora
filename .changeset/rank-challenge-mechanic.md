@@ -18,5 +18,5 @@ Concurrency: two players crossing the same tier at once resolve to exactly one w
 unique index on the claim's tier, checked through `onConflictDoNothing` plus a `.returning()`
 check rather than a pre-check select, so there is no TOCTOU gap.
 
-New domain event `promo.rankChallenge.won` and notification type (in-app + email), mirroring
+New domain event `promo.rank-challenge.won` and notification type (in-app + email), mirroring
 `promo.race.won`. New `seedRankChallengeLadder` seed helper, mirroring `seedRankLadder`.
