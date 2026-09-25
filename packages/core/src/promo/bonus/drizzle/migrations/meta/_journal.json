@@ -71,6 +71,13 @@
       "when": 1790321212162,
       "tag": "0009_amazing_forgotten_one",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790321212163,
+      "tag": "0010_narrow_ricochet",
+      "breakpoints": true
     }
   ]
 }

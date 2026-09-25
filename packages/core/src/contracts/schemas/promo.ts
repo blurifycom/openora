@@ -36,6 +36,9 @@ export const BONUS_FORFEIT_REASONS = [
   'admin',
   'player_opt_out',
   'withdrawal_while_active',
+  // An offer's own terms breached by the player - e.g. an Activity Bonus that missed a
+  // required wagering day - closed by a scheduled job rather than an admin or an RG event.
+  'terms_breach',
 ] as const;
 
 export const PROMO_OFFER_STATUSES = ['draft', 'active', 'paused', 'archived'] as const;
