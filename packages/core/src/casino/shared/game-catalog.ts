@@ -202,6 +202,33 @@ export function toGameTagSummary(record: GameTag) {
   };
 }
 
+export function toGame(row: {
+  game: Game;
+  provider: GameProvider;
+  categories: GameCategory[];
+  tags: GameTag[];
+}) {
+  return {
+    id: row.game.id,
+    name: row.game.name,
+    slug: row.game.slug,
+    provider: {
+      id: row.provider.id,
+      slug: row.provider.slug,
+      name: row.provider.name,
+      logoUrl: row.provider.logoUrl,
+    },
+    aggregator: row.game.aggregator,
+    categories: row.categories.map(toCategorySummary),
+    tags: row.tags.map(toGameTagSummary),
+    gameType: row.game.gameType,
+    thumbnailUrl: row.game.thumbnailUrl,
+    isActive: row.game.isActive,
+    isUnavailable: row.game.isUnavailable,
+    metadata: row.game.metadata,
+  };
+}
+
 export function isGamePlayable(
   target: Pick<Game, 'isActive' | 'isUnavailable'>,
   provider: Pick<GameProvider, 'isActive'>,

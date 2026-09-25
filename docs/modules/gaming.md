@@ -8,6 +8,7 @@ The game catalog, category ordering, and round management module. `docs/catalog.
 - **Game rounds** - a player's engagement with a game; started by the player, concluded by the provider.
 - **Category ordering** - every category has a configurable sort with a materialized, job-written effective order, manual drag-and-drop positioning, and pinned slots.
 - **Rule-based category membership** - a category can be populated by a rule instead of by hand: a pipeline of clauses over an operator-extensible catalog of rule kinds (built-ins: providers, tags, most played); see below.
+- **Player game favorites** - a player's hearted games, capped at 200; see below.
 - **Read ports** - `GAME_CATALOG_READER` for cross-module access (lobby sections, promotions) and `GAMING_COMMANDS` for wallet integration (`accumulateExternalRound`, `setGameAvailability`) and catalogue imports (`notifyGamesCreated`).
 
 ## Per-category game ordering
@@ -118,6 +119,17 @@ The list is returned in the same effective order players see (`categoryGameOrder
 **Cross-module read** (`GAME_CATALOG_READER.listPlayableGamesInCategory(categoryId, { limit })`) - called by lobby sections and promotions. Returns an ordered list of playable games (active game, active provider, not vendor-unavailable), capped at `limit`. Falls back to name ordering for any game not yet ranked.
 
 The lobby module's own `lobby_category`/`lobby_category_game`/`featured_slot` system is unaffected and unaware of gaming sorts. A lobby section that surfaces a gaming category still reads it through `GAME_CATALOG_READER`, so it inherits the category's configured order automatically - but the lobby layout itself is cached (by default 30 seconds), so a re-rank triggered here can take up to that TTL to become visible in lobby sections.
+
+## Player game favorites
+
+`game_favorite` holds one row per `(userId, gameId)`; a player may hold at most `GAME_FAVORITE_LIMIT` (200). Every route acts on the session's own player.
+
+- **`GET /gaming/favorites`** - full game cards, newest-favorited first. A game hidden by its own or its provider's inactive state, or by vendor unavailability, is omitted but keeps its row, so it reappears when the game is playable again.
+- **`GET /gaming/favorites/ids`** - every favorited id, hidden games included, so a heart icon can render its state anywhere without loading the cards.
+- **`POST /gaming/favorites`** - `{ gameId }`. Idempotent: re-favoriting a game already on the list succeeds even at the cap. `NOT_FOUND` for an unknown game, `CONFLICT` past the cap; the count and insert run under a per-player advisory lock.
+- **`DELETE /gaming/favorites/{gameId}`** - idempotent; removing a game that is not a favorite succeeds.
+
+Deleting a game cascades to its favorite rows.
 
 ## Rule-based category membership
 

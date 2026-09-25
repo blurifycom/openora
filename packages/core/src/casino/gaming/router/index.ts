@@ -48,6 +48,10 @@ import {
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
 import { GameBulkService, GameBulkTooManyGamesError } from '../service/game-bulk.service.js';
+import {
+  GameFavoriteService,
+  GameFavoriteLimitReachedError,
+} from '../service/game-favorite.service.js';
 import { MaxBetExceededError, RgLimitExceededError } from '@openora/core/contracts';
 
 export function createGamingRouter({
@@ -58,6 +62,7 @@ export function createGamingRouter({
   membership,
   tags,
   bulk,
+  favorites,
   adminGuard,
   sorts,
 }: {
@@ -68,6 +73,7 @@ export function createGamingRouter({
   membership: GameCategoryMembershipService;
   tags: GameTagService;
   bulk: GameBulkService;
+  favorites: GameFavoriteService;
   adminGuard: AdminGuard;
   sorts: GameSortService;
 }) {
@@ -135,6 +141,24 @@ export function createGamingRouter({
       mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>
         categories.getActiveCategoryBySlug(input.slug),
       ),
+    ),
+
+    listFavorites: os.listFavorites.handler(({ context }) =>
+      favorites.listFavorites(getUserId(context)),
+    ),
+
+    listFavoriteIds: os.listFavoriteIds.handler(({ context }) =>
+      favorites.listFavoriteIds(getUserId(context)),
+    ),
+
+    addFavorite: os.addFavorite.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: GameNotFoundError, CONFLICT: GameFavoriteLimitReachedError }, () =>
+        favorites.addFavorite(getUserId(context), input.gameId),
+      ),
+    ),
+
+    removeFavorite: os.removeFavorite.handler(({ input, context }) =>
+      favorites.removeFavorite(getUserId(context), input.gameId),
     ),
 
     listAdminProviders: os.listAdminProviders.handler(async ({ input, context }) => {

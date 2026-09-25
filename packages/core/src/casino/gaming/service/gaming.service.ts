@@ -72,8 +72,7 @@ import {
   markCategoriesRankDirtyForGames,
   playableGameCondition,
   tagsByGameIds,
-  toCategorySummary,
-  toGameTagSummary,
+  toGame,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
 import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
@@ -137,33 +136,6 @@ export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundI
   (externalRoundId) =>
     `externalRoundId ${externalRoundId} is already tagged to a different game/user`,
 );
-
-function toGame(row: {
-  game: typeof game.$inferSelect;
-  provider: typeof gameProvider.$inferSelect;
-  categories: (typeof gameCategory.$inferSelect)[];
-  tags: (typeof gameTag.$inferSelect)[];
-}) {
-  return {
-    id: row.game.id,
-    name: row.game.name,
-    slug: row.game.slug,
-    provider: {
-      id: row.provider.id,
-      slug: row.provider.slug,
-      name: row.provider.name,
-      logoUrl: row.provider.logoUrl,
-    },
-    aggregator: row.game.aggregator,
-    categories: row.categories.map(toCategorySummary),
-    tags: row.tags.map(toGameTagSummary),
-    gameType: row.game.gameType,
-    thumbnailUrl: row.game.thumbnailUrl,
-    isActive: row.game.isActive,
-    isUnavailable: row.game.isUnavailable,
-    metadata: row.game.metadata,
-  };
-}
 
 // Reads the links through the caller's transaction so the snapshot matches the
 // locked row; ordered so identical link sets always serialize identically.
