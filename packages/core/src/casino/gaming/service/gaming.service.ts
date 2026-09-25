@@ -502,18 +502,33 @@ export class GamingService {
     id: Game['id'],
     opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
   ) {
+    return this.findGame(eq(game.id, id), id, opts);
+  }
+
+  async getGameBySlug(
+    slug: Game['slug'],
+    opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
+  ) {
+    return this.findGame(eq(game.slug, slug), slug, opts);
+  }
+
+  private async findGame(
+    where: SQL,
+    key: string,
+    opts: { activeOnly?: boolean; includeInvisibleTags?: boolean },
+  ) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .select({ game, provider: gameProvider })
         .from(game)
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-        .where(eq(game.id, id)),
-      new GameNotFoundError(id),
+        .where(where),
+      new GameNotFoundError(key),
     );
-    // The public detail route passes activeOnly: internal callers (updateGame's
+    // The public detail routes pass activeOnly: internal callers (updateGame's
     // return value) keep the unfiltered row so an admin still sees what they wrote.
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
-      throw new GameNotFoundError(id);
+      throw new GameNotFoundError(key);
     }
     const [categories, tags] = await Promise.all([
       categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly),
