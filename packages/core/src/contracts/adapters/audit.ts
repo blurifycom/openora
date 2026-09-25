@@ -95,15 +95,6 @@ export type AuditWritePort = {
       correlationId?: string | null;
     } & Partial<ClientMeta>,
   ): Promise<void>;
-  /**
-   * Maps each payload as the audit event subscriber would and appends the rows under one
-   * `audit_log` lock hold, chained in array order.
-   */
-  recordEventsInTransaction(
-    tx: unknown,
-    topic: DomainEventName,
-    payloads: Record<string, unknown>[],
-  ): Promise<void>;
 };
 
 export const AUDIT_WRITER: SealedToken<AuditWritePort> =

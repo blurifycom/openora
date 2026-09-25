@@ -112,11 +112,9 @@ export const makeEventBus = (): MockedEventBus =>
 export const makeAuditWriter = (): AuditWritePort & {
   record: Mock;
   recordInTransaction: Mock;
-  recordEventsInTransaction: Mock;
 } => ({
   record: vi.fn(async () => undefined),
   recordInTransaction: vi.fn(async () => undefined),
-  recordEventsInTransaction: vi.fn(async () => undefined),
 });
 
 /**

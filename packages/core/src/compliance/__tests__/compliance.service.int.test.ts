@@ -967,7 +967,7 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
     const providerId = await seedProvider();
     const [first, second, third] = await seedManyGames(providerId, 3);
     const actorId = randomUUID();
-    const { svc, events, audit } = makeService();
+    const { svc, events } = makeService();
     await svc.upsertGameGeoRules(
       { gameId: first!, countryCodes: ['DK'], reason: 'original reason' },
       actorId,
@@ -986,21 +986,22 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       unchanged: 1,
       notFound: { gameIds: [], providerIds: [] },
     });
-    expect(audit.recordEventsInTransaction).toHaveBeenCalledTimes(1);
-    const [, auditTopic, auditPayloads] = audit.recordEventsInTransaction.mock.calls[0]!;
-    expect(auditTopic).toBe('compliance.game-geo-rule.upserted');
-    expect(auditPayloads).toHaveLength(2);
-
-    const upsertPayloads = events.emit.mock.calls
-      .filter(([topic]) => topic === 'compliance.game-geo-rule.upserted')
-      .map(
-        ([, payload]) =>
-          payload as { gameId: string; before: unknown; reason: string; auditRecorded?: true },
-      );
-    expect(upsertPayloads).toHaveLength(2);
-    expect(upsertPayloads.map((p) => p.gameId).sort()).toEqual([second, third].sort());
-    expect(upsertPayloads.every((p) => p.before === null)).toBe(true);
-    expect(upsertPayloads.every((p) => p.auditRecorded === true)).toBe(true);
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith('compliance.game-geo-rules.bulk_updated', {
+      operation: 'restrict',
+      countryCode: 'DK',
+      reason: 'bulk restriction',
+      rules: [second, third]
+        .sort()
+        .map((gameId) =>
+          expect.objectContaining({ gameId, countryCode: 'DK', reason: 'bulk restriction' }),
+        ),
+      target: { gameIds: [first, second, third].sort(), providerIds: [] },
+      notFound: { gameIds: [], providerIds: [] },
+      actorId,
+      ip: NO_META.ip,
+      userAgent: NO_META.userAgent,
+    });
 
     const firstRule = await db.drizzle.db
       .select()
@@ -1040,7 +1041,7 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
     const providerId = await seedProvider();
     const gameIds = await seedManyGames(providerId, 3);
     const actorId = randomUUID();
-    const { svc, events, audit } = makeService();
+    const { svc, events } = makeService();
     await svc.bulkRestrictGameGeoRules(
       { gameIds, countryCode: 'DK', reason: 'restricted' },
       actorId,
@@ -1050,7 +1051,6 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       .insert(providerGeoRule)
       .values({ providerId, countryCode: 'DK', reason: 'provider licence restriction' });
     events.emit.mockClear();
-    audit.recordEventsInTransaction.mockClear();
 
     const result = await svc.bulkUnrestrictGameGeoRules(
       { providerIds: [providerId], countryCode: 'DK', reason: 'licence restored' },
@@ -1065,10 +1065,17 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       globallyBlocked: false,
       notFound: { gameIds: [], providerIds: [] },
     });
-    expect(audit.recordEventsInTransaction).toHaveBeenCalledTimes(1);
-    const [, auditTopic, auditPayloads] = audit.recordEventsInTransaction.mock.calls[0]!;
-    expect(auditTopic).toBe('compliance.game-geo-rule.deleted');
-    expect(auditPayloads).toHaveLength(3);
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.game-geo-rules.bulk_updated',
+      expect.objectContaining({
+        operation: 'unrestrict',
+        rules: [...gameIds]
+          .sort()
+          .map((gameId) => expect.objectContaining({ gameId, reason: 'restricted' })),
+        target: { gameIds: [], providerIds: [providerId] },
+      }),
+    );
     expect(
       await db.drizzle.db.select().from(gameGeoRule).where(inArray(gameGeoRule.gameId, gameIds)),
     ).toHaveLength(0);
@@ -1078,11 +1085,6 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
         .from(providerGeoRule)
         .where(eq(providerGeoRule.providerId, providerId)),
     ).toHaveLength(1);
-    const deletePayloads = events.emit.mock.calls
-      .filter(([topic]) => topic === 'compliance.game-geo-rule.deleted')
-      .map(([, payload]) => payload as { gameId: string; after: unknown });
-    expect(deletePayloads).toHaveLength(3);
-    expect(deletePayloads.every((p) => p.after === null)).toBe(true);
   });
 
   it('unrestrict is idempotent: a game with no matching rule is unchanged, not an error', async () => {

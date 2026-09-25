@@ -65,6 +65,20 @@ async function auditEntries(resourceId: string, action: string) {
   return (await readJson(response)).items as Array<Record<string, unknown>>;
 }
 
+async function bulkAuditEntries(gameId: string, operation: 'restrict' | 'unrestrict') {
+  const response = await admin.get('/audit/logs?action=compliance.game-geo-rules.bulk_updated');
+  expect(response.status).toBe(200);
+  const entries = (await readJson(response)).items as Array<Record<string, unknown>>;
+  return entries.filter((entry) => {
+    const before = entry['before'] as { rules: { gameId: string }[] };
+    const after = entry['after'] as { operation: string; rules: { gameId: string }[] };
+    return (
+      after.operation === operation &&
+      [...before.rules, ...after.rules].some((rule) => rule.gameId === gameId)
+    );
+  });
+}
+
 async function seedGame(label: string): Promise<SeededGame> {
   const drizzle = app.container.get(DRIZZLE).db;
   const [provider] = await drizzle
@@ -545,7 +559,7 @@ describe('multi-country geo-blocking', () => {
 });
 
 describe('bulk geo restrict / unrestrict', () => {
-  it('restricts and unrestricts many games for one country in a single call, audited per game', async () => {
+  it('restricts and unrestricts many games for one country in a single call, audited once per call', async () => {
     const first = await seedGame('Bulk geo first');
     const second = await seedGame('Bulk geo second');
     const bothGameIds = [first.gameId, second.gameId];
@@ -580,21 +594,24 @@ describe('bulk geo restrict / unrestrict', () => {
     expect(rules).toHaveLength(2);
 
     await vi.waitFor(async () => {
-      for (const rule of rules) {
-        expect(await auditEntries(rule.id, 'compliance.game-geo-rule.upserted')).toEqual([
-          expect.objectContaining({
-            actorType: 'admin',
-            resourceType: 'game-geo-rule',
-            resourceId: rule.id,
-            before: null,
-            after: expect.objectContaining({
-              reason: 'bulk restriction',
-              gameId: rule.gameId,
-              countryCode: 'US',
-            }),
+      expect(await bulkAuditEntries(first.gameId, 'restrict')).toEqual([
+        expect.objectContaining({
+          actorType: 'admin',
+          resourceType: 'game-geo-rule',
+          resourceId: null,
+          after: expect.objectContaining({
+            operation: 'restrict',
+            countryCode: 'US',
+            reason: 'bulk restriction',
+            rules: [...bothGameIds]
+              .sort()
+              .map((gameId) =>
+                expect.objectContaining({ gameId, countryCode: 'US', reason: 'bulk restriction' }),
+              ),
+            target: { gameIds: [...bothGameIds].sort(), providerIds: [] },
           }),
-        ]);
-      }
+        }),
+      ]);
     });
 
     const restrictAgain = await admin.post('/compliance/game-geo-rules/bulk/restrict', {
@@ -630,22 +647,33 @@ describe('bulk geo restrict / unrestrict', () => {
     });
 
     await vi.waitFor(async () => {
-      for (const rule of rules) {
-        expect(await auditEntries(rule.id, 'compliance.game-geo-rule.deleted')).toEqual([
-          expect.objectContaining({
-            resourceType: 'game-geo-rule',
-            resourceId: rule.id,
-            after: { state: null, reason: 'bulk restore', gameId: rule.gameId, countryCode: 'US' },
+      expect(await bulkAuditEntries(first.gameId, 'unrestrict')).toEqual([
+        expect.objectContaining({
+          resourceType: 'game-geo-rule',
+          before: {
+            rules: rules.map((rule) =>
+              expect.objectContaining({
+                id: rule.id,
+                gameId: rule.gameId,
+                reason: 'bulk restriction',
+              }),
+            ),
+          },
+          after: expect.objectContaining({
+            operation: 'unrestrict',
+            reason: 'bulk restore',
+            rules: [],
           }),
-        ]);
-      }
+        }),
+      ]);
     });
+    expect(await bulkAuditEntries(first.gameId, 'restrict')).toHaveLength(1);
 
     const rulesAfterUnrestrict = await admin.get(`/compliance/game-geo-rules?${gamesQuery}`);
     expect(await readJson(rulesAfterUnrestrict)).toMatchObject({ items: [], total: 0 });
   });
 
-  it('records exactly one audit row per changed game and none for a game that was already restricted', async () => {
+  it('records one audit row listing only the games the call changed', async () => {
     const alreadyRestricted = await seedGame('Bulk audit already-restricted');
     const changedFirst = await seedGame('Bulk audit changed first');
     const changedSecond = await seedGame('Bulk audit changed second');
@@ -669,21 +697,18 @@ describe('bulk geo restrict / unrestrict', () => {
       notFound: { gameIds: [], providerIds: [] },
     });
 
-    const changedRulesRes = await admin.get(
-      `/compliance/game-geo-rules?gameIds[]=${changedFirst.gameId}&gameIds[]=${changedSecond.gameId}`,
-    );
-    const changedRules = (await readJson(changedRulesRes)).items as Array<{
-      id: string;
-      gameId: string;
-    }>;
-    expect(changedRules).toHaveLength(2);
-
     await vi.waitFor(async () => {
-      for (const rule of changedRules) {
-        expect(await auditEntries(rule.id, 'compliance.game-geo-rule.upserted')).toHaveLength(1);
-      }
+      expect(await bulkAuditEntries(changedFirst.gameId, 'restrict')).toEqual([
+        expect.objectContaining({
+          after: expect.objectContaining({
+            rules: [changedFirst.gameId, changedSecond.gameId]
+              .sort()
+              .map((gameId) => expect.objectContaining({ gameId })),
+          }),
+        }),
+      ]);
     });
-
+    expect(await bulkAuditEntries(alreadyRestricted.gameId, 'restrict')).toEqual([]);
     expect(
       await auditEntries(preExistingRule.id, 'compliance.game-geo-rule.upserted'),
     ).toHaveLength(1);

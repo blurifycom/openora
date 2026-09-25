@@ -121,6 +121,19 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'compliance.game-geo-rules.bulk_updated') {
+    const rules = Array.isArray(p['rules']) ? p['rules'] : [];
+    const restricted = p['operation'] === 'restrict';
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game-geo-rule',
+      before: { rules: restricted ? [] : rules },
+      after: restricted ? p : { ...p, rules: [] },
+    };
+  }
+
   if (
     topic === 'compliance.provider-geo-rule.upserted' ||
     topic === 'compliance.provider-geo-rule.deleted'
@@ -1181,12 +1194,6 @@ export async function mapEventToRecord(
   return base;
 }
 
-const AUDIT_RECORDED_INLINE_TOPICS = new Set<DomainEventName>([
-  'compliance.kyc.updated',
-  'compliance.game-geo-rule.upserted',
-  'compliance.game-geo-rule.deleted',
-]);
-
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.registered',
   'identity.user.registration.failed',
@@ -1296,6 +1303,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.geo-rule.added',
   'compliance.game-geo-rule.upserted',
   'compliance.game-geo-rule.deleted',
+  'compliance.game-geo-rules.bulk_updated',
   'compliance.provider-geo-rule.upserted',
   'compliance.provider-geo-rule.deleted',
   'cms.page.published',
@@ -1349,10 +1357,6 @@ export default {
         record: (entry) => svc.record(entry).then(() => undefined),
         recordInTransaction: (tx, entry) =>
           svc.recordInTransaction(tx, entry).then(() => undefined),
-        recordEventsInTransaction: async (tx, topic, payloads) => {
-          const records = await Promise.all(payloads.map((p) => mapEventToRecord(topic, p)));
-          await svc.recordEventsInTransaction(tx, records);
-        },
       };
     });
 
@@ -1361,7 +1365,9 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
-        if (AUDIT_RECORDED_INLINE_TOPICS.has(topic) && payload['auditRecorded'] === true) {
+        // KYC exemptions append their audit record inside the state transaction, then
+        // publish this event for realtime and other consumers after commit.
+        if (topic === 'compliance.kyc.updated' && payload['auditRecorded'] === true) {
           return;
         }
         const svc = svcRef;

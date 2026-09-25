@@ -18,7 +18,7 @@ import {
   type IdentityReader,
   type User,
 } from '@openora/core/contracts';
-import { auditLog, type AuditLog, type AuditLogInsert } from '../schema/index.js';
+import { auditLog, type AuditLog } from '../schema/index.js';
 import type {
   AuditListFilters,
   AuditExportFilters,
@@ -226,76 +226,6 @@ export class AuditService {
       return inserted;
     });
     return row;
-  }
-
-  static readonly INSERT_CHUNK_SIZE = 1_000;
-
-  /**
-   * Batch counterpart to `recordInTransaction`; `records` are chained in array order.
-   */
-  async recordEventsInTransaction(tx: unknown, records: RecordInput[]): Promise<AuditLog[]> {
-    if (records.length === 0) {
-      return [];
-    }
-    const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
-    return withAdvisoryXactLock(txn, 'audit_log', async () => {
-      const [latest] = await txn
-        .select({ hash: auditLog.hash })
-        .from(auditLog)
-        .orderBy(desc(auditLog.seq))
-        .limit(1);
-      let prevHash = latest?.hash ?? null;
-
-      const seqRows = await txn.execute<{ seq: string | number }>(
-        sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq
-            FROM generate_series(1, ${records.length}) AS ord(n)
-            ORDER BY n`,
-      );
-      const seqs = seqRows.rows.map((row) => +row.seq);
-      if (seqs.length !== records.length) {
-        throw new Error('audit seq allocation returned fewer rows than the batch');
-      }
-      for (let i = 1; i < seqs.length; i++) {
-        const current = seqs[i];
-        const previous = seqs[i - 1];
-        if (current === undefined || previous === undefined || current <= previous) {
-          throw new Error('audit seq allocation returned a non-ascending sequence');
-        }
-      }
-
-      const createdAt = new Date();
-      const values: AuditLogInsert[] = records.map((input, i) => {
-        const id = randomUUID();
-        const seq = seqs[i];
-        if (seq === undefined) {
-          throw new Error('audit seq allocation returned fewer rows than the batch');
-        }
-        const hash = computeHash({
-          id,
-          actorId: input.actorId ?? null,
-          actorType: input.actorType,
-          action: input.action,
-          resourceType: input.resourceType,
-          resourceId: input.resourceId ?? null,
-          before: input.before ?? null,
-          after: input.after ?? null,
-          result: input.result ?? null,
-          seq,
-          createdAt: createdAt.toISOString(),
-          prevHash,
-        });
-        const row = { ...input, id, seq, prevHash, createdAt, hash };
-        prevHash = hash;
-        return row;
-      });
-
-      const inserted: AuditLog[] = [];
-      for (let i = 0; i < values.length; i += AuditService.INSERT_CHUNK_SIZE) {
-        const chunk = values.slice(i, i + AuditService.INSERT_CHUNK_SIZE);
-        inserted.push(...(await txn.insert(auditLog).values(chunk).returning()));
-      }
-      return inserted;
-    });
   }
 
   async list(filters: AuditListFilters) {

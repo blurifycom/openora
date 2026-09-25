@@ -191,31 +191,18 @@ export async function withAdvisoryXactLocks<T>(
   txn: DrizzleTx,
   keys: readonly string[],
   fn: () => Promise<T>,
+  mode: 'exclusive' | 'shared' = 'exclusive',
 ): Promise<T> {
   if (keys.length > 0) {
     const keyList = sql.join(
       keys.map((key) => sql`${key}`),
       sql`, `,
     );
-    await txn.execute(
-      sql`select pg_advisory_xact_lock(lock_id) from (select distinct hashtext(key) as lock_id from unnest(array[${keyList}]::text[]) as key order by lock_id) as locks`,
-    );
-  }
-  return fn();
-}
-
-export async function withSharedAdvisoryXactLocks<T>(
-  txn: DrizzleTx,
-  keys: readonly string[],
-  fn: () => Promise<T>,
-): Promise<T> {
-  if (keys.length > 0) {
-    const keyList = sql.join(
-      keys.map((key) => sql`${key}`),
-      sql`, `,
+    const lockFn = sql.raw(
+      mode === 'shared' ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock',
     );
     await txn.execute(
-      sql`select pg_advisory_xact_lock_shared(lock_id) from (select distinct hashtext(key) as lock_id from unnest(array[${keyList}]::text[]) as key order by lock_id) as locks`,
+      sql`select ${lockFn}(lock_id) from (select distinct hashtext(key) as lock_id from unnest(array[${keyList}]::text[]) as key order by lock_id) as locks`,
     );
   }
   return fn();

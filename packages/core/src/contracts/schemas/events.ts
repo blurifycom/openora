@@ -886,8 +886,6 @@ export const domainEventSchemas = {
     before: gameGeoRuleEventState.nullable(),
     after: gameGeoRuleEventState,
     actorId: UuidSchema,
-    // Set when the writer already appended the audit record; audit's subscriber skips it.
-    auditRecorded: z.literal(true).optional(),
   }),
 
   'compliance.game-geo-rule.deleted': authContextBase.extend({
@@ -898,8 +896,14 @@ export const domainEventSchemas = {
     before: gameGeoRuleEventState,
     after: z.null(),
     actorId: UuidSchema,
-    // Set when the writer already appended the audit record; audit's subscriber skips it.
-    auditRecorded: z.literal(true).optional(),
+  }),
+
+  'compliance.game-geo-rules.bulk_updated': gameBulkEventBase.extend({
+    operation: z.enum(['restrict', 'unrestrict']),
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    // The rules the call added (restrict) or removed (unrestrict).
+    rules: z.array(gameGeoRuleEventState),
   }),
 
   'compliance.provider-geo-rule.upserted': authContextBase.extend({
