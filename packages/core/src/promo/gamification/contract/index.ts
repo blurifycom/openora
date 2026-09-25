@@ -451,8 +451,11 @@ export const SetRankChallengeLadderInputSchema = z.object({
 });
 export type SetRankChallengeLadderInput = z.infer<typeof SetRankChallengeLadderInputSchema>;
 
+// Keyed by tierId, not a claim row id: `promoRankChallengeClaim.tierId` is unique per claim
+// (see schema/index.ts) and the API's own RankChallengeClaimSchema never exposes a row id, so
+// this is the one identifier the admin UI already has on hand from every claim/queue listing.
 export const MarkRankChallengeFulfilledInputSchema = z.object({
-  claimId: UuidSchema,
+  tierId: UuidSchema,
   note: z.string().min(1).max(1000),
 });
 export type MarkRankChallengeFulfilledInput = z.infer<typeof MarkRankChallengeFulfilledInputSchema>;
@@ -585,7 +588,7 @@ export const gamificationContract = {
           .output(z.array(RankChallengeClaimSchema)),
 
         markFulfilled: oc
-          .route({ method: 'POST', path: '/backoffice/promo/rank-challenge/fulfilment/{claimId}' })
+          .route({ method: 'POST', path: '/backoffice/promo/rank-challenge/fulfilment/{tierId}' })
           .input(MarkRankChallengeFulfilledInputSchema)
           .output(RankChallengeClaimSchema),
       },

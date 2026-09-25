@@ -207,7 +207,7 @@ export function createGamificationRouter({
           markFulfilled: os.admin.rankChallenge.fulfilment.markFulfilled.handler(
             async ({ input, context }) => {
               const { userId } = await adminGuard.assert(context, 'bonus', 'update');
-              return rankChallengeAdmin.markFulfilled(userId, input.claimId, input.note);
+              return rankChallengeAdmin.markFulfilled(userId, input.tierId, input.note);
             },
           ),
         },

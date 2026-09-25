@@ -219,12 +219,17 @@ export class RankChallengeAdminService {
     return rows.map(toClaim);
   }
 
-  async markFulfilled(adminId: Uuid, claimId: Uuid, note: string): Promise<RankChallengeClaim> {
+  /**
+   * Keyed by `tierId`, not the claim's own row id: `promoRankChallengeClaim.tierId` is unique
+   * per claim, and it is the one identifier `RankChallengeClaimSchema` actually exposes to the
+   * admin UI (see contract/index.ts).
+   */
+  async markFulfilled(adminId: Uuid, tierId: Uuid, note: string): Promise<RankChallengeClaim> {
     return this.drizzle.db.transaction(async (tx) => {
       const [claim] = await tx
         .select()
         .from(promoRankChallengeClaim)
-        .where(eq(promoRankChallengeClaim.id, claimId))
+        .where(eq(promoRankChallengeClaim.tierId, tierId))
         .for('update');
       if (!claim) {
         throw new Error('rank challenge claim not found');
@@ -236,13 +241,13 @@ export class RankChallengeAdminService {
           physicalFulfilledBy: adminId,
           physicalFulfillmentNote: note,
         })
-        .where(eq(promoRankChallengeClaim.id, claimId));
+        .where(eq(promoRankChallengeClaim.tierId, tierId));
       await this.audit.recordInTransaction(tx, {
         actorId: adminId,
         actorType: 'admin',
         action: 'promo.rankChallenge.fulfilled',
         resourceType: 'promo_rank_challenge_claim',
-        resourceId: claimId,
+        resourceId: tierId,
         before: { physicalFulfilledAt: null },
         after: { physicalFulfilledAt: new Date().toISOString(), note },
       });
@@ -264,7 +269,7 @@ export class RankChallengeAdminService {
           eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
         )
         .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId))
-        .where(eq(promoRankChallengeClaim.id, claimId));
+        .where(eq(promoRankChallengeClaim.tierId, tierId));
       if (!row) {
         throw new Error('rank challenge claim vanished after update');
       }

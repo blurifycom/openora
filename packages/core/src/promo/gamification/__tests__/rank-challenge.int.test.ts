@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { mock, makeAuditWriter } from '../../../testing/mock.js';
 import type {
@@ -282,19 +281,12 @@ describe('the fulfilment queue', () => {
 
     const queue = await adminService.listFulfilmentQueue();
     expect(queue).toHaveLength(1);
-    const claimId = queue[0]?.tierId
-      ? (
-          await db.drizzle.db
-            .select({ id: promoRankChallengeClaim.id })
-            .from(promoRankChallengeClaim)
-            .where(eq(promoRankChallengeClaim.tierId, queue[0].tierId))
-        )[0]?.id
-      : undefined;
-    if (!claimId) {
+    const tierId = queue[0]?.tierId;
+    if (!tierId) {
       throw new Error('claim not found');
     }
 
-    const fulfilled = await adminService.markFulfilled(randomUUID(), claimId, 'Shipped via FedEx');
+    const fulfilled = await adminService.markFulfilled(randomUUID(), tierId, 'Shipped via FedEx');
 
     expect(fulfilled.physicalFulfillmentNote).toBe('Shipped via FedEx');
     expect(await adminService.listFulfilmentQueue()).toHaveLength(0);
