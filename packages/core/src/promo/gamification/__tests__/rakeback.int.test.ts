@@ -62,7 +62,7 @@ const givePlayerTier = async (userId: string, tierKey: string) => {
 
 beforeAll(async () => {
   db = await createTestDb([migrate]);
-  rakeback = new RakebackService(mock<WalletCommands>({ credit }), logger);
+  rakeback = new RakebackService(() => mock<WalletCommands>({ credit }), logger);
 });
 
 afterAll(() => db.drop());

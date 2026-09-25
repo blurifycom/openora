@@ -33,15 +33,22 @@ const countsToward = (eligibleProducts: readonly string[], product: string) =>
  *
  * Own-money only: `args.realAmount` already excludes whatever part of the stake a bonus grant
  * paid for, so wagering a bonus never earns real-money rakeback on funds the player never risked.
+ *
+ * Takes a `getWallet` thunk rather than a resolved `WalletCommands`: `WALLET_COMMANDS`'s own
+ * factory resolves `WAGER_TRACKING` transitively (through the bonus module's wagering service),
+ * so resolving `WALLET_COMMANDS` eagerly while `WAGER_TRACKING` itself is still being built is a
+ * circular `Container.get`. Deferring the lookup to the first bet - long after both tokens have
+ * finished resolving - breaks the cycle.
  */
 export class RakebackService implements WagerTrackingCommands {
   constructor(
-    private readonly wallet: WalletCommands | undefined,
+    private readonly getWallet: () => WalletCommands | undefined,
     private readonly logger: { warn: (context: object, message: string) => void },
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
-    if (!this.wallet || moneyCompare(args.realAmount, ZERO) <= 0) {
+    const wallet = this.getWallet();
+    if (!wallet || moneyCompare(args.realAmount, ZERO) <= 0) {
       return;
     }
     const [config] = await tx
@@ -78,7 +85,7 @@ export class RakebackService implements WagerTrackingCommands {
     if (moneyCompare(rakeback, ZERO) <= 0) {
       return;
     }
-    const outcome = await this.wallet.credit(tx, {
+    const outcome = await wallet.credit(tx, {
       userId: args.userId,
       amount: rakeback,
       currency: args.currency,

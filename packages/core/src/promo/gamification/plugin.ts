@@ -63,7 +63,7 @@ const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
   new StreakService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
 
 const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RakebackService(c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined, logger);
+  new RakebackService(() => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined), logger);
 
 export default {
   id: 'gamification',
