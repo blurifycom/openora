@@ -162,7 +162,16 @@ export class OfferService {
       return context;
     }
     const lifetime = await this.wallet.getLifetimeDeposit(userId);
-    return { ...context, isFirstDeposit: moneyCompare(lifetime, '0') === 0 };
+    // null means at least one currency couldn't be priced, which only happens once a deposit
+    // exists - so unpriced reads the same as "not the first deposit".
+    return { ...context, isFirstDeposit: lifetime !== null && moneyCompare(lifetime, '0') === 0 };
+  }
+
+  // Fallback for a WalletReader implementation without isFirstDeposit; null (an unpriced
+  // currency) reads as "not the first deposit", same direction as offerFacts above.
+  private async isFirstDepositByLifetimeTotal(userId: Uuid, depositAmount: string) {
+    const lifetime = await this.wallet.getLifetimeDeposit(userId);
+    return lifetime !== null && moneyCompare(lifetime, depositAmount) === 0;
   }
 
   /** The offers open to this player right now, with what their deposits have put toward each. */
@@ -242,7 +251,7 @@ export class OfferService {
     // `created_at` against every other completed deposit, which does not move once written.
     const isFirstDeposit = this.wallet.isFirstDeposit
       ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId)
-      : moneyCompare(await this.wallet.getLifetimeDeposit(deposit.userId), deposit.amount) === 0;
+      : await this.isFirstDepositByLifetimeTotal(deposit.userId, deposit.amount);
     // Re-evaluated here rather than trusted from opt-in time: this job can run after a
     // self-exclusion or ban that landed between the opt-in and this deposit settling, and the
     // forfeit sweep that reacted to that exclusion has no way to know a grant would appear later.

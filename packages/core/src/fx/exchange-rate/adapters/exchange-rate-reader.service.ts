@@ -53,6 +53,8 @@ export type ExchangeRateReaderServiceDeps = {
   freshTtlMs: number;
   hardMaxAgeMs: number;
   providerTimeoutMs: number;
+  /** See `ExchangeRateConfigSchema.failureCooldownMs`. */
+  failureCooldownMs: number;
 };
 
 /**
@@ -81,6 +83,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly freshTtlMs: number;
   private readonly hardMaxAgeMs: number;
   private readonly providerTimeoutMs: number;
+  private readonly failureCooldownMs: number;
   private readonly inFlight = new Map<string, Promise<ExchangeRateQuote>>();
   private readonly legResolution = new Map<string, Promise<ExchangeRateQuote | null>>();
   private readonly failedUntil = new Map<string, number>();
@@ -94,6 +97,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     this.freshTtlMs = deps.freshTtlMs;
     this.hardMaxAgeMs = deps.hardMaxAgeMs;
     this.providerTimeoutMs = deps.providerTimeoutMs;
+    this.failureCooldownMs = deps.failureCooldownMs;
   }
 
   async getRate(from: string, to: string): Promise<ExchangeRateQuote | null> {
@@ -199,7 +203,7 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       }
       this.failedUntil.delete(oldest);
     }
-    this.failedUntil.set(currency, now + this.providerTimeoutMs);
+    this.failedUntil.set(currency, now + this.failureCooldownMs);
   }
 
   private async readRow(currency: string): Promise<{ rate: string; providerAsOf: Date } | null> {

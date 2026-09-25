@@ -1,4 +1,4 @@
-import { MONEY_SCALE, MoneyAmountSchema } from '@openora/core/contracts';
+import { MONEY_SCALE, MoneyAmountSchema, type ExchangeRateReader } from '@openora/core/contracts';
 import { sql } from 'drizzle-orm';
 import type { DrizzleTx } from './drizzle.js';
 
@@ -131,6 +131,33 @@ function fromUnitsAtScale(units: bigint, scale: number): string {
   const digits = units.toString().padStart(scale + 1, '0');
   const whole = digits.slice(0, digits.length - scale) || '0';
   return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
+}
+
+// A no-base-currency platform holds each row in whatever coin it was made in, so a
+// compliance total (re-KYC cumulative deposits, a high_roller threshold) has to price every
+// currency into one before it can be summed. A row this can't price (no quote) is never
+// silently dropped from the total - that would undercount a compliance check - so the whole
+// sum reads back as null and the caller decides what "we don't know" means for it. Never
+// guess a value to fill the gap: a fabricated total sums, compares and gets written down like
+// a real one, and nothing downstream can tell the difference.
+export async function sumInPivot(
+  rows: readonly { currency: string; total: string }[],
+  pivotCurrency: string,
+  rates: ExchangeRateReader | undefined,
+): Promise<string | null> {
+  let total = '0';
+  for (const row of rows) {
+    if (row.currency.toUpperCase() === pivotCurrency.toUpperCase()) {
+      total = moneyAdd(total, row.total);
+      continue;
+    }
+    const converted = rates ? await rates.convert(row.total, row.currency, pivotCurrency) : null;
+    if (converted === null) {
+      return null;
+    }
+    total = moneyAdd(total, converted);
+  }
+  return total;
 }
 
 // Escape LIKE wildcards so a caller-supplied value matches literally and a

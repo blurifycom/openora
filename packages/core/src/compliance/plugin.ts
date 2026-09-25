@@ -298,6 +298,7 @@ export default {
         statusWriter: c.get(KYC_STATUS_WRITER),
         identityReader: c.get(IDENTITY_READER),
         platformConfig,
+        exchangeRateReader: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
       });
       kycRef = kyc;
       const compliance = makeComplianceService(c);

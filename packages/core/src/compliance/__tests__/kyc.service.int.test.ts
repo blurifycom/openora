@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { desc, eq, sql } from 'drizzle-orm';
 import type {
+  ExchangeRateReader,
   KycAdapter,
   KycStatusWriter,
   KycVendorStatus,
@@ -21,7 +22,13 @@ let db: TestDb;
 
 type AdapterResult = { referenceId: string; status: KycVendorStatus; verificationUrl?: string };
 
-function makeService(options: { adapter?: Partial<AdapterResult>; config?: PlatformConfig } = {}) {
+function makeService(
+  options: {
+    adapter?: Partial<AdapterResult>;
+    config?: PlatformConfig;
+    exchangeRateReader?: ExchangeRateReader;
+  } = {},
+) {
   const events = makeEventBus();
   const audit = makeAuditWriter();
   const adapterResult: AdapterResult = {
@@ -42,6 +49,7 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
     statusWriter,
     identityReader: makeIdentityReader(),
     ...(options.config ? { platformConfig: options.config } : {}),
+    ...(options.exchangeRateReader ? { exchangeRateReader: options.exchangeRateReader } : {}),
   });
   return { svc, events, audit, kycAdapter, statusWriter, adapterResult };
 }
@@ -86,6 +94,24 @@ async function verificationsOf(userId: string) {
     .from(kycVerification)
     .where(eq(kycVerification.userId, userId))
     .orderBy(desc(kycVerification.createdAt));
+}
+
+// A fake pivot-rate reader for the fx-aware handleDeposit tests: `prices` gives the USD value
+// of one whole unit of a currency, `unpriced` names currencies that answer null (no quote).
+function makeRates(prices: Record<string, string>, unpriced: string[] = []): ExchangeRateReader {
+  return mock<ExchangeRateReader>({
+    getRate: vi.fn(async () => null),
+    convert: vi.fn(async (amount: string, from: string, to: string) => {
+      if (from === to) {
+        return amount;
+      }
+      if (unpriced.includes(from)) {
+        return null;
+      }
+      const price = prices[from];
+      return price === undefined ? null : String(Number(amount) * Number(price));
+    }),
+  });
 }
 
 beforeAll(async () => {
@@ -550,6 +576,58 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
       expect.anything(),
     );
     expect(await verificationsOf(userId)).toHaveLength(2);
+  });
+
+  it('fires on the deposit that crosses the threshold once summed across currencies', async () => {
+    const rates = makeRates({ BTC: '6000', ETH: '5000' });
+    const { svc, statusWriter } = makeService({
+      config: mock<PlatformConfig>({ kyc: { reverifyThresholds: { USD: '10000' } } }),
+      exchangeRateReader: rates,
+    });
+    const { userId } = await seedPlayer();
+
+    await seedDeposit(userId, '1', 'BTC');
+    await svc.handleDeposit(userId);
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+
+    await seedDeposit(userId, '1', 'ETH');
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'resubmission_requested',
+      expect.objectContaining({ source: 'reverify' }),
+      expect.anything(),
+    );
+    const [row] = await verificationsOf(userId);
+    expect(Number(row?.triggerDeposits)).toBe(11000);
+  });
+
+  it('writes no row when a deposit currency cannot be priced, then fires once rates return', async () => {
+    const config = mock<PlatformConfig>({ kyc: { reverifyThresholds: { USD: '10000' } } });
+    const { userId } = await seedPlayer();
+    await seedDeposit(userId, '1', 'DOGE');
+
+    const unpriced = makeService({ config, exchangeRateReader: makeRates({}, ['DOGE']) });
+    await unpriced.svc.handleDeposit(userId);
+
+    expect(unpriced.statusWriter.setStatus).not.toHaveBeenCalled();
+    expect(await verificationsOf(userId)).toHaveLength(0);
+
+    await seedDeposit(userId, '1', 'BTC');
+    const priced = makeService({
+      config,
+      exchangeRateReader: makeRates({ DOGE: '1', BTC: '20000' }),
+    });
+    await priced.svc.handleDeposit(userId);
+
+    expect(priced.statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'resubmission_requested',
+      expect.objectContaining({ source: 'reverify' }),
+      expect.anything(),
+    );
+    expect(await verificationsOf(userId)).toHaveLength(1);
   });
 });
 

@@ -12,7 +12,7 @@ import {
   withAdvisoryXactLock,
   assertRateLimit,
   createLogger,
-  moneyToNumber,
+  mapConcurrent,
   moneyEquals,
   moneyAdd,
   moneyCompare,
@@ -1609,11 +1609,16 @@ export class WalletService {
     // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
     const pageWalletIds = [...new Set(pageRows.map((r) => r.tx.walletId))];
     const frequentWalletIds = await this.frequentWithdrawalWalletIds(db, pageWalletIds);
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
 
-    const items: WithdrawalQueueItem[] = pageRows.map((r) => {
+    const items: WithdrawalQueueItem[] = await mapConcurrent(pageRows, 5, async (r) => {
       const summary = byUserId.get(r.userId);
       const riskTags: string[] = [];
-      if (moneyToNumber(r.tx.amount) >= moneyToNumber(LARGE_WITHDRAWAL_THRESHOLD)) {
+      // The queue tag is priced in the fx pivot, same as auto-approval - a raw compare let a
+      // 5000 DOGE withdrawal read as "large" next to a 5000 BTC one that dwarfs it. No rate
+      // for the coin flags it anyway: never let a compliance total quietly undercount.
+      const pivotAmount = await this.toPivotAmount(r.tx.amount, r.tx.currency, pivotCurrency);
+      if (pivotAmount === null || moneyCompare(pivotAmount, LARGE_WITHDRAWAL_THRESHOLD) >= 0) {
         riskTags.push('large_amount');
       }
       if (frequentWalletIds.has(r.tx.walletId)) {
