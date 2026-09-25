@@ -558,47 +558,49 @@ export class GamingService {
     // without one can never be settled back.
     const roundId = randomUUID();
 
-    const { round, betTransactionId, completed } = await this.drizzle.db.transaction(async (tx) => {
-      // The same currency the RG pre-check above weighed. Left off, the debit falls on the
-      // player's active currency, and the two would then judge different moves.
-      const outcome = await this.walletCommands.debit(tx, {
-        userId,
-        amount: betAmount,
-        currency,
-        type: 'bet',
-        context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
-        providerRef: {
-          providerName: INTERNAL_ROUND_PROVIDER,
-          providerRefId: `bet:${roundId}`,
-          externalRoundId: roundId,
-        },
+    const { round, betTransactionId, completed, wagerTrackingCredits } =
+      await this.drizzle.db.transaction(async (tx) => {
+        // The same currency the RG pre-check above weighed. Left off, the debit falls on the
+        // player's active currency, and the two would then judge different moves.
+        const outcome = await this.walletCommands.debit(tx, {
+          userId,
+          amount: betAmount,
+          currency,
+          type: 'bet',
+          context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
+          providerRef: {
+            providerName: INTERNAL_ROUND_PROVIDER,
+            providerRefId: `bet:${roundId}`,
+            externalRoundId: roundId,
+          },
+        });
+        if (!outcome.ok) {
+          throw new InsufficientBalanceError(outcome.available, betAmount);
+        }
+        const insertedRound = findOneOrThrow(
+          await tx
+            .insert(gameRound)
+            .values({
+              id: roundId,
+              gameId,
+              userId,
+              currency,
+              betAmount,
+              status: 'active',
+            })
+            .returning(),
+          new GameRoundNotFoundError(gameId),
+        );
+        const moved = outcome.moved ? outcome : undefined;
+        return {
+          round: insertedRound,
+          completed: moved?.completed
+            ? { ...moved.completed, currency: outcome.currency }
+            : undefined,
+          betTransactionId: moved?.transactionId,
+          wagerTrackingCredits: moved?.wagerTrackingCredits ?? [],
+        };
       });
-      if (!outcome.ok) {
-        throw new InsufficientBalanceError(outcome.available, betAmount);
-      }
-      const insertedRound = findOneOrThrow(
-        await tx
-          .insert(gameRound)
-          .values({
-            id: roundId,
-            gameId,
-            userId,
-            currency,
-            betAmount,
-            status: 'active',
-          })
-          .returning(),
-        new GameRoundNotFoundError(gameId),
-      );
-      const moved = outcome.moved ? outcome : undefined;
-      return {
-        round: insertedRound,
-        completed: moved?.completed
-          ? { ...moved.completed, currency: outcome.currency }
-          : undefined,
-        betTransactionId: moved?.transactionId,
-      };
-    });
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
@@ -613,6 +615,20 @@ export class GamingService {
         transactionId: betTransactionId,
         type: 'bet',
         direction: 'debit',
+      });
+    }
+
+    // Whatever a WAGER_TRACKING consumer (rank rakeback) credited to the real balance inside the
+    // same transaction as the bet above - same post-commit rule as the bet debit itself.
+    for (const credit of wagerTrackingCredits) {
+      this.events.emit('wallet.balance.changed', {
+        userId,
+        playerId,
+        amount: credit.amount,
+        currency: credit.currency,
+        transactionId: credit.transactionId,
+        type: 'cashback',
+        direction: 'credit',
       });
     }
 

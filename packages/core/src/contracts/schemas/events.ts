@@ -738,6 +738,27 @@ export const domainEventSchemas = {
     ),
     currency: CurrencyTickerSchema,
   }),
+  // One winner's own prize, emitted per player after the settlement transaction commits - the
+  // shape the in-app/email notification maps 1:1 (see engagement/notifications/plugin.ts).
+  'promo.race.won': z.object({
+    userId: UuidSchema,
+    raceId: UuidSchema,
+    raceName: z.string(),
+    position: z.number().int().positive(),
+    amount: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
+  }),
+  // One winner's own Rank Challenge tier, emitted per player after the settlement transaction
+  // commits - the shape the in-app/email notification maps 1:1, mirroring promo.race.won.
+  'promo.rank-challenge.won': z.object({
+    userId: UuidSchema,
+    tierId: UuidSchema,
+    tierKey: z.string(),
+    tierName: z.string(),
+    cashAmount: MoneyAmountSchema.nullable(),
+    physicalItem: z.string().nullable(),
+    currency: CurrencyTickerSchema,
+  }),
 
   'chat.message.sent': z.object({
     messageId: UuidSchema,

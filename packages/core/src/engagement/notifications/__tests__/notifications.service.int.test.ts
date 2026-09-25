@@ -202,6 +202,27 @@ describe('NotificationsService.create (real PG)', () => {
   });
 });
 
+describe('NotificationsService.getById (real PG)', () => {
+  it('returns the row a notifications.created subscriber would re-read to publish it live', async () => {
+    const { svc } = makeService();
+    const created = await svc.create({
+      userId: randomUUID(),
+      type: 'withdrawal.approved',
+      title: 'Payout approved',
+      body: 'Your withdrawal is on its way.',
+    });
+
+    const found = await svc.getById(created!.id);
+
+    expect(found).toMatchObject({ id: created!.id, userId: created!.userId });
+  });
+
+  it('returns null for an id nothing was ever inserted under', async () => {
+    const { svc } = makeService();
+    expect(await svc.getById(randomUUID())).toBeNull();
+  });
+});
+
 describe('NotificationsService.listForUser (real PG)', () => {
   it('returns only the requesting player rows, newest first, with a total count', async () => {
     const { svc } = makeService();

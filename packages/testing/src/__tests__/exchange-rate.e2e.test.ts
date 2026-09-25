@@ -58,3 +58,22 @@ describe('GET /exchange-rate/rate', () => {
     expect(res.status).toBeLessThan(500);
   });
 });
+
+describe('GET /exchange-rate/rates', () => {
+  it('answers a code the operator does not offer with a null quote and keeps the rest', async () => {
+    const res = await player.get('/exchange-rate/rates?to=USD&from=USD&from=ZZZ');
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { from: string; quote: { rate: string } | null }[];
+    expect(body).toEqual([
+      { from: 'USD', quote: expect.objectContaining({ rate: '1.000000000000000000' }) },
+      { from: 'ZZZ', quote: null },
+    ]);
+  });
+
+  it('still rejects a target the operator does not offer', async () => {
+    const res = await player.get('/exchange-rate/rates?to=ZZZ&from=USD');
+
+    expect(res.status).toBe(400);
+  });
+});

@@ -1,0 +1,1 @@
+ALTER TABLE "player" ADD COLUMN "hide_username_on_leaderboards" boolean DEFAULT false NOT NULL;

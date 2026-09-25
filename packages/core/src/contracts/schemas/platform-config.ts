@@ -148,6 +148,19 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+const DEFAULT_WALLET_CURRENCY = 'USD';
+
+/**
+ * The currency a cash prize or cashback credit lands in when its own source (a rank ladder, a
+ * race, a streak milestone) is priced in something else - never the source's own currency
+ * unconditionally, or crediting a crypto-only player in a fiat ticker would open a balance the
+ * operator never offers. Absent `wallet.defaultCurrency` falls back to USD, the same default
+ * `readWalletBalances` uses for a player with no wallet row yet.
+ */
+export function resolveWalletDefaultCurrency(config: WalletConfig | undefined): string {
+  return (config?.defaultCurrency ?? DEFAULT_WALLET_CURRENCY).toUpperCase();
+}
+
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
 
 export const ExchangeRateConfigSchema = z
@@ -241,6 +254,9 @@ export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
  */
 export const RANK_PAYOUT_DEFAULT_CRON = '3,13,23,33,43,53 * * * *';
 export const RANK_PERIODIC_DEFAULT_CRON = '17 * * * *';
+export const STREAK_PAYOUT_DEFAULT_CRON = '7,27,47 * * * *';
+/** Once, shortly after the UTC day turns over - the boundary the streak's own "day" is defined by. */
+export const STREAK_CLOSE_DEFAULT_CRON = '5 0 * * *';
 
 export const PromoConfigSchema = z
   .object({
@@ -250,6 +266,15 @@ export const PromoConfigSchema = z
         payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
         /** How often the daily, weekly and monthly payouts check whether a period has closed. */
         periodicCron: CronExpressionSchema.default(RANK_PERIODIC_DEFAULT_CRON),
+      })
+      .strict()
+      .prefault({}),
+    streaks: z
+      .object({
+        /** How often owed milestone rewards are settled. */
+        payoutCron: CronExpressionSchema.default(STREAK_PAYOUT_DEFAULT_CRON),
+        /** How often a UTC day is closed out, resetting anyone who missed it. */
+        closeCron: CronExpressionSchema.default(STREAK_CLOSE_DEFAULT_CRON),
       })
       .strict()
       .prefault({}),

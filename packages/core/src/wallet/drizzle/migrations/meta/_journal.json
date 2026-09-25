@@ -162,6 +162,13 @@
       "when": 1789328275743,
       "tag": "0022_natural_exodus",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790310753944,
+      "tag": "0023_colossal_doctor_doom",
+      "breakpoints": true
     }
   ]
 }

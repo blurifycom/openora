@@ -1,9 +1,10 @@
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
   ExchangeRateReader,
   WagerTrackingArgs,
   WagerTrackingCommands,
+  WagerTrackingWalletCredit,
 } from '@openora/core/contracts';
 import {
   makeNotFoundError,
@@ -11,7 +12,7 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import type { PlayerRank, RankLadder } from '../contract/index.js';
+import type { PlayerRank, RankLadder, RankLookupEntry } from '../contract/index.js';
 import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
 import {
   promoPlayerRank,
@@ -66,9 +67,9 @@ export class RankService implements WagerTrackingCommands {
    * Not idempotent on its own: call it only inside the wallet's debit transaction, below its
    * duplicate-bet guard, so a replayed bet never reaches it.
    */
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.amount, '0') <= 0) {
-      return;
+      return [];
     }
     const [config] = await tx
       .select({
@@ -77,7 +78,7 @@ export class RankService implements WagerTrackingCommands {
       })
       .from(promoRankConfig);
     if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
-      return;
+      return [];
     }
     const ladder = await tx
       .select({
@@ -91,7 +92,7 @@ export class RankService implements WagerTrackingCommands {
       .orderBy(asc(promoRankTier.position));
     const [lowest] = ladder;
     if (!lowest) {
-      return;
+      return [];
     }
     const amount =
       args.currency === lowest.currency
@@ -108,7 +109,7 @@ export class RankService implements WagerTrackingCommands {
         },
         'rank wager skipped - no exchange rate',
       );
-      return;
+      return [];
     }
 
     // What the player wagered inside each open period, for the payouts that settle them. Upserted
@@ -160,7 +161,7 @@ export class RankService implements WagerTrackingCommands {
     const reached = rank && tierFor(ladder, rank.lifetimeWagered);
     const current = ladder.find((tier) => tier.id === rank?.tierId);
     if (!reached || (current && reached.position <= current.position)) {
-      return;
+      return [];
     }
     await tx
       .update(promoPlayerRank)
@@ -197,6 +198,7 @@ export class RankService implements WagerTrackingCommands {
       before: { tierId: current?.id ?? null },
       after: { tierId: reached.id },
     });
+    return [];
   }
 
   /** The ladder as an operator configured it. No player data, so anyone may read it. */
@@ -213,6 +215,35 @@ export class RankService implements WagerTrackingCommands {
       currency: lowest.currency,
       tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
     };
+  }
+
+  /**
+   * Public rank badges for a set of other players, one query, no N+1 - a chat avatar list or
+   * friends panel looks these up batched for whoever is on screen. A user with no rank row yet,
+   * or none held (tierId null), comes back with `tierKey`/`tierName` both null rather than
+   * omitted, so a caller can tell "looked up, no rank" from "not in the response".
+   *
+   * There is no hidden-profile/ghost-mode setting anywhere in the platform today (checked pam
+   * and social modules), so nothing here has one to respect.
+   */
+  async lookup(userIds: readonly PromoPlayerRank['userId'][]): Promise<RankLookupEntry[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+    const rows = await this.drizzle.db
+      .select({
+        userId: promoPlayerRank.userId,
+        tierKey: promoRankTier.key,
+        tierName: promoRankTier.name,
+      })
+      .from(promoPlayerRank)
+      .leftJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+      .where(inArray(promoPlayerRank.userId, userIds));
+    const byUser = new Map(rows.map((row) => [row.userId, row]));
+    return userIds.map((userId) => {
+      const row = byUser.get(userId);
+      return { userId, tierKey: row?.tierKey ?? null, tierName: row?.tierName ?? null };
+    });
   }
 
   async getForPlayer(userId: PromoPlayerRank['userId']): Promise<PlayerRank> {

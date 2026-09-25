@@ -54,7 +54,14 @@ const PARALLEL_BETS = 20;
 
 const wager = (userId: string, amount: string, currency = 'USDT', context: WagerContext = CASINO) =>
   db.drizzle.db.transaction((tx) =>
-    ranks.recordWager(tx, { userId, currency, amount, weightedAmount: amount, context }),
+    ranks.recordWager(tx, {
+      userId,
+      currency,
+      amount,
+      weightedAmount: amount,
+      realAmount: amount,
+      context,
+    }),
   );
 
 const levelUpsOf = (userId: string) =>
@@ -101,6 +108,7 @@ describe('recording a wager toward the rank ladder', () => {
         currency: 'USDT',
         amount: '12.345678901234567891',
         weightedAmount: '0',
+        realAmount: '12.345678901234567891',
         context: CASINO,
       }),
     );
@@ -169,7 +177,7 @@ describe('recording a wager toward the rank ladder', () => {
     const userId = randomUUID();
     convert.mockResolvedValue(null);
 
-    await expect(wager(userId, '10', 'BTC')).resolves.toBeUndefined();
+    await expect(wager(userId, '10', 'BTC')).resolves.toEqual([]);
 
     expect(await rankOf(userId)).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(
@@ -293,6 +301,7 @@ describe('recording a wager toward the rank ladder', () => {
       currency: 'USDT',
       amount: '100',
       weightedAmount: '100',
+      realAmount: '100',
       bonusAmount: '40',
       context: CASINO,
     };
@@ -300,5 +309,24 @@ describe('recording a wager toward the rank ladder', () => {
     await db.drizzle.db.transaction((tx) => ranks.recordWager(tx, partlyBonusFunded));
 
     expect((await rankOf(userId))?.lifetimeWagered).toBe('100.000000000000000000');
+  });
+});
+
+describe('public rank lookup', () => {
+  it('returns the tier key and name for each ranked user, null for one with no rank', async () => {
+    const ranked = randomUUID();
+    const unranked = randomUUID();
+    await wager(ranked, '1');
+
+    const result = await ranks.lookup([ranked, unranked]);
+
+    expect(result).toEqual([
+      { userId: ranked, tierKey: 'bronze', tierName: 'Bronze' },
+      { userId: unranked, tierKey: null, tierName: null },
+    ]);
+  });
+
+  it('returns an empty array for an empty input, without querying', async () => {
+    expect(await ranks.lookup([])).toEqual([]);
   });
 });

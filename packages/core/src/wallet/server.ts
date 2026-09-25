@@ -3,5 +3,5 @@ export {
   WalletNotFoundError,
   InsufficientBalanceError,
 } from './service/wallet.service.js';
-export { createWalletRouter } from './router/index.js';
+export { createWalletRouter, walletBalanceChannel } from './router/index.js';
 export { default } from './plugin.js';

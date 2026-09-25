@@ -2,9 +2,11 @@ import * as z from 'zod';
 import {
   AUDIT_WRITER,
   BONUS_GRANTS,
+  BONUS_LIFECYCLE,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
   type BonusForfeitReason,
+  type BonusLifecycleCommands,
   CurrencyTickerSchema,
   JOB_QUEUE,
   MoneyAmountSchema,
@@ -30,6 +32,7 @@ import {
   type Plugin,
 } from '@openora/core/server';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
+import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
 import { GrantReaderService } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { OfferService } from './service/offer.service.js';
@@ -48,6 +51,16 @@ const EXPIRY_CRON = '*/15 * * * *';
 // default of one attempt, which turns one transient failure into a bonus the player earned and
 // never receives. Each handler's own database guard is what makes the retry itself safe.
 const MONEY_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
+
+// Trust-boundary narrowing for a zod-parsed event payload whose shape varies by topic: some
+// forfeit-triggering events carry `initiatedBy`, some do not. `unknown` in, a known initiator out.
+function initiatedByOf(data: unknown): 'player' | 'admin' | 'system' | undefined {
+  if (typeof data !== 'object' || data === null || !('initiatedBy' in data)) {
+    return undefined;
+  }
+  const value = (data as { initiatedBy: unknown }).initiatedBy;
+  return value === 'player' || value === 'admin' || value === 'system' ? value : undefined;
+}
 
 const EmptyJobPayloadSchema = z.object({});
 
@@ -85,6 +98,19 @@ export default {
     ctx.provideSealed(
       BONUS_WAGERING,
       (c) => new WageringService(c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined),
+    );
+    // A thin command port over GrantLifecycleService.forfeit - the shape an external
+    // system/job context needs (no admin session to assert, one named grant rather than every
+    // grant a player holds). Constructed off the container directly, not the module-scoped
+    // `lifecycle` variable below: that one is only built lazily when the router resolves, and a
+    // job calling this port must not depend on the router having been requested first.
+    ctx.provide(
+      BONUS_LIFECYCLE,
+      (c): BonusLifecycleCommands =>
+        createBonusLifecyclePort(
+          new GrantLifecycleService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+          c.get(EVENT_BUS),
+        ),
     );
 
     let lifecycle: GrantLifecycleService | null = null;
@@ -177,12 +203,19 @@ export default {
       },
     });
 
-    // A bonus is money a player may not keep once they have excluded themselves or closed the
-    // account, and the rule is immediate rather than "by the next sweep".
+    // A bonus is money a player may not keep once they have excluded themselves, entered a
+    // cooling-off period, closed the account or been banned, and the rule is immediate rather
+    // than "by the next sweep".
     const forfeitEverything =
-      <K extends 'rg.self_exclusion.activated' | 'player.account.closed'>(
+      <
+        K extends
+          | 'rg.self_exclusion.activated'
+          | 'rg.cooling_off.activated'
+          | 'player.account.closed'
+          | 'identity.user.deactivated',
+      >(
         topic: K,
-        reason: 'self_exclusion' | 'account_closed',
+        reason: 'self_exclusion' | 'cooling_off' | 'account_closed' | 'admin',
       ) =>
       (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
@@ -195,15 +228,17 @@ export default {
           return;
         }
         const { userId, actorId } = parsed.data;
-        // Account closure is always an admin action. A self-exclusion names its own initiator,
-        // which is 'player', 'admin' or 'system' - a rule-triggered exclusion is nobody's admin
-        // action, and recording it as one puts the wrong name on a regulator-facing audit row.
+        // Account closure and a ban (identity.user.deactivated) are always an admin action. A
+        // self-exclusion names its own initiator, which is 'player', 'admin' or 'system' - a
+        // rule-triggered exclusion is nobody's admin action, and recording it as one puts the
+        // wrong name on a regulator-facing audit row. Read via a type guard rather than the `in`
+        // narrowing the three-topic version used - the fourth topic in this union has no
+        // `initiatedBy` field at all, which collapses `parsed.data`'s inferred type to a point
+        // the compiler can no longer narrow through property presence alone.
         const initiatedBy: 'player' | 'admin' | 'system' =
-          topic === 'player.account.closed'
+          topic === 'player.account.closed' || topic === 'identity.user.deactivated'
             ? 'admin'
-            : 'initiatedBy' in parsed.data
-              ? parsed.data.initiatedBy
-              : 'system';
+            : (initiatedByOf(parsed.data) ?? 'system');
         // No queue idempotency key on purpose. It would have to be derived from the player and
         // the reason, and a player who excludes themselves, lets the cool-off lapse, takes a new
         // bonus and excludes themselves again produces the same key - which BullMQ drops
@@ -230,8 +265,18 @@ export default {
       forfeitEverything('rg.self_exclusion.activated', 'self_exclusion'),
     );
     ctx.events.on(
+      'rg.cooling_off.activated',
+      forfeitEverything('rg.cooling_off.activated', 'cooling_off'),
+    );
+    ctx.events.on(
       'player.account.closed',
       forfeitEverything('player.account.closed', 'account_closed'),
+    );
+    // A ban is `identity.user.deactivated` - the admin-console "Ban" action flips `isActive`
+    // false, same event chat's own membership service already reacts to for room removal.
+    ctx.events.on(
+      'identity.user.deactivated',
+      forfeitEverything('identity.user.deactivated', 'admin'),
     );
 
     ctx.jobs.worker({

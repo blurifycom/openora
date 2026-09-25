@@ -5,6 +5,8 @@
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 import type { WagerContext } from './wager-context.js';
+import type { BonusGrantTerms } from './bonus-grants.js';
+import type { WagerTrackingWalletCredit } from './wager-tracking.js';
 
 export type WalletProviderRef = {
   providerName: string;
@@ -49,6 +51,13 @@ export type WalletDebitOutcome =
       bonusBalance?: string;
       /** The grant this debit pushed over its requirement, and what it released into the real balance. */
       completed?: { grantId: string; convertedAmount: string };
+      /**
+       * Whatever `WAGER_TRACKING` credited to the real balance alongside this bet (rank rakeback),
+       * inside the same transaction. Empty when nothing was. The caller emits `wallet.balance.
+       * changed` for each once its own transaction commits, the same rule it follows for the bet
+       * debit itself - this port never emits it.
+       */
+      wagerTrackingCredits?: WagerTrackingWalletCredit[];
     }
   | { ok: true; moved: false; newBalance: string; currency: string }
   /** `available` is the real balance plus whatever bonus funds could have covered the rest. */
@@ -64,6 +73,12 @@ export type WalletCreditArgs = {
   /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
   allowNewWallet?: boolean;
   providerRef?: WalletProviderRef;
+  /**
+   * Terms a `gift`/`rain` credit's underlying bonus grant is created under. Ignored by any other
+   * credit type. Omit it and the grant falls back to the bonus module's own default terms, same
+   * as before this field existed.
+   */
+  terms?: BonusGrantTerms;
 };
 
 /** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */

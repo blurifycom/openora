@@ -30,6 +30,7 @@ import {
   type Player,
   type User,
   ClientMeta,
+  resolveExchangeRatePivot,
 } from '@openora/core/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { kycVerification, type KycVerification } from '../schema/index.js';
@@ -629,10 +630,11 @@ export class KycVerificationService {
    * over: skips unless presently approved, and the watermark stops a re-approved
    * high-roller re-firing on every later deposit.
    *
-   * A player can deposit in several currencies (no platform base currency), so every
-   * completed deposit is priced into the player's reference currency before it is summed -
-   * filtering to that one currency instead (as this used to) reads $0 forever for a player
-   * who never deposits in it.
+   * A player can deposit in several currencies, so every completed deposit is priced into
+   * the platform's exchange-rate pivot currency before it is summed - filtering to the
+   * player's own currency instead (as this used to) reads $0 forever for a player who
+   * never deposits in it, and mismatches reverifyThresholds, which is keyed by pivot
+   * currency.
    */
   async handleDeposit(userId: User['id']) {
     const [current] = await this.drizzle.db
@@ -658,24 +660,29 @@ export class KycVerificationService {
         ),
       )
       .groupBy(walletTransaction.currency);
+    // Priced into the platform's exchange-rate pivot (not the player's own currency) so
+    // it lines up with reverifyThresholds, which is configured per pivot currency (e.g.
+    // { USD: '10000' }) - a threshold keyed by player.currency would only ever fire for
+    // players whose wallet currency happens to match the config key.
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const totalDeposits = await sumInPivot(
       depositsByCurrency,
-      current.currency,
+      pivotCurrency,
       this.exchangeRateReader,
     );
     // Never write a watermark from a guess: a fabricated total would sum, compare and get
     // stored exactly like a real one, and no later deposit could tell the difference. Skip
     // this evaluation and let the next deposit re-check once every currency prices again.
     if (totalDeposits === null) {
-      const unpriced = await this.unpricedCurrencies(depositsByCurrency, current.currency);
+      const unpriced = await this.unpricedCurrencies(depositsByCurrency, pivotCurrency);
       const err = new Error(
-        `handleDeposit: no rate for ${unpriced.join(', ')} into ${current.currency}`,
+        `handleDeposit: no rate for ${unpriced.join(', ')} into ${pivotCurrency}`,
       );
       logger.error(
-        { err, userId, unpriced, pivotCurrency: current.currency },
+        { err, userId, unpriced, pivotCurrency },
         'handleDeposit: could not price a deposit currency, skipping re-KYC evaluation',
       );
-      reportError(err, { userId, extra: { unpriced, pivotCurrency: current.currency } });
+      reportError(err, { userId, extra: { unpriced, pivotCurrency } });
       return;
     }
 
@@ -694,7 +701,7 @@ export class KycVerificationService {
 
     const snapshot = {
       totalDeposits,
-      currency: current.currency,
+      currency: pivotCurrency,
       lastTriggeredDeposits: lastFire?.triggerDeposits ?? '0',
     };
     const thresholds = this.platformConfig?.kyc?.reverifyThresholds;

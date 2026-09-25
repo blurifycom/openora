@@ -57,6 +57,9 @@ export type {
 } from './bonus-grants.js';
 export { BONUS_GRANTS } from './bonus-grants.js';
 
+export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
+
 export type {
   BonusWageringCommands,
   BonusWagerArgs,
@@ -66,7 +69,11 @@ export type {
 } from './bonus-wagering.js';
 export { BONUS_WAGERING, MaxBetExceededError } from './bonus-wagering.js';
 
-export type { WagerTrackingCommands, WagerTrackingArgs } from './wager-tracking.js';
+export type {
+  WagerTrackingCommands,
+  WagerTrackingArgs,
+  WagerTrackingWalletCredit,
+} from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 
 export type {

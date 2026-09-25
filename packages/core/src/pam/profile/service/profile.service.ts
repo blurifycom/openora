@@ -217,7 +217,7 @@ export class ProfileService implements PlayerProvisioning {
     userId: User['id'],
     row: { displayCurrency: string | null },
   ): Promise<string> {
-    if (row.displayCurrency) {
+    if (row.displayCurrency && this.supportedDisplayCurrencies.includes(row.displayCurrency)) {
       return row.displayCurrency;
     }
 

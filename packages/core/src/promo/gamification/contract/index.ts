@@ -4,6 +4,7 @@ import {
   ContributionPercentSchema,
   CurrencyTickerSchema,
   MoneyAmountSchema,
+  TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
 
@@ -90,7 +91,7 @@ export type RankPayoutKind = z.infer<typeof RankPayoutKindSchema>;
 
 const MAX_EXPIRY_DAYS = 365;
 
-const RankRewardTermsSchema = z.object({
+export const RankRewardTermsSchema = z.object({
   /**
    * Wagering requirement as a multiple of the reward, as a decimal string above zero. Its upper
    * bound is the bonus engine's, checked by the service, since comparing it needs decimal math.
@@ -184,6 +185,281 @@ export const RankConfigSchema = z.object({
 
 export type RankConfig = z.infer<typeof RankConfigSchema>;
 
+/**
+ * A daily-streak milestone reward. `bonus` and `giftDrop` both credit through BONUS_GRANTS;
+ * `giftDrop` is a `bonus` whose amount is rolled fresh, between `min` and `max`, at settlement
+ * time rather than fixed in the config - an operator names the range, not the number.
+ * `rakebackBoost` is not a bonus grant: it raises the player's rank rakeback by `percentPoints`
+ * for `days`, recorded on the rank the streak payout settles against. `cash` is not a bonus grant
+ * either: real money, no wagering requirement, no expiry, credited to the balance directly - the
+ * same wallet transaction type (`cashback`) rank rakeback uses, since both are an operator-funded
+ * real-money credit that never carries a wagering requirement.
+ */
+export const StreakRewardSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('bonus'), amount: MoneyAmountSchema, terms: RankRewardTermsSchema }),
+  z.object({
+    kind: z.literal('giftDrop'),
+    min: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+    max: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+    terms: RankRewardTermsSchema,
+  }),
+  z.object({
+    kind: z.literal('rakebackBoost'),
+    percentPoints: ContributionPercentSchema,
+    days: z.number().int().positive().max(90),
+  }),
+  z.object({
+    kind: z.literal('cash'),
+    amount: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  }),
+]);
+export type StreakReward = z.infer<typeof StreakRewardSchema>;
+
+export const StreakMilestoneSchema = z.object({
+  /** The streak length this milestone pays at. Unique within the milestone list. */
+  day: z.number().int().positive().max(365),
+  rewards: z.array(StreakRewardSchema).min(1),
+});
+export type StreakMilestone = z.infer<typeof StreakMilestoneSchema>;
+
+export const StreakConfigSchema = z.object({
+  /** What counts toward a qualifying day, and in what currency the threshold is priced. */
+  currency: CurrencyTickerSchema,
+  dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  /** Products whose stakes count toward the streak. Empty counts every product. */
+  eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
+  milestones: z
+    .array(StreakMilestoneSchema)
+    .max(50)
+    .refine(
+      (milestones) => new Set(milestones.map((m) => m.day)).size === milestones.length,
+      'two milestones share a day',
+    ),
+  /** The day a streak that reaches its last milestone resets to, and pays its final reward. */
+  resetAfterDay: z.number().int().positive().max(365),
+});
+export type StreakConfig = z.infer<typeof StreakConfigSchema>;
+
+export const PlayerStreakSchema = z.object({
+  current: z.number().int().nonnegative(),
+  best: z.number().int().nonnegative(),
+  todayWagered: MoneyAmountSchema,
+  dailyMinWager: MoneyAmountSchema,
+  currency: CurrencyTickerSchema,
+  milestones: z.array(StreakMilestoneSchema),
+});
+export type PlayerStreak = z.infer<typeof PlayerStreakSchema>;
+
+export const StreakLeaderboardEntrySchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  streak: z.number().int().nonnegative(),
+});
+export type StreakLeaderboardEntry = z.infer<typeof StreakLeaderboardEntrySchema>;
+
+export const StreakLeaderboardSchema = z.object({
+  top: z.array(StreakLeaderboardEntrySchema).max(5),
+  /** The requesting player's own rank on the board, 1-based; null when they have no streak. */
+  ownPosition: z.number().int().positive().nullable(),
+});
+export type StreakLeaderboard = z.infer<typeof StreakLeaderboardSchema>;
+
+const MAX_LOOKUP_IDS = 100;
+
+export const RankLookupInputSchema = z.object({
+  userIds: z.array(UuidSchema).min(1).max(MAX_LOOKUP_IDS),
+});
+export type RankLookupInput = z.infer<typeof RankLookupInputSchema>;
+
+export const RankLookupEntrySchema = z.object({
+  userId: UuidSchema,
+  tierKey: z.string().nullable(),
+  tierName: z.string().nullable(),
+});
+export type RankLookupEntry = z.infer<typeof RankLookupEntrySchema>;
+
+// A race's leaderboard is capped rather than paginated - see RaceService.getForPlayer.
+const MAX_RACE_POSITIONS = 100;
+
+export const RacePositionSchema = z.object({
+  position: z.number().int().positive(),
+  prize: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+});
+export type RacePosition = z.infer<typeof RacePositionSchema>;
+
+export const RacePositionsSchema = z
+  .array(RacePositionSchema)
+  .min(1)
+  .max(MAX_RACE_POSITIONS)
+  .refine((positions) => {
+    const sorted = positions.map((p) => p.position).sort((a, b) => a - b);
+    return sorted.every((position, index) => position === index + 1);
+  }, 'positions must run 1..N with no gap or duplicate');
+export type RacePositions = z.infer<typeof RacePositionsSchema>;
+
+export const RaceEligibleProductsSchema = z.array(z.string().trim().min(1).max(64)).max(50);
+export type RaceEligibleProducts = z.infer<typeof RaceEligibleProductsSchema>;
+
+const RaceFieldsShape = {
+  name: z.string().min(1).max(200),
+  currency: CurrencyTickerSchema,
+  startAt: TimestampSchema,
+  endAt: TimestampSchema,
+  prizePool: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  positions: RacePositionsSchema,
+  /** Products whose stakes count toward this race. Empty counts every product. */
+  eligibleProducts: RaceEligibleProductsSchema,
+} as const;
+
+const raceDatesOrdered = (v: { startAt: string; endAt: string }) =>
+  new Date(v.endAt).getTime() > new Date(v.startAt).getTime();
+
+export const CreateRaceInputSchema = z
+  .object(RaceFieldsShape)
+  .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
+export type CreateRaceInput = z.infer<typeof CreateRaceInputSchema>;
+
+export const UpdateRaceInputSchema = z
+  .object({ raceId: UuidSchema, ...RaceFieldsShape })
+  .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
+export type UpdateRaceInput = z.infer<typeof UpdateRaceInputSchema>;
+
+export const RaceSchema = z.object({
+  id: UuidSchema,
+  ...RaceFieldsShape,
+  closedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type Race = z.infer<typeof RaceSchema>;
+
+/** A public leaderboard row: masked or "Incognito" per the player's own privacy setting. */
+export const RaceLeaderboardEntrySchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  wagered: MoneyAmountSchema,
+  position: z.number().int().positive(),
+});
+export type RaceLeaderboardEntry = z.infer<typeof RaceLeaderboardEntrySchema>;
+
+export const RaceOwnEntrySchema = z.object({
+  userId: UuidSchema,
+  wagered: MoneyAmountSchema,
+  /** Null when the player has not wagered in this race at all. */
+  position: z.number().int().positive().nullable(),
+  /** How much more the player must wager to reach the next paid position. Null once they are
+   * already in a paid position, or the race pays no positions. */
+  amountToNextPaidPosition: MoneyAmountSchema.nullable(),
+});
+export type RaceOwnEntry = z.infer<typeof RaceOwnEntrySchema>;
+
+export const RaceForPlayerSchema = z.object({
+  race: RaceSchema,
+  podium: z.array(RaceLeaderboardEntrySchema).max(3),
+  /** Positions 4 and below, capped - see RaceService.getForPlayer. */
+  leaderboard: z.array(RaceLeaderboardEntrySchema).max(MAX_RACE_POSITIONS - 3),
+  own: RaceOwnEntrySchema,
+});
+export type RaceForPlayer = z.infer<typeof RaceForPlayerSchema>;
+
+// A tier may carry a cash amount, a physical item, or both (master/titan) - at least one.
+const rankChallengeHasAPrize = (t: { cashAmount: string | null; physicalItem: string | null }) =>
+  t.cashAmount !== null || (t.physicalItem !== null && t.physicalItem.trim().length > 0);
+
+export const RankChallengeTierSchema = z.object({
+  id: UuidSchema,
+  key: z.string().min(1),
+  name: z.string().min(1),
+  position: z.number().int().nonnegative(),
+  wagerThreshold: MoneyAmountSchema,
+  cashAmount: MoneyAmountSchema.nullable(),
+  physicalItem: z.string().min(1).max(200).nullable(),
+});
+export type RankChallengeTier = z.infer<typeof RankChallengeTierSchema>;
+
+export const RankChallengeClaimSchema = z.object({
+  tierId: UuidSchema,
+  tierKey: z.string(),
+  userId: UuidSchema,
+  username: z.string(),
+  cashAmount: MoneyAmountSchema.nullable(),
+  physicalItem: z.string().nullable(),
+  claimedAt: TimestampSchema,
+  physicalFulfilledAt: TimestampSchema.nullable(),
+  physicalFulfillmentNote: z.string().nullable(),
+});
+export type RankChallengeClaim = z.infer<typeof RankChallengeClaimSchema>;
+
+export const RankChallengeLadderTierSchema = RankChallengeTierSchema.extend({
+  winnerUserId: UuidSchema.nullable(),
+  winnerUsername: z.string().nullable(),
+  claimedAt: TimestampSchema.nullable(),
+});
+export type RankChallengeLadderTier = z.infer<typeof RankChallengeLadderTierSchema>;
+
+export const RankChallengeLadderSchema = z.object({
+  currency: CurrencyTickerSchema,
+  tiers: z.array(RankChallengeLadderTierSchema),
+});
+export type RankChallengeLadder = z.infer<typeof RankChallengeLadderSchema>;
+
+export const RankChallengeLeaderboardEntrySchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  lifetimeWagered: MoneyAmountSchema,
+  position: z.number().int().positive(),
+});
+export type RankChallengeLeaderboardEntry = z.infer<typeof RankChallengeLeaderboardEntrySchema>;
+
+export const PlayerRankChallengeSchema = z.object({
+  currency: CurrencyTickerSchema,
+  lifetimeWagered: MoneyAmountSchema,
+  /** The next tier the player has not yet claimed and nobody else has either. Null once every
+   * tier is claimed. */
+  nextTier: RankChallengeTierSchema.nullable(),
+  leaderboard: z.array(RankChallengeLeaderboardEntrySchema).max(5),
+  /** The player's own 1-based position; null when outside the top 5 shown, or no wagers yet. */
+  ownPosition: z.number().int().positive().nullable(),
+});
+export type PlayerRankChallenge = z.infer<typeof PlayerRankChallengeSchema>;
+
+const MAX_CHALLENGE_TIERS = 50;
+
+const SubmittedRankChallengeTierSchema = RankChallengeTierSchema.omit({ id: true }).extend({
+  id: UuidSchema.optional(),
+});
+export type SubmittedRankChallengeTier = z.infer<typeof SubmittedRankChallengeTierSchema>;
+
+export const SetRankChallengeLadderInputSchema = z.object({
+  currency: CurrencyTickerSchema,
+  tiers: z
+    .array(SubmittedRankChallengeTierSchema)
+    .min(1)
+    .max(MAX_CHALLENGE_TIERS)
+    .refine(
+      (tiers) => new Set(tiers.map((t) => t.key)).size === tiers.length,
+      'two tiers share a key',
+    )
+    .refine(
+      (tiers) => new Set(tiers.map((t) => t.position)).size === tiers.length,
+      'two tiers share a position',
+    )
+    .refine(
+      (tiers) => tiers.every(rankChallengeHasAPrize),
+      'every tier needs a cash amount, a physical item, or both',
+    ),
+});
+export type SetRankChallengeLadderInput = z.infer<typeof SetRankChallengeLadderInputSchema>;
+
+// Keyed by tierId, not a claim row id: `promoRankChallengeClaim.tierId` is unique per claim
+// (see schema/index.ts) and the API's own RankChallengeClaimSchema never exposes a row id, so
+// this is the one identifier the admin UI already has on hand from every claim/queue listing.
+export const MarkRankChallengeFulfilledInputSchema = z.object({
+  tierId: UuidSchema,
+  note: z.string().min(1).max(1000),
+});
+export type MarkRankChallengeFulfilledInput = z.infer<typeof MarkRankChallengeFulfilledInputSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -193,9 +469,60 @@ export const gamificationContract = {
      * marketing, and the page that shows it is public. Carries no player data at all.
      */
     ladder: oc.route({ method: 'GET', path: '/promo/ranks/ladder' }).output(RankLadderSchema),
+
+    /**
+     * Another player's rank badge, batched - a chat avatar or profile card names whose rank it
+     * wants rather than firing one request per avatar on screen. Public fields only: a tier's
+     * key and display name, never wagered amounts or rakeback.
+     */
+    lookup: oc
+      .route({ method: 'POST', path: '/promo/ranks/lookup' })
+      .input(RankLookupInputSchema)
+      .output(z.array(RankLookupEntrySchema)),
+  },
+
+  streaks: {
+    get: oc.route({ method: 'GET', path: '/promo/streaks' }).output(PlayerStreakSchema),
+    leaderboard: oc
+      .route({ method: 'GET', path: '/promo/streaks/leaderboard' })
+      .output(StreakLeaderboardSchema),
+  },
+
+  races: {
+    /** Races open right now, for the race switcher. */
+    listActive: oc.route({ method: 'GET', path: '/promo/races' }).output(z.array(RaceSchema)),
+
+    get: oc
+      .route({ method: 'GET', path: '/promo/races/{raceId}' })
+      .input(z.object({ raceId: UuidSchema }))
+      .output(RaceForPlayerSchema),
+  },
+
+  rankChallenge: {
+    get: oc
+      .route({ method: 'GET', path: '/promo/rank-challenge' })
+      .output(PlayerRankChallengeSchema),
+
+    /** The tiers and who has won each so far - public, no wagered totals. */
+    ladder: oc
+      .route({ method: 'GET', path: '/promo/rank-challenge/ladder' })
+      .output(RankChallengeLadderSchema),
   },
 
   admin: {
+    streaks: {
+      config: {
+        get: oc
+          .route({ method: 'GET', path: '/backoffice/promo/streaks/config' })
+          .output(StreakConfigSchema),
+
+        set: oc
+          .route({ method: 'PUT', path: '/backoffice/promo/streaks/config' })
+          .input(StreakConfigSchema)
+          .output(StreakConfigSchema),
+      },
+    },
+
     ranks: {
       get: oc.route({ method: 'GET', path: '/backoffice/promo/ranks' }).output(RankLadderSchema),
 
@@ -213,6 +540,57 @@ export const gamificationContract = {
           .route({ method: 'PUT', path: '/backoffice/promo/ranks/config' })
           .input(RankConfigSchema)
           .output(RankConfigSchema),
+      },
+    },
+
+    races: {
+      list: oc
+        .route({ method: 'GET', path: '/backoffice/promo/races' })
+        .output(z.array(RaceSchema)),
+
+      get: oc
+        .route({ method: 'GET', path: '/backoffice/promo/races/{raceId}' })
+        .input(z.object({ raceId: UuidSchema }))
+        .output(RaceSchema),
+
+      create: oc
+        .route({ method: 'POST', path: '/backoffice/promo/races' })
+        .input(CreateRaceInputSchema)
+        .output(RaceSchema),
+
+      update: oc
+        .route({ method: 'PUT', path: '/backoffice/promo/races/{raceId}' })
+        .input(UpdateRaceInputSchema)
+        .output(RaceSchema),
+    },
+
+    rankChallenge: {
+      config: {
+        get: oc
+          .route({ method: 'GET', path: '/backoffice/promo/rank-challenge' })
+          .output(RankChallengeLadderSchema),
+
+        set: oc
+          .route({ method: 'PUT', path: '/backoffice/promo/rank-challenge' })
+          .input(SetRankChallengeLadderInputSchema)
+          .output(RankChallengeLadderSchema),
+      },
+
+      claims: {
+        list: oc
+          .route({ method: 'GET', path: '/backoffice/promo/rank-challenge/claims' })
+          .output(z.array(RankChallengeClaimSchema)),
+      },
+
+      fulfilment: {
+        list: oc
+          .route({ method: 'GET', path: '/backoffice/promo/rank-challenge/fulfilment' })
+          .output(z.array(RankChallengeClaimSchema)),
+
+        markFulfilled: oc
+          .route({ method: 'POST', path: '/backoffice/promo/rank-challenge/fulfilment/{tierId}' })
+          .input(MarkRankChallengeFulfilledInputSchema)
+          .output(RankChallengeClaimSchema),
       },
     },
   },

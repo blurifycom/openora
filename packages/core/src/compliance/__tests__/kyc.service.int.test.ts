@@ -480,7 +480,7 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
     expect(statusWriter.setStatus).not.toHaveBeenCalled();
   });
 
-  it('ignores deposits in another currency than the player account', async () => {
+  it('skips evaluation (no report) when a deposit currency cannot be priced into the pivot', async () => {
     const { svc, statusWriter } = makeService({ config });
     const { userId } = await seedPlayer({ currency: 'EUR' });
     await seedDeposit(userId, '2000', 'EUR');
@@ -488,6 +488,24 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
     await svc.handleDeposit(userId);
 
     expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('fires for a player whose own currency differs from the pivot, once their deposits price past the threshold', async () => {
+    const rates = makeRates({ EUR: '1.1' });
+    const { svc, statusWriter } = makeService({ config, exchangeRateReader: rates });
+    const { userId } = await seedPlayer({ currency: 'EUR' });
+    await seedDeposit(userId, '1000', 'EUR');
+
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'resubmission_requested',
+      expect.objectContaining({ source: 'reverify' }),
+      expect.anything(),
+    );
+    const [row] = await verificationsOf(userId);
+    expect(Number(row?.triggerDeposits)).toBe(1100);
   });
 
   it('ignores a pending deposit that has not settled', async () => {

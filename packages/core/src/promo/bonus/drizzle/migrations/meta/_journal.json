@@ -64,6 +64,13 @@
       "when": 1790217101459,
       "tag": "0008_dear_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790343346597,
+      "tag": "0009_bonus_offer_rules_cashback_forfeit",
+      "breakpoints": true
     }
   ]
 }

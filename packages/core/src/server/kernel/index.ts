@@ -42,8 +42,11 @@ export { mapErrors } from './orpc-error-map.js';
 export { assertOwnership } from './ownership.js';
 export { serializeRow } from './serialize-row.js';
 export type { SerializedRow } from './serialize-row.js';
-export { createEventStreamGenerator } from './event-stream.js';
-export type { EventStreamOptions } from './event-stream.js';
+export {
+  createEventStreamGenerator,
+  createMultiplexedEventStreamGenerator,
+} from './event-stream.js';
+export type { EventStreamOptions, MultiplexedChannel, MultiplexedEvent } from './event-stream.js';
 
 // T0 PlatformConfig loader. See ADR-0013 Tier 0.
 export { loadPlatformConfig, resolvePlatformConfigPath } from './platform-config-loader.js';
