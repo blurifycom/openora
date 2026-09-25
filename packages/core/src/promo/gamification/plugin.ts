@@ -32,6 +32,9 @@ import { RankService } from './service/rank.service.js';
 import { StreakAdminService } from './service/streak-admin.service.js';
 import { StreakPayoutService } from './service/streak-payout.service.js';
 import { StreakService } from './service/streak.service.js';
+import { RaceAdminService } from './service/race-admin.service.js';
+import { RacePayoutService } from './service/race-payout.service.js';
+import { RaceService } from './service/race.service.js';
 import { createGamificationRouter } from './router/index.js';
 import { RankPayoutKindSchema } from './contract/index.js';
 
@@ -40,6 +43,10 @@ const logger = createLogger('promo-gamification');
 const RANK_PAYOUT_QUEUE = queue('promo-rank-payout');
 const STREAK_PAYOUT_QUEUE = queue('promo-streak-payout');
 const STREAK_CLOSE_QUEUE = queue('promo-streak-close');
+const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
+// Races close at whatever timestamp the operator configured, not a shared daily/weekly/monthly
+// anchor - a short recurring tick is what makes "closed within a minute of endAt" true.
+const RACE_PAYOUT_CRON = '*/1 * * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.
 const RankPayoutJobSchema = z.object({ kind: RankPayoutKindSchema });
@@ -62,6 +69,9 @@ const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
 const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
   new StreakService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
 
+const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
+  new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+
 const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RakebackService(() => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined), logger);
 
@@ -71,11 +81,18 @@ export default {
   register(ctx) {
     ctx.provide(
       WAGER_TRACKING,
-      (c) => new CompositeWagerTracking([rankService(c), rakebackService(c), streakService(c)]),
+      (c) =>
+        new CompositeWagerTracking([
+          rankService(c),
+          rakebackService(c),
+          streakService(c),
+          raceService(c),
+        ]),
     );
 
     let rankPayouts: RankPayoutService | null = null;
     let streakPayouts: StreakPayoutService | null = null;
+    let racePayouts: RacePayoutService | null = null;
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
 
@@ -129,6 +146,24 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: RACE_PAYOUT_QUEUE,
+      schema: EmptyJobSchema,
+      handler: async () => {
+        if (!racePayouts) {
+          logger.warn({}, 'race payout skipped - service not constructed');
+          return;
+        }
+        const won = await racePayouts.closeDue(new Date());
+        // After the settlement transaction's own commit, the same rule the rank/streak payouts
+        // follow: a winner announced before the credit lands would tell a player about a prize
+        // they do not have yet.
+        for (const win of won) {
+          events?.emit('promo.race.won', win);
+        }
+      },
+    });
+
     ctx.routers.add('promo-gamification', (c) => {
       rankPayouts = new RankPayoutService(
         c.get(DRIZZLE),
@@ -144,6 +179,12 @@ export default {
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         logger,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+      );
+      racePayouts = new RacePayoutService(
+        c.get(DRIZZLE),
+        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        logger,
       );
       streaks = streakService(c);
       events = c.get(EVENT_BUS);
@@ -179,12 +220,17 @@ export default {
           { cron: schedule.streaks.closeCron },
         )
         .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
+      void jobs
+        .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
+        .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
 
       return createGamificationRouter({
         ranks: rankService(c),
         admin: new RankAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         streaks,
         streakAdmin: new StreakAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        races: raceService(c),
+        raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         adminGuard: c.get(ADMIN_GUARD),
       });
     });

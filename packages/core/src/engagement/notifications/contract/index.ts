@@ -11,6 +11,7 @@ export const NOTIFICATION_TYPES = [
   'social.friend_request.accepted',
   'promo.bonus.granted',
   'promo.bonus.completed',
+  'promo.race.won',
   'chat.rain.received',
   'chat.tip.received',
   'chat.gift.claimed',

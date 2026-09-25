@@ -8,6 +8,7 @@ import {
   timestamp,
   pgEnum,
   index,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import { PLAYER_STATUSES, KYC_STATUSES } from '@openora/core/contracts';
 
@@ -47,6 +48,10 @@ export const player = pgTable(
     ageAcceptedAt: timestamp({ withTimezone: true }),
     registrationIp: text(),
     registrationUserAgent: text(),
+    /** Shows "Incognito" in place of this player's username on a public leaderboard (a wager
+     * race, say) instead of the platform's own partial masking. Never affects the player's own
+     * standing, wagered total, or prize eligibility - only what other players see. */
+    hideUsernameOnLeaderboards: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

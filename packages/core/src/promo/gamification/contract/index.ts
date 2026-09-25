@@ -4,6 +4,7 @@ import {
   ContributionPercentSchema,
   CurrencyTickerSchema,
   MoneyAmountSchema,
+  TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
 
@@ -277,6 +278,90 @@ export const RankLookupEntrySchema = z.object({
 });
 export type RankLookupEntry = z.infer<typeof RankLookupEntrySchema>;
 
+// A race's leaderboard is capped rather than paginated - see RaceService.getForPlayer.
+const MAX_RACE_POSITIONS = 100;
+
+export const RacePositionSchema = z.object({
+  position: z.number().int().positive(),
+  prize: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+});
+export type RacePosition = z.infer<typeof RacePositionSchema>;
+
+export const RacePositionsSchema = z
+  .array(RacePositionSchema)
+  .min(1)
+  .max(MAX_RACE_POSITIONS)
+  .refine((positions) => {
+    const sorted = positions.map((p) => p.position).sort((a, b) => a - b);
+    return sorted.every((position, index) => position === index + 1);
+  }, 'positions must run 1..N with no gap or duplicate');
+export type RacePositions = z.infer<typeof RacePositionsSchema>;
+
+export const RaceEligibleProductsSchema = z.array(z.string().trim().min(1).max(64)).max(50);
+export type RaceEligibleProducts = z.infer<typeof RaceEligibleProductsSchema>;
+
+const RaceFieldsShape = {
+  name: z.string().min(1).max(200),
+  currency: CurrencyTickerSchema,
+  startAt: TimestampSchema,
+  endAt: TimestampSchema,
+  prizePool: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  positions: RacePositionsSchema,
+  /** Products whose stakes count toward this race. Empty counts every product. */
+  eligibleProducts: RaceEligibleProductsSchema,
+} as const;
+
+const raceDatesOrdered = (v: { startAt: string; endAt: string }) =>
+  new Date(v.endAt).getTime() > new Date(v.startAt).getTime();
+
+export const CreateRaceInputSchema = z
+  .object(RaceFieldsShape)
+  .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
+export type CreateRaceInput = z.infer<typeof CreateRaceInputSchema>;
+
+export const UpdateRaceInputSchema = z
+  .object({ raceId: UuidSchema, ...RaceFieldsShape })
+  .refine(raceDatesOrdered, { message: 'endAt must be after startAt', path: ['endAt'] });
+export type UpdateRaceInput = z.infer<typeof UpdateRaceInputSchema>;
+
+export const RaceSchema = z.object({
+  id: UuidSchema,
+  ...RaceFieldsShape,
+  closedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type Race = z.infer<typeof RaceSchema>;
+
+/** A public leaderboard row: masked or "Incognito" per the player's own privacy setting. */
+export const RaceLeaderboardEntrySchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  wagered: MoneyAmountSchema,
+  position: z.number().int().positive(),
+});
+export type RaceLeaderboardEntry = z.infer<typeof RaceLeaderboardEntrySchema>;
+
+export const RaceOwnEntrySchema = z.object({
+  userId: UuidSchema,
+  wagered: MoneyAmountSchema,
+  /** Null when the player has not wagered in this race at all. */
+  position: z.number().int().positive().nullable(),
+  /** How much more the player must wager to reach the next paid position. Null once they are
+   * already in a paid position, or the race pays no positions. */
+  amountToNextPaidPosition: MoneyAmountSchema.nullable(),
+});
+export type RaceOwnEntry = z.infer<typeof RaceOwnEntrySchema>;
+
+export const RaceForPlayerSchema = z.object({
+  race: RaceSchema,
+  podium: z.array(RaceLeaderboardEntrySchema).max(3),
+  /** Positions 4 and below, capped - see RaceService.getForPlayer. */
+  leaderboard: z.array(RaceLeaderboardEntrySchema).max(MAX_RACE_POSITIONS - 3),
+  own: RaceOwnEntrySchema,
+});
+export type RaceForPlayer = z.infer<typeof RaceForPlayerSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -303,6 +388,16 @@ export const gamificationContract = {
     leaderboard: oc
       .route({ method: 'GET', path: '/promo/streaks/leaderboard' })
       .output(StreakLeaderboardSchema),
+  },
+
+  races: {
+    /** Races open right now, for the race switcher. */
+    listActive: oc.route({ method: 'GET', path: '/promo/races' }).output(z.array(RaceSchema)),
+
+    get: oc
+      .route({ method: 'GET', path: '/promo/races/{raceId}' })
+      .input(z.object({ raceId: UuidSchema }))
+      .output(RaceForPlayerSchema),
   },
 
   admin: {
@@ -337,6 +432,27 @@ export const gamificationContract = {
           .input(RankConfigSchema)
           .output(RankConfigSchema),
       },
+    },
+
+    races: {
+      list: oc
+        .route({ method: 'GET', path: '/backoffice/promo/races' })
+        .output(z.array(RaceSchema)),
+
+      get: oc
+        .route({ method: 'GET', path: '/backoffice/promo/races/{raceId}' })
+        .input(z.object({ raceId: UuidSchema }))
+        .output(RaceSchema),
+
+      create: oc
+        .route({ method: 'POST', path: '/backoffice/promo/races' })
+        .input(CreateRaceInputSchema)
+        .output(RaceSchema),
+
+      update: oc
+        .route({ method: 'PUT', path: '/backoffice/promo/races/{raceId}' })
+        .input(UpdateRaceInputSchema)
+        .output(RaceSchema),
     },
   },
 };

@@ -14,18 +14,28 @@ import {
 import { RankLadderNotConfiguredError, RankService } from '../service/rank.service.js';
 import { StreakAdminService } from '../service/streak-admin.service.js';
 import { StreakConfigNotSetError, StreakService } from '../service/streak.service.js';
+import { RaceNotFoundError, RaceService } from '../service/race.service.js';
+import {
+  RaceAdminService,
+  RaceClosedError,
+  RacePositionsInvalidError,
+} from '../service/race-admin.service.js';
 
 export function createGamificationRouter({
   ranks,
   admin,
   streaks,
   streakAdmin,
+  races,
+  raceAdmin,
   adminGuard,
 }: {
   ranks: RankService;
   admin: RankAdminService;
   streaks: StreakService;
   streakAdmin: StreakAdminService;
+  races: RaceService;
+  raceAdmin: RaceAdminService;
   adminGuard: AdminGuard;
 }) {
   const os = implement(gamificationContract).$context<OssContext>();
@@ -56,6 +66,16 @@ export function createGamificationRouter({
 
       leaderboard: os.streaks.leaderboard.handler(({ context }) =>
         streaks.leaderboard(getUserId(context)),
+      ),
+    },
+
+    races: {
+      listActive: os.races.listActive.handler(() => races.listActive(new Date())),
+
+      get: os.races.get.handler(({ input, context }) =>
+        mapErrors({ NOT_FOUND: RaceNotFoundError }, () =>
+          races.getForPlayer(input.raceId, getUserId(context)),
+        ),
       ),
     },
 
@@ -105,6 +125,37 @@ export function createGamificationRouter({
             );
           }),
         },
+      },
+
+      races: {
+        list: os.admin.races.list.handler(async ({ context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return raceAdmin.list();
+        }),
+
+        get: os.admin.races.get.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return mapErrors({ NOT_FOUND: RaceNotFoundError }, () => raceAdmin.get(input.raceId));
+        }),
+
+        create: os.admin.races.create.handler(async ({ input, context }) => {
+          const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+          return mapErrors({ BAD_REQUEST: RacePositionsInvalidError }, () =>
+            raceAdmin.create(userId, input),
+          );
+        }),
+
+        update: os.admin.races.update.handler(async ({ input, context }) => {
+          const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+          return mapErrors(
+            {
+              BAD_REQUEST: RacePositionsInvalidError,
+              CONFLICT: RaceClosedError,
+              NOT_FOUND: RaceNotFoundError,
+            },
+            () => raceAdmin.update(userId, input),
+          );
+        }),
       },
     },
   });

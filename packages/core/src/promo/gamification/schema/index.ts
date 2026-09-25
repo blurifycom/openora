@@ -20,6 +20,8 @@ import {
   MONEY_SCALE,
 } from '@openora/core/contracts';
 import type {
+  RaceEligibleProducts,
+  RacePositions,
   RankConfig,
   RankPayoutAnchors,
   RankPayoutKind,
@@ -318,3 +320,112 @@ export const promoStreakMilestoneGrant = pgTable(
 );
 
 export type PromoStreakMilestoneGrant = typeof promoStreakMilestoneGrant.$inferSelect;
+
+/**
+ * A wager challenge: a fixed window over which wagering volume is ranked and a prize pool split
+ * across the paid positions. Unlike the rank ladder and streak, a race carries its own explicit
+ * `startAt`/`endAt` rather than an operator-wide anchor, since races are run one at a time (or
+ * overlapping) on whatever schedule the operator likes.
+ *
+ * `closedAt` is the hard settlement flag: standings are frozen and prizes paid once, and a late
+ * or retried settle-job tick after `endAt` must never recompute them - `endAt < now()` alone
+ * cannot express "already settled", since a crash could leave it null after payouts landed.
+ * Prospective-only editing (`RaceAdminService`) is enforced by refusing any change once this is
+ * set, mirroring how `RankAdminService.set` blocks a ladder edit once a player holds state.
+ */
+export const promoRace = pgTable(
+  'promo_race',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull(),
+    currency: text().notNull(),
+    startAt: timestamp({ withTimezone: true }).notNull(),
+    endAt: timestamp({ withTimezone: true }).notNull(),
+    prizePool: money().notNull(),
+    /** `{ position, prize }[]`, validated 1..N contiguous, prizes summing to at most `prizePool`. */
+    positions: jsonb().$type<RacePositions>().notNull(),
+    /** Products whose stakes count toward this race. Empty counts every product. */
+    eligibleProducts: text().array().notNull().default([]).$type<RaceEligibleProducts>(),
+    /** Set once, by the settle job, when standings are frozen and prizes granted. */
+    closedAt: timestamp({ withTimezone: true }),
+    createdBy: uuid(),
+    updatedBy: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check('promo_race_prize_pool_positive', sql`${t.prizePool} > 0`),
+    check('promo_race_dates_ordered', sql`${t.endAt} > ${t.startAt}`),
+    index('promo_race_open_idx')
+      .on(t.startAt, t.endAt)
+      .where(sql`${t.closedAt} is null`),
+  ],
+);
+
+export type PromoRace = typeof promoRace.$inferSelect;
+
+/**
+ * What a player has wagered inside one race, in the race's own currency - one row per player per
+ * race, upserted per bet, the same accumulator shape as `promoRankPeriodWager`. `updatedAt`
+ * doubles as the tie-break clock the payout job reads: two players tied on `wagered` are ranked
+ * by whoever's row last moved, ie whoever reached the total first.
+ */
+export const promoRaceWager = pgTable(
+  'promo_race_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    raceId: uuid()
+      .notNull()
+      .references(() => promoRace.id),
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    wagered: money().notNull().default('0'),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('promo_race_wager_race_id_user_id_idx').on(t.raceId, t.userId),
+    // The leaderboard's own query: everyone in one race, ranked by what they wagered.
+    index('promo_race_wager_race_id_wagered_idx').on(t.raceId, t.wagered),
+    check('promo_race_wager_non_negative', sql`${t.wagered} >= 0`),
+  ],
+);
+
+export type PromoRaceWager = typeof promoRaceWager.$inferSelect;
+
+/**
+ * One prize paid to one player in one race, written once by the settle job -
+ * `unique(raceId, userId)` is the idempotency guard a retried or re-ticked settlement reads
+ * before crediting anything, the same "insert once, skip if present" shape
+ * `promoRankLevelUp`/`promoStreakMilestoneGrant` use for their own settlement.
+ */
+export const promoRacePayout = pgTable(
+  'promo_race_payout',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    raceId: uuid()
+      .notNull()
+      .references(() => promoRace.id),
+    userId: uuid().notNull(),
+    position: integer().notNull(),
+    amount: money().notNull(),
+    currency: text().notNull(),
+    settledAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    grantId: uuid(),
+    /** `granted`, or why nothing was: `restricted` for a player under an RG block. */
+    outcome: text().notNull(),
+  },
+  (t) => [
+    uniqueIndex('promo_race_payout_race_id_user_id_idx').on(t.raceId, t.userId),
+    index('promo_race_payout_race_id_idx').on(t.raceId),
+    check('promo_race_payout_position_positive', sql`${t.position} > 0`),
+    check('promo_race_payout_amount_non_negative', sql`${t.amount} >= 0`),
+  ],
+);
+
+export type PromoRacePayout = typeof promoRacePayout.$inferSelect;

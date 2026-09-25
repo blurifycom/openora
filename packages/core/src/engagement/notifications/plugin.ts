@@ -263,6 +263,28 @@ export const notificationEventMap: NotificationMapEntry[] = [
     data: { grantId: p.grantId },
   })),
 
+  mapEvent(
+    'promo.race.won',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.race.won',
+      title: 'You placed in a race',
+      body: `You placed #${p.position} in ${p.raceName} and won ${formatMoneyAmount(p.amount)} ${p.currency}.`,
+      data: { raceId: p.raceId },
+    }),
+    {
+      email: (p) => ({
+        key: 'raceWon',
+        data: {
+          raceName: p.raceName,
+          position: p.position,
+          amount: p.amount,
+          currency: p.currency,
+        },
+      }),
+    },
+  ),
+
   mapEvent('chat.user.mentioned', (p) => ({
     userId: p.mentionedUserId,
     type: 'chat.mention',

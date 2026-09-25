@@ -180,6 +180,10 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
         ? 'An anti-phishing code was added to your account. If this was not you, secure your account immediately.'
         : `Your anti-phishing code was changed. Your previous code was: ${data.previousAntiPhishingCode}\n\nIf this was not you, secure your account immediately.`,
   }),
+  raceWon: (data) => ({
+    subject: `You placed #${data.position} in ${data.raceName}`,
+    text: `You placed #${data.position} in ${data.raceName} and won ${formatMoney(data.amount, data.currency)}. The prize has been credited to your balance.`,
+  }),
 };
 
 const renderDefaultEmail = (

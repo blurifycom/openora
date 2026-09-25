@@ -66,6 +66,9 @@ export const PlayerSchema = z.object({
   timezone: TimezoneSchema.nullable(),
   // Last confirmed by a device, not last changed: it moves on every accepted capture.
   timezoneUpdatedAt: TimestampSchema.nullable(),
+  /** Shows "Incognito" in place of this player's username on a public leaderboard instead of
+   * the platform's own partial masking. Never affects the player's own standing. */
+  hideUsernameOnLeaderboards: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -142,6 +145,7 @@ export const UpdatePlayerProfileInputSchema = z
     country: CountryCodeSchema.nullable(),
     currency: CurrencyCodeSchema,
     timezone: TimezoneSchema,
+    hideUsernameOnLeaderboards: z.boolean(),
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
