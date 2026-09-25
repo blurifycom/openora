@@ -52,6 +52,16 @@ const EXPIRY_CRON = '*/15 * * * *';
 // never receives. Each handler's own database guard is what makes the retry itself safe.
 const MONEY_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
+// Trust-boundary narrowing for a zod-parsed event payload whose shape varies by topic: some
+// forfeit-triggering events carry `initiatedBy`, some do not. `unknown` in, a known initiator out.
+function initiatedByOf(data: unknown): 'player' | 'admin' | 'system' | undefined {
+  if (typeof data !== 'object' || data === null || !('initiatedBy' in data)) {
+    return undefined;
+  }
+  const value = (data as { initiatedBy: unknown }).initiatedBy;
+  return value === 'player' || value === 'admin' || value === 'system' ? value : undefined;
+}
+
 const EmptyJobPayloadSchema = z.object({});
 
 /**
@@ -194,17 +204,18 @@ export default {
     });
 
     // A bonus is money a player may not keep once they have excluded themselves, entered a
-    // cooling-off period or closed the account, and the rule is immediate rather than "by the
-    // next sweep".
+    // cooling-off period, closed the account or been banned, and the rule is immediate rather
+    // than "by the next sweep".
     const forfeitEverything =
       <
         K extends
           | 'rg.self_exclusion.activated'
           | 'rg.cooling_off.activated'
-          | 'player.account.closed',
+          | 'player.account.closed'
+          | 'identity.user.deactivated',
       >(
         topic: K,
-        reason: 'self_exclusion' | 'cooling_off' | 'account_closed',
+        reason: 'self_exclusion' | 'cooling_off' | 'account_closed' | 'admin',
       ) =>
       (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
@@ -217,15 +228,17 @@ export default {
           return;
         }
         const { userId, actorId } = parsed.data;
-        // Account closure is always an admin action. A self-exclusion names its own initiator,
-        // which is 'player', 'admin' or 'system' - a rule-triggered exclusion is nobody's admin
-        // action, and recording it as one puts the wrong name on a regulator-facing audit row.
+        // Account closure and a ban (identity.user.deactivated) are always an admin action. A
+        // self-exclusion names its own initiator, which is 'player', 'admin' or 'system' - a
+        // rule-triggered exclusion is nobody's admin action, and recording it as one puts the
+        // wrong name on a regulator-facing audit row. Read via a type guard rather than the `in`
+        // narrowing the three-topic version used - the fourth topic in this union has no
+        // `initiatedBy` field at all, which collapses `parsed.data`'s inferred type to a point
+        // the compiler can no longer narrow through property presence alone.
         const initiatedBy: 'player' | 'admin' | 'system' =
-          topic === 'player.account.closed'
+          topic === 'player.account.closed' || topic === 'identity.user.deactivated'
             ? 'admin'
-            : 'initiatedBy' in parsed.data
-              ? parsed.data.initiatedBy
-              : 'system';
+            : (initiatedByOf(parsed.data) ?? 'system');
         // No queue idempotency key on purpose. It would have to be derived from the player and
         // the reason, and a player who excludes themselves, lets the cool-off lapse, takes a new
         // bonus and excludes themselves again produces the same key - which BullMQ drops
@@ -258,6 +271,12 @@ export default {
     ctx.events.on(
       'player.account.closed',
       forfeitEverything('player.account.closed', 'account_closed'),
+    );
+    // A ban is `identity.user.deactivated` - the admin-console "Ban" action flips `isActive`
+    // false, same event chat's own membership service already reacts to for room removal.
+    ctx.events.on(
+      'identity.user.deactivated',
+      forfeitEverything('identity.user.deactivated', 'admin'),
     );
 
     ctx.jobs.worker({

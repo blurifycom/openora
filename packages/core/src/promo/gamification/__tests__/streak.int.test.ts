@@ -66,14 +66,19 @@ beforeEach(async () => {
   await db.drizzle.db.insert(promoStreakConfig).values(CONFIG);
 });
 
-const record = (userId: string, amount: string, context: WagerContext = CASINO) =>
+const record = (
+  userId: string,
+  amount: string,
+  context: WagerContext = CASINO,
+  realAmount: string = amount,
+) =>
   db.drizzle.db.transaction((tx) =>
     streaks.recordWager(tx, {
       userId,
       currency: 'USD',
       amount,
       weightedAmount: amount,
-      realAmount: amount,
+      realAmount,
       context,
     }),
   );
@@ -99,6 +104,22 @@ describe('recordWager', () => {
     await record(userId, '50', SPORTSBOOK);
     const state = await streaks.getForPlayer(userId);
     expect(state.current).toBe(0);
+  });
+
+  it('counts only the real-money part of a bonus-funded stake toward the daily minimum', async () => {
+    const userId = randomUUID();
+    // A 20 stake with only 5 out of the player's own funds - real money alone misses the
+    // 10 daily minimum, so the streak must not advance even though the full stake would clear it.
+    await record(userId, '20', CASINO, '5');
+    const state = await streaks.getForPlayer(userId);
+    expect(state).toMatchObject({ current: 0, todayWagered: '5.000000000000000000' });
+  });
+
+  it('advances the streak off real-money stake alone once it crosses the minimum', async () => {
+    const userId = randomUUID();
+    await record(userId, '20', CASINO, '11');
+    const state = await streaks.getForPlayer(userId);
+    expect(state.current).toBe(1);
   });
 
   it('records an unsettled milestone grant on the day it is reached', async () => {

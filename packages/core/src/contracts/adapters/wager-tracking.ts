@@ -19,9 +19,10 @@ export type WagerTrackingArgs = {
   weightedAmount: string;
   /**
    * The part of `amount` staked out of the player's own funds - `amount` minus whatever a bonus
-   * grant covered. Rank/streak counters intentionally ignore this and count the full stake (see
-   * their own doc comments); it exists for a consumer that must not reward money the player never
-   * risked, such as real-money rakeback.
+   * grant covered. `RankService`'s lifetime-wagering counter intentionally ignores this and
+   * counts the full stake (see its own doc comment); every other consumer here - rakeback,
+   * streak, races, the rank challenge - counts only this, since none of them may reward money
+   * the player never risked.
    */
   realAmount: string;
   context: WagerContext;

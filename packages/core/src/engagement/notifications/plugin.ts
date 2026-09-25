@@ -463,6 +463,27 @@ export default {
       }
     };
 
+    // The one place every `create()` call ends up on the realtime channel from - this
+    // module's own dispatch jobs below, and an overlay's own `NotificationsService` instance
+    // over a consumer-specific event `domainEventSchemas` has no entry for, since both share
+    // this event bus and `create()` always emits this topic. Re-reads the row rather than
+    // carrying it on the event: the event is `{ notificationId, userId }` only, the same shape
+    // every other consumer of this topic (the audit log) already treats as the full payload.
+    ctx.events.on('notifications.created', (payload) => {
+      const parsed = domainEventSchemas['notifications.created'].safeParse(payload);
+      if (!parsed.success || !svcRef) {
+        return;
+      }
+      void svcRef
+        .getById(parsed.data.notificationId)
+        .then((record) => {
+          if (record) {
+            publishNotification(record);
+          }
+        })
+        .catch((err: unknown) => logger.error({ err }, 'notification realtime lookup failed'));
+    });
+
     for (const entry of notificationEventMap) {
       ctx.events.on(entry.event, (payload, envelope) => {
         if (!jobQueueRef || !envelope) {
@@ -641,7 +662,6 @@ export default {
         if (!record) {
           return;
         }
-        publishNotification(record);
         if (payload.eventId) {
           await dispatchMail(
             payload.userId,
@@ -672,7 +692,6 @@ export default {
           }
           return;
         }
-        publishNotification(record);
         if (payload.email) {
           const mailKey = payload.input.eventId ?? record.id;
           await (payload.securityAlert

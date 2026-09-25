@@ -45,6 +45,10 @@ type Logger = { warn: (context: object, message: string) => void };
  *
  * A missed day is never observed here - only the close job (`closeDay`) sees the absence of a
  * qualifying bet, because nothing else can.
+ *
+ * Own-money only, the same rule `RaceService`/`RankChallengeService` apply: `args.realAmount`
+ * already excludes whatever part of a stake a bonus grant covered, so wagering a bonus never
+ * advances the streak.
  */
 export class StreakService implements WagerTrackingCommands {
   constructor(
@@ -54,7 +58,7 @@ export class StreakService implements WagerTrackingCommands {
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
-    if (moneyCompare(args.amount, '0') <= 0) {
+    if (moneyCompare(args.realAmount, '0') <= 0) {
       return [];
     }
     const [config] = await tx
@@ -71,13 +75,13 @@ export class StreakService implements WagerTrackingCommands {
     }
     const amount =
       args.currency === config.currency
-        ? args.amount
-        : await this.rates.convert(args.amount, args.currency, config.currency);
+        ? args.realAmount
+        : await this.rates.convert(args.realAmount, args.currency, config.currency);
     if (amount === null) {
       // ponytail: a wager with no rate does not count toward the streak; revisit if this shows
       // up in logs the way the equivalent rank-side skip would.
       this.logger.warn(
-        { userId: args.userId, from: args.currency, to: config.currency, amount: args.amount },
+        { userId: args.userId, from: args.currency, to: config.currency, amount: args.realAmount },
         'streak wager skipped - no exchange rate',
       );
       return [];
