@@ -60,7 +60,6 @@ beforeAll(async () => {
   audit = {
     record: (entry) => svc.record(entry).then(() => undefined),
     recordInTransaction: (tx, entry) => svc.recordInTransaction(tx, entry).then(() => undefined),
-    recordEventsInTransaction: async () => undefined,
   };
 });
 

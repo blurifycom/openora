@@ -128,7 +128,6 @@ function makeService(
   const audit = mock<AuditWritePort>({
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
-    recordEventsInTransaction: vi.fn().mockResolvedValue(undefined),
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
   const identityReader = makeIdentityReader();

@@ -390,6 +390,55 @@ describe('mapEventToRecord: gaming.games.bulk_updated', () => {
   });
 });
 
+describe('mapEventToRecord: compliance.game-geo-rules.bulk_updated', () => {
+  const rule = {
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    gameId: '99999999-9999-4999-8999-999999999999',
+    countryCode: 'DK',
+    reason: 'regulator letter 12',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  const payload = {
+    countryCode: 'DK',
+    reason: 'licence change',
+    rules: [rule],
+    target: { gameIds: [], providerIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] },
+    notFound: { gameIds: [], providerIds: [] },
+    actorId: adminId,
+    ip: '198.51.100.7',
+    userAgent: null,
+  };
+
+  it('audits a bulk restrict call once, with the added rules as the after-state', async () => {
+    const restrict = { ...payload, operation: 'restrict' };
+    const row = await mapEventToRecord('compliance.game-geo-rules.bulk_updated', restrict);
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      action: 'compliance.game-geo-rules.bulk_updated',
+      resourceType: 'game-geo-rule',
+      resourceId: null,
+      before: { rules: [] },
+      after: restrict,
+      ip: '198.51.100.7',
+    });
+  });
+
+  it('audits a bulk unrestrict call with the removed rules as the before-state', async () => {
+    const unrestrict = { ...payload, operation: 'unrestrict' };
+    const row = await mapEventToRecord('compliance.game-geo-rules.bulk_updated', unrestrict);
+
+    expect(row).toMatchObject({
+      resourceType: 'game-geo-rule',
+      resourceId: null,
+      before: { rules: [rule] },
+      after: { ...unrestrict, rules: [] },
+    });
+  });
+});
+
 describe('mapEventToRecord: gaming.provider.updated', () => {
   const providerId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const snapshot = {

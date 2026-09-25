@@ -21,7 +21,6 @@ const makeModeration = () =>
     mock<AuditWritePort>({
       record: vi.fn().mockResolvedValue(undefined),
       recordInTransaction: vi.fn().mockResolvedValue(undefined),
-      recordEventsInTransaction: vi.fn().mockResolvedValue(undefined),
     }),
   );
 
