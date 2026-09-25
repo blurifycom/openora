@@ -141,4 +141,35 @@ describe('instant rakeback on a qualifying bet', () => {
 
     expect(credit).not.toHaveBeenCalled();
   });
+
+  it('reports the credit for the caller to announce once its own transaction commits', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    const transactionId = randomUUID();
+    credit.mockResolvedValue({ ok: true, moved: true, transactionId, newBalance: '1' });
+
+    const credits = await wager(userId, '100');
+
+    expect(credits).toEqual([{ transactionId, amount: '1.000000000000000000', currency: 'USDT' }]);
+  });
+
+  it('reports nothing for a replayed credit that moved no money', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    credit.mockResolvedValue({ ok: true, moved: false, newBalance: '1' });
+
+    const credits = await wager(userId, '100');
+
+    expect(credits).toEqual([]);
+  });
+
+  it('reports nothing when the wallet refuses the credit', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+    credit.mockResolvedValue({ ok: false, reason: 'wallet not found' });
+
+    const credits = await wager(userId, '100');
+
+    expect(credits).toEqual([]);
+  });
 });

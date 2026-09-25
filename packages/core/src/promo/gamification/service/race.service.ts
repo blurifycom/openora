@@ -6,6 +6,7 @@ import type {
   Uuid,
   WagerTrackingArgs,
   WagerTrackingCommands,
+  WagerTrackingWalletCredit,
 } from '@openora/core/contracts';
 import {
   makeNotFoundError,
@@ -93,9 +94,9 @@ export class RaceService implements WagerTrackingCommands {
     private readonly logger: { warn: (context: object, message: string) => void },
   ) {}
 
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.realAmount, '0') <= 0) {
-      return;
+      return [];
     }
     const now = new Date();
     const open = await tx
@@ -137,6 +138,7 @@ export class RaceService implements WagerTrackingCommands {
           },
         });
     }
+    return [];
   }
 
   async listActive(now: Date): Promise<Race[]> {

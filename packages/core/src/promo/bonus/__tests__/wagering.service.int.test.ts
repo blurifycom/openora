@@ -19,7 +19,7 @@ afterAll(async () => {
 
 describe('wager() with no attributed bonus grant', () => {
   it('still reports the bet to wager tracking at its full stake', async () => {
-    const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => {}) };
+    const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
     const wagering = new WageringService(wagerTracking);
     const userId = randomUUID();
 
@@ -44,7 +44,7 @@ describe('wager() with no attributed bonus grant', () => {
   });
 
   it('does not report a bet requesting bonus funds it has no grant for', async () => {
-    const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => {}) };
+    const wagerTracking: WagerTrackingCommands = { recordWager: vi.fn(async () => []) };
     const wagering = new WageringService(wagerTracking);
 
     const outcome = await db.drizzle.db.transaction((tx) =>

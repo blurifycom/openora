@@ -80,11 +80,15 @@ const claimsOf = () =>
     })
     .from(promoRankChallengeClaim);
 
-const payoutService = () =>
+// The tier ladder and the payout currency match by default, so most tests exercise the
+// no-conversion path - the currency-conversion behaviour has its own describe block below.
+const payoutService = (payoutCurrency = 'USDT') =>
   new RankChallengePayoutService(
     db.drizzle,
     mock<PlayEligibilityPort>({ isRestricted }),
     mock<WalletCommands>({ credit }),
+    mock<ExchangeRateReader>({ convert }),
+    payoutCurrency,
     audit,
     logger,
   );
@@ -236,6 +240,52 @@ describe('settling a claim', () => {
     await payoutService().settlePending();
 
     expect(credit).not.toHaveBeenCalled();
+  });
+});
+
+describe('crediting a prize in a currency the player can actually hold', () => {
+  it('converts the tier cash amount into the payout currency before crediting', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    const userId = account.id;
+    await wager(userId, '1');
+    convert.mockResolvedValue('48');
+
+    const won = await payoutService('USD').settlePending();
+
+    expect(convert).toHaveBeenCalledWith('50.000000000000000000', 'USDT', 'USD');
+    expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '48', currency: 'USD' });
+    expect(won).toEqual([expect.objectContaining({ cashAmount: '48', currency: 'USD' })]);
+  });
+
+  it('leaves the claim unsettled to retry when no rate is available', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    const userId = account.id;
+    await wager(userId, '1');
+    convert.mockResolvedValue(null);
+
+    const won = await payoutService('USD').settlePending();
+
+    expect(won).toEqual([]);
+    expect(credit).not.toHaveBeenCalled();
+    const [claim] = await db.drizzle.db
+      .select({ settledAt: promoRankChallengeClaim.settledAt })
+      .from(promoRankChallengeClaim);
+    expect(claim?.settledAt).toBeNull();
+  });
+
+  it('leaves the claim unsettled, granting nothing, when the wallet credit fails', async () => {
+    const { account } = await seedPlayerWithUser(db);
+    const userId = account.id;
+    await wager(userId, '1');
+    credit.mockResolvedValue({ ok: false, reason: 'wallet not found' });
+
+    const won = await payoutService().settlePending();
+
+    expect(won).toEqual([]);
+    const [claim] = await db.drizzle.db
+      .select({ settledAt: promoRankChallengeClaim.settledAt })
+      .from(promoRankChallengeClaim);
+    expect(claim?.settledAt).toBeNull();
   });
 });
 

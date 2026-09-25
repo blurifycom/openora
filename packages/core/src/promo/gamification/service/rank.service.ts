@@ -4,6 +4,7 @@ import type {
   ExchangeRateReader,
   WagerTrackingArgs,
   WagerTrackingCommands,
+  WagerTrackingWalletCredit,
 } from '@openora/core/contracts';
 import {
   makeNotFoundError,
@@ -66,9 +67,9 @@ export class RankService implements WagerTrackingCommands {
    * Not idempotent on its own: call it only inside the wallet's debit transaction, below its
    * duplicate-bet guard, so a replayed bet never reaches it.
    */
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.amount, '0') <= 0) {
-      return;
+      return [];
     }
     const [config] = await tx
       .select({
@@ -77,7 +78,7 @@ export class RankService implements WagerTrackingCommands {
       })
       .from(promoRankConfig);
     if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
-      return;
+      return [];
     }
     const ladder = await tx
       .select({
@@ -91,7 +92,7 @@ export class RankService implements WagerTrackingCommands {
       .orderBy(asc(promoRankTier.position));
     const [lowest] = ladder;
     if (!lowest) {
-      return;
+      return [];
     }
     const amount =
       args.currency === lowest.currency
@@ -108,7 +109,7 @@ export class RankService implements WagerTrackingCommands {
         },
         'rank wager skipped - no exchange rate',
       );
-      return;
+      return [];
     }
 
     // What the player wagered inside each open period, for the payouts that settle them. Upserted
@@ -160,7 +161,7 @@ export class RankService implements WagerTrackingCommands {
     const reached = rank && tierFor(ladder, rank.lifetimeWagered);
     const current = ladder.find((tier) => tier.id === rank?.tierId);
     if (!reached || (current && reached.position <= current.position)) {
-      return;
+      return [];
     }
     await tx
       .update(promoPlayerRank)
@@ -197,6 +198,7 @@ export class RankService implements WagerTrackingCommands {
       before: { tierId: current?.id ?? null },
       after: { tierId: reached.id },
     });
+    return [];
   }
 
   /** The ladder as an operator configured it. No player data, so anyone may read it. */

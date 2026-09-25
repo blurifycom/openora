@@ -5,6 +5,7 @@ import type {
   Uuid,
   WagerTrackingArgs,
   WagerTrackingCommands,
+  WagerTrackingWalletCredit,
 } from '@openora/core/contracts';
 import {
   makeNotFoundError,
@@ -52,9 +53,9 @@ export class StreakService implements WagerTrackingCommands {
     private readonly logger: Logger,
   ) {}
 
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.amount, '0') <= 0) {
-      return;
+      return [];
     }
     const [config] = await tx
       .select({
@@ -66,7 +67,7 @@ export class StreakService implements WagerTrackingCommands {
       })
       .from(promoStreakConfig);
     if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
-      return;
+      return [];
     }
     const amount =
       args.currency === config.currency
@@ -79,7 +80,7 @@ export class StreakService implements WagerTrackingCommands {
         { userId: args.userId, from: args.currency, to: config.currency, amount: args.amount },
         'streak wager skipped - no exchange rate',
       );
-      return;
+      return [];
     }
 
     const today = isoDate(new Date());
@@ -95,7 +96,7 @@ export class StreakService implements WagerTrackingCommands {
       })
       .returning({ wagered: promoStreakDailyWager.wagered });
     if (!day || moneyCompare(day.wagered, config.dailyMinWager) < 0) {
-      return;
+      return [];
     }
 
     // One row per player, upserted per bet - `where` skips the update entirely once today has
@@ -115,7 +116,7 @@ export class StreakService implements WagerTrackingCommands {
       })
       .returning({ current: promoPlayerStreak.current });
     if (!advanced) {
-      return;
+      return [];
     }
 
     if (config.milestones.some((milestone) => milestone.day === advanced.current)) {
@@ -138,6 +139,7 @@ export class StreakService implements WagerTrackingCommands {
         .set({ current: 0, updatedAt: sql`now()` })
         .where(eq(promoPlayerStreak.userId, args.userId));
     }
+    return [];
   }
 
   async getForPlayer(userId: Uuid): Promise<PlayerStreak> {

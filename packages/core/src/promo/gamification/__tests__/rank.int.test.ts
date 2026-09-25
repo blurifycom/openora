@@ -177,7 +177,7 @@ describe('recording a wager toward the rank ladder', () => {
     const userId = randomUUID();
     convert.mockResolvedValue(null);
 
-    await expect(wager(userId, '10', 'BTC')).resolves.toBeUndefined();
+    await expect(wager(userId, '10', 'BTC')).resolves.toEqual([]);
 
     expect(await rankOf(userId)).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(

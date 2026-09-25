@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { definePlatformConfig } from '../platform-config.js';
+import { definePlatformConfig, resolveWalletDefaultCurrency } from '../platform-config.js';
+
+describe('resolveWalletDefaultCurrency', () => {
+  it('falls back to USD when the operator has not set one', () => {
+    expect(resolveWalletDefaultCurrency(undefined)).toBe('USD');
+    expect(resolveWalletDefaultCurrency({})).toBe('USD');
+  });
+
+  it('uppercases the operator-configured currency', () => {
+    expect(resolveWalletDefaultCurrency({ defaultCurrency: 'usdt' })).toBe('USDT');
+  });
+});
 
 describe('definePlatformConfig', () => {
   it('canonicalizes attachment hosts before services consume the config', () => {

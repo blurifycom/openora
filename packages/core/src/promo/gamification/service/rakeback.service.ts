@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type {
   WagerTrackingArgs,
   WagerTrackingCommands,
+  WagerTrackingWalletCredit,
   WalletCommands,
 } from '@openora/core/contracts';
 import {
@@ -46,16 +47,16 @@ export class RakebackService implements WagerTrackingCommands {
     private readonly logger: { warn: (context: object, message: string) => void },
   ) {}
 
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     const wallet = this.getWallet();
     if (!wallet || moneyCompare(args.realAmount, ZERO) <= 0) {
-      return;
+      return [];
     }
     const [config] = await tx
       .select({ eligibleProducts: promoRankConfig.eligibleProducts })
       .from(promoRankConfig);
     if (!config || !countsToward(config.eligibleProducts, args.context.product)) {
-      return;
+      return [];
     }
     const [rank] = await tx
       .select({
@@ -66,14 +67,14 @@ export class RakebackService implements WagerTrackingCommands {
       .from(promoPlayerRank)
       .where(eq(promoPlayerRank.userId, args.userId));
     if (!rank?.tierId) {
-      return;
+      return [];
     }
     const [tier] = await tx
       .select({ rakebackPercent: promoRankTier.rakebackPercent })
       .from(promoRankTier)
       .where(eq(promoRankTier.id, rank.tierId));
     if (!tier) {
-      return;
+      return [];
     }
     const boostActive =
       rank.rakebackBoostExpiresAt !== null && rank.rakebackBoostExpiresAt > new Date();
@@ -83,8 +84,12 @@ export class RakebackService implements WagerTrackingCommands {
     );
     const rakeback = moneyDivide(moneyScaleBy(args.realAmount, rate), '100');
     if (moneyCompare(rakeback, ZERO) <= 0) {
-      return;
+      return [];
     }
+    // Own-money only, priced in the bet's own currency - the currency the player is already
+    // holding a balance in, so unlike a race/streak/rank-challenge prize (priced in whatever
+    // currency their own config carries) this never opens a balance in one the player does not
+    // already use.
     const outcome = await wallet.credit(tx, {
       userId: args.userId,
       amount: rakeback,
@@ -93,6 +98,12 @@ export class RakebackService implements WagerTrackingCommands {
     });
     if (!outcome.ok) {
       this.logger.warn({ userId: args.userId, reason: outcome.reason }, 'rakeback credit failed');
+      return [];
     }
+    // `moved: false` is a replayed credit (a duplicate bet-tracking call for the same bet) -
+    // the balance already changed and was already announced the first time.
+    return outcome.moved
+      ? [{ transactionId: outcome.transactionId, amount: rakeback, currency: args.currency }]
+      : [];
   }
 }

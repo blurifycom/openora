@@ -148,6 +148,19 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+const DEFAULT_WALLET_CURRENCY = 'USD';
+
+/**
+ * The currency a cash prize or cashback credit lands in when its own source (a rank ladder, a
+ * race, a streak milestone) is priced in something else - never the source's own currency
+ * unconditionally, or crediting a crypto-only player in a fiat ticker would open a balance the
+ * operator never offers. Absent `wallet.defaultCurrency` falls back to USD, the same default
+ * `readWalletBalances` uses for a player with no wallet row yet.
+ */
+export function resolveWalletDefaultCurrency(config: WalletConfig | undefined): string {
+  return (config?.defaultCurrency ?? DEFAULT_WALLET_CURRENCY).toUpperCase();
+}
+
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
 
 export const ExchangeRateConfigSchema = z

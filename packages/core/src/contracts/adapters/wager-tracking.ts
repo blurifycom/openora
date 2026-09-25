@@ -27,8 +27,22 @@ export type WagerTrackingArgs = {
   context: WagerContext;
 };
 
+/**
+ * A real-money wallet credit a `recordWager` consumer made inside the caller's own transaction -
+ * rank rakeback today. Reported back rather than fired as an event from inside the port, since a
+ * consumer here has no view of when the caller's transaction actually commits; the caller collects
+ * these and emits `wallet.balance.changed` itself once it does, the same rule every other wallet
+ * mover in `WalletCommandsService` follows.
+ */
+export type WagerTrackingWalletCredit = {
+  transactionId: string;
+  amount: string;
+  currency: string;
+};
+
 export type WagerTrackingCommands = {
-  recordWager(tx: unknown, args: WagerTrackingArgs): Promise<void>;
+  /** Empty array when nothing here moved real money - the common case. */
+  recordWager(tx: unknown, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]>;
 };
 
 export const WAGER_TRACKING: Token<WagerTrackingCommands> = createToken('WAGER_TRACKING');

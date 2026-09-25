@@ -5,6 +5,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import type {
   BonusGrantCommands,
+  ExchangeRateReader,
   PlayEligibilityPort,
   WalletCommands,
 } from '@openora/core/contracts';
@@ -17,15 +18,20 @@ let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const credit = vi.fn<WalletCommands['credit']>();
+const convert = vi.fn<ExchangeRateReader['convert']>();
 const logger = { warn: vi.fn(), error: vi.fn() };
 
 const MILESTONES: StreakMilestone[] = [{ day: 3, rewards: [{ kind: 'cash', amount: '5' }] }];
 
-const service = () =>
+// The streak's own currency and the payout currency match by default, so most tests exercise
+// the no-conversion path - the currency-conversion behaviour has its own describe block below.
+const service = (payoutCurrency = 'USD') =>
   new StreakPayoutService(
     db.drizzle,
     mock<BonusGrantCommands>({ grant }),
     mock<PlayEligibilityPort>({ isRestricted }),
+    mock<ExchangeRateReader>({ convert }),
+    payoutCurrency,
     logger,
     mock<WalletCommands>({ credit }),
   );
@@ -119,5 +125,44 @@ describe('settling a cash streak reward', () => {
 
     expect(credit).not.toHaveBeenCalled();
     await expect(milestoneGrant(id)).resolves.toMatchObject({ outcome: 'restricted' });
+  });
+});
+
+describe('crediting a cash reward in a currency the player can actually hold', () => {
+  it('converts the reward into the payout currency before crediting', async () => {
+    const userId = randomUUID();
+    await owe(userId, 3);
+    convert.mockResolvedValue('4.5');
+
+    const { cashPaid } = await service('USDT').settlePending();
+
+    expect(convert).toHaveBeenCalledWith('5', 'USD', 'USDT');
+    expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '4.5', currency: 'USDT' });
+    expect(cashPaid).toEqual([
+      expect.objectContaining({ userId, amount: '4.5', currency: 'USDT' }),
+    ]);
+  });
+
+  it('leaves the milestone unsettled to retry when no rate is available', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    convert.mockResolvedValue(null);
+
+    const { cashPaid } = await service('USDT').settlePending();
+
+    expect(cashPaid).toEqual([]);
+    expect(credit).not.toHaveBeenCalled();
+    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
+  });
+
+  it('leaves the milestone unsettled, granting nothing, when the wallet credit fails', async () => {
+    const userId = randomUUID();
+    const id = await owe(userId, 3);
+    credit.mockResolvedValue({ ok: false, reason: 'wallet not found' });
+
+    const { cashPaid } = await service().settlePending();
+
+    expect(cashPaid).toEqual([]);
+    await expect(milestoneGrant(id)).resolves.toMatchObject({ settledAt: null });
   });
 });

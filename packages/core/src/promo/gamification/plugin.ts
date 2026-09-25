@@ -3,6 +3,7 @@ import {
   AUDIT_WRITER,
   BONUS_GRANTS,
   EXCHANGE_RATE_READER,
+  IDENTITY_READER,
   JOB_QUEUE,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
@@ -11,8 +12,11 @@ import {
   PromoConfigSchema,
   WAGER_TRACKING,
   queue,
+  resolveWalletDefaultCurrency,
+  type IdentityReader,
   type WagerTrackingArgs,
   type WagerTrackingCommands,
+  type WagerTrackingWalletCredit,
 } from '@openora/core/contracts';
 import {
   ADMIN_GUARD,
@@ -63,10 +67,12 @@ const EmptyJobSchema = z.object({});
 class CompositeWagerTracking implements WagerTrackingCommands {
   constructor(private readonly consumers: readonly WagerTrackingCommands[]) {}
 
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
+    const credits: WagerTrackingWalletCredit[] = [];
     for (const consumer of this.consumers) {
-      await consumer.recordWager(tx, args);
+      credits.push(...(await consumer.recordWager(tx, args)));
     }
+    return credits;
   }
 }
 
@@ -107,6 +113,29 @@ export default {
     let rankChallengePayouts: RankChallengePayoutService | null = null;
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
+    let identityReader: IdentityReader | null = null;
+
+    const emitCashCredit = async (args: {
+      userId: string;
+      amount: string;
+      currency: string;
+      transactionId: string | null;
+    }) => {
+      // Null when nothing moved (a replayed credit already announced the first time).
+      if (!args.transactionId) {
+        return;
+      }
+      const playerId = (await identityReader?.getPlayerIdByUserIdSafe(args.userId)) ?? null;
+      events?.emit('wallet.balance.changed', {
+        userId: args.userId,
+        playerId,
+        amount: args.amount,
+        currency: args.currency,
+        transactionId: args.transactionId,
+        type: 'cashback',
+        direction: 'credit',
+      });
+    };
 
     ctx.jobs.worker({
       queue: RANK_PAYOUT_QUEUE,
@@ -136,9 +165,12 @@ export default {
           logger.warn({}, 'streak payout skipped - service not constructed');
           return;
         }
-        const granted = await streakPayouts.settlePending();
+        const { granted, cashPaid } = await streakPayouts.settlePending();
         for (const grant of granted) {
           events?.emit('promo.bonus.granted', grant);
+        }
+        for (const paid of cashPaid) {
+          await emitCashCredit(paid);
         }
       },
     });
@@ -172,6 +204,7 @@ export default {
         // they do not have yet.
         for (const win of won) {
           events?.emit('promo.race.won', win);
+          await emitCashCredit(win);
         }
       },
     });
@@ -189,11 +222,24 @@ export default {
         // transaction that credited the cash (if any) has committed.
         for (const win of won) {
           events?.emit('promo.rank-challenge.won', win);
+          if (win.cashAmount !== null) {
+            await emitCashCredit({
+              userId: win.userId,
+              amount: win.cashAmount,
+              currency: win.currency,
+              transactionId: win.transactionId,
+            });
+          }
         }
       },
     });
 
     ctx.routers.add('promo-gamification', (c) => {
+      // A cash prize/cashback credit lands here when its own source (a race, a rank challenge
+      // tier, a streak milestone) is priced in something else - see `priceForPayout`.
+      const payoutCurrency = resolveWalletDefaultCurrency(
+        c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
+      );
       rankPayouts = new RankPayoutService(
         c.get(DRIZZLE),
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
@@ -206,6 +252,8 @@ export default {
         c.get(DRIZZLE),
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        c.get(EXCHANGE_RATE_READER),
+        payoutCurrency,
         logger,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
       );
@@ -213,17 +261,22 @@ export default {
         c.get(DRIZZLE),
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        c.get(EXCHANGE_RATE_READER),
+        payoutCurrency,
         logger,
       );
       rankChallengePayouts = new RankChallengePayoutService(
         c.get(DRIZZLE),
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        c.get(EXCHANGE_RATE_READER),
+        payoutCurrency,
         c.get(AUDIT_WRITER),
         logger,
       );
       streaks = streakService(c);
       events = c.get(EVENT_BUS);
+      identityReader = c.get(IDENTITY_READER);
       const schedule = PromoConfigSchema.parse(
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {},
       );

@@ -5,6 +5,7 @@ import type {
   Uuid,
   WagerTrackingArgs,
   WagerTrackingCommands,
+  WagerTrackingWalletCredit,
 } from '@openora/core/contracts';
 import { moneyCompare, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type {
@@ -54,9 +55,9 @@ export class RankChallengeService implements WagerTrackingCommands {
     private readonly logger: { warn: (context: object, message: string) => void },
   ) {}
 
-  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs) {
+  async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.realAmount, '0') <= 0) {
-      return;
+      return [];
     }
     const ladder = await tx
       .select(TIER_COLUMNS)
@@ -64,7 +65,7 @@ export class RankChallengeService implements WagerTrackingCommands {
       .orderBy(asc(promoRankChallengeTier.position));
     const [lowest] = ladder;
     if (!lowest) {
-      return;
+      return [];
     }
     const currency = await tx
       .select({ currency: promoRankChallengeTier.currency })
@@ -72,7 +73,7 @@ export class RankChallengeService implements WagerTrackingCommands {
       .where(eq(promoRankChallengeTier.id, lowest.id));
     const ladderCurrency = currency[0]?.currency;
     if (!ladderCurrency) {
-      return;
+      return [];
     }
     const amount =
       args.currency === ladderCurrency
@@ -85,7 +86,7 @@ export class RankChallengeService implements WagerTrackingCommands {
         { userId: args.userId, from: args.currency, to: ladderCurrency },
         'rank challenge wager skipped - no exchange rate',
       );
-      return;
+      return [];
     }
 
     const [wager] = await tx
@@ -100,14 +101,14 @@ export class RankChallengeService implements WagerTrackingCommands {
       })
       .returning({ lifetimeWagered: promoRankChallengeWager.lifetimeWagered });
     if (!wager) {
-      return;
+      return [];
     }
 
     const crossed = ladder.filter(
       (tier) => moneyCompare(tier.wagerThreshold, wager.lifetimeWagered) <= 0,
     );
     if (crossed.length === 0) {
-      return;
+      return [];
     }
     const alreadyClaimed = await tx
       .select({ tierId: promoRankChallengeClaim.tierId })
@@ -116,7 +117,7 @@ export class RankChallengeService implements WagerTrackingCommands {
     const claimedIds = new Set(alreadyClaimed.map((c) => c.tierId));
     const contestable = crossed.filter((t) => !claimedIds.has(t.id));
     if (contestable.length === 0) {
-      return;
+      return [];
     }
 
     for (const tier of contestable.sort((a, b) => a.position - b.position)) {
@@ -141,6 +142,7 @@ export class RankChallengeService implements WagerTrackingCommands {
       // level-up bonus (settled later, audited by RankPayoutService's own caller).
       void won;
     }
+    return [];
   }
 
   /** The ladder's tiers alone - what `recordWager`/`getForPlayer` need, no winner join. */

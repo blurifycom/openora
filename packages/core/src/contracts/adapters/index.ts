@@ -69,7 +69,11 @@ export type {
 } from './bonus-wagering.js';
 export { BONUS_WAGERING, MaxBetExceededError } from './bonus-wagering.js';
 
-export type { WagerTrackingCommands, WagerTrackingArgs } from './wager-tracking.js';
+export type {
+  WagerTrackingCommands,
+  WagerTrackingArgs,
+  WagerTrackingWalletCredit,
+} from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 
 export type {

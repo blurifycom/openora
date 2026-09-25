@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
-import type { PlayEligibilityPort, WalletCommands } from '@openora/core/contracts';
+import type {
+  ExchangeRateReader,
+  PlayEligibilityPort,
+  WalletCommands,
+} from '@openora/core/contracts';
 import { migrate } from '../migrate.js';
 import { promoRace, promoRacePayout, promoRaceWager } from '../schema/index.js';
 import { RacePayoutService } from '../service/race-payout.service.js';
@@ -12,6 +16,7 @@ import type { RacePosition } from '../contract/index.js';
 let db: TestDb;
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const credit = vi.fn<WalletCommands['credit']>();
+const convert = vi.fn<ExchangeRateReader['convert']>();
 const logger = { warn: vi.fn(), error: vi.fn() };
 
 const POSITIONS: RacePosition[] = [
@@ -19,11 +24,15 @@ const POSITIONS: RacePosition[] = [
   { position: 2, prize: '250' },
 ];
 
-const service = () =>
+// The race's own currency and the payout currency match by default, so most tests exercise the
+// no-conversion path - the currency-conversion behaviour has its own describe block below.
+const service = (payoutCurrency = 'USDT') =>
   new RacePayoutService(
     db.drizzle,
     mock<PlayEligibilityPort>({ isRestricted }),
     mock<WalletCommands>({ credit }),
+    mock<ExchangeRateReader>({ convert }),
+    payoutCurrency,
     logger,
   );
 
@@ -176,5 +185,61 @@ describe('settling a closed race', () => {
 
     expect(won).toHaveLength(0);
     expect(credit).not.toHaveBeenCalled();
+  });
+});
+
+describe('crediting a prize in a currency the player can actually hold', () => {
+  it('converts a prize priced in the race currency into the payout currency before crediting', async () => {
+    const raceId = await insertRace();
+    const winner = randomUUID();
+    await insertWager(raceId, winner, '500');
+    convert.mockResolvedValue('480');
+
+    const won = await service('USD').closeDue(new Date());
+
+    expect(convert).toHaveBeenCalledWith('500', 'USDT', 'USD');
+    expect(credit.mock.calls[0]?.[1]).toMatchObject({ amount: '480', currency: 'USD' });
+    expect(won[0]).toMatchObject({ amount: '480', currency: 'USD' });
+    const payouts = await payoutsFor(raceId);
+    expect(Number(payouts[0]?.amount)).toBe(480);
+  });
+
+  it('refuses the credit and leaves the race open to retry when no rate is available', async () => {
+    const raceId = await insertRace();
+    const winner = randomUUID();
+    await insertWager(raceId, winner, '500');
+    convert.mockResolvedValue(null);
+
+    const won = await service('USD').closeDue(new Date());
+
+    expect(won).toHaveLength(0);
+    expect(credit).not.toHaveBeenCalled();
+    const payouts = await payoutsFor(raceId);
+    expect(payouts).toHaveLength(0);
+    const [race] = await db.drizzle.db
+      .select({ closedAt: promoRace.closedAt })
+      .from(promoRace)
+      .where(eq(promoRace.id, raceId));
+    expect(race?.closedAt).toBeNull();
+  });
+
+  it('rolls back the whole race, granting nothing, when the wallet credit fails', async () => {
+    const raceId = await insertRace();
+    const winner = randomUUID();
+    const runnerUp = randomUUID();
+    await insertWager(raceId, winner, '500');
+    await insertWager(raceId, runnerUp, '300');
+    credit.mockResolvedValueOnce({ ok: false, reason: 'wallet not found' });
+
+    const won = await service().closeDue(new Date());
+
+    expect(won).toHaveLength(0);
+    const payouts = await payoutsFor(raceId);
+    expect(payouts).toHaveLength(0);
+    const [race] = await db.drizzle.db
+      .select({ closedAt: promoRace.closedAt })
+      .from(promoRace)
+      .where(eq(promoRace.id, raceId));
+    expect(race?.closedAt).toBeNull();
   });
 });

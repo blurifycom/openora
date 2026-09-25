@@ -288,6 +288,7 @@ export class WalletCommandsService implements WalletCommands {
       bonusSpent: wagered.bonusSpent,
       bonusBalance: wagered.bonusBalanceAfter,
       ...(wagered.completed === null ? {} : { completed: wagered.completed }),
+      wagerTrackingCredits: wagered.walletCredits,
     };
   }
 

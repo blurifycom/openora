@@ -3,6 +3,7 @@ import { and, asc, eq, isNull } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   DomainEventPayload,
+  ExchangeRateReader,
   PlayEligibilityPort,
   Uuid,
   WalletCommands,
@@ -10,8 +11,21 @@ import type {
 import { moneyScaleBy, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import { promoPlayerRank, promoStreakConfig, promoStreakMilestoneGrant } from '../schema/index.js';
 import type { StreakReward } from '../contract/index.js';
+import { priceForPayout } from '../shared/payout-currency.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
+
+/** What `plugin.ts` announces per cash reward, once its own settlement transaction has committed. */
+export type StreakCashPaid = {
+  userId: Uuid;
+  /** As actually credited, after `priceForPayout` - may differ from the streak's own currency. */
+  amount: string;
+  currency: string;
+  /** Null on a replayed credit (the balance already moved and was already announced). */
+  transactionId: string | null;
+};
+
+export type StreakPayoutResult = { granted: Granted[]; cashPaid: StreakCashPaid[] };
 
 type Logger = {
   warn: (context: object, message: string) => void;
@@ -44,20 +58,22 @@ export class StreakPayoutService {
     private readonly drizzle: DrizzleService,
     private readonly grants: BonusGrantCommands | undefined,
     private readonly eligibility: PlayEligibilityPort | undefined,
+    private readonly rates: ExchangeRateReader,
+    private readonly payoutCurrency: string,
     private readonly logger: Logger,
     private readonly wallet?: WalletCommands,
   ) {}
 
-  async settlePending(): Promise<Granted[]> {
+  async settlePending(): Promise<StreakPayoutResult> {
     if (!this.grants || !this.eligibility) {
       this.logger.warn({}, 'streak payout skipped - bonus grants or play eligibility not bound');
-      return [];
+      return { granted: [], cashPaid: [] };
     }
     const [config] = await this.drizzle.db
       .select({ milestones: promoStreakConfig.milestones })
       .from(promoStreakConfig);
     if (!config) {
-      return [];
+      return { granted: [], cashPaid: [] };
     }
     const owed = await this.drizzle.db
       .select({ id: promoStreakMilestoneGrant.id })
@@ -67,33 +83,35 @@ export class StreakPayoutService {
       .limit(BATCH);
 
     const granted: Granted[] = [];
+    const cashPaid: StreakCashPaid[] = [];
     for (const { id } of owed) {
       try {
         const paid = await this.drizzle.db.transaction((tx) =>
           this.settleOne(tx, id, config.milestones),
         );
-        granted.push(...paid);
+        granted.push(...paid.granted);
+        cashPaid.push(...paid.cashPaid);
       } catch (err) {
         // ponytail: a milestone that keeps failing is retried every run; add a failure count if
         // one ever sticks, the same deferral `RankPayoutService.settleLevelUps` takes.
         this.logger.error({ err, milestoneGrantId: id }, 'streak milestone payout failed');
       }
     }
-    return granted;
+    return { granted, cashPaid };
   }
 
   private async settleOne(
     tx: DrizzleTx,
     id: Uuid,
     milestones: readonly { day: number; rewards: readonly StreakReward[] }[],
-  ): Promise<Granted[]> {
+  ): Promise<StreakPayoutResult> {
     const [row] = await tx
       .select({ userId: promoStreakMilestoneGrant.userId, day: promoStreakMilestoneGrant.day })
       .from(promoStreakMilestoneGrant)
       .where(and(eq(promoStreakMilestoneGrant.id, id), isNull(promoStreakMilestoneGrant.settledAt)))
       .for('update', { skipLocked: true });
     if (!row) {
-      return [];
+      return { granted: [], cashPaid: [] };
     }
     const settle = (outcome: string) =>
       tx
@@ -103,10 +121,11 @@ export class StreakPayoutService {
 
     if ((await this.eligibility?.isRestricted(row.userId)) ?? true) {
       await settle('restricted');
-      return [];
+      return { granted: [], cashPaid: [] };
     }
     const rewards = milestones.find((m) => m.day === row.day)?.rewards ?? [];
     const granted: Granted[] = [];
+    const cashPaid: StreakCashPaid[] = [];
     for (const [index, reward] of rewards.entries()) {
       const sourceRef = `streak-milestone:${id}:${index}`;
       if (reward.kind === 'rakebackBoost') {
@@ -114,7 +133,10 @@ export class StreakPayoutService {
         continue;
       }
       if (reward.kind === 'cash') {
-        await this.grantCash(tx, row.userId, reward, sourceRef);
+        const paid = await this.grantCash(tx, row.userId, reward, sourceRef);
+        if (paid) {
+          cashPaid.push(paid);
+        }
         continue;
       }
       const paid = await this.grantOne(tx, row.userId, reward, sourceRef);
@@ -123,7 +145,7 @@ export class StreakPayoutService {
       }
     }
     await settle('granted');
-    return granted;
+    return { granted, cashPaid };
   }
 
   private async grantOne(
@@ -183,22 +205,35 @@ export class StreakPayoutService {
     userId: Uuid,
     reward: Extract<StreakReward, { kind: 'cash' }>,
     sourceRef: string,
-  ) {
+  ): Promise<StreakCashPaid> {
     if (!this.wallet) {
       throw new Error('WALLET_COMMANDS is not bound');
     }
     const currency = await this.currencyFor();
+    // Never the streak's own currency unconditionally - see RacePayoutService's own use of
+    // `priceForPayout` for why. Throws on no rate, rolling back this milestone's settlement so
+    // the payout job's next tick retries it.
+    const priced = await priceForPayout(this.rates, reward.amount, currency, this.payoutCurrency);
     const outcome = await this.wallet.credit(tx, {
       userId,
-      amount: reward.amount,
-      currency,
+      amount: priced.amount,
+      currency: priced.currency,
       type: 'cashback',
       allowNewCurrency: true,
       providerRef: { providerName: 'promo-streak', providerRefId: sourceRef },
     });
     if (!outcome.ok) {
-      this.logger.error({ userId, sourceRef, reason: outcome.reason }, 'streak cash reward failed');
+      // Thrown rather than logged-and-settled-as-granted: a milestone must never settle
+      // `outcome: 'granted'` for cash that never moved. See RacePayoutService for the same
+      // "roll back and let the job retry" rule.
+      throw new Error(`streak cash reward failed: ${outcome.reason}`);
     }
+    return {
+      userId,
+      amount: priced.amount,
+      currency: priced.currency,
+      transactionId: outcome.moved ? outcome.transactionId : null,
+    };
   }
 
   private async currencyFor() {
