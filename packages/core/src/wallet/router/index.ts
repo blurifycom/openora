@@ -13,6 +13,8 @@ import {
   RATE_LIMIT_KEYS,
   RgLimitExceededError,
   PaymentRejectedError,
+  SwapLimitExceededError,
+  SwapRefusedError,
   makeRateLimitKey,
   type AuditWritePort,
   type JobQueueAdapter,
@@ -501,8 +503,12 @@ export function createWalletRouter({
 
     swap: {
       quote: os.swap.quote.handler(({ input, context }) =>
-        mapErrors({ CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError] }, () =>
-          requireSwap().quote({ userId: getUserId(context), ...input }),
+        mapErrors(
+          {
+            CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError, SwapRefusedError],
+            BAD_REQUEST: SwapLimitExceededError,
+          },
+          () => requireSwap().quote({ userId: getUserId(context), ...input }),
         ),
       ),
 
@@ -510,8 +516,13 @@ export function createWalletRouter({
         mapErrors(
           {
             NOT_FOUND: WalletNotFoundError,
-            CONFLICT: [SwapUnavailableError, SwapPairUnsupportedError, IdempotencyKeyReuseError],
-            BAD_REQUEST: InsufficientBalanceError,
+            CONFLICT: [
+              SwapUnavailableError,
+              SwapPairUnsupportedError,
+              IdempotencyKeyReuseError,
+              SwapRefusedError,
+            ],
+            BAD_REQUEST: [InsufficientBalanceError, SwapLimitExceededError],
             // SwapFillAmountMissingError is deliberately unmapped: the vendor filled but
             // would not say how much, which is a 500 on our side of the seam, not a 4xx
             // the caller can act on.

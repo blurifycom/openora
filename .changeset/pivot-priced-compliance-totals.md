@@ -1,0 +1,17 @@
+---
+'@openora/core': minor
+---
+
+Re-KYC's cumulative-deposit trigger, the `high_roller` tag's lifetime-deposit total, and the withdrawal queue's `large_amount` tag are now priced in a single reference currency before they are compared or summed, instead of adding or comparing raw amounts across whatever currencies a player happens to hold.
+
+A platform with no base currency lets a player deposit and withdraw in several coins at once. `KycVerificationService.handleDeposit` used to sum only the deposits already in the player's own currency field - on a crypto-only platform with no matching wallet currency, that read $0 forever and re-KYC never fired. `WalletReader.getLifetimeDeposit` (the `high_roller` rule's input) and the withdrawal queue's `large_amount` heuristic both summed or compared raw `wallet_transaction.amount` regardless of currency - `1 BTC + 20000 DOGE` read as `20001`.
+
+All three now convert through the already-existing `EXCHANGE_RATE_READER` port: re-KYC sums every currency into the player's own currency field, `getLifetimeDeposit` sums into `exchangeRate.pivot` (`USD` by default, and now always the configured pivot rather than a hardcoded default), and the queue tag prices the withdrawal into the same pivot before comparing it to `LARGE_WITHDRAWAL_THRESHOLD` (previously a raw, currency-blind compare - the queue tag's own doc comment used to call this "a display hint, not a decision"; it is a decision now).
+
+**Missing-rate behaviour, and a breaking port change:** a compliance total must never silently undercount because one currency had no quote, and it must never fabricate a value either - a made-up total sums, compares and gets written down exactly like a real one, and nothing downstream can tell the difference. So:
+
+- `WalletReader.getLifetimeDeposit(userId): Promise<string | null>` - the return type changed from `string` to `string | null`. `null` means at least one currency could not be priced. Every core caller handles it explicitly and in the direction that never quietly loses the compliance signal: `high_roller` skips the evaluation and logs a warning (never assigns or removes off a guess - the tag is sticky); `basic_kyc_needed` (only asks "any deposit on file") still assigns, since `null` can only happen when a deposit exists; bonus eligibility's `isFirstDeposit` fallback treats `null` as "not the first deposit". A custom `WalletReader` implementation (or a mock) built against the old `Promise<string>` signature needs updating.
+- The withdrawal queue's per-transaction `large_amount` check has no running total to lose, so an unpriced withdrawal is flagged rather than skipped - never a silent pass.
+- `KycVerificationService.handleDeposit` never writes a `kyc_verification` row from an unpriced total: on an unpriced currency it logs an error (`logger.error` + `reportError`, naming the userId and the unpriced currencies) and returns without evaluating the threshold or moving the re-KYC watermark. The next deposit re-evaluates once rates are available again.
+
+`WalletReaderService`'s constructor now takes a single deps object (`{ drizzle, defaultCurrency?, exchangeRateReader?, pivotCurrency }`) instead of positional params - `pivotCurrency` is required and should be wired from `resolveExchangeRatePivot(platformConfig.exchangeRate)`, not hardcoded. `KycVerificationDeps` gains an optional `exchangeRateReader`. Both are already wired this way in their plugins.

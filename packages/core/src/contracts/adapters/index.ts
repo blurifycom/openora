@@ -236,8 +236,15 @@ export type {
   SwapWebhookEvent,
   SwapAdapter,
   SwapWebhookVerifier,
+  SwapRefusalReason,
+  SwapLimitReason,
 } from './swap.js';
-export { SWAP_ADAPTER, SWAP_WEBHOOK_VERIFIER } from './swap.js';
+export {
+  SWAP_ADAPTER,
+  SWAP_WEBHOOK_VERIFIER,
+  SwapRefusedError,
+  SwapLimitExceededError,
+} from './swap.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER, normalizeCountryCode } from './geo-ip.js';

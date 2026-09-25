@@ -88,6 +88,7 @@ function baseDeps(
     freshTtlMs: 60_000,
     hardMaxAgeMs: 120_000,
     providerTimeoutMs: 150,
+    failureCooldownMs: 150,
     ...over,
   };
 }
@@ -249,6 +250,41 @@ describe('ExchangeRateReaderService.getRate - age bands', () => {
 
     expect(quote).toBeNull();
     expect(elapsed).toBeLessThan(500);
+  });
+});
+
+describe('ExchangeRateReaderService.getRate - failure cooldown', () => {
+  function failingProvider() {
+    const getRate = vi.fn(async (): Promise<ExchangeRateQuote> => {
+      throw new Error('vendor unreachable');
+    });
+    return { provider: mock<ExchangeRateProvider>({ getRate }), getRate };
+  }
+
+  it('refuses a failed currency for failureCooldownMs, not providerTimeoutMs, without calling the vendor again', async () => {
+    const { provider, getRate } = failingProvider();
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider: provider, providerTimeoutMs: 10, failureCooldownMs: 60_000 }),
+    );
+
+    expect(await reader.getRate('EUR', 'USD')).toBeNull();
+    await wait(50);
+    expect(await reader.getRate('EUR', 'USD')).toBeNull();
+
+    expect(getRate).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the vendor again once the cooldown has passed', async () => {
+    const { provider, getRate } = failingProvider();
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider: provider, failureCooldownMs: 30 }),
+    );
+
+    await reader.getRate('EUR', 'USD');
+    await wait(80);
+    await reader.getRate('EUR', 'USD');
+
+    expect(getRate).toHaveBeenCalledTimes(2);
   });
 });
 
