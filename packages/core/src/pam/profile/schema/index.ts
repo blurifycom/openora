@@ -8,8 +8,10 @@ import {
   timestamp,
   pgEnum,
   index,
+  check,
 } from 'drizzle-orm/pg-core';
-import { PLAYER_STATUSES, KYC_STATUSES } from '@openora/core/contracts';
+import { sql } from 'drizzle-orm';
+import { PLAYER_STATUSES, KYC_STATUSES, MAX_DISPLAY_DECIMAL_PLACES } from '@openora/core/contracts';
 
 export const playerStatusEnum = pgEnum('player_status', PLAYER_STATUSES);
 export const kycStatusEnum = pgEnum('kyc_status', KYC_STATUSES);
@@ -31,6 +33,7 @@ export const player = pgTable(
     country: text(),
     currency: text().notNull().default('USD'),
     displayCurrency: text(),
+    displayDecimalPlaces: integer(),
     status: playerStatusEnum().notNull().default('active'),
     kycStatus: kycStatusEnum().notNull().default('pending'),
     level: integer().notNull().default(1),
@@ -52,7 +55,14 @@ export const player = pgTable(
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
-  (t) => [index('player_status_idx').on(t.status), index('player_created_at_idx').on(t.createdAt)],
+  (t) => [
+    index('player_status_idx').on(t.status),
+    index('player_created_at_idx').on(t.createdAt),
+    check(
+      'player_display_decimal_places_range',
+      sql`${t.displayDecimalPlaces} BETWEEN 0 AND ${sql.raw(String(MAX_DISPLAY_DECIMAL_PLACES))}`,
+    ),
+  ],
 );
 
 export type Player = typeof player.$inferSelect;

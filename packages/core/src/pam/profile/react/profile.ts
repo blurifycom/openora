@@ -36,3 +36,12 @@ export function useSetDisplayCurrency() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.getDisplayCurrency.key() }),
   });
 }
+
+export function useSetDisplayDecimalPlaces() {
+  const utils = useOrpcQueryUtils(profileContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.setDisplayDecimalPlaces.mutationOptions(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.getDisplayCurrency.key() }),
+  });
+}

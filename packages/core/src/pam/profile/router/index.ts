@@ -28,5 +28,9 @@ export function createProfileRouter(profile: ProfileService) {
         profile.setMyDisplayCurrency(getUserId(context), input),
       ),
     ),
+
+    setDisplayDecimalPlaces: os.setDisplayDecimalPlaces.handler(({ input, context }) =>
+      profile.setMyDisplayDecimalPlaces(getUserId(context), input),
+    ),
   });
 }
