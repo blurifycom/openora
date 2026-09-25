@@ -27,6 +27,7 @@ const catalogGameColumns = {
   slug: game.slug,
   provider: providerSummaryColumns,
   thumbnailUrl: game.thumbnailUrl,
+  customThumbnailUrl: game.customThumbnailUrl,
 };
 
 function isUuid(id: string) {

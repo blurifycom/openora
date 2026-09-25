@@ -317,7 +317,10 @@ describe('rule-based category membership e2e', () => {
 
   it('previews an unsaved rule with a count and a first page, writing nothing', async () => {
     const provider = await seedProvider();
-    const alpha = await seedGame(provider.id, { name: 'Alpha' });
+    const alpha = await seedGame(provider.id, {
+      name: 'Alpha',
+      customThumbnailUrl: 'https://cdn.example/alpha-custom.png',
+    });
     const bravo = await seedGame(provider.id, { name: 'Bravo' });
 
     const res = await admin.post('/backoffice/gaming/categories/rule-preview', {
@@ -330,7 +333,11 @@ describe('rule-based category membership e2e', () => {
     const body = await readJson(res);
     expect(body).toMatchObject({ total: 2, page: 1, limit: 1 });
     expect(body.items).toHaveLength(1);
-    expect(body.items[0]).toMatchObject({ id: alpha.id, provider: { id: provider.id } });
+    expect(body.items[0]).toMatchObject({
+      id: alpha.id,
+      provider: { id: provider.id },
+      customThumbnailUrl: 'https://cdn.example/alpha-custom.png',
+    });
     expect(body.items[0].id).not.toBe(bravo.id);
   });
 

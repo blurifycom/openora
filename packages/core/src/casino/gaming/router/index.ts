@@ -8,6 +8,7 @@ import {
   GameRoundNotFoundError,
   GameSlugTakenError,
   GameAggregatorNotMappedError,
+  GameThumbnailHostNotAllowedError,
   RgRestrictedError,
   InsufficientBalanceError,
   GameGeoRestrictedError,
@@ -356,6 +357,7 @@ export function createGamingRouter({
             GameAggregatorNotMappedError,
             GameCategoryRuleManagedError,
           ],
+          BAD_REQUEST: GameThumbnailHostNotAllowedError,
         },
         () => gaming.updateGame({ ...input, actorId: userId, ip, userAgent }),
       );

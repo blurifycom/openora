@@ -1,8 +1,6 @@
-export type BannerImageUrlValidationResult = { ok: true } | { ok: false; reason: string };
+import { isAllowedHost } from '@openora/core/contracts';
 
-function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boolean {
-  return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`));
-}
+export type BannerImageUrlValidationResult = { ok: true } | { ok: false; reason: string };
 
 export function validateBannerImageUrl(
   url: string,

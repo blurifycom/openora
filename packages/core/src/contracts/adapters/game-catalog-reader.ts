@@ -21,6 +21,7 @@ export type CatalogGame = {
   slug: string;
   provider: GameProviderSummary;
   thumbnailUrl: string | null;
+  customThumbnailUrl: string | null;
   tags: GameTagSummary[];
 };
 

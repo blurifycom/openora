@@ -35,6 +35,7 @@ import {
   GameAggregatorNotMappedError,
   GameNotFoundError,
   GameSlugTakenError,
+  GameThumbnailHostNotAllowedError,
   RgRestrictedError,
   InsufficientBalanceError,
   WinCreditFailedError,
@@ -67,6 +68,8 @@ function makeWalletCommands(
   });
 }
 
+const DEFAULT_ALLOWED_THUMBNAIL_HOSTS = ['cdn.example'];
+
 function makeService({
   provider = mock<GameAdapter>({
     launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
@@ -77,6 +80,7 @@ function makeService({
   rgLimits,
   gameGeoCheck,
   events = noopEvents,
+  allowedThumbnailHosts = DEFAULT_ALLOWED_THUMBNAIL_HOSTS,
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
@@ -84,6 +88,7 @@ function makeService({
   rgLimits?: RgLimitsPort;
   gameGeoCheck?: GameGeoCheckPort;
   events?: ReturnType<typeof makeEventBus>;
+  allowedThumbnailHosts?: readonly string[];
 } = {}) {
   return new GamingService(
     db.drizzle,
@@ -94,6 +99,7 @@ function makeService({
     makeIdentityReader(),
     rgLimits,
     gameGeoCheck,
+    allowedThumbnailHosts,
   );
 }
 
@@ -1252,6 +1258,144 @@ describe('GamingService updateGame (real PG)', () => {
     await expect(
       svc.updateGame({ id: created.id, slug: 'game-two', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameSlugTakenError);
+  });
+
+  it('persists a custom thumbnail, clears it with null, and leaves it when omitted', async () => {
+    const created = await seedGame();
+    const svc = makeService();
+
+    const set = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(set.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+
+    const left = await svc.updateGame({ id: created.id, name: 'Renamed Custom', ...ACTOR });
+    expect(left.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+
+    const cleared = await svc.updateGame({ id: created.id, customThumbnailUrl: null, ...ACTOR });
+    expect(cleared.customThumbnailUrl).toBeNull();
+  });
+
+  it('keeps thumbnailUrl and customThumbnailUrl independent of each other', async () => {
+    const created = await seedGame({ thumbnailUrl: 'https://cdn.example/aggregator.png' });
+    const svc = makeService();
+
+    const customSet = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(customSet.thumbnailUrl).toBe('https://cdn.example/aggregator.png');
+    expect(customSet.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+
+    const thumbnailChanged = await svc.updateGame({
+      id: created.id,
+      thumbnailUrl: 'https://cdn.example/aggregator-2.png',
+      ...ACTOR,
+    });
+    expect(thumbnailChanged.thumbnailUrl).toBe('https://cdn.example/aggregator-2.png');
+    expect(thumbnailChanged.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+  });
+
+  it('carries the old and new customThumbnailUrl on the emitted gaming.game.updated event', async () => {
+    const created = await seedGame({ customThumbnailUrl: 'https://cdn.example/old.png' });
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/new.png',
+      ...ACTOR,
+    });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.game.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({ customThumbnailUrl: 'https://cdn.example/old.png' }),
+        after: expect.objectContaining({ customThumbnailUrl: 'https://cdn.example/new.png' }),
+      }),
+    );
+  });
+
+  it('returns customThumbnailUrl from getGame, admin listing and public listing', async () => {
+    const created = await seedGame({
+      isActive: true,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+    });
+    const svc = makeService();
+
+    expect(await svc.getGame(created.id)).toMatchObject({
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+    });
+    expect(
+      (await svc.listGamesAdmin({ page: 1, limit: 10 })).items.find((g) => g.id === created.id),
+    ).toMatchObject({ customThumbnailUrl: 'https://cdn.example/custom.png' });
+    expect(
+      (await svc.listGamesPublic({ page: 1, limit: 10 })).items.find((g) => g.id === created.id),
+    ).toMatchObject({ customThumbnailUrl: 'https://cdn.example/custom.png' });
+  });
+
+  it('persists a custom thumbnail whose host is allowlisted', async () => {
+    const created = await seedGame();
+    const svc = makeService({ allowedThumbnailHosts: ['cdn.example'] });
+
+    const updated = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(updated.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+  });
+
+  it('persists a custom thumbnail on a subdomain of an allowlisted host', async () => {
+    const created = await seedGame();
+    const svc = makeService({ allowedThumbnailHosts: ['cdn.example'] });
+
+    const updated = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://assets.cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(updated.customThumbnailUrl).toBe('https://assets.cdn.example/custom.png');
+  });
+
+  it('rejects a custom thumbnail on a host outside the allowlist, leaving the column unchanged and emitting nothing', async () => {
+    const created = await seedGame();
+    const events = makeEventBus();
+    const svc = makeService({ events, allowedThumbnailHosts: ['cdn.example'] });
+
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        customThumbnailUrl: 'https://evil.example/tracker.png',
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameThumbnailHostNotAllowedError);
+
+    expect(events.emit).not.toHaveBeenCalledWith('gaming.game.updated', expect.anything());
+    const [row] = await db.drizzle.db
+      .select({ customThumbnailUrl: game.customThumbnailUrl })
+      .from(game)
+      .where(eq(game.id, created.id));
+    expect(row?.customThumbnailUrl).toBeNull();
+  });
+
+  it('rejects any custom thumbnail when the allowlist is empty, but null still clears it', async () => {
+    const created = await seedGame({ customThumbnailUrl: 'https://cdn.example/old.png' });
+    const svc = makeService({ allowedThumbnailHosts: [] });
+
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        customThumbnailUrl: 'https://cdn.example/new.png',
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameThumbnailHostNotAllowedError);
+
+    const cleared = await svc.updateGame({ id: created.id, customThumbnailUrl: null, ...ACTOR });
+    expect(cleared.customThumbnailUrl).toBeNull();
   });
 });
 

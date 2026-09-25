@@ -115,6 +115,7 @@ function toGameSummary(row: {
     categories: row.categories.map(toCategorySummary),
     tags: row.tags.map(toGameTagSummary),
     thumbnailUrl: row.game.thumbnailUrl,
+    customThumbnailUrl: row.game.customThumbnailUrl,
   };
 }
 
@@ -241,6 +242,7 @@ export class LobbyService {
                 gameId: slot.gameId,
                 gameName: g.name,
                 thumbnailUrl: g.thumbnailUrl,
+                customThumbnailUrl: g.customThumbnailUrl,
                 placement: slot.placement,
                 sortOrder: slot.sortOrder,
               },
