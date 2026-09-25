@@ -1,1 +1,0 @@
-ALTER TYPE "public"."promo_forfeit_reason" ADD VALUE 'terms_breach';

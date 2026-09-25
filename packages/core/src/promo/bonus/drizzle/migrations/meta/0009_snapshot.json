@@ -1,5 +1,5 @@
 {
-  "id": "6dfe7e38-f784-416c-8162-161bbf9460e3",
+  "id": "10e6f7a1-a889-4ce1-9367-250771b78ce6",
   "prevId": "113e30a1-ffac-401a-ab0c-f194efc58d82",
   "version": "7",
   "dialect": "postgresql",
@@ -926,7 +926,8 @@
         "account_closed",
         "admin",
         "player_opt_out",
-        "withdrawal_while_active"
+        "withdrawal_while_active",
+        "terms_breach"
       ]
     },
     "public.promo_grant_entry_type": {
@@ -937,7 +938,7 @@
     "public.promo_grant_source": {
       "name": "promo_grant_source",
       "schema": "public",
-      "values": ["deposit", "manual", "streak", "rank", "race", "gift", "rain"]
+      "values": ["deposit", "manual", "streak", "rank", "race", "gift", "rain", "cashback"]
     },
     "public.promo_grant_status": {
       "name": "promo_grant_status",

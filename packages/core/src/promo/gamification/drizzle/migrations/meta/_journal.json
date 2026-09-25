@@ -89,22 +89,8 @@
     {
       "idx": 12,
       "version": "7",
-      "when": 1790306558604,
-      "tag": "0012_bitter_sister_grimm",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1790313747654,
-      "tag": "0013_broad_reavers",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1790316717848,
-      "tag": "0014_rank_challenge",
+      "when": 1790343347170,
+      "tag": "0012_gamification_rakeback_streaks_races_rank_challenge",
       "breakpoints": true
     }
   ]
