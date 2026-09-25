@@ -72,16 +72,27 @@ export class WageringService implements BonusWageringCommands {
     const grant = await this.lockAttributedGrant(tx, args.userId, args.currency);
 
     if (!grant) {
-      return moneyCompare(args.fromBonus, ZERO) > 0
-        ? { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO }
-        : {
-            ok: true,
-            grantId: null,
-            bonusSpent: ZERO,
-            weightedAmount: ZERO,
-            bonusBalanceAfter: ZERO,
-            completed: null,
-          };
+      if (moneyCompare(args.fromBonus, ZERO) > 0) {
+        return { ok: false, reason: 'insufficient_bonus', bonusAvailable: ZERO };
+      }
+      // No bonus attributed to this bet: it is a plain real-money wager, still counted toward
+      // rank and rank-adjacent tracking (streaks, etc) at its full stake - nothing here weights
+      // it down the way a bonus's contribution percent would.
+      await this.wagerTracking?.recordWager(tx, {
+        userId: args.userId,
+        currency: args.currency,
+        amount: args.stake,
+        weightedAmount: args.stake,
+        context: args.context,
+      });
+      return {
+        ok: true,
+        grantId: null,
+        bonusSpent: ZERO,
+        weightedAmount: ZERO,
+        bonusBalanceAfter: ZERO,
+        completed: null,
+      };
     }
 
     // Against the terms snapshot, inside the transaction that moves the money. It is an

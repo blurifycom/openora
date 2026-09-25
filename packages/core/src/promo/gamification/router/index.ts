@@ -12,14 +12,20 @@ import {
   RankTierKeyTakenError,
 } from '../service/rank-admin.service.js';
 import { RankLadderNotConfiguredError, RankService } from '../service/rank.service.js';
+import { StreakAdminService } from '../service/streak-admin.service.js';
+import { StreakConfigNotSetError, StreakService } from '../service/streak.service.js';
 
 export function createGamificationRouter({
   ranks,
   admin,
+  streaks,
+  streakAdmin,
   adminGuard,
 }: {
   ranks: RankService;
   admin: RankAdminService;
+  streaks: StreakService;
+  streakAdmin: StreakAdminService;
   adminGuard: AdminGuard;
 }) {
   const os = implement(gamificationContract).$context<OssContext>();
@@ -38,7 +44,33 @@ export function createGamificationRouter({
       ),
     },
 
+    streaks: {
+      get: os.streaks.get.handler(({ context }) =>
+        mapErrors({ NOT_FOUND: StreakConfigNotSetError }, () =>
+          streaks.getForPlayer(getUserId(context)),
+        ),
+      ),
+
+      leaderboard: os.streaks.leaderboard.handler(({ context }) =>
+        streaks.leaderboard(getUserId(context)),
+      ),
+    },
+
     admin: {
+      streaks: {
+        config: {
+          get: os.admin.streaks.config.get.handler(async ({ context }) => {
+            await adminGuard.assert(context, 'bonus', 'view');
+            return mapErrors({ NOT_FOUND: StreakConfigNotSetError }, () => streakAdmin.getConfig());
+          }),
+
+          set: os.admin.streaks.config.set.handler(async ({ input, context }) => {
+            const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+            return streakAdmin.setConfig(userId, input);
+          }),
+        },
+      },
+
       ranks: {
         get: os.admin.ranks.get.handler(async ({ context }) => {
           await adminGuard.assert(context, 'bonus', 'view');

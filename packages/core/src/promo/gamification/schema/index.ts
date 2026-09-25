@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  date,
   decimal,
   index,
   integer,
@@ -18,7 +19,12 @@ import {
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
-import type { RankConfig, RankPayoutAnchors, RankPayoutKind } from '../contract/index.js';
+import type {
+  RankConfig,
+  RankPayoutAnchors,
+  RankPayoutKind,
+  StreakMilestone,
+} from '../contract/index.js';
 
 const money = () => decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE });
 
@@ -70,6 +76,16 @@ export const promoPlayerRank = pgTable(
     tierId: uuid().references(() => promoRankTier.id),
     /** Last counted wager. A periodic bonus goes only to a player active in the period it pays. */
     lastWageredAt: timestamp({ withTimezone: true }),
+    /**
+     * A streak milestone's temporary lift on top of the tier's own `rakebackPercent`. Additive,
+     * and gone once `rakebackBoostExpiresAt` passes - read together, never `rakebackPercent`
+     * alone, by anything that pays rakeback.
+     */
+    rakebackBoostPercent: decimal({
+      precision: CONTRIBUTION_PERCENT_PRECISION,
+      scale: CONTRIBUTION_PERCENT_SCALE,
+    }),
+    rakebackBoostExpiresAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -193,3 +209,112 @@ export const promoRankLevelUp = pgTable(
     check('promo_rank_level_up_amount_positive', sql`${t.amount} > 0`),
   ],
 );
+
+export type PromoRankLevelUp = typeof promoRankLevelUp.$inferSelect;
+
+/**
+ * Streak-wide settings, one row - the same singleton shape as `promoRankConfig`. Absent means no
+ * day counts and no milestone pays: an operator who has not decided what qualifies has not
+ * launched the streak.
+ */
+export const promoStreakConfig = pgTable('promo_streak_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique().default('global'),
+  currency: text().notNull(),
+  dailyMinWager: money().notNull(),
+  /** Products whose stakes count toward the streak. Empty counts every product. */
+  eligibleProducts: text().array().notNull().default([]),
+  milestones: jsonb().$type<StreakMilestone[]>().notNull().default([]),
+  resetAfterDay: integer().notNull().default(30),
+  updatedBy: uuid(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export type PromoStreakConfig = typeof promoStreakConfig.$inferSelect;
+
+/**
+ * A player's own streak state: the current run, the best run ever held, and the UTC calendar day
+ * it last advanced on - the guard that keeps one qualifying day from being counted twice no
+ * matter how many qualifying bets land inside it.
+ */
+export const promoPlayerStreak = pgTable(
+  'promo_player_streak',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull().unique(),
+    current: integer().notNull().default(0),
+    best: integer().notNull().default(0),
+    lastQualifyingDay: date(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check(
+      'promo_player_streak_counts_non_negative',
+      sql`${t.current} >= 0 AND ${t.best} >= 0 AND ${t.current} <= ${t.best}`,
+    ),
+  ],
+);
+
+export type PromoPlayerStreak = typeof promoPlayerStreak.$inferSelect;
+
+/**
+ * What a player has wagered inside one UTC calendar day, toward that day's qualifying threshold.
+ * Upserted per bet, mirroring `promoRankPeriodWager` - the accumulator the daily close job and
+ * the leaderboard never need, since a day answers for itself in `promoPlayerStreak` once closed.
+ */
+export const promoStreakDailyWager = pgTable(
+  'promo_streak_daily_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    day: date().notNull(),
+    currency: text().notNull(),
+    wagered: money().notNull().default('0'),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('promo_streak_daily_wager_user_id_day_idx').on(t.userId, t.day),
+    check('promo_streak_daily_wager_non_negative', sql`${t.wagered} >= 0`),
+  ],
+);
+
+export type PromoStreakDailyWager = typeof promoStreakDailyWager.$inferSelect;
+
+/**
+ * A milestone a player has reached and the payout job has yet to settle, one row per player per
+ * milestone day. Deleted whenever `promo_player_streak.current` resets to zero - a missed day or
+ * the milestone at `resetAfterDay` completing - so the same day can be earned again on the next
+ * run without a second dimension threading every query that reads this table.
+ */
+export const promoStreakMilestoneGrant = pgTable(
+  'promo_streak_milestone_grant',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    day: integer().notNull(),
+    reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp({ withTimezone: true }),
+    /** `granted`, or why nothing was: `restricted` for a player under an RG block. */
+    outcome: text(),
+  },
+  (t) => [
+    uniqueIndex('promo_streak_milestone_grant_user_id_day_idx').on(t.userId, t.day),
+    index('promo_streak_milestone_grant_unsettled_idx')
+      .on(t.reachedAt)
+      .where(sql`${t.settledAt} is null`),
+    check('promo_streak_milestone_grant_day_positive', sql`${t.day} > 0`),
+  ],
+);
+
+export type PromoStreakMilestoneGrant = typeof promoStreakMilestoneGrant.$inferSelect;

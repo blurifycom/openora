@@ -241,6 +241,9 @@ export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
  */
 export const RANK_PAYOUT_DEFAULT_CRON = '3,13,23,33,43,53 * * * *';
 export const RANK_PERIODIC_DEFAULT_CRON = '17 * * * *';
+export const STREAK_PAYOUT_DEFAULT_CRON = '7,27,47 * * * *';
+/** Once, shortly after the UTC day turns over - the boundary the streak's own "day" is defined by. */
+export const STREAK_CLOSE_DEFAULT_CRON = '5 0 * * *';
 
 export const PromoConfigSchema = z
   .object({
@@ -250,6 +253,15 @@ export const PromoConfigSchema = z
         payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
         /** How often the daily, weekly and monthly payouts check whether a period has closed. */
         periodicCron: CronExpressionSchema.default(RANK_PERIODIC_DEFAULT_CRON),
+      })
+      .strict()
+      .prefault({}),
+    streaks: z
+      .object({
+        /** How often owed milestone rewards are settled. */
+        payoutCron: CronExpressionSchema.default(STREAK_PAYOUT_DEFAULT_CRON),
+        /** How often a UTC day is closed out, resetting anyone who missed it. */
+        closeCron: CronExpressionSchema.default(STREAK_CLOSE_DEFAULT_CRON),
       })
       .strict()
       .prefault({}),

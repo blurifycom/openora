@@ -1,6 +1,6 @@
 import type { DrizzleDb } from '@openora/core/server';
-import type { RankConfig } from '../contract/index.js';
-import { promoRankConfig, promoRankTier } from '../schema/index.js';
+import type { RankConfig, StreakConfig } from '../contract/index.js';
+import { promoRankConfig, promoRankTier, promoStreakConfig } from '../schema/index.js';
 
 export type RankTierSeed = {
   key: string;
@@ -38,4 +38,14 @@ export async function seedRankLadder(db: DrizzleDb, ladder: RankLadderSeed): Pro
     )
     .onConflictDoNothing();
   await db.insert(promoRankConfig).values(ladder.config).onConflictDoNothing();
+}
+
+export type StreakSeed = StreakConfig;
+
+/**
+ * Seeds the streak config, mirroring `seedRankLadder`: idempotent, never overwrites a setting an
+ * operator has already edited.
+ */
+export async function seedStreakConfig(db: DrizzleDb, config: StreakSeed): Promise<void> {
+  await db.insert(promoStreakConfig).values(config).onConflictDoNothing();
 }

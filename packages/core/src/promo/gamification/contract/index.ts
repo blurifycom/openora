@@ -90,7 +90,7 @@ export type RankPayoutKind = z.infer<typeof RankPayoutKindSchema>;
 
 const MAX_EXPIRY_DAYS = 365;
 
-const RankRewardTermsSchema = z.object({
+export const RankRewardTermsSchema = z.object({
   /**
    * Wagering requirement as a multiple of the reward, as a decimal string above zero. Its upper
    * bound is the bonus engine's, checked by the service, since comparing it needs decimal math.
@@ -184,6 +184,78 @@ export const RankConfigSchema = z.object({
 
 export type RankConfig = z.infer<typeof RankConfigSchema>;
 
+/**
+ * A daily-streak milestone reward. `bonus` and `giftDrop` both credit through BONUS_GRANTS;
+ * `giftDrop` is a `bonus` whose amount is rolled fresh, between `min` and `max`, at settlement
+ * time rather than fixed in the config - an operator names the range, not the number.
+ * `rakebackBoost` is not a bonus grant: it raises the player's rank rakeback by `percentPoints`
+ * for `days`, recorded on the rank the streak payout settles against.
+ */
+export const StreakRewardSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('bonus'), amount: MoneyAmountSchema, terms: RankRewardTermsSchema }),
+  z.object({
+    kind: z.literal('giftDrop'),
+    min: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+    max: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+    terms: RankRewardTermsSchema,
+  }),
+  z.object({
+    kind: z.literal('rakebackBoost'),
+    percentPoints: ContributionPercentSchema,
+    days: z.number().int().positive().max(90),
+  }),
+]);
+export type StreakReward = z.infer<typeof StreakRewardSchema>;
+
+export const StreakMilestoneSchema = z.object({
+  /** The streak length this milestone pays at. Unique within the milestone list. */
+  day: z.number().int().positive().max(365),
+  rewards: z.array(StreakRewardSchema).min(1),
+});
+export type StreakMilestone = z.infer<typeof StreakMilestoneSchema>;
+
+export const StreakConfigSchema = z.object({
+  /** What counts toward a qualifying day, and in what currency the threshold is priced. */
+  currency: CurrencyTickerSchema,
+  dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  /** Products whose stakes count toward the streak. Empty counts every product. */
+  eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
+  milestones: z
+    .array(StreakMilestoneSchema)
+    .max(50)
+    .refine(
+      (milestones) => new Set(milestones.map((m) => m.day)).size === milestones.length,
+      'two milestones share a day',
+    ),
+  /** The day a streak that reaches its last milestone resets to, and pays its final reward. */
+  resetAfterDay: z.number().int().positive().max(365),
+});
+export type StreakConfig = z.infer<typeof StreakConfigSchema>;
+
+export const PlayerStreakSchema = z.object({
+  current: z.number().int().nonnegative(),
+  best: z.number().int().nonnegative(),
+  todayWagered: MoneyAmountSchema,
+  dailyMinWager: MoneyAmountSchema,
+  currency: CurrencyTickerSchema,
+  milestones: z.array(StreakMilestoneSchema),
+});
+export type PlayerStreak = z.infer<typeof PlayerStreakSchema>;
+
+export const StreakLeaderboardEntrySchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  streak: z.number().int().nonnegative(),
+});
+export type StreakLeaderboardEntry = z.infer<typeof StreakLeaderboardEntrySchema>;
+
+export const StreakLeaderboardSchema = z.object({
+  top: z.array(StreakLeaderboardEntrySchema).max(5),
+  /** The requesting player's own rank on the board, 1-based; null when they have no streak. */
+  ownPosition: z.number().int().positive().nullable(),
+});
+export type StreakLeaderboard = z.infer<typeof StreakLeaderboardSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -195,7 +267,27 @@ export const gamificationContract = {
     ladder: oc.route({ method: 'GET', path: '/promo/ranks/ladder' }).output(RankLadderSchema),
   },
 
+  streaks: {
+    get: oc.route({ method: 'GET', path: '/promo/streaks' }).output(PlayerStreakSchema),
+    leaderboard: oc
+      .route({ method: 'GET', path: '/promo/streaks/leaderboard' })
+      .output(StreakLeaderboardSchema),
+  },
+
   admin: {
+    streaks: {
+      config: {
+        get: oc
+          .route({ method: 'GET', path: '/backoffice/promo/streaks/config' })
+          .output(StreakConfigSchema),
+
+        set: oc
+          .route({ method: 'PUT', path: '/backoffice/promo/streaks/config' })
+          .input(StreakConfigSchema)
+          .output(StreakConfigSchema),
+      },
+    },
+
     ranks: {
       get: oc.route({ method: 'GET', path: '/backoffice/promo/ranks' }).output(RankLadderSchema),
 
