@@ -429,3 +429,103 @@ export const promoRacePayout = pgTable(
 );
 
 export type PromoRacePayout = typeof promoRacePayout.$inferSelect;
+
+/**
+ * A Rank Challenge tier: a lifetime real-money wagering threshold and the prize the first player
+ * to cross it wins, once, forever - unlike `promoRankTier` (a repeatable ladder every player
+ * climbs) or `promoRace` (a repeating leaderboard window), this is a race-to-threshold with a
+ * single winner per tier. A tier carries a cash amount, a physical item description, or both
+ * (`master`/`titan` combine them) - at least one of the two is required.
+ */
+export const promoRankChallengeTier = pgTable(
+  'promo_rank_challenge_tier',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    key: text().notNull().unique(),
+    name: text().notNull(),
+    position: integer().notNull().unique(),
+    currency: text().notNull(),
+    wagerThreshold: money().notNull(),
+    cashAmount: money(),
+    physicalItem: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check(
+      'promo_rank_challenge_tier_bounds',
+      sql`${t.position} >= 0 AND ${t.wagerThreshold} >= 0
+        AND (${t.cashAmount} is null OR ${t.cashAmount} > 0)
+        AND (${t.physicalItem} is not null OR ${t.cashAmount} is not null)`,
+    ),
+  ],
+);
+
+export type PromoRankChallengeTier = typeof promoRankChallengeTier.$inferSelect;
+
+/**
+ * A player's lifetime real-money wagering total toward the Rank Challenge - independent of
+ * `promoPlayerRank.lifetimeWagered` (the rank ladder's own accumulator, filtered by that
+ * ladder's `eligibleProducts`). Every real-money wager counts here, no eligibility filter, per
+ * the challenge's own "lifetime real-money wagering" rule.
+ */
+export const promoRankChallengeWager = pgTable(
+  'promo_rank_challenge_wager',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull().unique(),
+    currency: text().notNull(),
+    lifetimeWagered: money().notNull().default('0'),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [check('promo_rank_challenge_wager_non_negative', sql`${t.lifetimeWagered} >= 0`)],
+);
+
+export type PromoRankChallengeWager = typeof promoRankChallengeWager.$inferSelect;
+
+/**
+ * The winner record for one tier - `unique(tierId)` is the whole mechanic's atomicity guard: two
+ * players crossing the same tier concurrently both attempt this insert, and the unique index
+ * lets exactly one land (`onConflictDoNothing`, checked via `.returning()`). `cashAmount`/
+ * `physicalItem` are snapshotted from the tier at claim time so a later admin edit to the tier's
+ * prize never changes what a past winner was actually granted (prospective-only, the same rule
+ * `promoRankLevelUp` follows for its own amount). Settled by a payout job, mirroring
+ * `promoRankLevelUp`/`promoStreakMilestoneGrant`'s own unsettled-row pattern, rather than being
+ * credited inline in the same transaction that detects the crossing.
+ */
+export const promoRankChallengeClaim = pgTable(
+  'promo_rank_challenge_claim',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    tierId: uuid().notNull(),
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    cashAmount: money(),
+    physicalItem: text(),
+    claimedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp({ withTimezone: true }),
+    /** `granted`, or why the cash part was not: `restricted` for a player under an RG block. */
+    outcome: text(),
+    cashGrantId: uuid(),
+    physicalFulfilledAt: timestamp({ withTimezone: true }),
+    physicalFulfilledBy: uuid(),
+    physicalFulfillmentNote: text(),
+  },
+  (t) => [
+    uniqueIndex('promo_rank_challenge_claim_tier_id_idx').on(t.tierId),
+    index('promo_rank_challenge_claim_unsettled_idx')
+      .on(t.claimedAt)
+      .where(sql`${t.settledAt} is null`),
+    index('promo_rank_challenge_claim_fulfilment_queue_idx')
+      .on(t.claimedAt)
+      .where(sql`${t.physicalItem} is not null AND ${t.physicalFulfilledAt} is null`),
+  ],
+);
+
+export type PromoRankChallengeClaim = typeof promoRankChallengeClaim.$inferSelect;

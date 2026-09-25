@@ -362,6 +362,101 @@ export const RaceForPlayerSchema = z.object({
 });
 export type RaceForPlayer = z.infer<typeof RaceForPlayerSchema>;
 
+// A tier may carry a cash amount, a physical item, or both (master/titan) - at least one.
+const rankChallengeHasAPrize = (t: { cashAmount: string | null; physicalItem: string | null }) =>
+  t.cashAmount !== null || (t.physicalItem !== null && t.physicalItem.trim().length > 0);
+
+export const RankChallengeTierSchema = z.object({
+  id: UuidSchema,
+  key: z.string().min(1),
+  name: z.string().min(1),
+  position: z.number().int().nonnegative(),
+  wagerThreshold: MoneyAmountSchema,
+  cashAmount: MoneyAmountSchema.nullable(),
+  physicalItem: z.string().min(1).max(200).nullable(),
+});
+export type RankChallengeTier = z.infer<typeof RankChallengeTierSchema>;
+
+export const RankChallengeClaimSchema = z.object({
+  tierId: UuidSchema,
+  tierKey: z.string(),
+  userId: UuidSchema,
+  username: z.string(),
+  cashAmount: MoneyAmountSchema.nullable(),
+  physicalItem: z.string().nullable(),
+  claimedAt: TimestampSchema,
+  physicalFulfilledAt: TimestampSchema.nullable(),
+  physicalFulfillmentNote: z.string().nullable(),
+});
+export type RankChallengeClaim = z.infer<typeof RankChallengeClaimSchema>;
+
+export const RankChallengeLadderTierSchema = RankChallengeTierSchema.extend({
+  winnerUserId: UuidSchema.nullable(),
+  winnerUsername: z.string().nullable(),
+  claimedAt: TimestampSchema.nullable(),
+});
+export type RankChallengeLadderTier = z.infer<typeof RankChallengeLadderTierSchema>;
+
+export const RankChallengeLadderSchema = z.object({
+  currency: CurrencyTickerSchema,
+  tiers: z.array(RankChallengeLadderTierSchema),
+});
+export type RankChallengeLadder = z.infer<typeof RankChallengeLadderSchema>;
+
+export const RankChallengeLeaderboardEntrySchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  lifetimeWagered: MoneyAmountSchema,
+  position: z.number().int().positive(),
+});
+export type RankChallengeLeaderboardEntry = z.infer<typeof RankChallengeLeaderboardEntrySchema>;
+
+export const PlayerRankChallengeSchema = z.object({
+  currency: CurrencyTickerSchema,
+  lifetimeWagered: MoneyAmountSchema,
+  /** The next tier the player has not yet claimed and nobody else has either. Null once every
+   * tier is claimed. */
+  nextTier: RankChallengeTierSchema.nullable(),
+  leaderboard: z.array(RankChallengeLeaderboardEntrySchema).max(5),
+  /** The player's own 1-based position; null when outside the top 5 shown, or no wagers yet. */
+  ownPosition: z.number().int().positive().nullable(),
+});
+export type PlayerRankChallenge = z.infer<typeof PlayerRankChallengeSchema>;
+
+const MAX_CHALLENGE_TIERS = 50;
+
+const SubmittedRankChallengeTierSchema = RankChallengeTierSchema.omit({ id: true }).extend({
+  id: UuidSchema.optional(),
+});
+export type SubmittedRankChallengeTier = z.infer<typeof SubmittedRankChallengeTierSchema>;
+
+export const SetRankChallengeLadderInputSchema = z.object({
+  currency: CurrencyTickerSchema,
+  tiers: z
+    .array(SubmittedRankChallengeTierSchema)
+    .min(1)
+    .max(MAX_CHALLENGE_TIERS)
+    .refine(
+      (tiers) => new Set(tiers.map((t) => t.key)).size === tiers.length,
+      'two tiers share a key',
+    )
+    .refine(
+      (tiers) => new Set(tiers.map((t) => t.position)).size === tiers.length,
+      'two tiers share a position',
+    )
+    .refine(
+      (tiers) => tiers.every(rankChallengeHasAPrize),
+      'every tier needs a cash amount, a physical item, or both',
+    ),
+});
+export type SetRankChallengeLadderInput = z.infer<typeof SetRankChallengeLadderInputSchema>;
+
+export const MarkRankChallengeFulfilledInputSchema = z.object({
+  claimId: UuidSchema,
+  note: z.string().min(1).max(1000),
+});
+export type MarkRankChallengeFulfilledInput = z.infer<typeof MarkRankChallengeFulfilledInputSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -398,6 +493,17 @@ export const gamificationContract = {
       .route({ method: 'GET', path: '/promo/races/{raceId}' })
       .input(z.object({ raceId: UuidSchema }))
       .output(RaceForPlayerSchema),
+  },
+
+  rankChallenge: {
+    get: oc
+      .route({ method: 'GET', path: '/promo/rank-challenge' })
+      .output(PlayerRankChallengeSchema),
+
+    /** The tiers and who has won each so far - public, no wagered totals. */
+    ladder: oc
+      .route({ method: 'GET', path: '/promo/rank-challenge/ladder' })
+      .output(RankChallengeLadderSchema),
   },
 
   admin: {
@@ -453,6 +559,36 @@ export const gamificationContract = {
         .route({ method: 'PUT', path: '/backoffice/promo/races/{raceId}' })
         .input(UpdateRaceInputSchema)
         .output(RaceSchema),
+    },
+
+    rankChallenge: {
+      config: {
+        get: oc
+          .route({ method: 'GET', path: '/backoffice/promo/rank-challenge' })
+          .output(RankChallengeLadderSchema),
+
+        set: oc
+          .route({ method: 'PUT', path: '/backoffice/promo/rank-challenge' })
+          .input(SetRankChallengeLadderInputSchema)
+          .output(RankChallengeLadderSchema),
+      },
+
+      claims: {
+        list: oc
+          .route({ method: 'GET', path: '/backoffice/promo/rank-challenge/claims' })
+          .output(z.array(RankChallengeClaimSchema)),
+      },
+
+      fulfilment: {
+        list: oc
+          .route({ method: 'GET', path: '/backoffice/promo/rank-challenge/fulfilment' })
+          .output(z.array(RankChallengeClaimSchema)),
+
+        markFulfilled: oc
+          .route({ method: 'POST', path: '/backoffice/promo/rank-challenge/fulfilment/{claimId}' })
+          .input(MarkRankChallengeFulfilledInputSchema)
+          .output(RankChallengeClaimSchema),
+      },
     },
   },
 };

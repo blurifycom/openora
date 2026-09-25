@@ -32,6 +32,20 @@ import { CreateNotificationInputSchema, type CreateNotificationInput } from './c
 const describeLimitValue = (amount: string | null, minutes: number | null): string =>
   amount !== null ? amount : `${minutes} minutes`;
 
+// A Rank Challenge tier may carry a cash amount, a physical item, or both (master/titan) - the
+// body text names whichever the player actually won.
+const describeRankChallengePrize = (p: {
+  cashAmount: string | null;
+  physicalItem: string | null;
+  currency: string;
+}): string => {
+  const parts = [
+    p.cashAmount !== null ? `${formatMoneyAmount(p.cashAmount)} ${p.currency}` : null,
+    p.physicalItem,
+  ].filter((part): part is string => part !== null);
+  return parts.join(' + ');
+};
+
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
@@ -279,6 +293,28 @@ export const notificationEventMap: NotificationMapEntry[] = [
           raceName: p.raceName,
           position: p.position,
           amount: p.amount,
+          currency: p.currency,
+        },
+      }),
+    },
+  ),
+
+  mapEvent(
+    'promo.rankChallenge.won',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.rankChallenge.won',
+      title: 'You won a Rank Challenge tier',
+      body: `You reached the ${p.tierName} tier and won ${describeRankChallengePrize(p)}.`,
+      data: { tierId: p.tierId },
+    }),
+    {
+      email: (p) => ({
+        key: 'rankChallengeWon' as const,
+        data: {
+          tierName: p.tierName,
+          cashAmount: p.cashAmount,
+          physicalItem: p.physicalItem,
           currency: p.currency,
         },
       }),

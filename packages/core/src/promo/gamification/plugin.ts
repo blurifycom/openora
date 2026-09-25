@@ -35,6 +35,9 @@ import { StreakService } from './service/streak.service.js';
 import { RaceAdminService } from './service/race-admin.service.js';
 import { RacePayoutService } from './service/race-payout.service.js';
 import { RaceService } from './service/race.service.js';
+import { RankChallengeService } from './service/rank-challenge.service.js';
+import { RankChallengeAdminService } from './service/rank-challenge-admin.service.js';
+import { RankChallengePayoutService } from './service/rank-challenge-payout.service.js';
 import { createGamificationRouter } from './router/index.js';
 import { RankPayoutKindSchema } from './contract/index.js';
 
@@ -44,9 +47,13 @@ const RANK_PAYOUT_QUEUE = queue('promo-rank-payout');
 const STREAK_PAYOUT_QUEUE = queue('promo-streak-payout');
 const STREAK_CLOSE_QUEUE = queue('promo-streak-close');
 const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
+const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
 // Races close at whatever timestamp the operator configured, not a shared daily/weekly/monthly
 // anchor - a short recurring tick is what makes "closed within a minute of endAt" true.
 const RACE_PAYOUT_CRON = '*/1 * * * *';
+// A claim can land at any moment (it is detected inline on the bet that crosses a threshold),
+// so settling it - the cash credit and the win announcement - runs on the same short tick.
+const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.
 const RankPayoutJobSchema = z.object({ kind: RankPayoutKindSchema });
@@ -75,6 +82,9 @@ const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
 const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RakebackService(() => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined), logger);
 
+const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
+  new RankChallengeService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+
 export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
@@ -87,12 +97,14 @@ export default {
           rakebackService(c),
           streakService(c),
           raceService(c),
+          rankChallengeService(c),
         ]),
     );
 
     let rankPayouts: RankPayoutService | null = null;
     let streakPayouts: StreakPayoutService | null = null;
     let racePayouts: RacePayoutService | null = null;
+    let rankChallengePayouts: RankChallengePayoutService | null = null;
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
 
@@ -164,6 +176,23 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: RANK_CHALLENGE_PAYOUT_QUEUE,
+      schema: EmptyJobSchema,
+      handler: async () => {
+        if (!rankChallengePayouts) {
+          logger.warn({}, 'rank challenge payout skipped - service not constructed');
+          return;
+        }
+        const won = await rankChallengePayouts.settlePending();
+        // Same rule as every other payout job here: announce only after the settlement
+        // transaction that credited the cash (if any) has committed.
+        for (const win of won) {
+          events?.emit('promo.rankChallenge.won', win);
+        }
+      },
+    });
+
     ctx.routers.add('promo-gamification', (c) => {
       rankPayouts = new RankPayoutService(
         c.get(DRIZZLE),
@@ -184,6 +213,13 @@ export default {
         c.get(DRIZZLE),
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        logger,
+      );
+      rankChallengePayouts = new RankChallengePayoutService(
+        c.get(DRIZZLE),
+        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        c.get(AUDIT_WRITER),
         logger,
       );
       streaks = streakService(c);
@@ -223,6 +259,14 @@ export default {
       void jobs
         .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
         .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
+      void jobs
+        .schedule(
+          RANK_CHALLENGE_PAYOUT_QUEUE,
+          'promo-rank-challenge-payout.cron',
+          {},
+          { cron: RANK_CHALLENGE_PAYOUT_CRON },
+        )
+        .catch((err: unknown) => logger.error({ err }, 'rank challenge payout schedule failed'));
 
       return createGamificationRouter({
         ranks: rankService(c),
@@ -231,6 +275,8 @@ export default {
         streakAdmin: new StreakAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         races: raceService(c),
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        rankChallenge: rankChallengeService(c),
+        rankChallengeAdmin: new RankChallengeAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         adminGuard: c.get(ADMIN_GUARD),
       });
     });

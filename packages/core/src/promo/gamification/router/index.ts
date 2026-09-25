@@ -20,6 +20,11 @@ import {
   RaceClosedError,
   RacePositionsInvalidError,
 } from '../service/race-admin.service.js';
+import { RankChallengeService } from '../service/rank-challenge.service.js';
+import {
+  RankChallengeAdminService,
+  RankChallengeLadderCurrencyHeldError,
+} from '../service/rank-challenge-admin.service.js';
 
 export function createGamificationRouter({
   ranks,
@@ -28,6 +33,8 @@ export function createGamificationRouter({
   streakAdmin,
   races,
   raceAdmin,
+  rankChallenge,
+  rankChallengeAdmin,
   adminGuard,
 }: {
   ranks: RankService;
@@ -36,6 +43,8 @@ export function createGamificationRouter({
   streakAdmin: StreakAdminService;
   races: RaceService;
   raceAdmin: RaceAdminService;
+  rankChallenge: RankChallengeService;
+  rankChallengeAdmin: RankChallengeAdminService;
   adminGuard: AdminGuard;
 }) {
   const os = implement(gamificationContract).$context<OssContext>();
@@ -77,6 +86,15 @@ export function createGamificationRouter({
           races.getForPlayer(input.raceId, getUserId(context)),
         ),
       ),
+    },
+
+    rankChallenge: {
+      get: os.rankChallenge.get.handler(({ context }) =>
+        rankChallenge.getForPlayer(getUserId(context)),
+      ),
+
+      // No `getUserId`: public, the same rule `ranks.ladder` follows.
+      ladder: os.rankChallenge.ladder.handler(() => rankChallenge.getLadder()),
     },
 
     admin: {
@@ -156,6 +174,43 @@ export function createGamificationRouter({
             () => raceAdmin.update(userId, input),
           );
         }),
+      },
+
+      rankChallenge: {
+        config: {
+          get: os.admin.rankChallenge.config.get.handler(async ({ context }) => {
+            await adminGuard.assert(context, 'bonus', 'view');
+            return rankChallengeAdmin.getLadder();
+          }),
+
+          set: os.admin.rankChallenge.config.set.handler(async ({ input, context }) => {
+            const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+            return mapErrors({ CONFLICT: RankChallengeLadderCurrencyHeldError }, () =>
+              rankChallengeAdmin.setLadder(userId, input),
+            );
+          }),
+        },
+
+        claims: {
+          list: os.admin.rankChallenge.claims.list.handler(async ({ context }) => {
+            await adminGuard.assert(context, 'bonus', 'view');
+            return rankChallengeAdmin.listClaims();
+          }),
+        },
+
+        fulfilment: {
+          list: os.admin.rankChallenge.fulfilment.list.handler(async ({ context }) => {
+            await adminGuard.assert(context, 'bonus', 'view');
+            return rankChallengeAdmin.listFulfilmentQueue();
+          }),
+
+          markFulfilled: os.admin.rankChallenge.fulfilment.markFulfilled.handler(
+            async ({ input, context }) => {
+              const { userId } = await adminGuard.assert(context, 'bonus', 'update');
+              return rankChallengeAdmin.markFulfilled(userId, input.claimId, input.note);
+            },
+          ),
+        },
       },
     },
   });

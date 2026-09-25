@@ -184,6 +184,18 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: `You placed #${data.position} in ${data.raceName}`,
     text: `You placed #${data.position} in ${data.raceName} and won ${formatMoney(data.amount, data.currency)}. The prize has been credited to your balance.`,
   }),
+  rankChallengeWon: (data) => {
+    const prize = [
+      data.cashAmount !== null ? formatMoney(data.cashAmount, data.currency) : null,
+      data.physicalItem,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(' + ');
+    return {
+      subject: `You won the ${data.tierName} Rank Challenge tier`,
+      text: `You reached the ${data.tierName} tier and won ${prize}. ${data.cashAmount !== null ? 'The cash prize has been credited to your balance. ' : ''}Our team will be in touch about fulfilling any physical prize.`,
+    };
+  },
 };
 
 const renderDefaultEmail = (

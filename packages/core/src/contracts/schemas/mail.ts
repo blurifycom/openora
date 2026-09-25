@@ -27,6 +27,7 @@ export const MAIL_TEMPLATE_KEYS = [
   'emailChanged',
   'securityAntiPhishingCodeChanged',
   'raceWon',
+  'rankChallengeWon',
 ] as const;
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
@@ -97,6 +98,12 @@ export const EmailTemplateDataSchemas = {
     amount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
+  rankChallengeWon: z.object({
+    tierName: z.string(),
+    cashAmount: MoneyAmountSchema.nullable(),
+    physicalItem: z.string().nullable(),
+    currency: CurrencyTickerSchema,
+  }),
 } as const satisfies Record<EmailTemplateKey, z.ZodType>;
 
 export type EmailTemplateData = {
@@ -131,6 +138,7 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('emailChanged'),
   templateVariant('securityAntiPhishingCodeChanged'),
   templateVariant('raceWon'),
+  templateVariant('rankChallengeWon'),
 ]);
 
 export type MailTemplate = {
