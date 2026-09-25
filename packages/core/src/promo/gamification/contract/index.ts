@@ -189,7 +189,10 @@ export type RankConfig = z.infer<typeof RankConfigSchema>;
  * `giftDrop` is a `bonus` whose amount is rolled fresh, between `min` and `max`, at settlement
  * time rather than fixed in the config - an operator names the range, not the number.
  * `rakebackBoost` is not a bonus grant: it raises the player's rank rakeback by `percentPoints`
- * for `days`, recorded on the rank the streak payout settles against.
+ * for `days`, recorded on the rank the streak payout settles against. `cash` is not a bonus grant
+ * either: real money, no wagering requirement, no expiry, credited to the balance directly - the
+ * same wallet transaction type (`cashback`) rank rakeback uses, since both are an operator-funded
+ * real-money credit that never carries a wagering requirement.
  */
 export const StreakRewardSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('bonus'), amount: MoneyAmountSchema, terms: RankRewardTermsSchema }),
@@ -203,6 +206,10 @@ export const StreakRewardSchema = z.discriminatedUnion('kind', [
     kind: z.literal('rakebackBoost'),
     percentPoints: ContributionPercentSchema,
     days: z.number().int().positive().max(90),
+  }),
+  z.object({
+    kind: z.literal('cash'),
+    amount: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
   }),
 ]);
 export type StreakReward = z.infer<typeof StreakRewardSchema>;
@@ -256,6 +263,20 @@ export const StreakLeaderboardSchema = z.object({
 });
 export type StreakLeaderboard = z.infer<typeof StreakLeaderboardSchema>;
 
+const MAX_LOOKUP_IDS = 100;
+
+export const RankLookupInputSchema = z.object({
+  userIds: z.array(UuidSchema).min(1).max(MAX_LOOKUP_IDS),
+});
+export type RankLookupInput = z.infer<typeof RankLookupInputSchema>;
+
+export const RankLookupEntrySchema = z.object({
+  userId: UuidSchema,
+  tierKey: z.string().nullable(),
+  tierName: z.string().nullable(),
+});
+export type RankLookupEntry = z.infer<typeof RankLookupEntrySchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -265,6 +286,16 @@ export const gamificationContract = {
      * marketing, and the page that shows it is public. Carries no player data at all.
      */
     ladder: oc.route({ method: 'GET', path: '/promo/ranks/ladder' }).output(RankLadderSchema),
+
+    /**
+     * Another player's rank badge, batched - a chat avatar or profile card names whose rank it
+     * wants rather than firing one request per avatar on screen. Public fields only: a tier's
+     * key and display name, never wagered amounts or rakeback.
+     */
+    lookup: oc
+      .route({ method: 'POST', path: '/promo/ranks/lookup' })
+      .input(RankLookupInputSchema)
+      .output(z.array(RankLookupEntrySchema)),
   },
 
   streaks: {

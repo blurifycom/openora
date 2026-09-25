@@ -6,6 +6,7 @@ import {
   JOB_QUEUE,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
+  WALLET_COMMANDS,
   WALLET_READER,
   PromoConfigSchema,
   WAGER_TRACKING,
@@ -24,6 +25,7 @@ import {
   type Plugin,
   type TypedContainer,
 } from '@openora/core/server';
+import { RakebackService } from './service/rakeback.service.js';
 import { RankAdminService } from './service/rank-admin.service.js';
 import { RankPayoutService } from './service/rank-payout.service.js';
 import { RankService } from './service/rank.service.js';
@@ -60,13 +62,16 @@ const rankService = (c: TypedContainer<CoreTokenCatalog>) =>
 const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
   new StreakService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
 
+const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
+  new RakebackService(c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined, logger);
+
 export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
   register(ctx) {
     ctx.provide(
       WAGER_TRACKING,
-      (c) => new CompositeWagerTracking([rankService(c), streakService(c)]),
+      (c) => new CompositeWagerTracking([rankService(c), rakebackService(c), streakService(c)]),
     );
 
     let rankPayouts: RankPayoutService | null = null;
@@ -138,6 +143,7 @@ export default {
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
         c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         logger,
+        c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
       );
       streaks = streakService(c);
       events = c.get(EVENT_BUS);

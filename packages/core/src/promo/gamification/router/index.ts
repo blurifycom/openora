@@ -42,6 +42,9 @@ export function createGamificationRouter({
           ranks.getForPlayer(getUserId(context)),
         ),
       ),
+
+      // No `getUserId`: public, so a chat avatar can show another player's rank badge.
+      lookup: os.ranks.lookup.handler(({ input }) => ranks.lookup([...new Set(input.userIds)])),
     },
 
     streaks: {

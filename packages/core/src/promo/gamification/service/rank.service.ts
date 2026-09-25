@@ -1,4 +1,4 @@
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
   ExchangeRateReader,
@@ -11,7 +11,7 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import type { PlayerRank, RankLadder } from '../contract/index.js';
+import type { PlayerRank, RankLadder, RankLookupEntry } from '../contract/index.js';
 import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
 import {
   promoPlayerRank,
@@ -213,6 +213,35 @@ export class RankService implements WagerTrackingCommands {
       currency: lowest.currency,
       tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
     };
+  }
+
+  /**
+   * Public rank badges for a set of other players, one query, no N+1 - a chat avatar list or
+   * friends panel looks these up batched for whoever is on screen. A user with no rank row yet,
+   * or none held (tierId null), comes back with `tierKey`/`tierName` both null rather than
+   * omitted, so a caller can tell "looked up, no rank" from "not in the response".
+   *
+   * There is no hidden-profile/ghost-mode setting anywhere in the platform today (checked pam
+   * and social modules), so nothing here has one to respect.
+   */
+  async lookup(userIds: readonly PromoPlayerRank['userId'][]): Promise<RankLookupEntry[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+    const rows = await this.drizzle.db
+      .select({
+        userId: promoPlayerRank.userId,
+        tierKey: promoRankTier.key,
+        tierName: promoRankTier.name,
+      })
+      .from(promoPlayerRank)
+      .leftJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+      .where(inArray(promoPlayerRank.userId, userIds));
+    const byUser = new Map(rows.map((row) => [row.userId, row]));
+    return userIds.map((userId) => {
+      const row = byUser.get(userId);
+      return { userId, tierKey: row?.tierKey ?? null, tierName: row?.tierName ?? null };
+    });
   }
 
   async getForPlayer(userId: PromoPlayerRank['userId']): Promise<PlayerRank> {

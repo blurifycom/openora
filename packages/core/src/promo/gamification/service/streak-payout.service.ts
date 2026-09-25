@@ -5,6 +5,7 @@ import type {
   DomainEventPayload,
   PlayEligibilityPort,
   Uuid,
+  WalletCommands,
 } from '@openora/core/contracts';
 import { moneyScaleBy, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import { promoPlayerRank, promoStreakConfig, promoStreakMilestoneGrant } from '../schema/index.js';
@@ -44,6 +45,7 @@ export class StreakPayoutService {
     private readonly grants: BonusGrantCommands | undefined,
     private readonly eligibility: PlayEligibilityPort | undefined,
     private readonly logger: Logger,
+    private readonly wallet?: WalletCommands,
   ) {}
 
   async settlePending(): Promise<Granted[]> {
@@ -111,6 +113,10 @@ export class StreakPayoutService {
         await this.applyRakebackBoost(tx, row.userId, reward);
         continue;
       }
+      if (reward.kind === 'cash') {
+        await this.grantCash(tx, row.userId, reward, sourceRef);
+        continue;
+      }
       const paid = await this.grantOne(tx, row.userId, reward, sourceRef);
       if (paid) {
         granted.push(paid);
@@ -164,6 +170,35 @@ export class StreakPayoutService {
       source: 'streak',
       offerId: null,
     };
+  }
+
+  /**
+   * `cash`: real money, no bonus grant, no wagering requirement - credited through the same
+   * `cashback` wallet transaction type rank rakeback uses. `sourceRef` is the milestone's own
+   * `providerRefId`, so a retried settlement (the failed-milestone retry loop in `settlePending`)
+   * can never pay the same milestone's cash reward twice.
+   */
+  private async grantCash(
+    tx: DrizzleTx,
+    userId: Uuid,
+    reward: Extract<StreakReward, { kind: 'cash' }>,
+    sourceRef: string,
+  ) {
+    if (!this.wallet) {
+      throw new Error('WALLET_COMMANDS is not bound');
+    }
+    const currency = await this.currencyFor();
+    const outcome = await this.wallet.credit(tx, {
+      userId,
+      amount: reward.amount,
+      currency,
+      type: 'cashback',
+      allowNewCurrency: true,
+      providerRef: { providerName: 'promo-streak', providerRefId: sourceRef },
+    });
+    if (!outcome.ok) {
+      this.logger.error({ userId, sourceRef, reason: outcome.reason }, 'streak cash reward failed');
+    }
   }
 
   private async currencyFor() {
