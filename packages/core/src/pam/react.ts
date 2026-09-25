@@ -45,6 +45,7 @@ export {
   useUpdatePlayerProfile,
   useDisplayCurrency,
   useSetDisplayCurrency,
+  useSetDisplayDecimalPlaces,
   type PlayerProfile,
   type DisplayCurrencyInfo,
 } from './profile/react/profile.js';
