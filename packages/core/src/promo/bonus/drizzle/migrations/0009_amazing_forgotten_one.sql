@@ -1,0 +1,1 @@
+ALTER TYPE "public"."promo_forfeit_reason" ADD VALUE 'cooling_off' BEFORE 'account_closed';

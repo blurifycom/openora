@@ -31,6 +31,7 @@ export const BONUS_GRANT_STATUSES = [
 /** Why an active grant was taken away. Recorded on every forfeit, for the regulator. */
 export const BONUS_FORFEIT_REASONS = [
   'self_exclusion',
+  'cooling_off',
   'account_closed',
   'admin',
   'player_opt_out',

@@ -177,12 +177,18 @@ export default {
       },
     });
 
-    // A bonus is money a player may not keep once they have excluded themselves or closed the
-    // account, and the rule is immediate rather than "by the next sweep".
+    // A bonus is money a player may not keep once they have excluded themselves, entered a
+    // cooling-off period or closed the account, and the rule is immediate rather than "by the
+    // next sweep".
     const forfeitEverything =
-      <K extends 'rg.self_exclusion.activated' | 'player.account.closed'>(
+      <
+        K extends
+          | 'rg.self_exclusion.activated'
+          | 'rg.cooling_off.activated'
+          | 'player.account.closed',
+      >(
         topic: K,
-        reason: 'self_exclusion' | 'account_closed',
+        reason: 'self_exclusion' | 'cooling_off' | 'account_closed',
       ) =>
       (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
@@ -228,6 +234,10 @@ export default {
     ctx.events.on(
       'rg.self_exclusion.activated',
       forfeitEverything('rg.self_exclusion.activated', 'self_exclusion'),
+    );
+    ctx.events.on(
+      'rg.cooling_off.activated',
+      forfeitEverything('rg.cooling_off.activated', 'cooling_off'),
     );
     ctx.events.on(
       'player.account.closed',

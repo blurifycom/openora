@@ -209,6 +209,18 @@ describe('forfeiting every grant a player holds', () => {
     });
   });
 
+  it('takes everything for a cooling-off period, the same as a self-exclusion', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+
+    await lifecycle.forfeitAllFor(userId, 'cooling_off');
+
+    expect(await rowOf(grantId)).toMatchObject({
+      status: 'forfeited',
+      forfeitReason: 'cooling_off',
+    });
+  });
+
   it('leaves another player’s grants untouched', async () => {
     const mine = await grant({ userId: randomUUID() });
     const theirs = await grant({ userId: randomUUID() });
