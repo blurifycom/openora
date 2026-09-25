@@ -217,6 +217,7 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   gameTypes: queryArraySchema(GameTypeSchema, GAME_TYPES.length).optional(),
   geoBlocked: QueryBooleanSchema.optional(),
   geoBlockedCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
+  geoAvailableCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
 })
   .refine(
     (input) => !(input.uncategorized === true && (input.categoryId || input.categoryIds?.length)),
@@ -225,7 +226,21 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   .refine((input) => !(input.geoBlocked === false && input.geoBlockedCountries?.length), {
     message: 'geoBlocked=false cannot be combined with geoBlockedCountries',
     path: ['geoBlocked'],
-  });
+  })
+  .refine((input) => !(input.geoBlocked === true && input.geoAvailableCountries?.length), {
+    message: 'geoBlocked=true cannot be combined with geoAvailableCountries',
+    path: ['geoAvailableCountries'],
+  })
+  .refine(
+    (input) =>
+      !input.geoBlockedCountries?.length ||
+      !input.geoAvailableCountries?.length ||
+      !input.geoBlockedCountries.some((code) => input.geoAvailableCountries?.includes(code)),
+    {
+      message: 'geoAvailableCountries cannot share a country with geoBlockedCountries',
+      path: ['geoAvailableCountries'],
+    },
+  );
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
 // `active` and `inactive` count each row's own `isActive` flag, matching the admin list filters.

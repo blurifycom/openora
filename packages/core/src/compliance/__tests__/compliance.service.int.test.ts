@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { count, eq, inArray, sql } from 'drizzle-orm';
 import {
   defineIgamingConfig,
   type GeoIpAdapter,
@@ -23,6 +23,7 @@ import {
   ComplianceService,
   CountryRuleConfirmationRequiredError,
   CountryRuleVersionConflictError,
+  GeoRuleBulkTooManyGamesError,
   GeoRuleProviderNotFoundError,
   LicensedJurisdictionBlacklistError,
 } from '../service/compliance.service.js';
@@ -58,6 +59,24 @@ async function seedGame(id: string, name: string, providerId?: string) {
     isActive: true,
   });
 }
+
+async function seedManyGames(providerId: string, gameCount: number) {
+  const rows = await db.drizzle.db
+    .insert(game)
+    .values(
+      Array.from({ length: gameCount }, () => ({
+        name: 'Game',
+        slug: `game-${randomUUID()}`,
+        providerId,
+        aggregator: 'mock',
+        isActive: true,
+      })),
+    )
+    .returning({ id: game.id });
+  return rows.map((row) => row.id);
+}
+
+const NO_META = { ip: null, userAgent: null };
 
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile, migrateGaming]);
@@ -915,5 +934,278 @@ describe('ComplianceService per-provider geo rules (real PG)', () => {
       ].sort(),
     );
     expect((await svc.listProviderGeoRules({ page: 1, limit: 100 })).total).toBe(4);
+  });
+});
+
+describe('ComplianceService.listGloballyBlockedCountries (real PG)', () => {
+  it('unions the runtime config with block rules, sorted and deduped, ignoring allow rules', async () => {
+    const igaming = defineIgamingConfig({
+      branding: { name: 'Test' },
+      currencies: ['EUR'],
+      jurisdictions: ['MT'],
+      blockedCountries: ['US', 'DE'],
+    });
+    const { svc } = makeService(undefined, igaming);
+    await db.drizzle.db.insert(countryRule).values([
+      { countryCode: 'DE', action: 'block' },
+      { countryCode: 'FR', action: 'block' },
+      { countryCode: 'GB', action: 'allow' },
+    ]);
+
+    expect(await svc.listGloballyBlockedCountries()).toEqual(['DE', 'FR', 'US']);
+  });
+
+  it('is empty when nothing blocks globally', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.listGloballyBlockedCountries()).toEqual([]);
+  });
+});
+
+describe('ComplianceService bulk game geo rules (real PG)', () => {
+  it('restricts many games at once, leaving an already-restricted game (and its reason) untouched', async () => {
+    const providerId = await seedProvider();
+    const [first, second, third] = await seedManyGames(providerId, 3);
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+    await svc.upsertGameGeoRules(
+      { gameId: first!, countryCodes: ['DK'], reason: 'original reason' },
+      actorId,
+      NO_META,
+    );
+    events.emit.mockClear();
+
+    const result = await svc.bulkRestrictGameGeoRules(
+      { gameIds: [first!, second!, third!], countryCode: 'DK', reason: 'bulk restriction' },
+      actorId,
+      NO_META,
+    );
+
+    expect(result).toEqual({
+      changed: 2,
+      unchanged: 1,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith('compliance.game-geo-rules.bulk_updated', {
+      operation: 'restrict',
+      countryCode: 'DK',
+      reason: 'bulk restriction',
+      rules: [second, third]
+        .sort()
+        .map((gameId) =>
+          expect.objectContaining({ gameId, countryCode: 'DK', reason: 'bulk restriction' }),
+        ),
+      target: { gameIds: [first, second, third].sort(), providerIds: [] },
+      notFound: { gameIds: [], providerIds: [] },
+      actorId,
+      ip: NO_META.ip,
+      userAgent: NO_META.userAgent,
+    });
+
+    const firstRule = await db.drizzle.db
+      .select()
+      .from(gameGeoRule)
+      .where(eq(gameGeoRule.gameId, first!));
+    expect(firstRule).toHaveLength(1);
+    expect(firstRule[0]?.reason).toBe('original reason');
+  });
+
+  it('restrict is idempotent: re-running the same call changes nothing and emits nothing', async () => {
+    const providerId = await seedProvider();
+    const [first, second] = await seedManyGames(providerId, 2);
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+    await svc.bulkRestrictGameGeoRules(
+      { gameIds: [first!, second!], countryCode: 'DK', reason: 'bulk restriction' },
+      actorId,
+      NO_META,
+    );
+    events.emit.mockClear();
+
+    const result = await svc.bulkRestrictGameGeoRules(
+      { gameIds: [first!, second!], countryCode: 'DK', reason: 'repeat' },
+      actorId,
+      NO_META,
+    );
+
+    expect(result).toEqual({
+      changed: 0,
+      unchanged: 2,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('unrestricts every game of a provider, reporting the ones still blocked by the provider rule', async () => {
+    const providerId = await seedProvider();
+    const gameIds = await seedManyGames(providerId, 3);
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+    await svc.bulkRestrictGameGeoRules(
+      { gameIds, countryCode: 'DK', reason: 'restricted' },
+      actorId,
+      NO_META,
+    );
+    await db.drizzle.db
+      .insert(providerGeoRule)
+      .values({ providerId, countryCode: 'DK', reason: 'provider licence restriction' });
+    events.emit.mockClear();
+
+    const result = await svc.bulkUnrestrictGameGeoRules(
+      { providerIds: [providerId], countryCode: 'DK', reason: 'licence restored' },
+      actorId,
+      NO_META,
+    );
+
+    expect(result).toEqual({
+      changed: 3,
+      unchanged: 0,
+      stillBlockedByProvider: 3,
+      globallyBlocked: false,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.game-geo-rules.bulk_updated',
+      expect.objectContaining({
+        operation: 'unrestrict',
+        rules: [...gameIds]
+          .sort()
+          .map((gameId) => expect.objectContaining({ gameId, reason: 'restricted' })),
+        target: { gameIds: [], providerIds: [providerId] },
+      }),
+    );
+    expect(
+      await db.drizzle.db.select().from(gameGeoRule).where(inArray(gameGeoRule.gameId, gameIds)),
+    ).toHaveLength(0);
+    expect(
+      await db.drizzle.db
+        .select()
+        .from(providerGeoRule)
+        .where(eq(providerGeoRule.providerId, providerId)),
+    ).toHaveLength(1);
+  });
+
+  it('unrestrict is idempotent: a game with no matching rule is unchanged, not an error', async () => {
+    const providerId = await seedProvider();
+    const [first, second] = await seedManyGames(providerId, 2);
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+    await svc.bulkRestrictGameGeoRules(
+      { gameIds: [first!], countryCode: 'DK', reason: 'restricted' },
+      actorId,
+      NO_META,
+    );
+    events.emit.mockClear();
+
+    const result = await svc.bulkUnrestrictGameGeoRules(
+      { gameIds: [first!, second!], countryCode: 'DK', reason: 'licence restored' },
+      actorId,
+      NO_META,
+    );
+
+    expect(result).toEqual({
+      changed: 1,
+      unchanged: 1,
+      stillBlockedByProvider: 0,
+      globallyBlocked: false,
+      notFound: { gameIds: [], providerIds: [] },
+    });
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports globallyBlocked when the unrestricted country is also blocked platform-wide', async () => {
+    const providerId = await seedProvider();
+    const [gameId] = await seedManyGames(providerId, 1);
+    const actorId = randomUUID();
+    const { svc } = makeService();
+    await svc.bulkRestrictGameGeoRules(
+      { gameIds: [gameId!], countryCode: 'DK', reason: 'restricted' },
+      actorId,
+      NO_META,
+    );
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'DK', action: 'block' });
+
+    const result = await svc.bulkUnrestrictGameGeoRules(
+      { gameIds: [gameId!], countryCode: 'DK', reason: 'licence restored' },
+      actorId,
+      NO_META,
+    );
+
+    expect(result).toMatchObject({ changed: 1, globallyBlocked: true });
+  });
+
+  it('reports unknown game and provider ids in notFound while the rest applies', async () => {
+    const providerId = await seedProvider();
+    const [first] = await seedManyGames(providerId, 1);
+    const ghostGameId = randomUUID();
+    const ghostProviderId = randomUUID();
+    const actorId = randomUUID();
+    const { svc } = makeService();
+
+    const result = await svc.bulkRestrictGameGeoRules(
+      {
+        gameIds: [first!, ghostGameId],
+        providerIds: [ghostProviderId],
+        countryCode: 'DK',
+        reason: 'bulk restriction',
+      },
+      actorId,
+      NO_META,
+    );
+
+    expect(result).toEqual({
+      changed: 1,
+      unchanged: 0,
+      notFound: { gameIds: [ghostGameId], providerIds: [ghostProviderId] },
+    });
+  });
+
+  it('rejects a whole-provider scope over 5,000 games and writes nothing', async () => {
+    const providerId = await seedProvider();
+    await seedManyGames(providerId, 5001);
+    const actorId = randomUUID();
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.bulkRestrictGameGeoRules(
+        { providerIds: [providerId], countryCode: 'DK', reason: 'bulk restriction' },
+        actorId,
+        NO_META,
+      ),
+    ).rejects.toBeInstanceOf(GeoRuleBulkTooManyGamesError);
+    expect(events.emit).not.toHaveBeenCalled();
+    const [row] = await db.drizzle.db.select({ n: count() }).from(gameGeoRule);
+    expect(Number(row?.n)).toBe(0);
+  }, 30_000);
+
+  it('a bulk restrict and a concurrent single-target upsert for the same country both finish without deadlocking', async () => {
+    const providerId = await seedProvider();
+    const [bulkA, bulkB, single] = await seedManyGames(providerId, 3);
+    const actorId = randomUUID();
+    const { svc } = makeService();
+
+    await expect(
+      Promise.all([
+        svc.bulkRestrictGameGeoRules(
+          { gameIds: [bulkA!, bulkB!], countryCode: 'DK', reason: 'bulk restriction' },
+          actorId,
+          NO_META,
+        ),
+        svc.upsertGameGeoRules(
+          { gameId: single!, countryCodes: ['DK'], reason: 'single restriction' },
+          actorId,
+          NO_META,
+        ),
+      ]),
+    ).resolves.toBeDefined();
+
+    const rules = await db.drizzle.db
+      .select({ gameId: gameGeoRule.gameId, countryCode: gameGeoRule.countryCode })
+      .from(gameGeoRule)
+      .where(inArray(gameGeoRule.gameId, [bulkA!, bulkB!, single!]));
+    expect(rules.map((r) => r.gameId).sort()).toEqual([bulkA, bulkB, single].sort());
+    expect(rules.every((r) => r.countryCode === 'DK')).toBe(true);
   });
 });

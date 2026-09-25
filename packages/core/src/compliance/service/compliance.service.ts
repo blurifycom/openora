@@ -1,15 +1,18 @@
 import {
   DrizzleService,
+  createDomainError,
   findOneOrThrow,
   pageToOffset,
   makeConflictError,
   makeNotFoundError,
   makeOwnershipError,
   serializeRow,
+  withAdvisoryXactLock,
   withAdvisoryXactLocks,
+  type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, asc, count, eq, exists, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, exists, inArray, or, sql, type SQL } from 'drizzle-orm';
 import {
   countryRule,
   gameGeoRule,
@@ -19,6 +22,9 @@ import {
 } from '../schema/index.js';
 import type {
   AddGeoRuleInput,
+  BulkGameGeoRuleInput,
+  BulkRestrictGameGeoRulesOutput,
+  BulkUnrestrictGameGeoRulesOutput,
   DeleteGameGeoRulesInput,
   DeleteProviderGeoRulesInput,
   UpsertGameGeoRulesInput,
@@ -144,6 +150,95 @@ function gameGeoRuleLockKey(
   return `game-geo-rule:${gameId}:${countryCode}`;
 }
 
+// Bulk writers take this exclusive; single-target writers take it shared, before their
+// per-(game, country) keys.
+function gameGeoRuleCountryLockKey(countryCode: string): string {
+  return `game-geo-rule-country:${countryCode}`;
+}
+
+function withGameGeoRuleLocks<T>(
+  tx: DrizzleTx,
+  gameId: UpsertGameGeoRulesInput['gameId'],
+  countryCodes: UpsertGameGeoRulesInput['countryCodes'],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withAdvisoryXactLocks(
+    tx,
+    countryCodes.map(gameGeoRuleCountryLockKey),
+    () =>
+      withAdvisoryXactLocks(
+        tx,
+        countryCodes.map((countryCode) => gameGeoRuleLockKey(gameId, countryCode)),
+        fn,
+      ),
+    'shared',
+  );
+}
+
+const GEO_RULE_BULK_GAME_CAP = 5000;
+
+export const GeoRuleBulkTooManyGamesError = createDomainError<[matchedCount: number, cap: number]>(
+  'GeoRuleBulkTooManyGamesError',
+  (matchedCount, cap) => `bulk action matched ${matchedCount} games, exceeding the ${cap}-game cap`,
+);
+
+function bulkGameGeoTargetCondition(gameIds: string[], providerIds: string[]): SQL | undefined {
+  return or(
+    gameIds.length > 0 ? inArray(game.id, gameIds) : undefined,
+    providerIds.length > 0 ? inArray(game.providerId, providerIds) : undefined,
+  );
+}
+
+async function resolveBulkGeoScope(
+  tx: DrizzleTx,
+  gameIds: string[],
+  providerIds: string[],
+  limit: number,
+): Promise<{
+  games: { id: string; providerId: string }[];
+  notFoundGameIds: string[];
+  notFoundProviderIds: string[];
+}> {
+  const games = await tx
+    .select({ id: game.id, providerId: game.providerId })
+    .from(game)
+    .where(bulkGameGeoTargetCondition(gameIds, providerIds))
+    .limit(limit);
+  const foundGameIds = new Set(games.map((row) => row.id));
+  const notFoundGameIds = gameIds.filter((id) => !foundGameIds.has(id)).sort();
+
+  const foundProviderIds =
+    providerIds.length > 0
+      ? new Set(
+          (
+            await tx
+              .select({ id: gameProvider.id })
+              .from(gameProvider)
+              .where(inArray(gameProvider.id, providerIds))
+          ).map((row) => row.id),
+        )
+      : new Set<string>();
+  const notFoundProviderIds = providerIds.filter((id) => !foundProviderIds.has(id)).sort();
+
+  return { games, notFoundGameIds, notFoundProviderIds };
+}
+
+async function assertWithinGeoCap(
+  tx: DrizzleTx,
+  gameIds: string[],
+  providerIds: string[],
+  scopeLength: number,
+): Promise<void> {
+  if (scopeLength <= GEO_RULE_BULK_GAME_CAP) {
+    return;
+  }
+  const [{ n }] = await tx
+    .select({ n: count() })
+    .from(game)
+    .where(bulkGameGeoTargetCondition(gameIds, providerIds));
+  throw new GeoRuleBulkTooManyGamesError(Number(n), GEO_RULE_BULK_GAME_CAP);
+}
+
 export const ProviderGeoRuleNotFoundError = makeNotFoundError('ProviderGeoRule');
 
 export const GeoRuleProviderNotFoundError = makeNotFoundError('GameProvider');
@@ -162,6 +257,10 @@ function missingCountryCodes(requested: string[], rows: { countryCode: string }[
 
 function serializeGeoRule<Rule extends { createdAt: Date; updatedAt: Date }>(rule: Rule) {
   return serializeRow(rule, { dateFields: ['createdAt', 'updatedAt'] });
+}
+
+function serializeBulkGeoRules(rows: (typeof gameGeoRule.$inferSelect)[]) {
+  return rows.map(serializeGeoRule).sort((a, b) => a.gameId.localeCompare(b.gameId));
 }
 
 function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date; updatedAt: Date }>(
@@ -282,6 +381,18 @@ export class ComplianceService {
   async checkRegistration(ipAddress: string | null) {
     const result = await this.geoCheck(ipAddress);
     return { allowed: result.allowed, countryCode: result.countryCode };
+  }
+
+  async listGloballyBlockedCountries(): Promise<string[]> {
+    const rows = await this.drizzle.db
+      .select({ countryCode: countryRule.countryCode })
+      .from(countryRule)
+      .where(eq(countryRule.action, 'block'));
+    const blocked = new Set([
+      ...(this.igaming?.blockedCountries ?? []),
+      ...rows.map((row) => row.countryCode),
+    ]);
+    return [...blocked].sort();
   }
 
   async upsertCountryRule(input: UpsertCountryRuleInput, actorId: User['id'], meta?: ClientMeta) {
@@ -524,36 +635,32 @@ export class ComplianceService {
         new GeoRuleGameNotFoundError(input.gameId),
       );
 
-      return withAdvisoryXactLocks(
-        tx,
-        countryCodes.map((countryCode) => gameGeoRuleLockKey(input.gameId, countryCode)),
-        async () => {
-          const before = await tx
-            .select()
-            .from(gameGeoRule)
-            .where(
-              and(
-                eq(gameGeoRule.gameId, input.gameId),
-                inArray(gameGeoRule.countryCode, countryCodes),
-              ),
-            );
-          const rows = await tx
-            .insert(gameGeoRule)
-            .values(
-              countryCodes.map((countryCode) => ({
-                gameId: input.gameId,
-                countryCode,
-                reason: input.reason,
-              })),
-            )
-            .onConflictDoUpdate({
-              target: [gameGeoRule.gameId, gameGeoRule.countryCode],
-              set: { reason: input.reason, updatedAt: new Date() },
-            })
-            .returning();
-          return pairGeoRuleChanges(before, rows);
-        },
-      );
+      return withGameGeoRuleLocks(tx, input.gameId, countryCodes, async () => {
+        const before = await tx
+          .select()
+          .from(gameGeoRule)
+          .where(
+            and(
+              eq(gameGeoRule.gameId, input.gameId),
+              inArray(gameGeoRule.countryCode, countryCodes),
+            ),
+          );
+        const rows = await tx
+          .insert(gameGeoRule)
+          .values(
+            countryCodes.map((countryCode) => ({
+              gameId: input.gameId,
+              countryCode,
+              reason: input.reason,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [gameGeoRule.gameId, gameGeoRule.countryCode],
+            set: { reason: input.reason, updatedAt: new Date() },
+          })
+          .returning();
+        return pairGeoRuleChanges(before, rows);
+      });
     });
 
     for (const { before, after } of changes) {
@@ -575,28 +682,24 @@ export class ComplianceService {
   async deleteGameGeoRules(input: DeleteGameGeoRulesInput, actorId: User['id'], meta: ClientMeta) {
     const countryCodes = [...new Set(input.countryCodes)].sort();
     const deleted = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLocks(
-        tx,
-        countryCodes.map((countryCode) => gameGeoRuleLockKey(input.gameId, countryCode)),
-        async () => {
-          const rows = await tx
-            .delete(gameGeoRule)
-            .where(
-              and(
-                eq(gameGeoRule.gameId, input.gameId),
-                inArray(gameGeoRule.countryCode, countryCodes),
-              ),
-            )
-            .returning();
-          const missing = missingCountryCodes(countryCodes, rows);
-          if (missing.length > 0) {
-            throw new GameGeoRuleNotFoundError(`${input.gameId}:${missing.join(',')}`);
-          }
-          return rows
-            .map(serializeGeoRule)
-            .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
-        },
-      ),
+      withGameGeoRuleLocks(tx, input.gameId, countryCodes, async () => {
+        const rows = await tx
+          .delete(gameGeoRule)
+          .where(
+            and(
+              eq(gameGeoRule.gameId, input.gameId),
+              inArray(gameGeoRule.countryCode, countryCodes),
+            ),
+          )
+          .returning();
+        const missing = missingCountryCodes(countryCodes, rows);
+        if (missing.length > 0) {
+          throw new GameGeoRuleNotFoundError(`${input.gameId}:${missing.join(',')}`);
+        }
+        return rows
+          .map(serializeGeoRule)
+          .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
+      }),
     );
 
     for (const before of deleted) {
@@ -613,6 +716,152 @@ export class ComplianceService {
       });
     }
     return deleted;
+  }
+
+  /**
+   * Idempotent: a game that already has the rule keeps it, reason included, and counts as
+   * `unchanged`. Never writes `provider_geo_rule`.
+   */
+  async bulkRestrictGameGeoRules(
+    input: BulkGameGeoRuleInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ): Promise<BulkRestrictGameGeoRulesOutput> {
+    const outcome = await this.bulkWriteGameGeoRules(
+      'restrict',
+      input,
+      actorId,
+      meta,
+      async (tx, games) => {
+        if (games.length === 0) {
+          return { rules: [] };
+        }
+        const rows = await tx
+          .insert(gameGeoRule)
+          .values(
+            games.map((row) => ({
+              gameId: row.id,
+              countryCode: input.countryCode,
+              reason: input.reason,
+            })),
+          )
+          .onConflictDoNothing({ target: [gameGeoRule.gameId, gameGeoRule.countryCode] })
+          .returning();
+        return { rules: serializeBulkGeoRules(rows) };
+      },
+    );
+
+    return {
+      changed: outcome.rules.length,
+      unchanged: outcome.matchedCount - outcome.rules.length,
+      notFound: outcome.notFound,
+    };
+  }
+
+  /**
+   * Idempotent: a game without the rule counts as `unchanged`, not NOT_FOUND. Never deletes
+   * `provider_geo_rule`; games it keeps blocked are counted in `stillBlockedByProvider`.
+   */
+  async bulkUnrestrictGameGeoRules(
+    input: BulkGameGeoRuleInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ): Promise<BulkUnrestrictGameGeoRulesOutput> {
+    const outcome = await this.bulkWriteGameGeoRules(
+      'unrestrict',
+      input,
+      actorId,
+      meta,
+      async (tx, games) => {
+        if (games.length === 0) {
+          return { rules: [], stillBlockedByProvider: 0 };
+        }
+        const rows = await tx
+          .delete(gameGeoRule)
+          .where(
+            and(
+              inArray(
+                gameGeoRule.gameId,
+                games.map((row) => row.id),
+              ),
+              eq(gameGeoRule.countryCode, input.countryCode),
+            ),
+          )
+          .returning();
+
+        const blockingProviders = await tx
+          .select({ providerId: providerGeoRule.providerId })
+          .from(providerGeoRule)
+          .where(
+            and(
+              inArray(providerGeoRule.providerId, [...new Set(games.map((row) => row.providerId))]),
+              eq(providerGeoRule.countryCode, input.countryCode),
+            ),
+          );
+        const blockingProviderIds = new Set(blockingProviders.map((row) => row.providerId));
+
+        return {
+          rules: serializeBulkGeoRules(rows),
+          stillBlockedByProvider: games.filter((row) => blockingProviderIds.has(row.providerId))
+            .length,
+        };
+      },
+    );
+
+    const globallyBlocked = (await this.listGloballyBlockedCountries()).includes(input.countryCode);
+
+    return {
+      changed: outcome.rules.length,
+      unchanged: outcome.matchedCount - outcome.rules.length,
+      stillBlockedByProvider: outcome.stillBlockedByProvider,
+      globallyBlocked,
+      notFound: outcome.notFound,
+    };
+  }
+
+  private async bulkWriteGameGeoRules<
+    T extends { rules: ReturnType<typeof serializeBulkGeoRules> },
+  >(
+    operation: 'restrict' | 'unrestrict',
+    input: BulkGameGeoRuleInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+    write: (tx: DrizzleTx, games: { id: string; providerId: string }[]) => Promise<T>,
+  ) {
+    const gameIds = [...new Set(input.gameIds ?? [])].sort();
+    const providerIds = [...new Set(input.providerIds ?? [])].sort();
+
+    const outcome = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, gameGeoRuleCountryLockKey(input.countryCode), async () => {
+        const { games, notFoundGameIds, notFoundProviderIds } = await resolveBulkGeoScope(
+          tx,
+          gameIds,
+          providerIds,
+          GEO_RULE_BULK_GAME_CAP + 1,
+        );
+        await assertWithinGeoCap(tx, gameIds, providerIds, games.length);
+        return {
+          ...(await write(tx, games)),
+          matchedCount: games.length,
+          notFound: { gameIds: notFoundGameIds, providerIds: notFoundProviderIds },
+        };
+      }),
+    );
+
+    if (outcome.rules.length > 0) {
+      this.events.emit('compliance.game-geo-rules.bulk_updated', {
+        operation,
+        countryCode: input.countryCode,
+        reason: input.reason,
+        rules: outcome.rules,
+        target: { gameIds, providerIds },
+        notFound: outcome.notFound,
+        actorId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return outcome;
   }
 
   async listGameGeoRules({ gameIds, page, limit }: ListGameGeoRulesInput) {

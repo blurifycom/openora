@@ -121,6 +121,19 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'compliance.game-geo-rules.bulk_updated') {
+    const rules = Array.isArray(p['rules']) ? p['rules'] : [];
+    const restricted = p['operation'] === 'restrict';
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'game-geo-rule',
+      before: { rules: restricted ? [] : rules },
+      after: restricted ? p : { ...p, rules: [] },
+    };
+  }
+
   if (
     topic === 'compliance.provider-geo-rule.upserted' ||
     topic === 'compliance.provider-geo-rule.deleted'
@@ -1290,6 +1303,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.geo-rule.added',
   'compliance.game-geo-rule.upserted',
   'compliance.game-geo-rule.deleted',
+  'compliance.game-geo-rules.bulk_updated',
   'compliance.provider-geo-rule.upserted',
   'compliance.provider-geo-rule.deleted',
   'cms.page.published',
