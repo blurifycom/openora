@@ -69,6 +69,7 @@ const wager = (userId: string, amount: string, product: WagerProduct) =>
       currency: 'USDT',
       amount,
       weightedAmount: amount,
+      realAmount: amount,
       context: { provider: 'aggregator', product },
     }),
   );
