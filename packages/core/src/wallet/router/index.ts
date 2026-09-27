@@ -277,25 +277,12 @@ export function createWalletRouter({
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions({
-        userId: getUserId(context),
-        page: input.page,
-        limit: input.limit,
-        sortBy: input.sortBy,
-        sortOrder: input.sortOrder,
-      }),
+      wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions({
-        userId: input.userId,
-        page: input.page,
-        limit: input.limit,
-        sortBy: input.sortBy,
-        sortOrder: input.sortOrder,
-        includeInternal: true,
-      });
+      return wallet.getTransactions({ ...input, includeInternal: true });
     }),
 
     withdrawals: {

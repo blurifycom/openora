@@ -18,6 +18,7 @@ import {
   moneyCompare,
   moneySubtract,
   moneyScaleBy,
+  escapeLike,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
@@ -49,8 +50,24 @@ import {
   type Uuid,
   type PaginationOptions,
   type WalletProviderRef,
+  type WalletTransactionType,
+  type WalletTransactionStatus,
+  type BonusGrantLedgerReader,
 } from '@openora/core/contracts';
-import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
+import {
+  eq,
+  asc,
+  desc,
+  sql,
+  and,
+  gte,
+  lte,
+  count,
+  inArray,
+  isNull,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
@@ -83,6 +100,7 @@ import type {
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
+  WalletTransactionListQuery,
   WalletAsset,
   PublicWalletAsset,
   CreateWalletAssetInput,
@@ -549,6 +567,40 @@ const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
 
 const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', 'manual_debit']);
 
+// Columns of the history UNION in `getTransactions`, as the driver returns them: numerics as
+// strings, timestamps as Postgres text.
+type TransactionHistoryRow = {
+  id: string;
+  type: WalletTransactionType;
+  amount: string;
+  currency: string;
+  network: string | null;
+  status: WalletTransactionStatus;
+  direction: ManualAdjustmentDirection | null;
+  created_at: string;
+  rail: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_reason: string | null;
+  reference_currency: string | null;
+  reference_amount: string | null;
+  reference_rate: string | null;
+  reference_rate_as_of: string | null;
+  provider_ref_id: string | null;
+  tx_hash: string | null;
+  fee: string | null;
+};
+
+const TX_SORT_COLUMNS = {
+  createdAt: 'created_at',
+  amount: 'amount',
+  type: 'type',
+  status: 'status',
+  currency: 'currency',
+  rail: 'rail',
+  reviewedAt: 'reviewed_at',
+} as const satisfies Record<WalletTransactionSortBy, keyof TransactionHistoryRow>;
+
 function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
   return [
@@ -715,6 +767,8 @@ export type WalletServiceDeps = {
   rates?: ExchangeRateReader;
   // Optional: bound by compliance. Absent = every gated withdrawal requires KYC (fail closed).
   kycPolicy?: KycWithdrawalPolicy;
+  // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
+  grantLedger?: BonusGrantLedgerReader;
 };
 
 /**
@@ -741,6 +795,8 @@ export class WalletService {
   private readonly rates?: ExchangeRateReader;
   private readonly kycPolicy?: KycWithdrawalPolicy;
 
+  private readonly grantLedger?: BonusGrantLedgerReader;
+
   constructor({
     drizzle,
     events,
@@ -756,6 +812,7 @@ export class WalletService {
     rgLimits,
     rates,
     kycPolicy,
+    grantLedger,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -771,6 +828,7 @@ export class WalletService {
     this.rgLimits = rgLimits;
     this.rates = rates;
     this.kycPolicy = kycPolicy;
+    this.grantLedger = grantLedger;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -2752,47 +2810,93 @@ export class WalletService {
     return { transactionId: tx.id, status: 'rejected' };
   }
 
+  /**
+   * The player's history: their ledger rows and, when `includeGrants`, the bonus grants they
+   * received (a bonus, gift or rain credit lands on a grant, never on the ledger). Both halves
+   * are one UNION ALL, so every filter, the sort and the page apply to the whole history in SQL.
+   */
   async getTransactions({
     userId,
     page,
     limit,
     sortBy,
     sortOrder,
+    types,
+    statuses,
+    currencies,
+    from,
+    to,
+    search,
     includeInternal = false,
+    includeGrants = false,
   }: PaginationOptions<
-    { userId: User['id']; includeInternal?: boolean },
+    { userId: User['id']; includeInternal?: boolean; includeGrants?: boolean } & Omit<
+      WalletTransactionListQuery,
+      'page' | 'limit' | 'sortBy' | 'sortOrder'
+    >,
     WalletTransactionSortBy
   >) {
-    const db = this.drizzle.db;
+    const t = walletTransaction;
+    const ledgerRows = sql`
+      select ${t.id} as id, ${t.type}::text as type, ${t.amount} as amount,
+        ${t.currency} as currency, ${t.network} as network, ${t.status}::text as status,
+        ${t.direction}::text as direction, ${t.createdAt} as created_at, ${t.rail}::text as rail,
+        ${t.reviewedBy} as reviewed_by, ${t.reviewedAt} as reviewed_at,
+        ${t.reviewReason} as review_reason, ${t.referenceCurrency} as reference_currency,
+        ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
+        ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
+        ${t.txHash} as tx_hash, ${t.fee} as fee
+      from ${t}
+      where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
+    // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
+    const grantQuery =
+      includeGrants && this.grantLedger
+        ? (this.grantLedger.ledgerRowsQuery(userId) as SQL)
+        : undefined;
+    const grantRows = grantQuery
+      ? sql`
+      union all
+      select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
+        null, null, null, null, null, null, null, null, null, null
+      from (${grantQuery}) g`
+      : sql``;
+    const history = sql`(${ledgerRows} ${grantRows}) as history`;
 
-    const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!walletRecord) {
-      return { items: [], total: 0, page, limit };
+    const conditions: SQL[] = [];
+    if (types?.length) {
+      conditions.push(sql`type = any(${sql.param(types)}::text[])`);
     }
-    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
-    const TX_SORT_COLS = {
-      createdAt: walletTransaction.createdAt,
-      amount: walletTransaction.amount,
-      type: walletTransaction.type,
-      status: walletTransaction.status,
-      currency: walletTransaction.currency,
-      rail: walletTransaction.rail,
-      reviewedAt: walletTransaction.reviewedAt,
-    } as const;
-    const col = TX_SORT_COLS[sortBy ?? 'createdAt'];
-    const where = eq(walletTransaction.walletId, walletRecord.id);
-    const [txs, [{ n }]] = await Promise.all([
-      db
-        .select()
-        .from(walletTransaction)
-        .where(where)
-        .orderBy(dir(col), desc(walletTransaction.id))
-        .limit(limit)
-        .offset(pageToOffset(page, limit)),
-      db.select({ n: count() }).from(walletTransaction).where(where),
+    if (statuses?.length) {
+      conditions.push(sql`status = any(${sql.param(statuses)}::text[])`);
+    }
+    if (currencies?.length) {
+      conditions.push(sql`currency = any(${sql.param(currencies)}::text[])`);
+    }
+    if (from) {
+      conditions.push(sql`created_at >= ${from}::timestamptz`);
+    }
+    if (to) {
+      conditions.push(sql`created_at <= ${to}::timestamptz`);
+    }
+    if (search) {
+      conditions.push(
+        sql`(id::text like ${`${escapeLike(search.toLowerCase())}%`} or provider_ref_id = ${search} or tx_hash = ${search})`,
+      );
+    }
+    const where = conditions.length ? sql`where ${sql.join(conditions, sql` and `)}` : sql``;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? sql`asc` : sql`desc`;
+    const sortColumn = sql.identifier(TX_SORT_COLUMNS[sortBy ?? 'createdAt']);
+
+    const db = this.drizzle.db;
+    const [{ rows }, { rows: counted }] = await Promise.all([
+      db.execute<TransactionHistoryRow>(sql`
+        select * from ${history} ${where}
+        order by ${sortColumn} ${dir}, id desc
+        limit ${limit} offset ${pageToOffset(page, limit)}`),
+      db.execute<{ n: number }>(sql`select count(*)::int as n from ${history} ${where}`),
     ]);
     return {
-      items: txs.map((tx) => ({
+      items: rows.map((tx) => ({
         id: tx.id,
         type: tx.type,
         amount: tx.amount,
@@ -2801,15 +2905,23 @@ export class WalletService {
         status: tx.status,
         direction: tx.direction,
         fee: tx.fee,
-        createdAt: tx.createdAt.toISOString(),
-        reviewedBy: includeInternal ? tx.reviewedBy : null,
-        reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
+        createdAt: new Date(tx.created_at).toISOString(),
+        reviewedBy: includeInternal ? tx.reviewed_by : null,
+        reviewedAt:
+          includeInternal && tx.reviewed_at ? new Date(tx.reviewed_at).toISOString() : null,
         reviewReason:
-          includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.reviewReason : null,
+          includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.review_reason : null,
         // Internal only: a reference currency is never shown to the player.
-        reference: includeInternal ? toReferenceDto(tx) : null,
+        reference: includeInternal
+          ? toReferenceDto({
+              referenceCurrency: tx.reference_currency,
+              referenceAmount: tx.reference_amount,
+              referenceRate: tx.reference_rate,
+              referenceRateAsOf: tx.reference_rate_as_of ? new Date(tx.reference_rate_as_of) : null,
+            })
+          : null,
       })),
-      total: Number(n),
+      total: counted[0]?.n ?? 0,
       page,
       limit,
     };
