@@ -136,6 +136,7 @@ export class BackofficeService {
       amountMin,
       amountMax,
       player,
+      search,
       sortBy,
       sortOrder,
     } = filters;
@@ -165,6 +166,7 @@ export class BackofficeService {
       dateTo: dateTo ? new Date(dateTo) : undefined,
       amountMin,
       amountMax,
+      search,
       sortBy,
       sortOrder,
     });

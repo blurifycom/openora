@@ -1,6 +1,6 @@
 import type { AdminTxListOptions, AdminWalletReporting } from '@openora/core/contracts';
-import { DrizzleService, pageToOffset } from '@openora/core/server';
-import { and, asc, count, desc, eq, gte, inArray, lte, sum } from 'drizzle-orm';
+import { DrizzleService, escapeLike, pageToOffset } from '@openora/core/server';
+import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
 
 // See ADR-0017/0025.
@@ -40,6 +40,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
     dateTo,
     amountMin,
     amountMax,
+    search,
     sortBy,
     sortOrder,
   }: AdminTxListOptions) {
@@ -54,6 +55,13 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       dateTo ? lte(walletTransaction.createdAt, dateTo) : undefined,
       amountMin !== undefined ? gte(walletTransaction.amount, amountMin) : undefined,
       amountMax !== undefined ? lte(walletTransaction.amount, amountMax) : undefined,
+      search
+        ? or(
+            like(sql`${walletTransaction.id}::text`, `${escapeLike(search.toLowerCase())}%`),
+            eq(walletTransaction.providerRefId, search),
+            eq(walletTransaction.txHash, search),
+          )
+        : undefined,
     ].filter(Boolean);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const [rows, [{ n }]] = await Promise.all([
