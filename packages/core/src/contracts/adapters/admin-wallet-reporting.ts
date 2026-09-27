@@ -55,6 +55,7 @@ export type AdminTxListOptions = {
   dateTo?: Date;
   amountMin?: string;
   amountMax?: string;
+  search?: string;
   sortBy?: AdminTxSortBy;
   sortOrder?: SortOrder;
 };
