@@ -5,6 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import type {
   AdminUserDirectory,
   KycStatus,
+  KycWithdrawalPolicy,
   PaymentAdapter,
   PlatformConfig,
   AdminPlayerSummary,
@@ -25,7 +26,11 @@ import { WalletService, KycRequiredError } from '../service/wallet.service.js';
 
 let db: TestDb;
 
-function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
+function makeService(
+  kycStatus: KycStatus | null,
+  gateWithdrawals: boolean,
+  kycPolicy?: KycWithdrawalPolicy,
+) {
   const directory = mock<AdminUserDirectory>({
     lookupPlayers: vi.fn(async (ids: string[]) =>
       kycStatus === null
@@ -42,6 +47,7 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
     identityReader: makeIdentityReader(),
     directory,
     platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals } }),
+    kycPolicy,
   });
   return { svc, directory };
 }
@@ -144,5 +150,64 @@ describe('WalletService.withdraw KYC gate (real PG)', () => {
 
     expect(result.status).toBe('pending');
     expect(directory.lookupPlayers).not.toHaveBeenCalled();
+  });
+});
+
+describe('WalletService.withdraw KYC policy (real PG)', () => {
+  async function balanceOf(walletId: string) {
+    const [row] = await db.drizzle.db
+      .select({ amount: walletBalance.amount })
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, walletId));
+    return row?.amount;
+  }
+
+  it('lets an unverified player withdraw when the policy does not require KYC', async () => {
+    const requiresKycForWithdrawal = vi.fn(async () => false);
+    const { svc, directory } = makeService('pending', true, { requiresKycForWithdrawal });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '50',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(requiresKycForWithdrawal).toHaveBeenCalledWith({
+      userId: w.userId,
+      pivotAmount: '50',
+      pivotCurrency: 'USD',
+    });
+    expect(directory.lookupPlayers).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unverified player the policy requires KYC for, without debiting', async () => {
+    const { svc } = makeService('pending', true, {
+      requiresKycForWithdrawal: vi.fn(async () => true),
+    });
+    const w = await seedWallet();
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '50', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(KycRequiredError);
+    expect(await txCount(w.id)).toBe(0);
+    expect(await balanceOf(w.id)).toBe('100.000000000000000000');
+  });
+
+  it('hands the policy a null pivot amount when the currency cannot be priced', async () => {
+    const requiresKycForWithdrawal = vi.fn(async () => true);
+    const { svc } = makeService('pending', true, { requiresKycForWithdrawal });
+    const w = await seedWallet();
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '50', currency: 'EUR', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(KycRequiredError);
+    expect(requiresKycForWithdrawal).toHaveBeenCalledWith({
+      userId: w.userId,
+      pivotAmount: null,
+      pivotCurrency: 'USD',
+    });
   });
 });

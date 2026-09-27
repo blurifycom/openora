@@ -113,6 +113,8 @@ describe('regulatory overview routes', () => {
     expect(initialGlobal.status).toBe(200);
     expect(GlobalKycConfigSchema.parse(await initialGlobal.json())).toEqual({
       enabled: true,
+      withdrawalThreshold: null,
+      cumulativeDepositThreshold: '10000',
       updatedAt: null,
       updatedBy: null,
     });

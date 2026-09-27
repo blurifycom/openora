@@ -6,6 +6,8 @@ import {
   UnsupportedNetworkError,
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
+  withdrawalFeeFor,
+  WithdrawalAmountNotAboveFeeError,
 } from '../service/wallet.service.js';
 
 const asset = (network: string, minWithdrawal = '0', withdrawalEnabled = true) => ({
@@ -83,5 +85,34 @@ describe('assertAboveMinimumWithdrawal', () => {
   it('is a no-op when the network has no catalog row', () => {
     expect(() => assertAboveMinimumWithdrawal(assets, '0.01', 'USDT', 'TRC20')).not.toThrow();
     expect(() => assertAboveMinimumWithdrawal([], '0.01', 'USD', null)).not.toThrow();
+  });
+});
+
+describe('withdrawalFeeFor', () => {
+  const feeAsset = (network: string, withdrawalFee: string, withdrawalEnabled = true) => ({
+    ...asset(network, '0', withdrawalEnabled),
+    withdrawalFee,
+  });
+
+  it("returns the settlement network's fee", () => {
+    const assets = [feeAsset('ERC20', '5'), feeAsset('TRC20', '1')];
+
+    expect(withdrawalFeeFor(assets, '10', 'USDT', 'TRC20')).toBe('1');
+  });
+
+  it('returns null for a zero fee or an unconfigured currency', () => {
+    expect(withdrawalFeeFor([feeAsset('TRC20', '0')], '10', 'USDT', 'TRC20')).toBeNull();
+    expect(withdrawalFeeFor([], '10', 'USD', null)).toBeNull();
+  });
+
+  it('refuses an amount that does not exceed the fee', () => {
+    const assets = [feeAsset('TRC20', '1')];
+
+    expect(() => withdrawalFeeFor(assets, '1', 'USDT', 'TRC20')).toThrow(
+      WithdrawalAmountNotAboveFeeError,
+    );
+    expect(() => withdrawalFeeFor(assets, '0.5', 'USDT', 'TRC20')).toThrow(
+      WithdrawalAmountNotAboveFeeError,
+    );
   });
 });
