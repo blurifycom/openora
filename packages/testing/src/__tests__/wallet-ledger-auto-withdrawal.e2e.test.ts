@@ -87,7 +87,15 @@ beforeAll(async () => {
     new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
   );
   appGated = await bootTestApp({
-    plugins: [...basePlugins, { id: 'test-wallet-auto-withdrawal-config', path: gatedFixture }],
+    plugins: [
+      ...basePlugins,
+      { id: 'test-wallet-auto-withdrawal-config', path: gatedFixture },
+      // The crypto-rail scenario deposits BTC, which needs a BTC rate to snapshot its reference value.
+      {
+        id: 'testing-exchange-rate-provider',
+        path: fileURLToPath(new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url)),
+      },
+    ],
     databaseUrl: db.url,
   });
 

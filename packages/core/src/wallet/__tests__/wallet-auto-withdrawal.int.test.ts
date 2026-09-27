@@ -34,7 +34,7 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
 } from '../schema/index.js';
-import { WalletService } from '../service/wallet.service.js';
+import { WalletService, WalletReferenceRateUnavailableError } from '../service/wallet.service.js';
 
 let db: TestDb;
 
@@ -55,6 +55,10 @@ const USD_PER_UNIT: Partial<Record<string, string>> = { BTC: '1000', USDT: '1' }
 
 function fixedRates(): ExchangeRateReader {
   return mock<ExchangeRateReader>({
+    getRate: vi.fn(async (from: string, to: string) => {
+      const perUnit = from === to ? '1' : USD_PER_UNIT[from];
+      return perUnit && to === 'USD' ? { rate: perUnit, asOf: new Date().toISOString() } : null;
+    }),
     convert: vi.fn(async (amount: string, from: string, to: string) => {
       const perUnit = USD_PER_UNIT[from];
       if (from === to) {
@@ -830,7 +834,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
-  it('stays pending when there is no rate to value the withdrawal in the pivot', async () => {
+  it('refuses the withdrawal when there is no rate to value it', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       cryptoThreshold: '100000',
@@ -838,18 +842,18 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '1',
-      currency: 'BTC',
-      destinationAddress: 'bc1qexample',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '1',
+        currency: 'BTC',
+        destinationAddress: 'bc1qexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(WalletReferenceRateUnavailableError);
   });
 
-  it('stays pending when the bound reader has no rate for the currency', async () => {
+  it('refuses the withdrawal when the bound reader has no rate for the currency', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       fiatThreshold: '100000',
@@ -857,15 +861,15 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'ETH', balance: '10' });
 
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '1',
-      currency: 'ETH',
-      destinationAddress: '0xexample',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '1',
+        currency: 'ETH',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(WalletReferenceRateUnavailableError);
   });
 
   it('caps on the pivot value a past payout was approved at, not its value at the current rate', async () => {

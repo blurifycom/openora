@@ -11,6 +11,7 @@ import {
   mock,
   makeEventBus,
   makeIdentityReader,
+  makeExchangeRateReader,
   makeAuditWriter,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
@@ -39,6 +40,7 @@ function makeService(rgLimits?: RgLimitsPort) {
     paymentProviders: makePaymentProviderRegistry(),
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
+    rates: makeExchangeRateReader(),
     ...(rgLimits ? { rgLimits } : {}),
   });
   return { svc, payment };
@@ -46,6 +48,7 @@ function makeService(rgLimits?: RgLimitsPort) {
 
 const refusingGate = () =>
   mock<RgLimitsPort>({
+    referenceCurrency: vi.fn(async () => null),
     checkDeposit: vi.fn(async () => REFUSED),
     checkWager: vi.fn(),
   });
@@ -88,6 +91,7 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
   it('lets a deposit within the limit through', async () => {
     const { svc, payment } = makeService(
       mock<RgLimitsPort>({
+        referenceCurrency: vi.fn(async () => null),
         checkDeposit: vi.fn(async () => ({ allowed: true })),
         checkWager: vi.fn(),
       }),
@@ -104,6 +108,7 @@ describe('WalletService deposit RG limit gate (real PG)', () => {
     const idempotencyKey = randomUUID();
     let used = 0;
     const gate = mock<RgLimitsPort>({
+      referenceCurrency: vi.fn(async () => null),
       checkWager: vi.fn(),
       checkDeposit: vi.fn(async (_u: string, amount: string) => {
         if (used + Number(amount) > 100) {

@@ -21,6 +21,7 @@ import {
   makeRealtimeTransport,
   makeEventBus,
   makeIdentityReader,
+  makeExchangeRateReader,
   testContext,
   makeAuditWriter,
   makeJobQueue,
@@ -84,6 +85,7 @@ function routerWithProviders(
     paymentProviders,
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
+    rates: makeExchangeRateReader(),
   });
   return createWalletRouter({
     wallet: service,
