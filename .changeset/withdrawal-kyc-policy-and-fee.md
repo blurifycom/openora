@@ -9,3 +9,5 @@ Withdrawal KYC now follows the global KYC switch and two thresholds instead of d
 New port `KYC_WITHDRAWAL_POLICY` (`requiresKycForWithdrawal`), bound by compliance. `kyc.gateWithdrawals` stays the switch for the request-time check; when on, the wallet asks the policy and refuses with `KycRequiredError` before any debit. Auto-approval always asks the policy, so a player who needs no KYC can now be auto-approved without an approved status. Without a bound policy, every gated withdrawal needs an approved status, as before.
 
 **Behaviour change:** the catalog's `withdrawal_fee` is now charged. The player is debited the entered amount, the provider is asked to pay out the amount minus the fee, and `wallet_transaction.fee` (new nullable column) records it. An amount that does not exceed the fee is refused with `WithdrawalAmountNotAboveFeeError` (`400`). A rejection or failure refunds the full debited amount. `WalletTransaction`, `AdminWalletTransaction` and `WithdrawalQueueItem` gain a nullable `fee`.
+
+The `wallet.withdrawal.requested` email is now always sent, no longer gated on the player's login-and-withdrawal alert preference.

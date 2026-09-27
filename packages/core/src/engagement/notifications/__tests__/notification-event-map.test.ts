@@ -212,7 +212,7 @@ describe('notificationEventMap', () => {
     expect(entryFor('wallet.withdrawal.failed').securityAlert).toBe(false);
   });
 
-  it('builds a preference-gated security alert mail for a requested withdrawal', () => {
+  it('always mails the requested-withdrawal confirmation, not gated on the alert preference', () => {
     const transactionId = randomUUID();
     const payload = {
       userId: randomUUID(),
@@ -223,7 +223,7 @@ describe('notificationEventMap', () => {
 
     const entry = entryFor('wallet.withdrawal.requested');
 
-    expect(entry.securityAlert).toBe(true);
+    expect(entry.securityAlert).toBe(false);
     expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
       key: 'securityWithdrawalRequested',
       data: {

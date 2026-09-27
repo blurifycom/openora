@@ -183,7 +183,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
           occurredAt,
         },
       }),
-      securityAlert: true,
     },
   ),
 
@@ -500,9 +499,7 @@ export default {
               event: entry.event,
               input: { ...entry.buildNotification(data), eventId: envelope.eventId },
               email: entry.buildEmail(data, envelope.occurredAt),
-              // `wallet.withdrawal.requested` already creates an in-app notification. Its
-              // existing dispatch is enriched with a preference-gated email rather than adding
-              // a second record or a second subscription.
+              // An opted-in entry's email is preference-gated; every other entry always mails.
               securityAlert: entry.securityAlert,
             },
             {
