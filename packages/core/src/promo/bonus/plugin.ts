@@ -2,6 +2,7 @@ import * as z from 'zod';
 import {
   AUDIT_WRITER,
   BONUS_GRANTS,
+  BONUS_GRANT_LEDGER,
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
@@ -33,7 +34,7 @@ import {
 } from '@openora/core/server';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
-import { GrantReaderService } from './service/grant-reader.service.js';
+import { GrantReaderService, bonusGrantLedger } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { OfferService } from './service/offer.service.js';
 import { WageringService } from './service/wagering.service.js';
@@ -95,6 +96,7 @@ export default {
   requiresPorts: [PLAY_ELIGIBILITY],
   register(ctx) {
     ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER)));
+    ctx.provide(BONUS_GRANT_LEDGER, () => bonusGrantLedger);
     ctx.provideSealed(
       BONUS_WAGERING,
       (c) => new WageringService(c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined),

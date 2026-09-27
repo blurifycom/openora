@@ -15,6 +15,8 @@ import {
   WalletTransactionTypeSchema,
   WalletReconciliationFindingKindSchema,
   WalletReconciliationFindingStatusSchema,
+  WALLET_TRANSACTION_STATUSES,
+  WALLET_TRANSACTION_TYPES,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -230,10 +232,29 @@ export const WITHDRAWAL_SORT_BY_VALUES = [
 export const WithdrawalSortBySchema = z.enum(WITHDRAWAL_SORT_BY_VALUES).default('createdAt');
 export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 
-export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
-  userId: UuidSchema,
+// Every filter narrows the whole history in SQL before paging, so `total` always agrees with
+// what the filters match. `search` matches a transaction id by prefix (what a player copies off
+// a receipt is often truncated), or a provider reference or tx hash exactly.
+export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
+  types: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
+  statuses: z
+    .array(WalletTransactionStatusSchema)
+    .max(WALLET_TRANSACTION_STATUSES.length)
+    .optional(),
+  currencies: z.array(WalletCurrencyInputSchema).max(50).optional(),
+  from: TimestampSchema.optional(),
+  to: TimestampSchema.optional(),
+  search: z.string().trim().min(1).max(128).optional(),
+}).refine((q) => !q.from || !q.to || Date.parse(q.from) <= Date.parse(q.to), {
+  message: '`from` must not be after `to`',
+  path: ['from'],
+});
+export type WalletTransactionListQuery = z.infer<typeof WalletTransactionListQuerySchema>;
+
+export const ListPlayerTransactionsArgs = WalletTransactionListQuerySchema.safeExtend({
+  userId: UuidSchema,
 });
 
 export const WithdrawalQueueItemSchema = z.object({
@@ -613,12 +634,7 @@ export const walletContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
-    .input(
-      PageQuerySchema.extend({
-        sortBy: WalletTransactionSortBySchema.optional(),
-        sortOrder: SortOrderSchema.default('desc').optional(),
-      }),
-    )
+    .input(WalletTransactionListQuerySchema)
     .output(paginated(WalletTransactionSchema)),
 
   listPlayerTransactions: oc
