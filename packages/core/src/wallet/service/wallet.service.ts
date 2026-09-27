@@ -38,6 +38,7 @@ import {
   resolveWalletReferenceCurrency,
   type PlayerTags,
   type RgLimitsPort,
+  type KycWithdrawalPolicy,
   type ExchangeRateReader,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -120,6 +121,14 @@ export const WithdrawalNotPendingError = makeConflictError(
 export const KycRequiredError = makeConflictError(
   'KycRequiredError',
   'KYC verification required before withdrawal',
+);
+
+export const WithdrawalAmountNotAboveFeeError = createDomainError<
+  [amount: string, fee: string, currency: string]
+>(
+  'WithdrawalAmountNotAboveFeeError',
+  (amount, fee, currency) =>
+    `Withdrawal of ${amount} ${currency} does not exceed the ${fee} ${currency} network fee`,
 );
 
 export const IdempotencyKeyReuseError = makeConflictError(
@@ -225,6 +234,9 @@ export const BelowMinimumDepositError = createDomainError(
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
+const isKycPassed = (status: KycStatus | null) =>
+  status !== null && KYC_PASS_STATUSES.has(normalizeKycStatus(status));
+
 export const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
   (address, network) =>
@@ -261,6 +273,7 @@ const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 type WithdrawalAsset = {
   network: string;
   minWithdrawal: string;
+  withdrawalFee?: string;
   withdrawalEnabled: boolean;
 };
 
@@ -312,12 +325,36 @@ export function assertAboveMinimumWithdrawal(
   currency: string,
   network: string | null,
 ): void {
-  const asset = assets.find(
-    (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
-  );
+  const asset = payableAsset(assets, network);
   if (asset && moneyCompare(amount, asset.minWithdrawal) < 0) {
     throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
   }
+}
+
+function payableAsset(assets: readonly WithdrawalAsset[], network: string | null) {
+  return assets.find(
+    (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
+  );
+}
+
+/**
+ * The network fee kept from a withdrawal: the player is debited `amount` and the provider pays
+ * out `amount - fee`, so the operator never funds the fee. `null` when the network charges none.
+ */
+export function withdrawalFeeFor(
+  assets: readonly WithdrawalAsset[],
+  amount: string,
+  currency: string,
+  network: string | null,
+): string | null {
+  const fee = payableAsset(assets, network)?.withdrawalFee;
+  if (fee === undefined || moneyCompare(fee, '0') <= 0) {
+    return null;
+  }
+  if (moneyCompare(amount, fee) <= 0) {
+    throw new WithdrawalAmountNotAboveFeeError(amount, fee, currency);
+  }
+  return fee;
 }
 
 type DepositAsset = {
@@ -543,7 +580,8 @@ const AUTO_APPROVED_REASON = 'auto-approved';
 type AutoApprovalDecision = {
   threshold: string;
   thresholdSource: 'per-player' | 'global';
-  kycStatus: KycStatus;
+  kycRequired: boolean;
+  kycStatus: KycStatus | null;
   riskTagsEvaluated: TagKey[];
   effectiveExcludeTags: TagKey[];
   // The withdrawal's value in `pivotCurrency`, the unit of `threshold`, the daily amount cap
@@ -562,6 +600,7 @@ type AutoApprovalGates = Pick<
   AutoApprovalDecision,
   | 'threshold'
   | 'thresholdSource'
+  | 'kycRequired'
   | 'kycStatus'
   | 'riskTagsEvaluated'
   | 'effectiveExcludeTags'
@@ -573,6 +612,10 @@ type ReferenceSnapshot = Pick<
   WalletTransaction,
   'referenceCurrency' | 'referenceAmount' | 'referenceRate' | 'referenceRateAsOf'
 >;
+
+function payoutAmount(tx: Pick<WalletTransaction, 'amount' | 'fee'>): string {
+  return tx.fee === null ? tx.amount : moneySubtract(tx.amount, tx.fee);
+}
 
 function toReferenceDto(row: ReferenceSnapshot): WalletReferenceConversion | null {
   if (
@@ -670,6 +713,8 @@ export type WalletServiceDeps = {
   // Optional: bound by the fx module. Auto-approval thresholds and caps are denominated in
   // the fx pivot; without a reader, a withdrawal in any other currency is never auto-approved.
   rates?: ExchangeRateReader;
+  // Optional: bound by compliance. Absent = every gated withdrawal requires KYC (fail closed).
+  kycPolicy?: KycWithdrawalPolicy;
 };
 
 /**
@@ -694,6 +739,7 @@ export class WalletService {
   private readonly audit: AuditWritePort;
   private readonly rgLimits?: RgLimitsPort;
   private readonly rates?: ExchangeRateReader;
+  private readonly kycPolicy?: KycWithdrawalPolicy;
 
   constructor({
     drizzle,
@@ -709,6 +755,7 @@ export class WalletService {
     audit,
     rgLimits,
     rates,
+    kycPolicy,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -723,6 +770,7 @@ export class WalletService {
     this.audit = audit;
     this.rgLimits = rgLimits;
     this.rates = rates;
+    this.kycPolicy = kycPolicy;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -732,6 +780,7 @@ export class WalletService {
       .select({
         network: walletAsset.network,
         minWithdrawal: walletAsset.minWithdrawal,
+        withdrawalFee: walletAsset.withdrawalFee,
         withdrawalEnabled: walletAsset.withdrawalEnabled,
       })
       .from(walletAsset)
@@ -857,14 +906,30 @@ export class WalletService {
       : Promise.resolve();
   }
 
-  private async assertKycForWithdrawal(userId: User['id']) {
+  // `kyc.gateWithdrawals` is the operator's master switch; once on, the compliance policy
+  // decides per withdrawal. Runs before any debit, so a refused withdrawal moves no funds.
+  private async assertKycForWithdrawal(userId: User['id'], amount: string, currency: string) {
     if (!this.platformConfig?.kyc?.gateWithdrawals) {
       return;
     }
-    const status = await this.autoApprovalKycStatus(userId);
-    if (!status || !KYC_PASS_STATUSES.has(normalizeKycStatus(status))) {
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig.exchangeRate);
+    const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
+    if (!(await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency))) {
+      return;
+    }
+    if (!isKycPassed(await this.autoApprovalKycStatus(userId))) {
       throw new KycRequiredError();
     }
+  }
+
+  private withdrawalNeedsKyc(
+    userId: User['id'],
+    pivotAmount: string | null,
+    pivotCurrency: string,
+  ): Promise<boolean> {
+    return this.kycPolicy
+      ? this.kycPolicy.requiresKycForWithdrawal({ userId, pivotAmount, pivotCurrency })
+      : Promise.resolve(true);
   }
 
   getBalance(userId: User['id']) {
@@ -1377,13 +1442,14 @@ export class WalletService {
     destinationTag?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    await this.assertKycForWithdrawal(userId);
+    await this.assertKycForWithdrawal(userId, amount, currency);
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
     const assets = await this.assetsForCurrency(currency);
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
+    const fee = withdrawalFeeFor(assets, amount, currency, settlementNetwork);
     const destinationWalletId = await this.requireWhitelistedWalletId(
       userId,
       currency,
@@ -1437,6 +1503,7 @@ export class WalletService {
             destinationAddress: destinationAddress ?? null,
             destinationTag: destinationTag ?? null,
             destinationWalletId,
+            fee,
           },
         });
 
@@ -1702,6 +1769,7 @@ export class WalletService {
         playerId: summary?.playerId ?? null,
         username: summary?.username ?? '',
         amount: r.tx.amount,
+        fee: r.tx.fee,
         currency: r.tx.currency,
         network: r.tx.network,
         rail: r.tx.rail ?? null,
@@ -1812,7 +1880,8 @@ export class WalletService {
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
-      result = await adapter.processWithdrawal(amount, tx.currency, {
+      // The fee stays with the operator: the player was debited `amount`, the payout is net of it.
+      result = await adapter.processWithdrawal(payoutAmount(tx), tx.currency, {
         transactionId: tx.id,
         userId,
         rail: tx.rail,
@@ -2136,9 +2205,11 @@ export class WalletService {
       return null;
     }
 
-    // Independent of kyc.gateWithdrawals: auto-approval always demands a passing status; anything else fails closed.
+    // Independent of kyc.gateWithdrawals: auto-approval follows the compliance policy even when
+    // the request itself was not gated, so a required-but-missing KYC always goes to a human.
+    const kycRequired = await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency);
     const kycStatus = await this.autoApprovalKycStatus(userId);
-    if (!kycStatus || !KYC_PASS_STATUSES.has(normalizeKycStatus(kycStatus))) {
+    if (kycRequired && !isKycPassed(kycStatus)) {
       return null;
     }
 
@@ -2161,6 +2232,7 @@ export class WalletService {
     return {
       threshold: threshold.value,
       thresholdSource: threshold.source,
+      kycRequired,
       kycStatus,
       riskTagsEvaluated: riskTags,
       effectiveExcludeTags,
@@ -2728,6 +2800,7 @@ export class WalletService {
         network: tx.network,
         status: tx.status,
         direction: tx.direction,
+        fee: tx.fee,
         createdAt: tx.createdAt.toISOString(),
         reviewedBy: includeInternal ? tx.reviewedBy : null,
         reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,

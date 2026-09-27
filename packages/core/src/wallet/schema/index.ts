@@ -141,6 +141,9 @@ export const walletTransaction = pgTable(
     referenceAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     referenceRate: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     referenceRateAsOf: timestamp({ withTimezone: true }),
+    // Withdrawal rows: the network fee kept from the debited `amount`, so the payout sent to the
+    // provider is `amount - fee`. NULL on every other row type and on withdrawals without a fee.
+    fee: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // The concrete settlement provider (eg a PSP name) and its reference id (eg the
     // PSP charge id), as first-class typed columns so they are filterable for
     // reconciliation rather than buried in free-form JSON.

@@ -176,6 +176,13 @@
       "when": 1790522745623,
       "tag": "0024_woozy_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790536781350,
+      "tag": "0025_unique_romulus",
+      "breakpoints": true
     }
   ]
 }

@@ -39,6 +39,8 @@ const COUNTRY_RULE = {
 
 const GLOBAL_KYC_CONFIG = {
   enabled: true,
+  withdrawalThreshold: null,
+  cumulativeDepositThreshold: '10000',
   updatedAt: '2026-01-01T00:00:00.000Z',
   updatedBy: null,
 };

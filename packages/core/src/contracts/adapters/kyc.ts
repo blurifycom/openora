@@ -165,6 +165,24 @@ export type KycStatusTransition = {
 export const KYC_STATUS_WRITER: Token<KycStatusWriter> = createToken('KYC_STATUS_WRITER');
 
 /**
+ * Whether a withdrawal needs an approved KYC status, per the operator's global KYC switch
+ * and its thresholds (cumulative completed deposits, single-withdrawal amount), both in the
+ * fx pivot. Compliance binds it; the wallet asks it before debiting and before auto-approving.
+ * `pivotAmount` is `null` when the withdrawal could not be priced; the answer is then
+ * fail-closed `true` unless KYC is switched off.
+ */
+export type KycWithdrawalPolicy = {
+  requiresKycForWithdrawal(input: {
+    userId: Player['userId'];
+    pivotAmount: string | null;
+    pivotCurrency: string;
+  }): Promise<boolean>;
+};
+
+export const KYC_WITHDRAWAL_POLICY: Token<KycWithdrawalPolicy> =
+  createToken('KYC_WITHDRAWAL_POLICY');
+
+/**
  * Verifies the public KYC provider webhook is genuine. The default impl recomputes
  * an HMAC-SHA256 over the raw request body and constant-time compares it against the
  * `x-kyc-signature` header; a vendor overlay rebinds it. Fails closed when the secret is

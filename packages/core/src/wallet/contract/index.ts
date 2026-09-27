@@ -129,6 +129,9 @@ export const WalletTransactionSchema = z.object({
   // row whose `type` never carried a recoverable direction, eg a pre-migration gift/
   // rain/tip leg) have no direction on record.
   direction: ManualAdjustmentDirectionSchema.nullable(),
+  // Withdrawal rows: the network fee kept from `amount`; the payout was `amount - fee`.
+  // Null on every other row and on a withdrawal without a fee.
+  fee: MoneyAmountSchema.nullable(),
   createdAt: TimestampSchema,
   reviewReason: z.string().nullable(),
 });
@@ -239,6 +242,8 @@ export const WithdrawalQueueItemSchema = z.object({
   playerId: UuidSchema.nullable(),
   username: z.string(),
   amount: MoneyAmountSchema,
+  // The network fee kept from `amount`; the payout sent to the provider is `amount - fee`.
+  fee: MoneyAmountSchema.nullable(),
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema.nullable(),
   rail: WalletRailSchema.nullable(),

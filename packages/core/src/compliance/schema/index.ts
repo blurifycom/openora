@@ -94,11 +94,19 @@ export const countryRule = pgTable('geo_rule', {
 });
 
 export const GLOBAL_KYC_ENABLED_DEFAULT = true;
+export const GLOBAL_KYC_CUMULATIVE_DEPOSIT_THRESHOLD_DEFAULT = '10000';
 
 export const globalKycConfig = pgTable('global_kyc_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique('global_kyc_config_singleton_key_unique').default('global'),
   enabled: boolean().notNull().default(GLOBAL_KYC_ENABLED_DEFAULT),
+  // Both in the fx pivot. While KYC is enabled, a withdrawal needs an approved KYC status once
+  // the player's completed deposits exceed the cumulative threshold, or when the withdrawal
+  // itself exceeds the withdrawal threshold. A null withdrawal threshold never triggers.
+  withdrawalThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+  cumulativeDepositThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+    .notNull()
+    .default(GLOBAL_KYC_CUMULATIVE_DEPOSIT_THRESHOLD_DEFAULT),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true }),
   updatedBy: uuid(),

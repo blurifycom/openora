@@ -1,0 +1,1 @@
+ALTER TABLE "wallet_transaction" ADD COLUMN "fee" numeric(38, 18);

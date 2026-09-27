@@ -168,6 +168,8 @@ export async function mapEventToRecord(
       actorId: str(p['adminId']),
       resourceType: 'withdrawal',
       resourceId: str(p['transactionId']),
+      // A rejection is the admin's decision carried out, not a failed action.
+      result: topic === 'wallet.withdrawal.failed' ? 'failure' : 'success',
       after: {
         userId: str(p['userId']),
         amount: p['amount'],

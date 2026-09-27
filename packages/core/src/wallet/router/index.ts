@@ -52,6 +52,7 @@ import {
   UnsupportedNetworkError,
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
+  WithdrawalAmountNotAboveFeeError,
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
@@ -237,6 +238,7 @@ export function createWalletRouter({
             AmbiguousNetworkError,
             UnsupportedNetworkError,
             BelowMinimumWithdrawalError,
+            WithdrawalAmountNotAboveFeeError,
           ],
           CONFLICT: [
             KycRequiredError,
