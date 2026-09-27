@@ -1,0 +1,1 @@
+CREATE INDEX "wallet_transaction_provider_ref_idx" ON "wallet_transaction" USING btree ("provider_ref_id");
