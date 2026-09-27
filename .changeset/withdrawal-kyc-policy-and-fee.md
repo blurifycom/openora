@@ -11,3 +11,5 @@ New port `KYC_WITHDRAWAL_POLICY` (`requiresKycForWithdrawal`), bound by complian
 **Behaviour change:** the catalog's `withdrawal_fee` is now charged. The player is debited the entered amount, the provider is asked to pay out the amount minus the fee, and `wallet_transaction.fee` (new nullable column) records it. An amount that does not exceed the fee is refused with `WithdrawalAmountNotAboveFeeError` (`400`). A rejection or failure refunds the full debited amount. `WalletTransaction`, `AdminWalletTransaction` and `WithdrawalQueueItem` gain a nullable `fee`.
 
 The `wallet.withdrawal.requested` email is now always sent, no longer gated on the player's login-and-withdrawal alert preference.
+
+The audit row for `wallet.withdrawal.rejected` now records `result: success` (the admin decision was carried out) instead of `failure`; `wallet.withdrawal.failed` stays `failure`.
