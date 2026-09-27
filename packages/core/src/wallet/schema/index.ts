@@ -133,6 +133,14 @@ export const walletTransaction = pgTable(
     // sums these, so a rate move after approval cannot shrink what the player already took.
     // NULL on every other row, and on auto-approvals written before this column existed.
     autoApprovalPivotAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // Deposit, withdrawal and manual adjustment rows: the amount converted into the player's
+    // reference currency when the row was written, with the rate and the rate's own timestamp.
+    // Written once and never recalculated. NULL on every other row type, and on rows written
+    // before these columns existed.
+    referenceCurrency: text(),
+    referenceAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    referenceRate: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    referenceRateAsOf: timestamp({ withTimezone: true }),
     // The concrete settlement provider (eg a PSP name) and its reference id (eg the
     // PSP charge id), as first-class typed columns so they are filterable for
     // reconciliation rather than buried in free-form JSON.

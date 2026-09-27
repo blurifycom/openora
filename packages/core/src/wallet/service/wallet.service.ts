@@ -17,6 +17,7 @@ import {
   moneyAdd,
   moneyCompare,
   moneySubtract,
+  moneyScaleBy,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
@@ -34,6 +35,7 @@ import {
   type WalletRail,
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
+  resolveWalletReferenceCurrency,
   type PlayerTags,
   type RgLimitsPort,
   type ExchangeRateReader,
@@ -87,6 +89,7 @@ import type {
   ManualAdjustmentDirection,
   WithdrawalAddress,
   CreateWithdrawalAddressInput,
+  WalletReferenceConversion,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -99,6 +102,14 @@ export const PlayerNotFoundError = makeNotFoundError('Player');
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
+);
+
+export const WalletReferenceRateUnavailableError = createDomainError<
+  [currency: string, referenceCurrency: string]
+>(
+  'WalletReferenceRateUnavailableError',
+  (currency, referenceCurrency) =>
+    `no fresh ${currency}/${referenceCurrency} exchange rate to record this transaction's reference value`,
 );
 
 export const WithdrawalNotPendingError = makeConflictError(
@@ -558,6 +569,28 @@ type AutoApprovalGates = Pick<
   | 'pivotCurrency'
 >;
 
+type ReferenceSnapshot = Pick<
+  WalletTransaction,
+  'referenceCurrency' | 'referenceAmount' | 'referenceRate' | 'referenceRateAsOf'
+>;
+
+function toReferenceDto(row: ReferenceSnapshot): WalletReferenceConversion | null {
+  if (
+    row.referenceCurrency === null ||
+    row.referenceAmount === null ||
+    row.referenceRate === null ||
+    row.referenceRateAsOf === null
+  ) {
+    return null;
+  }
+  return {
+    currency: row.referenceCurrency,
+    amount: row.referenceAmount,
+    rate: row.referenceRate,
+    rateAsOf: row.referenceRateAsOf.toISOString(),
+  };
+}
+
 type DepositAddressResult = {
   address: string;
   currency: string;
@@ -789,6 +822,35 @@ export class WalletService {
     return { providerName, adapter };
   }
 
+  /**
+   * The ledger row's value in the player's reference currency, at a rate that is fresh now.
+   * Fails closed: without a rate the reader will vouch for, the row is not written at all
+   * rather than written without its conversion.
+   */
+  private async referenceSnapshot(
+    tx: DrizzleDb | DrizzleTx,
+    userId: User['id'],
+    amount: string,
+    currency: string,
+  ) {
+    const referenceCurrency =
+      (await this.rgLimits?.referenceCurrency(tx, userId)) ??
+      resolveWalletReferenceCurrency(this.platformConfig?.wallet);
+    const quote =
+      currency.toUpperCase() === referenceCurrency
+        ? { rate: '1', asOf: new Date().toISOString() }
+        : await this.rates?.getRate(currency, referenceCurrency);
+    if (!quote) {
+      throw new WalletReferenceRateUnavailableError(currency, referenceCurrency);
+    }
+    return {
+      referenceCurrency,
+      referenceAmount: moneyScaleBy(amount, quote.rate),
+      referenceRate: quote.rate,
+      referenceRateAsOf: new Date(quote.asOf),
+    };
+  }
+
   private rateLimit(userId: User['id']) {
     return this.limiter
       ? assertRateLimit(this.limiter, `wallet-mutation:${userId}`, WALLET_MUTATION_RATE_LIMIT)
@@ -918,6 +980,7 @@ export class WalletService {
 
         const { row } = await this.insertIdempotentTransaction(txn, {
           namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
+          userId,
           walletId: holder.id,
           rawIdempotencyKey: idempotencyKey,
           amount,
@@ -1045,6 +1108,7 @@ export class WalletService {
 
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
         namespace: MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE,
+        userId,
         walletId: walletRecord.id,
         rawIdempotencyKey: idempotencyKey,
         amount,
@@ -1105,6 +1169,7 @@ export class WalletService {
           direction,
           amount,
           reason,
+          reference: toReferenceDto(row),
         },
         ip,
         userAgent,
@@ -1227,6 +1292,7 @@ export class WalletService {
     txn: DrizzleTx,
     {
       namespace,
+      userId,
       walletId,
       rawIdempotencyKey,
       amount,
@@ -1234,6 +1300,7 @@ export class WalletService {
       values,
     }: {
       namespace: string;
+      userId: User['id'];
       walletId: Wallet['id'];
       rawIdempotencyKey: string | undefined;
       amount: string;
@@ -1241,7 +1308,10 @@ export class WalletService {
       // `direction` is nullable on the column (historical rows predate it) but every
       // new insert must set it explicitly - narrowed to required+non-null here so a
       // caller that forgets it fails to typecheck instead of writing another NULL row.
-      values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey' | 'direction'> & {
+      values: Omit<
+        typeof walletTransaction.$inferInsert,
+        'idempotencyKey' | 'direction' | keyof ReferenceSnapshot
+      > & {
         direction: ManualAdjustmentDirection;
       };
     },
@@ -1250,9 +1320,10 @@ export class WalletService {
       ? namespacedIdempotencyKey(namespace, rawIdempotencyKey)
       : undefined;
 
+    const reference = await this.referenceSnapshot(txn, userId, amount, currency);
     const insertQuery = txn
       .insert(walletTransaction)
-      .values({ ...values, idempotencyKey: idempotencyKey ?? null });
+      .values({ ...values, ...reference, idempotencyKey: idempotencyKey ?? null });
     const [row] = idempotencyKey
       ? await insertQuery.onConflictDoNothing().returning()
       : await insertQuery.returning();
@@ -1349,6 +1420,7 @@ export class WalletService {
 
         const { row, replayed } = await this.insertIdempotentTransaction(txn, {
           namespace: WITHDRAW_IDEMPOTENCY_NAMESPACE,
+          userId,
           walletId: current.id,
           rawIdempotencyKey: idempotencyKey,
           amount,
@@ -2661,6 +2733,8 @@ export class WalletService {
         reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
         reviewReason:
           includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.reviewReason : null,
+        // Internal only: a reference currency is never shown to the player.
+        reference: includeInternal ? toReferenceDto(tx) : null,
       })),
       total: Number(n),
       page,
@@ -2802,9 +2876,28 @@ export class WalletService {
         );
       }
 
+      // A redelivery of a credited deposit must not depend on a rate being available now.
+      const [credited] = await this.findDepositByProviderRef(
+        txn,
+        depositAddress.providerName,
+        event.externalId,
+      );
+      if (credited) {
+        return { transactionId: credited.id, replayed: true };
+      }
+      // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
+      // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
+      // and reconciliation files it as a missing deposit if the redeliveries run out.
+      const reference = await this.referenceSnapshot(
+        txn,
+        depositAddress.userId,
+        event.amount,
+        event.currency,
+      );
       const [inserted] = await txn
         .insert(walletTransaction)
         .values({
+          ...reference,
           walletId: walletRecord.id,
           type: 'deposit',
           amount: event.amount,
@@ -2828,15 +2921,11 @@ export class WalletService {
         return { transactionId: inserted.id, replayed: false };
       }
 
-      const [winner] = await txn
-        .select()
-        .from(walletTransaction)
-        .where(
-          and(
-            eq(walletTransaction.providerName, depositAddress.providerName),
-            eq(walletTransaction.providerRefId, event.externalId),
-          ),
-        );
+      const [winner] = await this.findDepositByProviderRef(
+        txn,
+        depositAddress.providerName,
+        event.externalId,
+      );
       if (!winner) {
         throw new Error(
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
@@ -2896,6 +2985,22 @@ export class WalletService {
         this.audit,
       );
     }
+  }
+
+  private findDepositByProviderRef(
+    txn: DrizzleTx,
+    providerName: string,
+    externalId: NonNullable<WalletTransaction['providerRefId']>,
+  ) {
+    return txn
+      .select({ id: walletTransaction.id })
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.providerName, providerName),
+          eq(walletTransaction.providerRefId, externalId),
+        ),
+      );
   }
 
   private async userIdForWallet(walletId: Wallet['id']) {

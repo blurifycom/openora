@@ -1,4 +1,5 @@
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, inArray, isNotNull, desc, sql } from 'drizzle-orm';
+import { player } from '@openora/core/pam/schema/profile';
 import { moneyAdd, moneyCompare, withAdvisoryXactLock, type DrizzleTx } from '@openora/core/server';
 import type {
   ExchangeRateReader,
@@ -50,6 +51,24 @@ export class RgLimitGate implements RgLimitsPort {
     currency: string,
   ): Promise<RgLimitDecision> {
     return this.check(tx, userId, TYPES_BY_MOVE.wager, amount, currency);
+  }
+
+  async referenceCurrency(tx: unknown, userId: string): Promise<string | null> {
+    // A limit row whose currency was never resolved is denominated in the player's currency.
+    const [row] = await (tx as DrizzleTx)
+      .select({ currency: sql<string | null>`coalesce(${userLimit.currency}, ${player.currency})` })
+      .from(userLimit)
+      .leftJoin(player, eq(player.userId, userLimit.userId))
+      .where(
+        and(
+          eq(userLimit.userId, userId),
+          inArray(userLimit.type, ['deposit', 'wager']),
+          isNotNull(userLimit.amount),
+        ),
+      )
+      .orderBy(sql`${userLimit.type} = 'deposit' desc`, desc(userLimit.updatedAt))
+      .limit(1);
+    return row?.currency?.toUpperCase() ?? null;
   }
 
   private async check(

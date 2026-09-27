@@ -67,6 +67,12 @@ export type RgLimitsPort = {
     amount: string,
     currency: string,
   ): Promise<RgLimitDecision>;
+  /**
+   * The player's reference currency: the currency of their deposit limit, else of their
+   * wager limit (the most recently changed one when several are set). `null` when the player
+   * has neither, so the caller applies its own default.
+   */
+  referenceCurrency(tx: unknown, userId: string): Promise<string | null>;
 };
 
 export const RG_LIMITS: Token<RgLimitsPort> = createToken<RgLimitsPort>('RG_LIMITS');

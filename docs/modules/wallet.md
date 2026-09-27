@@ -24,6 +24,11 @@ does not repeat it.
 - **Every ledger row records its direction explicitly.** Direction is never inferred from the kind
   of transaction: a player-to-player transfer writes the same kind for the sender's debit and the
   recipient's credit.
+- **A deposit, withdrawal or manual adjustment records its reference value once, when written.**
+  The reference currency is the player's deposit-limit currency, else their wager-limit currency,
+  else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
+  recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
+  deposit webhook fails so the vendor redelivers it.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

@@ -133,9 +133,21 @@ export const WalletTransactionSchema = z.object({
   reviewReason: z.string().nullable(),
 });
 
+// A ledger row's value in the player's reference currency when it was written. Never
+// recalculated, so the rate and its timestamp are what an auditor reproduces it from.
+export const WalletReferenceConversionSchema = z.object({
+  currency: WalletCurrencyCodeSchema,
+  amount: MoneyAmountSchema,
+  rate: MoneyAmountSchema,
+  rateAsOf: TimestampSchema,
+});
+export type WalletReferenceConversion = z.infer<typeof WalletReferenceConversionSchema>;
+
 export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
+  // Null on row types that carry no conversion, and on rows written before it was recorded.
+  reference: WalletReferenceConversionSchema.nullable(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 

@@ -19,6 +19,7 @@ import {
   makeIdentityReader,
   NO_CLIENT_META,
   makeAuditWriter,
+  makeExchangeRateReader,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -74,6 +75,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
     paymentProviders: makePaymentProviderRegistry(),
     audit,
     identityReader: makeIdentityReader(),
+    rates: makeExchangeRateReader(),
     ...overrides,
   });
   return { svc, events, psp, audit };
@@ -1927,7 +1929,10 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
   });
 
   function gateDeciding(checkDeposit: NonNullable<WalletServiceDeps['rgLimits']>['checkDeposit']) {
-    return mock<NonNullable<WalletServiceDeps['rgLimits']>>({ checkDeposit: vi.fn(checkDeposit) });
+    return mock<NonNullable<WalletServiceDeps['rgLimits']>>({
+      checkDeposit: vi.fn(checkDeposit),
+      referenceCurrency: vi.fn(async () => null),
+    });
   }
 
   async function findingsFor(externalId: string) {
