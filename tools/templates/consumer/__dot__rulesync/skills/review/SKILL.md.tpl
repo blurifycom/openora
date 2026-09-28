@@ -37,7 +37,7 @@ Checklist - tick as you go:
 
 ## 2. Scope the diff
 
-**Reviewing a pull request by number:** reviewers need files to open, and the working tree is not theirs to switch. Fetch the source branch and add a detached worktree: `git fetch origin <src-branch> && git worktree add --detach .claude/worktrees/review-<n> FETCH_HEAD`. Pass the worktree path to every reviewer and remove it with `git worktree remove` after §7.
+**Reviewing a pull request by number:** reviewers need files to open, and the working tree is not theirs to switch. Fetch the source branch and add a detached worktree at the pull request's head SHA, never at `FETCH_HEAD` (a failed fetch leaves it pointing at the previous ref): `git fetch origin <src-branch> && git worktree add --detach .claude/worktrees/review-<n> <head-sha>`, then confirm `git -C .claude/worktrees/review-<n> rev-parse HEAD` equals `<head-sha>` and stop if it does not. An existing `review-<n>` worktree is reset to `<head-sha>`, not reused as is. Pass the worktree path to every reviewer and remove it with `git worktree remove` after §7.
 
 **Run the precheck before anything else reads code.** From the directory under review (the review worktree, or the working tree), run the main checkout's script - it is rendered and gitignored, so a worktree lacks it: `node <main-checkout>/tools/review-precheck.mjs --base origin/<base>` (add `--since <sha>` from §2a). It costs no tokens beyond its output and replaces what reviewers used to derive by reading:
 
@@ -232,12 +232,13 @@ Only when `--post` is set and the target is a pull-request number. Turns finding
 
 Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete `file:line`. One comment per finding, one line each.
 
-1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.`
-2. **Confirm.** Show all drafted comments + the summary and stop for approval - UNLESS `--yes`, then skip straight to posting.
-3. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
-4. **Post the summary** as one general comment on the pull request, per the same file, ending with the hidden marker `<!-- review:sha=<reviewed HEAD SHA> -->` so the next review on any machine can go incremental (§2a).
-5. Report back the count posted + the summary verdict. Never resolve threads; never push.
-6. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
+1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`, in the posting user's voice: when their instructions name a voice or writing guide, read it before drafting. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.`
+2. **Dedupe.** Read every existing thread on the pull request, resolved or not, per `docs/agents/forge.md`. Drop a draft that an existing thread already raises, even worded differently; when it adds a new fact, reply to that thread instead of opening a new one. Drop the summary when every finding was dropped.
+3. **Confirm.** Show all drafted comments + the summary and stop for approval - UNLESS `--yes`, then skip straight to posting.
+4. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
+5. **Post the summary** as one general comment on the pull request, per the same file, ending with the hidden marker `<!-- review:sha=<reviewed HEAD SHA> -->` so the next review on any machine can go incremental (§2a).
+6. Report back the count posted + the summary verdict. Never resolve threads; never push.
+7. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
 
 ## Constraints
 

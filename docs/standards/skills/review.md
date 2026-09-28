@@ -114,10 +114,11 @@ VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
 
 Report only by default. `--post` publishes the findings to the PR; it needs a PR number.
 
-1. Show the exact comment bodies and their anchors, then stop for confirmation. `--yes` skips that stop.
-2. Post inline with `gh api "repos/blurifycom/openora/pulls/<n>/comments"`, one per finding, anchored to `path` and `line` on the head commit.
-3. Post the GO or NO-GO line as a single summary review.
-4. Write every comment in the user's voice: plain, direct, no severity markers, no internal ticket text or names.
+1. Read every existing review thread and comment on the PR (`gh api "repos/blurifycom/openora/pulls/<n>/comments"` and `.../issues/<n>/comments`). Drop a draft an existing comment already raises, even worded differently; when it adds a new fact, reply in that thread instead. Post nothing when every draft was dropped.
+2. Show the exact comment bodies and their anchors, then stop for confirmation. `--yes` skips that stop.
+3. Post inline with `gh api "repos/blurifycom/openora/pulls/<n>/comments"`, one per finding, anchored to `path` and `line` on the head commit.
+4. Post the GO or NO-GO line as a single summary review.
+5. Write every comment in the user's voice: when their instructions name a voice or writing guide, read it before drafting. Plain, direct, no severity markers, no internal ticket text or names.
 
 ## Fix mode
 
