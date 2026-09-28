@@ -221,7 +221,7 @@ describe('a player ranking up and being told about it', () => {
       async () =>
         expect(await rankNotifications(client)).toEqual([
           expect.objectContaining({
-            title: 'You reached Silver',
+            title: 'You reached Silver rank',
             body: 'Congratulations on reaching Silver. Your rank now pays 3% rakeback and a bonus of 5 USDT daily, 50 USDT monthly.',
             data: { tierId: await tierId('silver') },
           }),

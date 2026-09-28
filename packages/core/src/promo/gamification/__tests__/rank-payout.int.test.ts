@@ -391,6 +391,11 @@ describe('paying a periodic bonus', () => {
     expect(granted).toEqual([]);
     expect(grant).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledTimes(1);
+
+    convert.mockResolvedValue('0.000008000000000000');
+
+    expect(await service().payPeriodic('daily', NOW)).toHaveLength(1);
+    expect(grant).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the operator currency when the player has no rate of their own', async () => {

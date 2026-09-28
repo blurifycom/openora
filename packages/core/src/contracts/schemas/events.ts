@@ -732,12 +732,13 @@ export const domainEventSchemas = {
     tierId: UuidSchema,
     previousTierId: UuidSchema.nullable(),
     position: z.number().int().nonnegative(),
-    tierName: z.string().min(1),
-    currency: CurrencyTickerSchema,
-    rakebackPercent: ContributionPercentSchema,
-    dailyBonus: MoneyAmountSchema.nullable(),
-    weeklyBonus: MoneyAmountSchema.nullable(),
-    monthlyBonus: MoneyAmountSchema.nullable(),
+    // Optional for compatibility with producers deployed before the notification payload grew.
+    tierName: z.string().min(1).optional(),
+    currency: CurrencyTickerSchema.optional(),
+    rakebackPercent: ContributionPercentSchema.optional(),
+    dailyBonus: MoneyAmountSchema.nullable().optional(),
+    weeklyBonus: MoneyAmountSchema.nullable().optional(),
+    monthlyBonus: MoneyAmountSchema.nullable().optional(),
   }),
   // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
   'promo.race.settled': z.object({

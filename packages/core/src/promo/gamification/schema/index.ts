@@ -193,6 +193,7 @@ export const promoRankPeriodWager = pgTable(
     ),
     // What the payout reads: everyone who wagered in the period it is settling.
     index('promo_rank_period_wager_kind_period_key_idx').on(t.kind, t.periodKey),
+    index('promo_rank_period_wager_kind_updated_at_idx').on(t.kind, t.updatedAt),
     check('promo_rank_period_wager_non_negative', sql`${t.wagered} >= 0`),
   ],
 );

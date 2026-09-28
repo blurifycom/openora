@@ -51,14 +51,20 @@ const describeRankChallengePrize = (p: {
 const describeRankBenefits = (p: {
   currency: string;
   rakebackPercent: string;
-  dailyBonus: string | null;
-  weeklyBonus: string | null;
-  monthlyBonus: string | null;
+  dailyBonus?: string | null;
+  weeklyBonus?: string | null;
+  monthlyBonus?: string | null;
 }): string => {
   const bonuses = [
-    p.dailyBonus !== null ? `${formatMoneyAmount(p.dailyBonus)} ${p.currency} daily` : null,
-    p.weeklyBonus !== null ? `${formatMoneyAmount(p.weeklyBonus)} ${p.currency} weekly` : null,
-    p.monthlyBonus !== null ? `${formatMoneyAmount(p.monthlyBonus)} ${p.currency} monthly` : null,
+    p.dailyBonus !== null && p.dailyBonus !== undefined
+      ? `${formatMoneyAmount(p.dailyBonus)} ${p.currency} daily`
+      : null,
+    p.weeklyBonus !== null && p.weeklyBonus !== undefined
+      ? `${formatMoneyAmount(p.weeklyBonus)} ${p.currency} weekly`
+      : null,
+    p.monthlyBonus !== null && p.monthlyBonus !== undefined
+      ? `${formatMoneyAmount(p.monthlyBonus)} ${p.currency} monthly`
+      : null,
   ].filter((part): part is string => part !== null);
   const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
   return bonuses.length > 0 ? `${rakeback} and a bonus of ${bonuses.join(', ')}` : rakeback;
@@ -354,8 +360,17 @@ export const notificationEventMap: NotificationMapEntry[] = [
   mapEvent('promo.rank.changed', (p) => ({
     userId: p.userId,
     type: 'promo.rank.changed',
-    title: `You reached ${p.tierName} rank`,
-    body: `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits(p)}.`,
+    title: p.tierName ? `You reached ${p.tierName} rank` : 'Rank updated',
+    body:
+      p.tierName && p.currency && p.rakebackPercent
+        ? `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits({
+            currency: p.currency,
+            rakebackPercent: p.rakebackPercent,
+            dailyBonus: p.dailyBonus,
+            weeklyBonus: p.weeklyBonus,
+            monthlyBonus: p.monthlyBonus,
+          })}.`
+        : 'Your account rank has been updated.',
     data: { tierId: p.tierId },
   })),
 

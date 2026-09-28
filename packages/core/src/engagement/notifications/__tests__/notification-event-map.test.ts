@@ -472,6 +472,21 @@ describe('notificationEventMap', () => {
       });
     });
 
+    it('keeps delivering a notification for the original event payload', () => {
+      const input = entryFor('promo.rank.changed').buildNotification({
+        userId: randomUUID(),
+        tierId: randomUUID(),
+        previousTierId: null,
+        position: 1,
+      });
+
+      expect(input).toMatchObject({
+        type: 'promo.rank.changed',
+        title: 'Rank updated',
+        body: 'Your account rank has been updated.',
+      });
+    });
+
     // A rank may carry only some of the periodic bonuses; one it does not pay is left out rather
     // than promised as zero.
     it('leaves out a bonus the rank does not pay', () => {

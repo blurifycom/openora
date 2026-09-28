@@ -213,6 +213,7 @@ export class RankPayoutService {
     }
     const bonus = PERIOD_BONUS[kind];
     const granted: Granted[] = [];
+    let retryRequired = false;
     let after = '00000000-0000-0000-0000-000000000000';
 
     for (;;) {
@@ -240,11 +241,15 @@ export class RankPayoutService {
             { err, userId: player.userId, sourceRef: period.sourceRef },
             'rank periodic payout failed',
           );
+          retryRequired = true;
         }
       }
 
       const last = due.at(-1);
       if (!last || due.length < BATCH) {
+        if (retryRequired) {
+          return granted;
+        }
         // Written once the whole period is processed: a run that dies halfway is retried, and
         // each player's own grant key keeps the retry from paying anybody twice.
         await this.markPaid(kind, period.end);
