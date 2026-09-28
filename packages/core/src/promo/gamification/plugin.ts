@@ -53,6 +53,7 @@ const STREAK_CLOSE_QUEUE = queue('promo-streak-close');
 const RACE_PAYOUT_QUEUE = queue('promo-race-payout');
 const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
 const RANK_ANNOUNCE_QUEUE = queue('promo-rank-announce');
+const RANK_PERIOD_PRUNE_QUEUE = queue('promo-rank-period-prune');
 // Races close at whatever timestamp the operator configured, not a shared daily/weekly/monthly
 // anchor - a short recurring tick is what makes "closed within a minute of endAt" true.
 const RACE_PAYOUT_CRON = '*/1 * * * *';
@@ -62,6 +63,9 @@ const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 // A promotion lands on whatever bet crosses the threshold, and a congratulation ten minutes late
 // reads as a glitch - announced on the same short tick.
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
+// Housekeeping, so once a day and off-peak - clear of tag evaluation (02:00) and the
+// notification purge (03:00), which the in-process driver would otherwise run side by side.
+const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.
 const RankPayoutJobSchema = z.object({ kind: RankPayoutKindSchema });
@@ -172,6 +176,19 @@ export default {
         for (const change of await rankPayouts.announceRankChanges()) {
           events?.emit('promo.rank.changed', change);
         }
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: RANK_PERIOD_PRUNE_QUEUE,
+      schema: EmptyJobSchema,
+      handler: async () => {
+        if (!rankPayouts) {
+          logger.warn({}, 'rank period prune skipped - service not constructed');
+          return;
+        }
+        const count = await rankPayouts.pruneSettledPeriodWagers();
+        logger.info({ count }, 'rank period counters pruned');
       },
     });
 
@@ -341,6 +358,14 @@ export default {
       void jobs
         .schedule(RANK_ANNOUNCE_QUEUE, 'promo-rank-announce.cron', {}, { cron: RANK_ANNOUNCE_CRON })
         .catch((err: unknown) => logger.error({ err }, 'rank announcement schedule failed'));
+      void jobs
+        .schedule(
+          RANK_PERIOD_PRUNE_QUEUE,
+          'promo-rank-period-prune.cron',
+          {},
+          { cron: RANK_PERIOD_PRUNE_CRON },
+        )
+        .catch((err: unknown) => logger.error({ err }, 'rank period prune schedule failed'));
 
       return createGamificationRouter({
         ranks: rankService(c),

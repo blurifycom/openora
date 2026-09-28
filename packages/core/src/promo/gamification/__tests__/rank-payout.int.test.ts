@@ -586,3 +586,68 @@ describe('announcing a promotion', () => {
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('pruning settled period counters', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const SETTLED = new Date('2026-09-22T00:00:00Z');
+
+  /** A counter last written `daysBefore` days before the settled watermark. */
+  const counter = async (kind: 'daily' | 'weekly' | 'monthly', daysBefore: number) => {
+    const [row] = await db.drizzle.db
+      .insert(promoRankPeriodWager)
+      .values({
+        userId: randomUUID(),
+        kind,
+        periodKey: `rank-${kind}:${randomUUID()}`,
+        currency: 'USD',
+        wagered: '5',
+        updatedAt: new Date(SETTLED.getTime() - daysBefore * DAY_MS),
+      })
+      .returning({ id: promoRankPeriodWager.id });
+    return row?.id ?? '';
+  };
+
+  const settledThrough = (paidThrough: Partial<Record<'daily' | 'weekly' | 'monthly', string>>) =>
+    db.drizzle.db.update(promoRankConfig).set({ paidThrough });
+
+  const remaining = async () =>
+    (await db.drizzle.db.select({ id: promoRankPeriodWager.id }).from(promoRankPeriodWager)).map(
+      (row) => row.id,
+    );
+
+  it('deletes a counter whose period the payout has long since settled', async () => {
+    await settledThrough({ daily: SETTLED.toISOString() });
+    await counter('daily', 60);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(1);
+    expect(await remaining()).toEqual([]);
+  });
+
+  // No period runs past a month, so a counter written within that of the watermark may still
+  // belong to a period the watermark has not reached.
+  it('keeps a counter written close enough to the watermark to be unsettled', async () => {
+    await settledThrough({ monthly: SETTLED.toISOString() });
+    const recent = await counter('monthly', 30);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(0);
+    expect(await remaining()).toEqual([recent]);
+  });
+
+  // A payout job down for weeks must lose nothing it has yet to settle.
+  it('keeps every counter of a kind that has never been paid', async () => {
+    await settledThrough({});
+    const old = await counter('weekly', 365);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(0);
+    expect(await remaining()).toEqual([old]);
+  });
+
+  it('measures each kind against its own watermark', async () => {
+    await settledThrough({ daily: SETTLED.toISOString() });
+    await counter('daily', 60);
+    const weekly = await counter('weekly', 60);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(1);
+    expect(await remaining()).toEqual([weekly]);
+  });
+});

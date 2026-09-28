@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   ExchangeRateReader,
@@ -22,7 +22,12 @@ import {
   type RankRewardTerms,
   type RankRewards,
 } from '../schema/index.js';
-import { lastCompletePeriod, type RankPeriod, type RankPeriodKind } from '../shared/rank-period.js';
+import {
+  lastCompletePeriod,
+  RANK_PERIOD_KINDS,
+  type RankPeriod,
+  type RankPeriodKind,
+} from '../shared/rank-period.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
 type RankChanged = DomainEventPayload<'promo.rank.changed'>;
@@ -36,6 +41,13 @@ type Logger = {
 };
 
 const BATCH = 500;
+
+// A counter's last write falls inside its own period - a bet after the period closed lands on the
+// next key - and no period runs longer than a month. So a counter last written this long before a
+// kind's watermark belongs to a period that ended before it, and no payout reads it again. The
+// slack past 31 days absorbs clock skew between the app, which picks the key, and the database,
+// which stamps the write.
+const SETTLED_COUNTER_AGE_MS = 35 * 24 * 60 * 60 * 1000;
 
 const PERIOD_BONUS = {
   daily: promoRankTier.dailyBonus,
@@ -453,6 +465,37 @@ export class RankPayoutService {
       requiresActivity: config.periodicRequiresActivity,
       minimumWager: config.periodicMinimumWager,
     };
+  }
+
+  /**
+   * Deletes the per-period wager counters no payout will read again, and returns how many. A
+   * payout only ever settles the last period to close, and never one its kind's watermark has
+   * passed, so a counter from before the watermark is dead weight - one row per player per period
+   * that would otherwise grow with every day the operator runs.
+   *
+   * Measured against the watermark, not the clock: a kind that has never been paid keeps every
+   * counter, and a payout job that has been down for weeks loses nothing it has yet to settle.
+   */
+  async pruneSettledPeriodWagers(): Promise<number> {
+    const [config] = await this.drizzle.db
+      .select({ paidThrough: promoRankConfig.paidThrough })
+      .from(promoRankConfig);
+    let pruned = 0;
+    for (const kind of RANK_PERIOD_KINDS) {
+      const settled = config?.paidThrough[kind];
+      if (settled === undefined) {
+        continue;
+      }
+      const before = new Date(new Date(settled).getTime() - SETTLED_COUNTER_AGE_MS);
+      // ponytail: one DELETE per kind, fine daily on a table that is pruned as it grows; batch it
+      // behind an index on (kind, updated_at) if a long backlog ever makes a run slow.
+      const deleted = await this.drizzle.db
+        .delete(promoRankPeriodWager)
+        .where(and(eq(promoRankPeriodWager.kind, kind), lt(promoRankPeriodWager.updatedAt, before)))
+        .returning({ id: promoRankPeriodWager.id });
+      pruned += deleted.length;
+    }
+    return pruned;
   }
 
   /** Moves the kind's watermark forward, so no later run reaches back into a settled period. */

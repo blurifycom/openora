@@ -100,6 +100,12 @@ per period as the bets happen - not by whether they have played since. A bet pla
 a period closed belongs to the next one. The operator decides whether activity is required at all,
 and how much of it: a minimum wagered inside the period, or any single bet.
 
+Those counters are one row per player per period per kind, and a payout never reads one again
+once its kind's watermark has passed the period. A daily job deletes them, measured against that
+watermark rather than the clock: a counter goes only once it was last written more than a month
+before the watermark - no period runs longer - and a kind that has never been paid keeps
+everything, so a payout job that was down for weeks loses nothing it still has to settle.
+
 ## What a reward is paid in
 
 A ladder can be priced in a unit the wallet cannot hold - a fiat ticker on a crypto-only operator
@@ -139,6 +145,3 @@ The bonus module's own grant path does not check this. It is checked here, befor
   accrues or pays it. It is a share of the house edge - the stake times the game's margin times
   the rank's percentage - so it needs the game's RTP on the bet, and the bonus-funded part of the
   stake to exclude it. Both arrive from the wagering engine's side of the seam.
-- **Pruning old period counters.** One row per player per period per kind is written and never
-  read again once its period is paid. A sweep will be needed long before it becomes a problem,
-  but it is not there today.
