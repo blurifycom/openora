@@ -9,7 +9,7 @@ const PATTERNS = ['test\\_%', 'oss_igaming_test_tpl\\_%', 'unseeded\\_%'];
 
 const TEST_URL =
   process.env['TEST_DATABASE_URL'] ??
-  'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
+  'postgres://postgres:postgres@localhost:5434/oss_igaming_test';
 
 async function main() {
   const adminUrl = new URL(TEST_URL);
