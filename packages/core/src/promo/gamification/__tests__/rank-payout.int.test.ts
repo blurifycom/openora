@@ -334,6 +334,65 @@ describe('paying a periodic bonus', () => {
     );
   });
 
+  // The operator prices the cap in the ladder's currency, and the bonus engine compares it with
+  // stakes in the grant's own - so it has to move with the reward.
+  it('converts the stake cap into the currency the reward is credited in', async () => {
+    const userId = await played('silver');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payInPlayerCurrency: true, rewards: { daily: { ...DAILY_TERMS, maxBet: '5' } } });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    convert.mockImplementation(async (amount) =>
+      amount === '5' ? '0.000080000000000000' : '0.000008000000000000',
+    );
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(convert).toHaveBeenCalledWith('5', 'USD', 'BTC');
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId,
+        currency: 'BTC',
+        terms: expect.objectContaining({ maxBet: '0.000080000000000000' }),
+      }),
+    );
+  });
+
+  it('keeps the stake cap as priced when the reward is credited in the ladder currency', async () => {
+    await played('silver');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ rewards: { daily: { ...DAILY_TERMS, maxBet: '5' } } });
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        currency: 'USD',
+        terms: expect.objectContaining({ maxBet: '5' }),
+      }),
+    );
+  });
+
+  // A cap that cannot be priced is not dropped: a bonus without it is the coin flip the cap
+  // exists to prevent.
+  it('pays nothing when the stake cap has no rate, and leaves it for the next run', async () => {
+    await played('silver');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payInPlayerCurrency: true, rewards: { daily: { ...DAILY_TERMS, maxBet: '5' } } });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    convert.mockImplementation(async (amount) => (amount === '5' ? null : '0.000008000000000000'));
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to the operator currency when the player has no rate of their own', async () => {
     await played('silver');
     await db.drizzle.db

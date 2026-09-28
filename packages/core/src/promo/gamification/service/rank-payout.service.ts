@@ -350,6 +350,7 @@ export class RankPayoutService {
       throw new Error('BONUS_GRANTS is not bound');
     }
     const paid = await this.inPayoutCurrency(owed, payout);
+    const maxBet = await this.capIn(terms.maxBet, owed.currency, paid.currency);
     const outcome = await this.grants.grant(tx, {
       userId: owed.userId,
       currency: paid.currency,
@@ -363,7 +364,7 @@ export class RankPayoutService {
         // Both are anti-abuse controls the bonus engine enforces inside the bet, against the
         // snapshot this grant is made under - so an operator loosening them later cannot widen
         // a bonus a player already holds.
-        ...(terms.maxBet === null || terms.maxBet === undefined ? {} : { maxBet: terms.maxBet }),
+        ...(maxBet === null || maxBet === undefined ? {} : { maxBet }),
         ...(terms.maxWinMultiplier === null || terms.maxWinMultiplier === undefined
           ? {}
           : { maxWinMultiplier: terms.maxWinMultiplier }),
@@ -417,6 +418,24 @@ export class RankPayoutService {
       );
     }
     throw new Error(`no rate to pay a rank reward owed in ${owed.currency}`);
+  }
+
+  /**
+   * A stake cap in the currency the reward was credited in. The operator prices it in the
+   * ladder's currency like every other amount, and the bonus engine compares it with stakes in
+   * the grant's own currency - so a cap copied across unconverted means 5 BTC to a player paid
+   * in BTC, and five cents to one paid in a low-value coin. No rate means no payout, retried on
+   * the next run, the same as for the amount itself.
+   */
+  private async capIn(cap: string | null | undefined, from: string, to: string) {
+    if (cap === null || cap === undefined || from === to) {
+      return cap;
+    }
+    const converted = await this.rates.convert(cap, from, to);
+    if (converted === null) {
+      throw new Error(`no rate to price a rank reward's stake cap in ${to}`);
+    }
+    return converted;
   }
 
   /** The currencies to try, best first. */
