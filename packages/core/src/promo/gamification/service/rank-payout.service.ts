@@ -231,7 +231,7 @@ export class RankPayoutService {
             this.grant(tx, owed, period.sourceRef, terms, payout),
           );
           if (paid) {
-            granted.push(paid);
+            granted.push({ ...paid, rankBonusKind: kind });
           }
         } catch (err) {
           // One player's failure - an amount an admin changed between two runs of the same

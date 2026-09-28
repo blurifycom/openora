@@ -281,7 +281,9 @@ export const notificationEventMap: NotificationMapEntry[] = [
   mapEvent('promo.bonus.granted', (p) => ({
     userId: p.userId,
     type: 'promo.bonus.granted',
-    title: 'Bonus credited',
+    title: p.rankBonusKind
+      ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
+      : 'Bonus credited',
     body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
     data: { grantId: p.grantId },
   })),
@@ -352,7 +354,7 @@ export const notificationEventMap: NotificationMapEntry[] = [
   mapEvent('promo.rank.changed', (p) => ({
     userId: p.userId,
     type: 'promo.rank.changed',
-    title: `You reached ${p.tierName}`,
+    title: `You reached ${p.tierName} rank`,
     body: `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits(p)}.`,
     data: { tierId: p.tierId },
   })),

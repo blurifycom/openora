@@ -690,6 +690,8 @@ export const domainEventSchemas = {
     wageringRequired: MoneyAmountSchema,
     source: BonusGrantSourceSchema,
     offerId: UuidSchema.nullable(),
+    // Periodic rank rewards need a player-facing label distinct from other bonus grants.
+    rankBonusKind: z.enum(['daily', 'weekly', 'monthly']).optional(),
   }),
   // Wagering requirement met. The lock is released; what happens to the balance is the
   // conversion step, which emits nothing of its own.

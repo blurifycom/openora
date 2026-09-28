@@ -392,6 +392,21 @@ describe('notificationEventMap', () => {
     expect(input.body).not.toContain('1234.500000000000000000');
   });
 
+  it('names a periodic rank bonus in its notification title', () => {
+    const input = entryFor('promo.bonus.granted').buildNotification({
+      userId: randomUUID(),
+      grantId: randomUUID(),
+      currency: 'USDT',
+      grantedAmount: '10',
+      wageringRequired: '10',
+      source: 'rank',
+      offerId: null,
+      rankBonusKind: 'weekly',
+    });
+
+    expect(input.title).toBe('Weekly bonus credited');
+  });
+
   it('builds a bonusUnlocked mail alongside the promo.bonus.completed in-app notification', () => {
     const entry = entryFor('promo.bonus.completed');
     const payload = {
@@ -451,7 +466,7 @@ describe('notificationEventMap', () => {
       expect(input).toEqual({
         userId: payload.userId,
         type: 'promo.rank.changed',
-        title: 'You reached Gold',
+        title: 'You reached Gold rank',
         body: 'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus of 2 USD daily, 10 USD weekly, 25 USD monthly.',
         data: { tierId: payload.tierId },
       });
