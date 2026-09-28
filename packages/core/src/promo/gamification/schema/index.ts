@@ -106,8 +106,6 @@ export const promoPlayerRank = pgTable(
   },
   (t) => [
     check('promo_player_rank_lifetime_wagered_non_negative', sql`${t.lifetimeWagered} >= 0`),
-    // Only the promotions not yet announced, which the announcement job reads every minute:
-    // nearly always empty, so the tick costs nothing however many players have ever bet.
     index('promo_player_rank_unannounced_idx')
       .on(t.userId)
       .where(sql`${t.announcedTierId} IS DISTINCT FROM ${t.tierId}`),

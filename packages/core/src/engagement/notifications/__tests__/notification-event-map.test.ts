@@ -487,8 +487,6 @@ describe('notificationEventMap', () => {
       });
     });
 
-    // A rank may carry only some of the periodic bonuses; one it does not pay is left out rather
-    // than promised as zero.
     it('leaves out a bonus the rank does not pay', () => {
       const input = entryFor('promo.rank.changed').buildNotification(
         rankChanged({ dailyBonus: '0.500000000000000000', weeklyBonus: null, monthlyBonus: null }),

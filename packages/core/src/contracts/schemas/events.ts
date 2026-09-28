@@ -690,7 +690,6 @@ export const domainEventSchemas = {
     wageringRequired: MoneyAmountSchema,
     source: BonusGrantSourceSchema,
     offerId: UuidSchema.nullable(),
-    // Periodic rank rewards need a player-facing label distinct from other bonus grants.
     rankBonusKind: z.enum(['daily', 'weekly', 'monthly']).optional(),
   }),
   // Wagering requirement met. The lock is released; what happens to the balance is the
@@ -723,16 +722,11 @@ export const domainEventSchemas = {
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),
-  // Fires on promotion only - a rank never decreases - once per jump, after the bet that caused
-  // it has committed: crossing two thresholds in one bet announces the rank landed on, with
-  // `previousTierId` the rank last announced. Carries what the new rank pays, priced in the
-  // ladder's `currency`, so a consumer can describe it without reading promo tables.
   'promo.rank.changed': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,
     previousTierId: UuidSchema.nullable(),
     position: z.number().int().nonnegative(),
-    // Optional for compatibility with producers deployed before the notification payload grew.
     tierName: z.string().min(1).optional(),
     currency: CurrencyTickerSchema.optional(),
     rakebackPercent: ContributionPercentSchema.optional(),

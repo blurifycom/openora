@@ -60,11 +60,7 @@ const RACE_PAYOUT_CRON = '*/1 * * * *';
 // A claim can land at any moment (it is detected inline on the bet that crosses a threshold),
 // so settling it - the cash credit and the win announcement - runs on the same short tick.
 const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
-// A promotion lands on whatever bet crosses the threshold, and a congratulation ten minutes late
-// reads as a glitch - announced on the same short tick.
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
-// Housekeeping, so once a day and off-peak - clear of tag evaluation (02:00) and the
-// notification purge (03:00), which the in-process driver would otherwise run side by side.
 const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
 
 // The cron tick carries only which payout to run; what is owed is read from the database.

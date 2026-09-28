@@ -42,11 +42,7 @@ type Logger = {
 
 const BATCH = 500;
 
-// A counter's last write falls inside its own period - a bet after the period closed lands on the
-// next key - and no period runs longer than a month. So a counter last written this long before a
-// kind's watermark belongs to a period that ended before it, and no payout reads it again. The
-// slack past 31 days absorbs clock skew between the app, which picks the key, and the database,
-// which stamps the write.
+// No period runs longer than a month; the slack past 31 days absorbs clock skew.
 const SETTLED_COUNTER_AGE_MS = 35 * 24 * 60 * 60 * 1000;
 
 const PERIOD_BONUS = {
@@ -115,18 +111,10 @@ export class RankPayoutService {
 
   /**
    * The promotions no one has told the player about yet, for the caller to emit as
-   * `promo.rank.changed` once this returns. A promotion happens inside the bet's own
-   * transaction, where nothing may be emitted, so it is announced from here instead: one event
-   * per jump, however many thresholds the jump crossed, naming the rank landed on.
+   * `promo.rank.changed` once this returns.
    *
-   * Each row is caught up only if it still reads as it did when selected, so a player promoted
-   * again in between is left for the next run rather than announced a rank they already passed.
-   * Caught up before the caller emits: a crash between the two loses one announcement, never
-   * repeats it - the same trade every other event here makes, since `emit()` is best-effort.
-   *
-   * Two promotions are caught up without being announced: onto the rank every player starts on,
-   * which crosses nothing, and for a player under a responsible-gambling block, who is not sent
-   * a reason to come back. With no way to check the block, nothing is announced or caught up.
+   * A promotion onto the rank every player starts on, and one for a player under a
+   * responsible-gambling block that cannot be checked, is caught up without being announced.
    */
   async announceRankChanges(): Promise<RankChanged[]> {
     if (!this.eligibility) {
@@ -182,7 +170,6 @@ export class RankPayoutService {
             announced.push(change);
           }
         } catch (err) {
-          // Left as it was, so the next run tries again.
           this.logger.error({ err, userId: change.userId }, 'rank change announcement failed');
         }
       }
@@ -429,8 +416,7 @@ export class RankPayoutService {
    * A stake cap in the currency the reward was credited in. The operator prices it in the
    * ladder's currency like every other amount, and the bonus engine compares it with stakes in
    * the grant's own currency - so a cap copied across unconverted means 5 BTC to a player paid
-   * in BTC, and five cents to one paid in a low-value coin. No rate means no payout, retried on
-   * the next run, the same as for the amount itself.
+   * in BTC, and five cents to one paid in a low-value coin.
    */
   private async capIn(cap: string | null | undefined, from: string, to: string) {
     if (cap === null || cap === undefined || from === to) {
@@ -492,10 +478,7 @@ export class RankPayoutService {
   }
 
   /**
-   * Deletes the per-period wager counters no payout will read again, and returns how many. A
-   * payout only ever settles the last period to close, and never one its kind's watermark has
-   * passed, so a counter from before the watermark is dead weight - one row per player per period
-   * that would otherwise grow with every day the operator runs.
+   * Deletes the per-period wager counters no payout will read again, and returns how many.
    *
    * Measured against the watermark, not the clock: a kind that has never been paid keeps every
    * counter, and a payout job that has been down for weeks loses nothing it has yet to settle.
