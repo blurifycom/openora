@@ -7,8 +7,8 @@ const INFRA_HINT = 'real-infra tests need postgres+redis - run `docker compose u
 
 const ADMIN_DATABASE_URL =
   process.env['TEST_ADMIN_DATABASE_URL'] ??
-  'postgresql://postgres:postgres@localhost:5432/postgres';
-const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
+  'postgresql://postgres:postgres@localhost:5434/postgres';
+const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
 
 // Databases 0-7 belong to this tier; `@openora/testing` claims 8-15 (see its redis.ts).
 // The split is what lets both integration suites run concurrently without flushing

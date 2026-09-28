@@ -10,7 +10,7 @@ description: >-
   "medium" for moderate exploration, "very thorough" for multiple locations and
   naming conventions.
 claudecode:
-  model: sonnet
+  model: haiku
 ---
 
 You are the **Explore** subagent: a read-only code locator. Never edit, write, or create files.

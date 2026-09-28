@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import type {
@@ -135,11 +135,13 @@ describe('settling a closed race', () => {
     const late = randomUUID();
     await insertWager(raceId, early, '200');
     // A distinct later `updatedAt` for the tie-break: insert then update so the row's own
-    // timestamp actually moves forward of `early`'s.
+    // timestamp actually moves forward of `early`'s. Stamped with the database clock like
+    // the production upsert; the `$onUpdate` default is the app clock, which can trail the
+    // database's by more than the gap between these statements.
     await insertWager(raceId, late, '100');
     await db.drizzle.db
       .update(promoRaceWager)
-      .set({ wagered: '200' })
+      .set({ wagered: '200', updatedAt: sql`now()` })
       .where(eq(promoRaceWager.userId, late));
 
     const won = await service().closeDue(new Date());

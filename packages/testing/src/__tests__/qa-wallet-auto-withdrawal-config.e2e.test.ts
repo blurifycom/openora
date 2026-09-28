@@ -111,7 +111,7 @@ let unseededAdminClient: Client;
 async function createIsolatedTestDatabase(): Promise<string> {
   const baseUrl =
     process.env['TEST_DATABASE_URL'] ??
-    'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
+    'postgres://postgres:postgres@localhost:5434/oss_igaming_test';
   const url = new URL(baseUrl);
   const dbName = `unseeded_${randomUUID().replaceAll('-', '')}`;
   const admin = new Client({
