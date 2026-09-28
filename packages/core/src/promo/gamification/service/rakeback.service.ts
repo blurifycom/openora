@@ -82,6 +82,9 @@ export class RakebackService implements WagerTrackingCommands {
       tier.rakebackPercent,
       boostActive ? (rank.rakebackBoostPercent ?? ZERO) : ZERO,
     );
+    // TODO: scale by the game's house edge - stake × (100% − RTP) × rate - once the RTP reaches
+    // `WagerContext`. Without it this pays a share of turnover, not of margin, so any rate above
+    // the game's edge (3-5% on a typical slot) returns more than the house made on the bet.
     const rakeback = moneyDivide(moneyScaleBy(args.realAmount, rate), '100');
     if (moneyCompare(rakeback, ZERO) <= 0) {
       return [];
