@@ -479,3 +479,110 @@ describe('paying a periodic bonus', () => {
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('announcing a promotion', () => {
+  /** A player the bet has promoted to `to`, last told about `from` (null: never told anything). */
+  const promoted = async (from: string | null, to: string) => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(promoPlayerRank).values({
+      userId,
+      currency: 'USD',
+      lifetimeWagered: '150',
+      tierId: await tierId(to),
+      announcedTierId: from === null ? null : await tierId(from),
+    });
+    return userId;
+  };
+
+  const announcedTier = async (userId: string) => {
+    const [row] = await db.drizzle.db
+      .select({ announcedTierId: promoPlayerRank.announcedTierId })
+      .from(promoPlayerRank)
+      .where(eq(promoPlayerRank.userId, userId));
+    return row?.announcedTierId;
+  };
+
+  it('announces the rank reached with what it pays, once', async () => {
+    const userId = await promoted('bronze', 'silver');
+
+    const announced = await service().announceRankChanges();
+
+    expect(announced).toEqual([
+      {
+        userId,
+        tierId: await tierId('silver'),
+        previousTierId: await tierId('bronze'),
+        position: 1,
+        tierName: 'Silver',
+        currency: 'USD',
+        rakebackPercent: '3.00',
+        dailyBonus: '0.500000000000000000',
+        weeklyBonus: null,
+        monthlyBonus: null,
+      },
+    ]);
+    expect(await announcedTier(userId)).toBe(await tierId('silver'));
+    expect(await service().announceRankChanges()).toEqual([]);
+  });
+
+  // One bet can cross several thresholds; the player hears about the rank they landed on.
+  it('announces a jump past several ranks once, naming the one landed on', async () => {
+    const userId = await promoted(null, 'silver');
+
+    const announced = await service().announceRankChanges();
+
+    expect(announced).toEqual([
+      expect.objectContaining({ userId, tierId: await tierId('silver'), previousTierId: null }),
+    ]);
+  });
+
+  // Every player starts there; it crosses nothing.
+  it('catches up the starting rank without announcing it', async () => {
+    const userId = await promoted(null, 'bronze');
+
+    expect(await service().announceRankChanges()).toEqual([]);
+    expect(await announcedTier(userId)).toBe(await tierId('bronze'));
+  });
+
+  // Same rule as the payouts: a player under a block is not sent a reason to come back, and the
+  // congratulation does not wait for the block to lift.
+  it('catches up a player under a responsible-gambling block without announcing it', async () => {
+    const userId = await promoted('bronze', 'silver');
+    isRestricted.mockResolvedValue(true);
+
+    expect(await service().announceRankChanges()).toEqual([]);
+    expect(await announcedTier(userId)).toBe(await tierId('silver'));
+  });
+
+  it('announces nothing, and catches nobody up, when the block cannot be checked', async () => {
+    const userId = await promoted('bronze', 'silver');
+    const unchecked = new RankPayoutService(
+      db.drizzle,
+      mock<BonusGrantCommands>({ grant }),
+      undefined,
+      mock<ExchangeRateReader>({ convert }),
+      mock<WalletReader>({ getBalances }),
+      logger,
+    );
+
+    expect(await unchecked.announceRankChanges()).toEqual([]);
+    expect(await announcedTier(userId)).toBe(await tierId('bronze'));
+  });
+
+  it('leaves a player it could not check for the next run, and announces the rest', async () => {
+    const failing = await promoted('bronze', 'silver');
+    const other = await promoted('bronze', 'silver');
+    isRestricted.mockImplementation(async (id) => {
+      if (id === failing) {
+        throw new Error('compliance unavailable');
+      }
+      return false;
+    });
+
+    const announced = await service().announceRankChanges();
+
+    expect(announced.map((change) => change.userId)).toEqual([other]);
+    expect(await announcedTier(failing)).toBe(await tierId('bronze'));
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+});

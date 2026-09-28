@@ -46,6 +46,24 @@ const describeRankChallengePrize = (p: {
   return parts.join(' + ');
 };
 
+// What a new rank pays, in the order a player weighs it: rakeback on every bet first, then the
+// recurring bonuses the rank carries. A bonus the rank does not pay is left out, not listed as zero.
+const describeRankBenefits = (p: {
+  currency: string;
+  rakebackPercent: string;
+  dailyBonus: string | null;
+  weeklyBonus: string | null;
+  monthlyBonus: string | null;
+}): string => {
+  const bonuses = [
+    p.dailyBonus !== null ? `${formatMoneyAmount(p.dailyBonus)} ${p.currency} daily` : null,
+    p.weeklyBonus !== null ? `${formatMoneyAmount(p.weeklyBonus)} ${p.currency} weekly` : null,
+    p.monthlyBonus !== null ? `${formatMoneyAmount(p.monthlyBonus)} ${p.currency} monthly` : null,
+  ].filter((part): part is string => part !== null);
+  const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
+  return bonuses.length > 0 ? `${rakeback} and a bonus of ${bonuses.join(', ')}` : rakeback;
+};
+
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
@@ -328,6 +346,16 @@ export const notificationEventMap: NotificationMapEntry[] = [
       }),
     },
   ),
+
+  // In-app only. The level-up bonus that comes with a rank announces itself through
+  // `promo.bonus.granted`, so this names what the rank pays from now on, not what it paid today.
+  mapEvent('promo.rank.changed', (p) => ({
+    userId: p.userId,
+    type: 'promo.rank.changed',
+    title: `You reached ${p.tierName}`,
+    body: `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits(p)}.`,
+    data: { tierId: p.tierId },
+  })),
 
   mapEvent('chat.user.mentioned', (p) => ({
     userId: p.mentionedUserId,

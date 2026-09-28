@@ -422,4 +422,68 @@ describe('notificationEventMap', () => {
 
     expect(input.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
   });
+
+  describe('promo.rank.changed', () => {
+    const rankChanged = (bonuses: {
+      dailyBonus: string | null;
+      weeklyBonus: string | null;
+      monthlyBonus: string | null;
+    }) => ({
+      userId: randomUUID(),
+      tierId: randomUUID(),
+      previousTierId: randomUUID(),
+      position: 2,
+      tierName: 'Gold',
+      currency: 'USD',
+      rakebackPercent: '5.00',
+      ...bonuses,
+    });
+
+    it('congratulates the player on the rank and names everything it pays from now on', () => {
+      const payload = rankChanged({
+        dailyBonus: '2.000000000000000000',
+        weeklyBonus: '10.000000000000000000',
+        monthlyBonus: '25.000000000000000000',
+      });
+
+      const input = entryFor('promo.rank.changed').buildNotification(payload);
+
+      expect(input).toEqual({
+        userId: payload.userId,
+        type: 'promo.rank.changed',
+        title: 'You reached Gold',
+        body: 'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus of 2 USD daily, 10 USD weekly, 25 USD monthly.',
+        data: { tierId: payload.tierId },
+      });
+    });
+
+    // A rank may carry only some of the periodic bonuses; one it does not pay is left out rather
+    // than promised as zero.
+    it('leaves out a bonus the rank does not pay', () => {
+      const input = entryFor('promo.rank.changed').buildNotification(
+        rankChanged({ dailyBonus: '0.500000000000000000', weeklyBonus: null, monthlyBonus: null }),
+      );
+
+      expect(input.body).toBe(
+        'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus of 0.5 USD daily.',
+      );
+    });
+
+    it('names the rakeback alone when the rank pays no periodic bonus', () => {
+      const input = entryFor('promo.rank.changed').buildNotification(
+        rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
+      );
+
+      expect(input.body).toBe('Congratulations on reaching Gold. Your rank now pays 5% rakeback.');
+    });
+
+    it('sends no email - a rank-up is an in-app moment', () => {
+      expect(
+        entryFor('promo.rank.changed').buildEmail(
+          rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
+          new Date().toISOString(),
+        ),
+      ).toBeNull();
+    });
+  });
 });

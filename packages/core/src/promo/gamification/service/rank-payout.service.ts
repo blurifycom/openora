@@ -7,7 +7,12 @@ import type {
   Uuid,
   WalletReader,
 } from '@openora/core/contracts';
-import { moneyScaleBy, type DrizzleService, type DrizzleTx } from '@openora/core/server';
+import {
+  moneyCompare,
+  moneyScaleBy,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
 import {
   promoPlayerRank,
   promoRankConfig,
@@ -20,6 +25,7 @@ import {
 import { lastCompletePeriod, type RankPeriod, type RankPeriodKind } from '../shared/rank-period.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
+type RankChanged = DomainEventPayload<'promo.rank.changed'>;
 
 /** What a reward is credited in, in the order the operator asked for it. */
 type PayoutSettings = { currency: string | null; inPlayerCurrency: boolean };
@@ -48,6 +54,8 @@ const PERIOD_BONUS = {
  * block cannot be checked at all, nothing is paid.
  *
  * Each method returns the grants it created, for the caller to announce once they are committed.
+ * The promotions themselves are announced from here too, for the same reason: they happen inside
+ * a bet, and this is the first place after it where anything may be emitted.
  */
 export class RankPayoutService {
   constructor(
@@ -91,6 +99,88 @@ export class RankPayoutService {
       }
     }
     return granted;
+  }
+
+  /**
+   * The promotions no one has told the player about yet, for the caller to emit as
+   * `promo.rank.changed` once this returns. A promotion happens inside the bet's own
+   * transaction, where nothing may be emitted, so it is announced from here instead: one event
+   * per jump, however many thresholds the jump crossed, naming the rank landed on.
+   *
+   * Each row is caught up only if it still reads as it did when selected, so a player promoted
+   * again in between is left for the next run rather than announced a rank they already passed.
+   * Caught up before the caller emits: a crash between the two loses one announcement, never
+   * repeats it - the same trade every other event here makes, since `emit()` is best-effort.
+   *
+   * Two promotions are caught up without being announced: onto the rank every player starts on,
+   * which crosses nothing, and for a player under a responsible-gambling block, who is not sent
+   * a reason to come back. With no way to check the block, nothing is announced or caught up.
+   */
+  async announceRankChanges(): Promise<RankChanged[]> {
+    if (!this.eligibility) {
+      return [];
+    }
+    const announced: RankChanged[] = [];
+    let after = '00000000-0000-0000-0000-000000000000';
+
+    for (;;) {
+      const due = await this.drizzle.db
+        .select({
+          userId: promoPlayerRank.userId,
+          previousTierId: promoPlayerRank.announcedTierId,
+          tierId: promoRankTier.id,
+          position: promoRankTier.position,
+          wagerThreshold: promoRankTier.wagerThreshold,
+          tierName: promoRankTier.name,
+          currency: promoRankTier.currency,
+          rakebackPercent: promoRankTier.rakebackPercent,
+          dailyBonus: promoRankTier.dailyBonus,
+          weeklyBonus: promoRankTier.weeklyBonus,
+          monthlyBonus: promoRankTier.monthlyBonus,
+        })
+        .from(promoPlayerRank)
+        .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+        .where(
+          and(
+            gt(promoPlayerRank.userId, after),
+            sql`${promoPlayerRank.announcedTierId} IS DISTINCT FROM ${promoPlayerRank.tierId}`,
+          ),
+        )
+        .orderBy(asc(promoPlayerRank.userId))
+        .limit(BATCH);
+
+      for (const { wagerThreshold, ...change } of due) {
+        try {
+          const silent =
+            moneyCompare(wagerThreshold, '0') === 0 || (await this.isBlocked(change.userId));
+          const [caughtUp] = await this.drizzle.db
+            .update(promoPlayerRank)
+            .set({ announcedTierId: change.tierId })
+            .where(
+              and(
+                eq(promoPlayerRank.userId, change.userId),
+                eq(promoPlayerRank.tierId, change.tierId),
+                change.previousTierId === null
+                  ? isNull(promoPlayerRank.announcedTierId)
+                  : eq(promoPlayerRank.announcedTierId, change.previousTierId),
+              ),
+            )
+            .returning({ userId: promoPlayerRank.userId });
+          if (caughtUp && !silent) {
+            announced.push(change);
+          }
+        } catch (err) {
+          // Left as it was, so the next run tries again.
+          this.logger.error({ err, userId: change.userId }, 'rank change announcement failed');
+        }
+      }
+
+      const last = due.at(-1);
+      if (!last || due.length < BATCH) {
+        return announced;
+      }
+      after = last.userId;
+    }
   }
 
   /**

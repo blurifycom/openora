@@ -80,6 +80,19 @@ const tierId = async (key: string) => {
   return tier?.id ?? '';
 };
 
+/** Fires what the announcement cron fires. */
+const announceRankChanges = () =>
+  app.container.get(JOB_QUEUE).enqueue(queue('promo-rank-announce'), {});
+
+type NotificationRow = { type: string; title: string; body: string; data: unknown };
+
+const rankNotifications = async (client: TestClient): Promise<NotificationRow[]> => {
+  const { items } = (await readJson(await client.get('/notifications'))) as {
+    items: NotificationRow[];
+  };
+  return items.filter((n) => n.type === 'promo.rank.changed');
+};
+
 const owed = (userId: string) =>
   drizzle()
     .select({ outcome: promoRankLevelUp.outcome, grantId: promoRankLevelUp.grantId })
@@ -194,5 +207,53 @@ describe('a player ranking up and the bonus it pays', () => {
 
     await vi.waitFor(async () => expect(await owed(userId)).toHaveLength(1));
     expect(await rankGrants(userId)).toHaveLength(1);
+  });
+});
+
+describe('a player ranking up and being told about it', () => {
+  it("lands in the player's own inbox with the rank reached and what it pays", async () => {
+    const { client, userId } = await newPlayer(randomUUID());
+
+    await wager(userId, SILVER_THRESHOLD);
+    await announceRankChanges();
+
+    await vi.waitFor(
+      async () =>
+        expect(await rankNotifications(client)).toEqual([
+          expect.objectContaining({
+            title: 'You reached Silver',
+            body: 'Congratulations on reaching Silver. Your rank now pays 3% rakeback and a bonus of 5 USDT daily, 50 USDT monthly.',
+            data: { tierId: await tierId('silver') },
+          }),
+        ]),
+      { timeout: 10_000 },
+    );
+  });
+
+  it('tells the player once, however many times the job runs', async () => {
+    const { client, userId } = await newPlayer(randomUUID());
+    await wager(userId, SILVER_THRESHOLD);
+
+    await announceRankChanges();
+    await vi.waitFor(async () => expect(await rankNotifications(client)).toHaveLength(1), {
+      timeout: 10_000,
+    });
+    await announceRankChanges();
+
+    // Nothing is left to announce, so a second run adds nothing - checked after it has drained.
+    await vi.waitFor(async () => expect(await rankNotifications(client)).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await rankNotifications(client)).toHaveLength(1);
+  });
+
+  // The player's first bet puts them on the starting rank, which crosses nothing.
+  it('says nothing about the rank every player starts on', async () => {
+    const { client, userId } = await newPlayer(randomUUID());
+    await wager(userId, '1');
+
+    await announceRankChanges();
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await rankNotifications(client)).toEqual([]);
   });
 });

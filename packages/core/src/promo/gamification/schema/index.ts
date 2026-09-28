@@ -76,6 +76,16 @@ export const promoPlayerRank = pgTable(
     currency: text().notNull(),
     lifetimeWagered: money().notNull().default('0'),
     tierId: uuid().references(() => promoRankTier.id),
+    /**
+     * The rank last announced to the player. A promotion happens inside the bet's transaction,
+     * where nothing may be emitted; the announcement job emits `promo.rank.changed` for every
+     * row where this trails `tierId`, then catches it up.
+     *
+     * No foreign key, unlike `tierId`: in the window before the job runs this names a rank the
+     * player no longer holds, and an admin removing that rank must get the ladder's own
+     * validation, not a constraint violation from a bookkeeping column.
+     */
+    announcedTierId: uuid(),
     /** Last counted wager. A periodic bonus goes only to a player active in the period it pays. */
     lastWageredAt: timestamp({ withTimezone: true }),
     /**
@@ -94,7 +104,14 @@ export const promoPlayerRank = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [check('promo_player_rank_lifetime_wagered_non_negative', sql`${t.lifetimeWagered} >= 0`)],
+  (t) => [
+    check('promo_player_rank_lifetime_wagered_non_negative', sql`${t.lifetimeWagered} >= 0`),
+    // Only the promotions not yet announced, which the announcement job reads every minute:
+    // nearly always empty, so the tick costs nothing however many players have ever bet.
+    index('promo_player_rank_unannounced_idx')
+      .on(t.userId)
+      .where(sql`${t.announcedTierId} IS DISTINCT FROM ${t.tierId}`),
+  ],
 );
 
 export type PromoPlayerRank = typeof promoPlayerRank.$inferSelect;

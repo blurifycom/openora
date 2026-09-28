@@ -66,6 +66,23 @@ Paying from a job rather than inside the bet is deliberate. A grant that fails -
 a currency the wallet cannot place - is retried on the next run instead of being lost, and it can
 never roll back the player's bet.
 
+## Telling the player
+
+A promotion is announced as `promo.rank.changed`, which the notifications module turns into an
+in-app message naming the rank and what it now pays. The level-up bonus announces itself
+separately, as any bonus grant does.
+
+The bet's transaction cannot emit it: a player told about a rank the transaction then rolled
+back was promoted by nothing. So the player's row keeps the rank last announced next to the rank
+held, and a job on a one-minute tick announces every row where the two differ, then catches the
+first up to the second. The announcement lags the bet by up to that minute.
+
+It is one message per jump, naming the rank landed on - a bet that crosses two thresholds is
+congratulated once, though it pays both level-up bonuses. The rank every player starts on crosses
+nothing and is never announced. A player under a responsible-gambling block is caught up without
+being told, for the same reason they are not paid: a congratulation waiting at the end of a block
+is a reason to come back.
+
 ## Periods, and what "played in the period" means
 
 The daily, weekly and monthly rewards pay for a period that has closed. The operator anchors when
@@ -122,10 +139,6 @@ The bonus module's own grant path does not check this. It is checked here, befor
   accrues or pays it. It is a share of the house edge - the stake times the game's margin times
   the rank's percentage - so it needs the game's RTP on the bet, and the bonus-funded part of the
   stake to exclude it. Both arrive from the wagering engine's side of the seam.
-- **The rank-change event.** A rank change is audited but not announced, so nothing downstream -
-  an in-app notification, an analytics fan-out - can react to it. The counter cannot emit from
-  inside the bet's transaction; the event has to be returned to the caller and emitted after
-  commit.
 - **Pruning old period counters.** One row per player per period per kind is written and never
   read again once its period is paid. A sweep will be needed long before it becomes a problem,
   but it is not there today.

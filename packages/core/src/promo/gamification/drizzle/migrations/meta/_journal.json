@@ -92,6 +92,20 @@
       "when": 1790343347170,
       "tag": "0012_gamification_rakeback_streaks_races_rank_challenge",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790580284088,
+      "tag": "0013_rank_announced_tier",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790580284482,
+      "tag": "0014_rank_announced_tier_backfill",
+      "breakpoints": true
     }
   ]
 }

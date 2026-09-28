@@ -13,6 +13,7 @@ export const NOTIFICATION_TYPES = [
   'promo.bonus.completed',
   'promo.race.won',
   'promo.rank-challenge.won',
+  'promo.rank.changed',
   'chat.rain.received',
   'chat.tip.received',
   'chat.gift.claimed',
