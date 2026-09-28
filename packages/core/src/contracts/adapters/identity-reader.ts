@@ -23,6 +23,26 @@ export type IdentityReader = {
    * a missing implementation reads as opted out, which is the default state anyway.
    */
   canReceiveLoginWithdrawalAlerts?(userId: User['id']): Promise<boolean>;
+  /**
+   * Resolves a player profile id to its auth user id, or null when no such player exists.
+   * Optional so an operator's own implementation of this port keeps compiling; a caller that
+   * needs it must fail closed when it is missing rather than treat that as "no such player".
+   */
+  getUserIdByPlayerId?(playerId: Player['id']): Promise<User['id'] | null>;
 };
 
 export const IDENTITY_READER = createToken<IdentityReader>('IDENTITY_READER');
+
+/**
+ * `getUserIdByPlayerId` for a caller that cannot work without it: throws when the bound reader
+ * does not implement it, so the caller fails closed instead of reading "no such player".
+ */
+export async function userIdOfPlayer(
+  reader: IdentityReader,
+  playerId: Player['id'],
+): Promise<User['id'] | null> {
+  if (!reader.getUserIdByPlayerId) {
+    throw new Error('the bound IDENTITY_READER cannot resolve a player id to a user id');
+  }
+  return reader.getUserIdByPlayerId(playerId);
+}

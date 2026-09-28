@@ -121,7 +121,8 @@ export default {
     ctx.provide(MY_ADAPTER, () => new MyAdapter()); // bind a vendor seam
     ctx.routers.add('myFeature', (c) => createMyRouter(c)); // oRPC router
     ctx.events.on('wallet.deposit.completed', handler);
-    ctx.mcp.tool({ name: 'my-tool', description: '...', handler });
+    ctx.mcp.tool(myTool, (c) => async (input, run) => output); // agent tool (defineMcpTool)
+    ctx.actions.register(myAction, (c) => ({ precondition, execute })); // agent action type
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
 ```

@@ -316,3 +316,83 @@ describe('AdminGuard.assertSuperAdmin (real PG)', () => {
     });
   });
 });
+
+describe('AdminGuard.assertUser (real PG)', () => {
+  it('returns the caller for an admin holding the grant, with no client metadata', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard();
+
+    await expect(guard.assertUser(userId, 'agent-proposal', 'approve')).resolves.toEqual({
+      userId,
+      role: 'admin',
+      ip: null,
+      userAgent: null,
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('denies a user without the grant and emits the same denial event as assert', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard({ grants: [{ resource: 'player', action: 'view' }] });
+
+    await expect(guard.assertUser(userId, 'agent-proposal', 'approve')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith('identity.user.unauthorized_access', {
+      userId,
+      playerId: null,
+      resource: 'agent-proposal',
+      action: 'approve',
+      ip: null,
+      userAgent: null,
+      role: 'admin',
+    });
+  });
+
+  it('denies an id with no user row', async () => {
+    const userId = randomUUID();
+    const { guard, events } = makeGuard();
+
+    await expect(guard.assertUser(userId, 'agent', 'run')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId, resource: 'agent', action: 'run', role: undefined }),
+    );
+  });
+
+  it('enforces 2FA enrolment but runs no session-integrity check, having no session', async () => {
+    const userId = await seedUser('admin');
+    const securityPolicy = mock<AdminSecurityPolicy>({
+      assertEnrolled: vi.fn(async () => undefined),
+      assertSessionIntact: vi.fn(async () => undefined),
+    });
+    const { guard } = makeGuard({ securityPolicy });
+
+    await guard.assertUser(userId, 'agent-proposal', 'view');
+
+    expect(securityPolicy.assertEnrolled).toHaveBeenCalledWith({
+      userId,
+      sessionId: null,
+      ip: null,
+      userAgent: null,
+    });
+    expect(securityPolicy.assertSessionIntact).not.toHaveBeenCalled();
+  });
+
+  it('propagates a refused enrolment check', async () => {
+    const userId = await seedUser('admin');
+    const securityPolicy = mock<AdminSecurityPolicy>({
+      assertEnrolled: vi.fn(async () => {
+        throw new Error('two-factor enrolment required');
+      }),
+      assertSessionIntact: vi.fn(async () => undefined),
+    });
+    const { guard } = makeGuard({ securityPolicy });
+
+    await expect(guard.assertUser(userId, 'agent-proposal', 'view')).rejects.toThrow(
+      /two-factor enrolment required/,
+    );
+  });
+});

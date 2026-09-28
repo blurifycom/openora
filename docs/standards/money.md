@@ -7,6 +7,7 @@ Read this before changing a balance, ledger, payment, wager settlement, or money
 - Debit, every corresponding credit, the business record, and its required audit entry commit or roll back together. Do not debit a remainder that is not credited somewhere.
 - Treat external payment calls as non-transactional. Persist a recoverable state first, make every settlement transition idempotent, and compensate a failed held withdrawal exactly once.
 - Auto-approval and any missing risk/KYC signal fail closed to manual review. A system decision records its actor and rationale before contacting the payment rail.
+- A withdrawal held for manual review moves on only by an admin's approval or rejection. Auto-approval takes only a withdrawal nobody has held, and holding one moves no money: its funds were taken when it was requested.
 - Use the wallet command port for cross-domain transfers and pass the caller transaction. Never reach into wallet tables or rely on an event for a transfer that must be atomic.
 - A runtime-editable auto-approval config (a DB-backed threshold, cap, or exclusion set an admin can change without redeploy) must fail closed to manual review if the config row is unexpectedly missing - never silently default or create it outside its explicit admin write path.
 - A per-entity override narrows only the specific gate it targets. It must never implicitly bypass an independent gate (e.g. a risk or exclusion check) that the override was not designed to touch.

@@ -47,6 +47,9 @@ export const adminStatement = {
   'swap-config': ['view', 'update'] as const,
   'chat-command': ['view', 'update'] as const,
   'chat-moderation': ['view', 'moderate'] as const,
+  agent: ['view', 'create', 'update', 'publish', 'run'] as const,
+  'agent-proposal': ['view', 'approve', 'reject'] as const,
+  'agent-config': ['view', 'update'] as const,
 } as const;
 
 export type AdminResource = keyof typeof adminStatement;

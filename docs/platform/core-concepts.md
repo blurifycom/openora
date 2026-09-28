@@ -74,7 +74,8 @@ export function createWalletRouter(wallet: WalletService) {
 ## Plugins
 
 Typed plugin objects are the only way new functionality enters the system. In `register(ctx)` you bind
-adapters, add routers, subscribe to events, and register MCP tools.
+adapters, add routers, subscribe to events, and register agent tools and action types - the reads
+a model may make and the changes it may only propose, served only through the MCP kernel.
 
 ```ts
 import { EVENT_BUS, DRIZZLE } from '@openora/core/server';

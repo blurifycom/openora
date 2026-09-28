@@ -8,6 +8,7 @@ import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
+import { migrate as migratePlayerNote } from '@openora/core/pam/migrate/player-note';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { migrate as migrateIam } from '@openora/core/iam/migrate';
 import { migrate as migrateCms } from '@openora/core/cms/migrate';
@@ -31,6 +32,7 @@ async function applyAllMigrations(url: string): Promise<void> {
   await migrateIdentity(url);
   await migrateProfile(url);
   await migrateTag(url);
+  await migratePlayerNote(url);
   await migrateAudit(url);
   await migrateIam(url);
   await migrateCms(url);

@@ -107,7 +107,9 @@ export async function loadPlugins<C extends TokenCatalog>(
   const registry = new ModuleRegistryImpl<C>(container);
 
   for (const plugin of ordered) {
+    registry.setOwner(plugin.id);
     await plugin.register(registry);
+    registry.setOwner(null);
   }
 
   assertRequiredPorts(ordered, container);

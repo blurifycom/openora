@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { TagKey } from '@openora/core/contracts';
+import type { PlayEligibilityPort, TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus } from '../../../testing/mock.js';
+import { makeEventBus, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { playerTag, tag } from '../schema/index.js';
 import {
@@ -21,7 +21,7 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
-  return { svc: new TagService(db.drizzle, events), events };
+  return { svc: new TagService(db.drizzle, events, mock<PlayEligibilityPort>({})), events };
 }
 
 async function seedTag(key: TagKey, isSticky = false) {

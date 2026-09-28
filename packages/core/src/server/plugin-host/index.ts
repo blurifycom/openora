@@ -4,6 +4,10 @@ export type {
   PluginContext,
   RouterFactory,
   McpToolDefinition,
+  McpToolFactory,
+  ActionTypeFactory,
+  RegisteredMcpTool,
+  RegisteredActionType,
   EventHandler,
   TypedContainer,
 } from './define-plugin.js';

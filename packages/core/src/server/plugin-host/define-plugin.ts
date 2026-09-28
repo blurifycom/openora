@@ -1,5 +1,10 @@
+import type * as z from 'zod';
 import type {
+  ActionTypeContract,
+  ActionTypeImplementation,
   EventEnvelope,
+  McpToolContract,
+  McpToolHandler,
   SealedToken,
   Token,
   TokenCatalog,
@@ -31,6 +36,30 @@ export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => un
 
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
+// Tool and action-type factories run once, when MCP_KERNEL is built after every provider is
+// bound - never at registration.
+export type McpToolFactory<
+  C extends TokenCatalog,
+  I extends z.ZodObject = z.ZodObject,
+  O extends z.ZodObject = z.ZodObject,
+> = (c: TypedContainer<C>) => McpToolHandler<I, O>;
+
+export type ActionTypeFactory<C extends TokenCatalog, P extends z.ZodObject = z.ZodObject> = (
+  c: TypedContainer<C>,
+) => ActionTypeImplementation<P>;
+
+export type RegisteredMcpTool<C extends TokenCatalog> = {
+  contract: McpToolContract;
+  owner: string;
+  factory: McpToolFactory<C>;
+};
+
+export type RegisteredActionType<C extends TokenCatalog> = {
+  contract: ActionTypeContract;
+  owner: string;
+  factory: ActionTypeFactory<C>;
+};
+
 export type ModuleRegistry<C extends TokenCatalog> = {
   // Last registration wins - an overlay loaded after a module can rebind its adapter token.
   // T is inferred directly from the token argument (never a keyof reverse lookup) -
@@ -61,8 +90,21 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     getAll(): WorkerRegistration<unknown>[];
   };
   mcp: {
+    /** Legacy untyped form: listed by `getAll()` only, never served by MCP_KERNEL. */
     tool(definition: McpToolDefinition): void;
+    tool<I extends z.ZodObject, O extends z.ZodObject>(
+      contract: McpToolContract<I, O>,
+      factory: McpToolFactory<C, I, O>,
+    ): void;
     getAll(): McpToolDefinition[];
+    getTools(): readonly RegisteredMcpTool<C>[];
+  };
+  actions: {
+    register<P extends z.ZodObject>(
+      contract: ActionTypeContract<P>,
+      factory: ActionTypeFactory<C, P>,
+    ): void;
+    getAll(): readonly RegisteredActionType<C>[];
   };
 };
 

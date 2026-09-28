@@ -15,6 +15,7 @@ import z from 'zod';
 import { HighRiskAssignMetadataSchema } from './player-tag-assign-metadata.js';
 
 export * from './player-tag-assign-metadata.js';
+export * from './agent-tools.js';
 
 export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 

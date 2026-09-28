@@ -8,11 +8,13 @@ import {
   SESSION_COMMANDS,
   USER_COMMANDS,
   PLAYER_ACTIVITY_TRACKER,
+  McpToolError,
 } from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
-import { PlayerService } from './service/player.service.js';
+import { PlayerService, PlayerNotFoundError } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { createPlayerRouter } from './router/index.js';
+import { playerSummaryTool } from './contract/agent-tools.js';
 
 function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
   return new PlayerService(
@@ -35,5 +37,16 @@ export default {
     ctx.routers.add('player', (c) =>
       createPlayerRouter(makePlayerService(c), c.get(ADMIN_GUARD), c.get(AUDIT_WRITER)),
     );
+    ctx.mcp.tool(playerSummaryTool, (c) => {
+      const players = makePlayerService(c);
+      return async ({ playerId }) => {
+        try {
+          const { id, ...detail } = await players.get(playerId);
+          return { playerId: id, ...detail };
+        } catch (err) {
+          throw err instanceof PlayerNotFoundError ? new McpToolError('player_not_found') : err;
+        }
+      };
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

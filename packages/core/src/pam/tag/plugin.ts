@@ -13,13 +13,71 @@ import {
   IDENTITY_READER,
   ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
+  PLAY_ELIGIBILITY,
+  McpToolError,
   queue,
+  runActorAdminId,
+  type ActionExecutionOutcome,
+  type Player,
+  type RunActor,
+  type TagKey,
 } from '@openora/core/contracts';
 import z from 'zod';
-import { TagService } from './service/tag.service.js';
+import {
+  TagService,
+  TagNotFoundError,
+  PlayerNotFoundError,
+  PlayerNotEligibleForTagError,
+  type TagAssignmentRefusal,
+} from './service/tag.service.js';
 import { TagRuleService } from './service/tag-rule.service.js';
 import { TagEvaluationService } from './service/tag-evaluation.service.js';
 import { createTagRouter } from './router/index.js';
+import { addTagAction, sendToManualReviewAction } from './contract/agent-tools.js';
+
+type ProposedAssignment = {
+  playerId: Player['id'];
+  tagKey: TagKey;
+  reason: string;
+  actor: RunActor;
+};
+
+function preconditionOutcome(refusal: string | null) {
+  return refusal === null ? { ok: true as const } : { ok: false as const, code: refusal };
+}
+
+// send_to_manual_review declares no tag_not_found: a catalog without withdrawal_review is an
+// operator misconfiguration, which the kernel reports as internal_error.
+function manualReviewRefusal(refusal: TagAssignmentRefusal | null) {
+  return refusal === 'tag_already_active' ? 'already_in_manual_review' : refusal;
+}
+
+async function assignForProposal(
+  tags: TagService,
+  { playerId, tagKey, reason, actor }: ProposedAssignment,
+): Promise<ActionExecutionOutcome> {
+  try {
+    const outcome = await tags.assignPlayerTagForProposal({
+      playerId,
+      tagKey,
+      assignReason: reason,
+      assignActor: 'manual',
+      assignActorUserId: runActorAdminId(actor),
+    });
+    return { outcome: outcome.status === 'created' ? 'applied' : 'already_applied' };
+  } catch (err) {
+    if (err instanceof PlayerNotFoundError) {
+      throw new McpToolError('player_not_found');
+    }
+    if (err instanceof TagNotFoundError) {
+      throw new McpToolError('tag_not_found');
+    }
+    if (err instanceof PlayerNotEligibleForTagError) {
+      throw new McpToolError('player_not_eligible');
+    }
+    throw err;
+  }
+}
 
 export default {
   id: 'tag',
@@ -28,7 +86,7 @@ export default {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
     const tagService = (c: TypedContainer<CoreTokenCatalog>) =>
-      (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS)));
+      (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PLAY_ELIGIBILITY)));
 
     // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
     let ruleSvc: TagRuleService | null = null;
@@ -100,6 +158,28 @@ export default {
         );
 
       return createTagRouter(tagSvc, ruleSvcForRouter, c.get(ADMIN_GUARD));
+    });
+
+    ctx.actions.register(addTagAction, (c) => {
+      const tags = tagService(c);
+      return {
+        precondition: async ({ playerId, tagKey }) =>
+          preconditionOutcome(await tags.assignmentRefusal(playerId, tagKey)),
+        execute: ({ playerId, tagKey, reason }, _proposalId, actor) =>
+          assignForProposal(tags, { playerId, tagKey, reason, actor }),
+      };
+    });
+
+    ctx.actions.register(sendToManualReviewAction, (c) => {
+      const tags = tagService(c);
+      return {
+        precondition: async ({ playerId }) =>
+          preconditionOutcome(
+            manualReviewRefusal(await tags.assignmentRefusal(playerId, 'withdrawal_review')),
+          ),
+        execute: ({ playerId, reason }, _proposalId, actor) =>
+          assignForProposal(tags, { playerId, tagKey: 'withdrawal_review', reason, actor }),
+      };
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

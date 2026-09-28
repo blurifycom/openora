@@ -40,8 +40,11 @@ ctx.provide(TOKEN, factory); // bind/override a typed DI token (last registratio
 ctx.routers.add(namespace, (c) => router); // mount oRPC routes
 ctx.events.on(topic, handler); // subscribe to the typed EventBus
 ctx.jobs.worker({ queue, schema, handler, onDeadLetter }); // process JOB_QUEUE jobs (idempotent - at-least-once)
-ctx.mcp.tool(definition); // expose a new MCP tool
+ctx.mcp.tool(defineMcpTool({...}), (c) => async (input, run) => output); // agent tool: a read a model makes during a run
+ctx.actions.register(defineActionType({...}), (c) => ({ precondition, execute })); // action type: a change a model may only propose
 ```
+
+Agent tools and action types are served only through the `MCP_KERNEL` token, which checks the IAM grant of the admin behind the run, validates input, returns only the allow-listed output keys and declared error codes, and audits every tool call and action execution. A shape it cannot serve (eg a tool input that is not a top-level `z.object`, or an unbounded string) fails boot with the fix. `execute` must perform nothing on a replay while its effect still holds, and answer `already_applied`. The one-argument `ctx.mcp.tool(definition)` still registers but the kernel does not serve it. Contract types: `packages/core/src/contracts/adapters/mcp.ts`; why: ADR-0041.
 
 No decorators, no controllers - `{ id, dependsOn, register } satisfies Plugin<CoreTokenCatalog>` wired by the functional Container (ADR-0009). DB tables: a `pgTable` in the plugin's own `schema/index.ts`, then `pnpm regen`.
 

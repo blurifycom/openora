@@ -3,6 +3,8 @@
 **Date**: 2026-05-18
 **Status**: Accepted
 
+> **Update (2026-09-25)**: `ctx.mcp.tool` now takes a contract declared with `defineMcpTool` and a factory, and a second registry, `ctx.actions.register`, takes agent action types declared with `defineActionType`. Both are served only through the `MCP_KERNEL` token, which `createApp` binds after every plugin has registered. The one-argument `ctx.mcp.tool(definition)` form still registers, but the kernel does not serve it. See [ADR-0041](./0041-mcp-kernel-two-registries-behind-one-enforcing-wrapper.md).
+
 ## Context
 
 The platform's primary value proposition is extensibility: operators clone the repo and add their own games, payment providers, custom pages, and business rules without forking core. We need a mechanism that:

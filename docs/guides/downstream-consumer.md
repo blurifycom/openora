@@ -5,7 +5,7 @@ forking core. The root `AGENTS.md` links here; this is the detail an agent loads
 actually wiring a consumer.
 
 See the generated `docs/catalog.json` (`pnpm gen:catalog`, also served by `@openora/mcp`) for the machine-readable surface (routes, schemas, adapter
-tokens, events, config schema) an agent reads instead of grepping `node_modules`.
+tokens, events, config schema, agent tools and action types) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
 

@@ -107,6 +107,7 @@ This server reads the platform CATALOG (not OSS source) - it tells you what exis
 - `list-adapters` - vendor swap seams (interface + token + status)
 - `list-routes [module]` - oRPC route namespaces
 - `list-events` - cross-module domain events you can subscribe to
-- `describe-module <name>` - one module's group, tables, routes
+- `list-agent-tools [module]` - agent tools and action types, with their IAM resource and schema version
+- `describe-module <name>` - one module's group, tables, routes, agent tools and action types
 - `schema-get <name>` - locate a Zod contract schema's file
 - `get-config-schema` - the igaming-config fields a consumer can set

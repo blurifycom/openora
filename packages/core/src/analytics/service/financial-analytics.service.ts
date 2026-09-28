@@ -2,11 +2,13 @@ import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { CacheAdapter, Granularity } from '@openora/core/contracts';
 import { DrizzleService } from '@openora/core/server';
 import { walletTransaction } from '@openora/core/wallet/schema';
-import type {
-  FinancialGgrQuery,
-  FinancialSummary,
-  FinancialSummaryQuery,
-  GgrSeries,
+import {
+  resolveGgrSummaryRange,
+  type FinancialGgrQuery,
+  type FinancialSummary,
+  type FinancialSummaryQuery,
+  type GgrSeries,
+  type GgrSummaryInput,
 } from '../contract/index.js';
 
 const ANALYTICS_CACHE_TTL_MS = 60_000;
@@ -58,6 +60,17 @@ export class FinancialAnalyticsService {
 
   async ggr(query: FinancialGgrQuery): Promise<GgrSeries[]> {
     return this.cached('financial.ggr', query, () => this.computeGgr(query));
+  }
+
+  async ggrSummary({ currency, granularity, ...dates }: GgrSummaryInput, now = new Date()) {
+    const range = resolveGgrSummaryRange(dates, now);
+    const series = await this.ggr({
+      dateFrom: `${range.dateFrom}T00:00:00.000Z`,
+      dateTo: `${range.dateTo}T23:59:59.999Z`,
+      currency: currency?.toUpperCase(),
+      granularity,
+    });
+    return { ...range, granularity, series };
   }
 
   private async cached<T>(scope: string, query: object, compute: () => Promise<T>): Promise<T> {

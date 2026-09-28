@@ -46,6 +46,7 @@ import {
   type Uuid,
   type PaginationOptions,
   type WalletProviderRef,
+  type ActionExecutionContext,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -88,6 +89,7 @@ import type {
   WithdrawalAddress,
   CreateWithdrawalAddressInput,
 } from '../contract/index.js';
+import { OPEN_WITHDRAWALS_LIMIT } from '../contract/index.js';
 
 const logger = createLogger('wallet');
 
@@ -162,7 +164,7 @@ export const WalletAssetUnknownProviderError = makeConflictError(
 
 export const WalletAssetHasInFlightTransactionsError = makeConflictError(
   'WalletAssetHasInFlightTransactionsError',
-  'A pending or processing transaction exists for this currency and network',
+  'A pending, on-hold or processing transaction exists for this currency and network',
   { code: 'WALLET_ASSET_TRANSACTION_IN_FLIGHT' },
 );
 
@@ -521,13 +523,39 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
 
-// A withdrawal still waiting on a decision: the queue summary counts and totals only these.
+// A withdrawal still waiting on a decision: the queue summary counts and totals only these, and
+// an admin may approve or reject only these.
 const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
+
+const IN_FLIGHT_TRANSACTION_STATUSES = ['pending', 'on_hold', 'processing'] as const;
+
+const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win'] as const;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-// Also the marker the cumulative-cap query reads back to identify auto-approved payouts - keep write and read in lockstep.
+// Also, with no reviewer, the marker the cumulative-cap query reads back to identify
+// auto-approved payouts - keep write and read in lockstep. A reviewer's free-text reason can
+// hold the same words, so the reviewer column is part of the marker.
 const AUTO_APPROVED_REASON = 'auto-approved';
+
+function assertWithdrawalIn(
+  row: WalletTransaction,
+  statuses: readonly WalletTransaction['status'][],
+) {
+  if (row.type !== 'withdrawal' || !statuses.includes(row.status)) {
+    throw new WithdrawalNotPendingError();
+  }
+}
+
+function playerWithdrawal(userId: User['id'], withdrawalId: WalletTransaction['id']) {
+  return and(
+    eq(walletTransaction.id, withdrawalId),
+    eq(walletTransaction.type, 'withdrawal'),
+    eq(wallet.userId, userId),
+  );
+}
 
 type AutoApprovalDecision = {
   threshold: string;
@@ -819,6 +847,69 @@ export class WalletService {
       userId,
       this.platformConfig?.wallet?.defaultCurrency,
     );
+  }
+
+  /** A player without a wallet reads as empty rather than as an error. */
+  async getActivity({ userId, windowDays }: { userId: User['id']; windowDays: number }) {
+    const since = new Date(Date.now() - windowDays * DAY_MS);
+    const [{ activeCurrency, balances }, totals, openWithdrawals] = await Promise.all([
+      this.getBalances(userId),
+      this.completedTotalsSince(userId, since),
+      this.openWithdrawals(userId),
+    ]);
+    return { windowDays, activeCurrency, balances, totals, openWithdrawals };
+  }
+
+  private completedTotalsSince(userId: User['id'], since: Date) {
+    const sumOf = (type: (typeof ACTIVITY_TRANSACTION_TYPES)[number]) =>
+      sql<string>`coalesce(sum(${walletTransaction.amount}) filter (where ${walletTransaction.type} = ${type}), 0)`;
+    const countOf = (type: (typeof ACTIVITY_TRANSACTION_TYPES)[number]) =>
+      sql<number>`count(*) filter (where ${walletTransaction.type} = ${type})`.mapWith(Number);
+    return this.drizzle.db
+      .select({
+        currency: walletTransaction.currency,
+        deposits: sumOf('deposit'),
+        depositCount: countOf('deposit'),
+        withdrawals: sumOf('withdrawal'),
+        withdrawalCount: countOf('withdrawal'),
+        bets: sumOf('bet'),
+        wins: sumOf('win'),
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.status, 'completed'),
+          inArray(walletTransaction.type, [...ACTIVITY_TRANSACTION_TYPES]),
+          gte(walletTransaction.createdAt, since),
+        ),
+      )
+      .groupBy(walletTransaction.currency)
+      .orderBy(walletTransaction.currency);
+  }
+
+  private async openWithdrawals(userId: User['id']) {
+    const rows = await this.drizzle.db
+      .select({
+        withdrawalId: walletTransaction.id,
+        amount: walletTransaction.amount,
+        currency: walletTransaction.currency,
+        status: walletTransaction.status,
+        createdAt: walletTransaction.createdAt,
+      })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.type, 'withdrawal'),
+          inArray(walletTransaction.status, [...QUEUED_WITHDRAWAL_STATUSES]),
+        ),
+      )
+      .orderBy(desc(walletTransaction.createdAt), desc(walletTransaction.id))
+      .limit(OPEN_WITHDRAWALS_LIMIT);
+    return rows.map(({ createdAt, ...row }) => ({ ...row, requestedAt: createdAt.toISOString() }));
   }
 
   // TODO: validate `currency` against a canonical supported-currency list once one
@@ -1659,23 +1750,27 @@ export class WalletService {
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     const tx = await this.drizzle.db.transaction((txn) =>
-      this.flipToProcessing({ txn, withdrawalId, adminId }),
+      this.flipToProcessing({ txn, withdrawalId, adminId, from: QUEUED_WITHDRAWAL_STATUSES }),
     );
     return this.settleApproved(tx, adminId, meta);
   }
 
-  // Phase one: the pending -> processing flip under a FOR UPDATE lock. Extracted so the auto path can run it
+  // Phase one: the flip to processing under a FOR UPDATE lock. Extracted so the auto path can run it
   // inside its advisory-locked cap-check transaction, committing the marker atomically. Never call the PSP here.
+  // `from` has no default: the auto path must never inherit the admin path's on_hold and pay out a
+  // withdrawal someone held for review.
   private async flipToProcessing({
     txn,
     withdrawalId,
     adminId,
+    from,
     reviewReason,
     autoApprovalPivotAmount,
   }: {
     txn: DrizzleTx;
     withdrawalId: WalletTransaction['id'];
     adminId: User['id'] | null;
+    from: readonly WalletTransaction['status'][];
     reviewReason?: string;
     autoApprovalPivotAmount?: string;
   }): Promise<WalletTransaction> {
@@ -1687,10 +1782,8 @@ export class WalletService {
         .for('update'),
       new WithdrawalNotFoundError(withdrawalId),
     );
-    // Only a pending withdrawal can be approved, so a concurrent or repeated approve can't double-send to the PSP.
-    if (current.status !== 'pending' || current.type !== 'withdrawal') {
-      throw new WithdrawalNotPendingError();
-    }
+    // Only a withdrawal still awaiting a decision can be approved, so a concurrent or repeated approve can't double-send to the PSP.
+    assertWithdrawalIn(current, from);
     return findOneOrThrow(
       await txn
         .update(walletTransaction)
@@ -1968,6 +2061,7 @@ export class WalletService {
             txn,
             withdrawalId: args.transactionId,
             adminId: null,
+            from: ['pending'],
             reviewReason: AUTO_APPROVED_REASON,
             autoApprovalPivotAmount: gates.pivotAmount,
           });
@@ -2361,7 +2455,7 @@ export class WalletService {
       }
       // Renaming a pair is a delete plus a create (the (currency, network) key AND
       // providerName are immutable), so this delete is the only way providerName ever
-      // effectively changes. Block it while a pending/processing transaction exists for
+      // effectively changes. Block it while a pending/on-hold/processing transaction exists for
       // this exact (currency, network) pair - otherwise the vendor reference an in-flight
       // payout is settling through gets rewritten out from under it.
       const [inFlight] = await txn
@@ -2371,7 +2465,7 @@ export class WalletService {
           and(
             eq(walletTransaction.currency, currency),
             eq(walletTransaction.network, network),
-            inArray(walletTransaction.status, ['pending', 'processing']),
+            inArray(walletTransaction.status, [...IN_FLIGHT_TRANSACTION_STATUSES]),
           ),
         );
       if ((inFlight?.n ?? 0) > 0) {
@@ -2493,6 +2587,7 @@ export class WalletService {
           eq(walletTransaction.walletId, walletId),
           eq(walletTransaction.type, 'withdrawal'),
           eq(walletTransaction.reviewReason, AUTO_APPROVED_REASON),
+          isNull(walletTransaction.reviewedBy),
           gte(walletTransaction.createdAt, since),
         ),
       );
@@ -2576,9 +2671,7 @@ export class WalletService {
           .for('update'),
         new WithdrawalNotFoundError(withdrawalId),
       );
-      if (current.status !== 'pending' || current.type !== 'withdrawal') {
-        throw new WithdrawalNotPendingError();
-      }
+      assertWithdrawalIn(current, QUEUED_WITHDRAWAL_STATUSES);
       const updated = findOneOrThrow(
         await txn
           .update(walletTransaction)
@@ -2606,6 +2699,79 @@ export class WalletService {
     });
 
     return { transactionId: tx.id, status: 'rejected' };
+  }
+
+  /** The status of the player's own withdrawal, or null when no withdrawal of theirs has that id. */
+  async getPlayerWithdrawalStatus({
+    userId,
+    withdrawalId,
+  }: {
+    userId: User['id'];
+    withdrawalId: WalletTransaction['id'];
+  }) {
+    const [row] = await this.drizzle.db
+      .select({ status: walletTransaction.status })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(playerWithdrawal(userId, withdrawalId));
+    return row?.status ?? null;
+  }
+
+  /**
+   * Holds the player's pending withdrawal for manual review, on an agent proposal an admin
+   * approved. No money moves: the funds were held when the withdrawal was requested, and an admin
+   * later approves or rejects it. A withdrawal already on hold is left as it is and reported as
+   * `changed: false`, so a replayed proposal holds it once.
+   */
+  async holdWithdrawal({
+    adminId,
+    userId,
+    withdrawalId,
+    reason,
+    proposalId,
+  }: {
+    adminId: User['id'];
+    userId: User['id'];
+    withdrawalId: WalletTransaction['id'];
+    reason: string;
+    proposalId: ActionExecutionContext['proposalId'];
+  }) {
+    return this.drizzle.db.transaction(async (txn) => {
+      const current = findOneOrThrow(
+        await txn
+          .select({ status: walletTransaction.status })
+          .from(walletTransaction)
+          .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+          .where(playerWithdrawal(userId, withdrawalId))
+          .for('update', { of: walletTransaction }),
+        new WithdrawalNotFoundError(withdrawalId),
+      );
+      if (current.status === 'on_hold') {
+        return { changed: false };
+      }
+      if (current.status !== 'pending') {
+        throw new WithdrawalNotPendingError();
+      }
+      await txn
+        .update(walletTransaction)
+        .set({
+          status: 'on_hold',
+          reviewedBy: adminId,
+          reviewedAt: new Date(),
+          reviewReason: reason,
+        })
+        .where(eq(walletTransaction.id, withdrawalId));
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.withdrawal.held',
+        resourceType: 'withdrawal',
+        resourceId: withdrawalId,
+        before: { status: 'pending' },
+        after: { status: 'on_hold', reason, proposalId },
+      });
+      return { changed: true };
+    });
   }
 
   async getTransactions({

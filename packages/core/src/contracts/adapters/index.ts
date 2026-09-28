@@ -101,6 +101,7 @@ export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
 
 export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
+export { userIdOfPlayer } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 
 export type {
@@ -385,3 +386,58 @@ export { SESSION_IDLE_POLICY, type SessionIdlePolicy } from './session-idle-poli
 
 export type { SocialCommands, FriendshipDissolvedPayload } from './social-commands.js';
 export { SOCIAL_COMMANDS } from './social-commands.js';
+
+export type {
+  McpToolClass,
+  AgentApprovalLevel,
+  AgentProposalStatus,
+  TriggerKind,
+  McpCommonErrorCode,
+  RunActor,
+  RunContext,
+  ActionExecutionContext,
+  McpIamRequirement,
+  McpToolContract,
+  McpToolHandler,
+  ActionTypeContract,
+  ActionPreconditionOutcome,
+  ActionPrecondition,
+  ActionExecutionOutcome,
+  ActionExecutor,
+  ActionTypeImplementation,
+  McpToolDescriptor,
+  ActionTypeDescriptor,
+  TriggerDescriptor,
+  McpInputIssue,
+  McpFailure,
+  McpToolResult,
+  ActionPreconditionResult,
+  ActionExecutionResult,
+  McpKernel,
+} from './mcp.js';
+export {
+  MCP_TOOL_CLASSES,
+  McpToolClassSchema,
+  AGENT_APPROVAL_LEVELS,
+  AgentApprovalLevelSchema,
+  AGENT_PROPOSAL_STATUSES,
+  AgentProposalStatusSchema,
+  TRIGGER_KINDS,
+  TriggerKindSchema,
+  MCP_COMMON_ERROR_CODES,
+  MCP_ERROR_CODE_PATTERN,
+  MCP_TOOL_ID_PATTERN,
+  MCP_ACTION_TYPE_ID_PATTERN,
+  McpToolError,
+  RunActorSchema,
+  runActorAdminId,
+  RunContextSchema,
+  ActionExecutionContextSchema,
+  defineMcpTool,
+  ActionPreconditionOutcomeSchema,
+  ACTION_EXECUTION_OUTCOMES,
+  ActionExecutionOutcomeSchema,
+  defineActionType,
+  triggerCatalog,
+  MCP_KERNEL,
+} from './mcp.js';

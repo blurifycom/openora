@@ -89,63 +89,29 @@ export class AdminGuard {
       });
     }
 
-    const result = await this.drizzle.db.execute(
-      sql`SELECT id, role FROM "user" WHERE id = ${userId} LIMIT 1`,
-    );
-    const userRecord = result.rows[0] as { id: string; role: string } | undefined;
-    if (!userRecord) {
-      if (resource !== undefined && action !== undefined) {
-        this.emitUnauthorized(userId, undefined, resource, action, ip, userAgent);
-      } else {
-        this.emitUnauthorized(userId, undefined, 'admin', 'access', ip, userAgent);
-      }
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Admin access required',
-        data: { reason: AuthGuardReasonSchema.enum.admin_required },
-      });
-    }
+    return this.enforce({
+      userId,
+      clientMeta: { ip, userAgent },
+      permission: resource !== undefined && action !== undefined ? { resource, action } : undefined,
+      session: { sessionId: resolvedSession?.sessionId ?? null },
+    });
+  }
 
-    const userRole = roles[userRecord.role as keyof typeof roles];
-    if (!userRole) {
-      if (resource !== undefined && action !== undefined) {
-        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-      } else {
-        this.emitUnauthorized(userId, userRecord.role, 'admin', 'access', ip, userAgent);
-      }
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Admin access required',
-        data: { reason: AuthGuardReasonSchema.enum.admin_required },
-      });
-    }
-
-    if (resource !== undefined && action !== undefined) {
-      const grants = await this.resolveGrants(userId);
-      const allowed = this.checkGrant(grants, userRole, resource, action);
-      if (!allowed) {
-        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-        throw new ORPCError('FORBIDDEN', {
-          message: `Missing permission: ${String(resource)}:${String(action)}`,
-          data: {
-            reason: AuthGuardReasonSchema.enum.permission_denied,
-            resource: String(resource),
-            action: String(action),
-          },
-        });
-      }
-    }
-
-    if (this.securityPolicy) {
-      const securityContext = {
-        userId,
-        sessionId: resolvedSession?.sessionId ?? null,
-        ip,
-        userAgent,
-      };
-      await this.securityPolicy.assertEnrolled(securityContext);
-      await this.securityPolicy.assertSessionIntact(securityContext);
-    }
-
-    return { userId, role: userRecord.role, ip, userAgent };
+  /**
+   * `assert` for a caller that is not an HTTP request (an agent run, an MCP token): the same
+   * user, role, grant and 2FA-enrolment checks and the same denial event, without a session -
+   * so no session-integrity check, and `ip`/`userAgent` are null.
+   */
+  async assertUser<R extends ResourceName>(
+    userId: string,
+    resource: R,
+    action: ActionOf<R>,
+  ): Promise<AdminCaller> {
+    return this.enforce({
+      userId,
+      clientMeta: { ip: null, userAgent: null },
+      permission: { resource, action },
+    });
   }
 
   async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
@@ -168,6 +134,69 @@ export class AdminGuard {
       });
     }
     return caller;
+  }
+
+  private async enforce<R extends ResourceName>({
+    userId,
+    clientMeta: { ip, userAgent },
+    permission,
+    session,
+  }: {
+    userId: string;
+    clientMeta: ClientMeta;
+    permission: { resource: R; action: ActionOf<R> } | undefined;
+    session?: { sessionId: string | null };
+  }): Promise<AdminCaller> {
+    const deniedResource = permission?.resource ?? 'admin';
+    const deniedAction = permission?.action ?? 'access';
+
+    const result = await this.drizzle.db.execute(
+      sql`SELECT id, role FROM "user" WHERE id = ${userId} LIMIT 1`,
+    );
+    const userRecord = result.rows[0] as { id: string; role: string } | undefined;
+    if (!userRecord) {
+      this.emitUnauthorized(userId, undefined, deniedResource, deniedAction, ip, userAgent);
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Admin access required',
+        data: { reason: AuthGuardReasonSchema.enum.admin_required },
+      });
+    }
+
+    const userRole = roles[userRecord.role as keyof typeof roles];
+    if (!userRole) {
+      this.emitUnauthorized(userId, userRecord.role, deniedResource, deniedAction, ip, userAgent);
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Admin access required',
+        data: { reason: AuthGuardReasonSchema.enum.admin_required },
+      });
+    }
+
+    if (permission) {
+      const { resource, action } = permission;
+      const grants = await this.resolveGrants(userId);
+      const allowed = this.checkGrant(grants, userRole, resource, action);
+      if (!allowed) {
+        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
+        throw new ORPCError('FORBIDDEN', {
+          message: `Missing permission: ${String(resource)}:${String(action)}`,
+          data: {
+            reason: AuthGuardReasonSchema.enum.permission_denied,
+            resource: String(resource),
+            action: String(action),
+          },
+        });
+      }
+    }
+
+    if (this.securityPolicy) {
+      const securityContext = { userId, sessionId: session?.sessionId ?? null, ip, userAgent };
+      await this.securityPolicy.assertEnrolled(securityContext);
+      if (session) {
+        await this.securityPolicy.assertSessionIntact(securityContext);
+      }
+    }
+
+    return { userId, role: userRecord.role, ip, userAgent };
   }
 
   private resolveGrants(userId: string): Promise<AdminGrant[] | null> {

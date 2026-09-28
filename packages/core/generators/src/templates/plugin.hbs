@@ -9,7 +9,8 @@ import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 //   ctx.events.on(topic, (payload) => ...)       - subscribe to a domain event
 //   ctx.jobs.worker({ queue, schema, handler })  - register a background-job worker
 //   ctx.slots.fill(slotName, component)          - contribute a UI slot
-//   ctx.mcp.tool({ name, description, inputSchema, handler }) - expose an MCP tool
+//   ctx.mcp.tool(defineMcpTool({...}), (c) => handler)  - expose an agent tool (served only via MCP_KERNEL)
+//   ctx.actions.register(defineActionType({...}), (c) => ({ precondition, execute })) - an agent action type
 export default {
   id: '{{kebabCase name}}',
   // dependsOn: ['wallet'], // load after the plugin that owns a token you rebind

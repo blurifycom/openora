@@ -4,6 +4,7 @@ import {
   createDomainError,
   createLogger,
   findOneOrThrow,
+  makeConflictError,
   makeNotFoundError,
   mapConcurrent,
   reportError,
@@ -68,6 +69,21 @@ const BULK_APPROVE_CONCURRENCY = 10;
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
 export const KycVerificationNotFoundError = makeNotFoundError('KycVerification');
+
+export const KycResubmissionAlreadyRequestedError = makeConflictError(
+  'KycResubmissionAlreadyRequestedError',
+  'A resubmission is already requested for this tier',
+);
+
+// A vendor session the player opened (not_started) is as live as one awaiting a decision
+// (pending): submit() treats both as the session to continue, and a newer manual row would
+// shadow it.
+const ENHANCED_KYC_IN_PROGRESS: ReadonlySet<KycStatus> = new Set(['pending', 'not_started']);
+
+export const KycVerificationInProgressError = makeConflictError(
+  'KycVerificationInProgressError',
+  'A verification of this tier is in progress',
+);
 
 // Fail-closed: a referenceId is supposed to belong to one player. If rows sharing one
 // ever don't, that's a vendor reference collision - refuse to touch any of them rather
@@ -152,6 +168,19 @@ function toSummaryDto(dto: NonNullable<PlayerKycView['basic']['current']>): KycV
     decidedAt: dto.decidedAt,
     createdAt: dto.createdAt,
     updatedAt: dto.updatedAt,
+  };
+}
+
+// An allow-list, not a spread: vendor reference ids, risk signals and checks never reach an agent.
+// The decision reason is the vendor's free text and travels separately, as personal data.
+function toStandingVerification(dto: NonNullable<PlayerKycView['basic']['current']>) {
+  return {
+    status: normalizeKycStatus(dto.status),
+    provider: dto.provider,
+    documentTypes: dto.documentTypes,
+    triggeredBy: dto.triggeredBy,
+    decidedAt: dto.decidedAt,
+    createdAt: dto.createdAt,
   };
 }
 
@@ -607,6 +636,27 @@ export class KycVerificationService {
     };
   }
 
+  /**
+   * The player's KYC standing for an agent: the basic-tier status their profile holds and the
+   * current verification of each tier. Null when the player has no profile.
+   */
+  async getKycStanding(userId: User['id']) {
+    const [kycStatus, view] = await Promise.all([
+      this.identityReader.getPlayerKycStatusByUserId(userId),
+      this.getForPlayer(userId),
+    ]);
+    if (!kycStatus) {
+      return null;
+    }
+    return {
+      kycStatus: normalizeKycStatus(kycStatus),
+      basic: view.basic.current ? toStandingVerification(view.basic.current) : null,
+      advanced: view.advanced.current ? toStandingVerification(view.advanced.current) : null,
+      basicDecisionReason: view.basic.current?.decisionReason ?? null,
+      advancedDecisionReason: view.advanced.current?.decisionReason ?? null,
+    };
+  }
+
   // Names which of `rows`' currencies sumInPivot could not price, for the error log/report
   // when a re-KYC evaluation has to be skipped - sumInPivot itself only says "some row failed".
   private async unpricedCurrencies(
@@ -806,46 +856,109 @@ export class KycVerificationService {
     reason: string,
     actorId: User['id'],
   ) {
-    const outcome = await this.drizzle.db.transaction(async (trx) => {
-      const current = await this.requirePlayerRowForUpdate(userId, trx);
-      const latest = await this.latestVerification(userId, tier, trx);
-      const currentStatus = tier === 'basic' ? current.kycStatus : latest?.status;
-      if (currentStatus === 'resubmission_requested') {
-        return {
-          row: latest ? toDto(latest) : null,
-          playerTransition: null,
-          previousStatus: currentStatus,
-          changed: false,
-        };
-      }
-      const applied = await this.applyManualDecision(trx, {
+    const outcome = await this.drizzle.db.transaction((trx) =>
+      this.applyResubmissionRequest(trx, {
         userId,
         tier,
-        status: 'resubmission_requested',
         reason,
         actorId,
-        referenceIdPrefix: 'manual-resubmit',
-        decidedAt: null,
-      });
-      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): emitted here, inside the transaction, so it can never be dropped
-      // by a crash between commit and a post-commit emit.
-      await this.emitUpdated({
-        userId,
-        tier,
-        status: 'resubmission_requested',
-        previousStatus: currentStatus ?? null,
-        playerTransition: applied.playerTransition,
-        actorId,
-        reason,
-        source: 'manual',
-      });
-      return { ...applied, previousStatus: currentStatus ?? null, changed: true };
-    });
+        refuseInProgress: false,
+      }),
+    );
     if (!outcome.row) {
       throw new KycVerificationNotFoundError(userId);
     }
     return outcome.row;
+  }
+
+  async assertEnhancedKycRequestable(userId: User['id']) {
+    const latest = await this.latestVerification(userId, 'advanced');
+    if (latest?.status === 'resubmission_requested') {
+      throw new KycResubmissionAlreadyRequestedError();
+    }
+    if (latest && ENHANCED_KYC_IN_PROGRESS.has(latest.status)) {
+      throw new KycVerificationInProgressError();
+    }
+  }
+
+  /**
+   * Agent-proposed: asks the player for advanced-tier (enhanced) verification the way an admin's
+   * resubmission request does, and reports whether anything changed - a repeat is a no-op. Unlike
+   * the admin request it refuses while an advanced verification is pending, re-checked under the
+   * player's submit lock: the proposal was approved after its precondition ran, and the player
+   * may have started a verification since.
+   */
+  async requestEnhancedKyc({
+    userId,
+    reason,
+    actorId,
+  }: {
+    userId: User['id'];
+    reason: string;
+    actorId: User['id'];
+  }) {
+    const { changed } = await this.drizzle.db.transaction((trx) =>
+      withAdvisoryXactLock(trx, `kyc-submit:${userId}:advanced`, () =>
+        this.applyResubmissionRequest(trx, {
+          userId,
+          tier: 'advanced',
+          reason,
+          actorId,
+          refuseInProgress: true,
+        }),
+      ),
+    );
+    return { changed };
+  }
+
+  private async applyResubmissionRequest(
+    trx: DrizzleTx,
+    {
+      userId,
+      tier,
+      reason,
+      actorId,
+      refuseInProgress,
+    }: {
+      userId: User['id'];
+      tier: KycTier;
+      reason: string;
+      actorId: User['id'];
+      refuseInProgress: boolean;
+    },
+  ) {
+    const current = await this.requirePlayerRowForUpdate(userId, trx);
+    const latest = await this.latestVerification(userId, tier, trx);
+    const currentStatus = tier === 'basic' ? current.kycStatus : latest?.status;
+    if (currentStatus === 'resubmission_requested') {
+      return { row: latest ? toDto(latest) : null, changed: false };
+    }
+    if (refuseInProgress && currentStatus && ENHANCED_KYC_IN_PROGRESS.has(currentStatus)) {
+      throw new KycVerificationInProgressError();
+    }
+    const applied = await this.applyManualDecision(trx, {
+      userId,
+      tier,
+      status: 'resubmission_requested',
+      reason,
+      actorId,
+      referenceIdPrefix: 'manual-resubmit',
+      decidedAt: null,
+    });
+    // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
+    // compliance.md): emitted here, inside the transaction, so it can never be dropped
+    // by a crash between commit and a post-commit emit.
+    await this.emitUpdated({
+      userId,
+      tier,
+      status: 'resubmission_requested',
+      previousStatus: currentStatus ?? null,
+      playerTransition: applied.playerTransition,
+      actorId,
+      reason,
+      source: 'manual',
+    });
+    return { row: applied.row, changed: true };
   }
 
   /**

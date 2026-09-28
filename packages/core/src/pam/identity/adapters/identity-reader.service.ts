@@ -54,6 +54,15 @@ export class IdentityReaderService implements IdentityReader {
     return row?.id ?? null;
   }
 
+  async getUserIdByPlayerId(playerId: Player['id']): Promise<User['id'] | null> {
+    const [row] = await this.drizzle.db
+      .select({ userId: player.userId })
+      .from(player)
+      .where(eq(player.id, playerId))
+      .limit(1);
+    return row?.userId ?? null;
+  }
+
   async getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null> {
     try {
       return await this.getPlayerIdByUserId(userId);
