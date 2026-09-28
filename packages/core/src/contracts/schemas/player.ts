@@ -69,6 +69,10 @@ export const PlayerSchema = z.object({
   /** Shows "Incognito" in place of this player's username on a public leaderboard instead of
    * the platform's own partial masking. Never affects the player's own standing. */
   hideUsernameOnLeaderboards: z.boolean(),
+  /** Off refuses new friend requests addressed to this player. */
+  allowFriendRequests: z.boolean(),
+  /** Off hides this player's online status and last-seen time from their friends. */
+  showOnlineStatusToFriends: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -146,6 +150,8 @@ export const UpdatePlayerProfileInputSchema = z
     currency: CurrencyCodeSchema,
     timezone: TimezoneSchema,
     hideUsernameOnLeaderboards: z.boolean(),
+    allowFriendRequests: z.boolean(),
+    showOnlineStatusToFriends: z.boolean(),
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
