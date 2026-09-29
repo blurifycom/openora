@@ -26,6 +26,7 @@ export const makeConflictError = (name: string, message: string, data?: Record<s
 export const GameBulkTooManyGamesError = createDomainError<[matchedCount: number, cap: number]>(
   'GameBulkTooManyGamesError',
   (matchedCount, cap) => `bulk action matched ${matchedCount} games, exceeding the ${cap}-game cap`,
+  { reason: 'too_many_games' },
 );
 
 export const alreadyInUseError = (entity: string) =>
