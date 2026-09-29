@@ -552,6 +552,57 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
   });
 });
 
+describe('PlayerService player.status.changed emission (real PG)', () => {
+  it('emits the transition when update changes the status', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.status.changed', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+      previousStatus: 'active',
+      newStatus: 'suspended',
+    });
+  });
+
+  it('does not emit when the status is omitted or unchanged', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'suspended' });
+
+    await svc.update(seeded.id, { level: 3 }, ACTOR_ID);
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.status.changed', expect.anything());
+  });
+
+  it('emits the transition to closed from remove', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'dormant' });
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.status.changed', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+      previousStatus: 'dormant',
+      newStatus: 'closed',
+    });
+  });
+
+  it('does not emit from remove when the player was already closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.status.changed', expect.anything());
+  });
+});
+
 // Ported from chat-commands.service.test.ts (ChatCommandsService.searchPlayers/
 // getPlayerProfile) - these methods never touch the DB, only the injected ports.
 describe('PlayerService.searchPlayers', () => {

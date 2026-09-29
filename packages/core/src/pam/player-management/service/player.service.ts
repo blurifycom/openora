@@ -271,6 +271,16 @@ export class PlayerService implements PlayerActivityTracker {
       });
     }
 
+    if (data.status !== undefined && data.status !== existing.status) {
+      this.events.emit('player.status.changed', {
+        playerId,
+        userId: existing.userId,
+        actorId,
+        previousStatus: existing.status,
+        newStatus: data.status,
+      });
+    }
+
     return this.fetchOneWithTags(playerId);
   }
 
@@ -298,6 +308,15 @@ export class PlayerService implements PlayerActivityTracker {
       userId: existing.userId,
       actorId,
     });
+    if (existing.status !== 'closed') {
+      this.events.emit('player.status.changed', {
+        playerId,
+        userId: existing.userId,
+        actorId,
+        previousStatus: existing.status,
+        newStatus: 'closed',
+      });
+    }
     return { success: true };
   }
 

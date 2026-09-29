@@ -496,7 +496,27 @@ describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset
       actorId: adminId,
     });
 
-    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: userId });
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
+  });
+
+  it('files a Super Admin 2FA reset of a player account under that player', async () => {
+    const row = await mapEventToRecord('identity.2fa.reset', {
+      userId,
+      playerId,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
   });
 });
 
@@ -682,8 +702,8 @@ describe('mapEventToRecord: identity.email.changed', () => {
     expect(row).toMatchObject({
       actorType: 'player',
       actorId: playerId,
-      resourceType: 'user',
-      resourceId: userId,
+      resourceType: 'player',
+      resourceId: playerId,
       before: { email: 'old@example.com' },
       after: { email: 'new@example.com' },
     });
@@ -718,6 +738,101 @@ describe('mapEventToRecord: player account closed and reopened', () => {
       resourceType: 'player',
       resourceId: '55555555-5555-4555-8555-555555555555',
       after: { closed: false },
+    });
+  });
+});
+
+describe('mapEventToRecord: player.status.changed', () => {
+  it('records the status transition by the acting admin against the subject player', async () => {
+    const row = await mapEventToRecord('player.status.changed', {
+      playerId,
+      userId,
+      actorId: adminId,
+      previousStatus: 'active',
+      newStatus: 'suspended',
+    });
+
+    expect(row).toMatchObject({
+      action: 'player.status.changed',
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'player',
+      resourceId: playerId,
+      before: { status: 'active' },
+      after: { status: 'suspended' },
+    });
+  });
+
+  it('attributes a transition without an actor to the system', async () => {
+    const row = await mapEventToRecord('player.status.changed', {
+      playerId,
+      userId,
+      previousStatus: 'suspended',
+      newStatus: 'active',
+    });
+
+    expect(row).toMatchObject({ actorType: 'system', actorId: null, resourceId: playerId });
+  });
+});
+
+describe('mapEventToRecord: identity topics on a player-backed account', () => {
+  it.each([
+    'identity.user.login',
+    'identity.user.logout',
+    'identity.2fa.enabled',
+    'identity.2fa.disabled',
+    'identity.password.changed',
+    'identity.profile.updated',
+  ])('files a player self-action %s under the player', async (topic) => {
+    const row = await mapEventToRecord(topic, { userId, playerId });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
+  });
+
+  it('files the same self-action from an admin account under the user', async () => {
+    const row = await mapEventToRecord('identity.user.login', { userId, playerId: null });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
+  });
+
+  it('files a topic that carries no playerId under the user', async () => {
+    const row = await mapEventToRecord('identity.2fa.enrollment_blocked', { userId });
+
+    expect(row).toMatchObject({ resourceType: 'user', resourceId: userId });
+  });
+
+  it.each([
+    'identity.phone.verified',
+    'identity.security.auto_logout.updated',
+    'identity.security.withdrawal_pin.set',
+    'identity.security.anti_phishing_code.set',
+  ])('files a player security change %s under the player', async (topic) => {
+    const row = await mapEventToRecord(topic, { userId, playerId });
+
+    expect(row).toMatchObject({ resourceType: 'player', resourceId: playerId });
+  });
+
+  it('keeps an account without a player row under the user', async () => {
+    const row = await mapEventToRecord('identity.security.withdrawal_pin.removed', {
+      userId,
+      playerId: null,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      resourceType: 'user',
+      resourceId: userId,
     });
   });
 });
