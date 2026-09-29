@@ -134,7 +134,7 @@ Report only by default. `--post` publishes the findings to the PR; it needs a PR
 2. Show the exact comment bodies and their anchors, then stop for confirmation. `--yes` skips that stop.
 3. Post inline with `gh api "repos/blurifycom/openora/pulls/<n>/comments"`, one per finding, anchored to `path` and `line` on the head commit.
 4. Post the GO or NO-GO line as a single summary review.
-5. Write every comment in the user's voice: when their instructions name a voice or writing guide, read it before drafting. Plain, direct, no severity markers, no internal ticket text or names.
+5. Write every comment in the user's voice: when their instructions name a voice or writing guide, read it before drafting. Plain, direct, no severity markers, no internal ticket text or names. Each comment is 1-3 sentences: what breaks, the trigger, the fix. No mechanism chain, no secondary evidence, no add-ons - the author asks if unclear. Most comments start straight with the point; soften at most one in three, never with the same opener twice in a pull request.
 
 ## Fix mode
 
