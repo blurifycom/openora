@@ -6,7 +6,11 @@ import { JOB_QUEUE, WAGER_TRACKING, queue } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { promoGrant } from '@openora/core/promo/schema/bonus';
-import { promoRankLevelUp, promoRankTier } from '@openora/core/promo/schema/gamification';
+import {
+  promoPlayerRank,
+  promoRankLevelUp,
+  promoRankTier,
+} from '@openora/core/promo/schema/gamification';
 import {
   setupTestDb,
   bootTestApp,
@@ -83,6 +87,15 @@ const tierId = async (key: string) => {
 /** Fires what the announcement cron fires. */
 const announceRankChanges = () =>
   app.container.get(JOB_QUEUE).enqueue(queue('promo-rank-announce'), {});
+
+/** The announcement job has caught this player's marker up, told or not. */
+const isCaughtUp = async (userId: string) => {
+  const [row] = await drizzle()
+    .select({ tierId: promoPlayerRank.tierId, announcedTierId: promoPlayerRank.announcedTierId })
+    .from(promoPlayerRank)
+    .where(eq(promoPlayerRank.userId, userId));
+  return row !== undefined && row.announcedTierId === row.tierId;
+};
 
 type NotificationRow = { type: string; title: string; body: string; data: unknown };
 
@@ -240,9 +253,14 @@ describe('a player ranking up and being told about it', () => {
     });
     await announceRankChanges();
 
-    // Nothing is left to announce, so a second run adds nothing - checked after it has drained.
-    await vi.waitFor(async () => expect(await rankNotifications(client)).toHaveLength(1));
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // A second run has nothing to announce for this player. Another player's notification landing
+    // shows that run has finished, so the count is checked after it, not after a guess.
+    const other = await newPlayer(randomUUID());
+    await wager(other.userId, SILVER_THRESHOLD);
+    await announceRankChanges();
+    await vi.waitFor(async () => expect(await rankNotifications(other.client)).toHaveLength(1), {
+      timeout: 10_000,
+    });
     expect(await rankNotifications(client)).toHaveLength(1);
   });
 
@@ -253,7 +271,7 @@ describe('a player ranking up and being told about it', () => {
 
     await announceRankChanges();
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await vi.waitFor(async () => expect(await isCaughtUp(userId)).toBe(true), { timeout: 10_000 });
     expect(await rankNotifications(client)).toEqual([]);
   });
 });
