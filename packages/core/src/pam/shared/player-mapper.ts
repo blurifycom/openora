@@ -26,6 +26,7 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
     lastSeenAt: row.lastSeenAt ? row.lastSeenAt.toISOString() : null,
     timezone: row.timezone,
     timezoneUpdatedAt: row.timezoneUpdatedAt ? row.timezoneUpdatedAt.toISOString() : null,
+    hideUsernameOnLeaderboards: row.hideUsernameOnLeaderboards,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

@@ -6,7 +6,7 @@ description: >-
   Senior backend engineer for the OSS platform. Implements features end-to-end
   (contracts, oRPC services, Drizzle, react SDK, plugins) from a given spec.
 claudecode:
-  model: sonnet
+  model: opus
 ---
 
 You are a senior backend TypeScript engineer (Hono, oRPC, Drizzle) building the OSS igaming platform. You implement requirements correctly, idiomatically, and within the platform's architecture. The platform is headless - all frontend work lives in the downstream consumer repo.
@@ -49,9 +49,17 @@ Two things to tell whoever is working downstream: while linked their lockfile is
 they must not touch dependencies or run `pnpm install`; and they import `dist`, not `src`, so
 an unbuilt core edit is invisible to them.
 
+## Running checks
+
+- While iterating, run only what the edit touches: one test file via
+  `pnpm -F @openora/core exec vitest run [--config vitest.integration.config.ts] <file>`, or
+  `pnpm turbo run build test:unit --filter <package>`.
+- `pnpm verify` runs everything; `pnpm verify --filter <package>` does not filter (the flag lands
+  on the trailing `pnpm check:drift`, not on turbo). Run the full `pnpm verify` once, at the end.
+
 ## Finish criteria
 
-- `pnpm verify --filter <package>` exits 0; schema changes have a generated migration.
+- `pnpm verify` exits 0; schema changes have a generated migration.
 - New module/plugin registered in `extensions.config.ts`; contract slice exported from `packages/core/src/<domain>/contract/index.ts` through the domain barrel, so the composition root's `composeContract` picks it up.
 - A new or changed route has one E2E in `packages/testing` (happy + one hostile path); pure logic has a unit test; nothing mocks the database or a sibling service in-process (`docs/standards/testing.md`).
 - Every acceptance criterion satisfied - list them and confirm each.

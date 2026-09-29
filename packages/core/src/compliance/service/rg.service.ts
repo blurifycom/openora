@@ -10,7 +10,7 @@ import {
   withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
-import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
+import { and, eq, or, gt, lte, desc, inArray } from 'drizzle-orm';
 import type {
   AuditWritePort,
   LoginEnforcementPort,
@@ -116,6 +116,113 @@ export class LimitRaiseNotAllowedError extends Error {
       requestedMinutes: input.minutes,
     };
   }
+}
+
+// Periods ordering is enforced over. `session` is a duration, not a money bound - never
+// part of this chain.
+const LIMIT_ORDERING_PERIODS = ['daily', 'weekly', 'monthly'] as const;
+type OrderingPeriod = (typeof LIMIT_ORDERING_PERIODS)[number];
+
+export type LimitOrderingViolationData = {
+  type: LimitType;
+  period: OrderingPeriod;
+  conflictingPeriod: OrderingPeriod;
+  bound: { amount: string; currency: string };
+};
+
+export class LimitOrderingViolationError extends Error {
+  readonly data: LimitOrderingViolationData;
+
+  constructor(data: LimitOrderingViolationData) {
+    super(
+      `The ${data.period} ${data.type} limit cannot cross the ${data.conflictingPeriod} bound of ${data.bound.amount} ${data.bound.currency}`,
+    );
+    this.name = 'LimitOrderingViolationError';
+    this.data = data;
+  }
+}
+
+/**
+ * Enforces `daily <= weekly <= monthly` for a player's money limits (deposit/wager/loss),
+ * comparing every sibling in the currency of the row being changed. Call inside the same
+ * transaction/advisory lock that writes or parks `changedPeriod`, before that write - a
+ * missing exchange rate refuses the whole operation with the same typed error rather than
+ * silently skipping the check (see `RgRateUnavailableError` for the sibling pattern).
+ */
+export async function assertLimitOrdering(
+  tx: Tx,
+  userId: User['id'],
+  type: LimitType,
+  changedPeriod: LimitRow['period'],
+  changedValue: { amount: string; currency: string },
+  rates: ExchangeRateReader,
+): Promise<void> {
+  if (type === 'session' || !isOrderingPeriod(changedPeriod)) {
+    return;
+  }
+  const siblingRows = await tx
+    .select()
+    .from(userLimit)
+    .where(
+      and(
+        eq(userLimit.userId, userId),
+        eq(userLimit.type, type),
+        inArray(userLimit.period, LIMIT_ORDERING_PERIODS),
+      ),
+    );
+
+  const entries = new Map<
+    OrderingPeriod,
+    { compare: string; own: { amount: string; currency: string } }
+  >();
+  entries.set(changedPeriod, { compare: changedValue.amount, own: changedValue });
+
+  for (const row of siblingRows) {
+    const period = row.period;
+    if (!isOrderingPeriod(period) || period === changedPeriod || row.amount === null) {
+      continue;
+    }
+    const resolved = await resolveLimitCurrencyInTx(tx, row);
+    const own = { amount: resolved.amount as string, currency: resolved.currency };
+    const compare =
+      resolved.currency === changedValue.currency
+        ? own.amount
+        : await rates.convert(own.amount, resolved.currency, changedValue.currency);
+    if (compare === null) {
+      throw new LimitOrderingViolationError({
+        type,
+        period: changedPeriod,
+        conflictingPeriod: period,
+        bound: own,
+      });
+    }
+    entries.set(period, { compare, own });
+  }
+
+  const ordered = LIMIT_ORDERING_PERIODS.filter((p) => entries.has(p));
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const a = ordered.at(i);
+    const b = ordered.at(i + 1);
+    const va = a === undefined ? undefined : entries.get(a);
+    const vb = b === undefined ? undefined : entries.get(b);
+    if (a === undefined || b === undefined || va === undefined || vb === undefined) {
+      continue;
+    }
+    if (moneyCompare(va.compare, vb.compare) > 0) {
+      const conflictingPeriod = a === changedPeriod ? b : a;
+      const bound = a === changedPeriod ? vb.own : va.own;
+      throw new LimitOrderingViolationError({
+        type,
+        period: changedPeriod,
+        conflictingPeriod,
+        bound,
+      });
+    }
+  }
+}
+
+function isOrderingPeriod(period: LimitRow['period']): period is OrderingPeriod {
+  return (LIMIT_ORDERING_PERIODS as readonly string[]).includes(period);
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -325,6 +432,18 @@ export class RgService {
           if (await isWeakening(resolvedExisting, input, this.rates)) {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
+        }
+        // Reduce-only doesn't exempt ordering: an admin can still drop e.g. weekly
+        // below an existing daily.
+        if (input.type !== 'session' && input.amount !== null && input.currency !== null) {
+          await assertLimitOrdering(
+            tx,
+            userId,
+            input.type,
+            input.period,
+            { amount: input.amount, currency: toDbCurrency(input.type, input.currency) },
+            this.rates,
+          );
         }
         return { prior: existing, row: await writeLimitRow(tx, userId, existing, input) };
       }),

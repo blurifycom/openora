@@ -85,6 +85,13 @@
       "when": 1790174237316,
       "tag": "0011_rank_period_wager",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790343347170,
+      "tag": "0012_gamification_rakeback_streaks_races_rank_challenge",
+      "breakpoints": true
     }
   ]
 }

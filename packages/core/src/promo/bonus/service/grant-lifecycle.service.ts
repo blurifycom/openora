@@ -99,10 +99,17 @@ export class GrantLifecycleService {
     return closed;
   }
 
+  /**
+   * A single grant, taken away by name rather than by player - the shape a scheduled job needs
+   * (an Activity Bonus grant that missed its daily wager) that `forfeitAllFor` cannot give it,
+   * since that sweeps every live grant a player holds. `actor` is optional for the same reason
+   * `close` already allows it: a job has no admin session to assert, and recording one it does
+   * not have would misname the regulator-facing audit row as an admin action.
+   */
   async forfeit(
     grantId: PromoGrant['id'],
     reason: BonusForfeitReason,
-    actor: { id: Uuid; isAdmin: boolean },
+    actor: { id: Uuid; isAdmin: boolean } | undefined,
     note: string,
   ): Promise<ClosedGrant> {
     const [exists] = await this.drizzle.db
@@ -119,7 +126,7 @@ export class GrantLifecycleService {
         status: 'forfeited',
         action: 'promo.bonus.forfeited',
         reason,
-        actor,
+        ...(actor === undefined ? {} : { actor }),
         note,
       }),
     );
@@ -143,13 +150,17 @@ export class GrantLifecycleService {
    */
   private async recordRefusal(
     grantId: PromoGrant['id'],
-    actor: { id: Uuid; isAdmin: boolean },
+    actor: { id: Uuid; isAdmin: boolean } | undefined,
     note: string,
     status: string,
   ): Promise<void> {
     await this.audit.record({
-      actorId: actor.id,
-      actorType: actor.isAdmin ? 'admin' : 'player',
+      ...(actor === undefined
+        ? { actorType: 'system' as const }
+        : {
+            actorId: actor.id,
+            actorType: actor.isAdmin ? ('admin' as const) : ('player' as const),
+          }),
       // Its own action, not the successful one. A denial shares the resource type, so counting
       // forfeitures - or reading a grant's history in a dispute - would otherwise mix probes at
       // ids that do not exist in with the movements that destroyed real money.

@@ -15,6 +15,8 @@ import {
   WalletTransactionTypeSchema,
   WalletReconciliationFindingKindSchema,
   WalletReconciliationFindingStatusSchema,
+  WALLET_TRANSACTION_STATUSES,
+  WALLET_TRANSACTION_TYPES,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -129,13 +131,28 @@ export const WalletTransactionSchema = z.object({
   // row whose `type` never carried a recoverable direction, eg a pre-migration gift/
   // rain/tip leg) have no direction on record.
   direction: ManualAdjustmentDirectionSchema.nullable(),
+  // Withdrawal rows: the network fee kept from `amount`; the payout was `amount - fee`.
+  // Null on every other row and on a withdrawal without a fee.
+  fee: MoneyAmountSchema.nullable(),
   createdAt: TimestampSchema,
   reviewReason: z.string().nullable(),
 });
 
+// A ledger row's value in the player's reference currency when it was written. Never
+// recalculated, so the rate and its timestamp are what an auditor reproduces it from.
+export const WalletReferenceConversionSchema = z.object({
+  currency: WalletCurrencyCodeSchema,
+  amount: MoneyAmountSchema,
+  rate: MoneyAmountSchema,
+  rateAsOf: TimestampSchema,
+});
+export type WalletReferenceConversion = z.infer<typeof WalletReferenceConversionSchema>;
+
 export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
+  // Null on row types that carry no conversion, and on rows written before it was recorded.
+  reference: WalletReferenceConversionSchema.nullable(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
@@ -215,10 +232,29 @@ export const WITHDRAWAL_SORT_BY_VALUES = [
 export const WithdrawalSortBySchema = z.enum(WITHDRAWAL_SORT_BY_VALUES).default('createdAt');
 export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 
-export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
-  userId: UuidSchema,
+// Every filter narrows the whole history in SQL before paging, so `total` always agrees with
+// what the filters match. `search` matches a transaction id by prefix (what a player copies off
+// a receipt is often truncated), or a provider reference or tx hash exactly.
+export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
+  types: z.array(WalletTransactionTypeSchema).max(WALLET_TRANSACTION_TYPES.length).optional(),
+  statuses: z
+    .array(WalletTransactionStatusSchema)
+    .max(WALLET_TRANSACTION_STATUSES.length)
+    .optional(),
+  currencies: z.array(WalletCurrencyInputSchema).max(50).optional(),
+  from: TimestampSchema.optional(),
+  to: TimestampSchema.optional(),
+  search: z.string().trim().min(1).max(128).optional(),
+}).refine((q) => !q.from || !q.to || Date.parse(q.from) <= Date.parse(q.to), {
+  message: '`from` must not be after `to`',
+  path: ['from'],
+});
+export type WalletTransactionListQuery = z.infer<typeof WalletTransactionListQuerySchema>;
+
+export const ListPlayerTransactionsArgs = WalletTransactionListQuerySchema.safeExtend({
+  userId: UuidSchema,
 });
 
 export const WithdrawalQueueItemSchema = z.object({
@@ -227,6 +263,8 @@ export const WithdrawalQueueItemSchema = z.object({
   playerId: UuidSchema.nullable(),
   username: z.string(),
   amount: MoneyAmountSchema,
+  // The network fee kept from `amount`; the payout sent to the provider is `amount - fee`.
+  fee: MoneyAmountSchema.nullable(),
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema.nullable(),
   rail: WalletRailSchema.nullable(),
@@ -596,12 +634,7 @@ export const walletContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
-    .input(
-      PageQuerySchema.extend({
-        sortBy: WalletTransactionSortBySchema.optional(),
-        sortOrder: SortOrderSchema.default('desc').optional(),
-      }),
-    )
+    .input(WalletTransactionListQuerySchema)
     .output(paginated(WalletTransactionSchema)),
 
   listPlayerTransactions: oc

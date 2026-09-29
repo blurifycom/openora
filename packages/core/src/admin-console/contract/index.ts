@@ -3,7 +3,8 @@ import * as z from 'zod';
 import {
   ADMIN_TX_SORT_BY_VALUES,
   ADMIN_USER_SORT_BY_VALUES,
-  CurrencyCodeSchema,
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   DateRangeSchema,
   GAME_PERFORMANCE_SORT_FIELDS,
   GameTypeSchema,
@@ -62,13 +63,14 @@ export type AdminTransactionSortBy = z.infer<typeof AdminTransactionSortBySchema
 export const TransactionFilterSchema = PageQuerySchema.extend({
   userId: UuidSchema.optional(),
   type: WalletTransactionTypeSchema.optional(),
-  currency: CurrencyCodeSchema.optional(),
+  currency: CurrencyTickerInputSchema.optional(),
   rail: WalletRailSchema.optional(),
   status: WalletTransactionStatusSchema.optional(),
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
   amountMin: MoneyAmountSchema.optional(),
   amountMax: MoneyAmountSchema.optional(),
+  search: z.string().trim().min(1).max(128).optional(),
   player: PlayerSearchSchema.optional(),
   sortBy: AdminTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
@@ -81,7 +83,7 @@ export const AdminTransactionSchema = z.object({
   userId: UuidSchema,
   type: WalletTransactionTypeSchema,
   amount: MoneyAmountSchema,
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   status: WalletTransactionStatusSchema,
   rail: WalletRailSchema.nullable(),
   playerId: UuidSchema.nullable(),
@@ -104,7 +106,7 @@ export const SortDirectionSchema = z.enum(['asc', 'desc']);
 
 export const GamePerformanceFilterSchema = z.object({
   gameType: GameTypeSchema.optional(),
-  currency: CurrencyCodeSchema.optional(),
+  currency: CurrencyTickerInputSchema.optional(),
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
   sortBy: GamePerformanceSortBySchema.optional(),
@@ -127,7 +129,7 @@ export const GamePerformanceSchema = z.object({
 // amounts across currencies are summed unconverted, as in GamePerformanceSchema.
 export const GamePerformanceTrendFilterSchema = DateRangeSchema.extend({
   gameId: UuidSchema,
-  currency: CurrencyCodeSchema.optional(),
+  currency: CurrencyTickerInputSchema.optional(),
   granularity: GranularitySchema.default('day'),
 });
 

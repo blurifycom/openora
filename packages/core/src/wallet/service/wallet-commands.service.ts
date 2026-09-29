@@ -288,6 +288,7 @@ export class WalletCommandsService implements WalletCommands {
       bonusSpent: wagered.bonusSpent,
       bonusBalance: wagered.bonusBalanceAfter,
       ...(wagered.completed === null ? {} : { completed: wagered.completed }),
+      wagerTrackingCredits: wagered.walletCredits,
     };
   }
 
@@ -336,6 +337,7 @@ export class WalletCommandsService implements WalletCommands {
       allowNewCurrency,
       allowNewWallet,
       providerRef,
+      terms,
     }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
@@ -386,6 +388,7 @@ export class WalletCommandsService implements WalletCommands {
         source: type,
         sourceRef: providerRef.providerRefId,
         actor: { type: 'system' },
+        terms,
       });
       if (!granted.ok) {
         throw new WalletBonusGrantRefusedError(granted.reason);

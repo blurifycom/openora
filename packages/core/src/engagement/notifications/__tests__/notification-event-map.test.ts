@@ -212,7 +212,7 @@ describe('notificationEventMap', () => {
     expect(entryFor('wallet.withdrawal.failed').securityAlert).toBe(false);
   });
 
-  it('builds a preference-gated security alert mail for a requested withdrawal', () => {
+  it('always mails the requested-withdrawal confirmation, not gated on the alert preference', () => {
     const transactionId = randomUUID();
     const payload = {
       userId: randomUUID(),
@@ -223,7 +223,7 @@ describe('notificationEventMap', () => {
 
     const entry = entryFor('wallet.withdrawal.requested');
 
-    expect(entry.securityAlert).toBe(true);
+    expect(entry.securityAlert).toBe(false);
     expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
       key: 'securityWithdrawalRequested',
       data: {
@@ -390,6 +390,22 @@ describe('notificationEventMap', () => {
 
     expect(input.body).toContain('1,234.5');
     expect(input.body).not.toContain('1234.500000000000000000');
+  });
+
+  it('builds a bonusUnlocked mail alongside the promo.bonus.completed in-app notification', () => {
+    const entry = entryFor('promo.bonus.completed');
+    const payload = {
+      userId: randomUUID(),
+      grantId: randomUUID(),
+      currency: 'EUR',
+      convertedAmount: '1234.500000000000000000',
+    };
+
+    expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'bonusUnlocked',
+      data: { convertedAmount: '1234.500000000000000000', currency: 'EUR' },
+    });
+    expect(entry.securityAlert).toBe(false);
   });
 
   it('leaves currency and reason untouched while only the amount substring is reformatted', () => {

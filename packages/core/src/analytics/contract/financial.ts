@@ -1,7 +1,8 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
-  CurrencyCodeSchema,
+  CurrencyTickerInputSchema,
+  CurrencyTickerSchema,
   DateRangeSchema,
   GranularitySchema,
   MoneyAmountSchema,
@@ -12,14 +13,14 @@ import {
 export { SignedMoneyAmountSchema, type SignedMoneyAmount } from '@openora/core/contracts';
 
 export const MoneyByCurrencyRailSchema = z.object({
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   rail: WalletRailSchema.nullable(),
   total: MoneyAmountSchema,
 });
 export type MoneyByCurrencyRail = z.infer<typeof MoneyByCurrencyRailSchema>;
 
 export const MoneyByCurrencySchema = z.object({
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   total: SignedMoneyAmountSchema,
 });
 export type MoneyByCurrency = z.infer<typeof MoneyByCurrencySchema>;
@@ -35,7 +36,7 @@ export const FinancialSummarySchema = z.object({
 export type FinancialSummary = z.infer<typeof FinancialSummarySchema>;
 
 export const FinancialSummaryQuerySchema = DateRangeSchema.extend({
-  currency: CurrencyCodeSchema.optional(),
+  currency: CurrencyTickerInputSchema.optional(),
 });
 export type FinancialSummaryQuery = z.infer<typeof FinancialSummaryQuerySchema>;
 
@@ -45,13 +46,13 @@ export const GgrPointSchema = z.object({
 });
 
 export const GgrSeriesSchema = z.object({
-  currency: CurrencyCodeSchema,
+  currency: CurrencyTickerSchema,
   points: z.array(GgrPointSchema),
 });
 export type GgrSeries = z.infer<typeof GgrSeriesSchema>;
 
 export const FinancialGgrQuerySchema = DateRangeSchema.extend({
-  currency: CurrencyCodeSchema.optional(),
+  currency: CurrencyTickerInputSchema.optional(),
   granularity: GranularitySchema.default('day'),
 });
 export type FinancialGgrQuery = z.infer<typeof FinancialGgrQuerySchema>;

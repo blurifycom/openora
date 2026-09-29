@@ -634,6 +634,42 @@ describe('mapEventToRecord: wallet.withdrawal.failed', () => {
   });
 });
 
+describe('mapEventToRecord: wallet.withdrawal.rejected / approved', () => {
+  const transactionId = '99999999-9999-4999-8999-999999999999';
+
+  it("records an admin rejection as a success: the admin's decision was carried out", async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.rejected', {
+      userId,
+      amount: '10.00',
+      currency: 'USDT',
+      transactionId,
+      adminId,
+      reason: 'suspicious destination',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'withdrawal',
+      resourceId: transactionId,
+      result: 'success',
+      after: expect.objectContaining({ reason: 'suspicious destination' }),
+    });
+  });
+
+  it('records an admin approval as a success', async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.approved', {
+      userId,
+      amount: '10.00',
+      currency: 'USDT',
+      transactionId,
+      adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', result: 'success' });
+  });
+});
+
 describe('mapEventToRecord: identity.email.changed', () => {
   it('records the address transition as a player self-action', async () => {
     const row = await mapEventToRecord('identity.email.changed', {

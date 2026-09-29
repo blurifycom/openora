@@ -294,6 +294,11 @@
       "import": "./dist/engagement/notifications/contract/index.js",
       "default": "./dist/engagement/notifications/contract/index.js"
     },
+    "./engagement/notifications": {
+      "types": "./dist/engagement/notifications/index.d.ts",
+      "import": "./dist/engagement/notifications/index.js",
+      "default": "./dist/engagement/notifications/index.js"
+    },
     "./engagement/schema/chat": {
       "types": "./dist/engagement/chat/schema/index.d.ts",
       "import": "./dist/engagement/chat/schema/index.js",

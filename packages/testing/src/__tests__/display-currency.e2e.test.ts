@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
+import { player as playerTable } from '@openora/core/pam/schema/profile';
 import {
   setupTestDb,
   bootTestApp,
@@ -46,6 +47,21 @@ describe('GET /profile/display-currency', () => {
     expect(typeof body.currency).toBe('string');
     expect(body.supported).toContain('USD');
     expect(body.supported).toContain('BTC');
+  });
+
+  it('ignores a saved pick the operator no longer offers instead of serving it', async () => {
+    await app.container
+      .get(DRIZZLE)
+      .db.update(playerTable)
+      .set({ displayCurrency: 'ZZZ' })
+      .where(eq(playerTable.id, playerId));
+
+    const res = await player.get('/profile/display-currency');
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { currency: string; supported: string[] };
+    expect(body.currency).not.toBe('ZZZ');
+    expect(body.supported).toContain(body.currency);
   });
 });
 

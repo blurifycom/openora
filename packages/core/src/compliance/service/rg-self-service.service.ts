@@ -38,6 +38,7 @@ import {
   resolveLimitCurrency,
   resolveLimitCurrencyInTx,
   writeLimitRow,
+  assertLimitOrdering,
   RgLimitCurrencyUnresolvedError,
   type LimitRow,
 } from './rg.service.js';
@@ -160,6 +161,9 @@ export class RgSelfServiceService {
         if (existing) {
           const resolvedExisting = await resolveLimitCurrencyInTx(tx, existing);
           if (await isWeakening(resolvedExisting, input, this.rates)) {
+            // The pending amount is the effective one being validated - it's what
+            // applies once the player confirms it.
+            await this.assertOrdering(tx, userId, input);
             return {
               applied: false as const,
               existing,
@@ -167,6 +171,7 @@ export class RgSelfServiceService {
             };
           }
         }
+        await this.assertOrdering(tx, userId, input);
         const row = await writeLimitRow(tx, userId, existing, input);
         return { applied: true as const, existing: existing ?? null, row };
       }),
@@ -454,6 +459,24 @@ export class RgSelfServiceService {
         expiresAt: (row.pendingExpiresAt ?? now).toISOString(),
       });
     }
+  }
+
+  private async assertOrdering(
+    tx: DrizzleTx,
+    userId: User['id'],
+    input: Pick<UpsertLimitInput, 'type' | 'period' | 'amount' | 'currency'>,
+  ): Promise<void> {
+    if (input.type === 'session' || input.amount === null || input.currency === null) {
+      return;
+    }
+    await assertLimitOrdering(
+      tx,
+      userId,
+      input.type,
+      input.period,
+      { amount: input.amount, currency: toDbCurrency(input.type, input.currency) },
+      this.rates,
+    );
   }
 
   private async park(

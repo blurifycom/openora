@@ -1,6 +1,11 @@
 import type { DrizzleDb } from '@openora/core/server';
-import type { RankConfig } from '../contract/index.js';
-import { promoRankConfig, promoRankTier } from '../schema/index.js';
+import type { RankConfig, StreakConfig } from '../contract/index.js';
+import {
+  promoRankChallengeTier,
+  promoRankConfig,
+  promoRankTier,
+  promoStreakConfig,
+} from '../schema/index.js';
 
 export type RankTierSeed = {
   key: string;
@@ -38,4 +43,53 @@ export async function seedRankLadder(db: DrizzleDb, ladder: RankLadderSeed): Pro
     )
     .onConflictDoNothing();
   await db.insert(promoRankConfig).values(ladder.config).onConflictDoNothing();
+}
+
+export type StreakSeed = StreakConfig;
+
+/**
+ * Seeds the streak config, mirroring `seedRankLadder`: idempotent, never overwrites a setting an
+ * operator has already edited.
+ */
+export async function seedStreakConfig(db: DrizzleDb, config: StreakSeed): Promise<void> {
+  await db.insert(promoStreakConfig).values(config).onConflictDoNothing();
+}
+
+export type RankChallengeTierSeed = {
+  key: string;
+  name: string;
+  wagerThreshold: string;
+  cashAmount?: string | null;
+  physicalItem?: string | null;
+};
+
+export type RankChallengeLadderSeed = {
+  currency: string;
+  /** Lowest threshold first. */
+  tiers: RankChallengeTierSeed[];
+};
+
+/**
+ * Seeds the Rank Challenge ladder, mirroring `seedRankLadder`: idempotent (unique on `key` and
+ * `position`), never overwrites a tier an operator has already edited.
+ */
+export async function seedRankChallengeLadder(
+  db: DrizzleDb,
+  ladder: RankChallengeLadderSeed,
+): Promise<void> {
+  if (ladder.tiers.length === 0) {
+    return;
+  }
+  await db
+    .insert(promoRankChallengeTier)
+    .values(
+      ladder.tiers.map((tier, position) => ({
+        ...tier,
+        position,
+        currency: ladder.currency,
+        cashAmount: tier.cashAmount ?? null,
+        physicalItem: tier.physicalItem ?? null,
+      })),
+    )
+    .onConflictDoNothing();
 }

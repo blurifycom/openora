@@ -57,6 +57,12 @@ export type {
 } from './bonus-grants.js';
 export { BONUS_GRANTS } from './bonus-grants.js';
 
+export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
+export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
+
+export type { BonusLifecycleCommands, BonusForfeitOutcome } from './bonus-lifecycle.js';
+export { BONUS_LIFECYCLE } from './bonus-lifecycle.js';
+
 export type {
   BonusWageringCommands,
   BonusWagerArgs,
@@ -66,7 +72,11 @@ export type {
 } from './bonus-wagering.js';
 export { BONUS_WAGERING, MaxBetExceededError } from './bonus-wagering.js';
 
-export type { WagerTrackingCommands, WagerTrackingArgs } from './wager-tracking.js';
+export type {
+  WagerTrackingCommands,
+  WagerTrackingArgs,
+  WagerTrackingWalletCredit,
+} from './wager-tracking.js';
 export { WAGER_TRACKING } from './wager-tracking.js';
 
 export type {
@@ -187,6 +197,7 @@ export type {
   KycRiskSignals,
   KycStatusWriter,
   KycStatusTransition,
+  KycWithdrawalPolicy,
   KycWebhookVerifier,
   KycCheckStatus,
   KycCheckResult,
@@ -195,6 +206,7 @@ export {
   KYC_ADAPTER,
   KYC_STATUS_WRITER,
   KYC_WEBHOOK_VERIFIER,
+  KYC_WITHDRAWAL_POLICY,
   KYC_VENDOR_STATUSES,
   KYC_CHECK_STATUSES,
   KycCheckStatusSchema,

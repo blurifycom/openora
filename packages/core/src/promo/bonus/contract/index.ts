@@ -90,13 +90,26 @@ export const SetWagerWeightsInputSchema = z.object({
 export type SetWagerWeightsInput = z.infer<typeof SetWagerWeightsInputSchema>;
 
 /**
- * Who an offer is for. Kept as jsonb on the row rather than as columns: every one of these is a
- * predicate an operator turns on or off, and a new one should not cost a migration - which is
- * why a rule with no way to answer it yet is absent rather than present and never firing.
+ * Who an offer is for, and the small per-offer knobs a mechanic needs that core has no grant
+ * shape for. Kept as jsonb on the row rather than as columns: every one of these is a predicate
+ * or a setting an operator turns on, off or tunes, and a new one should not cost a migration -
+ * which is why a rule with no way to answer it yet is absent rather than present and never
+ * firing.
  */
 export const PromoOfferRulesSchema = z.object({
   /** Only the player's first confirmed deposit qualifies. */
   firstDepositOnly: z.boolean().default(false),
+  /**
+   * Free spins a grant of this offer entitles the player to. No provider-crediting API exists
+   * yet, so a job sets these pending on grant rather than never asking for a count at all -
+   * absent means this offer grants no spins.
+   */
+  freeSpins: z.number().int().positive().optional(),
+  /**
+   * How many days a period-close job (e.g. a net-loss cashback sweep) looks back. Absent means
+   * the job's own default period.
+   */
+  periodDays: z.number().int().positive().optional(),
 });
 
 export type PromoOfferRules = z.infer<typeof PromoOfferRulesSchema>;

@@ -67,6 +67,7 @@ describe('a player reading their rank', () => {
         currency: 'USDT',
         amount: '12000',
         weightedAmount: '12000',
+        realAmount: '12000',
         context: { provider: 'aggregator', product: 'casino' },
       }),
     );

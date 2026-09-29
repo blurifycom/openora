@@ -24,6 +24,17 @@ does not repeat it.
 - **Every ledger row records its direction explicitly.** Direction is never inferred from the kind
   of transaction: a player-to-player transfer writes the same kind for the sender's debit and the
   recipient's credit.
+- **A deposit, withdrawal or manual adjustment records its reference value once, when written.**
+  The reference currency is the player's deposit-limit currency, else their wager-limit currency,
+  else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
+  recalculated. With no fresh rate the row is not written: a request fails with a typed error, and a
+  deposit webhook fails so the vendor redelivers it.
+- **A withdrawal's network fee comes out of the amount the player entered.** The player is debited
+  the full amount, the row records the fee, and the provider pays out the amount minus the fee. An
+  amount that does not exceed the fee is refused. A refund returns the full debited amount.
+- **Whether a withdrawal needs KYC is compliance's decision, asked through `KYC_WITHDRAWAL_POLICY`.**
+  `kyc.gateWithdrawals` switches the request-time check on; auto-approval always asks. Without a
+  bound policy, every gated withdrawal needs an approved KYC status.
 - **Cross-module money moves through the wallet's command port, inside the caller's transaction.**
   Another module never reads or writes wallet tables directly, and a transfer is never settled over
   an event.

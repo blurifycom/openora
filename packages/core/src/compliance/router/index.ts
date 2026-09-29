@@ -42,6 +42,7 @@ import {
   PermanentExclusionLiftError,
   ExclusionPeriodNotElapsedError,
   LimitRaiseNotAllowedError,
+  LimitOrderingViolationError,
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import {
@@ -99,7 +100,9 @@ export function createComplianceRouter({
     getLimits: os.getLimits.handler(({ context }) => rgSelfService.getLimits(getUserId(context))),
 
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
-      return rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta);
+      return mapErrors({ CONFLICT: LimitOrderingViolationError }, () =>
+        rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta),
+      );
     }),
 
     deleteLimit: os.deleteLimit.handler(({ input, context }) => {
@@ -327,7 +330,7 @@ export function createComplianceRouter({
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return mapErrors({ CONFLICT: LimitRaiseNotAllowedError }, () =>
+      return mapErrors({ CONFLICT: [LimitRaiseNotAllowedError, LimitOrderingViolationError] }, () =>
         rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),

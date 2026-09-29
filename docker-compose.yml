@@ -15,6 +15,28 @@ services:
       timeout: 5s
       retries: 10
 
+  # Integration-test cluster, separate from the dev database above. Its data is throwaway,
+  # so it trades durability for speed the same way CI does (80s -> 29s for the core tier):
+  # no WAL fsync, and the data dir lives in memory. Every start is a fresh cluster with
+  # `oss_igaming_test` already created; the suites migrate their own databases.
+  postgres-test:
+    image: postgres:16-alpine
+    command:
+      ['postgres', '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off']
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: oss_igaming_test
+    ports:
+      - '5434:5432'
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # Durable inter-module broker (MESSAGE_BROKER overlay). OPT-IN via the `broker`
   # profile for local broker testing: `docker compose --profile broker up`. The
   # platform is headless - it ships no runnable API; a consumer app binds the
@@ -33,10 +55,9 @@ services:
       retries: 10
 
   # Distributed CACHE + RATE_LIMITER + MESSAGE_BROKER + JOB_QUEUE reference backend.
-  # Starts by default (`docker compose up -d`) because the real-infra kernel tests run
-  # the actual Redis adapters against it. A consumer app binds it by setting REDIS_URL
-  # (redis://localhost:6379) - createApp auto-binds the Redis adapters, no code change.
-  # See ADR-0028.
+  # The real-infra kernel tests use `redis-test` below, not this one. A consumer app
+  # binds it by setting REDIS_URL (redis://localhost:6379) - createApp auto-binds the
+  # Redis adapters, no code change. See ADR-0028.
   redis:
     image: redis:7-alpine
     command:
@@ -53,6 +74,20 @@ services:
       - '6379:6379'
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Integration-test Redis, separate from the dev one above: the suites flush logical
+  # databases 0-15 between tests, which would wipe dev keys. Nothing is persisted.
+  redis-test:
+    image: redis:7-alpine
+    command:
+      ['redis-server', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'no']
+    ports:
+      - '6380:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s

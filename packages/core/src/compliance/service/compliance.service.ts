@@ -5,6 +5,7 @@ import {
   makeConflictError,
   makeNotFoundError,
   makeOwnershipError,
+  moneyEquals,
   serializeRow,
   withAdvisoryXactLocks,
   type EventBus,
@@ -15,6 +16,7 @@ import {
   gameGeoRule,
   globalKycConfig,
   GLOBAL_KYC_ENABLED_DEFAULT,
+  GLOBAL_KYC_CUMULATIVE_DEPOSIT_THRESHOLD_DEFAULT,
   providerGeoRule,
 } from '../schema/index.js';
 import type {
@@ -99,6 +101,10 @@ function countryRuleFieldValue(
   return field === 'blacklisted' ? row.action === 'block' : row[field];
 }
 
+function moneyEqualsOrBothNull(a: string | null, b: string | null) {
+  return a === null || b === null ? a === b : moneyEquals(a, b);
+}
+
 function hasExpectedVersion(actual: Date | null, expected: string | null) {
   return (actual ? actual.toISOString() : null) === expected;
 }
@@ -119,6 +125,8 @@ function toCountryRuleView(row: typeof countryRule.$inferSelect) {
 function toGlobalKycConfigView(row: typeof globalKycConfig.$inferSelect) {
   return {
     enabled: row.enabled,
+    withdrawalThreshold: row.withdrawalThreshold,
+    cumulativeDepositThreshold: row.cumulativeDepositThreshold,
     updatedAt: row.updatedAt?.toISOString() ?? null,
     updatedBy: row.updatedBy,
   };
@@ -391,7 +399,13 @@ export class ComplianceService {
       .where(eq(globalKycConfig.singletonKey, 'global'));
     return row
       ? toGlobalKycConfigView(row)
-      : { enabled: GLOBAL_KYC_ENABLED_DEFAULT, updatedAt: null, updatedBy: null };
+      : {
+          enabled: GLOBAL_KYC_ENABLED_DEFAULT,
+          withdrawalThreshold: null,
+          cumulativeDepositThreshold: GLOBAL_KYC_CUMULATIVE_DEPOSIT_THRESHOLD_DEFAULT,
+          updatedAt: null,
+          updatedBy: null,
+        };
   }
 
   /**
@@ -447,14 +461,27 @@ export class ComplianceService {
       if (!hasExpectedVersion(before.updatedAt, input.expectedUpdatedAt)) {
         throw new GlobalKycConfigVersionConflictError();
       }
-      if (before.enabled === input.enabled) {
+      const next = {
+        enabled: input.enabled,
+        withdrawalThreshold:
+          input.withdrawalThreshold === undefined
+            ? before.withdrawalThreshold
+            : input.withdrawalThreshold,
+        cumulativeDepositThreshold:
+          input.cumulativeDepositThreshold ?? before.cumulativeDepositThreshold,
+      };
+      if (
+        before.enabled === next.enabled &&
+        moneyEqualsOrBothNull(before.withdrawalThreshold, next.withdrawalThreshold) &&
+        moneyEquals(before.cumulativeDepositThreshold, next.cumulativeDepositThreshold)
+      ) {
         return toGlobalKycConfigView(before);
       }
 
       const row = findOneOrThrow(
         await tx
           .update(globalKycConfig)
-          .set({ enabled: input.enabled, updatedAt: new Date(), updatedBy: actorId })
+          .set({ ...next, updatedAt: new Date(), updatedBy: actorId })
           .where(eq(globalKycConfig.id, before.id))
           .returning(),
         new GlobalKycConfigNotFoundError('global'),
@@ -466,8 +493,16 @@ export class ComplianceService {
         action: 'compliance.global_kyc.set',
         resourceType: 'global-kyc-config',
         resourceId: 'global',
-        before: { enabled: before.enabled },
-        after: { enabled: row.enabled },
+        before: {
+          enabled: before.enabled,
+          withdrawalThreshold: before.withdrawalThreshold,
+          cumulativeDepositThreshold: before.cumulativeDepositThreshold,
+        },
+        after: {
+          enabled: row.enabled,
+          withdrawalThreshold: row.withdrawalThreshold,
+          cumulativeDepositThreshold: row.cumulativeDepositThreshold,
+        },
         ...meta,
       });
 

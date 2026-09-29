@@ -11,6 +11,7 @@
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createSealedToken, type SealedToken } from './token.js';
 import type { WagerContext } from './wager-context.js';
+import type { WagerTrackingWalletCredit } from './wager-tracking.js';
 
 export type BonusWagerArgs = {
   userId: string;
@@ -57,6 +58,8 @@ export type BonusWagerOutcome =
        * performs the credit itself, so the two modules never call back into each other.
        */
       completed: { grantId: string; convertedAmount: string } | null;
+      /** Whatever a `WAGER_TRACKING` consumer credited to the real balance alongside this bet - rank rakeback today. */
+      walletCredits: WagerTrackingWalletCredit[];
     }
   /** Bonus funds could not cover `fromBonus`. The wallet turns this into its own insufficient-funds outcome. */
   | { ok: false; reason: 'insufficient_bonus'; bonusAvailable: string }

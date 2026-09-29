@@ -1018,6 +1018,49 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
 
     expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
   });
+
+  it('also emits it for a WAGER_TRACKING credit (rank rakeback) alongside the bet debit', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a8', name: 'Aces' });
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: true,
+      newBalance: '90',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000d2',
+      wagerTrackingCredits: [
+        {
+          transactionId: '00000000-0000-0000-0000-0000000000d3',
+          amount: '0.10',
+          currency: 'USD',
+        },
+      ],
+    });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      mock<GameAdapter>({
+        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
+        endRound: vi.fn(),
+      }),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+    const userId = '00000000-0000-0000-0000-000000000408';
+
+    await startRound(svc, userId, created.id, 'USD', '10');
+
+    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
+      userId,
+      playerId: null,
+      amount: '0.10',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000d3',
+      type: 'cashback',
+      direction: 'credit',
+    });
+  });
 });
 
 describe('GamingService updateGame (real PG)', () => {

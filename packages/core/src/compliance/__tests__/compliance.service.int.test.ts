@@ -458,8 +458,34 @@ describe('ComplianceService global KYC config (real PG)', () => {
         action: 'compliance.global_kyc.set',
         resourceType: 'global-kyc-config',
         resourceId: 'global',
-        before: { enabled: true },
-        after: { enabled: false },
+        before: expect.objectContaining({ enabled: true }),
+        after: expect.objectContaining({ enabled: false }),
+      }),
+    );
+  });
+
+  it('sets the KYC withdrawal thresholds and audits them, leaving omitted ones unchanged', async () => {
+    const { svc, audit } = makeService();
+
+    expect(await svc.getGlobalKycConfig()).toMatchObject({
+      withdrawalThreshold: null,
+      cumulativeDepositThreshold: '10000',
+    });
+    const config = await svc.setGlobalKycConfig(
+      { enabled: true, withdrawalThreshold: '2000', confirm: true, expectedUpdatedAt: null },
+      randomUUID(),
+    );
+
+    expect(config).toMatchObject({
+      enabled: true,
+      withdrawalThreshold: '2000.000000000000000000',
+      cumulativeDepositThreshold: '10000.000000000000000000',
+    });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        before: expect.objectContaining({ withdrawalThreshold: null }),
+        after: expect.objectContaining({ withdrawalThreshold: '2000.000000000000000000' }),
       }),
     );
   });
