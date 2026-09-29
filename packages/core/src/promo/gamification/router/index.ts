@@ -66,7 +66,7 @@ export function createGamificationRouter({
       lookup: os.ranks.lookup.handler(({ input }) => ranks.lookup([...new Set(input.userIds)])),
 
       // No `getUserId`: public, like `ladder`.
-      reached: os.ranks.reached.handler(() => ranks.reached()),
+      players: os.ranks.players.handler(() => ranks.playersPerTier()),
     },
 
     streaks: {

@@ -278,12 +278,12 @@ export const RankLookupEntrySchema = z.object({
 });
 export type RankLookupEntry = z.infer<typeof RankLookupEntrySchema>;
 
-/** How many players have reached a tier: those holding it or any tier above it. */
-export const RankReachedEntrySchema = z.object({
+/** How many players hold a tier right now. */
+export const RankPlayersEntrySchema = z.object({
   tierId: UuidSchema,
   players: z.number().int().nonnegative(),
 });
-export type RankReachedEntry = z.infer<typeof RankReachedEntrySchema>;
+export type RankPlayersEntry = z.infer<typeof RankPlayersEntrySchema>;
 
 // A race's leaderboard is capped rather than paginated - see RaceService.getForPlayer.
 const MAX_RACE_POSITIONS = 100;
@@ -488,9 +488,9 @@ export const gamificationContract = {
       .output(z.array(RankLookupEntrySchema)),
 
     /** Players per tier, for the public ladder page. Counts only, no player data. */
-    reached: oc
-      .route({ method: 'GET', path: '/promo/ranks/reached' })
-      .output(z.array(RankReachedEntrySchema)),
+    players: oc
+      .route({ method: 'GET', path: '/promo/ranks/players' })
+      .output(z.array(RankPlayersEntrySchema)),
   },
 
   streaks: {

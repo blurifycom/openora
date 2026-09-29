@@ -1,4 +1,4 @@
-import { asc, count, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { asc, count, eq, inArray, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
   ExchangeRateReader,
@@ -16,7 +16,7 @@ import type {
   PlayerRank,
   RankLadder,
   RankLookupEntry,
-  RankReachedEntry,
+  RankPlayersEntry,
 } from '../contract/index.js';
 import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
 import {
@@ -251,32 +251,16 @@ export class RankService implements WagerTrackingCommands {
     });
   }
 
-  /**
-   * Players per tier, top tier first in the query and lowest first in the answer. A player counts
-   * toward the tier they hold and every tier below it, since a player on Gold has reached Silver.
-   */
+  /** How many players hold each tier right now, lowest tier first; a tier nobody holds is zero. */
   // ponytail: one GROUP BY over every player's rank per call, unindexed tier_id; cache it or index
   // tier_id once the page's traffic or the player count makes it show.
-  async reached(): Promise<RankReachedEntry[]> {
-    const [tiers, held] = await Promise.all([
-      this.drizzle.db
-        .select({ id: promoRankTier.id })
-        .from(promoRankTier)
-        .orderBy(desc(promoRankTier.position)),
-      this.drizzle.db
-        .select({ tierId: promoPlayerRank.tierId, players: count() })
-        .from(promoPlayerRank)
-        .where(isNotNull(promoPlayerRank.tierId))
-        .groupBy(promoPlayerRank.tierId),
-    ]);
-    const byTier = new Map(held.map((row) => [row.tierId, row.players]));
-    let atOrAbove = 0;
-    return tiers
-      .map((tier) => {
-        atOrAbove += byTier.get(tier.id) ?? 0;
-        return { tierId: tier.id, players: atOrAbove };
-      })
-      .reverse();
+  playersPerTier(): Promise<RankPlayersEntry[]> {
+    return this.drizzle.db
+      .select({ tierId: promoRankTier.id, players: count(promoPlayerRank.id) })
+      .from(promoRankTier)
+      .leftJoin(promoPlayerRank, eq(promoPlayerRank.tierId, promoRankTier.id))
+      .groupBy(promoRankTier.id)
+      .orderBy(asc(promoRankTier.position));
   }
 
   async getForPlayer(userId: PromoPlayerRank['userId']): Promise<PlayerRank> {
