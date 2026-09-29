@@ -75,7 +75,10 @@ separately, as any bonus grant does.
 The bet's transaction cannot emit it: a player told about a rank the transaction then rolled
 back was promoted by nothing. So the player's row keeps the rank last announced next to the rank
 held, and a job on a one-minute tick announces every row where the two differ, then catches the
-first up to the second. The announcement lags the bet by up to that minute.
+first up to the second. The announcement lags the bet by up to that minute. The catch-up is written before
+the event goes out, so a message is never sent twice but can be lost: a process that dies, or a
+publish that fails, between the two leaves the player caught up and untold. For a congratulation
+that is the right way round - a retry that sends it again would be worse than one gone missing.
 
 It is one message per jump, naming the rank landed on - a bet that crosses two thresholds is
 congratulated once, though it pays both level-up bonuses. The rank every player starts on crosses
@@ -104,7 +107,11 @@ Those counters are one row per player per period per kind, and a payout never re
 once its kind's watermark has passed the period. A daily job deletes them, measured against that
 watermark rather than the clock: a counter goes only once it was last written more than a month
 before the watermark - no period runs longer - and a kind that has never been paid keeps
-everything, so a payout job that was down for weeks loses nothing it still has to settle.
+everything, so a payout job that was down for weeks loses nothing it still has to settle. A
+payout that keeps failing for one player - no rate for their currency, say - holds its kind's
+watermark back, so every run walks that period again (each grant is idempotent, so it only costs
+time) and the kind's counters stop being pruned. It ends when the next period closes and the
+stuck one is left behind.
 
 ## What a reward is paid in
 

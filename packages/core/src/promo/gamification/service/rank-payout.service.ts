@@ -494,8 +494,8 @@ export class RankPayoutService {
         continue;
       }
       const before = new Date(new Date(settled).getTime() - SETTLED_COUNTER_AGE_MS);
-      // ponytail: one DELETE per kind, fine daily on a table that is pruned as it grows; batch it
-      // behind an index on (kind, updated_at) if a long backlog ever makes a run slow.
+      // ponytail: one DELETE per kind, fine daily on a table that is pruned as it grows; delete in
+      // batches if a long backlog ever makes a single statement hold its locks too long.
       const deleted = await this.drizzle.db
         .delete(promoRankPeriodWager)
         .where(and(eq(promoRankPeriodWager.kind, kind), lt(promoRankPeriodWager.updatedAt, before)))
