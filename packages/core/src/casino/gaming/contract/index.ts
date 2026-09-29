@@ -138,6 +138,11 @@ export const gamingContract = {
     .input(IdInputSchema)
     .output(GameSchema),
 
+  getGameBySlug: oc
+    .route({ method: 'GET', path: '/gaming/games/by-slug/{slug}' })
+    .input(z.object({ slug: CatalogSlugSchema }))
+    .output(GameSchema),
+
   startRound: oc
     .route({ method: 'POST', path: '/gaming/rounds/start' })
     .input(StartRoundInputSchema)
