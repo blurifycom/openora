@@ -10,6 +10,8 @@ import * as z from 'zod';
 import { GameSortKeySchema, type GameSortDirection, type GameSortKey } from '../schemas/game.js';
 import { createToken, type Token } from './token.js';
 
+const RefreshIntervalMsSchema = z.number().int().positive().optional();
+
 export type GameSortRankInput<Params = unknown> = {
   categoryId: string;
   /** Every current member of the category, including inactive games. */
@@ -24,6 +26,8 @@ export type GameSortDefinition<Params = unknown> = {
   directions: readonly [GameSortDirection, ...GameSortDirection[]];
   /** A real Zod schema (not a duck-typed parser) so the admin route can emit its JSON Schema. */
   paramsSchema: z.ZodType<Params>;
+  /** Rank age after which the sweep re-ranks - for data no catalogue event covers (round counts). */
+  refreshIntervalMs?: number;
   rank(input: GameSortRankInput<Params>): Promise<string[]>;
 };
 
@@ -36,12 +40,14 @@ export function defineGameSort<Params>(definition: {
   key: string;
   directions: readonly [GameSortDirection, ...GameSortDirection[]];
   paramsSchema: z.ZodType<Params>;
+  refreshIntervalMs?: number;
   rank(input: GameSortRankInput<Params>): Promise<string[]>;
 }): GameSortDefinition<Params> {
   return {
     key: GameSortKeySchema.parse(definition.key),
     directions: definition.directions,
     paramsSchema: definition.paramsSchema,
+    refreshIntervalMs: RefreshIntervalMsSchema.parse(definition.refreshIntervalMs),
     rank: definition.rank,
   };
 }

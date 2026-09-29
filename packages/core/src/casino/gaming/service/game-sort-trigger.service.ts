@@ -1,6 +1,10 @@
-import { and, asc, sql } from 'drizzle-orm';
+import { and, asc, or, sql } from 'drizzle-orm';
 import { createLogger, type DrizzleService } from '@openora/core/server';
-import { domainEventSchemas, type JobQueueAdapter } from '@openora/core/contracts';
+import {
+  domainEventSchemas,
+  type GameSortCatalog,
+  type JobQueueAdapter,
+} from '@openora/core/contracts';
 import { gameCategory, type GameCategory } from '../schema/index.js';
 import {
   GAME_CATEGORY_RANK_QUEUE,
@@ -15,6 +19,7 @@ import {
   categoryIdsForProviderIds,
   categoryRankTriggerIds,
   isRankDirty,
+  rankDirtyPatch,
 } from '../../shared/game-catalog.js';
 
 const logger = createLogger('gaming');
@@ -39,6 +44,7 @@ export class GameSortTriggerService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly jobQueue: JobQueueAdapter,
+    private readonly catalog: GameSortCatalog,
   ) {}
 
   private enqueueCategories(categoryIds: readonly GameCategory['id'][]) {
@@ -115,7 +121,28 @@ export class GameSortTriggerService {
       });
   }
 
+  // Keeps updatedAt, like a claim: nothing about the category itself changed.
+  private async markStaleRefreshingSorts() {
+    const stale = this.catalog
+      .list()
+      .flatMap(({ key, refreshIntervalMs }) =>
+        refreshIntervalMs === undefined
+          ? []
+          : [
+              sql`(${gameCategory.sortKey} = ${key} AND ${gameCategory.rankedAt} < now() - make_interval(secs => ${refreshIntervalMs / 1000}::float8))`,
+            ],
+      );
+    if (stale.length === 0) {
+      return;
+    }
+    await this.drizzle.db
+      .update(gameCategory)
+      .set({ ...rankDirtyPatch(), updatedAt: sql`${gameCategory.updatedAt}` })
+      .where(and(sql`NOT (${isRankDirty()})`, or(...stale)));
+  }
+
   async sweep() {
+    await this.markStaleRefreshingSorts();
     const dirty = await this.drizzle.db
       .select({ id: gameCategory.id })
       .from(gameCategory)
