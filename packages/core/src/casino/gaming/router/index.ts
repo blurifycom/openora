@@ -93,6 +93,12 @@ export function createGamingRouter({
       ),
     ),
 
+    getGameBySlug: os.getGameBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
+        gaming.getGameBySlug(input.slug, { activeOnly: true }),
+      ),
+    ),
+
     startRound: os.startRound.handler(({ input, context }) =>
       mapErrors(
         {
