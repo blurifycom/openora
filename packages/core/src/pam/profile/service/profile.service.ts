@@ -39,6 +39,20 @@ export const PhoneCountryMismatchError = createDomainError<[country: string]>(
 
 const VALUE_COMPARISON_CURRENCY = 'USD';
 
+/**
+ * Only the fields an update touched, so an audit record's before/after shows the change.
+ * Dates go in as ISO strings: the audit hash is computed over this value but verified
+ * against the jsonb read-back, where a raw `Date` would hash as `{}` and break the chain.
+ */
+function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
+  return Object.fromEntries(
+    keys.map((key) => {
+      const value = row[key];
+      return [key, value instanceof Date ? value.toISOString() : value];
+    }),
+  );
+}
+
 export class ProfileService implements PlayerProvisioning {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -167,6 +181,17 @@ export class ProfileService implements PlayerProvisioning {
       if (!updated) {
         throw new Error('Profile update returned no row');
       }
+
+      const changedKeys = Object.keys(updates) as (keyof typeof updates)[];
+      await this.audit.recordInTransaction(tx, {
+        actorId: userId,
+        actorType: 'player',
+        action: 'player.profile.updated',
+        resourceType: 'player',
+        resourceId: updated.id,
+        before: pickFields(row, changedKeys),
+        after: pickFields(updated, changedKeys),
+      });
       return updated;
     });
     return toPlayer(record, identity.email, identity.username);

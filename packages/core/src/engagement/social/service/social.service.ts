@@ -54,6 +54,14 @@ export const FriendRequestUnavailableError = makeConflictError(
   'This player cannot receive friend requests right now',
 );
 
+// The target turned friend requests off. Disclosed, unlike a block: it is a setting the
+// player chose to make known, and `data.code` lets a client explain it.
+export const FriendRequestsDisabledError = makeConflictError(
+  'FriendRequestsDisabledError',
+  'This player does not accept friend requests',
+  { code: 'FRIEND_REQUESTS_DISABLED' },
+);
+
 // The caller's own chat block is disclosed because it is the caller's state.
 export const BlockedBySelfError = makeConflictError(
   'BLOCKED_BY_SELF',
@@ -123,6 +131,8 @@ export class SocialService {
         username: user.username,
         status: player.status,
         lastSeenAt: player.lastSeenAt,
+        allowFriendRequests: player.allowFriendRequests,
+        showOnlineStatusToFriends: player.showOnlineStatusToFriends,
       })
       .from(player)
       .innerJoin(user, eq(user.id, player.userId))
@@ -164,6 +174,19 @@ export class SocialService {
     }
     if (blocks.some((b) => b.blockerId === callerId && b.blockedId === targetUserId)) {
       throw new BlockedBySelfError();
+    }
+    // Only a brand-new request is refused: when a row for the pair already exists the
+    // flow below still answers it - accepting the target's own pending request, or
+    // reporting "already friends" / "already pending".
+    if (!targetPlayer.allowFriendRequests) {
+      const [existing] = await this.drizzle.db
+        .select({ id: friendship.id })
+        .from(friendship)
+        .where(and(pairCondition(callerId, targetUserId), isNull(friendship.removedAt)))
+        .limit(1);
+      if (!existing) {
+        throw new FriendRequestsDisabledError();
+      }
     }
 
     let inserted: FriendshipRow | undefined;
@@ -248,7 +271,11 @@ export class SocialService {
     const uniqueTargetIds = [...new Set(targetUserIds)];
 
     const players = await this.drizzle.db
-      .select({ userId: player.userId, status: player.status })
+      .select({
+        userId: player.userId,
+        status: player.status,
+        allowFriendRequests: player.allowFriendRequests,
+      })
       .from(player)
       .where(inArray(player.userId, uniqueTargetIds));
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
@@ -318,7 +345,12 @@ export class SocialService {
 
       const existing = friendshipByTargetId.get(userId);
       if (!existing) {
-        return { userId, status: 'none', friendshipId: null, canSendRequest: true };
+        return {
+          userId,
+          status: 'none',
+          friendshipId: null,
+          canSendRequest: targetPlayer.allowFriendRequests,
+        };
       }
       if (existing.refusedAt !== null) {
         return { userId, status: 'refused', friendshipId: existing.id, canSendRequest: false };
@@ -455,17 +487,22 @@ export class SocialService {
       if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
         return [];
       }
-      const isOnline =
-        targetPlayer.lastSeenAt !== null &&
-        now - targetPlayer.lastSeenAt.getTime() <= ONLINE_STATUS_WINDOW_MS;
+      // A hidden status blanks `lastSeenAt` too - the status is derivable from it.
+      const lastSeenAt = targetPlayer.showOnlineStatusToFriends ? targetPlayer.lastSeenAt : null;
+      const isOnline = lastSeenAt !== null && now - lastSeenAt.getTime() <= ONLINE_STATUS_WINDOW_MS;
+      const status = targetPlayer.showOnlineStatusToFriends
+        ? isOnline
+          ? ('online' as const)
+          : ('offline' as const)
+        : null;
       return [
         serializeRow(
           {
             userId,
             friendshipId: row.id,
             username: targetPlayer.username,
-            status: isOnline ? ('online' as const) : ('offline' as const),
-            lastSeenAt: targetPlayer.lastSeenAt,
+            status,
+            lastSeenAt,
             isIgnored: ignoredIds.has(userId),
           },
           { dateFields: ['lastSeenAt'] as const },

@@ -50,6 +50,13 @@
       "when": 1790313745574,
       "tag": "0006_natural_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790596192869,
+      "tag": "0007_smooth_rocket_racer",
+      "breakpoints": true
     }
   ]
 }
