@@ -94,7 +94,7 @@ const LOBBY_CACHE_TTL_MS = 30_000;
 const LAYOUT_CACHE_KEY = 'lobby:layout';
 const SECTION_OPERATION_CONCURRENCY = 5;
 const CATEGORIES_CACHE_KEY = 'lobby:categories';
-const FEATURED_CACHE_KEY = 'lobby:featured';
+const FEATURED_CACHE_KEY = 'lobby:featured:v2';
 
 function toGameSummary(row: {
   game: typeof game.$inferSelect;

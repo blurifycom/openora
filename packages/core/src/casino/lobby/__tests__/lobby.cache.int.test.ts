@@ -81,6 +81,22 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
       .values({ gameId: g.id, title: 'Big Win', placement: 'home', sortOrder: 0, isActive: true })
       .returning();
 
+    // A pre-deploy entry without customThumbnailUrl must not be served.
+    await redis.client.set(
+      'cache:lobby:featured',
+      JSON.stringify([
+        {
+          id: slot.id,
+          title: 'Stale',
+          gameId: g.id,
+          gameName: 'Aces',
+          thumbnailUrl: null,
+          placement: 'home',
+          sortOrder: 0,
+        },
+      ]),
+      { expiration: { type: 'PX', value: 30_000 } },
+    );
     const svc = makeLobbyService(new RedisCache(redis.client));
 
     const first = await svc.getFeatured();
@@ -97,7 +113,7 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
       },
     ]);
 
-    const pttl = await redis.client.pTTL('cache:lobby:featured');
+    const pttl = await redis.client.pTTL('cache:lobby:featured:v2');
     expect(pttl).toBeGreaterThan(0);
     expect(pttl).toBeLessThanOrEqual(30_000);
 
