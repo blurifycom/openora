@@ -6,6 +6,7 @@ import {
   type GeoIpAdapter,
   type IgamingConfig,
 } from '@openora/core/contracts';
+import { GameBulkTooManyGamesError } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
@@ -23,7 +24,6 @@ import {
   ComplianceService,
   CountryRuleConfirmationRequiredError,
   CountryRuleVersionConflictError,
-  GeoRuleBulkTooManyGamesError,
   GeoRuleProviderNotFoundError,
   LicensedJurisdictionBlacklistError,
 } from '../service/compliance.service.js';
@@ -993,13 +993,14 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
     const providerId = await seedProvider();
     const [first, second, third] = await seedManyGames(providerId, 3);
     const actorId = randomUUID();
-    const { svc, events } = makeService();
+    const { svc, events, audit } = makeService();
     await svc.upsertGameGeoRules(
       { gameId: first!, countryCodes: ['DK'], reason: 'original reason' },
       actorId,
       NO_META,
     );
     events.emit.mockClear();
+    audit.recordInTransaction.mockClear();
 
     const result = await svc.bulkRestrictGameGeoRules(
       { gameIds: [first!, second!, third!], countryCode: 'DK', reason: 'bulk restriction' },
@@ -1028,6 +1029,24 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       ip: NO_META.ip,
       userAgent: NO_META.userAgent,
     });
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
+      actorId,
+      actorType: 'admin',
+      action: 'compliance.game-geo-rules.bulk_updated',
+      resourceType: 'game-geo-rule',
+      resourceId: null,
+      before: { rules: [] },
+      after: {
+        operation: 'restrict',
+        countryCode: 'DK',
+        reason: 'bulk restriction',
+        rules: [second, third].sort().map((gameId) => expect.objectContaining({ gameId })),
+        target: { gameIds: [first, second, third].sort(), providerIds: [] },
+        notFound: { gameIds: [], providerIds: [] },
+      },
+      ...NO_META,
+    });
 
     const firstRule = await db.drizzle.db
       .select()
@@ -1041,13 +1060,14 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
     const providerId = await seedProvider();
     const [first, second] = await seedManyGames(providerId, 2);
     const actorId = randomUUID();
-    const { svc, events } = makeService();
+    const { svc, events, audit } = makeService();
     await svc.bulkRestrictGameGeoRules(
       { gameIds: [first!, second!], countryCode: 'DK', reason: 'bulk restriction' },
       actorId,
       NO_META,
     );
     events.emit.mockClear();
+    audit.recordInTransaction.mockClear();
 
     const result = await svc.bulkRestrictGameGeoRules(
       { gameIds: [first!, second!], countryCode: 'DK', reason: 'repeat' },
@@ -1061,6 +1081,27 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       notFound: { gameIds: [], providerIds: [] },
     });
     expect(events.emit).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls the rules back when the audit row cannot be written', async () => {
+    const providerId = await seedProvider();
+    const gameIds = await seedManyGames(providerId, 2);
+    const { svc, events, audit } = makeService();
+    audit.recordInTransaction.mockRejectedValueOnce(new Error('audit insert failed'));
+
+    await expect(
+      svc.bulkRestrictGameGeoRules(
+        { gameIds, countryCode: 'DK', reason: 'bulk restriction' },
+        randomUUID(),
+        NO_META,
+      ),
+    ).rejects.toThrow('audit insert failed');
+
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(
+      await db.drizzle.db.select().from(gameGeoRule).where(inArray(gameGeoRule.gameId, gameIds)),
+    ).toHaveLength(0);
   });
 
   it('unrestricts every game of a provider, reporting the ones still blocked by the provider rule', async () => {
@@ -1200,7 +1241,7 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
         actorId,
         NO_META,
       ),
-    ).rejects.toBeInstanceOf(GeoRuleBulkTooManyGamesError);
+    ).rejects.toBeInstanceOf(GameBulkTooManyGamesError);
     expect(events.emit).not.toHaveBeenCalled();
     const [row] = await db.drizzle.db.select({ n: count() }).from(gameGeoRule);
     expect(Number(row?.n)).toBe(0);

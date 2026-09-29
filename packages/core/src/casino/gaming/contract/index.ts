@@ -5,6 +5,9 @@ import {
   CurrencyCodeSchema,
   GAME_TYPES,
   GameBulkIdsSchema,
+  GameBulkTargetFieldsSchema,
+  gameBulkTargetRefinement,
+  hasGameBulkTarget,
   GameCategoryMembershipModeSchema,
   GameCategoryMembershipTriggerSchema,
   GameCategoryNameSchema,
@@ -570,33 +573,19 @@ export const UpdateGameInputSchema = z.object({
 });
 export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
 
-const BulkGameTargetFieldsSchema = z.object({
-  providerIds: z.array(UuidSchema).max(50).optional(),
-  gameIds: z.array(UuidSchema).max(500).optional(),
-});
-
-function hasBulkTarget(target: { providerIds?: string[]; gameIds?: string[] }) {
-  return (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0;
-}
-
-const bulkTargetRefinement = {
-  message: 'Provide at least one non-empty providerIds or gameIds',
-  path: ['gameIds'],
-};
-
-export const SetGamesActiveInputSchema = BulkGameTargetFieldsSchema.extend({
+export const SetGamesActiveInputSchema = GameBulkTargetFieldsSchema.extend({
   isActive: z.boolean(),
-}).refine(hasBulkTarget, bulkTargetRefinement);
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type SetGamesActiveInput = z.infer<typeof SetGamesActiveInputSchema>;
 
-export const AddGameTagsInputSchema = BulkGameTargetFieldsSchema.extend({
+export const AddGameTagsInputSchema = GameBulkTargetFieldsSchema.extend({
   tagIds: z.array(UuidSchema).min(1).max(50),
-}).refine(hasBulkTarget, bulkTargetRefinement);
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type AddGameTagsInput = z.infer<typeof AddGameTagsInputSchema>;
 
-export const AddGameCategoriesInputSchema = BulkGameTargetFieldsSchema.extend({
+export const AddGameCategoriesInputSchema = GameBulkTargetFieldsSchema.extend({
   categoryIds: z.array(UuidSchema).min(1).max(50),
-}).refine(hasBulkTarget, bulkTargetRefinement);
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type AddGameCategoriesInput = z.infer<typeof AddGameCategoriesInputSchema>;
 
 const BulkCountSchema = z.object({

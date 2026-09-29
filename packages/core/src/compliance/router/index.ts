@@ -3,6 +3,7 @@ import { implement, ORPCError } from '@orpc/server';
 import {
   AdminGuard,
   createEventStreamGenerator,
+  GameBulkTooManyGamesError,
   getUserId,
   mapErrors,
   type OssContext,
@@ -20,7 +21,6 @@ import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
   GameGeoRuleNotFoundError,
-  GeoRuleBulkTooManyGamesError,
   GeoRuleGameNotFoundError,
   GeoRuleProviderNotFoundError,
   ProviderGeoRuleNotFoundError,
@@ -173,7 +173,7 @@ export function createComplianceRouter({
         'compliance',
         'manage-geo',
       );
-      return mapErrors({ BAD_REQUEST: GeoRuleBulkTooManyGamesError }, () =>
+      return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
         compliance.bulkRestrictGameGeoRules(input, userId, { ip, userAgent }),
       );
     }),
@@ -185,7 +185,7 @@ export function createComplianceRouter({
           'compliance',
           'manage-geo',
         );
-        return mapErrors({ BAD_REQUEST: GeoRuleBulkTooManyGamesError }, () =>
+        return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
           compliance.bulkUnrestrictGameGeoRules(input, userId, { ip, userAgent }),
         );
       },

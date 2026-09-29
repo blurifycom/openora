@@ -27,6 +27,22 @@ export const GameBulkIdsSchema = z.object({
 });
 export type GameBulkIds = z.infer<typeof GameBulkIdsSchema>;
 
+export const GAME_BULK_CAP = 5000;
+
+export const GameBulkTargetFieldsSchema = z.object({
+  providerIds: z.array(UuidSchema).max(50).optional(),
+  gameIds: z.array(UuidSchema).max(500).optional(),
+});
+
+export function hasGameBulkTarget(target: { providerIds?: string[]; gameIds?: string[] }) {
+  return (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0;
+}
+
+export const gameBulkTargetRefinement = {
+  message: 'Provide at least one non-empty providerIds or gameIds',
+  path: ['gameIds'],
+};
+
 const GameAddedLinkBaseSchema = z.object({ gameId: UuidSchema });
 
 export const GameAddedTagLinksSchema = z.array(

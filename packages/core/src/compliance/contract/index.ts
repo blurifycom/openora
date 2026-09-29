@@ -8,6 +8,9 @@ import {
   TimestampSchema,
   CountryCodeSchema,
   GameBulkIdsSchema,
+  GameBulkTargetFieldsSchema,
+  gameBulkTargetRefinement,
+  hasGameBulkTarget,
   GeoRuleActionSchema,
   NonEmptyReasonSchema,
   PageQuerySchema,
@@ -291,17 +294,10 @@ export const GetBlockedCountriesOutputSchema = z.object({
 });
 export type GetBlockedCountriesOutput = z.infer<typeof GetBlockedCountriesOutputSchema>;
 
-export const BulkGameGeoRuleInputSchema = z
-  .object({
-    providerIds: z.array(UuidSchema).max(50).optional(),
-    gameIds: z.array(UuidSchema).max(500).optional(),
-    countryCode: CountryCodeSchema,
-    reason: NonEmptyReasonSchema.max(500),
-  })
-  .refine((target) => (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0, {
-    message: 'Provide at least one non-empty providerIds or gameIds',
-    path: ['gameIds'],
-  });
+export const BulkGameGeoRuleInputSchema = GameBulkTargetFieldsSchema.extend({
+  countryCode: CountryCodeSchema,
+  reason: NonEmptyReasonSchema.max(500),
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type BulkGameGeoRuleInput = z.infer<typeof BulkGameGeoRuleInputSchema>;
 
 export const BulkRestrictGameGeoRulesOutputSchema = z.object({

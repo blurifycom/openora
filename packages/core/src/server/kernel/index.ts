@@ -36,6 +36,7 @@ export {
   makeOwnershipError,
   makeConflictError,
   alreadyInUseError,
+  GameBulkTooManyGamesError,
 } from './domain-error.js';
 export { mapErrors } from './orpc-error-map.js';
 

@@ -593,26 +593,24 @@ describe('bulk geo restrict / unrestrict', () => {
     }>;
     expect(rules).toHaveLength(2);
 
-    await vi.waitFor(async () => {
-      expect(await bulkAuditEntries(first.gameId, 'restrict')).toEqual([
-        expect.objectContaining({
-          actorType: 'admin',
-          resourceType: 'game-geo-rule',
-          resourceId: null,
-          after: expect.objectContaining({
-            operation: 'restrict',
-            countryCode: 'US',
-            reason: 'bulk restriction',
-            rules: [...bothGameIds]
-              .sort()
-              .map((gameId) =>
-                expect.objectContaining({ gameId, countryCode: 'US', reason: 'bulk restriction' }),
-              ),
-            target: { gameIds: [...bothGameIds].sort(), providerIds: [] },
-          }),
+    expect(await bulkAuditEntries(first.gameId, 'restrict')).toEqual([
+      expect.objectContaining({
+        actorType: 'admin',
+        resourceType: 'game-geo-rule',
+        resourceId: null,
+        after: expect.objectContaining({
+          operation: 'restrict',
+          countryCode: 'US',
+          reason: 'bulk restriction',
+          rules: [...bothGameIds]
+            .sort()
+            .map((gameId) =>
+              expect.objectContaining({ gameId, countryCode: 'US', reason: 'bulk restriction' }),
+            ),
+          target: { gameIds: [...bothGameIds].sort(), providerIds: [] },
         }),
-      ]);
-    });
+      }),
+    ]);
 
     const restrictAgain = await admin.post('/compliance/game-geo-rules/bulk/restrict', {
       gameIds: bothGameIds,
@@ -646,27 +644,25 @@ describe('bulk geo restrict / unrestrict', () => {
       notFound: { gameIds: [], providerIds: [] },
     });
 
-    await vi.waitFor(async () => {
-      expect(await bulkAuditEntries(first.gameId, 'unrestrict')).toEqual([
-        expect.objectContaining({
-          resourceType: 'game-geo-rule',
-          before: {
-            rules: rules.map((rule) =>
-              expect.objectContaining({
-                id: rule.id,
-                gameId: rule.gameId,
-                reason: 'bulk restriction',
-              }),
-            ),
-          },
-          after: expect.objectContaining({
-            operation: 'unrestrict',
-            reason: 'bulk restore',
-            rules: [],
-          }),
+    expect(await bulkAuditEntries(first.gameId, 'unrestrict')).toEqual([
+      expect.objectContaining({
+        resourceType: 'game-geo-rule',
+        before: {
+          rules: rules.map((rule) =>
+            expect.objectContaining({
+              id: rule.id,
+              gameId: rule.gameId,
+              reason: 'bulk restriction',
+            }),
+          ),
+        },
+        after: expect.objectContaining({
+          operation: 'unrestrict',
+          reason: 'bulk restore',
+          rules: [],
         }),
-      ]);
-    });
+      }),
+    ]);
     expect(await bulkAuditEntries(first.gameId, 'restrict')).toHaveLength(1);
 
     const rulesAfterUnrestrict = await admin.get(`/compliance/game-geo-rules?${gamesQuery}`);
@@ -697,17 +693,15 @@ describe('bulk geo restrict / unrestrict', () => {
       notFound: { gameIds: [], providerIds: [] },
     });
 
-    await vi.waitFor(async () => {
-      expect(await bulkAuditEntries(changedFirst.gameId, 'restrict')).toEqual([
-        expect.objectContaining({
-          after: expect.objectContaining({
-            rules: [changedFirst.gameId, changedSecond.gameId]
-              .sort()
-              .map((gameId) => expect.objectContaining({ gameId })),
-          }),
+    expect(await bulkAuditEntries(changedFirst.gameId, 'restrict')).toEqual([
+      expect.objectContaining({
+        after: expect.objectContaining({
+          rules: [changedFirst.gameId, changedSecond.gameId]
+            .sort()
+            .map((gameId) => expect.objectContaining({ gameId })),
         }),
-      ]);
-    });
+      }),
+    ]);
     expect(await bulkAuditEntries(alreadyRestricted.gameId, 'restrict')).toEqual([]);
     expect(
       await auditEntries(preExistingRule.id, 'compliance.game-geo-rule.upserted'),

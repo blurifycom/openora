@@ -1,7 +1,7 @@
 import {
   DrizzleService,
-  createDomainError,
   findOneOrThrow,
+  GameBulkTooManyGamesError,
   pageToOffset,
   makeConflictError,
   makeNotFoundError,
@@ -37,6 +37,7 @@ import type {
   UpsertCountryRuleInput,
 } from '../contract/index.js';
 import {
+  GAME_BULK_CAP,
   normalizeCountryCode,
   type AuditWritePort,
   type ClientMeta,
@@ -183,13 +184,6 @@ function withGameGeoRuleLocks<T>(
   );
 }
 
-const GEO_RULE_BULK_GAME_CAP = 5000;
-
-export const GeoRuleBulkTooManyGamesError = createDomainError<[matchedCount: number, cap: number]>(
-  'GeoRuleBulkTooManyGamesError',
-  (matchedCount, cap) => `bulk action matched ${matchedCount} games, exceeding the ${cap}-game cap`,
-);
-
 function bulkGameGeoTargetCondition(gameIds: string[], providerIds: string[]): SQL | undefined {
   return or(
     gameIds.length > 0 ? inArray(game.id, gameIds) : undefined,
@@ -237,14 +231,14 @@ async function assertWithinGeoCap(
   providerIds: string[],
   scopeLength: number,
 ): Promise<void> {
-  if (scopeLength <= GEO_RULE_BULK_GAME_CAP) {
+  if (scopeLength <= GAME_BULK_CAP) {
     return;
   }
   const [{ n }] = await tx
     .select({ n: count() })
     .from(game)
     .where(bulkGameGeoTargetCondition(gameIds, providerIds));
-  throw new GeoRuleBulkTooManyGamesError(Number(n), GEO_RULE_BULK_GAME_CAP);
+  throw new GameBulkTooManyGamesError(Number(n), GAME_BULK_CAP);
 }
 
 export const ProviderGeoRuleNotFoundError = makeNotFoundError('ProviderGeoRule');
@@ -872,14 +866,31 @@ export class ComplianceService {
           tx,
           gameIds,
           providerIds,
-          GEO_RULE_BULK_GAME_CAP + 1,
+          GAME_BULK_CAP + 1,
         );
         await assertWithinGeoCap(tx, gameIds, providerIds, games.length);
-        return {
-          ...(await write(tx, games)),
-          matchedCount: games.length,
-          notFound: { gameIds: notFoundGameIds, providerIds: notFoundProviderIds },
-        };
+        const result = await write(tx, games);
+        const notFound = { gameIds: notFoundGameIds, providerIds: notFoundProviderIds };
+        if (result.rules.length > 0) {
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'admin',
+            action: 'compliance.game-geo-rules.bulk_updated',
+            resourceType: 'game-geo-rule',
+            resourceId: null,
+            before: { rules: operation === 'restrict' ? [] : result.rules },
+            after: {
+              operation,
+              countryCode: input.countryCode,
+              reason: input.reason,
+              rules: operation === 'restrict' ? result.rules : [],
+              target: { gameIds, providerIds },
+              notFound,
+            },
+            ...meta,
+          });
+        }
+        return { ...result, matchedCount: games.length, notFound };
       }),
     );
 

@@ -1,5 +1,11 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
+import {
+  GameBulkTooManyGamesError,
+  getUserId,
+  mapErrors,
+  type AdminGuard,
+  type OssContext,
+} from '@openora/core/server';
 import { GameSortService, GameSortConfigInvalidError } from '../service/game-sort.service.js';
 import { gamingContract, gamingAdminContract } from '../contract/index.js';
 import {
@@ -47,7 +53,7 @@ import {
   GameProviderVendorIdTakenError,
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
-import { GameBulkService, GameBulkTooManyGamesError } from '../service/game-bulk.service.js';
+import { GameBulkService } from '../service/game-bulk.service.js';
 import { MaxBetExceededError, RgLimitExceededError } from '@openora/core/contracts';
 
 export function createGamingRouter({
