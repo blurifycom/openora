@@ -208,11 +208,6 @@ export const PlayerGrantSchema = z.object({
   offerId: UuidSchema.nullable(),
   currency: CurrencyTickerSchema,
   source: BonusGrantSourceSchema,
-  /**
-   * What the bonus was issued for, so a client can name it: `rank-level-up:<tierId>`,
-   * `rank-daily:<period>` and so on. An idempotency key first, so treat an unknown prefix as
-   * "no name" rather than an error.
-   */
   sourceRef: z.string(),
   status: BonusGrantStatusSchema,
   grantedAmount: MoneyAmountSchema,
