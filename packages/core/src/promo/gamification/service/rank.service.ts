@@ -252,8 +252,6 @@ export class RankService implements WagerTrackingCommands {
   }
 
   /** How many players hold each tier right now, lowest tier first; a tier nobody holds is zero. */
-  // ponytail: one GROUP BY over every player's rank per call, unindexed tier_id; cache it or index
-  // tier_id once the page's traffic or the player count makes it show.
   playersPerTier(): Promise<RankPlayersEntry[]> {
     return this.drizzle.db
       .select({ tierId: promoRankTier.id, players: count(promoPlayerRank.id) })
