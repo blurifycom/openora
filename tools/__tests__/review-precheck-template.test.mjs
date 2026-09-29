@@ -120,6 +120,7 @@ test('counts domain hits so a reviewer can short-circuit on zero', () => {
     out.some((row) => row.startsWith('DOMAIN-HIT: compliance apps/web/src/mod/page.tsx:9')),
   );
   assert.ok(out.includes('DOMAIN: security hits 0'));
+  assert.ok(out.includes('RISK: critical - compliance hits 1'));
 });
 
 test('--since narrows to files changed after the last review and ignores merged base work', () => {
@@ -169,6 +170,7 @@ test('a removed line can lose a domain hit as easily as an added line can gain o
     out,
     /DOMAIN-HIT: security apps\/web\/src\/mod\/route\.ts - \/.*guard.*\/ \(removed\)/,
   );
+  assert.match(out, /^RISK: high - security hits 1$/m);
 });
 
 test('--since reports only hunks added after the last review, not the whole file again', () => {
@@ -185,4 +187,13 @@ test('--since reports only hunks added after the last review, not the whole file
   assert.match(text, /page\.tsx:1 - type-cast - `as Late`/);
   assert.doesNotMatch(text, /`as Status`/);
   assert.ok(out.includes('DOMAIN: compliance hits 0'));
+  assert.ok(out.includes('RISK: low - components, styles, or copy only'));
+});
+
+test('a small server-side change is high risk even with no domain keyword', () => {
+  git('checkout', '-q', '-b', 'route-base', 'dev');
+  git('checkout', '-q', '-b', 'route-added');
+  commit('add a route', { 'apps/api/src/routes/games.ts': 'export const byId = 1;\n' });
+  const out = precheck('--base', 'route-base', '--head', 'route-added');
+  assert.ok(out.includes('RISK: high - apps/api/src/routes/games.ts is server-side'));
 });

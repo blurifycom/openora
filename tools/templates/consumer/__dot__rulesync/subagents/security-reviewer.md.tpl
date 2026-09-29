@@ -46,6 +46,11 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 
 ## Checklist
 
+### Guards and intent
+
+- [ ] For every guard the change adds or touches, ask how a hostile caller bypasses it: a spoofed or rotated header, a null or absent value that skips the check, an ordering that lets one caller drain another's budget.
+- [ ] The change does what its title claims - a fix whose trigger still reproduces is a finding.
+
 ### Authorization
 
 - [ ] Overlay admin/backoffice routes enforce the platform guard - never a re-implemented role check.

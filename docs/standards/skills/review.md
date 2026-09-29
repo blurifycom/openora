@@ -21,8 +21,8 @@ Report only unless `--fix` or `--post` is passed.
 3. Group changed files by package or domain, and read each changed file and the standard governing its dimension before judging it.
 4. Assume each changed behaviour is broken until a concrete happy path and hostile path prove otherwise. Trace empty, falsy, error, unauthorized, concurrent, and repeated inputs.
 5. Run the request trace for each changed entry point and check the blast radius.
-6. Split reviewers by what they read, never by checklist: an agent's cost is its tool calls times its context, and two reviewers on the same files pay for them twice. Default roster: `quality-reviewer` (conventions and quality, always) and `security-reviewer` (security and money), which also reads `contract-reviewer`'s checklist and owns contracts and boundaries, since both read the same public surface. `operator` joins only with acceptance criteria. Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
-7. For a diff of at most 300 changed lines, review inline from the reviewer checklists. For a larger diff, fan out one parallel batch, passing each reviewer the scoped files, the context block, and the caller list for its file group.
+6. Split reviewers by what they read, never by checklist: an agent's cost is its tool calls times its context, and two reviewers on the same files pay for them twice. Default roster, two lenses: `security-reviewer` owns the risk lens (security, money, compliance, and whether the change does what its title claims) and also works `contract-reviewer`'s checklist, since both read the same public surface; `quality-reviewer` owns the correctness lens (failure branches, races, rollout, blast radius, performance, tests, conventions). `operator` joins only with acceptance criteria. Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
+7. Rate the risk from the changed paths, never from the title or the line count: `critical` for money, wallet, KYC, RG, geo, or audit; `high` for any schema, migration, contract, router, service, plugin, or job; `medium` for client logic; `low` for components, styles, or copy. Raise the tier after reading the diff when the content warrants it, never lower it below the path rule. Every reviewer runs on Opus at the matching effort (`low`, `medium`, `high`, `xhigh`). Spawn both reviewers in one message whatever the diff size, passing each the scoped files, the context block, and the caller list for its file group; one reviewer working every checklist finds about half of what two lens reviewers find.
 8. Deduplicate by `file:line`, apply the evidence gate, and return one verdict.
 
 ## Request trace
@@ -71,6 +71,7 @@ The orchestrator may run the tests of a touched module, never the full gate.
 - For each caller found in the blast radius, run the tests that import it, in the workspace that owns them: unit `pnpm -F @openora/core exec vitest related <path> --run`; integration `pnpm -F @openora/core exec vitest related <path> --run --config vitest.integration.config.ts`; E2E `pnpm -F @openora/testing exec vitest related <path> --run`.
 - A failing test is a BLOCK with the test name as evidence.
 - A caller with no test is an INFO, not a request to write one.
+- Tests that could not run (no install in the review worktree) are reported as `TESTS: not run - <reason>`, never skipped silently, and forbid a GO on `high` or `critical` risk.
 
 ### Report the trace
 
@@ -85,15 +86,30 @@ A consumer that builds on this repo may pair a PR here with a change of its own 
 ## Evidence gate
 
 - Every BLOCK or WARN cites a concrete `file:line`, trigger path, and rule or ADR.
-- Drop uncertain, theoretical, duplicate, or tooling-only findings.
+- Drop uncertain, duplicate, or tooling-only findings, and any without a concrete trigger. A rare trigger is still a trigger.
 - Do not report style nits already enforced by `pnpm verify` or `pnpm check:boundaries`.
 - Trace called functions whenever a finding depends on their behaviour.
+
+### What gets a comment
+
+Every verified finding is posted unless it matches one of these, and the report names which:
+
+- D1 the code does not do what the finding says;
+- D2 a duplicate - merge it into the other;
+- D3 pre-existing: the diff touches neither that path nor the order of checks around it (a new gate placed in front of an old one makes the order new);
+- D4 style or naming with no written rule behind it;
+- D5 a request for more test cases, when the existing tests fail without the feature;
+- D6 hardening for an input that cannot reach the code - name what stops it.
+
+Nothing else is a drop reason: not "theoretical", "unlikely", "no consumer yet", "a sibling does the same", "by design", "the lockfile pins it", or "performance only".
+
+A finding gets its own inline comment only when a concrete trigger leads to wrong or stranded money (a debit or hold that cannot be reversed, a credit that is blocked), an authz or security bypass, a compliance gap (audit, RG, KYC), data loss, a crash or 5xx, a broken public contract or declared rule (a type not exported where its siblings are, an undeclared audit action, untyped error data, a loose dependency pin), a race that persists state breaking an invariant the PR adds, request-path work that grows with table size, a test that passes with the feature removed or its mock unconfigured, or code that does not do what the title claims. Everything else - test gaps, naming, boundary nits, actor metadata, a weaker variant of a posted defect - joins an inline comment on the same file or becomes one line in the summary note. Merging never launders: each merged point passes the same bar on its own. A merged comment leads with its most severe finding, anchors on its line, and keeps its strongest fix. At most six inline comments.
 
 ## Output
 
 Default and `--post`: a human-readable report, and the same drafts are what `--post` publishes.
 
-1. Draft comments, most important first, in conversational language without severity markers; each names its `file:line`.
+1. Draft comments per "What gets a comment", most important first, in conversational language without severity markers; each names its `file:line`.
 2. One `TRACE:` line per traced entry point, as below.
 3. One status line per acceptance criterion: met, not met, or not verifiable. A UI criterion backed by a design screenshot is met only after comparing the rendered UI against it. A diff that crosses the ticket's out-of-scope line, or decides an open question in code without recording it on the ticket, is a draft comment citing that line.
 4. Exactly one GO or NO-GO sentence, last.
@@ -130,5 +146,5 @@ Report only by default. `--post` publishes the findings to the PR; it needs a PR
 
 - Never edit, commit, or push outside `--fix`, and never commit or push under it.
 - Cap review fan-out at four specialised agents.
-- Several PRs in one run: triage first without agents (skip drafts, dependency bumps, and docs-, rules-, or test-only PRs unless asked, and say which were skipped); one orchestrator per PR, never one agent over several; state the agent count and a token estimate before launching; run batches of about three PRs; keep each agent under about 20 tool calls, with the prompt text all agents share first and the PR-specific part last.
+- Several PRs in one run: triage first without agents (skip drafts, dependency bumps, and docs-, rules-, or test-only PRs unless asked, and say which were skipped); one orchestrator per PR, never one agent over several; state the agent count and a token estimate before launching; run batches of about three PRs; keep each agent under about 20 tool calls, with the prompt text all agents share first and the PR-specific part last. Before reviewing, list each open PR's files and flag two that add a migration to the same folder or edit the same function; each review names the other PR and which one must rebase. Approve on the forge only after reading the reviewable diff yourself - an agent's clean result is a claim, not a verdict.
 - Every finding cites a rule doc or ADR; no ungrounded opinions.

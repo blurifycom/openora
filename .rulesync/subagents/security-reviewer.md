@@ -23,6 +23,11 @@ Follow the request trace in `docs/standards/skills/review.md`: walk the seven ho
 
 ## Checklist
 
+### Guards and intent
+
+- [ ] For every guard the change adds or touches, ask how a hostile caller bypasses it: a spoofed or rotated header, a null or absent value that skips the check, an ordering that lets one caller drain another's budget.
+- [ ] The change does what its title claims - a fix whose trigger still reproduces is a finding.
+
 ### Money (wallet, payments)
 
 - [ ] Money mutations idempotent at the DATA layer - unique DB constraint / guard row inside the transaction, not just an `idempotencyKey` (ADR-0014: at-least-once delivery).

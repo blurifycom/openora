@@ -411,6 +411,7 @@ const DOMAIN_PATTERNS = {
     '\\baml\\b',
   ],
 };
+const domainHitCounts = new Map();
 for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
   const patterns = [...defaults, ...(config.domainPatterns?.[domain] ?? [])].map(
     (source) => new RegExp(source, 'i'),
@@ -433,6 +434,7 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       }),
     ),
   ];
+  domainHitCounts.set(domain, hits.length);
   findings.set(`domain:${domain}`, [
     `DOMAIN: ${domain} hits ${hits.length}`,
     ...hits.slice(0, MAX_HITS_PER_DOMAIN).map((hit) => `DOMAIN-HIT: ${domain} ${hit}`),
@@ -440,6 +442,31 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       ? [`DOMAIN-HIT: ${domain} +${hits.length - MAX_HITS_PER_DOMAIN} more`]
       : []),
   ]);
+}
+
+// ---- risk tier ----------------------------------------------------------------------------
+// Picks the reviewer's effort from what the diff touches, never from the title or its size:
+// a 30-line change can still add a route, a table, or a migration.
+
+const BACKEND_PATHS = [
+  /(^|\/)(apps\/api|server|schema|drizzle|migrations?|contracts?|routers?|services?)(\/|\.|$)/,
+  /(^|\/)(extensions?|plugins?|jobs?|workers?)\//,
+  /-contract\//,
+  /\.sql$/,
+  /(^|\/)(\.env|env\.ts|Dockerfile)/,
+];
+const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.ts$/];
+
+function riskTier() {
+  const complianceHits = domainHitCounts.get('compliance');
+  if (complianceHits > 0) return `critical - compliance hits ${complianceHits}`;
+  const securityHits = domainHitCounts.get('security');
+  if (securityHits > 0) return `high - security hits ${securityHits}`;
+  const backend = reviewable.find((path) => BACKEND_PATHS.some((re) => re.test(path)));
+  if (backend) return `high - ${backend} is server-side`;
+  const logic = reviewable.find((path) => FRONTEND_LOGIC_PATHS.some((re) => re.test(path)));
+  if (logic) return `medium - ${logic} is client logic`;
+  return 'low - components, styles, or copy only';
 }
 
 // ---- output --------------------------------------------------------------------------------
@@ -466,6 +493,7 @@ const reviewableChanged = reviewable.reduce(
 console.log(
   `SCOPE: files ${scoped.length} lines +${totals.added}/-${totals.deleted} reviewable ${reviewable.length} (${reviewableChanged} changed lines) skipped ${skipped.length} mode ${mode}`,
 );
+console.log(`RISK: ${riskTier()}`);
 notes.forEach((note) => console.log(note));
 reviewable.forEach((path) =>
   console.log(`REVIEWABLE: ${path} +${lines(path).added}/-${lines(path).deleted}`),
