@@ -24,6 +24,10 @@ A UI-only diff still calls platform routes: open each route's guard in `@openora
 
 An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is core money/auth logic: review it against that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and `docs/standards/`, cite those, and prefix each finding `[oss]`.
 
+## Focus
+
+`risk` (the default roster): also read `compliance-reviewer.md` next to this file IN FULL, follow its reading map, and run its checklist; you own `security` and `compliance` and return both `DIMENSION:` lines. `confirm` mode then needs zero hits in both domains.
+
 ## Mode
 
 - `confirm` (the precheck found no security keyword in the change): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
@@ -48,7 +52,7 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 - [ ] No client-supplied user id trusted for ownership decisions; caller resolved server-side.
 - [ ] Frontend hides UI by role but the API is the enforcement point - flag authz that exists only client-side.
 
-Money paths, ledger integrity, and regulated gates belong to `compliance-reviewer` - do not duplicate them here.
+Outside focus `risk`, money paths, ledger integrity, and regulated gates belong to `compliance-reviewer` - do not duplicate them here.
 
 ### Secrets & PII
 

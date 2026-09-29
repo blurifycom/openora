@@ -66,6 +66,7 @@ const firstFeature = commit('feature', {
     "const label = t('added');",
     "const missing = t('nope.key');",
     'const balance = wallet.balance;',
+    'export enum Kind { A }',
   ].join('\n'),
   'apps/web/src/mod/__tests__/page.test.tsx': 'const x = y as Z;\n',
   'pnpm-lock.yaml': 'lock\n',
@@ -74,7 +75,7 @@ const firstFeature = commit('feature', {
 test('scopes reviewable files and names every skipped one with its reason', () => {
   const out = precheck('--base', 'dev', '--head', 'feature');
   assert.match(out[0], /^SCOPE: files 6 .* reviewable 2 .* skipped 4 mode full$/);
-  assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +9/-0'));
+  assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +10/-0'));
   assert.ok(out.includes('SKIPPED: pnpm-lock.yaml - lockfile'));
   assert.ok(out.includes('SKIPPED: apps/web/src/mod/__tests__/page.test.tsx - test'));
   assert.ok(
@@ -91,6 +92,7 @@ test('reports mechanical checks on added lines only, never on tests or aliases',
   assert.match(out, /tone\.ts:1 - type-cast - `Record` widened to `Partial<Record>`/);
   assert.match(out, /page\.tsx:2 - hardcoded-limit - `PROVIDERS_LIMIT = 100`/);
   assert.match(out, /page\.tsx:4 - hand-memo/);
+  assert.match(out, /page\.tsx:10 - ts-enum/);
   assert.match(out, /page\.tsx:5 - banned-class - `alert alert-error`/);
   assert.doesNotMatch(out, /page\.tsx:6 - banned-class/);
 });

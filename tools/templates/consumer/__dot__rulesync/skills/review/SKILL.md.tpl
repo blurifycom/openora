@@ -25,7 +25,7 @@ Checklist - tick as you go:
 
 ## 1. Parse `$ARGUMENTS`
 
-- `--agents N` - parallel reviewers (4-5); default 4 (§5).
+- `--agents N` - parallel reviewers (2-4); default 2 (§5).
 - `--base <ref>` - diff base; default `{{mrTarget}}`.
 - `--full` - ignore the previous review (§2a) and review the whole change.
 - `<number>` - a pull request: read its patch and intent with the commands in `docs/agents/forge.md`.
@@ -152,27 +152,30 @@ Every review covers every dimension below, whatever the diff touches. Relevance 
 
 | Dimension     | Owner                                     | Covers                                                                                  |
 | ------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
-| `conventions` | `quality-reviewer` (focus `conventions`)  | correctness, boundaries, conventions, UI quality (i18n, a11y, states), dependencies     |
-| `performance` | `quality-reviewer` (focus `performance`)  | performance and scalability at production scale                                         |
-| `reliability` | `quality-reviewer` (focus `performance`)  | races, double submit, retries, partial failure, cache invalidation, error handling      |
-| `security`    | `security-reviewer`                       | authz, secrets and PII, input validation, URLs                                          |
-| `compliance`  | `compliance-reviewer`                     | responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail            |
+| `conventions` | `quality-reviewer`                        | correctness, boundaries, conventions, UI quality (i18n, a11y, states), dependencies     |
+| `performance` | `quality-reviewer`                        | performance and scalability at production scale                                         |
+| `reliability` | `quality-reviewer`                        | races, double submit, retries, partial failure, cache invalidation, error handling      |
+| `security`    | `security-reviewer` (focus `risk`)        | authz, secrets and PII, input validation, URLs                                          |
+| `compliance`  | `security-reviewer` (focus `risk`)        | responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail            |
 | `rollout`     | orchestrator                              | §3c migrations, destructive seeds, event and payload compatibility, new env/config      |
 | `spec`        | orchestrator                              | AC (§2b), ticket scope, manual-verification evidence and "Tests to add" (§3c)           |
 
 `expert` is not a reviewer; ask it only when an AC is ambiguous enough to block a `CRITERION:` line.
 
-**Small-diff fast path (<= 150 reviewable changed lines per `SCOPE:`): no subagents, same seven dimensions.** Read `.claude/agents/quality-reviewer.md`, `security-reviewer.md`, and `compliance-reviewer.md` IN FULL, then work each checklist yourself under the §3b stance. The fast path changes who reviews, never what is covered.
+Reviewers split by what they read, never by checklist. An agent's cost is its tool calls times its context: a checklist adds a few thousand tokens, while two reviewers reading the same files pay for those files twice.
+
+**Small-diff fast path (<= 300 reviewable changed lines per `SCOPE:`): no subagents, same seven dimensions.** Read `.claude/agents/quality-reviewer.md`, `security-reviewer.md`, and `compliance-reviewer.md` IN FULL, then work each checklist yourself under the §3b stance. The fast path changes who reviews, never what is covered.
 
 ## 5. Allocate to `--agents N` (large diffs only)
 
-- N unset or 4: `quality-reviewer` (focus `conventions`), `quality-reviewer` (focus `performance`), `security-reviewer`, `compliance-reviewer`.
-- N = 5: the fifth is another `quality-reviewer` (focus `conventions`), the file groups split between the two (state the split; never silently drop files).
-- N < 4: refuse the reduction - run the four and say so in the report. Merging dimensions into fewer reviewers is how they get skipped.
+- N unset or 2: `quality-reviewer` with no focus (every lens; owns `conventions`, `performance`, `reliability`) and `security-reviewer` with focus `risk` (also runs the `compliance-reviewer` checklist; owns `security` and `compliance`).
+- N = 3: a second `quality-reviewer`, the file groups split between the two (state the split; never silently drop files). The default when `REVIEWABLE:` changed lines exceed 1500.
+- N = 4: also split `risk` back into `security-reviewer` and `compliance-reviewer`.
+- N < 2: refuse the reduction - run the two and say so in the report.
 
-**Mode per reviewer, from the precheck.** `security-reviewer` with `DOMAIN: security hits 0`, and `compliance-reviewer` with `DOMAIN: compliance hits 0`, run in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
+**Mode per reviewer, from the precheck.** The `risk` reviewer with `DOMAIN: security hits 0` and `DOMAIN: compliance hits 0` (or, split, each reviewer with zero hits in its own domain) runs in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
 
-**Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `conventions` 30, `performance` 25, `security` 20, `compliance` 20, `confirm` mode 5. Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
+**Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `quality-reviewer` 40 (30 each when split), `risk` 30 (20 each when split), `confirm` mode 5. Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
 
 **Model per reviewer:** each agent file's `model` by default. A per-focus override (the Agent tool's `model` parameter) is set here only after a benchmark shows the cheaper model keeps every finding of the default on the same change - none is set yet.
 
@@ -180,7 +183,7 @@ Spawn all reviewers in a SINGLE message (parallel). Pass each, and nothing more:
 
 - its focus, mode, budget, and the `DIMENSION:` names it owns (§4);
 - its `REVIEWABLE:` lines, copied verbatim from the precheck (pre-grouped - reviewers never re-scope; never hand-typed paths or globs);
-- the `PRECHECK:` lines for its dimension (conventions: casts, hand memo, banned classes, i18n; performance: hardcoded limits) or its `DOMAIN-HIT:` lines;
+- `quality-reviewer`: every `PRECHECK:` line; `risk`: the `DOMAIN-HIT:` lines of both domains;
 - the prior findings on its files to re-verify (§2a);
 - the review worktree path, the main-checkout path for its reading map, the base ref, the §2b context block, the §3b stance verbatim, and the §3c trace for its file group;
 - hard caps: never open a `SKIPPED:` file; read changed files + only the callees a finding depends on; batch reads (several files in one shell call); max 10 findings; compact `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `/check`/tests.
@@ -240,11 +243,21 @@ Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete 
 6. Report back the count posted + the summary verdict. Never resolve threads; never push.
 7. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
 
+## 9. Several pull requests in one run
+
+An agent re-reads its whole context on every tool call, so a long session, or one agent walking several pull requests, costs more than short agents with one pull request each.
+
+- Triage first, without agents: skip drafts, dependency bumps, and pull requests that change only docs, rules, or tests unless asked. Say which were skipped.
+- One orchestrator and roster per pull request; never one agent over several.
+- Before launching, state the agent count and a token estimate. Run batches of about three pull requests, so a usage limit stops a batch, not the run.
+- Keep each agent under about 20 tool calls. Put the prompt text all agents share first and the pull-request-specific part last, so the cached prefix is reused.
+- A step that only distills the ticket or merges findings runs on the cheaper model.
+
 ## Constraints
 
 - Reviewers report; only the orchestrator edits, and only under `--fix` (working tree only - no commit, no push).
 - Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
 - NEVER edit `node_modules` or the main `{{ossDir}}` checkout. Under `--fix`, an `[oss]` finding is fixed in the OSS worktree only.
 - Every finding cites a rule doc or a named principle with a traced trigger - no ungrounded opinions.
-- Four reviewers minimum on a large diff, five maximum; seven `DIMENSION:` lines on every review.
+- Two reviewers minimum on a large diff, four maximum; seven `DIMENSION:` lines on every review.
 - Precheck first, reviewers second: no reviewer spends tokens on what `review-precheck` already printed.

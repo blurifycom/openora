@@ -177,6 +177,7 @@ const report = (check, severity, location, detail) =>
 const CAST = /\bas\s+(?!const\b)[A-Za-z_$][\w.$]*(?:<[^>]*>)?(?:\[\])?/;
 const LIMIT_LITERAL = /\b(limit|pageSize|perPage|take)\s*:\s*\d+\b/;
 const LIMIT_CONSTANT = /\b[A-Z][A-Z0-9_]*(LIMIT|PAGE_SIZE|PER_PAGE|MAX_ROWS)\s*=\s*\d+/;
+const TS_ENUM = /^\s*(?:export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+\w/;
 const HAND_MEMO = /\b(useMemo|useCallback|React\.memo|memo)\s*\(/;
 const STRING_LITERAL = /(['"`])((?:\\.|(?!\1).)*)\1/g;
 const CLASS_TOKEN = /^[a-z0-9:!\[\]\-/.%#_]+$/;
@@ -209,6 +210,9 @@ for (const { file, line, text } of added) {
       location,
       `\`${limit[0]}\` - rows past it must stay reachable`,
     );
+  }
+  if (TS_ENUM.test(text)) {
+    report('ts-enum', 'WARN', location, '`enum` - use a values + schema + type triple');
   }
   if (under(config.reactCompilerPaths, file) && HAND_MEMO.test(text)) {
     report(

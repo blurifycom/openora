@@ -16,7 +16,7 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 
 ## Grounding
 
-- Reading map, at the main-checkout path the orchestrator passed - read only your focus's docs, IN FULL, and enforce all of them; the lenses below are high-signal reminders, not the boundary of the review:
+- Reading map, at the main-checkout path the orchestrator passed - read only your focus's docs (no focus: both maps), IN FULL, and enforce all of them; the lenses below are high-signal reminders, not the boundary of the review:
   - focus `conventions`: `.claude/rules/conventions.md`, `.claude/rules/oss-boundaries.md`, and `.claude/rules/frontend-conventions.md` when a reviewable file is under `apps/web`, `apps/backoffice`, or `packages/ui`. Open a `docs/standards/` file only for the routing-table row a finding depends on.
   - focus `performance`: `.claude/rules/db-conventions.md` + `docs/standards/database.md`, and the scale line of `.claude/rules/workflow.md`.
 - An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is judged by the OSS repo's rules instead: read that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and the `docs/standards/` file for the change, and cite those. Prefix each finding `[oss]`.

@@ -8,7 +8,7 @@ Report only unless `--fix` or `--post` is passed.
 - `--base <ref>` changes the base; default `dev`.
 - A PR number reviews that PR with `gh pr diff` and `gh pr view`.
 - Paths limit the review scope.
-- `--agents N` selects one to four reviewers; default one reviewer per applicable dimension. When N is below the applicable dimensions, drop `operator` first, then fold contracts and boundaries into `quality-reviewer`; security and money never drops, the orchestrator runs that checklist itself. When N is above, the extra reviewers are `quality-reviewer` instances split by file group, and the report states the split.
+- `--agents N` selects one to four reviewers; default two (step 6). N = 1 folds everything into `quality-reviewer` except security and money, which the orchestrator runs itself. N = 3 gives contracts and boundaries back to `contract-reviewer`, or adds `operator` when the ticket has acceptance criteria. N = 4 adds a second `quality-reviewer` split by file group, and the report states the split.
 - `--fix` applies BLOCK and WARN fixes in the working tree after the report.
 - `--post` publishes the findings to the PR; it needs a PR number.
 - `--yes` skips the confirmation before posting.
@@ -21,8 +21,8 @@ Report only unless `--fix` or `--post` is passed.
 3. Group changed files by package or domain, and read each changed file and the standard governing its dimension before judging it.
 4. Assume each changed behaviour is broken until a concrete happy path and hostile path prove otherwise. Trace empty, falsy, error, unauthorized, concurrent, and repeated inputs.
 5. Run the request trace for each changed entry point and check the blast radius.
-6. Select only dimensions that apply and the roster reviewer that owns each: contracts and boundaries (`contract-reviewer`), security and money (`security-reviewer`), conventions and quality (`quality-reviewer`, always), operator fit (`operator`, only with acceptance criteria). Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
-7. For a diff of at most 150 changed lines, review inline from the reviewer checklists. For a larger diff, fan out one parallel batch, passing each reviewer the scoped files, the context block, and the caller list for its file group.
+6. Split reviewers by what they read, never by checklist: an agent's cost is its tool calls times its context, and two reviewers on the same files pay for them twice. Default roster: `quality-reviewer` (conventions and quality, always) and `security-reviewer` (security and money), which also reads `contract-reviewer`'s checklist and owns contracts and boundaries, since both read the same public surface. `operator` joins only with acceptance criteria. Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
+7. For a diff of at most 300 changed lines, review inline from the reviewer checklists. For a larger diff, fan out one parallel batch, passing each reviewer the scoped files, the context block, and the caller list for its file group.
 8. Deduplicate by `file:line`, apply the evidence gate, and return one verdict.
 
 ## Request trace
@@ -130,4 +130,5 @@ Report only by default. `--post` publishes the findings to the PR; it needs a PR
 
 - Never edit, commit, or push outside `--fix`, and never commit or push under it.
 - Cap review fan-out at four specialised agents.
+- Several PRs in one run: triage first without agents (skip drafts, dependency bumps, and docs-, rules-, or test-only PRs unless asked, and say which were skipped); one orchestrator per PR, never one agent over several; state the agent count and a token estimate before launching; run batches of about three PRs; keep each agent under about 20 tool calls, with the prompt text all agents share first and the PR-specific part last.
 - Every finding cites a rule doc or ADR; no ungrounded opinions.
