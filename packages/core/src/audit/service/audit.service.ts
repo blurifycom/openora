@@ -170,6 +170,54 @@ export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
 
+/**
+ * Appends one row to the hash chain inside the caller's transaction. Exported for a writer that
+ * runs outside the container - a deploy step - so it keeps the same chain protocol as
+ * `AUDIT_WRITER` rather than inserting into `audit_log` by hand.
+ */
+export async function recordAuditInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
+  const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
+  const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
+    const [latest] = await txn
+      .select({ hash: auditLog.hash })
+      .from(auditLog)
+      .orderBy(desc(auditLog.seq))
+      .limit(1);
+    const prevHash = latest?.hash ?? null;
+
+    const seqResult = await txn.execute<{ seq: string | number }>(
+      sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
+    );
+    const seq = +(seqResult.rows.at(0)?.seq ?? 0);
+
+    const id = randomUUID();
+    const createdAt = new Date();
+
+    const hash = computeHash({
+      id,
+      actorId: input.actorId ?? null,
+      actorType: input.actorType,
+      action: input.action,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId ?? null,
+      before: input.before ?? null,
+      after: input.after ?? null,
+      result: input.result ?? null,
+      seq,
+      createdAt: createdAt.toISOString(),
+      prevHash,
+    });
+
+    const [inserted] = await txn
+      .insert(auditLog)
+      .values({ ...input, id, seq, prevHash, createdAt, hash })
+      .returning();
+
+    return inserted;
+  });
+  return row;
+}
+
 export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -185,47 +233,8 @@ export class AuditService {
     return toDto(row);
   }
 
-  async recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
-    const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
-    const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
-      const [latest] = await txn
-        .select({ hash: auditLog.hash })
-        .from(auditLog)
-        .orderBy(desc(auditLog.seq))
-        .limit(1);
-      const prevHash = latest?.hash ?? null;
-
-      const seqResult = await txn.execute<{ seq: string | number }>(
-        sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
-      );
-      const seq = +(seqResult.rows.at(0)?.seq ?? 0);
-
-      const id = randomUUID();
-      const createdAt = new Date();
-
-      const hash = computeHash({
-        id,
-        actorId: input.actorId ?? null,
-        actorType: input.actorType,
-        action: input.action,
-        resourceType: input.resourceType,
-        resourceId: input.resourceId ?? null,
-        before: input.before ?? null,
-        after: input.after ?? null,
-        result: input.result ?? null,
-        seq,
-        createdAt: createdAt.toISOString(),
-        prevHash,
-      });
-
-      const [inserted] = await txn
-        .insert(auditLog)
-        .values({ ...input, id, seq, prevHash, createdAt, hash })
-        .returning();
-
-      return inserted;
-    });
-    return row;
+  recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
+    return recordAuditInTransaction(tx, input);
   }
 
   async list(filters: AuditListFilters) {

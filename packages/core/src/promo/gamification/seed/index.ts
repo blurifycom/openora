@@ -1,4 +1,4 @@
-import type { DrizzleDb } from '@openora/core/server';
+import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import type { RankConfig, StreakConfig } from '../contract/index.js';
 import {
   promoRankChallengeTier,
@@ -32,7 +32,10 @@ export type RankLadderSeed = {
  *
  * Idempotent, and it never overwrites a tier or a setting an operator has already edited.
  */
-export async function seedRankLadder(db: DrizzleDb, ladder: RankLadderSeed): Promise<void> {
+export async function seedRankLadder(
+  db: DrizzleDb | DrizzleTx,
+  ladder: RankLadderSeed,
+): Promise<void> {
   if (ladder.tiers.length === 0) {
     return;
   }
