@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE } from '@openora/core/server';
+import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
+import { IDENTITY_READER } from '@openora/core/contracts';
+import { AuditService } from '@openora/core/audit/server';
 import { player } from '@openora/core/pam/schema/profile';
 import { friendship } from '@openora/core/engagement/schema/social';
 import {
@@ -104,6 +106,30 @@ describe('PATCH /profile - community toggles', () => {
       before: { allowFriendRequests: true, showOnlineStatusToFriends: true },
       after: { allowFriendRequests: false, showOnlineStatusToFriends: false },
     });
+  });
+
+  it('keeps the audit hash chain valid when the update carries a timestamp', async () => {
+    const { client } = await newPlayer('timezone');
+    const { id: playerId } = await readJson(await client.get('/profile'));
+
+    const res = await client.patch('/profile', { timezone: 'Europe/Warsaw' });
+    expect(res.status).toBe(200);
+
+    const { items } = await readJson(
+      await admin.get(`/audit/logs?resourceId=${playerId}&action=player.profile.updated`),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].after).toMatchObject({
+      timezone: 'Europe/Warsaw',
+      timezoneUpdatedAt: expect.any(String),
+    });
+
+    const audit = new AuditService(
+      app.container.get(DRIZZLE),
+      app.container.get(EVENT_BUS),
+      app.container.get(IDENTITY_READER),
+    );
+    expect(await audit.verifyChain()).toEqual({ valid: true });
   });
 
   it('rejects a non-boolean toggle and writes nothing', async () => {

@@ -39,9 +39,18 @@ export const PhoneCountryMismatchError = createDomainError<[country: string]>(
 
 const VALUE_COMPARISON_CURRENCY = 'USD';
 
-/** Only the fields an update touched, so an audit record's before/after shows the change. */
+/**
+ * Only the fields an update touched, so an audit record's before/after shows the change.
+ * Dates go in as ISO strings: the audit hash is computed over this value but verified
+ * against the jsonb read-back, where a raw `Date` would hash as `{}` and break the chain.
+ */
 function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
-  return Object.fromEntries(keys.map((key) => [key, row[key]]));
+  return Object.fromEntries(
+    keys.map((key) => {
+      const value = row[key];
+      return [key, value instanceof Date ? value.toISOString() : value];
+    }),
+  );
 }
 
 export class ProfileService implements PlayerProvisioning {
