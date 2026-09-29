@@ -120,7 +120,7 @@ test('counts domain hits so a reviewer can short-circuit on zero', () => {
     out.some((row) => row.startsWith('DOMAIN-HIT: compliance apps/web/src/mod/page.tsx:9')),
   );
   assert.ok(out.includes('DOMAIN: security hits 0'));
-  assert.ok(out.includes('RISK: critical - compliance hits 1'));
+  assert.ok(out.includes('RISK: critical - compliance hits 1 in apps/web/src/mod/page.tsx'));
 });
 
 test('--since narrows to files changed after the last review and ignores merged base work', () => {
@@ -170,7 +170,7 @@ test('a removed line can lose a domain hit as easily as an added line can gain o
     out,
     /DOMAIN-HIT: security apps\/web\/src\/mod\/route\.ts - \/.*guard.*\/ \(removed\)/,
   );
-  assert.match(out, /^RISK: high - security hits 1$/m);
+  assert.match(out, /^RISK: high - security hits 1 in apps\/web\/src\/mod\/route\.ts$/m);
 });
 
 test('--since reports only hunks added after the last review, not the whole file again', () => {
@@ -196,4 +196,20 @@ test('a small server-side change is high risk even with no domain keyword', () =
   commit('add a route', { 'apps/api/src/routes/games.ts': 'export const byId = 1;\n' });
   const out = precheck('--base', 'route-base', '--head', 'route-added');
   assert.ok(out.includes('RISK: high - apps/api/src/routes/games.ts is server-side'));
+});
+
+test('a security keyword only in a component is medium risk, not high', () => {
+  git('checkout', '-q', '-b', 'skeleton-base', 'dev');
+  git('checkout', '-q', '-b', 'skeleton-added');
+  commit('add a skeleton', {
+    'apps/web/src/shell/components/header-skeleton.client.tsx':
+      'export const HeaderSessionSkeleton = () => null; // session\n',
+  });
+  const out = precheck('--base', 'skeleton-base', '--head', 'skeleton-added');
+  assert.ok(out.some((row) => row.startsWith('DOMAIN-HIT: security ')));
+  assert.ok(
+    out.includes(
+      'RISK: medium - domain keyword in apps/web/src/shell/components/header-skeleton.client.tsx',
+    ),
+  );
 });

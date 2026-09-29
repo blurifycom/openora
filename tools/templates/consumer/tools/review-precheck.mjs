@@ -411,7 +411,7 @@ const DOMAIN_PATTERNS = {
     '\\baml\\b',
   ],
 };
-const domainHitCounts = new Map();
+const domainHitFiles = new Map();
 for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
   const patterns = [...defaults, ...(config.domainPatterns?.[domain] ?? [])].map(
     (source) => new RegExp(source, 'i'),
@@ -434,7 +434,10 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       }),
     ),
   ];
-  domainHitCounts.set(domain, hits.length);
+  domainHitFiles.set(
+    domain,
+    hits.map((hit) => hit.split(' - ')[0].replace(/:\d+$/, '')),
+  );
   findings.set(`domain:${domain}`, [
     `DOMAIN: ${domain} hits ${hits.length}`,
     ...hits.slice(0, MAX_HITS_PER_DOMAIN).map((hit) => `DOMAIN-HIT: ${domain} ${hit}`),
@@ -449,7 +452,7 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
 // a 30-line change can still add a route, a table, or a migration.
 
 const BACKEND_PATHS = [
-  /(^|\/)(apps\/api|server|schema|drizzle|migrations?|contracts?|routers?|services?)(\/|\.|$)/,
+  /(^|\/)(apps\/api|server|schema|drizzle|migrations?|migrate|seeds?|contracts?|routers?|services?)(\/|\.|$)/,
   /(^|\/)(extensions?|plugins?|jobs?|workers?)\//,
   /-contract\//,
   /\.sql$/,
@@ -457,15 +460,27 @@ const BACKEND_PATHS = [
 ];
 const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.ts$/];
 
+const E2E_PATH = /(^|\/)e2e\//;
+const isBackend = (path) => BACKEND_PATHS.some((re) => re.test(path));
+const isLogic = (path) => !E2E_PATH.test(path) && FRONTEND_LOGIC_PATHS.some((re) => re.test(path));
+
+// A security keyword in a component or a layout ("session" in a skeleton, an `href`) says little;
+// the same keyword in a service, a router, or a hook is where the risk lives. Compliance keywords
+// stay strong on any screen (an RG or KYC page), and e2e page objects never raise the tier.
 function riskTier() {
-  const complianceHits = domainHitCounts.get('compliance');
-  if (complianceHits > 0) return `critical - compliance hits ${complianceHits}`;
-  const securityHits = domainHitCounts.get('security');
-  if (securityHits > 0) return `high - security hits ${securityHits}`;
-  const backend = reviewable.find((path) => BACKEND_PATHS.some((re) => re.test(path)));
+  const compliance = domainHitFiles.get('compliance').filter((path) => !E2E_PATH.test(path));
+  if (compliance.length > 0)
+    return `critical - compliance hits ${compliance.length} in ${compliance[0]}`;
+  const security = domainHitFiles
+    .get('security')
+    .filter((path) => isBackend(path) || isLogic(path));
+  if (security.length > 0) return `high - security hits ${security.length} in ${security[0]}`;
+  const backend = reviewable.find(isBackend);
   if (backend) return `high - ${backend} is server-side`;
-  const logic = reviewable.find((path) => FRONTEND_LOGIC_PATHS.some((re) => re.test(path)));
+  const logic = reviewable.find(isLogic);
   if (logic) return `medium - ${logic} is client logic`;
+  const keyword = [...domainHitFiles.values()].flat().find((path) => !E2E_PATH.test(path));
+  if (keyword) return `medium - domain keyword in ${keyword}`;
   return 'low - components, styles, or copy only';
 }
 
