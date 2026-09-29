@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { loadExtensions } from '@openora/core/server';
 import {
   asAdmin,
@@ -10,6 +11,10 @@ import {
   type TestApp,
   type TestDb,
 } from '../index.js';
+
+const exchangeRatePluginPath = fileURLToPath(
+  new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url),
+);
 
 let db: TestDb;
 let testApp: TestApp;
@@ -27,7 +32,13 @@ beforeAll(async () => {
   process.env['WITHDRAWAL_PIN_HMAC_SECRET'] ??= 'e2e-test-withdrawal-pin-hmac-secret-000000';
   process.env['NODE_ENV'] ??= 'test';
   db = await setupTestDb();
-  testApp = await bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url });
+  testApp = await bootTestApp({
+    plugins: [
+      ...(await loadExtensions()),
+      { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
+    ],
+    databaseUrl: db.url,
+  });
   await seedMinimal(testApp.container, { playerCount: 0 });
 }, 60_000);
 

@@ -1,0 +1,2 @@
+ALTER TABLE "global_kyc_config" ADD COLUMN "withdrawal_threshold" numeric(38, 18);--> statement-breakpoint
+ALTER TABLE "global_kyc_config" ADD COLUMN "cumulative_deposit_threshold" numeric(38, 18) DEFAULT '10000' NOT NULL;

@@ -169,6 +169,27 @@
       "when": 1790310753944,
       "tag": "0023_colossal_doctor_doom",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790522745623,
+      "tag": "0024_woozy_omega_sentinel",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790536781350,
+      "tag": "0025_unique_romulus",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790548245086,
+      "tag": "0026_careful_ares",
+      "breakpoints": true
     }
   ]
 }

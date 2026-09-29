@@ -80,6 +80,13 @@ export const WalletConfigSchema = z
      */
     defaultCurrency: CurrencyTickerInputSchema.optional(),
     /**
+     * Reference currency a deposit, withdrawal or manual adjustment is converted into for its
+     * ledger snapshot when the player has no money limit to take one from. A player's own
+     * reference currency is the currency of their deposit limit, else their wager limit.
+     * Absent = USD.
+     */
+    defaultReferenceCurrency: CurrencyTickerInputSchema.optional(),
+    /**
      * Vendor-side account each provider's sweeps move player funds into, keyed by the
      * provider name in `wallet_asset.providerName` (`default` for the single bound
      * adapter). Keyed rather than flat because one operator can run several vendors,
@@ -159,6 +166,13 @@ const DEFAULT_WALLET_CURRENCY = 'USD';
  */
 export function resolveWalletDefaultCurrency(config: WalletConfig | undefined): string {
   return (config?.defaultCurrency ?? DEFAULT_WALLET_CURRENCY).toUpperCase();
+}
+
+const DEFAULT_REFERENCE_CURRENCY = 'USD';
+
+/** Reference currency for a player with no money limit. See `wallet.defaultReferenceCurrency`. */
+export function resolveWalletReferenceCurrency(config: WalletConfig | undefined): string {
+  return (config?.defaultReferenceCurrency ?? DEFAULT_REFERENCE_CURRENCY).toUpperCase();
 }
 
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';

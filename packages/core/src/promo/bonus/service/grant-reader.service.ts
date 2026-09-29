@@ -1,5 +1,10 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
-import { type PageQuery, type Paginated, type Uuid } from '@openora/core/contracts';
+import {
+  type BonusGrantLedgerReader,
+  type PageQuery,
+  type Paginated,
+  type Uuid,
+} from '@openora/core/contracts';
 import {
   makeNotFoundError,
   pageToOffset,
@@ -51,6 +56,30 @@ const ADMIN_COLUMNS = {
   ...COLUMNS,
   userId: promoGrant.userId,
   sourceRef: promoGrant.sourceRef,
+};
+
+/**
+ * A grant is a credit the player received, so every grant that was ever funded reads as a
+ * completed credit of its granted amount - what happened to the bonus afterwards (wagered,
+ * expired, forfeited) is the grant's own story, told on the bonus screen. A pending grant was
+ * never funded and a cancelled one never will be, so those two keep their own status.
+ */
+export const bonusGrantLedger: BonusGrantLedgerReader = {
+  ledgerRowsQuery: (userId) => sql`
+    select
+      ${promoGrant.id} as id,
+      case ${promoGrant.source}
+        when 'gift' then 'gift' when 'rain' then 'rain' when 'cashback' then 'cashback'
+        else 'bonus'
+      end as type,
+      ${promoGrant.grantedAmount} as amount,
+      ${promoGrant.currency} as currency,
+      case ${promoGrant.status}
+        when 'pending' then 'pending' when 'cancelled' then 'cancelled' else 'completed'
+      end as status,
+      ${promoGrant.createdAt} as created_at
+    from ${promoGrant}
+    where ${promoGrant.userId} = ${userId}`,
 };
 
 /** What a player is allowed to see of their own bonuses. The terms snapshot stays internal. */

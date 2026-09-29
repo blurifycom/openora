@@ -52,11 +52,13 @@ import {
   UnsupportedNetworkError,
   WithdrawalDisabledError,
   BelowMinimumWithdrawalError,
+  WithdrawalAmountNotAboveFeeError,
   DepositDisabledError,
   BelowMinimumDepositError,
   PlayerNotFoundError,
   WithdrawalAddressAlreadyExistsError,
   WithdrawalAddressLimitReachedError,
+  WalletReferenceRateUnavailableError,
 } from '../service/wallet.service.js';
 import {
   SwapService,
@@ -214,6 +216,7 @@ export function createWalletRouter({
           // conflict: 409 would tell a status-code-branching client to retry it.
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
           CONFLICT: [IdempotencyKeyReuseError, RgLimitExceededError],
+          SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
         },
         () =>
           wallet.deposit({
@@ -235,6 +238,7 @@ export function createWalletRouter({
             AmbiguousNetworkError,
             UnsupportedNetworkError,
             BelowMinimumWithdrawalError,
+            WithdrawalAmountNotAboveFeeError,
           ],
           CONFLICT: [
             KycRequiredError,
@@ -243,6 +247,7 @@ export function createWalletRouter({
             DestinationAddressNotWhitelistedError,
             WithdrawalDisabledError,
           ],
+          SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
         },
         () =>
           wallet.withdraw({
@@ -265,31 +270,19 @@ export function createWalletRouter({
           NOT_FOUND: PlayerNotFoundError,
           BAD_REQUEST: InsufficientBalanceError,
           CONFLICT: IdempotencyKeyReuseError,
+          SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
         },
         () => wallet.manualAdjust({ ...input, adminId, ip, userAgent }),
       );
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions({
-        userId: getUserId(context),
-        page: input.page,
-        limit: input.limit,
-        sortBy: input.sortBy,
-        sortOrder: input.sortOrder,
-      }),
+      wallet.getTransactions({ ...input, userId: getUserId(context), includeGrants: true }),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions({
-        userId: input.userId,
-        page: input.page,
-        limit: input.limit,
-        sortBy: input.sortBy,
-        sortOrder: input.sortOrder,
-        includeInternal: true,
-      });
+      return wallet.getTransactions({ ...input, includeInternal: true });
     }),
 
     withdrawals: {

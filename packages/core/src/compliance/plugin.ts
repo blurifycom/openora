@@ -16,6 +16,7 @@ import {
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
+  KYC_WITHDRAWAL_POLICY,
   KycTierSchema,
   LOGIN_ENFORCEMENT,
   MAIL_DISPATCH,
@@ -41,6 +42,7 @@ import {
 import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 import { RgLimitGate } from './adapters/rg-limit-gate.js';
+import { KycWithdrawalGate } from './adapters/kyc-withdrawal-gate.js';
 
 const logger = createLogger('compliance');
 
@@ -93,6 +95,10 @@ export default {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(GAME_GEO_CHECK, makeComplianceService);
     ctx.provide(RG_LIMITS, (c) => new RgLimitGate(monitoring(c), c.get(EXCHANGE_RATE_READER)));
+    ctx.provide(
+      KYC_WITHDRAWAL_POLICY,
+      (c) => new KycWithdrawalGate(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER)),
+    );
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';

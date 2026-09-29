@@ -1,17 +1,19 @@
 import { vi, type Mock } from 'vitest';
 import { ORPCError } from '@orpc/server';
-import type {
-  AdminCaller,
-  AdminGuard,
-  DrizzleService,
-  EventBus,
-  OssContext,
+import {
+  moneyScaleBy,
+  type AdminCaller,
+  type AdminGuard,
+  type DrizzleService,
+  type EventBus,
+  type OssContext,
 } from '@openora/core/server';
 import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
   type CacheAdapter,
   type ClientMeta,
+  type ExchangeRateReader,
   type IdentityReader,
   type JobQueueAdapter,
   type PaymentAdapter,
@@ -198,6 +200,15 @@ export const makeRealtimeTransport = (): RealtimeTransport =>
     subscribe: vi.fn(() => () => undefined),
     getOnlineUserIds: vi.fn(async () => []),
   });
+
+/**
+ * An exchange-rate reader that quotes every pair at `rate`, fresh as of now. For tests that
+ * need a rate to exist but do not assert on its value.
+ */
+export const makeExchangeRateReader = (rate = '1'): ExchangeRateReader => ({
+  getRate: vi.fn(async () => ({ rate, asOf: new Date().toISOString() })),
+  convert: vi.fn(async (amount: string) => moneyScaleBy(amount, rate)),
+});
 
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({

@@ -4,6 +4,7 @@ import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
   BONUS_GRANTS,
+  BONUS_GRANT_LEDGER,
   BONUS_WAGERING,
   IDENTITY_READER,
   ADMIN_WALLET_REPORTING,
@@ -21,6 +22,7 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   RG_LIMITS,
+  KYC_WITHDRAWAL_POLICY,
   EXCHANGE_RATE_READER,
   resolveExchangeRatePivot,
   SWAP_ADAPTER,
@@ -287,6 +289,8 @@ export default {
         audit: c.get(AUDIT_WRITER),
         rgLimits,
         rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        kycPolicy: c.has(KYC_WITHDRAWAL_POLICY) ? c.get(KYC_WITHDRAWAL_POLICY) : undefined,
+        grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
       });
 
       const reconciliation = new ReconciliationService({

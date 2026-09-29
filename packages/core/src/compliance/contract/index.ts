@@ -11,10 +11,16 @@ import {
   NonEmptyReasonSchema,
   PageQuerySchema,
   paginated,
+  MoneyAmountSchema,
 } from '@openora/core/contracts';
+
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
 import { rgContract } from './rg.js';
+
+const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
+  message: 'Must be greater than zero',
+});
 
 export const KycDocumentTypeSchema = z.enum(KYC_DOCUMENT_TYPES);
 
@@ -214,8 +220,11 @@ export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
   .strict();
 export type UpsertCountryRuleInput = z.infer<typeof UpsertCountryRuleInputSchema>;
 
+// In the fx pivot currency. A null withdrawal threshold means no single-withdrawal trigger.
 export const GlobalKycConfigSchema = z.object({
   enabled: z.boolean(),
+  withdrawalThreshold: MoneyAmountSchema.nullable(),
+  cumulativeDepositThreshold: MoneyAmountSchema,
   updatedAt: TimestampSchema.nullable(),
   updatedBy: UuidSchema.nullable(),
 });
@@ -224,6 +233,9 @@ export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
 export const SetGlobalKycConfigInputSchema = z
   .object({
     enabled: z.boolean(),
+    // Omitted = unchanged.
+    withdrawalThreshold: PositiveMoneyAmountSchema.nullable().optional(),
+    cumulativeDepositThreshold: PositiveMoneyAmountSchema.optional(),
     confirm: z.literal(true),
     expectedUpdatedAt: TimestampSchema.nullable(),
   })

@@ -14,6 +14,9 @@ import {
 } from '../index.js';
 
 const swapDeskPluginPath = fileURLToPath(new URL('../test-swap-desk-plugin.ts', import.meta.url));
+const exchangeRatePluginPath = fileURLToPath(
+  new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url),
+);
 
 let db: TestDb;
 let testApp: TestApp;
@@ -58,7 +61,11 @@ beforeAll(async () => {
   process.env['NODE_ENV'] ??= 'test';
   db = await setupTestDb();
   testApp = await bootTestApp({
-    plugins: [...(await loadExtensions()), { id: 'testing-swap-desk', path: swapDeskPluginPath }],
+    plugins: [
+      ...(await loadExtensions()),
+      { id: 'testing-swap-desk', path: swapDeskPluginPath },
+      { id: 'testing-exchange-rate-provider', path: exchangeRatePluginPath },
+    ],
     databaseUrl: db.url,
   });
   await seedMinimal(testApp.container, { playerCount: 0 });
