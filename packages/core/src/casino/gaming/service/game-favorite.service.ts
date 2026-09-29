@@ -56,12 +56,13 @@ export class GameFavoriteService {
   }
 
   async addFavorite(userId: User['id'], gameId: Game['id']) {
-    const [existingGame] = await this.drizzle.db
+    const [playableGame] = await this.drizzle.db
       .select({ id: game.id })
       .from(game)
-      .where(eq(game.id, gameId))
+      .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
+      .where(and(eq(game.id, gameId), playableGameCondition()))
       .limit(1);
-    if (!existingGame) {
+    if (!playableGame) {
       throw new GameNotFoundError(gameId);
     }
 

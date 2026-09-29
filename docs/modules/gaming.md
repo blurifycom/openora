@@ -126,7 +126,7 @@ The lobby module's own `lobby_category`/`lobby_category_game`/`featured_slot` sy
 
 - **`GET /gaming/favorites`** - full game cards, newest-favorited first. A game hidden by its own or its provider's inactive state, or by vendor unavailability, is omitted but keeps its row, so it reappears when the game is playable again.
 - **`GET /gaming/favorites/ids`** - every favorited id, hidden games included, so a heart icon can render its state anywhere without loading the cards.
-- **`POST /gaming/favorites`** - `{ gameId }`. Idempotent: re-favoriting a game already on the list succeeds even at the cap. `NOT_FOUND` for an unknown game, `CONFLICT` past the cap; the count and insert run under a per-player advisory lock.
+- **`POST /gaming/favorites`** - `{ gameId }`. Idempotent: re-favoriting a game already on the list succeeds even at the cap. `NOT_FOUND` for an unknown game or one not currently playable, `CONFLICT` past the cap; the count and insert run under a per-player advisory lock.
 - **`DELETE /gaming/favorites/{gameId}`** - idempotent; removing a game that is not a favorite succeeds.
 
 Deleting a game cascades to its favorite rows.

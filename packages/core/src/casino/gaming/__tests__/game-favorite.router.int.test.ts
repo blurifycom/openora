@@ -237,4 +237,30 @@ describe('gaming router favorites - happy path and typed errors', () => {
     expect(error).toBeInstanceOf(ORPCError);
     expect((error as ORPCError<'NOT_FOUND', unknown>).code).toBe('NOT_FOUND');
   });
+
+  it.each<
+    [
+      string,
+      {
+        game?: Partial<typeof game.$inferInsert>;
+        provider?: Partial<typeof gameProvider.$inferInsert>;
+      },
+    ]
+  >([
+    ['an inactive game', { game: { isActive: false } }],
+    ['an unavailable game', { game: { isUnavailable: true } }],
+    ['a game whose provider is inactive', { provider: { isActive: false } }],
+  ])('refuses to favorite %s with NOT_FOUND and writes no row', async (_, overrides) => {
+    const provider = await seedProvider(overrides.provider);
+    const target = await seedGame(provider.id, overrides.game);
+    const userId = randomUUID();
+    const error = await call(
+      router().addFavorite,
+      { gameId: target.id },
+      { context: testContext({ auth: { userId } }) },
+    ).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'NOT_FOUND', unknown>).code).toBe('NOT_FOUND');
+    expect(await db.drizzle.db.select().from(gameFavorite)).toEqual([]);
+  });
 });
