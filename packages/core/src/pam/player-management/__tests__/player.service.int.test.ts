@@ -511,6 +511,19 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
     });
   });
 
+  it('emits one status transition when two updates race to the same status', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await Promise.all([
+      svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID),
+      svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID),
+    ]);
+
+    const changes = events.emit.mock.calls.filter(([topic]) => topic === 'player.status.changed');
+    expect(changes).toHaveLength(1);
+  });
+
   it('does not emit when update moves the status to a non-terminal blocking status', async () => {
     const { svc, events } = makeService();
     const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });

@@ -762,17 +762,6 @@ describe('mapEventToRecord: player.status.changed', () => {
       after: { status: 'suspended' },
     });
   });
-
-  it('attributes a transition without an actor to the system', async () => {
-    const row = await mapEventToRecord('player.status.changed', {
-      playerId,
-      userId,
-      previousStatus: 'suspended',
-      newStatus: 'active',
-    });
-
-    expect(row).toMatchObject({ actorType: 'system', actorId: null, resourceId: playerId });
-  });
 });
 
 describe('mapEventToRecord: identity topics on a player-backed account', () => {
@@ -821,6 +810,15 @@ describe('mapEventToRecord: identity topics on a player-backed account', () => {
 
     expect(row).toMatchObject({ resourceType: 'player', resourceId: playerId });
   });
+
+  it.each(['identity.user.phone_login', 'identity.sessions.revoked_all'])(
+    'files %s under the player',
+    async (topic) => {
+      const row = await mapEventToRecord(topic, { userId, playerId, actorId: adminId });
+
+      expect(row).toMatchObject({ resourceType: 'player', resourceId: playerId });
+    },
+  );
 
   it('keeps an account without a player row under the user', async () => {
     const row = await mapEventToRecord('identity.security.withdrawal_pin.removed', {

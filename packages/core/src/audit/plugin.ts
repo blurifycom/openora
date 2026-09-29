@@ -263,8 +263,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'player',
       actorId: str(p['playerId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       result: 'success',
     };
   }
@@ -326,8 +325,9 @@ export async function mapEventToRecord(
       ...base,
       actorType,
       actorId,
-      resourceType: isSingle ? 'session' : 'user',
-      resourceId: isSingle ? str(p['sessionId']) : str(p['userId']),
+      ...(isSingle
+        ? { resourceType: 'session', resourceId: str(p['sessionId']) }
+        : identitySubject(p)),
     };
   }
 
@@ -484,7 +484,7 @@ export async function mapEventToRecord(
   if (topic === 'player.status.changed') {
     return {
       ...base,
-      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['playerId']),
