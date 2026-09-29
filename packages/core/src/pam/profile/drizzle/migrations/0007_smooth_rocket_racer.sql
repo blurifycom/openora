@@ -1,0 +1,2 @@
+ALTER TABLE "player" ADD COLUMN "allow_friend_requests" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "player" ADD COLUMN "show_online_status_to_friends" boolean DEFAULT true NOT NULL;

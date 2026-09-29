@@ -57,7 +57,8 @@ export const FriendListEntrySchema = z.object({
   userId: UuidSchema,
   friendshipId: UuidSchema,
   username: z.string(),
-  status: z.enum(['online', 'offline']),
+  // Both null when the friend turned `showOnlineStatusToFriends` off.
+  status: z.enum(['online', 'offline']).nullable(),
   lastSeenAt: TimestampSchema.nullable(),
   isIgnored: z.boolean(),
 });

@@ -52,6 +52,11 @@ export const player = pgTable(
      * race, say) instead of the platform's own partial masking. Never affects the player's own
      * standing, wagered total, or prize eligibility - only what other players see. */
     hideUsernameOnLeaderboards: boolean().notNull().default(false),
+    /** Off refuses new friend requests addressed to this player. A request the player sent
+     * themselves, and friendships that already exist, are unaffected. */
+    allowFriendRequests: boolean().notNull().default(true),
+    /** Off hides this player's online status and last-seen time from their friends. */
+    showOnlineStatusToFriends: boolean().notNull().default(true),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
