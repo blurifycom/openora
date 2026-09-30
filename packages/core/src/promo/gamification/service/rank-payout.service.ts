@@ -118,7 +118,7 @@ export class RankPayoutService {
    */
   async announceRankChanges(): Promise<RankChanged[]> {
     if (!this.eligibility) {
-      this.logger.warn('rank change announcements skipped - play eligibility not bound');
+      this.logger.warn({}, 'rank change announcements skipped - play eligibility not bound');
       return [];
     }
     const announced: RankChanged[] = [];
