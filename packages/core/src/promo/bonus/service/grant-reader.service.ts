@@ -30,6 +30,7 @@ const COLUMNS = {
   offerId: promoGrant.offerId,
   currency: promoGrant.currency,
   source: promoGrant.source,
+  sourceRef: promoGrant.sourceRef,
   status: promoGrant.status,
   grantedAmount: promoGrant.grantedAmount,
   bonusBalance: promoGrant.bonusBalance,
@@ -55,7 +56,6 @@ const ENTRY_COLUMNS = {
 const ADMIN_COLUMNS = {
   ...COLUMNS,
   userId: promoGrant.userId,
-  sourceRef: promoGrant.sourceRef,
 };
 
 /**

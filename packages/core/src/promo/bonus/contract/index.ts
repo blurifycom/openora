@@ -208,6 +208,7 @@ export const PlayerGrantSchema = z.object({
   offerId: UuidSchema.nullable(),
   currency: CurrencyTickerSchema,
   source: BonusGrantSourceSchema,
+  sourceRef: z.string(),
   status: BonusGrantStatusSchema,
   grantedAmount: MoneyAmountSchema,
   bonusBalance: MoneyAmountSchema,
@@ -223,7 +224,6 @@ export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const AdminGrantSchema = PlayerGrantSchema.extend({
   userId: UuidSchema,
-  sourceRef: z.string(),
 });
 
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;
