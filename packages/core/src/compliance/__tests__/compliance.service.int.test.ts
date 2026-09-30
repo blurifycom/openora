@@ -1104,7 +1104,7 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
     const providerId = await seedProvider();
     const gameIds = await seedManyGames(providerId, 3);
     const actorId = randomUUID();
-    const { svc, events } = makeService();
+    const { svc, events, audit } = makeService();
     await svc.bulkRestrictGameGeoRules(
       { gameIds, countryCode: 'DK', reason: 'restricted' },
       actorId,
@@ -1135,6 +1135,16 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
         operation: 'unrestrict',
         changedGameIds: [...gameIds].sort(),
         target: { gameIds: [], providerIds: [providerId] },
+      }),
+    );
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        before: {
+          removedRules: [...gameIds]
+            .sort()
+            .map((gameId) => ({ ruleId: expect.any(String), gameId, reason: 'restricted' })),
+        },
       }),
     );
     expect(

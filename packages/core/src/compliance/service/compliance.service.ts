@@ -878,7 +878,17 @@ export class ComplianceService {
             action: 'compliance.game-geo-rules.bulk_updated',
             resourceType: 'game-geo-rule',
             resourceId: null,
-            before: null,
+            // Unrestrict keeps what it deleted, so the licence history survives the removal.
+            before:
+              operation === 'unrestrict'
+                ? {
+                    removedRules: result.rules.map(({ id, gameId, reason }) => ({
+                      ruleId: id,
+                      gameId,
+                      reason,
+                    })),
+                  }
+                : null,
             after: {
               operation,
               countryCode: input.countryCode,

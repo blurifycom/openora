@@ -639,7 +639,11 @@ describe('bulk geo restrict / unrestrict', () => {
     expect(await bulkAuditEntries(first.gameId, 'unrestrict')).toEqual([
       expect.objectContaining({
         resourceType: 'game-geo-rule',
-        before: null,
+        before: {
+          removedRules: [...rules]
+            .sort((a, b) => a.gameId.localeCompare(b.gameId))
+            .map((rule) => ({ ruleId: rule.id, gameId: rule.gameId, reason: 'bulk restriction' })),
+        },
         after: expect.objectContaining({
           operation: 'unrestrict',
           reason: 'bulk restore',
