@@ -1,0 +1,1 @@
+ALTER TABLE "geo_rule" ADD COLUMN "mirror_url" text;

@@ -101,6 +101,7 @@ describe('ComplianceService.geoCheck (real PG)', () => {
       allowed: true,
       countryCode: null,
       reason: null,
+      redirectUrl: null,
     });
   });
 
@@ -118,6 +119,7 @@ describe('ComplianceService.geoCheck (real PG)', () => {
       allowed: false,
       countryCode: null,
       reason: 'Geolocation could not be determined',
+      redirectUrl: null,
     });
   });
 
@@ -151,6 +153,89 @@ describe('ComplianceService.geoCheck (real PG)', () => {
     await db.drizzle.db.insert(countryRule).values({ countryCode: 'DE', action: 'allow' });
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: 'DE' });
+  });
+
+  it('lets a blacklisted country through, carrying its mirror, once it is redirected', async () => {
+    const { svc, events } = makeService('TR');
+    await db.drizzle.db.insert(countryRule).values({
+      countryCode: 'TR',
+      action: 'block',
+      redirectIp: true,
+      mirrorUrl: 'https://mirror.example',
+    });
+
+    expect(await svc.geoCheck('1.2.3.4')).toEqual({
+      allowed: true,
+      countryCode: 'TR',
+      reason: null,
+      redirectUrl: 'https://mirror.example',
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('keeps a blacklisted country blocked when redirection has no target', async () => {
+    const { svc } = makeService('TR');
+    await db.drizzle.db
+      .insert(countryRule)
+      .values({ countryCode: 'TR', action: 'block', redirectIp: true });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, redirectUrl: null });
+  });
+
+  it('keeps a blacklisted country blocked when a target is stored but redirection is off', async () => {
+    const { svc } = makeService('TR');
+    await db.drizzle.db.insert(countryRule).values({
+      countryCode: 'TR',
+      action: 'block',
+      redirectIp: false,
+      mirrorUrl: 'https://mirror.example',
+    });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, redirectUrl: null });
+  });
+
+  it('reports the mirror for a redirected country that is not blacklisted', async () => {
+    const { svc } = makeService('DE');
+    await db.drizzle.db.insert(countryRule).values({
+      countryCode: 'DE',
+      action: 'allow',
+      redirectIp: true,
+      mirrorUrl: 'https://mirror.example',
+    });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({
+      allowed: true,
+      redirectUrl: 'https://mirror.example',
+    });
+  });
+
+  it('does not let a redirect open a country the deployment itself blocks', async () => {
+    const igaming = defineIgamingConfig({
+      branding: { name: 'Test' },
+      currencies: ['EUR'],
+      jurisdictions: ['MT'],
+      blockedCountries: ['US'],
+    });
+    const { svc } = makeService('US', igaming);
+    await db.drizzle.db.insert(countryRule).values({
+      countryCode: 'US',
+      action: 'allow',
+      redirectIp: true,
+      mirrorUrl: 'https://mirror.example',
+    });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, redirectUrl: null });
+  });
+
+  it('leaves a redirected blacklisted country out of the globally blocked list', async () => {
+    const { svc } = makeService();
+    await db.drizzle.db.insert(countryRule).values([
+      { countryCode: 'FR', action: 'block' },
+      { countryCode: 'TR', action: 'block', redirectIp: true, mirrorUrl: 'https://mirror.example' },
+      { countryCode: 'IR', action: 'block', redirectIp: true },
+    ]);
+
+    expect(await svc.listGloballyBlockedCountries()).toEqual(['FR', 'IR']);
   });
 
   it('enforces blocked countries from the runtime igaming configuration', async () => {
@@ -394,7 +479,7 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         resourceType: 'country-rule',
         resourceId: 'FR',
         before: null,
-        after: { blacklisted: false, redirectIp: false, kycRequired: true },
+        after: { blacklisted: false, redirectIp: false, mirrorUrl: null, kycRequired: true },
       }),
     );
   });
@@ -454,6 +539,118 @@ describe('ComplianceService.upsertCountryRule (real PG)', () => {
         randomUUID(),
       ),
     ).rejects.toBeInstanceOf(CountryRuleConfirmationRequiredError);
+  });
+
+  it('requires confirmation before a mirror opens a blacklisted country', async () => {
+    const { svc } = makeService();
+    const rule = await svc.upsertCountryRule(
+      {
+        countryCode: 'TR',
+        blacklisted: true,
+        redirectIp: true,
+        kycRequired: true,
+        expectedUpdatedAt: null,
+        confirm: true,
+      },
+      randomUUID(),
+    );
+
+    await expect(
+      svc.upsertCountryRule(
+        {
+          countryCode: 'TR',
+          blacklisted: true,
+          redirectIp: true,
+          mirrorUrl: 'https://mirror.example',
+          kycRequired: true,
+          expectedUpdatedAt: rule.updatedAt,
+        },
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(CountryRuleConfirmationRequiredError);
+  });
+
+  it('audits a mirror target change with its previous and new value', async () => {
+    const { svc, audit } = makeService();
+    const created = await svc.upsertCountryRule(
+      {
+        countryCode: 'DE',
+        blacklisted: false,
+        redirectIp: true,
+        mirrorUrl: 'https://mirror-one.example',
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
+      randomUUID(),
+    );
+    audit.recordInTransaction.mockClear();
+    const actorId = randomUUID();
+
+    const updated = await svc.upsertCountryRule(
+      {
+        countryCode: 'DE',
+        blacklisted: false,
+        redirectIp: true,
+        mirrorUrl: 'https://mirror-two.example',
+        kycRequired: true,
+        expectedUpdatedAt: created.updatedAt,
+      },
+      actorId,
+    );
+
+    expect(updated.mirrorUrl).toBe('https://mirror-two.example');
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId,
+        action: 'compliance.country_rule.setting_changed',
+        resourceId: 'DE',
+        before: { setting: 'mirrorUrl', value: 'https://mirror-one.example' },
+        after: { setting: 'mirrorUrl', value: 'https://mirror-two.example' },
+      }),
+    );
+  });
+
+  it('keeps the stored mirror target when a save omits it, and clears it on null', async () => {
+    const { svc } = makeService();
+    const created = await svc.upsertCountryRule(
+      {
+        countryCode: 'DE',
+        blacklisted: false,
+        redirectIp: true,
+        mirrorUrl: 'https://mirror.example',
+        kycRequired: true,
+        expectedUpdatedAt: null,
+      },
+      randomUUID(),
+    );
+
+    const kept = await svc.upsertCountryRule(
+      {
+        countryCode: 'DE',
+        blacklisted: false,
+        redirectIp: true,
+        kycRequired: false,
+        expectedUpdatedAt: created.updatedAt,
+        confirm: true,
+      },
+      randomUUID(),
+    );
+    const cleared = await svc.upsertCountryRule(
+      {
+        countryCode: 'DE',
+        blacklisted: false,
+        redirectIp: true,
+        mirrorUrl: null,
+        kycRequired: false,
+        expectedUpdatedAt: kept.updatedAt,
+      },
+      randomUUID(),
+    );
+
+    expect(kept.mirrorUrl).toBe('https://mirror.example');
+    expect(cleared.mirrorUrl).toBeNull();
   });
 
   it('requires confirmation before blacklisting a country', async () => {

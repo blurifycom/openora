@@ -164,11 +164,30 @@ export const BulkApproveKycOutputSchema = z.object({
 });
 export type BulkApproveKycOutput = z.infer<typeof BulkApproveKycOutputSchema>;
 
+const isBareHttpsOrigin = (value: string) => {
+  try {
+    return new URL(value).origin === value && value.startsWith('https://');
+  } catch {
+    return false;
+  }
+};
+
+// An origin, not a page: the consumer appends the path the visitor asked for, and an
+// origin is the unit a host allowlist can compare without parsing surprises.
+export const MirrorUrlSchema = z
+  .string()
+  .max(253 + 'https://'.length)
+  .refine(
+    isBareHttpsOrigin,
+    'Mirror URL must be an https origin with no path, e.g. https://example.com',
+  );
+
 export const CountryRuleSchema = z.object({
   id: UuidSchema,
   countryCode: CountryCodeSchema,
   blacklisted: z.boolean(),
   redirectIp: z.boolean(),
+  mirrorUrl: MirrorUrlSchema.nullable(),
   kycRequired: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.nullable(),
@@ -218,6 +237,8 @@ export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
   kycRequired: true,
 })
   .extend({
+    // Omitted keeps the stored target, so a client that predates the field cannot clear it.
+    mirrorUrl: MirrorUrlSchema.nullable().optional(),
     expectedUpdatedAt: TimestampSchema.nullable(),
     confirm: z.boolean().optional(),
   })
@@ -287,6 +308,9 @@ const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
   countryCode: CountryCodeSchema.nullable(),
   reason: z.string().nullable(),
+  // Set when the country is redirected to a mirror. Independent of `allowed`: a consumer
+  // serving the primary domain sends the visitor there instead of rendering.
+  redirectUrl: MirrorUrlSchema.nullable(),
 });
 
 export const GetBlockedCountriesOutputSchema = z.object({

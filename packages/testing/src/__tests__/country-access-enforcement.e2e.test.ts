@@ -12,6 +12,9 @@ import { forceEmailVerified } from '../register.js';
 const BLOCKED_IP = '203.0.113.10';
 const BLOCKED_COUNTRY = 'DE';
 const ALLOWED_IP = '203.0.113.20';
+const REDIRECTED_IP = '203.0.113.30';
+const REDIRECTED_COUNTRY = 'TR';
+const MIRROR_URL = 'https://mirror.e2e.test';
 const UNRESOLVABLE_IP = '198.51.100.7';
 
 let db: TestDb;
@@ -79,6 +82,12 @@ beforeAll(async () => {
     .db.insert(countryRule)
     .values({ countryCode: BLOCKED_COUNTRY, action: 'block' })
     .onConflictDoUpdate({ target: countryRule.countryCode, set: { action: 'block' } });
+  const redirected = { action: 'block', redirectIp: true, mirrorUrl: MIRROR_URL } as const;
+  await app.container
+    .get(DRIZZLE)
+    .db.insert(countryRule)
+    .values({ countryCode: REDIRECTED_COUNTRY, ...redirected })
+    .onConflictDoUpdate({ target: countryRule.countryCode, set: redirected });
 }, 60_000);
 
 afterAll(async () => {
@@ -106,6 +115,19 @@ describe('country access enforcement', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ allowed: false, countryCode: null });
+  });
+
+  it('hands a blacklisted but redirected country its mirror and lets it register', async () => {
+    const res = await geoCheck(REDIRECTED_IP);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      allowed: true,
+      countryCode: REDIRECTED_COUNTRY,
+      reason: null,
+      redirectUrl: MIRROR_URL,
+    });
+    expect((await register(REDIRECTED_IP, `mirror-${randomUUID()}@e2e.test`)).status).toBe(200);
   });
 
   it('refuses registration from a blacklisted country', async () => {

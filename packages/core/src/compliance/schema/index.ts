@@ -87,6 +87,8 @@ export const countryRule = pgTable('geo_rule', {
   countryCode: text().notNull().unique('geo_rule_country_code_unique'),
   action: text({ enum: geoRuleActions }).notNull(),
   redirectIp: boolean().notNull().default(false),
+  // Where `redirectIp` sends the country. Redirection is in force only with both set.
+  mirrorUrl: text(),
   kycRequired: boolean().notNull().default(true),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true }),
