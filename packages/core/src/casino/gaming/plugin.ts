@@ -189,9 +189,10 @@ export default {
 
     ctx.routers.add('gaming', (c) => {
       const jobQueue = c.get(JOB_QUEUE);
-      const sorts = new GameSortService(c.get(GAME_SORT_CATALOG));
+      const sortCatalog = c.get(GAME_SORT_CATALOG);
+      const sorts = new GameSortService(sortCatalog);
       rankingRef = new GameSortRankingService(c.get(DRIZZLE), sorts);
-      triggersRef = new GameSortTriggerService(c.get(DRIZZLE), jobQueue);
+      triggersRef = new GameSortTriggerService(c.get(DRIZZLE), jobQueue, sortCatalog);
       triggersRef.scheduleSweep();
       const { rules, membership, triggers } = membershipServices(c);
       triggers.scheduleSweep();
