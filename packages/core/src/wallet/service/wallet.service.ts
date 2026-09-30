@@ -1287,8 +1287,8 @@ export class WalletService {
         actorId: adminId,
         actorType: 'admin',
         action: 'wallet.manual_adjustment.created',
-        resourceType: 'wallet_transaction',
-        resourceId: row.id,
+        resourceType: 'player',
+        resourceId: playerId,
         before: { balance: balanceBefore, currency },
         after: {
           balance: balance.amount,

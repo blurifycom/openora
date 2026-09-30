@@ -29,10 +29,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // registration contract owns which fields are mandatory, and a hand-rolled body here
 // silently rots the moment one is added.
 async function registerPlayer() {
-  const { client, userId } = await registerAndMaterializePlayer(testApp, {
+  const { client, userId, playerId } = await registerAndMaterializePlayer(testApp, {
     email: `manual-adjustment-${randomUUID()}@e2e.test`,
   });
-  return { player: client, userId };
+  return { player: client, userId, playerId };
 }
 
 beforeAll(async () => {
@@ -52,7 +52,7 @@ afterAll(async () => {
 
 describe('manual wallet adjustment', () => {
   it('allows Super Admin credit, writes private admin history and audit, and rejects a player', async () => {
-    const { player, userId } = await registerPlayer();
+    const { player, userId, playerId } = await registerPlayer();
     const admin = await asAdmin(testApp.app);
     const idempotencyKey = randomUUID();
 
@@ -106,14 +106,17 @@ describe('manual wallet adjustment', () => {
 
     const auditRaw: unknown = await (
       await admin.get(
-        `/audit/logs?resourceId=${transactionId}&action=wallet.manual_adjustment.created`,
+        `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.manual_adjustment.created`,
       )
     ).json();
     const audit = object(auditRaw);
-    expect(audit['items']).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ action: 'wallet.manual_adjustment.created' }),
-      ]),
-    );
+    expect(audit['items']).toEqual([
+      expect.objectContaining({
+        action: 'wallet.manual_adjustment.created',
+        resourceType: 'player',
+        resourceId: playerId,
+        after: expect.objectContaining({ transactionId }),
+      }),
+    ]);
   });
 });

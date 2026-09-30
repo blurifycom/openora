@@ -63,6 +63,7 @@ function makeTrustedDevices(c: IdentityContainer) {
   return new TrustedDeviceService({
     drizzle: c.get(DRIZZLE),
     events: c.get(EVENT_BUS),
+    identityReader: c.get(IDENTITY_READER),
     trustedDeviceDays: adminSecurityConfig(c).trustedDeviceDays,
   });
 }

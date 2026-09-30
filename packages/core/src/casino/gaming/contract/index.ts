@@ -131,6 +131,13 @@ export type ListGamesInput = z.infer<typeof ListGamesInputSchema>;
 
 export const CatalogSlugSchema = createKebabSlugSchema(64);
 
+export const GAME_FAVORITE_LIMIT = 200;
+
+export const GameFavoriteInputSchema = z.object({ gameId: UuidSchema });
+export type GameFavoriteInput = z.infer<typeof GameFavoriteInputSchema>;
+
+export const GameFavoriteAckSchema = z.object({ success: z.literal(true) });
+
 export const gamingContract = {
   listGames: oc
     .route({ method: 'GET', path: '/gaming/games' })
@@ -178,6 +185,23 @@ export const gamingContract = {
     .route({ method: 'GET', path: '/gaming/categories/{slug}' })
     .input(z.object({ slug: CatalogSlugSchema }))
     .output(GameCategorySummaryWithTranslationsSchema),
+
+  // Newest-favorited first; a hidden game is omitted here but keeps its favorite row.
+  listFavorites: oc.route({ method: 'GET', path: '/gaming/favorites' }).output(z.array(GameSchema)),
+
+  listFavoriteIds: oc
+    .route({ method: 'GET', path: '/gaming/favorites/ids' })
+    .output(z.array(UuidSchema)),
+
+  addFavorite: oc
+    .route({ method: 'POST', path: '/gaming/favorites' })
+    .input(GameFavoriteInputSchema)
+    .output(GameFavoriteAckSchema),
+
+  removeFavorite: oc
+    .route({ method: 'DELETE', path: '/gaming/favorites/{gameId}' })
+    .input(GameFavoriteInputSchema)
+    .output(GameFavoriteAckSchema),
 };
 
 // Backoffice catalog management (game-config guarded in the router).

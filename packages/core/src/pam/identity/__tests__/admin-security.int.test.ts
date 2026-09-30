@@ -22,7 +22,12 @@ let db: TestDb;
 function buildService() {
   const events = makeEventBus();
   const drizzle = db.drizzle;
-  const trustedDevices = new TrustedDeviceService({ drizzle, events, trustedDeviceDays: 30 });
+  const trustedDevices = new TrustedDeviceService({
+    drizzle,
+    events,
+    identityReader: makeIdentityReader(),
+    trustedDeviceDays: 30,
+  });
   const service = new AdminSecurityService({
     drizzle,
     events,

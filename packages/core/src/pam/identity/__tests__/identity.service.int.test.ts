@@ -725,6 +725,7 @@ describe('IdentityService - trusted device login (real PG)', () => {
     new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
+      identityReader: makeIdentityReader(),
       trustedDeviceDays: 30,
     });
 
@@ -1338,6 +1339,7 @@ describe('IdentityService.verifyTwoFactor', () => {
       new TrustedDeviceService({
         drizzle: db.drizzle,
         events: makeEventBus(),
+        identityReader: makeIdentityReader(),
         trustedDeviceDays: 30,
       });
 
@@ -1387,6 +1389,7 @@ describe('IdentityService 2fa step-up teardown', () => {
     const trustedDevices = new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
+      identityReader: makeIdentityReader(),
       trustedDeviceDays: 30,
     });
     const sessions = new SessionService({
@@ -1560,6 +1563,7 @@ describe('IdentityService.trustCurrentDevice', () => {
     new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
+      identityReader: makeIdentityReader(),
       trustedDeviceDays: 30,
     });
 

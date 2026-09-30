@@ -31,6 +31,7 @@ import { GameSortTriggerService } from './service/game-sort-trigger.service.js';
 import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
 import { GameBulkService } from './service/game-bulk.service.js';
+import { GameFavoriteService } from './service/game-favorite.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
@@ -211,6 +212,7 @@ export default {
         ),
         tags: new GameTagService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         bulk: new GameBulkService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        favorites: new GameFavoriteService(c.get(DRIZZLE)),
         adminGuard: c.get(ADMIN_GUARD),
         sorts,
         rules,
