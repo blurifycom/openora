@@ -621,9 +621,10 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
-// A withdrawal that paid nothing out is not a cash-out: counting a vendor failure or an admin
-// rejection sent the player's next small withdrawal to the manual queue.
-const VELOCITY_IGNORED_STATUSES = ['failed', 'rejected', 'cancelled'] as const;
+// A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation
+// must not send the player's next small withdrawal to the manual queue. An admin rejection
+// still counts: it is a human judgement on this player and leaves no risk tag behind.
+const VELOCITY_IGNORED_STATUSES = ['failed', 'cancelled'] as const;
 
 // A withdrawal still waiting on a decision: the queue summary counts and totals only these.
 const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
