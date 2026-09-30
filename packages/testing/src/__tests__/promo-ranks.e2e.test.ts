@@ -93,3 +93,40 @@ describe('a player reading their rank', () => {
     expect(Object.keys(body)).toEqual(['currency', 'tiers']);
   });
 });
+
+describe('the public count of players per rank', () => {
+  const playersPerRank = async () => {
+    const res = await app.app.request('/promo/ranks/players');
+    expect(res.status).toBe(200);
+    return (await readJson(res)) as { tierId: string; players: number }[];
+  };
+
+  it('counts a player only toward the rank they hold now', async () => {
+    const before = await playersPerRank();
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `ranks-${randomUUID()}@example.test`,
+    });
+    await app.container.get(DRIZZLE).db.transaction((tx) =>
+      app.container.get(WAGER_TRACKING).recordWager(tx, {
+        userId,
+        currency: 'USDT',
+        amount: '150000',
+        weightedAmount: '150000',
+        realAmount: '150000',
+        context: { provider: 'aggregator', product: 'casino' },
+      }),
+    );
+
+    const after = await playersPerRank();
+
+    expect(after.map((entry, i) => entry.players - (before[i]?.players ?? 0))).toEqual([
+      0, 0, 1, 0,
+    ]);
+  });
+
+  it('serves counts only, with no player data on it', async () => {
+    const [entry] = await playersPerRank();
+
+    expect(Object.keys(entry ?? {})).toEqual(['tierId', 'players']);
+  });
+});
