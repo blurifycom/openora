@@ -5,6 +5,7 @@ import {
   UpdatePlayerProfileInputSchema,
   DisplayCurrencyCodeSchema,
   DisplayCurrencyInputSchema,
+  DisplayDecimalPlacesSchema,
 } from '@openora/core/contracts';
 
 // Player-facing self-profile contract. Caller resolved from the verified
@@ -18,6 +19,7 @@ export {
 export const DisplayCurrencyInfoSchema = z.object({
   currency: DisplayCurrencyCodeSchema,
   supported: z.array(DisplayCurrencyCodeSchema),
+  decimalPlaces: DisplayDecimalPlacesSchema,
 });
 export type DisplayCurrencyInfo = z.infer<typeof DisplayCurrencyInfoSchema>;
 
@@ -25,6 +27,11 @@ export const SetDisplayCurrencyInputSchema = z.object({
   currency: DisplayCurrencyInputSchema,
 });
 export type SetDisplayCurrencyInput = z.infer<typeof SetDisplayCurrencyInputSchema>;
+
+export const SetDisplayDecimalPlacesInputSchema = z.object({
+  decimalPlaces: DisplayDecimalPlacesSchema,
+});
+export type SetDisplayDecimalPlacesInput = z.infer<typeof SetDisplayDecimalPlacesInputSchema>;
 
 export const profileContract = {
   get: oc.route({ method: 'GET', path: '/profile' }).output(PlayerSchema),
@@ -41,5 +48,10 @@ export const profileContract = {
   setDisplayCurrency: oc
     .route({ method: 'PUT', path: '/profile/display-currency' })
     .input(SetDisplayCurrencyInputSchema)
+    .output(DisplayCurrencyInfoSchema),
+
+  setDisplayDecimalPlaces: oc
+    .route({ method: 'PUT', path: '/profile/display-decimal-places' })
+    .input(SetDisplayDecimalPlacesInputSchema)
     .output(DisplayCurrencyInfoSchema),
 };
