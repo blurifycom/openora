@@ -220,7 +220,7 @@ describe('ProfileService.getMyDisplayCurrency (real PG)', () => {
 
     const result = await svc.getMyDisplayCurrency(account.id);
 
-    expect(result).toEqual({ currency: 'EUR', supported: DEFAULT_SUPPORTED });
+    expect(result).toEqual({ currency: 'EUR', supported: DEFAULT_SUPPORTED, decimalPlaces: null });
   });
 
   it('falls back to the currency held with the most value when nothing was chosen', async () => {
@@ -299,7 +299,7 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
 
     const result = await svc.setMyDisplayCurrency(account.id, { currency: 'EUR' });
 
-    expect(result).toEqual({ currency: 'EUR', supported: DEFAULT_SUPPORTED });
+    expect(result).toEqual({ currency: 'EUR', supported: DEFAULT_SUPPORTED, decimalPlaces: null });
     const [row] = await playersFor(account.id);
     expect(row?.displayCurrency).toBe('EUR');
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
@@ -322,6 +322,80 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
     );
     const [row] = await playersFor(account.id);
     expect(row?.displayCurrency).toBeNull();
+  });
+});
+
+describe('ProfileService.setMyDisplayDecimalPlaces (real PG)', () => {
+  it('persists the pick, audits the value it replaced, and returns it on the next read', async () => {
+    const account = await seedUser(db);
+    const seeded = await seedPlayer(account.id, {
+      displayCurrency: 'EUR',
+      displayDecimalPlaces: 2,
+    });
+    const audit = makeAuditWriter();
+    const svc = new ProfileService(
+      db.drizzle,
+      mock<WalletReader>({}),
+      mock<ExchangeRateReader>({}),
+      audit,
+      DEFAULT_SUPPORTED,
+    );
+
+    const result = await svc.setMyDisplayDecimalPlaces(account.id, { decimalPlaces: 6 });
+
+    expect(result).toEqual({ currency: 'EUR', supported: DEFAULT_SUPPORTED, decimalPlaces: 6 });
+    expect(await svc.getMyDisplayCurrency(account.id)).toMatchObject({ decimalPlaces: 6 });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId: account.id,
+        actorType: 'player',
+        action: 'player.display_decimal_places.set',
+        resourceId: seeded.id,
+        before: { displayDecimalPlaces: 2 },
+        after: { displayDecimalPlaces: 6 },
+      }),
+    );
+  });
+
+  it('clears the pick back to the currency default when set to null', async () => {
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { displayCurrency: 'EUR', displayDecimalPlaces: 4 });
+    const svc = makeService();
+
+    const result = await svc.setMyDisplayDecimalPlaces(account.id, { decimalPlaces: null });
+
+    expect(result.decimalPlaces).toBeNull();
+    const [row] = await playersFor(account.id);
+    expect(row?.displayDecimalPlaces).toBeNull();
+  });
+
+  it('materializes the profile when the pick is the first call for a user', async () => {
+    const account = await seedUser(db);
+    const svc = makeService();
+
+    await svc.setMyDisplayDecimalPlaces(account.id, { decimalPlaces: 8 });
+
+    const rows = await playersFor(account.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.displayDecimalPlaces).toBe(8);
+  });
+
+  it('keeps the stored pick when the display currency changes', async () => {
+    const account = await seedUser(db);
+    await seedPlayer(account.id, { displayCurrency: 'USD', displayDecimalPlaces: 4 });
+    const svc = makeService();
+
+    const result = await svc.setMyDisplayCurrency(account.id, { currency: 'EUR' });
+
+    expect(result.decimalPlaces).toBe(4);
+  });
+
+  it('refuses an out-of-range value at the database even when validation is bypassed', async () => {
+    const account = await seedUser(db);
+
+    await expect(seedPlayer(account.id, { displayDecimalPlaces: 19 })).rejects.toThrow();
+    await expect(seedPlayer(account.id, { displayDecimalPlaces: -1 })).rejects.toThrow();
   });
 });
 
