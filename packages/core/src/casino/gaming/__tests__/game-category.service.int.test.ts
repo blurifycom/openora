@@ -274,6 +274,32 @@ describe('GameCategoryService (real PG)', () => {
   });
 });
 
+describe('GameCategoryService.listCategoryGames (real PG)', () => {
+  it('reports each member as playable only when active, vendor-available and on an active provider', async () => {
+    const { svc } = makeService();
+    const provider = await seedProvider();
+    const offProvider = await seedProvider();
+    await db.drizzle.db
+      .update(gameProvider)
+      .set({ isActive: false })
+      .where(eq(gameProvider.id, offProvider.id));
+    const category = await seedCategory();
+    const playable = await seedGame(provider.id, {}, [category.id]);
+    const inactive = await seedGame(provider.id, { isActive: false }, [category.id]);
+    const unavailable = await seedGame(provider.id, { isUnavailable: true }, [category.id]);
+    const onOffProvider = await seedGame(offProvider.id, {}, [category.id]);
+
+    const { items } = await svc.listCategoryGames(category.id, { page: 1, limit: 10 });
+
+    expect(Object.fromEntries(items.map((item) => [item.id, item.isPlayable]))).toEqual({
+      [playable.id]: true,
+      [inactive.id]: false,
+      [unavailable.id]: false,
+      [onOffProvider.id]: false,
+    });
+  });
+});
+
 describe('GameCategoryService.reorderCategoryGames (real PG)', () => {
   it('switches the category to manual sort, seeds unlisted members from their effective order, and leaves pins untouched', async () => {
     const category = await seedCategory({ sortKey: 'name', sortDirection: 'asc' });
