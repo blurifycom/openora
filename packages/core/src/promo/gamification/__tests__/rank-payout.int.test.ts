@@ -334,6 +334,70 @@ describe('paying a periodic bonus', () => {
     );
   });
 
+  // The operator prices the cap in the ladder's currency, and the bonus engine compares it with
+  // stakes in the grant's own - so it has to move with the reward.
+  it('converts the stake cap into the currency the reward is credited in', async () => {
+    const userId = await played('silver');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payInPlayerCurrency: true, rewards: { daily: { ...DAILY_TERMS, maxBet: '5' } } });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    convert.mockImplementation(async (amount) =>
+      amount === '5' ? '0.000080000000000000' : '0.000008000000000000',
+    );
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(convert).toHaveBeenCalledWith('5', 'USD', 'BTC');
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId,
+        currency: 'BTC',
+        terms: expect.objectContaining({ maxBet: '0.000080000000000000' }),
+      }),
+    );
+  });
+
+  it('keeps the stake cap as priced when the reward is credited in the ladder currency', async () => {
+    await played('silver');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ rewards: { daily: { ...DAILY_TERMS, maxBet: '5' } } });
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        currency: 'USD',
+        terms: expect.objectContaining({ maxBet: '5' }),
+      }),
+    );
+  });
+
+  // A cap that cannot be priced is not dropped: a bonus without it is the coin flip the cap
+  // exists to prevent.
+  it('pays nothing when the stake cap has no rate, and leaves it for the next run', async () => {
+    await played('silver');
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payInPlayerCurrency: true, rewards: { daily: { ...DAILY_TERMS, maxBet: '5' } } });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    convert.mockImplementation(async (amount) => (amount === '5' ? null : '0.000008000000000000'));
+
+    const granted = await service().payPeriodic('daily', NOW);
+
+    expect(granted).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+
+    convert.mockResolvedValue('0.000008000000000000');
+
+    expect(await service().payPeriodic('daily', NOW)).toHaveLength(1);
+    expect(grant).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to the operator currency when the player has no rate of their own', async () => {
     await played('silver');
     await db.drizzle.db
@@ -477,5 +541,221 @@ describe('paying a periodic bonus', () => {
 
     expect(granted).toHaveLength(1);
     expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  // A retry re-converts at the rate of the moment, so a player paid on the first run no longer
+  // matches their grant. That conflict is settled, not a reason to hold the period's watermark.
+  it('settles a period whose retry conflicts with a grant paid at an earlier rate', async () => {
+    const failing = await played('silver');
+    const paid = await played('silver');
+    await db.drizzle.db.update(promoRankConfig).set({ payInPlayerCurrency: true });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    const credited = new Map<string, string>();
+    let failingIsDown = true;
+    grant.mockImplementation(async (_tx, args) => {
+      if (args.userId === failing && failingIsDown) {
+        throw new Error('database unavailable');
+      }
+      const earlier = credited.get(args.userId);
+      if (earlier !== undefined && earlier !== args.amount) {
+        throw Object.assign(new Error('conflict'), { name: 'GrantConflictError' });
+      }
+      credited.set(args.userId, args.amount);
+      return { ok: true, grantId: randomUUID(), created: earlier === undefined };
+    });
+    const watermark = async () => {
+      const [config] = await db.drizzle.db
+        .select({ paidThrough: promoRankConfig.paidThrough })
+        .from(promoRankConfig);
+      return config?.paidThrough.daily;
+    };
+
+    convert.mockResolvedValue('0.000008000000000000');
+    const first = await service().payPeriodic('daily', NOW);
+    expect(first.map((g) => g.userId)).toEqual([paid]);
+    expect(await watermark()).toBeUndefined();
+
+    failingIsDown = false;
+    convert.mockResolvedValue('0.000009000000000000');
+    const second = await service().payPeriodic('daily', NOW);
+    expect(second.map((g) => g.userId)).toEqual([failing]);
+    expect(credited.get(paid)).toBe('0.000008000000000000');
+    expect(await watermark()).toBeDefined();
+
+    grant.mockClear();
+    expect(await service().payPeriodic('daily', NOW)).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+  });
+});
+
+describe('announcing a promotion', () => {
+  /** A player the bet has promoted to `to`, last told about `from` (null: never told anything). */
+  const promoted = async (from: string | null, to: string) => {
+    const userId = randomUUID();
+    await db.drizzle.db.insert(promoPlayerRank).values({
+      userId,
+      currency: 'USD',
+      lifetimeWagered: '150',
+      tierId: await tierId(to),
+      announcedTierId: from === null ? null : await tierId(from),
+    });
+    return userId;
+  };
+
+  const announcedTier = async (userId: string) => {
+    const [row] = await db.drizzle.db
+      .select({ announcedTierId: promoPlayerRank.announcedTierId })
+      .from(promoPlayerRank)
+      .where(eq(promoPlayerRank.userId, userId));
+    return row?.announcedTierId;
+  };
+
+  it('announces the rank reached with what it pays, once', async () => {
+    const userId = await promoted('bronze', 'silver');
+
+    const announced = await service().announceRankChanges();
+
+    expect(announced).toEqual([
+      {
+        userId,
+        tierId: await tierId('silver'),
+        previousTierId: await tierId('bronze'),
+        position: 1,
+        tierName: 'Silver',
+        currency: 'USD',
+        rakebackPercent: '3.00',
+        dailyBonus: '0.500000000000000000',
+        weeklyBonus: null,
+        monthlyBonus: null,
+      },
+    ]);
+    expect(await announcedTier(userId)).toBe(await tierId('silver'));
+    expect(await service().announceRankChanges()).toEqual([]);
+  });
+
+  // One bet can cross several thresholds; the player hears about the rank they landed on.
+  it('announces a jump past several ranks once, naming the one landed on', async () => {
+    const userId = await promoted(null, 'silver');
+
+    const announced = await service().announceRankChanges();
+
+    expect(announced).toEqual([
+      expect.objectContaining({ userId, tierId: await tierId('silver'), previousTierId: null }),
+    ]);
+  });
+
+  // Every player starts there; it crosses nothing.
+  it('catches up the starting rank without announcing it', async () => {
+    const userId = await promoted(null, 'bronze');
+
+    expect(await service().announceRankChanges()).toEqual([]);
+    expect(await announcedTier(userId)).toBe(await tierId('bronze'));
+  });
+
+  // Same rule as the payouts: a player under a block is not sent a reason to come back, and the
+  // congratulation does not wait for the block to lift.
+  it('catches up a player under a responsible-gambling block without announcing it', async () => {
+    const userId = await promoted('bronze', 'silver');
+    isRestricted.mockResolvedValue(true);
+
+    expect(await service().announceRankChanges()).toEqual([]);
+    expect(await announcedTier(userId)).toBe(await tierId('silver'));
+  });
+
+  it('announces nothing, and catches nobody up, when the block cannot be checked', async () => {
+    const userId = await promoted('bronze', 'silver');
+    const unchecked = new RankPayoutService(
+      db.drizzle,
+      mock<BonusGrantCommands>({ grant }),
+      undefined,
+      mock<ExchangeRateReader>({ convert }),
+      mock<WalletReader>({ getBalances }),
+      logger,
+    );
+
+    expect(await unchecked.announceRankChanges()).toEqual([]);
+    expect(await announcedTier(userId)).toBe(await tierId('bronze'));
+  });
+
+  it('leaves a player it could not check for the next run, and announces the rest', async () => {
+    const failing = await promoted('bronze', 'silver');
+    const other = await promoted('bronze', 'silver');
+    isRestricted.mockImplementation(async (id) => {
+      if (id === failing) {
+        throw new Error('compliance unavailable');
+      }
+      return false;
+    });
+
+    const announced = await service().announceRankChanges();
+
+    expect(announced.map((change) => change.userId)).toEqual([other]);
+    expect(await announcedTier(failing)).toBe(await tierId('bronze'));
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('pruning settled period counters', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const SETTLED = new Date('2026-09-22T00:00:00Z');
+
+  /** A counter last written `daysBefore` days before the settled watermark. */
+  const counter = async (kind: 'daily' | 'weekly' | 'monthly', daysBefore: number) => {
+    const [row] = await db.drizzle.db
+      .insert(promoRankPeriodWager)
+      .values({
+        userId: randomUUID(),
+        kind,
+        periodKey: `rank-${kind}:${randomUUID()}`,
+        currency: 'USD',
+        wagered: '5',
+        updatedAt: new Date(SETTLED.getTime() - daysBefore * DAY_MS),
+      })
+      .returning({ id: promoRankPeriodWager.id });
+    return row?.id ?? '';
+  };
+
+  const settledThrough = (paidThrough: Partial<Record<'daily' | 'weekly' | 'monthly', string>>) =>
+    db.drizzle.db.update(promoRankConfig).set({ paidThrough });
+
+  const remaining = async () =>
+    (await db.drizzle.db.select({ id: promoRankPeriodWager.id }).from(promoRankPeriodWager)).map(
+      (row) => row.id,
+    );
+
+  it('deletes a counter whose period the payout has long since settled', async () => {
+    await settledThrough({ daily: SETTLED.toISOString() });
+    await counter('daily', 60);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(1);
+    expect(await remaining()).toEqual([]);
+  });
+
+  // No period runs past a month, so a counter written within that of the watermark may still
+  // belong to a period the watermark has not reached.
+  it('keeps a counter written close enough to the watermark to be unsettled', async () => {
+    await settledThrough({ monthly: SETTLED.toISOString() });
+    const recent = await counter('monthly', 30);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(0);
+    expect(await remaining()).toEqual([recent]);
+  });
+
+  // A payout job down for weeks must lose nothing it has yet to settle.
+  it('keeps every counter of a kind that has never been paid', async () => {
+    await settledThrough({});
+    const old = await counter('weekly', 365);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(0);
+    expect(await remaining()).toEqual([old]);
+  });
+
+  it('measures each kind against its own watermark', async () => {
+    await settledThrough({ daily: SETTLED.toISOString() });
+    await counter('daily', 60);
+    const weekly = await counter('weekly', 60);
+
+    expect(await service().pruneSettledPeriodWagers()).toBe(1);
+    expect(await remaining()).toEqual([weekly]);
   });
 });

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import type {
   BonusGrantCommands,
   ExchangeRateReader,
@@ -7,7 +7,12 @@ import type {
   Uuid,
   WalletReader,
 } from '@openora/core/contracts';
-import { moneyScaleBy, type DrizzleService, type DrizzleTx } from '@openora/core/server';
+import {
+  moneyCompare,
+  moneyScaleBy,
+  type DrizzleService,
+  type DrizzleTx,
+} from '@openora/core/server';
 import {
   promoPlayerRank,
   promoRankConfig,
@@ -17,9 +22,15 @@ import {
   type RankRewardTerms,
   type RankRewards,
 } from '../schema/index.js';
-import { lastCompletePeriod, type RankPeriod, type RankPeriodKind } from '../shared/rank-period.js';
+import {
+  lastCompletePeriod,
+  RANK_PERIOD_KINDS,
+  type RankPeriod,
+  type RankPeriodKind,
+} from '../shared/rank-period.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
+type RankChanged = DomainEventPayload<'promo.rank.changed'>;
 
 /** What a reward is credited in, in the order the operator asked for it. */
 type PayoutSettings = { currency: string | null; inPlayerCurrency: boolean };
@@ -30,6 +41,9 @@ type Logger = {
 };
 
 const BATCH = 500;
+
+// No period runs longer than a month; the slack past 31 days absorbs clock skew.
+const SETTLED_COUNTER_AGE_MS = 35 * 24 * 60 * 60 * 1000;
 
 const PERIOD_BONUS = {
   daily: promoRankTier.dailyBonus,
@@ -48,6 +62,8 @@ const PERIOD_BONUS = {
  * block cannot be checked at all, nothing is paid.
  *
  * Each method returns the grants it created, for the caller to announce once they are committed.
+ * The promotions themselves are announced from here too, for the same reason: they happen inside
+ * a bet, and this is the first place after it where anything may be emitted.
  */
 export class RankPayoutService {
   constructor(
@@ -94,6 +110,80 @@ export class RankPayoutService {
   }
 
   /**
+   * The promotions no one has told the player about yet, for the caller to emit as
+   * `promo.rank.changed` once this returns.
+   *
+   * A promotion onto the rank every player starts on, and one for a player under a
+   * responsible-gambling block that cannot be checked, is caught up without being announced.
+   */
+  async announceRankChanges(): Promise<RankChanged[]> {
+    if (!this.eligibility) {
+      this.logger.warn({}, 'rank change announcements skipped - play eligibility not bound');
+      return [];
+    }
+    const announced: RankChanged[] = [];
+    let after = '00000000-0000-0000-0000-000000000000';
+
+    for (;;) {
+      const due = await this.drizzle.db
+        .select({
+          userId: promoPlayerRank.userId,
+          previousTierId: promoPlayerRank.announcedTierId,
+          tierId: promoRankTier.id,
+          position: promoRankTier.position,
+          wagerThreshold: promoRankTier.wagerThreshold,
+          tierName: promoRankTier.name,
+          currency: promoRankTier.currency,
+          rakebackPercent: promoRankTier.rakebackPercent,
+          dailyBonus: promoRankTier.dailyBonus,
+          weeklyBonus: promoRankTier.weeklyBonus,
+          monthlyBonus: promoRankTier.monthlyBonus,
+        })
+        .from(promoPlayerRank)
+        .innerJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
+        .where(
+          and(
+            gt(promoPlayerRank.userId, after),
+            sql`${promoPlayerRank.announcedTierId} IS DISTINCT FROM ${promoPlayerRank.tierId}`,
+          ),
+        )
+        .orderBy(asc(promoPlayerRank.userId))
+        .limit(BATCH);
+
+      for (const { wagerThreshold, ...change } of due) {
+        try {
+          const silent =
+            moneyCompare(wagerThreshold, '0') === 0 || (await this.isBlocked(change.userId));
+          const [caughtUp] = await this.drizzle.db
+            .update(promoPlayerRank)
+            .set({ announcedTierId: change.tierId })
+            .where(
+              and(
+                eq(promoPlayerRank.userId, change.userId),
+                eq(promoPlayerRank.tierId, change.tierId),
+                change.previousTierId === null
+                  ? isNull(promoPlayerRank.announcedTierId)
+                  : eq(promoPlayerRank.announcedTierId, change.previousTierId),
+              ),
+            )
+            .returning({ userId: promoPlayerRank.userId });
+          if (caughtUp && !silent) {
+            announced.push(change);
+          }
+        } catch (err) {
+          this.logger.error({ err, userId: change.userId }, 'rank change announcement failed');
+        }
+      }
+
+      const last = due.at(-1);
+      if (!last || due.length < BATCH) {
+        return announced;
+      }
+      after = last.userId;
+    }
+  }
+
+  /**
    * Pays the bonus of the given kind for the last period that closed, to every player who earned
    * it. Safe to run as often as the operator likes: a period already settled is skipped, so the
    * job can tick hourly and still pay a monthly bonus exactly once.
@@ -111,6 +201,7 @@ export class RankPayoutService {
     }
     const bonus = PERIOD_BONUS[kind];
     const granted: Granted[] = [];
+    let retryRequired = false;
     let after = '00000000-0000-0000-0000-000000000000';
 
     for (;;) {
@@ -129,20 +220,27 @@ export class RankPayoutService {
             this.grant(tx, owed, period.sourceRef, terms, payout),
           );
           if (paid) {
-            granted.push(paid);
+            granted.push({ ...paid, rankBonusKind: kind });
           }
         } catch (err) {
-          // One player's failure - an amount an admin changed between two runs of the same
-          // period, say - must not cost everyone after them their bonus.
+          // One player's failure must not cost everyone after them their bonus. Only a transient
+          // failure (rate, compliance, database) holds the watermark for a retry. A refused grant
+          // is permanent, and a conflict means this player already holds a grant for the period -
+          // re-converting at today's rate just no longer matches it - so both count as settled.
+          const settled = err instanceof GrantRefusedError || isGrantConflict(err);
           this.logger.error(
-            { err, userId: player.userId, sourceRef: period.sourceRef },
+            { err, userId: player.userId, sourceRef: period.sourceRef, settled },
             'rank periodic payout failed',
           );
+          retryRequired ||= !settled;
         }
       }
 
       const last = due.at(-1);
       if (!last || due.length < BATCH) {
+        if (retryRequired) {
+          return granted;
+        }
         // Written once the whole period is processed: a run that dies halfway is retried, and
         // each player's own grant key keeps the retry from paying anybody twice.
         await this.markPaid(kind, period.end);
@@ -248,6 +346,7 @@ export class RankPayoutService {
       throw new Error('BONUS_GRANTS is not bound');
     }
     const paid = await this.inPayoutCurrency(owed, payout);
+    const maxBet = await this.capIn(terms.maxBet, owed.currency, paid.currency);
     const outcome = await this.grants.grant(tx, {
       userId: owed.userId,
       currency: paid.currency,
@@ -261,14 +360,14 @@ export class RankPayoutService {
         // Both are anti-abuse controls the bonus engine enforces inside the bet, against the
         // snapshot this grant is made under - so an operator loosening them later cannot widen
         // a bonus a player already holds.
-        ...(terms.maxBet === null || terms.maxBet === undefined ? {} : { maxBet: terms.maxBet }),
+        ...(maxBet === null || maxBet === undefined ? {} : { maxBet }),
         ...(terms.maxWinMultiplier === null || terms.maxWinMultiplier === undefined
           ? {}
           : { maxWinMultiplier: terms.maxWinMultiplier }),
       },
     });
     if (!outcome.ok) {
-      throw new Error(`grant refused: ${outcome.reason}`);
+      throw new GrantRefusedError(outcome.reason);
     }
     if (!outcome.created) {
       return null;
@@ -315,6 +414,23 @@ export class RankPayoutService {
       );
     }
     throw new Error(`no rate to pay a rank reward owed in ${owed.currency}`);
+  }
+
+  /**
+   * A stake cap in the currency the reward was credited in. The operator prices it in the
+   * ladder's currency like every other amount, and the bonus engine compares it with stakes in
+   * the grant's own currency - so a cap copied across unconverted means 5 BTC to a player paid
+   * in BTC, and five cents to one paid in a low-value coin.
+   */
+  private async capIn(cap: string | null | undefined, from: string, to: string) {
+    if (cap === null || cap === undefined || from === to) {
+      return cap;
+    }
+    const converted = await this.rates.convert(cap, from, to);
+    if (converted === null) {
+      throw new Error(`no rate to price a rank reward's stake cap in ${to}`);
+    }
+    return converted;
   }
 
   /** The currencies to try, best first. */
@@ -365,6 +481,34 @@ export class RankPayoutService {
     };
   }
 
+  /**
+   * Deletes the per-period wager counters no payout will read again, and returns how many.
+   *
+   * Measured against the watermark, not the clock: a kind that has never been paid keeps every
+   * counter, and a payout job that has been down for weeks loses nothing it has yet to settle.
+   */
+  async pruneSettledPeriodWagers(): Promise<number> {
+    const [config] = await this.drizzle.db
+      .select({ paidThrough: promoRankConfig.paidThrough })
+      .from(promoRankConfig);
+    let pruned = 0;
+    for (const kind of RANK_PERIOD_KINDS) {
+      const settled = config?.paidThrough[kind];
+      if (settled === undefined) {
+        continue;
+      }
+      const before = new Date(new Date(settled).getTime() - SETTLED_COUNTER_AGE_MS);
+      // ponytail: one DELETE per kind, fine daily on a table that is pruned as it grows; delete in
+      // batches if a long backlog ever makes a single statement hold its locks too long.
+      const deleted = await this.drizzle.db
+        .delete(promoRankPeriodWager)
+        .where(and(eq(promoRankPeriodWager.kind, kind), lt(promoRankPeriodWager.updatedAt, before)))
+        .returning({ id: promoRankPeriodWager.id });
+      pruned += deleted.length;
+    }
+    return pruned;
+  }
+
   /** Moves the kind's watermark forward, so no later run reaches back into a settled period. */
   private async markPaid(kind: RankPeriodKind, end: Date) {
     await this.drizzle.db.update(promoRankConfig).set({
@@ -377,3 +521,12 @@ export class RankPayoutService {
     return (await this.eligibility?.isRestricted(userId)) ?? true;
   }
 }
+
+class GrantRefusedError extends Error {
+  constructor(reason: string) {
+    super(`grant refused: ${reason}`);
+  }
+}
+
+// Matched by name: the bonus module owns the class and gamification may not import it.
+const isGrantConflict = (err: unknown) => err instanceof Error && err.name === 'GrantConflictError';

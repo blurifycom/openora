@@ -201,11 +201,6 @@ export class PlayerService implements PlayerActivityTracker {
     data: { username?: string; status?: PlayerStatus; level?: number },
     actorId: User['id'],
   ) {
-    const existing = findOneOrThrow(
-      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
-      new PlayerNotFoundError(playerId),
-    );
-
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.status !== undefined) {
       patch.status = data.status;
@@ -217,26 +212,34 @@ export class PlayerService implements PlayerActivityTracker {
     // The username lives on identity's table, so it is written through USER_COMMANDS
     // rather than joined into this transaction - identity keeps its own invariants.
     if (data.username !== undefined) {
-      await this.userCommands.setUsername(existing.userId, data.username);
+      const { userId } = findOneOrThrow(
+        await this.drizzle.db
+          .select({ userId: player.userId })
+          .from(player)
+          .where(eq(player.id, playerId)),
+        new PlayerNotFoundError(playerId),
+      );
+      await this.userCommands.setUsername(userId, data.username);
     }
-    await this.drizzle.db.transaction(async (trx) => {
+    const before = await this.drizzle.db.transaction(async (trx) => {
+      const locked = findOneOrThrow(
+        await trx.select().from(player).where(eq(player.id, playerId)).for('update'),
+        new PlayerNotFoundError(playerId),
+      );
       if (Object.keys(patch).length > 0) {
         await trx.update(player).set(patch).where(eq(player.id, playerId));
       }
-      findOneOrThrow(
-        await trx.select().from(player).where(eq(player.id, playerId)),
-        new PlayerNotFoundError(playerId),
-      );
+      return locked;
     });
 
     // Emitted AFTER commit (not inside the transaction callback, unlike the
     // KYC_STATUS_WRITER emit above) - a level change is a best-effort fan-out, not a
     // regulated single-writer seam, so it follows the standard post-commit event idiom.
-    if (data.level !== undefined && data.level !== existing.level) {
+    if (data.level !== undefined && data.level !== before.level) {
       this.events.emit('player.level.changed', {
-        userId: existing.userId,
+        userId: before.userId,
         playerId,
-        previousLevel: existing.level,
+        previousLevel: before.level,
         newLevel: data.level,
         actorId,
       });
@@ -249,25 +252,35 @@ export class PlayerService implements PlayerActivityTracker {
     // additionally blocks a fresh login for the same account (mirrors the RG login gate).
     if (
       data.status !== undefined &&
-      data.status !== existing.status &&
+      data.status !== before.status &&
       BLOCKING_PLAYER_STATUSES.has(data.status)
     ) {
-      await this.sessionCommands.revokeAll(existing.userId, actorId);
+      await this.sessionCommands.revokeAll(before.userId, actorId);
     }
 
-    if (data.status === 'closed' && existing.status !== 'closed') {
+    if (data.status === 'closed' && before.status !== 'closed') {
       this.events.emit('player.account.closed', {
         playerId,
-        userId: existing.userId,
+        userId: before.userId,
         actorId,
       });
     }
 
-    if (data.status !== undefined && data.status !== 'closed' && existing.status === 'closed') {
+    if (data.status !== undefined && data.status !== 'closed' && before.status === 'closed') {
       this.events.emit('player.account.reopened', {
         playerId,
-        userId: existing.userId,
+        userId: before.userId,
         actorId,
+      });
+    }
+
+    if (data.status !== undefined && data.status !== before.status) {
+      this.events.emit('player.status.changed', {
+        playerId,
+        userId: before.userId,
+        actorId,
+        previousStatus: before.status,
+        newStatus: data.status,
       });
     }
 
@@ -287,17 +300,29 @@ export class PlayerService implements PlayerActivityTracker {
   }
 
   async remove(playerId: Player['id'], actorId: User['id']) {
-    const existing = findOneOrThrow(
-      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
-      new PlayerNotFoundError(playerId),
-    );
-    await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
-    await this.sessionCommands.revokeAll(existing.userId, actorId);
-    this.events.emit('player.account.closed', {
-      playerId,
-      userId: existing.userId,
-      actorId,
+    const before = await this.drizzle.db.transaction(async (trx) => {
+      const locked = findOneOrThrow(
+        await trx.select().from(player).where(eq(player.id, playerId)).for('update'),
+        new PlayerNotFoundError(playerId),
+      );
+      await trx.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
+      return locked;
     });
+    await this.sessionCommands.revokeAll(before.userId, actorId);
+    if (before.status !== 'closed') {
+      this.events.emit('player.account.closed', {
+        playerId,
+        userId: before.userId,
+        actorId,
+      });
+      this.events.emit('player.status.changed', {
+        playerId,
+        userId: before.userId,
+        actorId,
+        previousStatus: before.status,
+        newStatus: 'closed',
+      });
+    }
     return { success: true };
   }
 

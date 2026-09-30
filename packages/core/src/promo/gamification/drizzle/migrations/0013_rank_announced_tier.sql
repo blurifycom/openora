@@ -1,0 +1,2 @@
+ALTER TABLE "promo_player_rank" ADD COLUMN "announced_tier_id" uuid;--> statement-breakpoint
+CREATE INDEX "promo_player_rank_unannounced_idx" ON "promo_player_rank" USING btree ("user_id") WHERE "promo_player_rank"."announced_tier_id" IS DISTINCT FROM "promo_player_rank"."tier_id";

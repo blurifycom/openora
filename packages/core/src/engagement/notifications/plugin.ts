@@ -46,6 +46,28 @@ const describeRankChallengePrize = (p: {
   return parts.join(' + ');
 };
 
+const describeRankBenefits = (p: {
+  currency: string;
+  rakebackPercent: string;
+  dailyBonus?: string | null;
+  weeklyBonus?: string | null;
+  monthlyBonus?: string | null;
+}): string => {
+  const bonuses = [
+    p.dailyBonus !== null && p.dailyBonus !== undefined
+      ? `${formatMoneyAmount(p.dailyBonus)} ${p.currency} daily`
+      : null,
+    p.weeklyBonus !== null && p.weeklyBonus !== undefined
+      ? `${formatMoneyAmount(p.weeklyBonus)} ${p.currency} weekly`
+      : null,
+    p.monthlyBonus !== null && p.monthlyBonus !== undefined
+      ? `${formatMoneyAmount(p.monthlyBonus)} ${p.currency} monthly`
+      : null,
+  ].filter((part): part is string => part !== null);
+  const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
+  return bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
+};
+
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
@@ -263,7 +285,9 @@ export const notificationEventMap: NotificationMapEntry[] = [
   mapEvent('promo.bonus.granted', (p) => ({
     userId: p.userId,
     type: 'promo.bonus.granted',
-    title: 'Bonus credited',
+    title: p.rankBonusKind
+      ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
+      : 'Bonus credited',
     body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
     data: { grantId: p.grantId },
   })),
@@ -328,6 +352,23 @@ export const notificationEventMap: NotificationMapEntry[] = [
       }),
     },
   ),
+
+  mapEvent('promo.rank.changed', (p) => ({
+    userId: p.userId,
+    type: 'promo.rank.changed',
+    title: p.tierName ? `You reached ${p.tierName} rank` : 'Rank updated',
+    body:
+      p.tierName && p.currency && p.rakebackPercent
+        ? `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits({
+            currency: p.currency,
+            rakebackPercent: p.rakebackPercent,
+            dailyBonus: p.dailyBonus,
+            weeklyBonus: p.weeklyBonus,
+            monthlyBonus: p.monthlyBonus,
+          })}.`
+        : 'Your account rank has been updated.',
+    data: { tierId: p.tierId },
+  })),
 
   mapEvent('chat.user.mentioned', (p) => ({
     userId: p.mentionedUserId,

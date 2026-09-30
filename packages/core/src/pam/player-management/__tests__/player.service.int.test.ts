@@ -511,6 +511,19 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
     });
   });
 
+  it('emits one status transition when two updates race to the same status', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await Promise.all([
+      svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID),
+      svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID),
+    ]);
+
+    const changes = events.emit.mock.calls.filter(([topic]) => topic === 'player.status.changed');
+    expect(changes).toHaveLength(1);
+  });
+
   it('does not emit when update moves the status to a non-terminal blocking status', async () => {
     const { svc, events } = makeService();
     const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
@@ -525,6 +538,15 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
     const { player: seeded } = await seedPlayerWithUser({}, { status: 'closed' });
 
     await svc.update(seeded.id, { status: 'closed' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+  });
+
+  it('does not re-emit from remove when the player was already closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.remove(seeded.id, ACTOR_ID);
 
     expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
   });
@@ -549,6 +571,57 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
     await svc.update(seeded.id, { status: 'active' }, ACTOR_ID);
 
     expect(events.emit).not.toHaveBeenCalledWith('player.account.reopened', expect.anything());
+  });
+});
+
+describe('PlayerService player.status.changed emission (real PG)', () => {
+  it('emits the transition when update changes the status', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.status.changed', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+      previousStatus: 'active',
+      newStatus: 'suspended',
+    });
+  });
+
+  it('does not emit when the status is omitted or unchanged', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'suspended' });
+
+    await svc.update(seeded.id, { level: 3 }, ACTOR_ID);
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.status.changed', expect.anything());
+  });
+
+  it('emits the transition to closed from remove', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'dormant' });
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(events.emit).toHaveBeenCalledWith('player.status.changed', {
+      playerId: seeded.id,
+      userId: account.id,
+      actorId: ACTOR_ID,
+      previousStatus: 'dormant',
+      newStatus: 'closed',
+    });
+  });
+
+  it('does not emit from remove when the player was already closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.status.changed', expect.anything());
   });
 });
 

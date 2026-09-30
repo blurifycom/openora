@@ -66,6 +66,26 @@ Paying from a job rather than inside the bet is deliberate. A grant that fails -
 a currency the wallet cannot place - is retried on the next run instead of being lost, and it can
 never roll back the player's bet.
 
+## Telling the player
+
+A promotion is announced as `promo.rank.changed`, which the notifications module turns into an
+in-app message naming the rank and what it now pays. The level-up bonus announces itself
+separately, as any bonus grant does.
+
+The bet's transaction cannot emit it: a player told about a rank the transaction then rolled
+back was promoted by nothing. So the player's row keeps the rank last announced next to the rank
+held, and a job on a one-minute tick announces every row where the two differ, then catches the
+first up to the second. The announcement lags the bet by up to that minute. The catch-up is written before
+the event goes out, so a message is never sent twice but can be lost: a process that dies, or a
+publish that fails, between the two leaves the player caught up and untold. For a congratulation
+that is the right way round - a retry that sends it again would be worse than one gone missing.
+
+It is one message per jump, naming the rank landed on - a bet that crosses two thresholds is
+congratulated once, though it pays both level-up bonuses. The rank every player starts on crosses
+nothing and is never announced. A player under a responsible-gambling block is caught up without
+being told, for the same reason they are not paid: a congratulation waiting at the end of a block
+is a reason to come back.
+
 ## Periods, and what "played in the period" means
 
 The daily, weekly and monthly rewards pay for a period that has closed. The operator anchors when
@@ -82,6 +102,17 @@ running the job more often, twice at once, or late changes nothing about who get
 per period as the bets happen - not by whether they have played since. A bet placed a minute after
 a period closed belongs to the next one. The operator decides whether activity is required at all,
 and how much of it: a minimum wagered inside the period, or any single bet.
+
+Those counters are one row per player per period per kind, and a payout never reads one again
+once its kind's watermark has passed the period. A daily job deletes them, measured against that
+watermark rather than the clock: a counter goes only once it was last written more than a month
+before the watermark - no period runs longer - and a kind that has never been paid keeps
+everything, so a payout job that was down for weeks loses nothing it still has to settle. A
+payout that fails transiently for one player - no rate for their currency, say - holds its kind's
+watermark back, so every run walks that period again and the kind's counters stop being pruned. It
+ends when the next period closes and the stuck one is left behind. A retry re-converts at the rate
+of the moment, so a player already paid no longer matches their grant; that conflict, and a grant
+the bonus engine refuses outright, count as settled and do not hold the watermark.
 
 ## What a reward is paid in
 
@@ -122,10 +153,3 @@ The bonus module's own grant path does not check this. It is checked here, befor
   accrues or pays it. It is a share of the house edge - the stake times the game's margin times
   the rank's percentage - so it needs the game's RTP on the bet, and the bonus-funded part of the
   stake to exclude it. Both arrive from the wagering engine's side of the seam.
-- **The rank-change event.** A rank change is audited but not announced, so nothing downstream -
-  an in-app notification, an analytics fan-out - can react to it. The counter cannot emit from
-  inside the bet's transaction; the event has to be returned to the caller and emitted after
-  commit.
-- **Pruning old period counters.** One row per player per period per kind is written and never
-  read again once its period is paid. A sweep will be needed long before it becomes a problem,
-  but it is not there today.

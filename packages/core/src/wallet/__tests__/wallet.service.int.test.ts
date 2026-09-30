@@ -81,9 +81,9 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
   return { svc, events, psp, audit };
 }
 
-function playerIdentityReader() {
+function playerIdentityReader(playerId: string = randomUUID()) {
   const identityReader = makeIdentityReader();
-  vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(randomUUID());
+  vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(playerId);
   return identityReader;
 }
 
@@ -279,7 +279,8 @@ describe('WalletService.deposit (real PG)', () => {
 
 describe('WalletService.manualAdjust (real PG)', () => {
   it('credits, debits, writes an immutable ledger row and replays exactly once', async () => {
-    const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader() });
+    const playerId = randomUUID();
+    const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader(playerId) });
     const player = await seedWallet({ balance: '10' });
     const adminId = randomUUID();
     const idempotencyKey = randomUUID();
@@ -330,7 +331,9 @@ describe('WalletService.manualAdjust (real PG)', () => {
       expect.objectContaining({
         action: 'wallet.manual_adjustment.created',
         actorId: adminId,
-        resourceId: credit.transactionId,
+        resourceType: 'player',
+        resourceId: playerId,
+        after: expect.objectContaining({ transactionId: credit.transactionId }),
       }),
     );
     expect(psp.processDeposit).not.toHaveBeenCalled();
