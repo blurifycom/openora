@@ -33,6 +33,7 @@ import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import {
   RgLimitExceededError,
+  isAllowedHost,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -91,6 +92,11 @@ export const GameAggregatorNotMappedError = createDomainError<
 >(
   'GameAggregatorNotMappedError',
   (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
+);
+
+export const GameThumbnailHostNotAllowedError = createDomainError<[host: string]>(
+  'GameThumbnailHostNotAllowedError',
+  (host) => `Custom thumbnail URL rejected: host not allowed: ${host}`,
 );
 
 export const RgRestrictedError = makeConflictError(
@@ -158,6 +164,7 @@ async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
     providerId: row.providerId,
     aggregator: row.aggregator,
     thumbnailUrl: row.thumbnailUrl,
+    customThumbnailUrl: row.customThumbnailUrl,
     isActive: row.isActive,
     categoryIds: links.map((link) => link.categoryId),
     tagIds: tagLinks.map((link) => link.tagId),
@@ -191,6 +198,7 @@ export class GamingService {
     private readonly identityReader: IdentityReader,
     private readonly rgLimits?: RgLimitsPort,
     private readonly gameGeoCheck?: GameGeoCheckPort,
+    private readonly allowedThumbnailHosts: readonly string[] = [],
   ) {}
 
   async listGamesPublic(input: ListGamesInput) {
@@ -209,12 +217,21 @@ export class GamingService {
     gameTypes,
     geoBlocked,
     geoBlockedCountries,
+    geoAvailableCountries,
     ...input
   }: ListAdminGamesInput) {
-    if (!this.gameGeoCheck && (geoBlocked !== undefined || geoBlockedCountries)) {
+    const gameGeoCheck = this.gameGeoCheck;
+    if (
+      !gameGeoCheck &&
+      (geoBlocked !== undefined || geoBlockedCountries || geoAvailableCountries)
+    ) {
       throw new GameGeoFiltersUnavailableError();
     }
     const db = this.drizzle.db;
+    const geoAvailableFilter =
+      geoAvailableCountries && gameGeoCheck
+        ? await this.buildGeoAvailableFilter(geoAvailableCountries, gameGeoCheck)
+        : undefined;
     const anyCategory = this.rowsWhere({
       table: gameCategoryGame,
       column: gameCategoryGame.gameId,
@@ -294,8 +311,39 @@ export class GamingService {
               ),
             })
           : undefined,
+        geoAvailableFilter,
       ],
     });
+  }
+
+  private async buildGeoAvailableFilter(
+    countries: string[],
+    gameGeoCheck: GameGeoCheckPort,
+  ): Promise<SQL | undefined> {
+    const globallyBlocked = new Set(await gameGeoCheck.listGloballyBlockedCountries());
+    if (countries.some((countryCode) => globallyBlocked.has(countryCode))) {
+      return sql`false`;
+    }
+    const db = this.drizzle.db;
+    return and(
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(gameGeoRule)
+          .where(and(eq(gameGeoRule.gameId, game.id), inArray(gameGeoRule.countryCode, countries))),
+      ),
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(providerGeoRule)
+          .where(
+            and(
+              eq(providerGeoRule.providerId, game.providerId),
+              inArray(providerGeoRule.countryCode, countries),
+            ),
+          ),
+      ),
+    );
   }
 
   private rowsWhere({
@@ -837,6 +885,13 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & CatalogActor) {
+    // The only writer of `custom_thumbnail_url`; any new write path must repeat this host check.
+    if (patchInput.customThumbnailUrl !== undefined && patchInput.customThumbnailUrl !== null) {
+      const host = new URL(patchInput.customThumbnailUrl).hostname;
+      if (!isAllowedHost(host, this.allowedThumbnailHosts)) {
+        throw new GameThumbnailHostNotAllowedError(host);
+      }
+    }
     const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
     const uniqueTagIds = tagIds === undefined ? undefined : [...new Set(tagIds)];
     const patch: Partial<typeof game.$inferInsert> = { ...patchInput };

@@ -1,4 +1,4 @@
-import type { DrizzleDb } from '@openora/core/server';
+import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import type { RankConfig, StreakConfig } from '../contract/index.js';
 import {
   promoRankChallengeTier,
@@ -31,8 +31,16 @@ export type RankLadderSeed = {
  * operator's pricing, so it is passed in rather than shipped with the package.
  *
  * Idempotent, and it never overwrites a tier or a setting an operator has already edited.
+ *
+ * Passing a transaction does not by itself exclude a concurrent admin save: that save locks
+ * `promo_rank_tier` rows with `FOR UPDATE`, which locks nothing on an empty ladder. A caller that
+ * needs the check-then-install to be exclusive takes a table lock first, e.g.
+ * `LOCK TABLE promo_rank_tier IN SHARE ROW EXCLUSIVE MODE`.
  */
-export async function seedRankLadder(db: DrizzleDb, ladder: RankLadderSeed): Promise<void> {
+export async function seedRankLadder(
+  db: DrizzleDb | DrizzleTx,
+  ladder: RankLadderSeed,
+): Promise<void> {
   if (ladder.tiers.length === 0) {
     return;
   }

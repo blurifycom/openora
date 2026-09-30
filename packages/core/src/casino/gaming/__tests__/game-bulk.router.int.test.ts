@@ -628,7 +628,7 @@ describe('bulk route 5,000-game cap', () => {
 
     await expect(
       call(router.addGameTags, { providerIds: [provider.id], tagIds: [tag.id] }, { context: CTX }),
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', data: { reason: 'too_many_games' } });
     expect(await gameTagIdsFor(gameIds[0]!)).toEqual([]);
   }, 30_000);
 

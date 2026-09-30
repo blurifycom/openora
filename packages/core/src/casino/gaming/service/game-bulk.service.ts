@@ -1,15 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
+import { DrizzleService, type DrizzleTx, type EventBus } from '@openora/core/server';
 import {
-  createDomainError,
-  DrizzleService,
-  type DrizzleTx,
-  type EventBus,
-} from '@openora/core/server';
-import type {
-  GameAddedCategoryLinks,
-  GameAddedTagLinks,
-  GameProviderAggregatorMapping,
+  GAME_BULK_CAP,
+  GameBulkTooManyGamesError,
+  type GameAddedCategoryLinks,
+  type GameAddedTagLinks,
+  type GameProviderAggregatorMapping,
 } from '@openora/core/contracts';
 import { game, gameCategory, gameProvider, gameTag } from '../schema/index.js';
 import {
@@ -28,13 +25,6 @@ import type {
   AddGameTagsInput,
   SetGamesActiveInput,
 } from '../contract/index.js';
-
-const GAME_BULK_CAP = 5000;
-
-export const GameBulkTooManyGamesError = createDomainError<[matchedCount: number, cap: number]>(
-  'GameBulkTooManyGamesError',
-  (matchedCount, cap) => `bulk action matched ${matchedCount} games, exceeding the ${cap}-game cap`,
-);
 
 class ScopeChangedDuringLockError extends Error {}
 

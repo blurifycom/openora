@@ -155,6 +155,7 @@ export const game = pgTable(
     aggregator: text().notNull(),
     gameType: gameTypeEnum().notNull().default('casino'),
     thumbnailUrl: text(),
+    customThumbnailUrl: text(),
     isActive: boolean().notNull().default(false),
     isUnavailable: boolean().notNull().default(false),
     metadata: jsonb(),

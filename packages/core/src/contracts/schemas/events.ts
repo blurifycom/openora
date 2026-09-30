@@ -614,6 +614,8 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
+      // Older game-update events predate the custom thumbnail; replay them as unset.
+      customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
       // Older game-update events predate game tags; replay them as an empty tag set.
@@ -626,6 +628,8 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
+      // Older game-update events predate the custom thumbnail; replay them as unset.
+      customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
       // Older game-update events predate game tags; replay them as an empty tag set.
@@ -917,6 +921,14 @@ export const domainEventSchemas = {
     before: gameGeoRuleEventState,
     after: z.null(),
     actorId: UuidSchema,
+  }),
+
+  'compliance.game-geo-rules.bulk_updated': gameBulkEventBase.extend({
+    operation: z.enum(['restrict', 'unrestrict']),
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    // Games whose rule the call added (restrict) or removed (unrestrict).
+    changedGameIds: z.array(UuidSchema),
   }),
 
   'compliance.provider-geo-rule.upserted': authContextBase.extend({

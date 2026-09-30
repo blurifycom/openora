@@ -223,6 +223,7 @@ export function toGame(row: {
     tags: row.tags.map(toGameTagSummary),
     gameType: row.game.gameType,
     thumbnailUrl: row.game.thumbnailUrl,
+    customThumbnailUrl: row.game.customThumbnailUrl,
     isActive: row.game.isActive,
     isUnavailable: row.game.isUnavailable,
     metadata: row.game.metadata,
