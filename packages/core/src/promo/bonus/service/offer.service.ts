@@ -23,6 +23,7 @@ import type {
   CreatePromoOfferInput,
   PlayerOffer,
   PromoOffer,
+  PublicOffer,
   UpdatePromoOfferInput,
 } from '../contract/index.js';
 import {
@@ -190,9 +191,26 @@ export class OfferService {
     const facts = await this.offerFacts(userId, context);
     return rows
       .filter(({ offer }) => offerIneligibility({ offer: toOffer(offer), at, ...facts }) === null)
-      .map(({ offer, optIn }) =>
-        toPlayerOffer(offer, optIn?.accumulatedDeposit ?? '0', optIn !== null),
-      );
+      .map(({ offer, optIn }) => toPlayerOffer(offer, optIn));
+  }
+
+  /**
+   * The live catalogue for a signed-out visitor, under the same predicate a player's list uses.
+   * A visitor who registers has deposited nothing yet, so a first-deposit-only offer is open to
+   * them - the same fact `offerFacts` supplies for a player with no deposits.
+   */
+  async listPublic(): Promise<PublicOffer[]> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(promoOffer)
+      .where(eq(promoOffer.status, 'active'))
+      .orderBy(asc(promoOffer.minDeposit));
+    const at = new Date();
+    return rows
+      .filter(
+        (offer) => offerIneligibility({ offer: toOffer(offer), at, isFirstDeposit: true }) === null,
+      )
+      .map(toPublicOffer);
   }
 
   async optIn(userId: Uuid, offerId: Uuid, context: OfferContext = {}): Promise<PlayerOffer> {
@@ -226,10 +244,10 @@ export class OfferService {
         });
       }
       const [row] = await tx
-        .select({ accumulatedDeposit: promoOptIn.accumulatedDeposit })
+        .select()
         .from(promoOptIn)
         .where(and(eq(promoOptIn.userId, userId), eq(promoOptIn.offerId, offerId)));
-      return toPlayerOffer(offer, row?.accumulatedDeposit ?? '0', true);
+      return toPlayerOffer(offer, row ?? null);
     });
   }
 
@@ -408,11 +426,16 @@ function toOffer(row: PromoOfferRow): PromoOffer {
   return serializeRow(row, { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] });
 }
 
-function toPlayerOffer(
-  row: PromoOfferRow,
-  accumulatedDeposit: string,
-  optedIn: boolean,
-): PlayerOffer {
+function toPlayerOffer(row: PromoOfferRow, optIn: PromoOptInRow | null): PlayerOffer {
+  return {
+    ...toPublicOffer(row),
+    optedIn: optIn !== null,
+    claimed: optIn !== null && optIn.grantId !== null,
+    accumulatedDeposit: optIn?.accumulatedDeposit ?? '0',
+  };
+}
+
+function toPublicOffer(row: PromoOfferRow): PublicOffer {
   const offer = toOffer(row);
   return {
     id: offer.id,
@@ -425,8 +448,6 @@ function toPlayerOffer(
     requiresOptIn: offer.requiresOptIn,
     validUntil: offer.validUntil,
     wageringMultiplier: offer.terms.wageringMultiplier,
-    optedIn,
-    accumulatedDeposit,
   };
 }
 

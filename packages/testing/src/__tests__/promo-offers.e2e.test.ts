@@ -419,3 +419,54 @@ describe('a player taking an offer', () => {
     expect(res.status).toBe(409);
   });
 });
+
+describe('a signed-out visitor browsing offers', () => {
+  const browse = (ip: string) =>
+    app.app.request('/promo/offers/public', { headers: { 'x-real-ip': ip } });
+
+  it('sees the live catalogue with no claim state, where the player list refuses them', async () => {
+    const offer = await createOffer({ rules: { firstDepositOnly: true, excludedCountries: [] } });
+    const draft = await createOffer({ status: 'draft' });
+
+    const res = await browse('203.0.113.40');
+    const personal = await app.app.request('/promo/offers');
+
+    expect(res.status).toBe(200);
+    const listed = await readJson(res);
+    const shown = listed.find((o: { id: string }) => o.id === offer.id);
+    expect(shown).toMatchObject({ key: offer.key, name: offer.name, wageringMultiplier: '5' });
+    expect(shown).not.toHaveProperty('optedIn');
+    expect(shown).not.toHaveProperty('claimed');
+    expect(shown).not.toHaveProperty('accumulatedDeposit');
+    expect(listed.some((o: { id: string }) => o.id === draft.id)).toBe(false);
+    expect(personal.status).toBe(401);
+  });
+
+  it('throttles one address without starving another', async () => {
+    let lastStatus = 200;
+    for (let attempt = 0; attempt < 70 && lastStatus === 200; attempt += 1) {
+      lastStatus = (await browse('203.0.113.41')).status;
+    }
+
+    expect(lastStatus).toBe(429);
+    expect((await browse('203.0.113.42')).status).toBe(200);
+  });
+});
+
+describe('a player reading their bonuses', () => {
+  it('sees which offer a grant came from and that the offer is claimed', async () => {
+    const offer = await createOffer({ name: 'Reload Match', minDeposit: '20' });
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `offers-claimed-${randomUUID()}@example.test`,
+    });
+    await client.post(`/promo/offers/${offer.id}/opt-in`, {});
+    await deposit(client, '50');
+    await waitFor(() => grantsOf(userId), 1);
+
+    const grants = await readJson(await client.get('/promo/grants'));
+    const offers = await readJson(await client.get('/promo/offers'));
+
+    expect(grants.items[0]).toMatchObject({ offerKey: offer.key, offerName: 'Reload Match' });
+    expect(offers.find((o: { id: string }) => o.id === offer.id)).toMatchObject({ claimed: true });
+  });
+});
