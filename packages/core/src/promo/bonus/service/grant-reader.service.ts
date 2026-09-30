@@ -11,7 +11,7 @@ import {
   serializeRow,
   type DrizzleService,
 } from '@openora/core/server';
-import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
+import { promoGrant, promoGrantEntry, promoOffer, type PromoGrant } from '../schema/index.js';
 import type { AdminGrant, BonusBalance, PlayerGrant, PlayerGrantEntry } from '../contract/index.js';
 
 export const GrantNotFoundError = makeNotFoundError('Grant');
@@ -25,7 +25,7 @@ const MONEY_FIELDS = [
 const DATE_FIELDS = ['expiresAt', 'closedAt', 'createdAt'] as const;
 const SERIALIZE = { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] };
 
-const COLUMNS = {
+const GRANT_COLUMNS = {
   id: promoGrant.id,
   offerId: promoGrant.offerId,
   currency: promoGrant.currency,
@@ -41,6 +41,15 @@ const COLUMNS = {
   closedAt: promoGrant.closedAt,
   createdAt: promoGrant.createdAt,
 };
+
+/** Joined, not snapshotted: a grant shows its offer's current name, and none without an offer. */
+const COLUMNS = {
+  ...GRANT_COLUMNS,
+  offerKey: promoOffer.key,
+  offerName: promoOffer.name,
+};
+
+const withOffer = eq(promoOffer.id, promoGrant.offerId);
 
 const ENTRY_COLUMNS = {
   id: promoGrantEntry.id,
@@ -99,6 +108,7 @@ export class GrantReaderService {
       this.drizzle.db
         .select(COLUMNS)
         .from(promoGrant)
+        .leftJoin(promoOffer, withOffer)
         .where(where)
         .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
         .limit(limit)
@@ -167,6 +177,7 @@ export class GrantReaderService {
     const rows = await this.drizzle.db
       .select(ADMIN_COLUMNS)
       .from(promoGrant)
+      .leftJoin(promoOffer, withOffer)
       .where(eq(promoGrant.userId, userId))
       .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
       .limit(query.limit)
@@ -178,6 +189,7 @@ export class GrantReaderService {
     const [row] = await this.drizzle.db
       .select(ADMIN_COLUMNS)
       .from(promoGrant)
+      .leftJoin(promoOffer, withOffer)
       .where(eq(promoGrant.id, id));
     if (!row) {
       throw new GrantNotFoundError(id);
@@ -193,6 +205,7 @@ export class GrantReaderService {
     const [row] = await this.drizzle.db
       .select(COLUMNS)
       .from(promoGrant)
+      .leftJoin(promoOffer, withOffer)
       .where(and(eq(promoGrant.id, id), eq(promoGrant.userId, userId)));
     if (!row) {
       throw new GrantNotFoundError(id);
@@ -201,13 +214,13 @@ export class GrantReaderService {
   }
 }
 
-type PlayerGrantRow = {
-  [K in keyof typeof COLUMNS]: PromoGrant[K & keyof PromoGrant];
-};
+type OfferLabel = { offerKey: string | null; offerName: string | null };
 
-type AdminGrantRow = {
-  [K in keyof typeof ADMIN_COLUMNS]: PromoGrant[K & keyof PromoGrant];
-};
+type PlayerGrantRow = {
+  [K in keyof typeof GRANT_COLUMNS]: PromoGrant[K];
+} & OfferLabel;
+
+type AdminGrantRow = PlayerGrantRow & { userId: PromoGrant['userId'] };
 
 function toAdminGrant(row: AdminGrantRow): AdminGrant {
   return serializeRow(row, SERIALIZE);

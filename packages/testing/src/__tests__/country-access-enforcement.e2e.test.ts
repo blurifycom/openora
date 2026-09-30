@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { countryRule } from '@openora/core/compliance/schema';
+import { promoOffer } from '@openora/core/promo/schema/bonus';
 import { user } from '@openora/core/pam/schema/identity';
 import { bootTestApp, seedMinimal, setupTestDb, type TestApp, type TestDb } from '../index.js';
 import { forceEmailVerified } from '../register.js';
@@ -149,6 +150,37 @@ describe('country access enforcement', () => {
       after: { countryCode: BLOCKED_COUNTRY, reason: `Country ${BLOCKED_COUNTRY} is blocked` },
     });
     expect(latest?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('shows a visitor from a blocked country no offers', async () => {
+    const browse = (ip: string) =>
+      app.app.request('/promo/offers/public', { headers: { 'x-real-ip': ip } });
+
+    const key = `geo-offer-${randomUUID()}`;
+    await app.container
+      .get(DRIZZLE)
+      .db.insert(promoOffer)
+      .values({
+        key,
+        name: 'Welcome Bonus',
+        status: 'active',
+        currency: 'USD',
+        matchPercent: '100',
+        maxGrantAmount: '100',
+        minDeposit: '10',
+        terms: { wageringMultiplier: '5', expiryDays: 30 },
+        rules: { firstDepositOnly: false },
+      });
+
+    const blocked = await browse(BLOCKED_IP);
+    const allowed = await browse(ALLOWED_IP);
+
+    expect(blocked.status).toBe(200);
+    expect(await blocked.json()).toEqual([]);
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key })]),
+    );
   });
 
   it('throttles the anonymous geo-check per address', async () => {

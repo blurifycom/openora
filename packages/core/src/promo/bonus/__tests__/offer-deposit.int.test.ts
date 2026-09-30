@@ -332,3 +332,49 @@ describe('a deposit applied to a claim', () => {
     expect(optIn?.accumulatedDeposit).toBe('100.000000000000000000');
   });
 });
+
+describe('the offer lists', () => {
+  it('marks an offer claimed once a deposit turned it into a bonus', async () => {
+    const userId = randomUUID();
+    const [granting, pending] = [await seedOffer({ minDeposit: '20' }), await seedOffer()];
+    await claim(userId, granting.id);
+    await claim(userId, pending.id);
+    lifetimeDeposit = '50';
+    await apply(userId, '50', randomUUID());
+
+    const listed = await offers.listForPlayer(userId);
+
+    expect(listed.find((o) => o.id === granting.id)).toMatchObject({
+      optedIn: true,
+      claimed: true,
+    });
+    expect(listed.find((o) => o.id === pending.id)).toMatchObject({
+      optedIn: true,
+      claimed: false,
+    });
+  });
+
+  it('shows a visitor the live deal and nothing a player or operator owns', async () => {
+    const live = await seedOffer({ rules: { firstDepositOnly: true } });
+    await seedOffer({ status: 'draft' });
+    await seedOffer({ validUntil: new Date(Date.now() - 60_000) });
+    await claim(randomUUID(), live.id);
+
+    const listed = await offers.listPublic();
+
+    expect(listed).toEqual([
+      {
+        id: live.id,
+        key: live.key,
+        name: live.name,
+        currency: 'USD',
+        matchPercent: '100.00',
+        maxGrantAmount: '1000.000000000000000000',
+        minDeposit: '100.000000000000000000',
+        requiresOptIn: true,
+        validUntil: null,
+        wageringMultiplier: '5',
+      },
+    ]);
+  });
+});
