@@ -923,8 +923,8 @@ export const domainEventSchemas = {
     operation: z.enum(['restrict', 'unrestrict']),
     countryCode: CountryCodeSchema,
     reason: NonEmptyReasonSchema,
-    // The rules the call added (restrict) or removed (unrestrict).
-    rules: z.array(gameGeoRuleEventState),
+    // Games whose rule the call added (restrict) or removed (unrestrict).
+    changedGameIds: z.array(UuidSchema),
   }),
 
   'compliance.provider-geo-rule.upserted': authContextBase.extend({

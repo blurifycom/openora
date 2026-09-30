@@ -1,13 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
-import {
-  DrizzleService,
-  GameBulkTooManyGamesError,
-  type DrizzleTx,
-  type EventBus,
-} from '@openora/core/server';
+import { DrizzleService, type DrizzleTx, type EventBus } from '@openora/core/server';
 import {
   GAME_BULK_CAP,
+  GameBulkTooManyGamesError,
   type GameAddedCategoryLinks,
   type GameAddedTagLinks,
   type GameProviderAggregatorMapping,

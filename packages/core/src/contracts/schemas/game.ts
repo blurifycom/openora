@@ -29,6 +29,16 @@ export type GameBulkIds = z.infer<typeof GameBulkIdsSchema>;
 
 export const GAME_BULK_CAP = 5000;
 
+/** A bulk game action whose scope matched more games than `GAME_BULK_CAP`. */
+export class GameBulkTooManyGamesError extends Error {
+  readonly data = { reason: 'too_many_games' };
+
+  constructor(matchedCount: number, cap: number) {
+    super(`bulk action matched ${matchedCount} games, exceeding the ${cap}-game cap`);
+    this.name = 'GameBulkTooManyGamesError';
+  }
+}
+
 export const GameBulkTargetFieldsSchema = z.object({
   providerIds: z.array(UuidSchema).max(50).optional(),
   gameIds: z.array(UuidSchema).max(500).optional(),

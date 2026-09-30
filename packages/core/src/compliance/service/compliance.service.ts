@@ -1,7 +1,6 @@
 import {
   DrizzleService,
   findOneOrThrow,
-  GameBulkTooManyGamesError,
   pageToOffset,
   makeConflictError,
   makeNotFoundError,
@@ -38,6 +37,7 @@ import type {
 } from '../contract/index.js';
 import {
   GAME_BULK_CAP,
+  GameBulkTooManyGamesError,
   normalizeCountryCode,
   type AuditWritePort,
   type ClientMeta,
@@ -878,12 +878,12 @@ export class ComplianceService {
             action: 'compliance.game-geo-rules.bulk_updated',
             resourceType: 'game-geo-rule',
             resourceId: null,
-            before: { rules: operation === 'restrict' ? [] : result.rules },
+            before: null,
             after: {
               operation,
               countryCode: input.countryCode,
               reason: input.reason,
-              rules: operation === 'restrict' ? result.rules : [],
+              changedGameIds: result.rules.map((rule) => rule.gameId),
               target: { gameIds, providerIds },
               notFound,
             },
@@ -899,7 +899,7 @@ export class ComplianceService {
         operation,
         countryCode: input.countryCode,
         reason: input.reason,
-        rules: outcome.rules,
+        changedGameIds: outcome.rules.map((rule) => rule.gameId),
         target: { gameIds, providerIds },
         notFound: outcome.notFound,
         actorId,

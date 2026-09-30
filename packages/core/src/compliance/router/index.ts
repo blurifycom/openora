@@ -3,11 +3,11 @@ import { implement, ORPCError } from '@orpc/server';
 import {
   AdminGuard,
   createEventStreamGenerator,
-  GameBulkTooManyGamesError,
   getUserId,
   mapErrors,
   type OssContext,
 } from '@openora/core/server';
+import { GameBulkTooManyGamesError } from '@openora/core/contracts';
 import type {
   AuditWritePort,
   JobQueueAdapter,

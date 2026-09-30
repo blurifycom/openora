@@ -23,11 +23,5 @@ export const makeOwnershipError = (entity: string) =>
 export const makeConflictError = (name: string, message: string, data?: Record<string, string>) =>
   createDomainError<[]>(name, () => message, data);
 
-export const GameBulkTooManyGamesError = createDomainError<[matchedCount: number, cap: number]>(
-  'GameBulkTooManyGamesError',
-  (matchedCount, cap) => `bulk action matched ${matchedCount} games, exceeding the ${cap}-game cap`,
-  { reason: 'too_many_games' },
-);
-
 export const alreadyInUseError = (entity: string) =>
   createDomainError<[]>(`${entity}AlreadyInUseError`, () => `${entity} is already in use`);

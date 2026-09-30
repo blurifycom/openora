@@ -70,12 +70,8 @@ async function bulkAuditEntries(gameId: string, operation: 'restrict' | 'unrestr
   expect(response.status).toBe(200);
   const entries = (await readJson(response)).items as Array<Record<string, unknown>>;
   return entries.filter((entry) => {
-    const before = entry['before'] as { rules: { gameId: string }[] };
-    const after = entry['after'] as { operation: string; rules: { gameId: string }[] };
-    return (
-      after.operation === operation &&
-      [...before.rules, ...after.rules].some((rule) => rule.gameId === gameId)
-    );
+    const after = entry['after'] as { operation: string; changedGameIds: string[] };
+    return after.operation === operation && after.changedGameIds.includes(gameId);
   });
 }
 
@@ -602,11 +598,7 @@ describe('bulk geo restrict / unrestrict', () => {
           operation: 'restrict',
           countryCode: 'US',
           reason: 'bulk restriction',
-          rules: [...bothGameIds]
-            .sort()
-            .map((gameId) =>
-              expect.objectContaining({ gameId, countryCode: 'US', reason: 'bulk restriction' }),
-            ),
+          changedGameIds: [...bothGameIds].sort(),
           target: { gameIds: [...bothGameIds].sort(), providerIds: [] },
         }),
       }),
@@ -647,19 +639,11 @@ describe('bulk geo restrict / unrestrict', () => {
     expect(await bulkAuditEntries(first.gameId, 'unrestrict')).toEqual([
       expect.objectContaining({
         resourceType: 'game-geo-rule',
-        before: {
-          rules: rules.map((rule) =>
-            expect.objectContaining({
-              id: rule.id,
-              gameId: rule.gameId,
-              reason: 'bulk restriction',
-            }),
-          ),
-        },
+        before: null,
         after: expect.objectContaining({
           operation: 'unrestrict',
           reason: 'bulk restore',
-          rules: [],
+          changedGameIds: [...bothGameIds].sort(),
         }),
       }),
     ]);
@@ -696,9 +680,7 @@ describe('bulk geo restrict / unrestrict', () => {
     expect(await bulkAuditEntries(changedFirst.gameId, 'restrict')).toEqual([
       expect.objectContaining({
         after: expect.objectContaining({
-          rules: [changedFirst.gameId, changedSecond.gameId]
-            .sort()
-            .map((gameId) => expect.objectContaining({ gameId })),
+          changedGameIds: [changedFirst.gameId, changedSecond.gameId].sort(),
         }),
       }),
     ]);

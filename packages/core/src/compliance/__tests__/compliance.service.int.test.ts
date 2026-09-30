@@ -5,8 +5,8 @@ import {
   defineIgamingConfig,
   type GeoIpAdapter,
   type IgamingConfig,
+  GameBulkTooManyGamesError,
 } from '@openora/core/contracts';
-import { GameBulkTooManyGamesError } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
@@ -1018,11 +1018,7 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       operation: 'restrict',
       countryCode: 'DK',
       reason: 'bulk restriction',
-      rules: [second, third]
-        .sort()
-        .map((gameId) =>
-          expect.objectContaining({ gameId, countryCode: 'DK', reason: 'bulk restriction' }),
-        ),
+      changedGameIds: [second, third].sort(),
       target: { gameIds: [first, second, third].sort(), providerIds: [] },
       notFound: { gameIds: [], providerIds: [] },
       actorId,
@@ -1036,12 +1032,12 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       action: 'compliance.game-geo-rules.bulk_updated',
       resourceType: 'game-geo-rule',
       resourceId: null,
-      before: { rules: [] },
+      before: null,
       after: {
         operation: 'restrict',
         countryCode: 'DK',
         reason: 'bulk restriction',
-        rules: [second, third].sort().map((gameId) => expect.objectContaining({ gameId })),
+        changedGameIds: [second, third].sort(),
         target: { gameIds: [first, second, third].sort(), providerIds: [] },
         notFound: { gameIds: [], providerIds: [] },
       },
@@ -1137,9 +1133,7 @@ describe('ComplianceService bulk game geo rules (real PG)', () => {
       'compliance.game-geo-rules.bulk_updated',
       expect.objectContaining({
         operation: 'unrestrict',
-        rules: [...gameIds]
-          .sort()
-          .map((gameId) => expect.objectContaining({ gameId, reason: 'restricted' })),
+        changedGameIds: [...gameIds].sort(),
         target: { gameIds: [], providerIds: [providerId] },
       }),
     );
