@@ -46,6 +46,9 @@ export const LEDGER_WRITER: SealedToken<unknown> = createSealedToken('ledger-wri
 // platform writes the log entries) is defined and bound as a SealedToken directly
 // at `@openora/core/contracts` `adapters/audit.ts` - re-exported here as part of
 // the canonical sealed list rather than declared as a second, parallel identity.
+// The one exception to "the platform writes the log entries" is `recordAuditInTransaction`
+// (`@openora/core/audit/server`), for a writer outside the container such as a deploy step; it
+// runs the same chain protocol and grants no capability beyond the already-exported AuditService.
 
 /**
  * Game round outcome / RNG / RTP.

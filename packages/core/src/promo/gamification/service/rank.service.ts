@@ -1,4 +1,4 @@
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { asc, count, eq, inArray, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
   ExchangeRateReader,
@@ -12,7 +12,12 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import type { PlayerRank, RankLadder, RankLookupEntry } from '../contract/index.js';
+import type {
+  PlayerRank,
+  RankLadder,
+  RankLookupEntry,
+  RankPlayersEntry,
+} from '../contract/index.js';
 import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
 import {
   promoPlayerRank,
@@ -244,6 +249,16 @@ export class RankService implements WagerTrackingCommands {
       const row = byUser.get(userId);
       return { userId, tierKey: row?.tierKey ?? null, tierName: row?.tierName ?? null };
     });
+  }
+
+  /** How many players hold each tier right now, lowest tier first; a tier nobody holds is zero. */
+  playersPerTier(): Promise<RankPlayersEntry[]> {
+    return this.drizzle.db
+      .select({ tierId: promoRankTier.id, players: count(promoPlayerRank.id) })
+      .from(promoRankTier)
+      .leftJoin(promoPlayerRank, eq(promoPlayerRank.tierId, promoRankTier.id))
+      .groupBy(promoRankTier.id)
+      .orderBy(asc(promoRankTier.position));
   }
 
   async getForPlayer(userId: PromoPlayerRank['userId']): Promise<PlayerRank> {
