@@ -45,7 +45,11 @@ import {
   PlayerStatusSchema,
 } from './player.js';
 import { WalletTransactionTypeSchema } from './wallet-tx.js';
-import { BonusForfeitReasonSchema, BonusGrantSourceSchema } from './promo.js';
+import {
+  BonusForfeitReasonSchema,
+  BonusGrantSourceSchema,
+  ContributionPercentSchema,
+} from './promo.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -690,6 +694,7 @@ export const domainEventSchemas = {
     wageringRequired: MoneyAmountSchema,
     source: BonusGrantSourceSchema,
     offerId: UuidSchema.nullable(),
+    rankBonusKind: z.enum(['daily', 'weekly', 'monthly']).optional(),
   }),
   // Wagering requirement met. The lock is released; what happens to the balance is the
   // conversion step, which emits nothing of its own.
@@ -721,12 +726,17 @@ export const domainEventSchemas = {
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),
-  // Fires on promotion only - a rank never decreases.
   'promo.rank.changed': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,
     previousTierId: UuidSchema.nullable(),
     position: z.number().int().nonnegative(),
+    tierName: z.string().min(1).optional(),
+    currency: CurrencyTickerSchema.optional(),
+    rakebackPercent: ContributionPercentSchema.optional(),
+    dailyBonus: MoneyAmountSchema.nullable().optional(),
+    weeklyBonus: MoneyAmountSchema.nullable().optional(),
+    monthlyBonus: MoneyAmountSchema.nullable().optional(),
   }),
   // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
   'promo.race.settled': z.object({

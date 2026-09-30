@@ -103,6 +103,9 @@ export const RankRewardTermsSchema = z.object({
    * lets a player put the whole bonus on one spin and turn a wagering requirement into a coin
    * flip. Enforced by the bonus engine inside the bet, against the terms the grant was made
    * under, so changing it never touches a bonus a player already holds.
+   *
+   * Priced in the ladder's currency like every other amount, and converted with the reward when
+   * the reward is credited in another.
    */
   maxBet: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').nullish(),
   /**
