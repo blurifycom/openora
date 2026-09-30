@@ -1,0 +1,1 @@
+CREATE INDEX "promo_rank_period_wager_kind_updated_at_idx" ON "promo_rank_period_wager" USING btree ("kind","updated_at");
