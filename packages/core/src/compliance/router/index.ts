@@ -7,6 +7,7 @@ import {
   mapErrors,
   type OssContext,
 } from '@openora/core/server';
+import { GameBulkTooManyGamesError } from '@openora/core/contracts';
 import type {
   AuditWritePort,
   JobQueueAdapter,
@@ -164,6 +165,35 @@ export function createComplianceRouter({
     listGameGeoRules: os.listGameGeoRules.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGameGeoRules(input);
+    }),
+
+    bulkRestrictGameGeoRules: os.bulkRestrictGameGeoRules.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
+        compliance.bulkRestrictGameGeoRules(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    bulkUnrestrictGameGeoRules: os.bulkUnrestrictGameGeoRules.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(
+          context,
+          'compliance',
+          'manage-geo',
+        );
+        return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
+          compliance.bulkUnrestrictGameGeoRules(input, userId, { ip, userAgent }),
+        );
+      },
+    ),
+
+    getBlockedCountries: os.getBlockedCountries.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return { countryCodes: await compliance.listGloballyBlockedCountries() };
     }),
 
     upsertProviderGeoRules: os.upsertProviderGeoRules.handler(async ({ input, context }) => {
