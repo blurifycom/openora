@@ -14,7 +14,12 @@ import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { Auth } from '@openora/core/server';
-import type { CacheAdapter, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
+import type {
+  CacheAdapter,
+  GeoCheckCommands,
+  RateLimiterAdapter,
+  SmsAdapter,
+} from '@openora/core/contracts';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { makeEventBus, mock, NO_CLIENT_META } from '../../../testing/mock.js';
@@ -65,7 +70,8 @@ const allowLimiter = (): RateLimiterAdapter => ({
 function build({
   sms = { sendOtp: vi.fn().mockResolvedValue(undefined) },
   cache,
-}: { sms?: SmsAdapter; cache?: CacheAdapter } = {}) {
+  geoCheck,
+}: { sms?: SmsAdapter; cache?: CacheAdapter; geoCheck?: GeoCheckCommands } = {}) {
   const events = makeEventBus();
   const svc = new PhoneLoginService({
     drizzle: db.drizzle,
@@ -74,6 +80,7 @@ function build({
     limiter: allowLimiter(),
     auth: fakeAuth,
     cache,
+    geoCheck,
   });
   return { svc, events, sms };
 }
@@ -529,5 +536,20 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
       'identity.authentication.succeeded',
       expect.anything(),
     );
+  });
+});
+
+describe('PhoneLoginService.verifyOtp - geo gate', () => {
+  it('rejects the OTP sign-in from a geo-blocked address before the code is checked', async () => {
+    const checkLogin = vi.fn().mockResolvedValue({ allowed: false, countryCode: 'US' });
+    const { svc } = build({ geoCheck: { checkRegistration: vi.fn(), checkLogin } });
+
+    await expect(
+      svc.verifyOtp(
+        { phone: PHONE, code: '123456', ip: '203.0.113.7', userAgent: 'ua' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Login is unavailable' });
+    expect(checkLogin).toHaveBeenCalledWith('203.0.113.7', { userAgent: 'ua' });
   });
 });

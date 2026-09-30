@@ -112,8 +112,8 @@ export function createComplianceRouter({
     }),
 
     geoCheck: os.geoCheck.handler(({ context }) => {
-      const { ip } = context.clientMeta;
-      return compliance.geoCheck(ip ?? '127.0.0.1');
+      const { ip, userAgent } = context.clientMeta;
+      return compliance.visitorGeoCheck(ip ?? '127.0.0.1', userAgent);
     }),
 
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {

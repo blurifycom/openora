@@ -24,6 +24,7 @@ import {
   type PlayerProvisioning,
   type User,
   ClientMeta,
+  type GeoCheckCommands,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { captureTimezone } from './capture-timezone.service.js';
@@ -131,6 +132,7 @@ export type PhoneLoginServiceDeps = {
   cache?: CacheAdapter;
   options?: IdentityServiceOptions;
   playerProvisioning?: PlayerProvisioning;
+  geoCheck?: GeoCheckCommands;
 };
 
 export class PhoneLoginService {
@@ -142,6 +144,7 @@ export class PhoneLoginService {
   private readonly cache?: CacheAdapter;
   private readonly options?: IdentityServiceOptions;
   private readonly playerProvisioning?: PlayerProvisioning;
+  private readonly geoCheck?: GeoCheckCommands;
 
   constructor({
     drizzle,
@@ -152,6 +155,7 @@ export class PhoneLoginService {
     cache,
     options,
     playerProvisioning,
+    geoCheck,
   }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -161,6 +165,7 @@ export class PhoneLoginService {
     this.cache = cache;
     this.options = options;
     this.playerProvisioning = playerProvisioning;
+    this.geoCheck = geoCheck;
   }
 
   private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
@@ -266,6 +271,10 @@ export class PhoneLoginService {
   async verifyOtp(input: PhoneLoginVerifyInput & ClientMeta, resHeaders: Headers) {
     const { phone, code, rememberMe, timezone, ip = null, userAgent = null } = input;
     await assertRateLimit(this.limiter, `phone-otp-verify:${phone}`, OTP_VERIFY_RATE_LIMIT);
+    const geo = await this.geoCheck?.checkLogin(ip, { userAgent });
+    if (geo && !geo.allowed) {
+      throw new ORPCError('FORBIDDEN', { message: 'Login is unavailable' });
+    }
 
     const [otp] = await this.drizzle.db
       .select({

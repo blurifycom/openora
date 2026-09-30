@@ -16,6 +16,8 @@ export type GameGeoDenialReason = z.infer<typeof GameGeoDenialReasonSchema>;
 export const GameGeoCheckInputSchema = z.object({
   gameId: UuidSchema,
   ipAddress: z.string().nullable(),
+  // The player launching the round; recorded on the audit row when the launch is blocked.
+  userId: UuidSchema.optional(),
 });
 export type GameGeoCheckInput = z.infer<typeof GameGeoCheckInputSchema>;
 

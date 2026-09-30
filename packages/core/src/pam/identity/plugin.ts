@@ -242,6 +242,7 @@ export default {
           cache: c.get(CACHE),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
+          geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
         }),
         new PhoneVerificationService({
           drizzle: c.get(DRIZZLE),

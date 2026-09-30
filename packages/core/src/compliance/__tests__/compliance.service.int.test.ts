@@ -10,7 +10,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
-import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeCache, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   userLimit,
@@ -71,6 +71,79 @@ beforeEach(async () => {
   await db.drizzle.db.execute(
     sql`TRUNCATE ${userLimit}, ${countryRule}, ${globalKycConfig}, ${gameGeoRule}, ${providerGeoRule}, ${game}, ${gameProvider} RESTART IDENTITY CASCADE`,
   );
+});
+
+describe('ComplianceService geo block audit (real PG)', () => {
+  const blockedAudits = (audit: ReturnType<typeof makeAuditWriter>) =>
+    audit.record.mock.calls
+      .map(([entry]) => entry as { action: string; after: Record<string, unknown> })
+      .filter((entry) => entry.action === 'compliance.geo.access_blocked');
+
+  it('audits a blocked login and registration with the resolved country', async () => {
+    const { svc, audit } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    expect(await svc.checkLogin('1.2.3.4', { userAgent: 'ua' })).toEqual({
+      allowed: false,
+      countryCode: 'US',
+    });
+    expect(await svc.checkRegistration('1.2.3.4')).toMatchObject({ allowed: false });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'compliance.geo.access_blocked',
+        resourceId: 'US',
+        ip: '1.2.3.4',
+        userAgent: 'ua',
+        after: expect.objectContaining({ attempt: 'login', countryCode: 'US' }),
+      }),
+    );
+    expect(blockedAudits(audit).map((entry) => entry.after.attempt)).toEqual([
+      'login',
+      'registration',
+    ]);
+  });
+
+  it('does not audit an allowed attempt', async () => {
+    const { svc, audit } = makeService('DE');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    expect(await svc.checkLogin('1.2.3.4')).toMatchObject({ allowed: true });
+    expect(blockedAudits(audit)).toEqual([]);
+  });
+
+  it('audits a blocked game launch with the game and player', async () => {
+    const gameId = '00000000-0000-0000-0000-000000000190';
+    const userId = '00000000-0000-0000-0000-000000000191';
+    await seedGame(gameId, 'Audited');
+    const { svc, audit } = makeService('US');
+    await db.drizzle.db.insert(gameGeoRule).values({ gameId, countryCode: 'US', reason: 'x' });
+
+    await svc.checkGame({ gameId, ipAddress: '1.2.3.4', userId });
+    await svc.checkGame({ gameId: randomUUID(), ipAddress: '1.2.3.4', userId });
+
+    expect(blockedAudits(audit)).toEqual([
+      expect.objectContaining({
+        actorId: userId,
+        after: expect.objectContaining({ attempt: 'game_launch', reason: 'game_block', gameId }),
+      }),
+    ]);
+  });
+
+  it('audits a blocked geo-check poll once per address and country window', async () => {
+    const audit = makeAuditWriter();
+    const geoIp = mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode: 'US' })) });
+    const svc = new ComplianceService(db.drizzle, makeEventBus(), geoIp, audit, null, makeCache());
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.visitorGeoCheck('1.2.3.4', null);
+    await svc.visitorGeoCheck('1.2.3.4', null);
+    await svc.visitorGeoCheck('5.6.7.8', null);
+
+    expect(blockedAudits(audit).map((entry) => entry.after.attempt)).toEqual([
+      'geo_check',
+      'geo_check',
+    ]);
+  });
 });
 
 describe('ComplianceService.geoCheck (real PG)', () => {

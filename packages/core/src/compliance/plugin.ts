@@ -60,6 +60,7 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
     c.get(AUDIT_WRITER),
     c.has(IGAMING_CONFIG) ? c.get(IGAMING_CONFIG) : null,
+    c.get(CACHE),
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');

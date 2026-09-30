@@ -37,13 +37,13 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 
 ### Identity & compliance
 
-| Term                             | Meaning                                                                                                                               | Maps to                       |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| **KYC** (Know Your Customer)     | Verifying a player's identity (ID/selfie/proof of address), usually via a third-party provider, before withdrawals above a threshold. | `identity` / `KycAdapter`     |
-| **AML** (Anti-Money Laundering)  | Controls and monitoring to detect/prevent laundering through play (limits, source-of-funds, suspicious-activity flags).               | `identity`, `compliance`      |
-| **2FA**                          | Two-factor authentication (TOTP) on a player or admin account.                                                                        | `identity` (better-auth)      |
-| **Geo-blocking**                 | Refusing service from restricted jurisdictions based on IP/region.                                                                    | `compliance` / `GeoIpAdapter` |
-| **Jurisdiction** / **licensing** | The regulatory regime a igaming operates under; dictates allowed countries, game rules, RG requirements, and reporting.               | operator concern              |
+| Term                             | Meaning                                                                                                                                                                            | Maps to                       |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| **KYC** (Know Your Customer)     | Verifying a player's identity (ID/selfie/proof of address), usually via a third-party provider, before withdrawals above a threshold.                                              | `identity` / `KycAdapter`     |
+| **AML** (Anti-Money Laundering)  | Controls and monitoring to detect/prevent laundering through play (limits, source-of-funds, suspicious-activity flags).                                                            | `identity`, `compliance`      |
+| **2FA**                          | Two-factor authentication (TOTP) on a player or admin account.                                                                                                                     | `identity` (better-auth)      |
+| **Geo-blocking**                 | Refusing service from restricted jurisdictions based on IP/region: at registration, every sign-in path, and game launch; each block is audited as `compliance.geo.access_blocked`. | `compliance` / `GeoIpAdapter` |
+| **Jurisdiction** / **licensing** | The regulatory regime a igaming operates under; dictates allowed countries, game rules, RG requirements, and reporting.                                                            | operator concern              |
 
 ### Wallet & payments
 

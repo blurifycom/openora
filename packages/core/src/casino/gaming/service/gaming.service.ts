@@ -572,6 +572,7 @@ export class GamingService {
     const geoDecision = await this.gameGeoCheck?.checkGame({
       gameId,
       ipAddress,
+      userId,
     });
     if (geoDecision && !geoDecision.allowed) {
       throw new GameGeoRestrictedError(geoDecision);

@@ -33,8 +33,11 @@ import type {
 import {
   normalizeCountryCode,
   type AuditWritePort,
+  type CacheAdapter,
   type ClientMeta,
   type GameGeoCheckInput,
+  type GeoAccessAttempt,
+  type GeoAccessDecision,
   type GeoIpAdapter,
   type GeoRuleAction,
   type IgamingConfig,
@@ -185,6 +188,18 @@ function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date;
     .sort((a, b) => a.after.countryCode.localeCompare(b.after.countryCode));
 }
 
+// The geo-check endpoint is polled per page load; one audit row per address and country
+// in this window is the evidence, the rest is noise.
+const GEO_CHECK_AUDIT_DEDUPE_MS = 60 * 60 * 1000;
+
+type GeoBlockedAttempt = GeoAccessAttempt & {
+  attempt: 'registration' | 'login' | 'game_launch' | 'geo_check';
+  ipAddress: string | null;
+  countryCode: string | null;
+  reason: string;
+  gameId?: string;
+};
+
 export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -192,7 +207,83 @@ export class ComplianceService {
     private readonly geoIp: GeoIpAdapter | null,
     private readonly audit: AuditWritePort,
     private readonly igaming: IgamingConfig | null = null,
+    private readonly cache: CacheAdapter | null = null,
   ) {}
+
+  // Blocked attempts are regulatory evidence of market-access enforcement: the
+  // audit row's createdAt is the timestamp, `after.countryCode` the resolved country.
+  private async recordGeoBlock({ userId, userAgent, ipAddress, ...after }: GeoBlockedAttempt) {
+    await this.audit.record({
+      actorId: userId ?? null,
+      actorType: 'player',
+      action: 'compliance.geo.access_blocked',
+      resourceType: 'geo-access',
+      resourceId: after.countryCode,
+      after,
+      ip: ipAddress,
+      userAgent: userAgent ?? null,
+    });
+  }
+
+  private async checkAccess(
+    attempt: 'registration' | 'login',
+    ipAddress: string | null,
+    who: GeoAccessAttempt = {},
+  ): Promise<GeoAccessDecision> {
+    const result = await this.geoCheck(ipAddress);
+    if (!result.allowed) {
+      await this.recordGeoBlock({
+        ...who,
+        attempt,
+        ipAddress,
+        countryCode: result.countryCode,
+        reason: result.reason ?? 'blocked',
+      });
+    }
+    return { allowed: result.allowed, countryCode: result.countryCode };
+  }
+
+  async checkRegistration(ipAddress: string | null, who?: GeoAccessAttempt) {
+    return this.checkAccess('registration', ipAddress, who);
+  }
+
+  async checkLogin(ipAddress: string | null, who?: GeoAccessAttempt) {
+    return this.checkAccess('login', ipAddress, who);
+  }
+
+  /** The public `/compliance/geo-check` answer; a block is audited at most once per window. */
+  async visitorGeoCheck(ipAddress: string | null, userAgent: string | null) {
+    const result = await this.geoCheck(ipAddress);
+    if (
+      !result.allowed &&
+      (await this.isFirstGeoCheckBlockInWindow(ipAddress, result.countryCode))
+    ) {
+      await this.recordGeoBlock({
+        attempt: 'geo_check',
+        ipAddress,
+        userAgent,
+        countryCode: result.countryCode,
+        reason: result.reason ?? 'blocked',
+      });
+    }
+    return result;
+  }
+
+  // ponytail: dedupe is best-effort; a cache outage audits every poll rather than none.
+  private async isFirstGeoCheckBlockInWindow(ipAddress: string | null, countryCode: string | null) {
+    if (!this.cache) {
+      return true;
+    }
+    try {
+      return await this.cache.setIfAbsent(
+        `geo-check-audit:${ipAddress ?? 'unknown'}:${countryCode ?? 'unresolved'}`,
+        true,
+        { ttlMs: GEO_CHECK_AUDIT_DEDUPE_MS },
+      );
+    } catch {
+      return true;
+    }
+  }
 
   async geoCheck(ipAddress: string | null) {
     if (!this.geoIp) {
@@ -210,12 +301,20 @@ export class ComplianceService {
         .where(eq(countryRule.action, 'block'))
         .limit(1);
       return blacklistedRule || this.igaming?.blockedCountries.length
-        ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
+        ? {
+            allowed: false,
+            countryCode: null,
+            reason: 'Geolocation could not be determined',
+          }
         : { allowed: true, countryCode: null, reason: null };
     }
 
     if (this.igaming?.blockedCountries.includes(countryCode)) {
-      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
+      return {
+        allowed: false,
+        countryCode,
+        reason: `Country ${countryCode} is blocked`,
+      };
     }
 
     const [rule] = await this.drizzle.db
@@ -224,13 +323,32 @@ export class ComplianceService {
       .where(eq(countryRule.countryCode, countryCode));
 
     if (rule?.action === 'block') {
-      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
+      return {
+        allowed: false,
+        countryCode,
+        reason: `Country ${countryCode} is blocked`,
+      };
     }
 
     return { allowed: true, countryCode, reason: null };
   }
 
   async checkGame(input: GameGeoCheckInput) {
+    const decision = await this.decideGame(input);
+    if (!decision.allowed && decision.reason !== 'game_not_found') {
+      await this.recordGeoBlock({
+        attempt: 'game_launch',
+        userId: input.userId,
+        ipAddress: input.ipAddress,
+        countryCode: decision.countryCode,
+        reason: decision.reason,
+        gameId: input.gameId,
+      });
+    }
+    return decision;
+  }
+
+  private async decideGame(input: GameGeoCheckInput) {
     const globalDecision = await this.geoCheck(input.ipAddress);
     if (!globalDecision.allowed) {
       return {
@@ -270,26 +388,37 @@ export class ComplianceService {
       .where(eq(game.id, input.gameId));
 
     if (!rules) {
-      return { allowed: false as const, countryCode: null, reason: 'game_not_found' as const };
+      return {
+        allowed: false as const,
+        countryCode: null,
+        reason: 'game_not_found' as const,
+      };
     }
     if (!countryCode) {
       return rules.providerRule || rules.gameRule
-        ? { allowed: false as const, countryCode: null, reason: 'geo_unresolved' as const }
+        ? {
+            allowed: false as const,
+            countryCode: null,
+            reason: 'geo_unresolved' as const,
+          }
         : { allowed: true as const, countryCode: null, reason: null };
     }
     if (rules.providerRule) {
-      return { allowed: false as const, countryCode, reason: 'provider_block' as const };
+      return {
+        allowed: false as const,
+        countryCode,
+        reason: 'provider_block' as const,
+      };
     }
     if (rules.gameRule) {
-      return { allowed: false as const, countryCode, reason: 'game_block' as const };
+      return {
+        allowed: false as const,
+        countryCode,
+        reason: 'game_block' as const,
+      };
     }
 
     return { allowed: true as const, countryCode, reason: null };
-  }
-
-  async checkRegistration(ipAddress: string | null) {
-    const result = await this.geoCheck(ipAddress);
-    return { allowed: result.allowed, countryCode: result.countryCode };
   }
 
   async upsertCountryRule(input: UpsertCountryRuleInput, actorId: User['id'], meta?: ClientMeta) {
@@ -377,7 +506,10 @@ export class ComplianceService {
           action: 'compliance.country_rule.setting_changed',
           resourceType: 'country-rule',
           resourceId: input.countryCode,
-          before: { setting: field, value: countryRuleFieldValue(before, field) },
+          before: {
+            setting: field,
+            value: countryRuleFieldValue(before, field),
+          },
           after: { setting: field, value: countryRuleFieldValue(row, field) },
           ...meta,
         });

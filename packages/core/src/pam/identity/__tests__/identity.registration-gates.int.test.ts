@@ -98,7 +98,7 @@ describe('IdentityService.register - availability gates', () => {
     await expect(svc.register(validInput(), { 'x-real-ip': '203.0.113.7' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
-    expect(checkRegistration).toHaveBeenCalledWith('203.0.113.7');
+    expect(checkRegistration).toHaveBeenCalledWith('203.0.113.7', { userAgent: null });
     expect(failureReasons()).toEqual(['geo_blocked']);
   });
 
@@ -137,5 +137,44 @@ describe('IdentityService.register - availability gates', () => {
       ip: '203.0.113.7',
       userAgent: 'Mozilla/5.0',
     });
+  });
+});
+
+describe('IdentityService - login geo gate', () => {
+  const blockedGeo = () =>
+    mock<GeoCheckCommands>({
+      checkLogin: vi.fn().mockResolvedValue({ allowed: false, countryCode: 'US' }),
+    });
+
+  it('rejects a password login from a geo-blocked address before the password is checked', async () => {
+    const geoCheck = blockedGeo();
+    const svc = makeService({ geoCheck, limiter: new RedisRateLimiter(redis.client) });
+
+    await expect(
+      svc.login(
+        { email: 'nobody@x.dev', password: 'password1234' },
+        { 'x-real-ip': '203.0.113.7' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Login is unavailable' });
+    expect(geoCheck.checkLogin).toHaveBeenCalledWith('203.0.113.7', {
+      userId: undefined,
+      userAgent: null,
+    });
+  });
+
+  it('rejects email-code verification (which mints a session) from a geo-blocked address', async () => {
+    const svc = makeService({
+      geoCheck: blockedGeo(),
+      limiter: new RedisRateLimiter(redis.client),
+    });
+
+    await expect(
+      svc.verifyEmail(
+        { email: 'nobody@x.dev', otp: '123456' },
+        { 'x-real-ip': '203.0.113.7' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

@@ -650,6 +650,19 @@ export class IdentityService {
    * the one place that records what actually happened - the HTTP response deliberately
    * does not, because a truthful answer on a known address is an enumeration oracle.
    */
+  // Every session-issuing path runs this before the credential is spent, so a blocked
+  // country cannot sign in by switching flows.
+  private async assertLoginGeoAllowed(
+    ip: string | null,
+    userAgent: string | null,
+    userId?: User['id'] | null,
+  ) {
+    const decision = await this.geoCheck?.checkLogin(ip, { userId, userAgent });
+    if (decision && !decision.allowed) {
+      throw new ORPCError('FORBIDDEN', { message: 'Login is unavailable' });
+    }
+  }
+
   private emitRegistrationFailed(
     reason: RegistrationFailureReason,
     input: RegisterInput,
@@ -688,7 +701,9 @@ export class IdentityService {
       this.emitRegistrationFailed('rate_limited', input, meta);
       throw err;
     }
-    const registrationGeo = this.geoCheck ? await this.geoCheck.checkRegistration(ip) : null;
+    const registrationGeo = this.geoCheck
+      ? await this.geoCheck.checkRegistration(ip, { userAgent })
+      : null;
     if (registrationGeo && !registrationGeo.allowed) {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
@@ -927,6 +942,8 @@ export class IdentityService {
           | 'requireTwoFactorOnLogin'
         >
       | undefined = existingUserRow;
+
+    await this.assertLoginGeoAllowed(ip, userAgent, existingUser?.id);
 
     const isAdmin = existingUser?.role === 'admin';
     const bypassForAdmins = this.options?.lockout?.bypassForAdmins ?? false;
@@ -1652,6 +1669,7 @@ export class IdentityService {
     if (challengedUserId) {
       await this.twoFactorLockout?.assertNotLocked(challengedUserId);
     }
+    await this.assertLoginGeoAllowed(ip, userAgent, challengedUserId);
 
     // A backup code is a single-use recovery credential, not a second factor to bind a
     // browser to: it clears the challenge but never buys the trust window. A pushed
@@ -2398,6 +2416,8 @@ export class IdentityService {
     if (ip) {
       await assertRateLimit(this.limiter, `verify-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
+    // Checked before the OTP is spent: better-auth mints a session with the verification.
+    await this.assertLoginGeoAllowed(ip, userAgent);
     const res = await this.api.verifyEmailOTP({
       body: { email, otp: input.otp },
       headers,
