@@ -142,7 +142,10 @@ export class GameSortTriggerService {
   }
 
   async sweep() {
-    await this.markStaleRefreshingSorts();
+    // A failing refresh must not stop the dirty categories below from being ranked.
+    await this.markStaleRefreshingSorts().catch((err: unknown) => {
+      logger.error({ err }, 'gaming.category.rank-sweep refresh marking failed');
+    });
     const dirty = await this.drizzle.db
       .select({ id: gameCategory.id })
       .from(gameCategory)

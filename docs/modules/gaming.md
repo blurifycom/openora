@@ -21,7 +21,7 @@ A sort definition is a `GameSortDefinition<Params>`:
 - **`key`** - the stable sort identifier (e.g., `'manual'`, `'name'`, `'rtp'` in an overlay).
 - **`directions`** - an ordered array of supported directions; the first is the default (e.g., `'asc'` only for manual, `'asc' | 'desc'` for name or stats).
 - **`paramsSchema`** - a real Zod schema (not a duck-typed parser), so the admin route `/backoffice/gaming/sort-options` can emit its JSON Schema for a dynamic config UI.
-- **`refreshIntervalMs`** (optional) - for a sort over data that changes without a catalogue event (round counts, revenue): the rank sweep marks a clean category with this sort dirty once its last successful rank is older than this, so its order follows the data. Without it, a category re-ranks only when something about it changes.
+- **`refreshIntervalMs`** (optional) - for a sort over data that changes without a catalogue event (round counts, revenue): the rank sweep marks a clean category with this sort dirty once its last successful rank is older than this, so its order follows the data. Must be 60 seconds (the sweep interval) to 365 days; `defineGameSort` and `createGameSortCatalog` reject anything else. Without it, a category re-ranks only when something about it changes.
 - **`rank(input)`** - an async function returning an ordered list of game ids from any source: a SQL query, an external ranking service, a cached analytics rollup. The function receives:
   - **`categoryId`** - the category to order.
   - **`gameIds`** - every current member of the category (including inactive games).
