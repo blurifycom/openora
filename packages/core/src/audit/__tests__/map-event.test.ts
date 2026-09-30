@@ -460,29 +460,73 @@ describe('mapEventToRecord: gaming.game.availability_changed', () => {
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 
-  it('marks a self-service trust teardown a player action, not an admin one', async () => {
+  it("files a player's own trust teardown under the player, with the player as actor", async () => {
     const row = await mapEventToRecord('identity.trusted_device.revoked', {
       userId,
+      playerId,
       deviceId,
       actorId: userId,
     });
 
-    expect(row).toMatchObject({ actorType: 'player', resourceType: 'user', resourceId: userId });
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
+  });
+
+  it("names an admin's own trust teardown as that admin, not as a player", async () => {
+    const row = await mapEventToRecord('identity.trusted_device.revoked', {
+      userId,
+      playerId: null,
+      deviceId,
+      actorId: userId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
   });
 
   it('marks a cross-user device revoke an admin action', async () => {
     const row = await mapEventToRecord('identity.trusted_device.revoked', {
       userId,
+      playerId,
       deviceId,
       actorId: adminId,
     });
 
-    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: userId });
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
+  });
+
+  it('files a trusted device added by a player under the player', async () => {
+    const row = await mapEventToRecord('identity.trusted_device.added', {
+      userId,
+      playerId,
+      deviceId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
   });
 
   it('attributes an AdminGuard-forced trust revoke to the system', async () => {
     const row = await mapEventToRecord('identity.trusted_device.revoked', {
       userId,
+      playerId: null,
       deviceId,
     });
 

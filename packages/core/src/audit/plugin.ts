@@ -470,6 +470,7 @@ export async function mapEventToRecord(
     };
   }
 
+  // Only the admin player routes reach PlayerService.update / remove.
   if (topic === 'player.account.closed' || topic === 'player.account.reopened') {
     return {
       ...base,
@@ -481,6 +482,7 @@ export async function mapEventToRecord(
     };
   }
 
+  // Only the admin player routes reach PlayerService.update / remove.
   if (topic === 'player.status.changed') {
     return {
       ...base,
@@ -1051,10 +1053,11 @@ export async function mapEventToRecord(
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
     const isForced = !isSystem && rawActorId !== p['userId'];
+    const playerId = str(p['playerId']);
     return {
       ...base,
-      actorType: isSystem ? 'system' : isForced ? 'admin' : 'player',
-      actorId: isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']),
+      actorType: isSystem ? 'system' : isForced || !playerId ? 'admin' : 'player',
+      actorId: isSystem ? null : isForced ? str(rawActorId) : (playerId ?? str(p['userId'])),
       ...identitySubject(p),
     };
   }

@@ -300,12 +300,14 @@ export const domainEventSchemas = {
   }),
   'identity.trusted_device.added': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
     label: z.string(),
     expiresAt: TimestampSchema,
   }),
   'identity.trusted_device.revoked': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
     // Absent when the guard itself forces the revoke (fingerprint mismatch) rather
     // than an admin or the device owner acting.

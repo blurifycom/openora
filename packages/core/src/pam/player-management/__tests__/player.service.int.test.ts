@@ -542,6 +542,15 @@ describe('PlayerService player.account.closed emission (real PG)', () => {
     expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
   });
 
+  it('does not re-emit from remove when the player was already closed', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'closed' });
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.account.closed', expect.anything());
+  });
+
   it('emits player.account.reopened when update moves the status out of closed', async () => {
     const { svc, events } = makeService();
     const { player: seeded, account } = await seedPlayerWithUser({}, { status: 'closed' });

@@ -1,6 +1,6 @@
 import { type EventBus, DrizzleService, makeNotFoundError } from '@openora/core/server';
 import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
-import type { ClientMeta, User } from '@openora/core/contracts';
+import type { ClientMeta, IdentityReader, User } from '@openora/core/contracts';
 import { adminTrustedDevice, type AdminTrustedDevice } from '../schema/index.js';
 import { deviceHash, describeDevice, trustedDeviceExpiry } from './device-fingerprint.service.js';
 
@@ -20,6 +20,7 @@ export type TrustedDeviceItem = {
 export type TrustedDeviceServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
+  identityReader: IdentityReader;
   trustedDeviceDays: number;
 };
 
@@ -32,11 +33,13 @@ export type TrustedDeviceServiceDeps = {
 export class TrustedDeviceService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
+  private readonly identityReader: IdentityReader;
   private readonly trustedDeviceDays: number;
 
-  constructor({ drizzle, events, trustedDeviceDays }: TrustedDeviceServiceDeps) {
+  constructor({ drizzle, events, identityReader, trustedDeviceDays }: TrustedDeviceServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
+    this.identityReader = identityReader;
     this.trustedDeviceDays = trustedDeviceDays;
   }
 
@@ -86,6 +89,7 @@ export class TrustedDeviceService {
     }
     this.events.emit('identity.trusted_device.added', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       deviceId: row.id,
       label,
       expiresAt: row.expiresAt.toISOString(),
@@ -152,6 +156,7 @@ export class TrustedDeviceService {
 
     this.events.emit('identity.trusted_device.revoked', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       deviceId,
       actorId,
       ip: meta?.ip ?? null,
@@ -180,9 +185,12 @@ export class TrustedDeviceService {
       .where(this.activeDeviceWhere(userId, deviceHash(userAgent)))
       .returning({ id: adminTrustedDevice.id });
 
+    const playerId =
+      revoked.length > 0 ? await this.identityReader.getPlayerIdByUserIdSafe(userId) : null;
     for (const row of revoked) {
       this.events.emit('identity.trusted_device.revoked', {
         userId,
+        playerId,
         deviceId: row.id,
         actorId,
         ip: null,
@@ -204,9 +212,12 @@ export class TrustedDeviceService {
       )
       .returning({ id: adminTrustedDevice.id, userAgent: adminTrustedDevice.userAgent });
 
+    const playerId =
+      revoked.length > 0 ? await this.identityReader.getPlayerIdByUserIdSafe(userId) : null;
     for (const row of revoked) {
       this.events.emit('identity.trusted_device.revoked', {
         userId,
+        playerId,
         deviceId: row.id,
         actorId,
         ip: null,

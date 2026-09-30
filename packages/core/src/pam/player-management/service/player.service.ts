@@ -201,11 +201,6 @@ export class PlayerService implements PlayerActivityTracker {
     data: { username?: string; status?: PlayerStatus; level?: number },
     actorId: User['id'],
   ) {
-    const existing = findOneOrThrow(
-      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
-      new PlayerNotFoundError(playerId),
-    );
-
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.status !== undefined) {
       patch.status = data.status;
@@ -217,7 +212,14 @@ export class PlayerService implements PlayerActivityTracker {
     // The username lives on identity's table, so it is written through USER_COMMANDS
     // rather than joined into this transaction - identity keeps its own invariants.
     if (data.username !== undefined) {
-      await this.userCommands.setUsername(existing.userId, data.username);
+      const { userId } = findOneOrThrow(
+        await this.drizzle.db
+          .select({ userId: player.userId })
+          .from(player)
+          .where(eq(player.id, playerId)),
+        new PlayerNotFoundError(playerId),
+      );
+      await this.userCommands.setUsername(userId, data.username);
     }
     const before = await this.drizzle.db.transaction(async (trx) => {
       const locked = findOneOrThrow(
@@ -307,12 +309,12 @@ export class PlayerService implements PlayerActivityTracker {
       return locked;
     });
     await this.sessionCommands.revokeAll(before.userId, actorId);
-    this.events.emit('player.account.closed', {
-      playerId,
-      userId: before.userId,
-      actorId,
-    });
     if (before.status !== 'closed') {
+      this.events.emit('player.account.closed', {
+        playerId,
+        userId: before.userId,
+        actorId,
+      });
       this.events.emit('player.status.changed', {
         playerId,
         userId: before.userId,
