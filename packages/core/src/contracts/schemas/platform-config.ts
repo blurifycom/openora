@@ -400,6 +400,7 @@ export type CmsConfig = z.infer<typeof CmsConfigSchema>;
 
 export const GamingConfigSchema = z
   .object({
+    /** Hostnames a game's custom thumbnail URL may be served from. Empty = no custom thumbnails allowed. */
     allowedThumbnailHosts: z.array(HostAllowlistEntrySchema).default([]),
   })
   .strict();
@@ -458,6 +459,7 @@ export const PlatformConfigSchema = z
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
     /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
+    /** Game custom thumbnail host allow-list. Absent = built-in default (empty = disabled). */
     gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),

@@ -874,6 +874,7 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & CatalogActor) {
+    // The only writer of `custom_thumbnail_url`; any new write path must repeat this host check.
     if (patchInput.customThumbnailUrl !== undefined && patchInput.customThumbnailUrl !== null) {
       const host = new URL(patchInput.customThumbnailUrl).hostname;
       if (!isAllowedHost(host, this.allowedThumbnailHosts)) {
