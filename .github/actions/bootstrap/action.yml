@@ -14,27 +14,15 @@ inputs:
 runs:
   using: composite
   steps:
+    # Reads the pinned version from package.json `packageManager` and caches the store.
+    # Replaces `npm i -g corepack@latest` + corepack enable/prepare (Node 26 ships no corepack).
+    - uses: pnpm/action-setup@v6.1.0
+      with:
+        cache: true
+
     - uses: actions/setup-node@v4
       with:
         node-version: 26
-
-    - name: Enable corepack (pnpm)
-      shell: bash
-      run: |
-        npm install -g corepack@latest
-        corepack enable
-        corepack prepare pnpm@11.8.0 --activate
-
-    - name: Resolve pnpm store path
-      shell: bash
-      run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
-
-    - name: Cache pnpm store
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.STORE_PATH }}
-        key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: pnpm-store-${{ runner.os }}-
 
     - name: Install
       shell: bash
