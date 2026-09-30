@@ -337,6 +337,7 @@ export const CategoryGameItemSchema = GameSchema.pick({
 }).extend({
   position: z.number().int().nullable(),
   pinnedPosition: z.number().int().nullable(),
+  isPlayable: z.boolean(),
 });
 
 export const ListCategoryGamesInputSchema = PageQuerySchema.extend({

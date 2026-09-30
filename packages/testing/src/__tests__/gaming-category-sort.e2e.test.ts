@@ -233,6 +233,11 @@ describe('gaming category games listing e2e (GET /backoffice/gaming/categories/{
     const body = await readJson(res);
     const ids = (body.items as Array<{ id: string; position: number | null }>).map((g) => g.id);
     expect(ids.sort()).toEqual([active.id, inactive.id].sort());
+    const playableById = new Map(
+      (body.items as Array<{ id: string; isPlayable: boolean }>).map((g) => [g.id, g.isPlayable]),
+    );
+    expect(playableById.get(active.id)).toBe(true);
+    expect(playableById.get(inactive.id)).toBe(false);
     expect(body.items.every((g: { position: number | null }) => g.position === null)).toBe(true);
     expect(
       body.items.every((g: { pinnedPosition: number | null }) => g.pinnedPosition === null),

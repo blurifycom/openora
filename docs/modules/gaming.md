@@ -31,6 +31,7 @@ A sort definition is a `GameSortDefinition<Params>`:
 - **`key`** - the stable sort identifier (e.g., `'manual'`, `'name'`, `'rtp'` in an overlay).
 - **`directions`** - an ordered array of supported directions; the first is the default (e.g., `'asc'` only for manual, `'asc' | 'desc'` for name or stats).
 - **`paramsSchema`** - a real Zod schema (not a duck-typed parser), so the admin route `/backoffice/gaming/sort-options` can emit its JSON Schema for a dynamic config UI.
+- **`refreshIntervalMs`** (optional) - for a sort over data that changes without a catalogue event (round counts, revenue): the rank sweep marks a clean category with this sort dirty once its last successful rank is older than this, so its order follows the data. Must be 60 seconds (the sweep interval) to 365 days; `defineGameSort` and `createGameSortCatalog` reject anything else. Without it, a category re-ranks only when something about it changes.
 - **`rank(input)`** - an async function returning an ordered list of game ids from any source: a SQL query, an external ranking service, a cached analytics rollup. The function receives:
   - **`categoryId`** - the category to order.
   - **`gameIds`** - every current member of the category (including inactive games).
@@ -76,7 +77,7 @@ The ranking service claims a category version before computing. Each configurati
 
 Every relevant mutation also records durable dirty work. A claim bumps the same marker, so a run whose adapter fails leaves the category dirty and retryable. The marker uses the database wall clock at the write, rather than the transaction start time; a writer that began before an earlier successful run cannot make its newer work appear already processed.
 
-The periodic sweep runs every minute and enqueues at most 200 dirty categories, oldest first. Claims move attempted categories behind older pending work, preventing a failing category from monopolizing a full backlog. Unknown definitions, invalid parameters and adapter errors preserve both the previous ranks and the last successful evaluation time. They remain eligible for a later sweep, so fixing a temporary dependency failure or restoring an overlay does not require another configuration change. Each failure increments `rankFailures`, and the sweep skips the category until 2 minutes have passed since its last attempt, doubling per consecutive failure up to an hour; a success resets the count. A write that enqueues directly still runs at once.
+The periodic sweep runs every minute. It first marks dirty every clean category whose sort declares `refreshIntervalMs` and whose ranks are older than that, keeping `updatedAt`, then enqueues at most 200 dirty categories, oldest first. Claims move attempted categories behind older pending work, preventing a failing category from monopolizing a full backlog. Unknown definitions, invalid parameters and adapter errors preserve both the previous ranks and the last successful evaluation time. They remain eligible for a later sweep, so fixing a temporary dependency failure or restoring an overlay does not require another configuration change. Each failure increments `rankFailures`, and the sweep skips the category until 2 minutes have passed since its last attempt, doubling per consecutive failure up to an hour; a success resets the count. A write that enqueues directly still runs at once.
 
 A successful write records the exact database dirty timestamp as its success timestamp under the version lock. This preserves PostgreSQL timestamp precision: rounding through a JavaScript date would otherwise leave a successful category appearing dirty. Definition validation and option discovery live in the sort service; event selection and the sweep live in the trigger service. Plugin code only wires those services to events, jobs, and routes.
 
@@ -122,6 +123,7 @@ A pin is untouched by any of this: dragging a different game only ever changes t
 
 - **`position`** (nullable) - the operator-written manual position, `null` if never explicitly positioned.
 - **`pinnedPosition`** (nullable) - the operator-written pin slot, `null` if not pinned.
+- **`isPlayable`** - active game, active provider, not vendor-unavailable. Pins are placed among playable games only, so a pin on an unplayable game holds no slot until it becomes playable again; an admin UI should offer pinning only when this is `true`.
 
 The list is returned in the same effective order players see (`categoryGameOrder()`), not in raw `position` order, so a drag-and-drop UI shows what it is about to reorder even while the category is on an automatic sort. A reorder or pin change is reflected here only once the rank job has run, so a client that re-reads immediately may still see the previous order.
 
