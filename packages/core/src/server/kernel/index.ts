@@ -12,6 +12,8 @@ export { EVENT_BUS, createEventBus } from './event-bus.js';
 
 export { BullMqJobQueue } from './bullmq-job-queue.js';
 export { makeRateLimitError, assertRateLimit } from './rate-limiter.js';
+export { moderateContent, type ModerationResult } from './moderate-content.js';
+export { hasProfanity } from './profanity.js';
 export { cached, invalidate } from './cache.js';
 export { createRedisClient, type RedisClient } from './redis-client.js';
 export { RedisCache } from './redis-cache.js';
