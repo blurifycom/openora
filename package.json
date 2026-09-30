@@ -33,6 +33,7 @@
     "report:route-coverage": "tsx tools/lint/report-route-coverage.ts",
     "gen": "tsx tools/gen/gen.ts",
     "gen:catalog": "tsx tools/gen/gen-catalog.ts",
+    "gen:dep-graph": "tsx packages/mcp/src/dep-graph-cli.ts packages/mcp/docs/dep-graph.json",
     "gen:drizzle": "pnpm -F @openora/core gen:drizzle",
     "gen:tsconfig": "tsx tools/gen/sync-tsconfig-paths.ts",
     "gen:agents": "rulesync generate",

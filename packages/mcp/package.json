@@ -16,7 +16,10 @@
     "url": "git+https://github.com/blurifycom/openora.git",
     "directory": "packages/mcp"
   },
-  "bin": "./dist/main.js",
+  "bin": {
+    "mcp": "./dist/main.js",
+    "openora-dep-graph": "./dist/dep-graph-cli.js"
+  },
   "files": [
     "dist",
     "docs",
