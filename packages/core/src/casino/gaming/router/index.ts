@@ -48,8 +48,12 @@ import {
   GameProviderVendorIdTakenError,
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
-import { GameBulkService, GameBulkTooManyGamesError } from '../service/game-bulk.service.js';
-import { MaxBetExceededError, RgLimitExceededError } from '@openora/core/contracts';
+import { GameBulkService } from '../service/game-bulk.service.js';
+import {
+  GameBulkTooManyGamesError,
+  MaxBetExceededError,
+  RgLimitExceededError,
+} from '@openora/core/contracts';
 
 export function createGamingRouter({
   gaming,
@@ -372,7 +376,11 @@ export function createGamingRouter({
     listAdminGames: os.listAdminGames.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'game-config', 'view');
       // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
-      if (input.geoBlocked !== undefined || input.geoBlockedCountries) {
+      if (
+        input.geoBlocked !== undefined ||
+        input.geoBlockedCountries ||
+        input.geoAvailableCountries
+      ) {
         await adminGuard.assert(context, 'compliance', 'view');
       }
       return mapErrors({ BAD_REQUEST: GameGeoFiltersUnavailableError }, () =>
