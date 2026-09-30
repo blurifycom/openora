@@ -100,6 +100,7 @@ describe('GameCatalogReaderService.getPlayableGames (real PG)', () => {
     const playable = await seedGame(provider.id, {
       name: 'Playable',
       thumbnailUrl: 'https://cdn/thumb.png',
+      customThumbnailUrl: 'https://cdn/custom-thumb.png',
     });
     const inactive = await seedGame(provider.id, { isActive: false });
     const unavailable = await seedGame(provider.id, { isUnavailable: true });
@@ -121,6 +122,7 @@ describe('GameCatalogReaderService.getPlayableGames (real PG)', () => {
       name: 'Playable',
       slug: playable.slug,
       thumbnailUrl: 'https://cdn/thumb.png',
+      customThumbnailUrl: 'https://cdn/custom-thumb.png',
       provider: {
         id: provider.id,
         slug: provider.slug,
