@@ -620,6 +620,9 @@ describe('gaming catalog router authz', () => {
     await expect(
       call(router.listAdminGames, { geoBlockedCountries: ['DE'] }, { context: CTX }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    await expect(
+      call(router.listAdminGames, { geoAvailableCountries: ['DE'] }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
     await expect(call(router.listAdminGames, {}, { context: CTX })).resolves.toMatchObject({
       total: 0,
     });
@@ -633,6 +636,9 @@ describe('gaming catalog router authz', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       call(router.listAdminGames, { geoBlockedCountries: ['DE'] }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      call(router.listAdminGames, { geoAvailableCountries: ['DE'] }, { context: CTX }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       call(router.listAdminGames, { tagIds: [randomUUID()] }, { context: CTX }),

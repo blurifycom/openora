@@ -140,11 +140,28 @@ describe('admin game list filters e2e', () => {
       [full.id, partial.id, bare.id].sort(),
     );
     expect(await listIds('geoBlocked=false')).toEqual([]);
+
+    expect(await listIds('geoAvailableCountries[]=DE')).toEqual([bare.id]);
+    expect(await listIds('geoAvailableCountries[]=IT')).toEqual([]);
   });
 
   it('rejects geoBlocked=false combined with geoBlockedCountries', async () => {
     const res = await admin.get(
       '/backoffice/gaming/games?geoBlocked=false&geoBlockedCountries[]=DE',
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects geoBlocked=true combined with geoAvailableCountries', async () => {
+    const res = await admin.get(
+      '/backoffice/gaming/games?geoBlocked=true&geoAvailableCountries[]=DE',
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a country shared between geoAvailableCountries and geoBlockedCountries', async () => {
+    const res = await admin.get(
+      '/backoffice/gaming/games?geoAvailableCountries[]=DE&geoBlockedCountries[]=DE',
     );
     expect(res.status).toBe(400);
   });
