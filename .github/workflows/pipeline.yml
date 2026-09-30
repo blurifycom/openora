@@ -57,6 +57,10 @@ jobs:
       # Build only the publishable packages - the apps are private and never published.
       - run: pnpm exec turbo run build --filter='!./apps/*'
 
+      # The import graph ships inside @openora/mcp: its `impact` tool and the downstream QA
+      # automation follow a platform change into consumer code with it.
+      - run: pnpm gen:dep-graph
+
       # Immutable canary build `<next>-canary.<run>`, published on EVERY dev push regardless of
       # changesets: base = latest published stable, patch-bumped so canary always leads it; the run
       # number is a monotonic sha-free counter. `changeset publish` needs no changesets - it ships any

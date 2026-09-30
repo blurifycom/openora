@@ -68,6 +68,7 @@ jobs:
           # Pin the publishable packages to the tag's exact version (ephemeral - not committed).
           node -e "for (const p of ['packages/core/package.json','packages/mcp/package.json','packages/create-openora/package.json']) { const fs=require('fs'); const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.V; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n'); }"
           pnpm build
+          pnpm gen:dep-graph
           if [ "$DISTTAG" = "latest" ]; then
             pnpm changeset publish --no-git-tag
           else
