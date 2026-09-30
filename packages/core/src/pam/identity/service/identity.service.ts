@@ -69,6 +69,7 @@ import type {
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
+import { assertUsernameAllowed, isUsernameAllowed } from '../../shared/username.js';
 import {
   DEFAULT_LOCKOUT_DURATION_MS,
   DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -707,6 +708,12 @@ export class IdentityService {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
+    try {
+      assertUsernameAllowed(input.username, this.platformConfig?.reservedUsernames);
+    } catch (err) {
+      this.emitRegistrationFailed('username_blocked', input, meta);
+      throw err;
+    }
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.api.signUpEmail({
       body: {
@@ -859,7 +866,11 @@ export class IdentityService {
       `check-username:${ip ?? 'unknown'}`,
       USERNAME_AVAILABILITY_RATE_LIMIT,
     );
-    return { available: !(await this.findUserIdByUsername(username)) };
+    return {
+      available:
+        isUsernameAllowed(username, this.platformConfig?.reservedUsernames) &&
+        !(await this.findUserIdByUsername(username)),
+    };
   }
 
   /**

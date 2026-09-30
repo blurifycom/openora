@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import type { DrizzleService } from '@openora/core/server';
+import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import type { User } from '@openora/core/contracts';
 import { player } from '../profile/schema/index.js';
 import { user } from '../identity/schema/index.js';
@@ -17,6 +17,7 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
     dateOfBirth: row.dateOfBirth,
     phone: row.phone,
     country: row.country,
+    bio: row.bio,
     currency: row.currency,
     status: row.status,
     kycStatus: row.kycStatus,
@@ -35,8 +36,8 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
 }
 
 /** The identity columns `toPlayer` needs, or null when the user row is gone. */
-export async function fetchIdentityByUserId(drizzle: DrizzleService, userId: User['id']) {
-  const [record] = await drizzle.db
+export async function fetchIdentityByUserId(db: DrizzleDb | DrizzleTx, userId: User['id']) {
+  const [record] = await db
     .select({ email: user.email, username: user.username })
     .from(user)
     .where(eq(user.id, userId));

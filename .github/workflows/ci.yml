@@ -5,6 +5,8 @@ on:
     # `edited` too: the PR title is linted below, so a retitle has to re-run the check.
     types: [opened, synchronize, reopened, edited]
   workflow_call:
+  # audit-fix.yml opens its PR with the workflow token, which starts no `pull_request` run.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

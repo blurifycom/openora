@@ -48,8 +48,8 @@ export const SESSION_COMMANDS: Token<SessionCommands> =
  * `/schema` subpath but must mutate it here, so identity keeps its own invariants.
  */
 export type UserCommands = {
-  /** Throws if the handle is taken; comparison is case-insensitive. */
-  setUsername(userId: string, username: string): Promise<{ success: boolean }>;
+  /** Throws if the handle is taken; comparison is case-insensitive. `tx` joins the caller's transaction. */
+  setUsername(userId: string, username: string, tx?: unknown): Promise<{ success: boolean }>;
 };
 
 export const USER_COMMANDS: Token<UserCommands> = createToken<UserCommands>('USER_COMMANDS');

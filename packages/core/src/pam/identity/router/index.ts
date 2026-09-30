@@ -29,6 +29,7 @@ import {
   SelfTwoFactorResetError,
 } from '../service/admin-security.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
+import { UsernameBlockedError } from '../../shared/username.js';
 
 function requireSessionId(context: OssContext) {
   const sessionId = getSessionId(context);
@@ -71,7 +72,7 @@ export function createIdentityRouter(
 
   return os.router({
     register: os.register.handler(({ input, context }) =>
-      mapErrors({ CONFLICT: UsernameConflictError }, () =>
+      mapErrors({ CONFLICT: UsernameConflictError, BAD_REQUEST: UsernameBlockedError }, () =>
         identity.register(input, context.request.headers),
       ),
     ),
