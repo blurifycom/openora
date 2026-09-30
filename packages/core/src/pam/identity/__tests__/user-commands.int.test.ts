@@ -29,6 +29,7 @@ describe('DrizzleUserCommands.setUsername', () => {
 
     const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
     expect(row?.username).toBe('after_name');
+    expect(row?.name).toBe('after_name');
   });
 
   it('rejects a handle already taken, case-insensitively', async () => {

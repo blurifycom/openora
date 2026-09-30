@@ -234,9 +234,7 @@
         "player_user_id_unique": {
           "name": "player_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -266,13 +264,7 @@
     "public.player_status": {
       "name": "player_status",
       "schema": "public",
-      "values": [
-        "active",
-        "dormant",
-        "self_excluded",
-        "suspended",
-        "closed"
-      ]
+      "values": ["active", "dormant", "self_excluded", "suspended", "closed"]
     }
   },
   "schemas": {},

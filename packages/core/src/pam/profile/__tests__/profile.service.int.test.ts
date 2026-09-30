@@ -344,13 +344,15 @@ describe('ProfileService.setMyDisplayDecimalPlaces (real PG)', () => {
       displayDecimalPlaces: 2,
     });
     const audit = makeAuditWriter();
-    const svc = new ProfileService(
-      db.drizzle,
-      mock<WalletReader>({}),
-      mock<ExchangeRateReader>({}),
+    const svc = new ProfileService({
+      drizzle: db.drizzle,
+      walletReader: mock<WalletReader>({}),
+      exchangeRateReader: mock<ExchangeRateReader>({}),
       audit,
-      DEFAULT_SUPPORTED,
-    );
+      userCommands: mock<UserCommands>({}),
+      limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
+      supportedDisplayCurrencies: DEFAULT_SUPPORTED,
+    });
 
     const result = await svc.setMyDisplayDecimalPlaces(account.id, { decimalPlaces: 6 });
 

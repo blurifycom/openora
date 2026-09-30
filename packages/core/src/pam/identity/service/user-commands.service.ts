@@ -21,7 +21,8 @@ export class DrizzleUserCommands implements UserCommands {
   async setUsername(userId: User['id'], username: string, tx?: unknown) {
     const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);
     try {
-      await db.update(user).set({ username }).where(eq(user.id, userId));
+      // Registration writes the handle to `name` too; keep them in step so the old handle cannot linger.
+      await db.update(user).set({ username, name: username }).where(eq(user.id, userId));
     } catch (error) {
       if (isUsernameCollision(error)) {
         // Thrown as the transport error rather than a domain class: consumers live in
