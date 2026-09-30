@@ -2,42 +2,63 @@ name: CI
 
 on:
   pull_request:
-    # `edited` too: the PR title is linted below, so a retitle has to re-run the check.
+    # `edited` re-runs only the `commitlint` title check; `verify` skips it (see below).
     types: [opened, synchronize, reopened, edited]
+  # Merge queue: required checks `verify` and `commitlint` must report on the queue's
+  # temporary branch too, or the group never merges.
+  merge_group:
   workflow_call:
   # audit-fix.yml opens its PR with the workflow token, which starts no `pull_request` run.
   workflow_dispatch:
 
+# `edited` gets its own group so a retitle never cancels a running verify. Merge-group refs
+# are unique per group, so groups never cancel each other; only superseded PR pushes do.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event.action == 'edited' && 'title' || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
+  TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+  TEST_REDIS_URL: redis://localhost:6379
+  TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
 
 jobs:
   commitlint:
-    # PR only: lints the PR's commits. On pushes to dev/stage the commits already passed
-    # commitlint on their PR, and the push before-SHA is unreliable (null on a branch's
-    # first push -> "Invalid revision range 0000...").
-    if: github.event_name == 'pull_request'
+    # PR only does real work: lints the PR's commits + title. On pushes to dev/stage and in
+    # the merge queue the commits already passed on their PR (and the push before-SHA is
+    # unreliable), so the job still runs - the required check must report - but every step
+    # but the last is skipped.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       # No turbo here - taking the shared per-commit cache key would lock the verify
       # job out of saving its own task outputs.
-      - uses: ./.github/actions/bootstrap
+      - if: github.event_name == 'pull_request'
+        uses: ./.github/actions/bootstrap
         with:
           turbo-cache: 'false'
       - name: Commitlint
+        if: github.event_name == 'pull_request' && github.event.action != 'edited'
         run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
       # A squash merge takes the PR title as the commit subject, so an unlinted title
       # lands on dev as a commit commitlint would have rejected.
       - name: Commitlint PR title
+        if: github.event_name == 'pull_request'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: echo "$PR_TITLE" | pnpm commitlint
+      - name: Nothing to lint
+        if: github.event_name != 'pull_request'
+        run: echo "commitlint runs on pull requests only"
 
-  verify:
+  # Everything in `pnpm verify` except the core integration tier (sharded below).
+  checks:
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -62,38 +83,70 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
-      TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-      TEST_REDIS_URL: redis://localhost:6379
-      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
-      # This cluster holds nothing but throwaway test data, so it buys no safety from
-      # flushing WAL to disk - and the integration tiers are dominated by commit waits.
-      # Measured on the same host: 80s -> 29s for the core integration tier. All three
-      # settings take effect on reload (fsync and full_page_writes are `sighup`,
-      # synchronous_commit is `user`), so the service container needs no restart.
-      - name: Trade test-database durability for speed
-        run: |
-          psql "$TEST_ADMIN_DATABASE_URL" \
-            -c "ALTER SYSTEM SET fsync = off" \
-            -c "ALTER SYSTEM SET full_page_writes = off" \
-            -c "ALTER SYSTEM SET synchronous_commit = off" \
-            -c "SELECT pg_reload_conf()"
-      - name: Prepare migration database
-        run: pnpm db:setup:test
-      # Through turbo, not `pnpm --filter`, so the artifact lands in the turbo cache
-      # and the `build` inside Verify below is a hit instead of a second full tsc.
-      - name: Build migration runner
-        run: pnpm exec turbo run build --filter=@openora/core
-      - name: Run migrations
-        run: pnpm db:migrate
-      # Fans out lint, format, boundaries, module shape, deprecations, unit + tool
-      # tests through turbo (parallel + cached). `build` runs implicitly as the
-      # test dependency and is what typechecks (every package builds with tsc).
-      # `pnpm verify` ends with check:drift - no separate step needed.
+      - uses: ./.github/actions/test-infra
+      # Same task list as the root `verify` script, but the core integration tier is
+      # excluded (it runs in `integration`) - the other integration tiers stay here.
+      # `build` is what typechecks (every package builds with tsc).
       - name: Verify
-        run: pnpm verify
+        run: >-
+          pnpm exec turbo run build check:lint check:format check:boundaries check:shape
+          check:hygiene check:refs check:deprecations test:unit test:tools &&
+          pnpm exec turbo run test:integration --filter='!@openora/core' &&
+          pnpm check:drift
+
+  # The slowest tier (packages/core `vitest.integration.config.ts`), 3 shards. Each job has
+  # its own postgres + redis, so per-suite databases and redis partitions are isolated.
+  integration:
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+      - uses: ./.github/actions/test-infra
+      - name: Core integration (shard ${{ matrix.shard }}/3)
+        run: pnpm exec turbo run test:integration --filter=@openora/core -- --shard=${{ matrix.shard }}/3
+
+  # Stable required-check name; aggregates the jobs above.
+  verify:
+    if: always() && github.event.action != 'edited'
+    needs: [checks, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all verify jobs green
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*|*" skipped "*) exit 1;; esac

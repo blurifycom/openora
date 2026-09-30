@@ -1,5 +1,6 @@
 # Push pipeline: ci -> canary publish. One chained run per push.
 #
+# Dev commits land through the merge queue (tested there), so dev runs no CI here - only publish.
 # Every push to dev publishes an immutable CANARY build (`<next>-canary.<run>`, dist-tag `canary`) -
 # ALWAYS, independent of changesets: the base is the latest published stable patch-bumped so canary
 # always leads it, and the CI run number is a monotonic sha-free counter. Nothing is committed. This
@@ -20,28 +21,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # stage only: dev commits arrive through the merge queue, which already ran CI on them.
   ci:
+    if: github.ref == 'refs/heads/stage'
     uses: ./.github/workflows/ci.yml
 
   snapshot:
-    needs: ci
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # npm provenance (signed build attestation)
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
-      # The downstream consumer and example demo are identified ONLY by these secret VALUES -
-      # this repo is public, so nothing about them is committed here. Unset -> the step no-ops.
-      CONSUMER_TRIGGER_URL: ${{ secrets.CONSUMER_TRIGGER_URL }}
-      CONSUMER_TRIGGER_TOKEN: ${{ secrets.CONSUMER_TRIGGER_TOKEN }}
+      # The example demo is identified ONLY by these secret VALUES -
+      # this repo is public, so nothing about it is committed here. Unset -> the step no-ops.
       EXAMPLE_DEPLOY_TRIGGER_URL: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_URL }}
       EXAMPLE_DEPLOY_TRIGGER_TOKEN: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
-      # Restores the turbo cache the `ci` job just populated for this same commit, so the
-      # build below is a cache hit rather than a second full compile of every package.
+      # No CI ran for this commit on dev, so the build below is a real compile (turbo cache
+      # from earlier runs helps only where package inputs are unchanged).
       - uses: ./.github/actions/bootstrap
 
       # `setup-node` again purely for the npm registry auth the publish step needs -
@@ -73,19 +75,9 @@ jobs:
           NPM_CONFIG_PROVENANCE: true
           RUN: ${{ github.run_number }}
 
-      # Ask the downstream consumer to open a bump MR against its dev with the new canary
-      # version (its CI owns the pin/lockfile/MR). Best-effort; canary (dev) channel only.
-      - name: Trigger downstream consumer bump
-        continue-on-error: true
-        if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
-        run: |
-          VERSION=$(node -p "require('./packages/core/package.json').version")
-          curl -sf -X POST "$CONSUMER_TRIGGER_URL" \
-            -F "token=$CONSUMER_TRIGGER_TOKEN" \
-            -F "ref=dev" \
-            -F "variables[OSS_BUMP]=true" \
-            -F "variables[OSS_VERSION]=$VERSION" \
-            -F "variables[OSS_BUMP_TARGET]=dev"
+      - name: Read published version
+        id: version
+        run: echo "version=$(node -p "require('./packages/core/package.json').version")" >> "$GITHUB_OUTPUT"
 
       # Redeploy the public example demo against the new snapshot. Best-effort; dev channel only.
       - name: Trigger example demo deploy
@@ -98,3 +90,34 @@ jobs:
             -F "ref=main" \
             -F "variables[DEPLOY]=true" \
             -F "variables[OSS_VERSION]=$VERSION"
+
+  # Separate job so bursts of merges collapse into ONE downstream bump: each run waits, and a
+  # newer run's bump cancels this one while it waits (publishing above is never cancelled).
+  bump:
+    needs: snapshot
+    runs-on: ubuntu-latest
+    concurrency:
+      group: betfeel-bump
+      cancel-in-progress: true
+    env:
+      # Identified ONLY by secret VALUES (public repo). Unset -> the step no-ops.
+      CONSUMER_TRIGGER_URL: ${{ secrets.CONSUMER_TRIGGER_URL }}
+      CONSUMER_TRIGGER_TOKEN: ${{ secrets.CONSUMER_TRIGGER_TOKEN }}
+      VERSION: ${{ needs.snapshot.outputs.version }}
+    steps:
+      - name: Wait for the burst to settle
+        if: env.CONSUMER_TRIGGER_URL != ''
+        run: sleep 300
+
+      # Ask the downstream consumer to open a bump MR against its dev with the new canary
+      # version (its CI owns the pin/lockfile/MR). Best-effort; canary (dev) channel only.
+      - name: Trigger downstream consumer bump
+        continue-on-error: true
+        if: env.CONSUMER_TRIGGER_URL != ''
+        run: |
+          curl -sf -X POST "$CONSUMER_TRIGGER_URL" \
+            -F "token=$CONSUMER_TRIGGER_TOKEN" \
+            -F "ref=dev" \
+            -F "variables[OSS_BUMP]=true" \
+            -F "variables[OSS_VERSION]=$VERSION" \
+            -F "variables[OSS_BUMP_TARGET]=dev"
