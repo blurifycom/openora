@@ -1,0 +1,53 @@
+name: Audit fix
+
+# Weekly: bump vulnerable dependencies and refresh one PR into dev. `--fix=update` only
+# moves versions inside the ranges package.json already allows; an advisory that needs a
+# range or major change stays in `pnpm audit` for a human.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: audit-fix
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+env:
+  BRANCH: chore/audit-fix
+  TITLE: 'fix(deps): bump vulnerable dependencies'
+
+jobs:
+  audit-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
+      # Exits non-zero while anything is still vulnerable - the diff decides, not the exit code.
+      - run: pnpm audit --fix=update || true
+      - name: Open or refresh the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- pnpm-lock.yaml pnpm-workspace.yaml '*package.json'; then
+            echo "nothing to bump"
+            exit 0
+          fi
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git checkout -b "$BRANCH"
+          git add -- pnpm-lock.yaml pnpm-workspace.yaml '*package.json'
+          git commit -m "$TITLE"
+          git push -f origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base dev --head "$BRANCH" --title "$TITLE" --body 'Automated by the weekly `Audit fix` workflow (`pnpm audit --fix=update`).'
+          fi
+          # A push made with the workflow token starts no `pull_request` run, so CI is dispatched by hand.
+          gh workflow run ci.yml --ref "$BRANCH"

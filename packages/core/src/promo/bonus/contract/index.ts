@@ -177,8 +177,11 @@ export const UpdatePromoOfferInputSchema = PromoOfferSchema.omit({
 
 export type UpdatePromoOfferInput = z.infer<typeof UpdatePromoOfferInputSchema>;
 
-/** What a player sees of an offer: the deal, never the operator's weighting. */
-export const PlayerOfferSchema = PromoOfferSchema.pick({
+/**
+ * What a signed-out visitor sees of an offer: the deal and nothing else. No claim state, no
+ * progress, no operator weighting - there is no player to answer those for.
+ */
+export const PublicOfferSchema = PromoOfferSchema.pick({
   id: true,
   key: true,
   name: true,
@@ -190,8 +193,19 @@ export const PlayerOfferSchema = PromoOfferSchema.pick({
   validUntil: true,
 }).extend({
   wageringMultiplier: MoneyAmountSchema,
+});
+
+export type PublicOffer = z.infer<typeof PublicOfferSchema>;
+
+/** What a player sees of an offer: the deal, never the operator's weighting. */
+export const PlayerOfferSchema = PublicOfferSchema.extend({
   /** The player already took this one; deposits are counting toward its minimum. */
   optedIn: z.boolean(),
+  /**
+   * A deposit already turned this claim into a bonus. Read off the claim rather than the
+   * grant list, so it holds however far back that grant has been paged.
+   */
+  claimed: z.boolean(),
   /** What their deposits have put toward the minimum so far. */
   accumulatedDeposit: MoneyAmountSchema,
 });
@@ -206,6 +220,9 @@ export const PlayerGrantSchema = z.object({
   id: UuidSchema,
   /** The offer this bonus came from, so a client can show its state on that offer's card. */
   offerId: UuidSchema.nullable(),
+  /** The offer's key and name, so a grant still shows its offer once that offer has closed. */
+  offerKey: z.string().nullable(),
+  offerName: z.string().nullable(),
   currency: CurrencyTickerSchema,
   source: BonusGrantSourceSchema,
   sourceRef: z.string(),
@@ -311,6 +328,11 @@ export {
 export const bonusContract = {
   offers: {
     list: oc.route({ method: 'GET', path: '/promo/offers' }).output(z.array(PlayerOfferSchema)),
+
+    /** The live catalogue for a signed-out visitor; empty where the country rule refuses them. */
+    listPublic: oc
+      .route({ method: 'GET', path: '/promo/offers/public' })
+      .output(z.array(PublicOfferSchema)),
 
     optIn: oc
       .route({ method: 'POST', path: '/promo/offers/{id}/opt-in' })

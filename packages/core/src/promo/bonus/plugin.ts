@@ -9,9 +9,11 @@ import {
   type BonusForfeitReason,
   type BonusLifecycleCommands,
   CurrencyTickerSchema,
+  GEO_CHECK_COMMANDS,
   JOB_QUEUE,
   MoneyAmountSchema,
   PLAY_ELIGIBILITY,
+  RATE_LIMITER,
   REALTIME_TRANSPORT,
   UuidSchema,
   WAGER_TRACKING,
@@ -350,6 +352,8 @@ export default {
         lifecycle,
         events,
         adminGuard: c.get(ADMIN_GUARD),
+        limiter: c.get(RATE_LIMITER),
+        geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
       });
     });
   },

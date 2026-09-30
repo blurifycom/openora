@@ -30,6 +30,7 @@ export const RATE_LIMIT_KEYS = {
   CHAT_SEND: 'chat-send',
   REPORT_ACCESS_DENIED: 'report-access-denied',
   GEO_CHECK_IP: 'geo-check-ip',
+  PROMO_PUBLIC_OFFERS_IP: 'promo-public-offers-ip',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];
