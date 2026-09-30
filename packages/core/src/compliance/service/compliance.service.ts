@@ -40,6 +40,7 @@ import {
   GameBulkTooManyGamesError,
   normalizeCountryCode,
   type AuditWritePort,
+  type CacheAdapter,
   type ClientMeta,
   type GameGeoCheckInput,
   type GeoIpAdapter,
@@ -278,6 +279,8 @@ function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date;
     .sort((a, b) => a.after.countryCode.localeCompare(b.after.countryCode));
 }
 
+const VISITOR_GEO_BLOCK_AUDIT_WINDOW_MS = 60 * 60 * 1000;
+
 export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -285,11 +288,14 @@ export class ComplianceService {
     private readonly geoIp: GeoIpAdapter | null,
     private readonly audit: AuditWritePort,
     private readonly igaming: IgamingConfig | null = null,
+    private readonly cache: CacheAdapter | null = null,
   ) {}
 
-  private deny(ipAddress: string | null, countryCode: string | null, reason: string) {
+  private emitAccessBlocked(
+    ipAddress: string | null,
+    { countryCode, reason }: { countryCode: string | null; reason: string },
+  ) {
     this.events.emit('compliance.geo.access_blocked', { countryCode, reason, ip: ipAddress });
-    return { allowed: false, countryCode, reason };
   }
 
   /**
@@ -302,6 +308,51 @@ export class ComplianceService {
    * trail.
    */
   async geoCheck(ipAddress: string | null) {
+    const decision = await this.decideCountryAccess(ipAddress);
+    if (!decision.allowed) {
+      this.emitAccessBlocked(ipAddress, decision);
+    }
+    return decision;
+  }
+
+  /**
+   * `GET /compliance/geo-check`: the same decision, but a consumer polls it on every page
+   * load, so a denial is audited once per address and country per window - the first row
+   * is the evidence, the rest would be noise. Best-effort: a cache outage audits every
+   * poll rather than none.
+   */
+  async visitorGeoCheck(ipAddress: string | null) {
+    const decision = await this.decideCountryAccess(ipAddress);
+    if (!decision.allowed && (await this.isFirstVisitorBlockInWindow(ipAddress, decision))) {
+      this.emitAccessBlocked(ipAddress, decision);
+    }
+    return decision;
+  }
+
+  private async isFirstVisitorBlockInWindow(
+    ipAddress: string | null,
+    { countryCode }: { countryCode: string | null },
+  ) {
+    if (!this.cache) {
+      return true;
+    }
+    try {
+      return await this.cache.setIfAbsent(
+        `geo-check-audit:${ipAddress ?? 'unknown'}:${countryCode ?? 'unresolved'}`,
+        true,
+        { ttlMs: VISITOR_GEO_BLOCK_AUDIT_WINDOW_MS },
+      );
+    } catch {
+      return true;
+    }
+  }
+
+  private async decideCountryAccess(
+    ipAddress: string | null,
+  ): Promise<
+    | { allowed: true; countryCode: string | null; reason: null }
+    | { allowed: false; countryCode: string | null; reason: string }
+  > {
     if (!this.geoIp) {
       return { allowed: true, countryCode: null, reason: null };
     }
@@ -317,12 +368,12 @@ export class ComplianceService {
         .where(eq(countryRule.action, 'block'))
         .limit(1);
       return blacklistedRule || this.igaming?.blockedCountries.length
-        ? this.deny(ipAddress, null, 'Geolocation could not be determined')
+        ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
         : { allowed: true, countryCode: null, reason: null };
     }
 
     if (this.igaming?.blockedCountries.includes(countryCode)) {
-      return this.deny(ipAddress, countryCode, `Country ${countryCode} is blocked`);
+      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
     }
 
     const [rule] = await this.drizzle.db
@@ -331,7 +382,7 @@ export class ComplianceService {
       .where(eq(countryRule.countryCode, countryCode));
 
     if (rule?.action === 'block') {
-      return this.deny(ipAddress, countryCode, `Country ${countryCode} is blocked`);
+      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
     }
 
     return { allowed: true, countryCode, reason: null };

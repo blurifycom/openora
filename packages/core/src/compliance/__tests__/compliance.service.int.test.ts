@@ -11,7 +11,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
-import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeCache, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   userLimit,
@@ -211,6 +211,46 @@ describe('ComplianceService.geoCheck (real PG)', () => {
       'compliance.geo.access_blocked',
       expect.objectContaining({ countryCode: 'US' }),
     );
+  });
+});
+
+describe('ComplianceService.visitorGeoCheck (real PG)', () => {
+  it('audits a blocked geo-check poll once per address and country window', async () => {
+    const events = makeEventBus();
+    const geoIp = mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode: 'US' })) });
+    const svc = new ComplianceService(
+      db.drizzle,
+      events,
+      geoIp,
+      makeAuditWriter(),
+      null,
+      makeCache(),
+    );
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.visitorGeoCheck('1.2.3.4');
+    expect(await svc.visitorGeoCheck('1.2.3.4')).toMatchObject({ allowed: false });
+    await svc.visitorGeoCheck('5.6.7.8');
+
+    const blocked = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'compliance.geo.access_blocked',
+    );
+    expect(blocked.map(([, payload]) => (payload as { ip: string }).ip)).toEqual([
+      '1.2.3.4',
+      '5.6.7.8',
+    ]);
+  });
+
+  it('still audits every enforcement check, which is not deduplicated', async () => {
+    const { svc, events } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.checkAccess('1.2.3.4');
+    await svc.checkAccess('1.2.3.4');
+
+    expect(
+      events.emit.mock.calls.filter(([topic]) => topic === 'compliance.geo.access_blocked'),
+    ).toHaveLength(2);
   });
 });
 

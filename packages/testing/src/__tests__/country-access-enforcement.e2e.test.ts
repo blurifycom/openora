@@ -5,7 +5,9 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { countryRule } from '@openora/core/compliance/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import { bootTestApp, seedMinimal, setupTestDb, type TestApp, type TestDb } from '../index.js';
+import { forceEmailVerified } from '../register.js';
 
 const BLOCKED_IP = '203.0.113.10';
 const BLOCKED_COUNTRY = 'DE';
@@ -106,16 +108,34 @@ describe('country access enforcement', () => {
     expect(await res.json()).toMatchObject({ allowed: false, countryCode: null });
   });
 
-  it('refuses registration and login from a blacklisted country', async () => {
-    const email = `blocked-${randomUUID()}@e2e.test`;
+  it('refuses registration from a blacklisted country', async () => {
+    expect((await register(BLOCKED_IP, `blocked-${randomUUID()}@e2e.test`)).status).toBe(403);
+  });
 
-    expect((await register(BLOCKED_IP, email)).status).toBe(403);
-    expect((await login(BLOCKED_IP, email)).status).toBe(403);
+  it('refuses a proven login from a blacklisted country, but not from an allowed one', async () => {
+    const email = `traveller-${randomUUID()}@e2e.test`;
+    expect((await register(ALLOWED_IP, email)).status).toBe(200);
+    const [registered] = await app.container
+      .get(DRIZZLE)
+      .db.select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email));
+    if (!registered) {
+      throw new Error('registered user was not persisted');
+    }
+    await forceEmailVerified(app, registered.id);
+
+    const blocked = await login(BLOCKED_IP, email);
+    expect(blocked.status).toBe(403);
+    expect(blocked.headers.get('set-cookie')).toBeNull();
+    expect((await login(ALLOWED_IP, email)).status).toBe(200);
   });
 
   it('logs every refused attempt with the resolved country and a timestamp', async () => {
     const before = (await blockedAuditRows(BLOCKED_COUNTRY)).length;
-    await geoCheck(BLOCKED_IP);
+    // An enforcement point, which is audited on every refusal; the anonymous geo-check is
+    // deduplicated per address and country, so it may already have been recorded.
+    await register(BLOCKED_IP, `blocked-${randomUUID()}@e2e.test`);
 
     await vi.waitFor(async () => {
       expect((await blockedAuditRows(BLOCKED_COUNTRY)).length).toBeGreaterThan(before);

@@ -15,6 +15,7 @@ import {
   PhoneLoginOtpInvalidReasonSchema,
   type PhoneLoginOtpInvalidReason,
   type CacheAdapter,
+  type GeoCheckCommands,
   type RateLimiterAdapter,
   type SmsAdapter,
   type IdentityServiceOptions,
@@ -27,7 +28,7 @@ import {
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { captureTimezone } from './capture-timezone.service.js';
-import { assertAccountNotBlocked } from './rg-guard.service.js';
+import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
 import {
   DEFAULT_MAX_LOGIN_ATTEMPTS,
   createAccountLockedError,
@@ -131,6 +132,7 @@ export type PhoneLoginServiceDeps = {
   cache?: CacheAdapter;
   options?: IdentityServiceOptions;
   playerProvisioning?: PlayerProvisioning;
+  geoCheck?: GeoCheckCommands;
 };
 
 export class PhoneLoginService {
@@ -142,6 +144,7 @@ export class PhoneLoginService {
   private readonly cache?: CacheAdapter;
   private readonly options?: IdentityServiceOptions;
   private readonly playerProvisioning?: PlayerProvisioning;
+  private readonly geoCheck?: GeoCheckCommands;
 
   constructor({
     drizzle,
@@ -152,6 +155,7 @@ export class PhoneLoginService {
     cache,
     options,
     playerProvisioning,
+    geoCheck,
   }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -161,6 +165,7 @@ export class PhoneLoginService {
     this.cache = cache;
     this.options = options;
     this.playerProvisioning = playerProvisioning;
+    this.geoCheck = geoCheck;
   }
 
   private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
@@ -346,6 +351,7 @@ export class PhoneLoginService {
         phoneNumber: user.phoneNumber,
         phoneVerified: user.phoneVerified,
         twoFactorEnabled: user.twoFactorEnabled,
+        role: user.role,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         rgBlocked: user.rgBlocked,
@@ -411,6 +417,7 @@ export class PhoneLoginService {
         },
       },
     );
+    await assertCountryAllowed(this.geoCheck, account, ip);
 
     // This flow mints sessions directly and cannot hand a challenge to better-auth's
     // pending-2FA cookie. Refuse rather than silently downgrade a 2FA-protected

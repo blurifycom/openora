@@ -8,8 +8,8 @@ import {
   mapErrors,
   type OssContext,
 } from '@openora/core/server';
-import { GameBulkTooManyGamesError } from '@openora/core/contracts';
 import {
+  GameBulkTooManyGamesError,
   RATE_LIMIT_KEYS,
   makeRateLimitKey,
   type AuditWritePort,
@@ -131,7 +131,7 @@ export function createComplianceRouter({
         makeRateLimitKey(RATE_LIMIT_KEYS.GEO_CHECK_IP, ip ?? 'unknown'),
         GEO_CHECK_RATE_LIMIT,
       );
-      return compliance.geoCheck(ip ?? '127.0.0.1');
+      return compliance.visitorGeoCheck(ip ?? '127.0.0.1');
     }),
 
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
