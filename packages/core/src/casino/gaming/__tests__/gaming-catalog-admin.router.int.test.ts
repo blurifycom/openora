@@ -47,8 +47,10 @@ import { GameCategoryRuleService } from '../service/game-category-rule.service.j
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 import { createDefaultGameCategoryRules } from '../adapters/rules/index.js';
 import { GameBulkService } from '../service/game-bulk.service.js';
+import { UpdateGameInputSchema } from '../contract/index.js';
 
 const CTX = testContext();
+const URL_UNDER_CAP_RAW_OVER_CAP_ESCAPED = `https://cdn.example/${'"'.repeat(200)}`;
 
 let db: TestDb;
 
@@ -550,6 +552,63 @@ describe('gaming catalog router authz', () => {
     await expect(call(router.getGame, { id: down!.id }, { context: CTX })).rejects.toBeInstanceOf(
       ORPCError,
     );
+  });
+
+  it('rejects a non-https customThumbnailUrl, a javascript: URL, a non-URL string, embedded credentials, and a URL that exceeds 512 characters once normalized', () => {
+    const gameId = '00000000-0000-4000-8000-000000000000';
+    for (const customThumbnailUrl of [
+      'http://cdn.example/thumb.png',
+      'javascript:alert(1)',
+      'not-a-url',
+      `https://cdn.example/${'a'.repeat(500)}`,
+      'https://user:pass@cdn.example/thumb.png',
+      URL_UNDER_CAP_RAW_OVER_CAP_ESCAPED,
+    ]) {
+      expect(UpdateGameInputSchema.safeParse({ id: gameId, customThumbnailUrl }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it('accepts an https customThumbnailUrl exactly 512 characters long', () => {
+    const gameId = '00000000-0000-4000-8000-000000000000';
+    const prefix = 'https://cdn.example/';
+    const exact = prefix + 'a'.repeat(512 - prefix.length);
+    expect(exact.length).toBe(512);
+
+    expect(UpdateGameInputSchema.safeParse({ id: gameId, customThumbnailUrl: exact }).success).toBe(
+      true,
+    );
+  });
+
+  it('stores customThumbnailUrl normalized: control characters are dropped and unsafe characters are percent-escaped', () => {
+    const gameId = '00000000-0000-4000-8000-000000000000';
+
+    expect(
+      UpdateGameInputSchema.safeParse({
+        id: gameId,
+        customThumbnailUrl: 'https://cdn.example/x\u0000',
+      }),
+    ).toMatchObject({ success: true, data: { customThumbnailUrl: 'https://cdn.example/x' } });
+
+    expect(
+      UpdateGameInputSchema.safeParse({
+        id: gameId,
+        customThumbnailUrl: 'ht\ttps://cdn.example/x',
+      }),
+    ).toMatchObject({ success: true, data: { customThumbnailUrl: 'https://cdn.example/x' } });
+
+    expect(
+      UpdateGameInputSchema.safeParse({
+        id: gameId,
+        customThumbnailUrl: 'https://cdn.example/x"><script>alert(1)</script>',
+      }),
+    ).toMatchObject({
+      success: true,
+      data: {
+        customThumbnailUrl: 'https://cdn.example/x%22%3E%3Cscript%3Ealert(1)%3C/script%3E',
+      },
+    });
   });
 
   it('answers 400 to the geo filters when the compliance module is not loaded', async () => {

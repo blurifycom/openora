@@ -514,6 +514,7 @@ export class GameCategoryService {
           slug: game.slug,
           provider: providerSummaryColumns,
           thumbnailUrl: game.thumbnailUrl,
+          customThumbnailUrl: game.customThumbnailUrl,
           isActive: game.isActive,
           isPlayable: sql<boolean>`${playableGameCondition()}`,
           position: gameCategoryGame.position,
