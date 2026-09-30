@@ -68,7 +68,7 @@ import type {
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
-import { assertAccountNotBlocked } from './rg-guard.service.js';
+import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
 import {
   DEFAULT_LOCKOUT_DURATION_MS,
   DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -415,6 +415,9 @@ function loginShadowKey(email: string): string {
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
 
+// Gate input for a caller whose account could not be resolved: never exempt as staff.
+const NO_ROLE = { role: 'player' };
+
 function hasErrorCode(error: unknown, code: string) {
   if (typeof error !== 'object' || error === null || !('data' in error)) {
     return false;
@@ -634,6 +637,17 @@ export class IdentityService {
     return controls;
   }
 
+  // Scoped to one token: the account's other devices did nothing wrong, and signing them
+  // out here would be indistinguishable from a session hijack.
+  private async expireSessionToken(token: string | null | undefined) {
+    if (token) {
+      await this.drizzle.db
+        .update(session)
+        .set({ expiresAt: new Date() })
+        .where(eq(session.token, token));
+    }
+  }
+
   // Same gate as password login and phone login, from the one shared implementation.
   private assertAccountNotBlocked(
     account: { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null },
@@ -688,7 +702,7 @@ export class IdentityService {
       this.emitRegistrationFailed('rate_limited', input, meta);
       throw err;
     }
-    const registrationGeo = this.geoCheck ? await this.geoCheck.checkRegistration(ip) : null;
+    const registrationGeo = this.geoCheck ? await this.geoCheck.checkAccess(ip) : null;
     if (registrationGeo && !registrationGeo.allowed) {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
@@ -1012,14 +1026,32 @@ export class IdentityService {
         ? await this.assertAccountNotBlocked(existingUser, { ip, userAgent })
         : null;
 
-      this.forwardCookies(authResponse, resHeaders);
-
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
         token?: string;
         session?: { expiresAt: string | Date };
         twoFactorRedirect?: boolean;
       };
+
+      // Before any cookie is forwarded, so a denied caller holds neither a session nor a
+      // pending 2FA challenge; the session better-auth just minted is expired outright.
+      await assertCountryAllowed(
+        this.geoCheck,
+        existingUser ?? NO_ROLE,
+        ip,
+        async (countryCode) => {
+          await this.expireSessionToken(body.token);
+          this.events.emit('identity.user.login.failed', {
+            email,
+            reason: 'geo_blocked',
+            countryCode,
+            ip,
+            userAgent,
+          });
+        },
+      );
+
+      this.forwardCookies(authResponse, resHeaders);
 
       if (body.twoFactorRedirect || !body.user || !body.token) {
         // The challenge screen has to know whether to ask for an authenticator code or
@@ -1072,15 +1104,17 @@ export class IdentityService {
         }),
       };
     } catch (error) {
-      // An RG block is not a credential failure - surface it as-is, without touching the
-      // lockout budget or emitting login.failed (the RG event was already emitted). Match on
+      // An RG or country block is not a credential failure - surface it as-is, without touching
+      // the lockout budget or emitting login.failed again (the block was already recorded). Match on
       // the RG_BLOCKED marker, not the bare FORBIDDEN code - ensureOk also maps a banned-user
       // 403 (better-auth's admin plugin) to FORBIDDEN, and that path must still fall through
       // to the generic branch below to emit login.failed.
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
-        (hasErrorCode(error, 'RG_BLOCKED') || hasErrorCode(error, 'ACCOUNT_SUSPENDED'))
+        (hasErrorCode(error, 'RG_BLOCKED') ||
+          hasErrorCode(error, 'ACCOUNT_SUSPENDED') ||
+          hasErrorCode(error, 'GEO_BLOCKED'))
       ) {
         throw error;
       }
@@ -1639,6 +1673,15 @@ export class IdentityService {
     return row?.requireTwoFactorOnLogin ?? false;
   }
 
+  private async accountRole(userId: User['id']) {
+    const [row] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row ?? NO_ROLE;
+  }
+
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
@@ -1651,6 +1694,11 @@ export class IdentityService {
       sessionUserId ?? (await this.twoFactorLockout?.resolvePendingUserId(pendingCookie));
     if (challengedUserId) {
       await this.twoFactorLockout?.assertNotLocked(challengedUserId);
+    }
+    // The password was proven from wherever the challenge was issued; the session is handed
+    // to wherever it is answered. Enrolment (a live session) signs no one in.
+    if (challengedUserId && !sessionUserId) {
+      await assertCountryAllowed(this.geoCheck, await this.accountRole(challengedUserId), ip);
     }
 
     // A backup code is a single-use recovery credential, not a second factor to bind a
@@ -2418,6 +2466,7 @@ export class IdentityService {
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
         twoFactorEnabled: user.twoFactorEnabled,
+        role: user.role,
       })
       .from(user)
       .where(eq(user.id, body.user.id))
@@ -2425,6 +2474,10 @@ export class IdentityService {
     if (account) {
       await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
+    // The code mints a session, so it is a sign-in path like any other.
+    await assertCountryAllowed(this.geoCheck, account ?? NO_ROLE, ip, () =>
+      this.expireSessionToken(body.token),
+    );
     // Before the 2FA branch below: that path ends the session it just minted, but the zone
     // the browser reported is good either way.
     await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
@@ -2434,15 +2487,8 @@ export class IdentityService {
     // the emailed code alone, bypassing its second factor. Verification still stands; the
     // session does not, and the player signs in through `login` to face the challenge.
     if (account?.twoFactorEnabled) {
-      // Scoped to the token this call just minted: the player's other devices did nothing
-      // wrong, and an unrelated sign-out here would be indistinguishable from a session
-      // hijack. The RG/backoffice branch above is the one that revokes everything.
-      if (body.token) {
-        await this.drizzle.db
-          .update(session)
-          .set({ expiresAt: new Date() })
-          .where(eq(session.token, body.token));
-      }
+      // The RG/backoffice branch above is the one that revokes everything.
+      await this.expireSessionToken(body.token);
       return { twoFactorRedirect: true as const };
     }
 

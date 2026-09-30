@@ -878,3 +878,32 @@ describe('mapEventToRecord: identity topics on a player-backed account', () => {
     });
   });
 });
+
+describe('mapEventToRecord: compliance.geo.access_blocked', () => {
+  it('records a denial as a failure against the resolved country', async () => {
+    const row = await mapEventToRecord('compliance.geo.access_blocked', {
+      countryCode: 'DE',
+      reason: 'Country DE is blocked',
+      ip: '203.0.113.7',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'geo-access',
+      resourceId: 'DE',
+      result: 'failure',
+      ip: '203.0.113.7',
+      after: { countryCode: 'DE', reason: 'Country DE is blocked' },
+    });
+  });
+
+  it('keeps an unresolved country distinguishable from a named one', async () => {
+    const row = await mapEventToRecord('compliance.geo.access_blocked', {
+      countryCode: null,
+      reason: 'Geolocation could not be determined',
+      ip: null,
+    });
+
+    expect(row).toMatchObject({ resourceId: null, result: 'failure' });
+  });
+});

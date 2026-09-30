@@ -7,15 +7,18 @@ import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
+import { assertCountryAllowed } from '../service/rg-guard.service.js';
+
+const authApi = vi.hoisted(() => ({
+  getSession: vi.fn().mockResolvedValue(null),
+  signUpEmail: vi.fn(),
+  signInEmail: vi.fn(),
+  verifyEmailOTP: vi.fn(),
+}));
 
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
-  return {
-    ...actual,
-    createAuth: vi.fn(() => ({
-      api: { getSession: vi.fn().mockResolvedValue(null), signUpEmail: vi.fn() },
-    })),
-  };
+  return { ...actual, createAuth: vi.fn(() => ({ api: authApi })) };
 });
 
 const events = makeEventBus();
@@ -66,12 +69,19 @@ afterAll(async () => {
 beforeEach(async () => {
   await redis.flush();
   events.emit.mockClear();
+  authApi.signInEmail.mockReset();
+  authApi.verifyEmailOTP.mockReset();
 });
 
 const failureReasons = () =>
   events.emit.mock.calls
     .filter(([topic]) => topic === 'identity.user.registration.failed')
     .map(([, payload]) => (payload as { reason: string }).reason);
+
+const loginFailures = () =>
+  events.emit.mock.calls
+    .filter(([topic]) => topic === 'identity.user.login.failed')
+    .map(([, payload]) => payload as { reason: string; ip: string | null; countryCode?: string });
 
 describe('IdentityService.register - availability gates', () => {
   it('rejects registration when the operator has not configured it', async () => {
@@ -92,13 +102,13 @@ describe('IdentityService.register - availability gates', () => {
   });
 
   it('rejects registration from a geo-blocked address', async () => {
-    const checkRegistration = vi.fn().mockResolvedValue({ allowed: false });
-    const svc = makeService({ geoCheck: mock<GeoCheckCommands>({ checkRegistration }) });
+    const checkAccess = vi.fn().mockResolvedValue({ allowed: false });
+    const svc = makeService({ geoCheck: mock<GeoCheckCommands>({ checkAccess }) });
 
     await expect(svc.register(validInput(), { 'x-real-ip': '203.0.113.7' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
-    expect(checkRegistration).toHaveBeenCalledWith('203.0.113.7');
+    expect(checkAccess).toHaveBeenCalledWith('203.0.113.7');
     expect(failureReasons()).toEqual(['geo_blocked']);
   });
 
@@ -137,5 +147,105 @@ describe('IdentityService.register - availability gates', () => {
       ip: '203.0.113.7',
       userAgent: 'Mozilla/5.0',
     });
+  });
+});
+
+const signedIn = () =>
+  new Response(
+    JSON.stringify({
+      token: 'minted-session-token',
+      user: {
+        id: '00000000-0000-0000-0000-0000000000a1',
+        email: 'player@x.dev',
+        name: 'Player',
+        emailVerified: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
+
+const blockedGeo = () =>
+  mock<GeoCheckCommands>({
+    checkAccess: vi.fn().mockResolvedValue({ allowed: false, countryCode: 'US' }),
+  });
+
+describe('IdentityService.login - country access gate', () => {
+  const credentials = { email: 'player@x.dev', password: 'password1234' };
+  const headers = { 'x-real-ip': '203.0.113.7' };
+
+  it('refuses a proven login from a geo-blocked address and records why', async () => {
+    const geoCheck = blockedGeo();
+    const svc = makeService({ geoCheck });
+    authApi.signInEmail.mockResolvedValueOnce(signedIn());
+    const resHeaders = new Headers();
+
+    await expect(svc.login(credentials, headers, resHeaders)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      data: { code: 'GEO_BLOCKED' },
+    });
+    expect(geoCheck.checkAccess).toHaveBeenCalledWith('203.0.113.7');
+    expect(resHeaders.get('set-cookie')).toBeNull();
+    expect(loginFailures()).toEqual([
+      expect.objectContaining({ reason: 'geo_blocked', countryCode: 'US', ip: '203.0.113.7' }),
+    ]);
+  });
+
+  it('leaves a wrong password to the credential check, not the country rule', async () => {
+    const geoCheck = blockedGeo();
+    const svc = makeService({ geoCheck });
+    authApi.signInEmail.mockRejectedValueOnce(new Error('auth stub'));
+
+    await expect(svc.login(credentials, headers, new Headers())).rejects.toThrow();
+    expect(geoCheck.checkAccess).not.toHaveBeenCalled();
+    expect(loginFailures().map((failure) => failure.reason)).not.toContain('geo_blocked');
+  });
+
+  it('lets a login through when no geo-check port is bound', async () => {
+    const svc = makeService();
+    authApi.signInEmail.mockRejectedValueOnce(new Error('auth stub'));
+
+    await expect(svc.login(credentials, headers, new Headers())).rejects.toThrow();
+    expect(authApi.signInEmail).toHaveBeenCalled();
+  });
+});
+
+describe('IdentityService.verifyEmail - country access gate', () => {
+  it('refuses the session an emailed code mints from a geo-blocked address', async () => {
+    const geoCheck = blockedGeo();
+    const svc = makeService({ geoCheck });
+    authApi.verifyEmailOTP.mockResolvedValueOnce(signedIn());
+    const resHeaders = new Headers();
+
+    await expect(
+      svc.verifyEmail(
+        { email: 'player@x.dev', otp: '123456' },
+        { 'x-real-ip': '203.0.113.7' },
+        resHeaders,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'GEO_BLOCKED' } });
+    expect(geoCheck.checkAccess).toHaveBeenCalledWith('203.0.113.7');
+    expect(resHeaders.get('set-cookie')).toBeNull();
+  });
+});
+
+describe('assertCountryAllowed', () => {
+  it('exempts staff, so a blocked country cannot lock operators out of the backoffice', async () => {
+    const geoCheck = blockedGeo();
+
+    await expect(
+      assertCountryAllowed(geoCheck, { role: 'admin' }, '203.0.113.7'),
+    ).resolves.toBeUndefined();
+    expect(geoCheck.checkAccess).not.toHaveBeenCalled();
+  });
+
+  it('runs the caller cleanup before refusing a player', async () => {
+    const onDenied = vi.fn();
+
+    await expect(
+      assertCountryAllowed(blockedGeo(), { role: 'player' }, '203.0.113.7', onDenied),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'GEO_BLOCKED' } });
+    expect(onDenied).toHaveBeenCalledWith('US');
   });
 });

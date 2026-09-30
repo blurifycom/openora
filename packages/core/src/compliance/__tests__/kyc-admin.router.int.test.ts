@@ -16,6 +16,7 @@ import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   makeIdentityReader,
   mock,
+  makeRateLimiter,
   makeRealtimeTransport,
   makeEventBus,
   makeAuditWriter,
@@ -82,6 +83,7 @@ function build(guard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({}),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
+    limiter: makeRateLimiter(),
     realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),

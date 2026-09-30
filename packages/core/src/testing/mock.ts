@@ -19,6 +19,8 @@ import {
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookVerifier,
+  type RateLimitKey,
+  type RateLimiterAdapter,
   type RealtimeTransport,
 } from '@openora/core/contracts';
 
@@ -192,6 +194,17 @@ export const makeCache = (): CacheAdapter => {
     },
   };
 };
+
+/**
+ * Always-allow RateLimiterAdapter double, for a test whose subject is the handler behind
+ * a throttle rather than the throttle. A test that asserts the throttle itself binds the
+ * production driver (`RedisRateLimiter` over `createTestRedis()`), per ADR-0039.
+ */
+export const makeRateLimiter = (): RateLimiterAdapter<RateLimitKey> =>
+  mock<RateLimiterAdapter<RateLimitKey>>({
+    consume: vi.fn(async () => ({ allowed: true, retryAfterMs: 0 })),
+    reset: vi.fn(async () => undefined),
+  });
 
 export const makeRealtimeTransport = (): RealtimeTransport =>
   mock<RealtimeTransport>({

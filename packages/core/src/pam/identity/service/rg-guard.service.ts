@@ -1,7 +1,7 @@
 import { ORPCError } from '@orpc/server';
 import { eq } from 'drizzle-orm';
 import type { DrizzleService, EventBus } from '@openora/core/server';
-import type { ClientMeta, User } from '@openora/core/contracts';
+import type { ClientMeta, GeoCheckCommands, User } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { session } from '../schema/index.js';
 
@@ -82,4 +82,32 @@ export async function assertAccountNotBlocked(
   }
 
   return playerRow?.id ?? null;
+}
+
+/**
+ * The country rule for an account that has just proven a credential, on every surface that
+ * hands out a session - a rule only some sign-in paths enforce is bypassed by switching
+ * flows. After the credential, not before, so staff keep backoffice access from a blocked
+ * country without the exemption turning into a pre-auth probe for which addresses are
+ * staff. The denial is audited by the compliance decision itself
+ * (`compliance.geo.access_blocked`); `onDenied` is only the caller's own cleanup.
+ */
+export async function assertCountryAllowed(
+  geoCheck: GeoCheckCommands | undefined,
+  account: { role: string },
+  ip: string | null,
+  onDenied?: (countryCode: string | null) => Promise<void> | void,
+): Promise<void> {
+  if (!geoCheck || account.role === 'admin') {
+    return;
+  }
+  const decision = await geoCheck.checkAccess(ip);
+  if (decision.allowed) {
+    return;
+  }
+  await onDenied?.(decision.countryCode);
+  throw new ORPCError('FORBIDDEN', {
+    message: 'Login is unavailable',
+    data: { code: 'GEO_BLOCKED' },
+  });
 }

@@ -10,6 +10,7 @@ import {
 import {
   mock,
   makeAuditWriter,
+  makeRateLimiter,
   makeRealtimeTransport,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
@@ -72,6 +73,7 @@ function build(guard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({}),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
+    limiter: makeRateLimiter(),
     realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),

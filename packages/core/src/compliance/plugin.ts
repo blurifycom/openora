@@ -21,6 +21,7 @@ import {
   LOGIN_ENFORCEMENT,
   MAIL_DISPATCH,
   PLATFORM_CONFIG,
+  RATE_LIMITER,
   REALTIME_TRANSPORT,
   RG_LIMITS,
   UuidSchema,
@@ -60,6 +61,7 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
     c.get(AUDIT_WRITER),
     c.has(IGAMING_CONFIG) ? c.get(IGAMING_CONFIG) : null,
+    c.get(CACHE),
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');
@@ -346,6 +348,7 @@ export default {
         webhookVerifier: c.get(KYC_WEBHOOK_VERIFIER),
         jobQueue: jobQueueRef,
         kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
+        limiter: c.get(RATE_LIMITER),
         realtime: realtimeTransport,
         rg,
         rgMonitoring,

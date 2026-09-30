@@ -11,7 +11,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
-import { mock, makeAuditWriter, makeEventBus } from '../../testing/mock.js';
+import { mock, makeAuditWriter, makeCache, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   userLimit,
@@ -163,6 +163,109 @@ describe('ComplianceService.geoCheck (real PG)', () => {
     const { svc } = makeService('US', igaming);
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, countryCode: 'US' });
+  });
+
+  it('emits an access-blocked event carrying the resolved country and the address', async () => {
+    const { svc, events } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.geoCheck('1.2.3.4');
+
+    expect(events.emit).toHaveBeenCalledWith('compliance.geo.access_blocked', {
+      countryCode: 'US',
+      reason: 'Country US is blocked',
+      ip: '1.2.3.4',
+    });
+  });
+
+  it('emits an access-blocked event with a null country when the address resolves to none', async () => {
+    const { svc, events } = makeService(null);
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.geoCheck('1.2.3.4');
+
+    expect(events.emit).toHaveBeenCalledWith('compliance.geo.access_blocked', {
+      countryCode: null,
+      reason: 'Geolocation could not be determined',
+      ip: '1.2.3.4',
+    });
+  });
+
+  it('emits nothing when the country is allowed', async () => {
+    const { svc, events } = makeService('DE');
+
+    await svc.geoCheck('1.2.3.4');
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('emits an access-blocked event for a game launch denied by the global country rule', async () => {
+    const { svc, events } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+    const gameId = randomUUID();
+    await seedGame(gameId, 'Blocked Slot');
+
+    await svc.checkGame({ gameId, ipAddress: '1.2.3.4' });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.geo.access_blocked',
+      expect.objectContaining({ countryCode: 'US' }),
+    );
+  });
+});
+
+describe('ComplianceService.visitorGeoCheck (real PG)', () => {
+  it('audits a blocked geo-check poll once per address and country window', async () => {
+    const events = makeEventBus();
+    const geoIp = mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode: 'US' })) });
+    const svc = new ComplianceService(
+      db.drizzle,
+      events,
+      geoIp,
+      makeAuditWriter(),
+      null,
+      makeCache(),
+    );
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.visitorGeoCheck('1.2.3.4');
+    expect(await svc.visitorGeoCheck('1.2.3.4')).toMatchObject({ allowed: false });
+    await svc.visitorGeoCheck('5.6.7.8');
+
+    const blocked = events.emit.mock.calls.filter(
+      ([topic]) => topic === 'compliance.geo.access_blocked',
+    );
+    expect(blocked.map(([, payload]) => (payload as { ip: string }).ip)).toEqual([
+      '1.2.3.4',
+      '5.6.7.8',
+    ]);
+  });
+
+  it('still audits every enforcement check, which is not deduplicated', async () => {
+    const { svc, events } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    await svc.checkAccess('1.2.3.4');
+    await svc.checkAccess('1.2.3.4');
+
+    expect(
+      events.emit.mock.calls.filter(([topic]) => topic === 'compliance.geo.access_blocked'),
+    ).toHaveLength(2);
+  });
+});
+
+describe('ComplianceService.checkAccess (real PG)', () => {
+  it('denies a blacklisted country and reports it', async () => {
+    const { svc } = makeService('US');
+    await db.drizzle.db.insert(countryRule).values({ countryCode: 'US', action: 'block' });
+
+    expect(await svc.checkAccess('1.2.3.4')).toEqual({ allowed: false, countryCode: 'US' });
+  });
+
+  it('allows a country with no blocking rule', async () => {
+    const { svc } = makeService('DE');
+
+    expect(await svc.checkAccess('1.2.3.4')).toEqual({ allowed: true, countryCode: 'DE' });
   });
 });
 
