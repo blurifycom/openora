@@ -19,6 +19,15 @@ function identitySubject(
     : { resourceType: 'user', resourceId: str(p['userId']) };
 }
 
+// Withdrawal decisions are about the player; the withdrawal id stays in `after.transactionId`.
+function withdrawalSubject(
+  p: Record<string, unknown>,
+): Pick<RecordInput, 'resourceType' | 'resourceId'> {
+  return typeof p['playerId'] === 'string'
+    ? { resourceType: 'player', resourceId: p['playerId'] }
+    : { resourceType: 'withdrawal', resourceId: str(p['transactionId']) };
+}
+
 export async function mapEventToRecord(
   topic: string,
   p: Record<string, unknown>,
@@ -176,24 +185,25 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
-  // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
-  // carried on reject. `failed` has no adminId when auto-approved or webhook-rejected.
+  // Admin approve/reject of a withdrawal, a PSP-rail failure on an approved one, or its
+  // completion. actorId = the reviewing admin (none on completed, auto-approved or
+  // webhook-driven outcomes); filed under the player; reason carried on reject.
   if (
     topic === 'wallet.withdrawal.approved' ||
     topic === 'wallet.withdrawal.rejected' ||
-    topic === 'wallet.withdrawal.failed'
+    topic === 'wallet.withdrawal.failed' ||
+    topic === 'wallet.withdrawal.completed'
   ) {
     return {
       ...base,
       actorType: p['adminId'] ? 'admin' : 'system',
       actorId: str(p['adminId']),
-      resourceType: 'withdrawal',
-      resourceId: str(p['transactionId']),
+      ...withdrawalSubject(p),
       // A rejection is the admin's decision carried out, not a failed action.
       result: topic === 'wallet.withdrawal.failed' ? 'failure' : 'success',
       after: {
         userId: str(p['userId']),
+        transactionId: str(p['transactionId']),
         amount: p['amount'],
         currency: p['currency'],
         reason: p['reason'] ?? null,

@@ -84,6 +84,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
 function playerIdentityReader(playerId: string = randomUUID()) {
   const identityReader = makeIdentityReader();
   vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(playerId);
+  vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockResolvedValue(playerId);
   return identityReader;
 }
 
@@ -1657,7 +1658,8 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
   });
 
   it('refunds, marks failed, and emits a failed event with no admin attribution', async () => {
-    const { svc, events, audit } = makeService();
+    const playerId = randomUUID();
+    const { svc, events, audit } = makeService({ identityReader: playerIdentityReader(playerId) });
     const w = await seedWallet({ balance: '0' });
     const externalId = randomUUID();
     const tx = await seedTx(w.id, {
@@ -1673,19 +1675,20 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(40);
     expect(events.emit).toHaveBeenCalledWith(
       'wallet.withdrawal.failed',
-      expect.objectContaining({ userId: w.userId, transactionId: tx.id, adminId: null }),
+      expect.objectContaining({ userId: w.userId, playerId, transactionId: tx.id, adminId: null }),
     );
     // The audit row for the refund commits in the same transaction as the credit -
-    // not left to a best-effort subscriber on the event above.
+    // not left to a best-effort subscriber on the event above. Filed under the player
+    // so the player-scoped audit view finds it; the withdrawal id stays in `after`.
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         actorType: 'system',
         actorId: null,
         action: 'wallet.withdrawal.failed',
-        resourceType: 'withdrawal',
-        resourceId: tx.id,
-        after: expect.objectContaining({ userId: w.userId }),
+        resourceType: 'player',
+        resourceId: playerId,
+        after: expect.objectContaining({ userId: w.userId, transactionId: tx.id }),
       }),
     );
   });

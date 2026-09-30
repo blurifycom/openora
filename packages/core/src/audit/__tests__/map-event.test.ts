@@ -734,6 +734,38 @@ describe('mapEventToRecord: wallet.withdrawal.rejected / approved', () => {
   });
 });
 
+describe('mapEventToRecord: withdrawal lifecycle filed under the player', () => {
+  const transactionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const payload = { userId, playerId, amount: '10.00', currency: 'USDT', transactionId };
+
+  it.each([
+    ['wallet.withdrawal.approved', { adminId }, 'admin', 'success'],
+    ['wallet.withdrawal.rejected', { adminId, reason: 'suspicious' }, 'admin', 'success'],
+    ['wallet.withdrawal.failed', { adminId: null }, 'system', 'failure'],
+    ['wallet.withdrawal.completed', {}, 'system', 'success'],
+  ] as const)('%s keeps the withdrawal id in after', async (topic, extra, actorType, result) => {
+    const row = await mapEventToRecord(topic, { ...payload, ...extra });
+
+    expect(row).toMatchObject({
+      actorType,
+      resourceType: 'player',
+      resourceId: playerId,
+      result,
+      after: expect.objectContaining({ userId, transactionId }),
+    });
+  });
+
+  it('falls back to the withdrawal when no player backs the wallet', async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.approved', {
+      ...payload,
+      playerId: null,
+      adminId,
+    });
+
+    expect(row).toMatchObject({ resourceType: 'withdrawal', resourceId: transactionId });
+  });
+});
+
 describe('mapEventToRecord: identity.email.changed', () => {
   it('records the address transition as a player self-action', async () => {
     const row = await mapEventToRecord('identity.email.changed', {
