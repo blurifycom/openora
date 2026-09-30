@@ -30,7 +30,7 @@ An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) 
 
 ## Mode
 
-- `confirm` (the precheck found no security keyword in the change): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
+- `confirm` (the precheck found no security keyword in the change, and `RISK:` is `low` or `medium`): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
 - `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines.
 
 ## Budget and handoff

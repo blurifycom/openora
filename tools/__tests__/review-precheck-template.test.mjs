@@ -213,3 +213,33 @@ test('a security keyword only in a component is medium risk, not high', () => {
     ),
   );
 });
+
+test('a compliance word inside a class name or a doc path does not make the change critical', () => {
+  git('checkout', '-q', '-b', 'balance-base', 'dev');
+  git('checkout', '-q', '-b', 'balance-added');
+  commit('style a heading', {
+    'apps/web/src/shell/components/title.client.tsx':
+      'export const Title = () => <h1 className="text-balance" />;\n',
+    'docs/wallet-notes.md': 'notes\n',
+  });
+  const out = precheck('--base', 'balance-base', '--head', 'balance-added');
+  assert.ok(!out.some((row) => row.startsWith('RISK: critical')), out.join('\n'));
+});
+
+test('middleware, api folders, workflows and plain .mjs logic are not low risk', () => {
+  for (const [name, path, tier] of [
+    ['mw', 'apps/web/src/middleware.tsx', 'high'],
+    ['api', 'apps/web/src/api/client.tsx', 'high'],
+    ['wf', '.github/workflows/ci.yml', 'high'],
+    ['mjs', 'apps/web/src/format.mjs', 'medium'],
+  ]) {
+    git('checkout', '-q', '-b', `${name}-base`, 'dev');
+    git('checkout', '-q', '-b', `${name}-added`);
+    commit(name, { [path]: 'export const x = 1;\n' });
+    const out = precheck('--base', `${name}-base`, '--head', `${name}-added`);
+    assert.ok(
+      out.some((row) => row.startsWith(`RISK: ${tier} `)),
+      `${path}: ${out.join('\n')}`,
+    );
+  }
+});

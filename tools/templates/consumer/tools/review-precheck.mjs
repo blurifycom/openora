@@ -392,7 +392,8 @@ const DOMAIN_PATTERNS = {
   compliance: [
     'wallet',
     'ledger',
-    'balance',
+    // Not a hyphenated utility class such as Tailwind's `text-balance`.
+    '(?<!-)balance',
     'deposit',
     'withdraw',
     '\\bkyc\\b',
@@ -452,13 +453,14 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
 // a 30-line change can still add a route, a table, or a migration.
 
 const BACKEND_PATHS = [
-  /(^|\/)(apps\/api|server|schema|drizzle|migrations?|migrate|seeds?|contracts?|routers?|services?)(\/|\.|$)/,
+  /(^|\/)(apps\/api|api|server|schema|drizzle|migrations?|migrate|seeds?|contracts?|routers?|routes?|services?|middleware)(\/|\.|$)/,
   /(^|\/)(extensions?|plugins?|jobs?|workers?)\//,
   /-contract\//,
   /\.sql$/,
-  /(^|\/)(\.env|env\.ts|Dockerfile)/,
+  /(^|\/)(\.env|env\.ts|Dockerfile|package\.json$)/,
+  /(^|\/)\.github\/workflows\//,
 ];
-const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.ts$/];
+const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.[cm]?[jt]s$/];
 
 const E2E_PATH = /(^|\/)e2e\//;
 const isBackend = (path) => BACKEND_PATHS.some((re) => re.test(path));
@@ -468,7 +470,10 @@ const isLogic = (path) => !E2E_PATH.test(path) && FRONTEND_LOGIC_PATHS.some((re)
 // the same keyword in a service, a router, or a hook is where the risk lives. Compliance keywords
 // stay strong on any screen (an RG or KYC page), and e2e page objects never raise the tier.
 function riskTier() {
-  const compliance = domainHitFiles.get('compliance').filter((path) => !E2E_PATH.test(path));
+  // A path hit on a doc or an asset (`docs/wallet.md`) is not code that moves money.
+  const compliance = domainHitFiles
+    .get('compliance')
+    .filter((path) => !E2E_PATH.test(path) && CODE_FILE.test(path));
   if (compliance.length > 0)
     return `critical - compliance hits ${compliance.length} in ${compliance[0]}`;
   const security = domainHitFiles

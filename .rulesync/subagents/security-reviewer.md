@@ -17,6 +17,10 @@ Stance: assume every protection in the diff is broken or bypassable until you tr
 
 If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. Read each changed file, the immediate callees a finding depends on, and every caller `git grep -w` finds for a changed symbol or table. Prioritize `packages/core/src/wallet`, `packages/core/src/pam/identity`, `packages/core/src/compliance`, any PSP/KYC adapter, any admin router. Empty diff: ask which paths to review.
 
+## Focus
+
+`risk` (the default two-lens roster, where `contract-reviewer` is not spawned): also read `contract-reviewer.md` next to this file IN FULL and run its checklist - boundaries, contracts, Drizzle and migrations, barrel exports, tests and audit. You own `security` and `contracts`; report findings from both, each citing its rule.
+
 ## Request trace
 
 Follow the request trace in `docs/standards/skills/review.md`: walk the seven hops for each changed entry point, and check the blast radius: `git grep -w` each changed export, table symbol, and SQL table name across `*.ts`, `*.tsx`, `*.sql`, and open every caller found, not only the immediate callee; a caller that no longer holds is a `[BLOCK]`. Report one `TRACE:` line per entry point before the findings.

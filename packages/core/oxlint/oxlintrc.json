@@ -6,7 +6,7 @@
     "no-console": "warn",
     "eqeqeq": "error",
     "no-var": "error",
-    "no-empty": ["error", { "allowEmptyCatch": false }],
+    "no-empty": "error",
     "prefer-const": "error",
     "curly": ["error", "all"],
     "typescript/no-explicit-any": "error",

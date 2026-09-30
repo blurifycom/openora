@@ -8,7 +8,7 @@ Report only unless `--fix` or `--post` is passed.
 - `--base <ref>` changes the base; default `dev`.
 - A PR number reviews that PR with `gh pr diff` and `gh pr view`.
 - Paths limit the review scope.
-- `--agents N` selects one to four reviewers; default two (step 6). N = 1 folds everything into `quality-reviewer` except security and money, which the orchestrator runs itself. N = 3 gives contracts and boundaries back to `contract-reviewer`, or adds `operator` when the ticket has acceptance criteria. N = 4 adds a second `quality-reviewer` split by file group, and the report states the split.
+- `--agents N` selects two to four reviewers; default two (step 6). N = 3 adds a second `quality-reviewer` split by file group, and the report states the split. N = 4 also gives contracts and boundaries back to `contract-reviewer`, so `security-reviewer` drops focus `risk`. N < 2 is refused: run the two and say so in the report. `operator` joins on top of N only when the ticket has acceptance criteria.
 - `--fix` applies BLOCK and WARN fixes in the working tree after the report.
 - `--post` publishes the findings to the PR; it needs a PR number.
 - `--yes` skips the confirmation before posting.
@@ -21,7 +21,7 @@ Report only unless `--fix` or `--post` is passed.
 3. Group changed files by package or domain, and read each changed file and the standard governing its dimension before judging it.
 4. Assume each changed behaviour is broken until a concrete happy path and hostile path prove otherwise. Trace empty, falsy, error, unauthorized, concurrent, and repeated inputs.
 5. Run the request trace for each changed entry point and check the blast radius.
-6. Split reviewers by what they read, never by checklist: an agent's cost is its tool calls times its context, and two reviewers on the same files pay for them twice. Default roster, two lenses: `security-reviewer` owns the risk lens (security, money, compliance, and whether the change does what its title claims) and also works `contract-reviewer`'s checklist, since both read the same public surface; `quality-reviewer` owns the correctness lens (failure branches, races, rollout, blast radius, performance, tests, conventions). `operator` joins only with acceptance criteria. Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
+6. Split reviewers by what they read, never by checklist: an agent's cost is its tool calls times its context, and two reviewers on the same files pay for them twice. Default roster, two lenses: `security-reviewer` owns the risk lens (security, money, compliance, and whether the change does what its title claims) and, with focus `risk`, also works `contract-reviewer`'s checklist, since both read the same public surface; `quality-reviewer` owns the correctness lens (failure branches, races, rollout, blast radius, performance, tests, conventions). `operator` joins only with acceptance criteria. Keep an unmatched dimension in the orchestrator; never spawn a generic agent.
 7. Rate the risk from the changed paths, never from the title or the line count: `critical` for money, wallet, KYC, RG, geo, or audit; `high` for any schema, migration, contract, router, service, plugin, or job; `medium` for client logic; `low` for components, styles, or copy. Raise the tier after reading the diff when the content warrants it, never lower it below the path rule. Every reviewer runs on Opus at the matching effort (`low`, `medium`, `high`, `xhigh`). Spawn both reviewers in one message whatever the diff size, passing each the scoped files, the context block, and the caller list for its file group; one reviewer working every checklist finds about half of what two lens reviewers find.
 8. Deduplicate by `file:line`, apply the evidence gate, and return one verdict.
 
@@ -86,7 +86,7 @@ A consumer that builds on this repo may pair a PR here with a change of its own 
 ## Evidence gate
 
 - Every BLOCK or WARN cites a concrete `file:line`, trigger path, and rule or ADR.
-- Drop uncertain, duplicate, or tooling-only findings, and any without a concrete trigger. A rare trigger is still a trigger.
+- Drop a finding only for a reason in "What gets a comment" below, or when it has no concrete trigger. A rare trigger is still a trigger.
 - Do not report style nits already enforced by `pnpm verify` or `pnpm check:boundaries`.
 - Trace called functions whenever a finding depends on their behaviour.
 
@@ -130,7 +130,7 @@ VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
 
 Report only by default. `--post` publishes the findings to the PR; it needs a PR number.
 
-1. Read every existing review thread and comment on the PR (`gh api "repos/blurifycom/openora/pulls/<n>/comments"` and `.../issues/<n>/comments`). Drop a draft an existing comment already raises, even worded differently; when it adds a new fact, reply in that thread instead. Post nothing when every draft was dropped.
+1. Read every existing review thread and comment on the PR (`gh api --paginate "repos/blurifycom/openora/pulls/<n>/comments"` and `gh api --paginate "repos/blurifycom/openora/issues/<n>/comments"`; without `--paginate` only the first 30 come back). Drop a draft an existing comment already raises, even worded differently; when it adds a new fact, reply in that thread instead. Post nothing when every draft was dropped.
 2. Show the exact comment bodies and their anchors, then stop for confirmation. `--yes` skips that stop.
 3. Post inline with `gh api "repos/blurifycom/openora/pulls/<n>/comments"`, one per finding, anchored to `path` and `line` on the head commit.
 4. Post the GO or NO-GO line as a single summary review.
@@ -146,5 +146,5 @@ Report only by default. `--post` publishes the findings to the PR; it needs a PR
 
 - Never edit, commit, or push outside `--fix`, and never commit or push under it.
 - Cap review fan-out at four specialised agents.
-- Several PRs in one run: triage first without agents (skip drafts, dependency bumps, and docs-, rules-, or test-only PRs unless asked, and say which were skipped); one orchestrator per PR, never one agent over several; state the agent count and a token estimate before launching; run batches of about three PRs; keep each agent under about 20 tool calls, with the prompt text all agents share first and the PR-specific part last. Before reviewing, list each open PR's files and flag two that add a migration to the same folder or edit the same function; each review names the other PR and which one must rebase. Approve on the forge only after reading the reviewable diff yourself - an agent's clean result is a claim, not a verdict.
+- Several PRs in one run: triage first without agents (skip drafts, dependency bumps, and docs-, rules-, or test-only PRs unless asked, and say which were skipped); one orchestrator per PR, never one agent over several; state the agent count and a token estimate before launching; run batches of about three PRs; keep each agent within its tool-call budget (`quality-reviewer` 40, `security-reviewer` 30, doubled past 3000 changed lines), with the prompt text all agents share first and the PR-specific part last. Before reviewing, list each open PR's files and flag two that add a migration to the same folder or edit the same function; each review names the other PR and which one must rebase. Approve on the forge only after reading the reviewable diff yourself - an agent's clean result is a claim, not a verdict.
 - Every finding cites a rule doc or ADR; no ungrounded opinions.

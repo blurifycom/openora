@@ -174,7 +174,7 @@ Reviewers split by what they read, never by checklist. An agent's cost is its to
 - N = 4: also split `risk` back into `security-reviewer` and `compliance-reviewer`.
 - N < 2: refuse the reduction - run the two and say so in the report.
 
-**Mode per reviewer, from the precheck.** The `risk` reviewer with `DOMAIN: security hits 0` and `DOMAIN: compliance hits 0` (or, split, each reviewer with zero hits in its own domain) runs in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
+**Mode per reviewer, from the precheck.** `RISK: high` or `critical` always runs `full`. Otherwise, the `risk` reviewer with `DOMAIN: security hits 0` and `DOMAIN: compliance hits 0` (or, split, each reviewer with zero hits in its own domain) runs in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
 
 **Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `quality-reviewer` 40 (30 each when split), `risk` 30 (20 each when split), `confirm` mode 5. Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
 
@@ -264,7 +264,7 @@ An agent re-reads its whole context on every tool call, so a long session, or on
 - Check overlap before reviewing: list each open pull request's files (`gh pr view <n> --json files` / `glab mr diff <n> --name-only`) and flag two that add a migration to the same folder or edit the same function. Each review names the other pull request and which one must rebase and regenerate.
 - Before approving on the forge, read the reviewable diff yourself - at 300 lines or less that is one read. An agent's clean result is a claim, not a verdict.
 - Before launching, state the agent count and a token estimate. Run batches of about three pull requests, so a usage limit stops a batch, not the run.
-- Keep each agent under about 20 tool calls. Put the prompt text all agents share first and the pull-request-specific part last, so the cached prefix is reused.
+- Keep each agent within its §5 tool-call budget. Put the prompt text all agents share first and the pull-request-specific part last, so the cached prefix is reused.
 - A step that only distills the ticket or merges findings runs at low effort.
 
 ## Constraints
