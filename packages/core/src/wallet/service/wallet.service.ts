@@ -37,6 +37,7 @@ import {
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
   resolveWalletReferenceCurrency,
+  type Player,
   type PlayerTags,
   type RgLimitsPort,
   type KycWithdrawalPolicy,
@@ -113,6 +114,17 @@ import type {
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
+
+// Filed under the player so the player-scoped audit view finds it; `after.transactionId`
+// keeps the withdrawal link. Falls back to the withdrawal when no player backs the wallet.
+function withdrawalAuditSubject(
+  playerId: Player['id'] | null,
+  transactionId: WalletTransaction['id'],
+) {
+  return playerId
+    ? { resourceType: 'player', resourceId: playerId }
+    : { resourceType: 'withdrawal', resourceId: transactionId };
+}
 
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
@@ -1918,12 +1930,14 @@ export class WalletService {
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const amount = tx.amount;
     // `approved` is admin-attributed; the system auto path skips it - its trail is the
     // AUDIT_WRITER entry plus the shared `completed` event below.
     if (adminId) {
       this.events.emit('wallet.withdrawal.approved', {
         userId,
+        playerId,
         amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -1962,7 +1976,7 @@ export class WalletService {
     } catch (err) {
       if (err instanceof PaymentRejectedError) {
         // The vendor refused it, so no payout exists - mark failed and return the held funds.
-        await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+        await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
         throw err;
       }
       // A timeout or dropped connection looks exactly like a lost response to a payout the
@@ -1977,9 +1991,8 @@ export class WalletService {
           actorType: adminId ? 'admin' : 'system',
           actorId: adminId,
           action: 'wallet.withdrawal.outcome_unknown',
-          resourceType: 'withdrawal',
-          resourceId: tx.id,
-          after: { userId, amount, currency: tx.currency, providerName },
+          ...withdrawalAuditSubject(playerId, tx.id),
+          after: { userId, transactionId: tx.id, amount, currency: tx.currency, providerName },
         });
       } catch (auditErr) {
         logger.error({ err: auditErr, transactionId: tx.id }, 'outcome_unknown audit write failed');
@@ -1988,7 +2001,7 @@ export class WalletService {
     }
 
     if (result.status === 'failed') {
-      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
       return { transactionId: tx.id, status: 'failed' };
     }
 
@@ -2023,7 +2036,7 @@ export class WalletService {
     }
     this.events.emit('wallet.withdrawal.completed', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       amount,
       currency: tx.currency,
       transactionId: tx.id,
@@ -2036,11 +2049,13 @@ export class WalletService {
     tx,
     adminId,
     userId,
+    playerId,
     amount,
   }: {
     tx: WalletTransaction;
     adminId: User['id'] | null;
     userId: User['id'];
+    playerId: Player['id'] | null;
     amount: string;
   }): Promise<void> {
     const transitioned = await this.drizzle.db.transaction(async (txn) => {
@@ -2060,9 +2075,8 @@ export class WalletService {
         actorType: adminId ? 'admin' : 'system',
         actorId: adminId,
         action: 'wallet.withdrawal.failed',
-        resourceType: 'withdrawal',
-        resourceId: tx.id,
-        after: { userId, amount, currency: tx.currency, reason: null },
+        ...withdrawalAuditSubject(playerId, tx.id),
+        after: { userId, transactionId: tx.id, amount, currency: tx.currency, reason: null },
       });
       return true;
     });
@@ -2072,6 +2086,7 @@ export class WalletService {
     if (transitioned) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,
+        playerId,
         amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -2106,6 +2121,7 @@ export class WalletService {
     }
 
     const userId = await this.userIdForWallet(tx.walletId);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
     if (status === 'completed') {
       const updated = await this.drizzle.db
@@ -2118,7 +2134,7 @@ export class WalletService {
       }
       this.events.emit('wallet.withdrawal.completed', {
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId,
         amount: tx.amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -2127,7 +2143,13 @@ export class WalletService {
     }
 
     if (status === 'failed') {
-      await this.finalizeFailedWithdrawal({ tx, adminId: null, userId, amount: tx.amount });
+      await this.finalizeFailedWithdrawal({
+        tx,
+        adminId: null,
+        userId,
+        playerId,
+        amount: tx.amount,
+      });
     }
   }
 
@@ -2199,10 +2221,13 @@ export class WalletService {
         await this.audit.record({
           actorType: 'system',
           action: 'wallet.withdrawal.auto_approved',
-          resourceType: 'wallet_transaction',
-          resourceId: args.transactionId,
+          ...withdrawalAuditSubject(
+            await this.identityReader.getPlayerIdByUserIdSafe(args.userId),
+            args.transactionId,
+          ),
           after: {
             userId: args.userId,
+            transactionId: args.transactionId,
             amount: args.amount,
             currency: args.currency,
             ...decision,
@@ -2813,6 +2838,7 @@ export class WalletService {
     const userId = await this.userIdForWallet(tx.walletId);
     this.events.emit('wallet.withdrawal.rejected', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       amount: tx.amount,
       currency: tx.currency,
       transactionId: tx.id,

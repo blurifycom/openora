@@ -434,17 +434,20 @@ export const domainEventSchemas = {
   // A payments admin approved a pending withdrawal; it moves to `processing` and
   // is sent to the PSP/custody rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
-    .extend({ adminId: UuidSchema })
+    .extend({ playerId: UuidSchema.nullable(), adminId: UuidSchema })
     .extend(authContextBase.shape),
   // A payments admin rejected a pending withdrawal; held funds are returned to the
   // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
   'wallet.withdrawal.rejected': walletTxnBase
-    .extend({ adminId: UuidSchema, reason: z.string() })
+    .extend({ playerId: UuidSchema.nullable(), adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
   // An approved withdrawal failed at the PSP/custody rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`. `adminId` is
   // null when no reviewer was involved: an auto-approved payout, or a later webhook rejection.
-  'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema.nullable() }),
+  'wallet.withdrawal.failed': walletTxnBase.extend({
+    playerId: UuidSchema.nullable(),
+    adminId: UuidSchema.nullable(),
+  }),
   // A super admin credited or debited a balance directly, outside the deposit and
   // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
   // a correction is not a deposit, and reporting it as one would overstate deposits and

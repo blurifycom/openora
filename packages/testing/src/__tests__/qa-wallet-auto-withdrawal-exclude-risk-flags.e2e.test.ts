@@ -421,7 +421,9 @@ describe('audit trail', () => {
     });
 
     const email = `audit-effective-tags-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', {
       idempotencyKey: randomUUID(),
@@ -438,7 +440,7 @@ describe('audit trail', () => {
     expect(res.status).toBe('completed');
 
     const auditRes = await superAdmin.get(
-      `/audit/logs?resourceId=${res.transactionId}&action=wallet.withdrawal.auto_approved`,
+      `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
     );
     const audit = await readJson(auditRes);
     expect(audit.items.length).toBeGreaterThanOrEqual(1);

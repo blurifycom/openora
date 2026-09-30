@@ -163,7 +163,9 @@ afterAll(async () => {
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {
   it('auto-completes a fiat withdrawal under threshold, with a KYC-verified untagged player', async () => {
     const email = `auto-ok-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -189,7 +191,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${body.transactionId}&action=wallet.withdrawal.auto_approved`,
+        `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
@@ -355,7 +357,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('a higher per-player rule allows what the global threshold would block', async () => {
     const email = `auto-rule-allows-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -381,7 +385,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${body.transactionId}&action=wallet.withdrawal.auto_approved`,
+        `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items[0].after).toMatchObject({
