@@ -30,6 +30,7 @@ import type {
 } from './game-category-rule.service.js';
 import {
   categoryGameOrder,
+  playableGameCondition,
   rankDirtyPatch,
   categorySummaryColumns,
   providerSummaryColumns,
@@ -513,7 +514,9 @@ export class GameCategoryService {
           slug: game.slug,
           provider: providerSummaryColumns,
           thumbnailUrl: game.thumbnailUrl,
+          customThumbnailUrl: game.customThumbnailUrl,
           isActive: game.isActive,
+          isPlayable: sql<boolean>`${playableGameCondition()}`,
           position: gameCategoryGame.position,
           pinnedPosition: gameCategoryGame.pinnedPosition,
         })

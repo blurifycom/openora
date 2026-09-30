@@ -286,7 +286,7 @@ describe('GameSortRankingService (real PG)', () => {
     expect(row.rankedAt).not.toBeNull();
     expect(row.rankDirtyAt).not.toBeNull();
     expect(row.rankSeq).toBe(3);
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
   });
 
@@ -330,7 +330,7 @@ describe('GameSortRankingService (real PG)', () => {
     const row = await categoryRow(category.id);
     expect(row.rankedAt).not.toBeNull();
     expect(row.rankSeq).toBe(3);
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
   });
 
@@ -343,7 +343,7 @@ describe('GameSortRankingService (real PG)', () => {
     await markDirty(category.id);
 
     const { svc, jobQueue } = makeRankingService();
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).toHaveBeenCalledWith(expect.anything(), { categoryId: category.id });
 
     await svc.rank(category.id);
@@ -352,7 +352,7 @@ describe('GameSortRankingService (real PG)', () => {
     expect(rows.find((r) => r.gameId === b.id)?.rank).toBe(1);
 
     jobQueue.enqueue.mockClear();
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
   });
 
@@ -382,14 +382,14 @@ describe('GameSortRankingService (real PG)', () => {
     const failed = await categoryRow(category.id);
     expect(failed.rankedAt).toEqual(successAt);
     expect(failed.rankFailures).toBe(1);
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
 
     await db.drizzle.db
       .update(gameCategory)
       .set({ rankDirtyAt: sql`${gameCategory.rankDirtyAt} - interval '3 minutes'` })
       .where(eq(gameCategory.id, category.id));
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).toHaveBeenCalledWith(expect.anything(), { categoryId: category.id });
   });
 
@@ -420,7 +420,7 @@ describe('GameSortRankingService (real PG)', () => {
         .set({ rankDirtyAt: sql`now() - ${lastAttemptAgo}::interval` })
         .where(eq(gameCategory.id, category.id));
       jobQueue.enqueue.mockClear();
-      await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+      await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
       return jobQueue.enqueue.mock.calls.length > 0;
     };
 
@@ -460,6 +460,45 @@ describe('GameSortRankingService (real PG)', () => {
     await svc.rank(category.id);
     expect(calls).toBe(1);
     expect((await categoryRow(category.id)).rankSeq).toBe(ranked.rankSeq);
+  });
+
+  it('re-marks a ranked category once its sort refreshIntervalMs has passed, keeping updatedAt', async () => {
+    const provider = await seedProvider();
+    const refreshing = await seedCategory({ sortKey: 'refreshing' });
+    const plain = await seedCategory({ sortKey: 'name' });
+    await seedGame(provider.id, {}, [refreshing.id, plain.id]);
+    const refreshingSort = defineGameSort({
+      key: 'refreshing',
+      directions: ['asc'],
+      paramsSchema: EmptyParamsSchema,
+      refreshIntervalMs: 60 * 60_000,
+      async rank({ gameIds }) {
+        return gameIds;
+      },
+    });
+    const catalog = createGameSortCatalog([...createDefaultGameSorts(db.drizzle), refreshingSort]);
+    const svc = new GameSortRankingService(db.drizzle, new GameSortService(catalog));
+    await svc.rank(refreshing.id);
+    await svc.rank(plain.id);
+    const jobQueue = makeJobQueue();
+    const triggers = new GameSortTriggerService(db.drizzle, jobQueue, catalog);
+
+    await triggers.sweep();
+    expect(jobQueue.enqueue).not.toHaveBeenCalled();
+
+    await db.drizzle.db.update(gameCategory).set({
+      rankedAt: sql`${gameCategory.rankedAt} - interval '2 hours'`,
+      rankDirtyAt: sql`${gameCategory.rankDirtyAt} - interval '2 hours'`,
+      updatedAt: sql`${gameCategory.updatedAt}`,
+    });
+    const before = await categoryRow(refreshing.id);
+    await triggers.sweep();
+
+    expect(jobQueue.enqueue).toHaveBeenCalledTimes(1);
+    expect(jobQueue.enqueue).toHaveBeenCalledWith(expect.anything(), {
+      categoryId: refreshing.id,
+    });
+    expect((await categoryRow(refreshing.id)).updatedAt).toEqual(before.updatedAt);
   });
 
   it('never materializes stale results while waiting for a retry to compute', async () => {
@@ -532,7 +571,7 @@ describe('GameSortRankingService (real PG)', () => {
     await svc.rank(category.id);
     expect(calls).toBe(2);
     expect((await ranksFor(category.id)).find(({ gameId }) => gameId === member.id)?.rank).toBe(0);
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).not.toHaveBeenCalled();
   });
 
@@ -560,7 +599,7 @@ describe('GameSortRankingService (real PG)', () => {
     expect(calls).toBe(3);
     expect((await categoryRow(category.id)).rankedAt).toBeNull();
     expect((await ranksFor(category.id)).every(({ rank }) => rank === null)).toBe(true);
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).toHaveBeenCalledWith(expect.anything(), { categoryId: category.id });
   });
 
@@ -618,7 +657,7 @@ describe('GameSortRankingService (real PG)', () => {
     );
     const { svc, jobQueue } = makeRankingService();
     await svc.rank(failed.id);
-    await new GameSortTriggerService(db.drizzle, jobQueue).sweep();
+    await new GameSortTriggerService(db.drizzle, jobQueue, createGameSortCatalog([])).sweep();
     expect(jobQueue.enqueue).toHaveBeenCalledTimes(200);
     expect(jobQueue.enqueue).not.toHaveBeenCalledWith(expect.anything(), { categoryId: failed.id });
     expect((await categoryRow(failed.id)).rankedAt).toBeNull();

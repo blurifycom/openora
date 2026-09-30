@@ -218,7 +218,10 @@ describe('gaming category games listing e2e (GET /backoffice/gaming/categories/{
   it('pages category members in manual order, including inactive games', async () => {
     const category = await createCategory();
     const provider = await seedProvider();
-    const active = await seedGame(provider.id, { name: 'Active Member' });
+    const active = await seedGame(provider.id, {
+      name: 'Active Member',
+      customThumbnailUrl: 'https://cdn.example/active-custom.png',
+    });
     const inactive = await seedGame(provider.id, { name: 'Inactive Member', isActive: false });
     await addGameToCategory(active.id, category.id);
     await addGameToCategory(inactive.id, category.id);
@@ -230,10 +233,21 @@ describe('gaming category games listing e2e (GET /backoffice/gaming/categories/{
     const body = await readJson(res);
     const ids = (body.items as Array<{ id: string; position: number | null }>).map((g) => g.id);
     expect(ids.sort()).toEqual([active.id, inactive.id].sort());
+    const playableById = new Map(
+      (body.items as Array<{ id: string; isPlayable: boolean }>).map((g) => [g.id, g.isPlayable]),
+    );
+    expect(playableById.get(active.id)).toBe(true);
+    expect(playableById.get(inactive.id)).toBe(false);
     expect(body.items.every((g: { position: number | null }) => g.position === null)).toBe(true);
     expect(
       body.items.every((g: { pinnedPosition: number | null }) => g.pinnedPosition === null),
     ).toBe(true);
+    expect(body.items.find((g: { id: string }) => g.id === active.id)).toMatchObject({
+      customThumbnailUrl: 'https://cdn.example/active-custom.png',
+    });
+    expect(body.items.find((g: { id: string }) => g.id === inactive.id)).toMatchObject({
+      customThumbnailUrl: null,
+    });
   });
 
   it('denies the category games listing to a player', async () => {

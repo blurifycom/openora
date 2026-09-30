@@ -94,7 +94,7 @@ const LOBBY_CACHE_TTL_MS = 30_000;
 const LAYOUT_CACHE_KEY = 'lobby:layout';
 const SECTION_OPERATION_CONCURRENCY = 5;
 const CATEGORIES_CACHE_KEY = 'lobby:categories';
-const FEATURED_CACHE_KEY = 'lobby:featured';
+const FEATURED_CACHE_KEY = 'lobby:featured:v2';
 
 function toGameSummary(row: {
   game: typeof game.$inferSelect;
@@ -115,6 +115,7 @@ function toGameSummary(row: {
     categories: row.categories.map(toCategorySummary),
     tags: row.tags.map(toGameTagSummary),
     thumbnailUrl: row.game.thumbnailUrl,
+    customThumbnailUrl: row.game.customThumbnailUrl,
   };
 }
 
@@ -241,6 +242,7 @@ export class LobbyService {
                 gameId: slot.gameId,
                 gameName: g.name,
                 thumbnailUrl: g.thumbnailUrl,
+                customThumbnailUrl: g.customThumbnailUrl,
                 placement: slot.placement,
                 sortOrder: slot.sortOrder,
               },
