@@ -23,6 +23,7 @@ export const GameSummarySchema = z.object({
   categories: z.array(GameCategorySummaryWithTranslationsSchema),
   tags: z.array(GameTagSummarySchema),
   thumbnailUrl: z.string().nullable(),
+  customThumbnailUrl: z.string().nullable(),
 });
 
 export const LobbyCategorySchema = z.object({
@@ -46,6 +47,7 @@ export const FeaturedSlotSchema = z.object({
   gameId: UuidSchema,
   gameName: z.string(),
   thumbnailUrl: z.string().nullable(),
+  customThumbnailUrl: z.string().nullable(),
   placement: z.string(),
   sortOrder: z.number(),
 });

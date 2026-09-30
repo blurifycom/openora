@@ -616,6 +616,8 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
+      // Older game-update events predate the custom thumbnail; replay them as unset.
+      customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
       // Older game-update events predate game tags; replay them as an empty tag set.
@@ -628,6 +630,8 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
+      // Older game-update events predate the custom thumbnail; replay them as unset.
+      customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
       // Older game-update events predate game tags; replay them as an empty tag set.

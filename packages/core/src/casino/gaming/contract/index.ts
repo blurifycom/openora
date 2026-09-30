@@ -69,6 +69,7 @@ export const GameSchema = z.object({
   tags: z.array(GameTagSummarySchema),
   gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
+  customThumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),
   isUnavailable: z.boolean(),
   metadata: z.unknown().nullable(),
@@ -331,10 +332,12 @@ export const CategoryGameItemSchema = GameSchema.pick({
   slug: true,
   provider: true,
   thumbnailUrl: true,
+  customThumbnailUrl: true,
   isActive: true,
 }).extend({
   position: z.number().int().nullable(),
   pinnedPosition: z.number().int().nullable(),
+  isPlayable: z.boolean(),
 });
 
 export const ListCategoryGamesInputSchema = PageQuerySchema.extend({
@@ -465,6 +468,7 @@ export const CategoryRulePreviewItemSchema = GameSchema.pick({
   slug: true,
   provider: true,
   thumbnailUrl: true,
+  customThumbnailUrl: true,
   isActive: true,
 });
 
@@ -547,6 +551,18 @@ export const UpdateGameInputSchema = z.object({
   providerId: UuidSchema.optional(),
   aggregator: z.string().trim().min(1).max(64).optional(),
   thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
+  customThumbnailUrl: z
+    .url({ protocol: /^https$/, normalize: true, abort: true })
+    .max(512)
+    .refine(
+      (v) => {
+        const url = new URL(v);
+        return url.username === '' && url.password === '';
+      },
+      { message: 'must not embed credentials' },
+    )
+    .nullable()
+    .optional(),
   // No isUnavailable: the flag is vendor-set only, an admin must never be able to toggle it.
   isActive: z.boolean().optional(),
   metadata: z.unknown().nullable().optional(),
