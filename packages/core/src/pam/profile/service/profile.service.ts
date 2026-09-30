@@ -1,5 +1,7 @@
 import {
   DrizzleService,
+  assertRateLimit,
+  moderateContent,
   makeNotFoundError,
   createDomainError,
   moneyCompare,
@@ -12,8 +14,11 @@ import type {
   WalletBalanceReading,
   ExchangeRateReader,
   AuditWritePort,
+  UserCommands,
+  RateLimiterAdapter,
+  RateLimitKey,
 } from '@openora/core/contracts';
-import { resolveTimezone } from '@openora/core/contracts';
+import { RATE_LIMIT_KEYS, makeRateLimitKey, resolveTimezone } from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import type {
@@ -23,6 +28,7 @@ import type {
   DisplayCurrencyInfo,
 } from '../contract/index.js';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
+import { assertUsernameAllowed } from '../../shared/username.js';
 import { phoneMatchesCountryCallingCode } from './phone-country.js';
 
 export const ProfileUserNotFoundError = makeNotFoundError('User');
@@ -38,7 +44,19 @@ export const PhoneCountryMismatchError = createDomainError<[country: string]>(
   { reason: 'phone_country_mismatch' },
 );
 
+export const BioBlockedError = createDomainError<[]>(
+  'BioBlockedError',
+  () => 'Bio contains prohibited language',
+  { reason: 'prohibited_language', field: 'bio' },
+);
+
 const VALUE_COMPARISON_CURRENCY = 'USD';
+
+const USERNAME_CHANGE_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 60 * 60 * 1_000,
+  onUnavailable: 'deny',
+} as const;
 
 /**
  * Only the fields an update touched, so an audit record's before/after shows the change.
@@ -54,14 +72,64 @@ function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
   );
 }
 
+function pickChanged<T extends object>(row: T, candidate: Partial<T>): Partial<T> {
+  const keys = Object.keys(candidate) as (keyof T)[];
+  // Library boundary: `Object.fromEntries` widens the keys back to `string`.
+  return Object.fromEntries(
+    keys
+      .filter((key) => candidate[key] !== undefined && candidate[key] !== row[key])
+      .map((key) => [key, candidate[key]]),
+  ) as Partial<T>;
+}
+
+function moderateBio(bio: string) {
+  const result = moderateContent(bio);
+  if (!result.ok) {
+    throw new BioBlockedError();
+  }
+  return result.content;
+}
+
+export type ProfileServiceDeps = {
+  drizzle: DrizzleService;
+  walletReader: WalletReader;
+  exchangeRateReader: ExchangeRateReader;
+  audit: AuditWritePort;
+  userCommands: UserCommands;
+  limiter: RateLimiterAdapter<RateLimitKey>;
+  supportedDisplayCurrencies: readonly string[];
+  reservedUsernames?: readonly string[];
+};
+
 export class ProfileService implements PlayerProvisioning {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly walletReader: WalletReader,
-    private readonly exchangeRateReader: ExchangeRateReader,
-    private readonly audit: AuditWritePort,
-    private readonly supportedDisplayCurrencies: readonly string[],
-  ) {}
+  private readonly drizzle: DrizzleService;
+  private readonly walletReader: WalletReader;
+  private readonly exchangeRateReader: ExchangeRateReader;
+  private readonly audit: AuditWritePort;
+  private readonly userCommands: UserCommands;
+  private readonly limiter: RateLimiterAdapter<RateLimitKey>;
+  private readonly supportedDisplayCurrencies: readonly string[];
+  private readonly reservedUsernames?: readonly string[];
+
+  constructor({
+    drizzle,
+    walletReader,
+    exchangeRateReader,
+    audit,
+    userCommands,
+    limiter,
+    supportedDisplayCurrencies,
+    reservedUsernames,
+  }: ProfileServiceDeps) {
+    this.drizzle = drizzle;
+    this.walletReader = walletReader;
+    this.exchangeRateReader = exchangeRateReader;
+    this.audit = audit;
+    this.userCommands = userCommands;
+    this.limiter = limiter;
+    this.supportedDisplayCurrencies = supportedDisplayCurrencies;
+    this.reservedUsernames = reservedUsernames;
+  }
 
   /** Idempotent: a retried registration never overwrites the original consent record. */
   async createForRegistration({ userId, ...consent }: PlayerRegistrationRecord) {
@@ -79,7 +147,7 @@ export class ProfileService implements PlayerProvisioning {
    * create an orphan that every downstream join then has to defend against.
    */
   private async ensureProfileRow(userId: User['id']) {
-    const identity = await fetchIdentityByUserId(this.drizzle, userId);
+    const identity = await fetchIdentityByUserId(this.drizzle.db, userId);
     if (!identity) {
       throw new ProfileUserNotFoundError(userId);
     }
@@ -127,13 +195,22 @@ export class ProfileService implements PlayerProvisioning {
   }
 
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
-    const { timezone, ...fields } = data;
-    const identity = await fetchIdentityByUserId(this.drizzle, userId);
+    const { timezone, username, ...rest } = data;
+    const fields = { ...rest, ...(rest.bio ? { bio: moderateBio(rest.bio) } : {}) };
+    const identity = await fetchIdentityByUserId(this.drizzle.db, userId);
     if (!identity) {
       throw new ProfileUserNotFoundError(userId);
     }
+    if (username !== undefined && username !== identity.username) {
+      assertUsernameAllowed(username, this.reservedUsernames);
+      await assertRateLimit(
+        this.limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.USERNAME_CHANGE, userId),
+        USERNAME_CHANGE_RATE_LIMIT,
+      );
+    }
 
-    const record = await this.drizzle.db.transaction(async (tx) => {
+    return this.drizzle.db.transaction(async (tx) => {
       const [locked] = await tx
         .select()
         .from(player)
@@ -152,6 +229,11 @@ export class ProfileService implements PlayerProvisioning {
         }
         row = created;
       }
+      const current = await fetchIdentityByUserId(tx, userId);
+      if (!current) {
+        throw new ProfileUserNotFoundError(userId);
+      }
+      const newUsername = username !== undefined && username !== current.username ? username : null;
 
       if ('phone' in fields || 'country' in fields) {
         const effectivePhone = 'phone' in fields ? fields.phone : row.phone;
@@ -166,36 +248,50 @@ export class ProfileService implements PlayerProvisioning {
       }
 
       const resolvedTimezone = timezone === undefined ? undefined : resolveTimezone(timezone);
-      const updates = {
+      const candidate = {
         ...fields,
         ...(resolvedTimezone ? { timezone: resolvedTimezone, timezoneUpdatedAt: new Date() } : {}),
       };
-      if (!Object.keys(updates).length) {
-        return row;
-      }
-
-      const [updated] = await tx
-        .update(player)
-        .set(updates)
-        .where(eq(player.userId, userId))
-        .returning();
-      if (!updated) {
-        throw new Error('Profile update returned no row');
-      }
-
+      const updates = pickChanged(row, candidate);
       const changedKeys = Object.keys(updates) as (keyof typeof updates)[];
+      if (!changedKeys.length && !newUsername) {
+        return toPlayer(row, current.email, current.username);
+      }
+
+      if (newUsername) {
+        await this.userCommands.setUsername(userId, newUsername, tx);
+      }
+
+      let updated = row;
+      if (changedKeys.length) {
+        const [written] = await tx
+          .update(player)
+          .set(updates)
+          .where(eq(player.userId, userId))
+          .returning();
+        if (!written) {
+          throw new Error('Profile update returned no row');
+        }
+        updated = written;
+      }
+
       await this.audit.recordInTransaction(tx, {
         actorId: userId,
         actorType: 'player',
         action: 'player.profile.updated',
         resourceType: 'player',
         resourceId: updated.id,
-        before: pickFields(row, changedKeys),
-        after: pickFields(updated, changedKeys),
+        before: {
+          ...pickFields(row, changedKeys),
+          ...(newUsername ? { username: current.username } : {}),
+        },
+        after: {
+          ...pickFields(updated, changedKeys),
+          ...(newUsername ? { username: newUsername } : {}),
+        },
       });
-      return updated;
+      return toPlayer(updated, current.email, newUsername ?? current.username);
     });
-    return toPlayer(record, identity.email, identity.username);
   }
 
   async getMyDisplayCurrency(userId: User['id']): Promise<DisplayCurrencyInfo> {

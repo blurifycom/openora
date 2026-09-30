@@ -19,6 +19,7 @@ export const RATE_LIMIT_KEYS = {
   PASSWORD_RESET_VERIFY: 'pwreset-verify',
   PASSWORD_RESET: 'pwreset',
   CHANGE_PASSWORD: 'change-password',
+  USERNAME_CHANGE: 'username-change',
   WITHDRAWAL_PIN_MUTATION: 'withdrawal-pin-mutation',
   ANTI_PHISHING_CODE_MUTATION: 'anti-phishing-code-mutation',
   EMAIL_VERIFICATION: 'email-verify',
@@ -28,6 +29,7 @@ export const RATE_LIMIT_KEYS = {
   CHAT_ROOM_JOIN: 'chat-room-join',
   CHAT_SEND: 'chat-send',
   REPORT_ACCESS_DENIED: 'report-access-denied',
+  GEO_CHECK_IP: 'geo-check-ip',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];

@@ -3,10 +3,17 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import type { WalletReader, ExchangeRateReader } from '@openora/core/contracts';
+import type {
+  WalletReader,
+  ExchangeRateReader,
+  UserCommands,
+  RateLimiterAdapter,
+  RateLimitKey,
+} from '@openora/core/contracts';
 import { player } from '../schema/index.js';
 import { migrate } from '../migrate.js';
 import { ProfileService } from '../service/profile.service.js';
+import { UsernameBlockedError } from '../../shared/username.js';
 import { mock, makeAuditWriter } from '../../../testing/mock.js';
 
 let db: TestDb;
@@ -18,16 +25,21 @@ function makeService(
     walletReader?: WalletReader;
     exchangeRateReader?: ExchangeRateReader;
     supported?: string[];
+    reservedUsernames?: string[];
   } = {},
 ): ProfileService {
-  return new ProfileService(
-    db.drizzle,
-    overrides.walletReader ??
+  return new ProfileService({
+    drizzle: db.drizzle,
+    walletReader:
+      overrides.walletReader ??
       mock<WalletReader>({ getBalances: async () => ({ activeCurrency: 'USD', balances: [] }) }),
-    overrides.exchangeRateReader ?? mock<ExchangeRateReader>({}),
-    makeAuditWriter(),
-    overrides.supported ?? DEFAULT_SUPPORTED,
-  );
+    exchangeRateReader: overrides.exchangeRateReader ?? mock<ExchangeRateReader>({}),
+    audit: makeAuditWriter(),
+    userCommands: mock<UserCommands>({}),
+    limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
+    supportedDisplayCurrencies: overrides.supported ?? DEFAULT_SUPPORTED,
+    reservedUsernames: overrides.reservedUsernames,
+  });
 }
 
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -103,6 +115,21 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
     const [row] = await playersFor(account.id);
     expect(row?.country).toBe('US');
   });
+
+  it.each(['support_1', 'acmebet_vip'])(
+    'refuses a rename to the reserved handle %s and keeps the old one',
+    async (username) => {
+      const svc = makeService({ reservedUsernames: ['AcmeBet'] });
+      const account = await seedUser(db, { name: 'keeper', username: 'keeper_handle' });
+      await seedPlayer(account.id);
+
+      await expect(svc.updateMyProfile(account.id, { username })).rejects.toBeInstanceOf(
+        UsernameBlockedError,
+      );
+      const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
+      expect(row?.username).toBe('keeper_handle');
+    },
+  );
 
   it('materializes the profile first when update is the first call for a user', async () => {
     const svc = makeService();
@@ -289,13 +316,15 @@ describe('ProfileService.setMyDisplayCurrency (real PG)', () => {
     const account = await seedUser(db);
     await seedPlayer(account.id, { displayCurrency: null });
     const audit = makeAuditWriter();
-    const svc = new ProfileService(
-      db.drizzle,
-      mock<WalletReader>({}),
-      mock<ExchangeRateReader>({}),
+    const svc = new ProfileService({
+      drizzle: db.drizzle,
+      walletReader: mock<WalletReader>({}),
+      exchangeRateReader: mock<ExchangeRateReader>({}),
       audit,
-      DEFAULT_SUPPORTED,
-    );
+      userCommands: mock<UserCommands>({}),
+      limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
+      supportedDisplayCurrencies: DEFAULT_SUPPORTED,
+    });
 
     const result = await svc.setMyDisplayCurrency(account.id, { currency: 'EUR' });
 
@@ -333,13 +362,15 @@ describe('ProfileService.setMyDisplayDecimalPlaces (real PG)', () => {
       displayDecimalPlaces: 2,
     });
     const audit = makeAuditWriter();
-    const svc = new ProfileService(
-      db.drizzle,
-      mock<WalletReader>({}),
-      mock<ExchangeRateReader>({}),
+    const svc = new ProfileService({
+      drizzle: db.drizzle,
+      walletReader: mock<WalletReader>({}),
+      exchangeRateReader: mock<ExchangeRateReader>({}),
       audit,
-      DEFAULT_SUPPORTED,
-    );
+      userCommands: mock<UserCommands>({}),
+      limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
+      supportedDisplayCurrencies: DEFAULT_SUPPORTED,
+    });
 
     const result = await svc.setMyDisplayDecimalPlaces(account.id, { decimalPlaces: 6 });
 

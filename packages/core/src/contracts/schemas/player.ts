@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, TimezoneSchema, UuidSchema } from './common.js';
 import { CountryCodeSchema, CurrencyCodeSchema } from './igaming-config.js';
-import { E164PhoneSchema } from './identity.js';
+import { E164PhoneSchema, UsernameSchema } from './identity.js';
 import { TagKeySchema } from './tag.js';
 import { PageQuerySchema, SortOrderSchema } from '../kit.js';
 
@@ -55,6 +55,7 @@ export const PlayerSchema = z.object({
   dateOfBirth: z.iso.date().nullable(),
   phone: z.string().nullable(),
   country: z.string().nullable(),
+  bio: z.string().nullable(),
   currency: CurrencyCodeSchema,
   status: PlayerStatusSchema,
   kycStatus: KycStatusSchema,
@@ -112,6 +113,26 @@ export type PaginatedPlayerListSearchArgs = z.infer<typeof PaginatedPlayerSearch
 
 export const MIN_PLAYER_AGE_YEARS = 18;
 
+export const PLAYER_BIO_MAX_LENGTH = 160;
+
+// Bidi overrides and zero-width characters, except the joiner multi-part emoji need.
+const BIO_FORBIDDEN_CHARS = /[\p{Cc}\p{Cf}]/u;
+const ZERO_WIDTH_JOINER = /\u200D/g;
+
+/**
+ * Untrusted text, stored unescaped: consumers must render it as text, never as HTML.
+ * Blank after trimming clears the bio, the same as `null`.
+ */
+export const PlayerBioSchema = z
+  .string()
+  .trim()
+  .max(PLAYER_BIO_MAX_LENGTH)
+  .refine((value) => !BIO_FORBIDDEN_CHARS.test(value.replace(ZERO_WIDTH_JOINER, '')), {
+    message: 'Bio must be plain text',
+  })
+  .transform((value) => value || null)
+  .nullable();
+
 /**
  * Compares calendar dates, not elapsed milliseconds: a leap day between the birth date
  * and the cutoff would shift a ms-based boundary by a day. The player's own 18th birthday
@@ -132,8 +153,9 @@ export function isAdultDateOfBirth(dateOfBirth: string, now = new Date()): boole
  * player's self-declared contact number - the verified login credential lives on the
  * identity module's `user.phoneNumber` and is never written from here.
  *
- * `timezone` is the odd one out: not nullable (worth capturing, never worth clearing) and
- * written by `recordTimezone` rather than by the field update.
+ * `timezone` is the odd one out: not nullable (worth capturing, never worth clearing), and a
+ * zone the tz database does not recognise is dropped rather than rejected. `username` lives
+ * on identity's `user` row, not on `player`.
  */
 export const UpdatePlayerProfileInputSchema = z
   .object({
@@ -152,6 +174,8 @@ export const UpdatePlayerProfileInputSchema = z
     hideUsernameOnLeaderboards: z.boolean(),
     allowFriendRequests: z.boolean(),
     showOnlineStatusToFriends: z.boolean(),
+    username: UsernameSchema,
+    bio: PlayerBioSchema,
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
