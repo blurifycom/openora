@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Player } from '@openora/core/contracts';
 import { useOrpcQueryUtils } from '@openora/core/react';
+import { identityContract } from '@openora/core/pam/contracts/identity';
 import { profileContract, type DisplayCurrencyInfo } from '../contract/index.js';
 
 export type PlayerProfile = Player;
@@ -14,10 +15,15 @@ export function usePlayerProfile() {
 
 export function useUpdatePlayerProfile() {
   const utils = useOrpcQueryUtils(profileContract);
+  const identity = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.update.mutationOptions(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.get.key() }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: utils.get.key() }),
+        queryClient.invalidateQueries({ queryKey: identity.me.key() }),
+      ]),
   });
 }
 

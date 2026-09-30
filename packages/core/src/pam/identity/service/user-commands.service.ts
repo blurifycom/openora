@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 import { ORPCError } from '@orpc/server';
-import type { DrizzleService } from '@openora/core/server';
+import type { DrizzleService, DrizzleTx } from '@openora/core/server';
 import type { User, UserCommands } from '@openora/core/contracts';
 import { user } from '../schema/index.js';
 
@@ -18,9 +18,10 @@ function isUsernameCollision(error: unknown): boolean {
 export class DrizzleUserCommands implements UserCommands {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async setUsername(userId: User['id'], username: string) {
+  async setUsername(userId: User['id'], username: string, tx?: unknown) {
+    const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);
     try {
-      await this.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+      await db.update(user).set({ username }).where(eq(user.id, userId));
     } catch (error) {
       if (isUsernameCollision(error)) {
         // Thrown as the transport error rather than a domain class: consumers live in

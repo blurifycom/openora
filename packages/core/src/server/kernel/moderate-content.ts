@@ -3,10 +3,7 @@ import { sanitizeUrls } from './sanitize-urls.js';
 
 export type ModerationResult = { ok: true; content: string } | { ok: false; reason: 'profanity' };
 
-/**
- * Runs a message through the publish-time content gate: profanity is rejected
- * (so it never reaches other players), dangerous URLs are defanged in-place.
- */
+/** Rejects profanity and defangs dangerous URL schemes in place. */
 export function moderateContent(
   content: string,
   languages?: readonly SupportedLanguage[],

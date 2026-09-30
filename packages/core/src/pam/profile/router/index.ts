@@ -5,6 +5,8 @@ import {
   ProfileService,
   UnsupportedDisplayCurrencyError,
   PhoneCountryMismatchError,
+  UsernameBlockedError,
+  BioBlockedError,
 } from '../service/profile.service.js';
 
 export function createProfileRouter(profile: ProfileService) {
@@ -14,8 +16,9 @@ export function createProfileRouter(profile: ProfileService) {
     get: os.get.handler(({ context }) => profile.getMyProfile(getUserId(context))),
 
     update: os.update.handler(({ input, context }) =>
-      mapErrors({ BAD_REQUEST: PhoneCountryMismatchError }, () =>
-        profile.updateMyProfile(getUserId(context), input),
+      mapErrors(
+        { BAD_REQUEST: [PhoneCountryMismatchError, UsernameBlockedError, BioBlockedError] },
+        () => profile.updateMyProfile(getUserId(context), input),
       ),
     ),
 
