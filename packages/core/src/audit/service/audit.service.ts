@@ -5,6 +5,7 @@ import {
   pageToOffset,
   serializeRow,
   withAdvisoryXactLock,
+  type DrizzleTx,
   type EventBus,
   type SerializedRow,
 } from '@openora/core/server';
@@ -174,9 +175,14 @@ export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
  * Appends one row to the hash chain inside the caller's transaction. Exported for a writer that
  * runs outside the container - a deploy step - so it keeps the same chain protocol as
  * `AUDIT_WRITER` rather than inserting into `audit_log` by hand.
+ *
+ * Must be called inside a transaction: the advisory lock is transaction-scoped, so on a plain
+ * connection it is released after its own statement and concurrent writers can fork the chain.
  */
-export async function recordAuditInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
-  const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
+export async function recordAuditInTransaction(
+  txn: DrizzleTx,
+  input: RecordInput,
+): Promise<AuditLog> {
   const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
     const [latest] = await txn
       .select({ hash: auditLog.hash })
@@ -234,7 +240,7 @@ export class AuditService {
   }
 
   recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
-    return recordAuditInTransaction(tx, input);
+    return recordAuditInTransaction(tx as DrizzleTx, input);
   }
 
   async list(filters: AuditListFilters) {
