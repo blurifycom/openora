@@ -304,12 +304,14 @@ export const domainEventSchemas = {
   }),
   'identity.trusted_device.added': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
     label: z.string(),
     expiresAt: TimestampSchema,
   }),
   'identity.trusted_device.revoked': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
     // Absent when the guard itself forces the revoke (fingerprint mismatch) rather
     // than an admin or the device owner acting.
@@ -1186,6 +1188,13 @@ export const domainEventSchemas = {
     playerId: UuidSchema,
     userId: UuidSchema,
     actorId: UuidSchema,
+  }),
+  'player.status.changed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
+    previousStatus: PlayerStatusSchema,
+    newStatus: PlayerStatusSchema,
   }),
 
   'social.friend_request.sent': authContextBase.extend({
