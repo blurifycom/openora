@@ -933,6 +933,14 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
   }),
 
+  'compliance.game-geo-rules.bulk_updated': gameBulkEventBase.extend({
+    operation: z.enum(['restrict', 'unrestrict']),
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    // Games whose rule the call added (restrict) or removed (unrestrict).
+    changedGameIds: z.array(UuidSchema),
+  }),
+
   'compliance.provider-geo-rule.upserted': authContextBase.extend({
     ruleId: UuidSchema,
     providerId: UuidSchema,
