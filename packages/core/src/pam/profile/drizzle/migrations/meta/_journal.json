@@ -57,6 +57,13 @@
       "when": 1790596192869,
       "tag": "0007_smooth_rocket_racer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790751722152,
+      "tag": "0008_loud_gorgon",
+      "breakpoints": true
     }
   ]
 }

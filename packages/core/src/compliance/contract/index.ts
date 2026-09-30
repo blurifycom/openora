@@ -7,6 +7,10 @@ import {
   KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
+  GameBulkIdsSchema,
+  GameBulkTargetFieldsSchema,
+  gameBulkTargetRefinement,
+  hasGameBulkTarget,
   GeoRuleActionSchema,
   NonEmptyReasonSchema,
   PageQuerySchema,
@@ -285,6 +289,32 @@ const GeoCheckOutputSchema = z.object({
   reason: z.string().nullable(),
 });
 
+export const GetBlockedCountriesOutputSchema = z.object({
+  countryCodes: z.array(CountryCodeSchema),
+});
+export type GetBlockedCountriesOutput = z.infer<typeof GetBlockedCountriesOutputSchema>;
+
+export const BulkGameGeoRuleInputSchema = GameBulkTargetFieldsSchema.extend({
+  countryCode: CountryCodeSchema,
+  reason: NonEmptyReasonSchema.max(500),
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
+export type BulkGameGeoRuleInput = z.infer<typeof BulkGameGeoRuleInputSchema>;
+
+export const BulkRestrictGameGeoRulesOutputSchema = z.object({
+  changed: z.number().int().nonnegative(),
+  unchanged: z.number().int().nonnegative(),
+  notFound: GameBulkIdsSchema,
+});
+export type BulkRestrictGameGeoRulesOutput = z.infer<typeof BulkRestrictGameGeoRulesOutputSchema>;
+
+export const BulkUnrestrictGameGeoRulesOutputSchema = BulkRestrictGameGeoRulesOutputSchema.extend({
+  stillBlockedByProvider: z.number().int().nonnegative(),
+  globallyBlocked: z.boolean(),
+});
+export type BulkUnrestrictGameGeoRulesOutput = z.infer<
+  typeof BulkUnrestrictGameGeoRulesOutputSchema
+>;
+
 export const complianceContract = {
   getLimits: oc
     .route({ method: 'GET', path: '/compliance/limits' })
@@ -325,6 +355,20 @@ export const complianceContract = {
     .route({ method: 'GET', path: '/compliance/game-geo-rules' })
     .input(ListGameGeoRulesInputSchema)
     .output(paginated(GameGeoRuleSchema)),
+
+  bulkRestrictGameGeoRules: oc
+    .route({ method: 'POST', path: '/compliance/game-geo-rules/bulk/restrict' })
+    .input(BulkGameGeoRuleInputSchema)
+    .output(BulkRestrictGameGeoRulesOutputSchema),
+
+  bulkUnrestrictGameGeoRules: oc
+    .route({ method: 'POST', path: '/compliance/game-geo-rules/bulk/unrestrict' })
+    .input(BulkGameGeoRuleInputSchema)
+    .output(BulkUnrestrictGameGeoRulesOutputSchema),
+
+  getBlockedCountries: oc
+    .route({ method: 'GET', path: '/compliance/blocked-countries' })
+    .output(GetBlockedCountriesOutputSchema),
 
   upsertProviderGeoRules: oc
     .route({ method: 'PUT', path: '/compliance/provider-geo-rules/{providerId}' })
