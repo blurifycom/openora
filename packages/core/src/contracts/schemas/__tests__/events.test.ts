@@ -355,3 +355,48 @@ describe('gaming.game.updated tag forward-compat', () => {
     }
   });
 });
+
+describe('gaming.game.updated customThumbnailUrl forward-compat', () => {
+  const gameSnapshot = {
+    slug: 'demo-game',
+    name: 'Demo Game',
+    providerId: randomUUID(),
+    aggregator: 'direct',
+    thumbnailUrl: null,
+    isActive: true,
+    categoryIds: [],
+    tagIds: [],
+    metadata: null,
+  };
+
+  it('round-trips an explicit customThumbnailUrl', () => {
+    const withCustom = { ...gameSnapshot, customThumbnailUrl: 'https://cdn.example/custom.png' };
+    const result = domainEventSchemas['gaming.game.updated'].safeParse({
+      gameId: randomUUID(),
+      actorId: randomUUID(),
+      before: withCustom,
+      after: withCustom,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.before.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+      expect(result.data.after.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+    }
+  });
+
+  it('defaults customThumbnailUrl to null for a legacy payload without it', () => {
+    const result = domainEventSchemas['gaming.game.updated'].safeParse({
+      gameId: randomUUID(),
+      actorId: randomUUID(),
+      before: gameSnapshot,
+      after: gameSnapshot,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.before.customThumbnailUrl).toBeNull();
+      expect(result.data.after.customThumbnailUrl).toBeNull();
+    }
+  });
+});
