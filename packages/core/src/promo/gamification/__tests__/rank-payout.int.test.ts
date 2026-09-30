@@ -542,6 +542,50 @@ describe('paying a periodic bonus', () => {
     expect(granted).toHaveLength(1);
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
+
+  // A retry re-converts at the rate of the moment, so a player paid on the first run no longer
+  // matches their grant. That conflict is settled, not a reason to hold the period's watermark.
+  it('settles a period whose retry conflicts with a grant paid at an earlier rate', async () => {
+    const failing = await played('silver');
+    const paid = await played('silver');
+    await db.drizzle.db.update(promoRankConfig).set({ payInPlayerCurrency: true });
+    getBalances.mockResolvedValue({ activeCurrency: 'BTC', balances: [] });
+    const credited = new Map<string, string>();
+    let failingIsDown = true;
+    grant.mockImplementation(async (_tx, args) => {
+      if (args.userId === failing && failingIsDown) {
+        throw new Error('database unavailable');
+      }
+      const earlier = credited.get(args.userId);
+      if (earlier !== undefined && earlier !== args.amount) {
+        throw Object.assign(new Error('conflict'), { name: 'GrantConflictError' });
+      }
+      credited.set(args.userId, args.amount);
+      return { ok: true, grantId: randomUUID(), created: earlier === undefined };
+    });
+    const watermark = async () => {
+      const [config] = await db.drizzle.db
+        .select({ paidThrough: promoRankConfig.paidThrough })
+        .from(promoRankConfig);
+      return config?.paidThrough.daily;
+    };
+
+    convert.mockResolvedValue('0.000008000000000000');
+    const first = await service().payPeriodic('daily', NOW);
+    expect(first.map((g) => g.userId)).toEqual([paid]);
+    expect(await watermark()).toBeUndefined();
+
+    failingIsDown = false;
+    convert.mockResolvedValue('0.000009000000000000');
+    const second = await service().payPeriodic('daily', NOW);
+    expect(second.map((g) => g.userId)).toEqual([failing]);
+    expect(credited.get(paid)).toBe('0.000008000000000000');
+    expect(await watermark()).toBeDefined();
+
+    grant.mockClear();
+    expect(await service().payPeriodic('daily', NOW)).toEqual([]);
+    expect(grant).not.toHaveBeenCalled();
+  });
 });
 
 describe('announcing a promotion', () => {
