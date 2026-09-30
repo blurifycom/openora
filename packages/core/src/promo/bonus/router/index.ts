@@ -82,7 +82,12 @@ export function createBonusRouter({
           makeRateLimitKey(RATE_LIMIT_KEYS.PROMO_PUBLIC_OFFERS_IP, ip ?? 'unknown'),
           PUBLIC_OFFERS_RATE_LIMIT,
         );
-        if (geoCheck && !(await geoCheck.checkAccess(ip)).allowed) {
+        // Browsing, not an enforcement point: the deduped visitor check keeps a blocked visitor's
+        // page loads from writing an audit row each.
+        const decision = geoCheck?.visitorGeoCheck
+          ? await geoCheck.visitorGeoCheck(ip)
+          : await geoCheck?.checkAccess(ip);
+        if (decision && !decision.allowed) {
           return [];
         }
         return offers.listPublic();
