@@ -17,7 +17,7 @@ Checklist - tick as you go:
 - [ ] 3. Collect task context (ticket AC + MR discussion)
 - [ ] 3a. Paired OSS change? Review the OSS diff by the OSS rules + cross-check the contract (§2c)
 - [ ] 3c. Trace each changed entry point end to end + check the blast radius
-- [ ] 4. Cover all seven dimensions; small diff -> review inline, else spawn the fixed roster in ONE message
+- [ ] 4. Cover all seven dimensions; spawn the two-lens roster in ONE message, whatever the diff size
 - [ ] 5. Dedup + apply the evidence gate
 - [ ] 6. Report one DIMENSION line per dimension + one verdict (+ apply fixes only if --fix)
 - [ ] 7. Post to the MR as inline comments + summary (only if --post)
@@ -25,7 +25,7 @@ Checklist - tick as you go:
 
 ## 1. Parse `$ARGUMENTS`
 
-- `--agents N` - parallel reviewers (4-5); default 4 (§5).
+- `--agents N` - parallel reviewers (2-4); default 2 (§5).
 - `--base <ref>` - diff base; default `{{mrTarget}}`.
 - `--full` - ignore the previous review (§2a) and review the whole change.
 - `<number>` - a pull request: read its patch and intent with the commands in `docs/agents/forge.md`.
@@ -37,11 +37,12 @@ Checklist - tick as you go:
 
 ## 2. Scope the diff
 
-**Reviewing a pull request by number:** reviewers need files to open, and the working tree is not theirs to switch. Fetch the source branch and add a detached worktree: `git fetch origin <src-branch> && git worktree add --detach .claude/worktrees/review-<n> FETCH_HEAD`. Pass the worktree path to every reviewer and remove it with `git worktree remove` after §7.
+**Reviewing a pull request by number:** reviewers need files to open, and the working tree is not theirs to switch. Fetch the source branch and add a detached worktree at the pull request's head SHA, never at `FETCH_HEAD` (a failed fetch leaves it pointing at the previous ref): `git fetch origin <src-branch> && git worktree add --detach .claude/worktrees/review-<n> <head-sha>` and `pnpm install --offline --frozen-lockfile` in it (the tests in §3c need it), then confirm `git -C .claude/worktrees/review-<n> rev-parse HEAD` equals `<head-sha>` and stop if it does not. An existing `review-<n>` worktree is reset to `<head-sha>`, not reused as is. Pass the worktree path to every reviewer and remove it with `git worktree remove` after §7.
 
 **Run the precheck before anything else reads code.** From the directory under review (the review worktree, or the working tree), run the main checkout's script - it is rendered and gitignored, so a worktree lacks it: `node <main-checkout>/tools/review-precheck.mjs --base origin/<base>` (add `--since <sha>` from §2a). It costs no tokens beyond its output and replaces what reviewers used to derive by reading:
 
-- `SCOPE:` - mode (`full` / `incremental`) and the reviewable changed-line count that picks the path in §4.
+- `SCOPE:` - mode (`full` / `incremental`) and the reviewable changed-line count that sets the split and budgets in §5.
+- `RISK:` - `low`, `medium`, `high`, or `critical` from the changed paths and domain hits; it sets the reviewer effort in §5. Never judge risk from the title or the line count: a 30-line change can add a route, a table, or a migration. The tier is a floor: after reading the diff you may raise it (a component rendering untrusted HTML, a hook that moves money), never lower it; say why in the report.
 - `REVIEWABLE:` - the only file list reviewers get. Group these by app/package so reviewers and any file split share one map.
 - `SKIPPED:` - lockfiles, locale data, tests, generated files. No reviewer opens them; the precheck's i18n facts and CI's frozen-lockfile install stand in. List them in the report so nothing is silently dropped.
 - `PRECHECK:` - mechanical hits on added lines (casts, widened maps, hardcoded limits, hand memo, banned classes, locale parity, missing keys). Reviewers judge these; they never re-derive them.
@@ -107,7 +108,7 @@ No rule doc covers performance, scalability, or most security concerns. There a 
 
 ## 3b. Stance - assume the change is broken
 
-Review to falsify, not to confirm. Every reviewer (and you, on the fast path) starts from "this code does not work" and lets the diff earn correctness:
+Review to falsify, not to confirm. Every reviewer (and you, on `rollout` and `spec`) starts from "this code does not work" and lets the diff earn correctness:
 
 - For each changed behavior, trace the concrete execution path with real inputs - happy path plus at least one hostile one (empty/`''`/`0`, error, unauthorized, concurrent/repeat) - until you hit a defect or prove it sound. Reading the diff hunk is never enough.
 - Verify the called API actually behaves as the code assumes - open the callee or check current docs. Watch for falsy-vs-nullish, off-by-default options, swallowed rejections, partial failure mid-flow.
@@ -140,7 +141,7 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 **Check the migration.** For each changed `.sql` under `drizzle/migrations/`, read the SQL. A `DROP`, a `RENAME`, or a column type change breaks the instances still running the previous release - `[BLOCK]` in the same MR as the reader change; it ships in a later release, after every reader of the old shape is deployed. A new `NOT NULL` column without a default fails on existing rows - `[BLOCK]`. Expand first, contract later. A hand-edited migration is a `[BLOCK]` (`docs/standards/database.md`).
 
-**Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, plus any existing `apps/e2e` spec that already drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one.
+**Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, plus any existing `apps/e2e` spec that already drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one. Tests that could not run are reported as `TESTS: not run - <reason>`, never skipped silently, and forbid APPROVED on `high` or `critical` risk.
 
 **A feature PR ships no tests, at any tier** (`docs/standards/testing.md`) - a missing test is `[INFO]` at most, NEVER a `[BLOCK]`, and never a request to write one. What you check instead: the description carries the manual-verification evidence (a screenshot per changed screen, before/after on a fix, or the request/response trace for an API-only change) and a "Tests to add" list whose entries match the behaviour the diff actually changed. Missing evidence on a user-visible change is a `[WARN]`; a "Tests to add" list that contradicts the diff is a finding.
 
@@ -152,35 +153,38 @@ Every review covers every dimension below, whatever the diff touches. Relevance 
 
 | Dimension     | Owner                                     | Covers                                                                                  |
 | ------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
-| `conventions` | `quality-reviewer` (focus `conventions`)  | correctness, boundaries, conventions, UI quality (i18n, a11y, states), dependencies     |
-| `performance` | `quality-reviewer` (focus `performance`)  | performance and scalability at production scale                                         |
-| `reliability` | `quality-reviewer` (focus `performance`)  | races, double submit, retries, partial failure, cache invalidation, error handling      |
-| `security`    | `security-reviewer`                       | authz, secrets and PII, input validation, URLs                                          |
-| `compliance`  | `compliance-reviewer`                     | responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail            |
+| `conventions` | `quality-reviewer`                        | correctness, boundaries, conventions, UI quality (i18n, a11y, states), dependencies     |
+| `performance` | `quality-reviewer`                        | performance and scalability at production scale                                         |
+| `reliability` | `quality-reviewer`                        | races, double submit, retries, partial failure, cache invalidation, error handling      |
+| `security`    | `security-reviewer` (focus `risk`)        | authz, secrets and PII, input validation, URLs                                          |
+| `compliance`  | `security-reviewer` (focus `risk`)        | responsible gambling, KYC/age/geo gates, ledger and money paths, audit trail            |
 | `rollout`     | orchestrator                              | §3c migrations, destructive seeds, event and payload compatibility, new env/config      |
 | `spec`        | orchestrator                              | AC (§2b), ticket scope, manual-verification evidence and "Tests to add" (§3c)           |
 
 `expert` is not a reviewer; ask it only when an AC is ambiguous enough to block a `CRITERION:` line.
 
-**Small-diff fast path (<= 150 reviewable changed lines per `SCOPE:`): no subagents, same seven dimensions.** Read `.claude/agents/quality-reviewer.md`, `security-reviewer.md`, and `compliance-reviewer.md` IN FULL, then work each checklist yourself under the §3b stance. The fast path changes who reviews, never what is covered.
+Reviewers split by what they read, never by checklist. An agent's cost is its tool calls times its context: a checklist adds a few thousand tokens, while two reviewers reading the same files pay for those files twice.
 
-## 5. Allocate to `--agents N` (large diffs only)
+**No inline fast path.** Every diff, however small, goes to the two lens reviewers in §5. One reviewer working every checklist finds about half of what two focused lenses find, for most of their cost; a small diff is cheap for them anyway.
 
-- N unset or 4: `quality-reviewer` (focus `conventions`), `quality-reviewer` (focus `performance`), `security-reviewer`, `compliance-reviewer`.
-- N = 5: the fifth is another `quality-reviewer` (focus `conventions`), the file groups split between the two (state the split; never silently drop files).
-- N < 4: refuse the reduction - run the four and say so in the report. Merging dimensions into fewer reviewers is how they get skipped.
+## 5. Allocate to `--agents N`
 
-**Mode per reviewer, from the precheck.** `security-reviewer` with `DOMAIN: security hits 0`, and `compliance-reviewer` with `DOMAIN: compliance hits 0`, run in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
+- N unset or 2: `quality-reviewer` with no focus - the correctness lens (failure branches, races, rollout, blast radius, performance, conventions; owns `conventions`, `performance`, `reliability`) - and `security-reviewer` with focus `risk` - the risk lens (guards, money, regulated gates, and whether the change does what its title claims; also runs the `compliance-reviewer` checklist; owns `security` and `compliance`).
+- N = 3: a second `quality-reviewer`, the file groups split between the two (state the split; never silently drop files). The default when `REVIEWABLE:` changed lines exceed 1500.
+- N = 4: also split `risk` back into `security-reviewer` and `compliance-reviewer`.
+- N < 2: refuse the reduction - run the two and say so in the report.
 
-**Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `conventions` 30, `performance` 25, `security` 20, `compliance` 20, `confirm` mode 5. Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
+**Mode per reviewer, from the precheck.** `RISK: high` or `critical` always runs `full`. Otherwise, the `risk` reviewer with `DOMAIN: security hits 0` and `DOMAIN: compliance hits 0` (or, split, each reviewer with zero hits in its own domain) runs in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
 
-**Model per reviewer:** each agent file's `model` by default. A per-focus override (the Agent tool's `model` parameter) is set here only after a benchmark shows the cheaper model keeps every finding of the default on the same change - none is set yet.
+**Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `quality-reviewer` 40 (30 each when split), `risk` 30 (20 each when split), `confirm` mode 5. Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
+
+**Model and effort per reviewer:** every reviewer runs on Opus; the `RISK:` tier sets the effort - `low` low, `medium` medium, `high` high, `critical` xhigh. Where the runner cannot set effort per call, the session effort applies. A cheaper model misses findings a human then catches; save on effort and tool calls instead.
 
 Spawn all reviewers in a SINGLE message (parallel). Pass each, and nothing more:
 
 - its focus, mode, budget, and the `DIMENSION:` names it owns (§4);
 - its `REVIEWABLE:` lines, copied verbatim from the precheck (pre-grouped - reviewers never re-scope; never hand-typed paths or globs);
-- the `PRECHECK:` lines for its dimension (conventions: casts, hand memo, banned classes, i18n; performance: hardcoded limits) or its `DOMAIN-HIT:` lines;
+- `quality-reviewer`: every `PRECHECK:` line; `risk`: the `DOMAIN-HIT:` lines of both domains;
 - the prior findings on its files to re-verify (§2a);
 - the review worktree path, the main-checkout path for its reading map, the base ref, the §2b context block, the §3b stance verbatim, and the §3c trace for its file group;
 - hard caps: never open a `SKIPPED:` file; read changed files + only the callees a finding depends on; batch reads (several files in one shell call); max 10 findings; compact `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `/check`/tests.
@@ -230,14 +234,38 @@ If `--fix`: apply BLOCK + WARN fixes in the working tree (smallest diff satisfyi
 
 Only when `--post` is set and the target is a pull-request number. Turns findings into terse review comments: one line each, brief why, backtick every identifier.
 
-Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete `file:line`. One comment per finding, one line each.
+**What gets a comment.** Severity decides the verdict, not what gets posted. Every verified finding is posted unless it matches one of these, and the report names which:
 
-1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.`
-2. **Confirm.** Show all drafted comments + the summary and stop for approval - UNLESS `--yes`, then skip straight to posting.
-3. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
-4. **Post the summary** as one general comment on the pull request, per the same file, ending with the hidden marker `<!-- review:sha=<reviewed HEAD SHA> -->` so the next review on any machine can go incremental (§2a).
-5. Report back the count posted + the summary verdict. Never resolve threads; never push.
-6. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
+- D1 the code does not do what the finding says;
+- D2 a duplicate - merge it into the other;
+- D3 pre-existing: the diff touches neither that path nor the order of checks around it (a new gate placed in front of an old one makes the order new);
+- D4 style or naming with no written rule behind it;
+- D5 a request for more test cases, when the existing tests fail without the feature;
+- D6 hardening for an input that cannot reach the code - name what stops it.
+
+Nothing else is a drop reason: not "theoretical", "unlikely", "no consumer yet", "a sibling does the same", "by design", "the lockfile pins it", or "performance only".
+
+A finding gets its own inline comment only when a concrete trigger leads to wrong or stranded money (a debit or hold that cannot be reversed, a credit that is blocked), an authz or security bypass, a compliance gap (audit, RG, KYC, geo), data loss, a crash or 5xx, a broken public contract or declared rule (a type not exported where its siblings are, an undeclared audit action, untyped error data, a loose dependency pin), a race that persists state breaking an invariant the change adds, request-path work that grows with table size, a test that passes with the feature removed or its mock unconfigured, an unmet AC, or code that does not do what the title claims. Everything else - test gaps, naming, boundary nits, actor metadata, a weaker variant of a posted defect - joins an inline comment on the same file or becomes one line in the summary note. Merging never launders: each merged point passes the same bar on its own. A merged comment leads with its most severe finding, anchors on its line, and keeps its strongest fix. At most six inline comments.
+
+1. **Draft.** Rewrite each finding as a terse comment keyed to its `file:line`, in the posting user's voice: when their instructions name a voice or writing guide, read it before drafting. Each comment is 1-3 sentences: what breaks, the trigger, the fix. No mechanism chain, no secondary evidence, no add-ons - the author asks if unclear. Most comments start straight with the point; soften at most one in three, never with the same opener twice in a pull request. Compose the summary as ONE sentence stating whether the changes block prod/push, e.g. `Not a blocker for push - a few cleanups worth doing.` or `Blocker: the finding in `x.ts` must be fixed before we push.` Then one short line per minor finding.
+2. **Dedupe.** Read every existing thread on the pull request, resolved or not, per `docs/agents/forge.md`. Drop a draft that an existing thread already raises, even worded differently; when it adds a new fact, reply to that thread instead of opening a new one. Drop the summary when every finding was dropped.
+3. **Confirm.** Show all drafted comments + the summary and stop for approval - UNLESS `--yes`, then skip straight to posting.
+4. **Post inline comments** anchored to the diff, using the "Inline review comments" command in `docs/agents/forge.md`. Anchor on the NEW-file line of an added (`+`) line (`git show <src-branch>:<file> | grep -n`), and verify each response actually carries a line anchor - an unanchored fallback comment must be deleted and retried, never left behind.
+5. **Post the summary** as one general comment on the pull request, per the same file, ending with the hidden marker `<!-- review:sha=<reviewed HEAD SHA> -->` so the next review on any machine can go incremental (§2a).
+6. Report back the count posted + the summary verdict. Never resolve threads; never push.
+7. `[oss]` findings go to the paired OSS PR instead, by `<worktree>/docs/standards/skills/review.md` "Posting to the PR", after their own confirmation. That PR is public: no operator name, no internal URL, no ticket text beyond the bare key.
+
+## 9. Several pull requests in one run
+
+An agent re-reads its whole context on every tool call, so a long session, or one agent walking several pull requests, costs more than short agents with one pull request each.
+
+- Triage first, without agents: skip drafts, dependency bumps, and pull requests that change only docs, rules, or tests unless asked. Say which were skipped.
+- One orchestrator and roster per pull request; never one agent over several. A single-agent review returns the full §7 block (`TRACE:`, `CRITERION:`, seven `DIMENSION:` lines); one without it is rerun, not accepted.
+- Check overlap before reviewing: list each open pull request's files (`gh pr view <n> --json files` / `glab mr diff <n> --name-only`) and flag two that add a migration to the same folder or edit the same function. Each review names the other pull request and which one must rebase and regenerate.
+- Before approving on the forge, read the reviewable diff yourself - at 300 lines or less that is one read. An agent's clean result is a claim, not a verdict.
+- Before launching, state the agent count and a token estimate. Run batches of about three pull requests, so a usage limit stops a batch, not the run.
+- Keep each agent within its §5 tool-call budget. Put the prompt text all agents share first and the pull-request-specific part last, so the cached prefix is reused.
+- A step that only distills the ticket or merges findings runs at low effort.
 
 ## Constraints
 
@@ -245,5 +273,5 @@ Post BLOCK + WARN as inline threads; include INFO only if it maps to a concrete 
 - Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
 - NEVER edit `node_modules` or the main `{{ossDir}}` checkout. Under `--fix`, an `[oss]` finding is fixed in the OSS worktree only.
 - Every finding cites a rule doc or a named principle with a traced trigger - no ungrounded opinions.
-- Four reviewers minimum on a large diff, five maximum; seven `DIMENSION:` lines on every review.
+- Two reviewers minimum on every diff, four maximum; seven `DIMENSION:` lines on every review.
 - Precheck first, reviewers second: no reviewer spends tokens on what `review-precheck` already printed.

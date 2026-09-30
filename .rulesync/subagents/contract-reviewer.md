@@ -34,6 +34,7 @@ Follow the request trace in `docs/standards/skills/review.md`: walk the seven ho
 - [ ] Zod schemas live in the module's `contract/`/`schemas/` or core contracts - no ad-hoc schemas in handlers; no `z.any()`/`z.unknown()` in public contracts.
 - [ ] Every oRPC procedure has typed `.input()` and `.output()`; no hand-written response types (all `z.infer`'d).
 - [ ] Breaking changes to existing routes flagged (vs the module contract).
+- [ ] A new public type or option is exported from the barrel its siblings use; a new domain error carries a typed reason in `data` the client can branch on.
 
 ### Drizzle
 
@@ -52,7 +53,7 @@ Follow the request trace in `docs/standards/skills/review.md`: walk the seven ho
 ### Tests + audit
 
 - [ ] New business logic has at least one test (authz negatives for guarded routes).
-- [ ] Every state-changing action leaves an audit entry (domain event subscribed by `audit`, or `AUDIT_WRITER.record`).
+- [ ] Every state-changing action leaves an audit entry (domain event subscribed by `audit`, or `AUDIT_WRITER.record`), on its failure and refund branches too, with the action declared in the typed action list.
 
 ## Output
 
