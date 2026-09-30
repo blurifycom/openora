@@ -885,8 +885,8 @@ describe('mapEventToRecord() player.id resolution', () => {
     expect(row).toMatchObject({
       actorType: 'player',
       actorId: p.id,
-      resourceType: 'user',
-      resourceId: p.userId,
+      resourceType: 'player',
+      resourceId: p.id,
       before: { phoneVerified: false },
       after: { phoneVerified: true },
     });
@@ -920,8 +920,8 @@ describe('mapEventToRecord() player.id resolution', () => {
     expect(row).toMatchObject({
       actorType: 'player',
       actorId: p.id,
-      resourceType: 'user',
-      resourceId: p.userId,
+      resourceType: 'player',
+      resourceId: p.id,
       before: { loginWithdrawalAlertsEnabled: false },
       after: { loginWithdrawalAlertsEnabled: true },
     });
