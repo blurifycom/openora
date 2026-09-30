@@ -65,7 +65,7 @@ const describeRankBenefits = (p: {
       : null,
   ].filter((part): part is string => part !== null);
   const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
-  return bonuses.length > 0 ? `${rakeback} and a bonus of ${bonuses.join(', ')}` : rakeback;
+  return bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
 };
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');

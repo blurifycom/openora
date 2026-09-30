@@ -467,7 +467,7 @@ describe('notificationEventMap', () => {
         userId: payload.userId,
         type: 'promo.rank.changed',
         title: 'You reached Gold rank',
-        body: 'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus of 2 USD daily, 10 USD weekly, 25 USD monthly.',
+        body: 'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus worth 2 USD daily, 10 USD weekly, 25 USD monthly.',
         data: { tierId: payload.tierId },
       });
     });
@@ -493,7 +493,7 @@ describe('notificationEventMap', () => {
       );
 
       expect(input.body).toBe(
-        'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus of 0.5 USD daily.',
+        'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus worth 0.5 USD daily.',
       );
     });
 

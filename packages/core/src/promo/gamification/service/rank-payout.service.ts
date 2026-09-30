@@ -118,6 +118,7 @@ export class RankPayoutService {
    */
   async announceRankChanges(): Promise<RankChanged[]> {
     if (!this.eligibility) {
+      this.logger.warn('rank change announcements skipped - play eligibility not bound');
       return [];
     }
     const announced: RankChanged[] = [];
@@ -222,13 +223,16 @@ export class RankPayoutService {
             granted.push({ ...paid, rankBonusKind: kind });
           }
         } catch (err) {
-          // One player's failure - an amount an admin changed between two runs of the same
-          // period, say - must not cost everyone after them their bonus.
+          // One player's failure must not cost everyone after them their bonus. Only a transient
+          // failure (rate, compliance, database) holds the watermark for a retry. A refused grant
+          // is permanent, and a conflict means this player already holds a grant for the period -
+          // re-converting at today's rate just no longer matches it - so both count as settled.
+          const settled = err instanceof GrantRefusedError || isGrantConflict(err);
           this.logger.error(
-            { err, userId: player.userId, sourceRef: period.sourceRef },
+            { err, userId: player.userId, sourceRef: period.sourceRef, settled },
             'rank periodic payout failed',
           );
-          retryRequired = true;
+          retryRequired ||= !settled;
         }
       }
 
@@ -363,7 +367,7 @@ export class RankPayoutService {
       },
     });
     if (!outcome.ok) {
-      throw new Error(`grant refused: ${outcome.reason}`);
+      throw new GrantRefusedError(outcome.reason);
     }
     if (!outcome.created) {
       return null;
@@ -517,3 +521,12 @@ export class RankPayoutService {
     return (await this.eligibility?.isRestricted(userId)) ?? true;
   }
 }
+
+class GrantRefusedError extends Error {
+  constructor(reason: string) {
+    super(`grant refused: ${reason}`);
+  }
+}
+
+// Matched by name: the bonus module owns the class and gamification may not import it.
+const isGrantConflict = (err: unknown) => err instanceof Error && err.name === 'GrantConflictError';

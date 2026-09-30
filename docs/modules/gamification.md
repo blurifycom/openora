@@ -108,10 +108,11 @@ once its kind's watermark has passed the period. A daily job deletes them, measu
 watermark rather than the clock: a counter goes only once it was last written more than a month
 before the watermark - no period runs longer - and a kind that has never been paid keeps
 everything, so a payout job that was down for weeks loses nothing it still has to settle. A
-payout that keeps failing for one player - no rate for their currency, say - holds its kind's
-watermark back, so every run walks that period again (each grant is idempotent, so it only costs
-time) and the kind's counters stop being pruned. It ends when the next period closes and the
-stuck one is left behind.
+payout that fails transiently for one player - no rate for their currency, say - holds its kind's
+watermark back, so every run walks that period again and the kind's counters stop being pruned. It
+ends when the next period closes and the stuck one is left behind. A retry re-converts at the rate
+of the moment, so a player already paid no longer matches their grant; that conflict, and a grant
+the bonus engine refuses outright, count as settled and do not hold the watermark.
 
 ## What a reward is paid in
 
