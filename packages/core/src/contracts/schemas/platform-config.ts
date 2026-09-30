@@ -453,6 +453,11 @@ export const PlatformConfigSchema = z
     supportedLanguages: z.array(z.string().min(1)).optional(),
     /** Currencies a player may pick to display amounts in. Absent or empty = built-in default. */
     displayCurrencies: z.array(z.string().min(1)).optional(),
+    /**
+     * Handles players may not take at sign-up or rename (eg the brand name), on top of the
+     * built-in staff/system list. Case-insensitive, matched as a word inside the handle.
+     */
+    reservedUsernames: z.array(z.string().min(1)).optional(),
     /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
     /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */

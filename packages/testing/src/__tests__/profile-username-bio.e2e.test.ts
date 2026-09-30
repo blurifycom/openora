@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { loadExtensions } from '@openora/core/server';
-import { PLAYER_BIO_MAX_LENGTH } from '@openora/core/contracts';
+import { PLAYER_BIO_MAX_LENGTH, USER_COMMANDS } from '@openora/core/contracts';
 import {
   setupTestDb,
   bootTestApp,
   registerAndMaterializePlayer,
+  submitRegistration,
   asAdmin,
   seedMinimal,
   type TestDb,
@@ -172,9 +173,23 @@ describe('PATCH /profile - username', () => {
     expect(await profileAudits(playerId)).toHaveLength(0);
   });
 
+  it('refuses a staff-looking handle, with separators and digits around it', async () => {
+    const { client } = await newPlayer('reserved-handle');
+
+    const res = await client.patch('/profile', { username: 'support_1' });
+
+    expect(res.status).toBe(400);
+    expect(await readJson(res)).toMatchObject({
+      code: 'BAD_REQUEST',
+      data: { reason: 'prohibited_language', field: 'username' },
+    });
+  });
+
   it('lets a player whose stored handle trips the filter resend it with other changes', async () => {
-    const { client } = await newPlayer('legacy-handle', uniqueHandle('big_ass'));
-    const { username } = await readJson(await client.get('/profile'));
+    const { client, userId } = await newPlayer('legacy-handle');
+    // Sign-up screens handles too now, so the pre-filter handle goes in through the port.
+    const username = uniqueHandle('big_ass');
+    await app.container.get(USER_COMMANDS).setUsername(userId, username);
 
     const res = await client.patch('/profile', { username, bio: 'Hello' });
 
@@ -300,4 +315,22 @@ describe('PATCH /profile - bio', () => {
     expect(res.status).toBe(400);
     expect(await readJson(await client.get('/profile'))).toMatchObject({ bio: atLimit });
   });
+});
+
+describe('POST /identity/register - username screening', () => {
+  it.each([uniqueHandle('big_ass'), 'real_admin', 'Support_1'])(
+    'refuses %s with the same error shape a rename gets',
+    async (username) => {
+      const res = await submitRegistration(app, {
+        email: `profile-username-bio-signup-${randomUUID()}@e2e.test`,
+        username,
+      });
+
+      expect(res.status).toBe(400);
+      expect(await readJson(res)).toMatchObject({
+        code: 'BAD_REQUEST',
+        data: { reason: 'prohibited_language', field: 'username' },
+      });
+    },
+  );
 });

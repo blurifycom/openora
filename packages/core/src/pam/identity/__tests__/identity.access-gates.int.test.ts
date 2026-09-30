@@ -15,6 +15,7 @@ const authApi = vi.hoisted(() => ({
   signInEmail: vi.fn(),
   verifyEmailOTP: vi.fn(),
 }));
+import { UsernameBlockedError } from '../../shared/username.js';
 
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
@@ -247,5 +248,30 @@ describe('assertCountryAllowed', () => {
       assertCountryAllowed(blockedGeo(), { role: 'player' }, '203.0.113.7', onDenied),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'GEO_BLOCKED' } });
     expect(onDenied).toHaveBeenCalledWith('US');
+  });
+});
+
+describe('IdentityService.register - username screening', () => {
+  it.each(['big_ass', 'support_1', 'acmebet_vip'])(
+    'refuses %s before any account is created',
+    async (username) => {
+      const svc = makeService({
+        platformConfig: definePlatformConfig({
+          registration: { termsVersion: 'test-v1', requireEmailVerification: false },
+          reservedUsernames: ['AcmeBet'],
+        }),
+      });
+
+      await expect(svc.register({ ...validInput(), username }, {})).rejects.toBeInstanceOf(
+        UsernameBlockedError,
+      );
+      expect(failureReasons()).toEqual(['username_blocked']);
+    },
+  );
+
+  it('reports a refused handle as unavailable', async () => {
+    const svc = makeService();
+
+    await expect(svc.usernameAvailable('real_admin', {})).resolves.toEqual({ available: false });
   });
 });

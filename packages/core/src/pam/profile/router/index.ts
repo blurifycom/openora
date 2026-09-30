@@ -5,9 +5,9 @@ import {
   ProfileService,
   UnsupportedDisplayCurrencyError,
   PhoneCountryMismatchError,
-  UsernameBlockedError,
   BioBlockedError,
 } from '../service/profile.service.js';
+import { UsernameBlockedError } from '../../shared/username.js';
 
 export function createProfileRouter(profile: ProfileService) {
   const os = implement(profileContract).$context<OssContext>();

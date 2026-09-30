@@ -69,6 +69,7 @@ export const REGISTRATION_FAILURE_REASONS = [
   'rate_limited',
   'geo_blocked',
   'username_taken',
+  'username_blocked',
   'email_already_registered',
   'error',
 ] as const;

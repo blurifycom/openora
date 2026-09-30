@@ -13,6 +13,7 @@ import type {
 import { player } from '../schema/index.js';
 import { migrate } from '../migrate.js';
 import { ProfileService } from '../service/profile.service.js';
+import { UsernameBlockedError } from '../../shared/username.js';
 import { mock, makeAuditWriter } from '../../../testing/mock.js';
 
 let db: TestDb;
@@ -24,6 +25,7 @@ function makeService(
     walletReader?: WalletReader;
     exchangeRateReader?: ExchangeRateReader;
     supported?: string[];
+    reservedUsernames?: string[];
   } = {},
 ): ProfileService {
   return new ProfileService({
@@ -36,6 +38,7 @@ function makeService(
     userCommands: mock<UserCommands>({}),
     limiter: mock<RateLimiterAdapter<RateLimitKey>>({}),
     supportedDisplayCurrencies: overrides.supported ?? DEFAULT_SUPPORTED,
+    reservedUsernames: overrides.reservedUsernames,
   });
 }
 
@@ -112,6 +115,21 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
     const [row] = await playersFor(account.id);
     expect(row?.country).toBe('US');
   });
+
+  it.each(['support_1', 'acmebet_vip'])(
+    'refuses a rename to the reserved handle %s and keeps the old one',
+    async (username) => {
+      const svc = makeService({ reservedUsernames: ['AcmeBet'] });
+      const account = await seedUser(db, { name: 'keeper', username: 'keeper_handle' });
+      await seedPlayer(account.id);
+
+      await expect(svc.updateMyProfile(account.id, { username })).rejects.toBeInstanceOf(
+        UsernameBlockedError,
+      );
+      const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
+      expect(row?.username).toBe('keeper_handle');
+    },
+  );
 
   it('materializes the profile first when update is the first call for a user', async () => {
     const svc = makeService();

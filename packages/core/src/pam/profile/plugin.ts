@@ -22,6 +22,7 @@ const makeProfileService = (c: TypedContainer<CoreTokenCatalog>) =>
     userCommands: c.get(USER_COMMANDS),
     limiter: c.get(RATE_LIMITER),
     supportedDisplayCurrencies: resolveDisplayCurrencies(c.get(PLATFORM_CONFIG).displayCurrencies),
+    reservedUsernames: c.get(PLATFORM_CONFIG).reservedUsernames,
   });
 
 export default {

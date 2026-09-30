@@ -1,7 +1,6 @@
 import {
   DrizzleService,
   assertRateLimit,
-  hasProfanity,
   moderateContent,
   makeNotFoundError,
   createDomainError,
@@ -29,6 +28,7 @@ import type {
   DisplayCurrencyInfo,
 } from '../contract/index.js';
 import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
+import { assertUsernameAllowed } from '../../shared/username.js';
 import { phoneMatchesCountryCallingCode } from './phone-country.js';
 
 export const ProfileUserNotFoundError = makeNotFoundError('User');
@@ -42,12 +42,6 @@ export const PhoneCountryMismatchError = createDomainError<[country: string]>(
   'PhoneCountryMismatchError',
   (country) => `Phone number does not match the calling code for country ${country}`,
   { reason: 'phone_country_mismatch' },
-);
-
-export const UsernameBlockedError = createDomainError<[]>(
-  'UsernameBlockedError',
-  () => 'Username contains prohibited language',
-  { reason: 'prohibited_language', field: 'username' },
 );
 
 export const BioBlockedError = createDomainError<[]>(
@@ -104,6 +98,7 @@ export type ProfileServiceDeps = {
   userCommands: UserCommands;
   limiter: RateLimiterAdapter<RateLimitKey>;
   supportedDisplayCurrencies: readonly string[];
+  reservedUsernames?: readonly string[];
 };
 
 export class ProfileService implements PlayerProvisioning {
@@ -114,6 +109,7 @@ export class ProfileService implements PlayerProvisioning {
   private readonly userCommands: UserCommands;
   private readonly limiter: RateLimiterAdapter<RateLimitKey>;
   private readonly supportedDisplayCurrencies: readonly string[];
+  private readonly reservedUsernames?: readonly string[];
 
   constructor({
     drizzle,
@@ -123,6 +119,7 @@ export class ProfileService implements PlayerProvisioning {
     userCommands,
     limiter,
     supportedDisplayCurrencies,
+    reservedUsernames,
   }: ProfileServiceDeps) {
     this.drizzle = drizzle;
     this.walletReader = walletReader;
@@ -131,6 +128,7 @@ export class ProfileService implements PlayerProvisioning {
     this.userCommands = userCommands;
     this.limiter = limiter;
     this.supportedDisplayCurrencies = supportedDisplayCurrencies;
+    this.reservedUsernames = reservedUsernames;
   }
 
   /** Idempotent: a retried registration never overwrites the original consent record. */
@@ -204,9 +202,7 @@ export class ProfileService implements PlayerProvisioning {
       throw new ProfileUserNotFoundError(userId);
     }
     if (username !== undefined && username !== identity.username) {
-      if (hasProfanity(username)) {
-        throw new UsernameBlockedError();
-      }
+      assertUsernameAllowed(username, this.reservedUsernames);
       await assertRateLimit(
         this.limiter,
         makeRateLimitKey(RATE_LIMIT_KEYS.USERNAME_CHANGE, userId),
