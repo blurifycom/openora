@@ -24,9 +24,13 @@ A UI-only diff still calls platform routes: open each route's guard in `@openora
 
 An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) is core money/auth logic: review it against that worktree's `AGENTS.md`, `.rulesync/rules/*.md`, and `docs/standards/`, cite those, and prefix each finding `[oss]`.
 
+## Focus
+
+`risk` (the default roster): also read `compliance-reviewer.md` next to this file IN FULL, follow its reading map, and run its checklist; you own `security` and `compliance` and return both `DIMENSION:` lines. `confirm` mode then needs zero hits in both domains.
+
 ## Mode
 
-- `confirm` (the precheck found no security keyword in the change): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
+- `confirm` (the precheck found no security keyword in the change, and `RISK:` is `low` or `medium`): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
 - `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines.
 
 ## Budget and handoff
@@ -42,13 +46,18 @@ Follow §3c of the `review` skill: walk the seven hops for each changed entry po
 
 ## Checklist
 
+### Guards and intent
+
+- [ ] For every guard the change adds or touches, ask how a hostile caller bypasses it: a spoofed or rotated header, a null or absent value that skips the check, an ordering that lets one caller drain another's budget.
+- [ ] The change does what its title claims - a fix whose trigger still reproduces is a finding.
+
 ### Authorization
 
 - [ ] Overlay admin/backoffice routes enforce the platform guard - never a re-implemented role check.
 - [ ] No client-supplied user id trusted for ownership decisions; caller resolved server-side.
 - [ ] Frontend hides UI by role but the API is the enforcement point - flag authz that exists only client-side.
 
-Money paths, ledger integrity, and regulated gates belong to `compliance-reviewer` - do not duplicate them here.
+Outside focus `risk`, money paths, ledger integrity, and regulated gates belong to `compliance-reviewer` - do not duplicate them here.
 
 ### Secrets & PII
 

@@ -652,6 +652,47 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
+  it('ignores failed and cancelled withdrawals in the velocity count', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values([
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'failed' },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'failed' },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'cancelled' },
+    ]);
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+  });
+
+  it.each([
+    ['rejected', 'rejected'],
+    ['processing', 'on_hold'],
+    ['pending', 'processing'],
+  ] as const)('counts %s and %s withdrawals toward the velocity flag', async (first, second) => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values([
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: first },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: second },
+    ]);
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
   it('ignores withdrawals outside the velocity window', async () => {
     const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet();

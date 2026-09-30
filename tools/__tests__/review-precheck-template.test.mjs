@@ -66,6 +66,7 @@ const firstFeature = commit('feature', {
     "const label = t('added');",
     "const missing = t('nope.key');",
     'const balance = wallet.balance;',
+    'export enum Kind { A }',
   ].join('\n'),
   'apps/web/src/mod/__tests__/page.test.tsx': 'const x = y as Z;\n',
   'pnpm-lock.yaml': 'lock\n',
@@ -74,7 +75,7 @@ const firstFeature = commit('feature', {
 test('scopes reviewable files and names every skipped one with its reason', () => {
   const out = precheck('--base', 'dev', '--head', 'feature');
   assert.match(out[0], /^SCOPE: files 6 .* reviewable 2 .* skipped 4 mode full$/);
-  assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +9/-0'));
+  assert.ok(out.includes('REVIEWABLE: apps/web/src/mod/page.tsx +10/-0'));
   assert.ok(out.includes('SKIPPED: pnpm-lock.yaml - lockfile'));
   assert.ok(out.includes('SKIPPED: apps/web/src/mod/__tests__/page.test.tsx - test'));
   assert.ok(
@@ -91,6 +92,7 @@ test('reports mechanical checks on added lines only, never on tests or aliases',
   assert.match(out, /tone\.ts:1 - type-cast - `Record` widened to `Partial<Record>`/);
   assert.match(out, /page\.tsx:2 - hardcoded-limit - `PROVIDERS_LIMIT = 100`/);
   assert.match(out, /page\.tsx:4 - hand-memo/);
+  assert.match(out, /page\.tsx:10 - ts-enum/);
   assert.match(out, /page\.tsx:5 - banned-class - `alert alert-error`/);
   assert.doesNotMatch(out, /page\.tsx:6 - banned-class/);
 });
@@ -118,6 +120,7 @@ test('counts domain hits so a reviewer can short-circuit on zero', () => {
     out.some((row) => row.startsWith('DOMAIN-HIT: compliance apps/web/src/mod/page.tsx:9')),
   );
   assert.ok(out.includes('DOMAIN: security hits 0'));
+  assert.ok(out.includes('RISK: critical - compliance hits 1 in apps/web/src/mod/page.tsx'));
 });
 
 test('--since narrows to files changed after the last review and ignores merged base work', () => {
@@ -167,6 +170,7 @@ test('a removed line can lose a domain hit as easily as an added line can gain o
     out,
     /DOMAIN-HIT: security apps\/web\/src\/mod\/route\.ts - \/.*guard.*\/ \(removed\)/,
   );
+  assert.match(out, /^RISK: high - security hits 1 in apps\/web\/src\/mod\/route\.ts$/m);
 });
 
 test('--since reports only hunks added after the last review, not the whole file again', () => {
@@ -183,4 +187,59 @@ test('--since reports only hunks added after the last review, not the whole file
   assert.match(text, /page\.tsx:1 - type-cast - `as Late`/);
   assert.doesNotMatch(text, /`as Status`/);
   assert.ok(out.includes('DOMAIN: compliance hits 0'));
+  assert.ok(out.includes('RISK: low - components, styles, or copy only'));
+});
+
+test('a small server-side change is high risk even with no domain keyword', () => {
+  git('checkout', '-q', '-b', 'route-base', 'dev');
+  git('checkout', '-q', '-b', 'route-added');
+  commit('add a route', { 'apps/api/src/routes/games.ts': 'export const byId = 1;\n' });
+  const out = precheck('--base', 'route-base', '--head', 'route-added');
+  assert.ok(out.includes('RISK: high - apps/api/src/routes/games.ts is server-side'));
+});
+
+test('a security keyword only in a component is medium risk, not high', () => {
+  git('checkout', '-q', '-b', 'skeleton-base', 'dev');
+  git('checkout', '-q', '-b', 'skeleton-added');
+  commit('add a skeleton', {
+    'apps/web/src/shell/components/header-skeleton.client.tsx':
+      'export const HeaderSessionSkeleton = () => null; // session\n',
+  });
+  const out = precheck('--base', 'skeleton-base', '--head', 'skeleton-added');
+  assert.ok(out.some((row) => row.startsWith('DOMAIN-HIT: security ')));
+  assert.ok(
+    out.includes(
+      'RISK: medium - domain keyword in apps/web/src/shell/components/header-skeleton.client.tsx',
+    ),
+  );
+});
+
+test('a compliance word inside a class name or a doc path does not make the change critical', () => {
+  git('checkout', '-q', '-b', 'balance-base', 'dev');
+  git('checkout', '-q', '-b', 'balance-added');
+  commit('style a heading', {
+    'apps/web/src/shell/components/title.client.tsx':
+      'export const Title = () => <h1 className="text-balance" />;\n',
+    'docs/wallet-notes.md': 'notes\n',
+  });
+  const out = precheck('--base', 'balance-base', '--head', 'balance-added');
+  assert.ok(!out.some((row) => row.startsWith('RISK: critical')), out.join('\n'));
+});
+
+test('middleware, api folders, workflows and plain .mjs logic are not low risk', () => {
+  for (const [name, path, tier] of [
+    ['mw', 'apps/web/src/middleware.tsx', 'high'],
+    ['api', 'apps/web/src/api/client.tsx', 'high'],
+    ['wf', '.github/workflows/ci.yml', 'high'],
+    ['mjs', 'apps/web/src/format.mjs', 'medium'],
+  ]) {
+    git('checkout', '-q', '-b', `${name}-base`, 'dev');
+    git('checkout', '-q', '-b', `${name}-added`);
+    commit(name, { [path]: 'export const x = 1;\n' });
+    const out = precheck('--base', `${name}-base`, '--head', `${name}-added`);
+    assert.ok(
+      out.some((row) => row.startsWith(`RISK: ${tier} `)),
+      `${path}: ${out.join('\n')}`,
+    );
+  }
 });

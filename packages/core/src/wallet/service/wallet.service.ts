@@ -64,6 +64,7 @@ import {
   lte,
   count,
   inArray,
+  notInArray,
   isNull,
   or,
   type SQL,
@@ -620,6 +621,10 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
+// A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation
+// must not send the player's next small withdrawal to the manual queue. An admin rejection
+// still counts: it is a human judgement on this player and leaves no risk tag behind.
+const VELOCITY_IGNORED_STATUSES = ['failed', 'cancelled'] as const;
 
 // A withdrawal still waiting on a decision: the queue summary counts and totals only these.
 const QUEUED_WITHDRAWAL_STATUSES = ['pending', 'on_hold'] as const;
@@ -2161,6 +2166,10 @@ export class WalletService {
             txn,
           );
           if (caps.exceeded) {
+            logger.info(
+              { userId: args.userId, walletId: args.walletId, gate: 'daily_cap' },
+              'auto-withdrawal skipped',
+            );
             return null;
           }
           const tx = await this.flipToProcessing({
@@ -2247,20 +2256,25 @@ export class WalletService {
     walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<AutoApprovalGates | null> {
+    // Every gate fails closed; the log names the one that did, so a manual-queue withdrawal is explainable.
+    const skip = (gate: string): null => {
+      logger.info({ userId, walletId, gate }, 'auto-withdrawal skipped');
+      return null;
+    };
     const cfg = this.platformConfig?.autoWithdrawal;
     if (!cfg?.enabled) {
-      return null;
+      return skip('disabled');
     }
     const threshold = await this.resolveAutoThreshold(userId, rail);
     if (!threshold || moneyCompare(threshold.value, '0') <= 0) {
-      return null;
+      return skip('no_threshold');
     }
     // One threshold serves every currency on the rail, so it is read in the fx pivot. A raw
     // comparison let 0.4 BTC clear a threshold of 1 that was written with a stablecoin in mind.
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
     if (pivotAmount === null || moneyCompare(pivotAmount, threshold.value) > 0) {
-      return null;
+      return skip('over_threshold');
     }
 
     // Independent of kyc.gateWithdrawals: auto-approval follows the compliance policy even when
@@ -2268,7 +2282,7 @@ export class WalletService {
     const kycRequired = await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency);
     const kycStatus = await this.autoApprovalKycStatus(userId);
     if (kycRequired && !isKycPassed(kycStatus)) {
-      return null;
+      return skip('kyc');
     }
 
     const effectiveExcludeTags = threshold.config.excludeRiskFlags;
@@ -2276,15 +2290,15 @@ export class WalletService {
     const riskTags = await this.autoApprovalRiskTags(userId, effectiveExcludeTags);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
     if (riskTags === null) {
-      return null;
+      return skip('risk_tags_unavailable');
     }
     if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
-      return null;
+      return skip('risk_tag');
     }
 
     const heuristics = await this.autoApprovalHeuristics({ walletId, amount: pivotAmount });
     if (heuristics.largeAmount || heuristics.highFrequency) {
-      return null;
+      return skip('heuristics');
     }
 
     return {
@@ -2653,6 +2667,7 @@ export class WalletService {
           eq(walletTransaction.type, 'withdrawal'),
           gte(walletTransaction.createdAt, since),
           inArray(walletTransaction.walletId, walletIds),
+          notInArray(walletTransaction.status, [...VELOCITY_IGNORED_STATUSES]),
         ),
       )
       .groupBy(walletTransaction.walletId);
