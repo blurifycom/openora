@@ -19,7 +19,7 @@ import {
   chatRoom,
 } from '../schema/index.js';
 import { ChatPlayerMutedError, ChatPlayerBannedError } from './errors/chat-moderation.errors.js';
-import { resolveModerationTarget } from '../moderation/index.js';
+import { platformScopesFor, resolveModerationTarget } from '../moderation/index.js';
 
 export class ChatMuteService {
   constructor(
@@ -68,6 +68,7 @@ export class ChatMuteService {
         throw new ChatPlayerMutedError(roomMute.expiresAt);
       }
     }
+    const scopes = platformScopesFor(roomId === null ? 'global' : isPublic ? 'public' : 'private');
     const [ban] = await this.drizzle.db
       .select({ id: chatPlatformBan.id, expiresAt: chatPlatformBan.expiresAt })
       .from(chatPlatformBan)
@@ -76,22 +77,12 @@ export class ChatMuteService {
           eq(chatPlatformBan.userId, userId),
           isNull(chatPlatformBan.liftedAt),
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, now)),
-          roomId === null
-            ? or(
-                eq(chatPlatformBan.scope, '__global'),
-                eq(chatPlatformBan.scope, '__all_public'),
-                eq(chatPlatformBan.scope, '__all'),
-              )
-            : isPublic
-              ? or(
-                  eq(chatPlatformBan.scope, '__all_public'),
-                  eq(chatPlatformBan.scope, '__all'),
-                  and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
-                )
-              : or(
-                  eq(chatPlatformBan.scope, '__all'),
-                  and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
-                ),
+          or(
+            inArray(chatPlatformBan.scope, scopes),
+            roomId === null
+              ? undefined
+              : and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
+          ),
           roomId !== null
             ? or(isNull(chatPlatformBan.roomId), eq(chatPlatformBan.roomId, roomId))
             : isNull(chatPlatformBan.roomId),
@@ -108,17 +99,12 @@ export class ChatMuteService {
         and(
           eq(chatMute.userId, userId),
           isNull(chatMute.liftedAt),
-          roomId === null
-            ? or(
-                eq(chatMute.scope, '__global'),
-                eq(chatMute.scope, '__all_public'),
-                eq(chatMute.scope, '__all'),
-              )
-            : or(
-                eq(chatMute.scope, '__all'),
-                ...(isPublic ? [eq(chatMute.scope, '__all_public')] : []),
-                and(eq(chatMute.scope, 'room'), eq(chatMute.roomId, roomId)),
-              ),
+          or(
+            inArray(chatMute.scope, scopes),
+            roomId === null
+              ? undefined
+              : and(eq(chatMute.scope, 'room'), eq(chatMute.roomId, roomId)),
+          ),
           or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, now)),
         ),
       )
@@ -266,7 +252,10 @@ export class ChatMuteService {
             scope === 'room'
               ? or(
                   eq(chatMute.scope, 'room'),
-                  and(eq(chatMute.scope, '__global'), eq(chatMute.roomId, concreteRoomId ?? '')),
+                  and(
+                    eq(chatMute.scope, GLOBAL_CHAT_ROOM_ID),
+                    eq(chatMute.roomId, concreteRoomId ?? ''),
+                  ),
                 )
               : eq(chatMute.scope, scope),
             concreteRoomId === null ? isNull(chatMute.roomId) : eq(chatMute.roomId, concreteRoomId),

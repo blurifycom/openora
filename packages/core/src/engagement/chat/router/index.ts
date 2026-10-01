@@ -11,6 +11,7 @@ import {
 } from '@openora/core/server';
 import {
   ACCESS_REVOKED_SIGNAL,
+  GLOBAL_CHAT_ROOM_ID,
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
   chatChannel,
@@ -273,11 +274,11 @@ export function createChatRouter({
         });
       }
       const rooms = await chatService.listRooms(viewerId);
-      const globalRoom = rooms.find((room) => room.slug === '__global');
+      const globalRoom = rooms.find((room) => room.slug === GLOBAL_CHAT_ROOM_ID);
       const channels = [
         ...(globalRoom && !globalRoom.isBanned ? [chatChannel(null)] : []),
         ...rooms
-          .filter((room) => room.slug !== '__global' && !room.isBanned)
+          .filter((room) => room.slug !== GLOBAL_CHAT_ROOM_ID && !room.isBanned)
           .map((room) => chatChannel(room.id)),
       ];
       return authorizer.issueGrant({

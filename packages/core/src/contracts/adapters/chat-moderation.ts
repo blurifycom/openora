@@ -1,5 +1,9 @@
 import { createToken } from './token.js';
 import type { Uuid } from '../schemas/common.js';
+import type {
+  CHAT_MODERATION_SCOPES,
+  CHAT_MODERATION_SCOPE_VALUES,
+} from '../schemas/chat-command.js';
 
 export type ChatModerationEntry = {
   id: Uuid;
@@ -22,8 +26,8 @@ export type ChatPlatformBan = {
   scope: ChatModerationScope;
 };
 
-export type ChatModerationRoomId = Uuid | '__global' | '__all_public' | '__all';
-export type ChatModerationScope = '__global' | '__all_public' | '__all' | 'room';
+export type ChatModerationRoomId = Uuid | (typeof CHAT_MODERATION_SCOPES)[number];
+export type ChatModerationScope = (typeof CHAT_MODERATION_SCOPE_VALUES)[number];
 
 export type ChatModeration = {
   assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic?: boolean): Promise<void>;

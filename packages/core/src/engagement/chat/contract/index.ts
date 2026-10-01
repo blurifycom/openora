@@ -5,6 +5,8 @@ import {
   TimestampSchema,
   UuidSchema,
   GLOBAL_CHAT_ROOM_ID,
+  CHAT_MODERATION_SCOPES,
+  CHAT_MODERATION_SCOPE_VALUES,
   CommandMetadataSchema,
   SystemChatMessageSchema,
   ChatAttachmentSchema,
@@ -252,8 +254,7 @@ export const ChatConnectionGrantSchema = z
   .loose();
 
 export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
-export const CHAT_MODERATION_SCOPES = ['__global', '__all_public', '__all'] as const;
-export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;
+export { CHAT_MODERATION_SCOPES, CHAT_MODERATION_SCOPE_VALUES };
 export const ChatModerationScopeSchema = z.enum(CHAT_MODERATION_SCOPE_VALUES);
 export type ChatModerationScope = z.infer<typeof ChatModerationScopeSchema>;
 export const ChatModerationRoomIdSchema = z.union([UuidSchema, z.enum(CHAT_MODERATION_SCOPES)]);

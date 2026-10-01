@@ -102,7 +102,7 @@ import {
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
-import { validateAttachment } from '../moderation/index.js';
+import { platformScopesFor, roomReach, validateAttachment } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 const logger = createLogger('chat');
 
@@ -603,17 +603,10 @@ export class ChatService {
             eq(chatPlatformBan.userId, viewerId),
             isNull(chatPlatformBan.liftedAt),
             or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, now)),
-            room.isPublic
-              ? or(
-                  eq(chatPlatformBan.scope, '__all'),
-                  eq(chatPlatformBan.scope, '__all_public'),
-                  isGlobalRoom(room) ? eq(chatPlatformBan.scope, '__global') : undefined,
-                  and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
-                )
-              : or(
-                  eq(chatPlatformBan.scope, '__all'),
-                  and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
-                ),
+            or(
+              inArray(chatPlatformBan.scope, platformScopesFor(roomReach(room))),
+              and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
+            ),
           ),
         )
         .limit(1);
@@ -659,11 +652,7 @@ export class ChatService {
           eq(chatPlatformBan.userId, viewerId),
           isNull(chatPlatformBan.liftedAt),
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, new Date())),
-          or(
-            eq(chatPlatformBan.scope, '__global'),
-            eq(chatPlatformBan.scope, '__all_public'),
-            eq(chatPlatformBan.scope, '__all'),
-          ),
+          inArray(chatPlatformBan.scope, platformScopesFor('global')),
         ),
       )
       .limit(1);
@@ -715,11 +704,6 @@ export class ChatService {
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, now)),
         ),
       );
-    const allPublicBan = platformBans.find(
-      (ban) => ban.scope === '__all_public' || ban.scope === '__all',
-    );
-    const allPrivateBan = platformBans.find((ban) => ban.scope === '__all');
-    const globalBan = platformBans.find((ban) => ban.scope === '__global');
     for (const ban of platformBans) {
       if (ban.scope === 'room' && ban.roomId) {
         roomBanById.set(ban.roomId, ban.expiresAt);
@@ -757,18 +741,16 @@ export class ChatService {
       (room, index, rows) => rows.findIndex((candidate) => candidate.id === room.id) === index,
     );
     return uniqueRooms.map((room) => {
-      const roomBanUntil = roomBanById.get(room.id) ?? null;
-      const platformBanUntil = room.isPublic
-        ? (allPublicBan?.expiresAt ?? null)
-        : (allPrivateBan?.expiresAt ?? null);
+      const scopes = platformScopesFor(roomReach(room));
+      const platformBan = platformBans.find((ban) => scopes.includes(ban.scope));
+      const roomBanned = roomBanById.has(room.id);
       return serializeRow(
         {
           ...room,
-          isBanned:
-            room.slug === GLOBAL_CHAT_ROOM_ID
-              ? Boolean(globalBan || allPublicBan)
-              : roomBanById.has(room.id) || Boolean(room.isPublic ? allPublicBan : allPrivateBan),
-          bannedUntil: roomBanById.has(room.id) ? roomBanUntil : platformBanUntil,
+          isBanned: roomBanned || Boolean(platformBan),
+          bannedUntil: roomBanned
+            ? (roomBanById.get(room.id) ?? null)
+            : (platformBan?.expiresAt ?? null),
         },
         { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
       );
@@ -1452,10 +1434,10 @@ export class ChatService {
       const [globalRoom] = await this.drizzle.db
         .select({ id: chatRoom.id })
         .from(chatRoom)
-        .where(and(eq(chatRoom.slug, '__global'), isNull(chatRoom.deletedAt)))
+        .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
         .limit(1);
       if (!globalRoom) {
-        throw new ChatRoomNotFoundError('__global');
+        throw new ChatRoomNotFoundError(GLOBAL_CHAT_ROOM_ID);
       }
       roomId = globalRoom.id;
     }

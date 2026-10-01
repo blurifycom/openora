@@ -14,6 +14,27 @@ import {
 
 export type ModerationTarget = { scope: ChatModerationScope; roomId: Uuid | null };
 
+export type ChatRoomReach = 'global' | 'public' | 'private';
+
+export function roomReach(room: { slug: string; isPublic: boolean }): ChatRoomReach {
+  if (room.slug === GLOBAL_CHAT_ROOM_ID) {
+    return 'global';
+  }
+  return room.isPublic ? 'public' : 'private';
+}
+
+/** The platform-wide scopes that restrict a player in a room of this reach; `room` scope is per room. */
+export function platformScopesFor(reach: ChatRoomReach): ChatModerationScope[] {
+  switch (reach) {
+    case 'global':
+      return [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'];
+    case 'public':
+      return ['__all_public', '__all'];
+    case 'private':
+      return ['__all'];
+  }
+}
+
 // `validate` guards new restrictions only; lifting one must still reach missing, deleted or private rooms.
 export async function resolveModerationTarget(
   db: DrizzleDb | DrizzleTx,
@@ -34,7 +55,7 @@ export async function resolveModerationTarget(
     .limit(1);
   const target: ModerationTarget =
     roomId === GLOBAL_CHAT_ROOM_ID || room?.slug === GLOBAL_CHAT_ROOM_ID
-      ? { scope: '__global', roomId: null }
+      ? { scope: GLOBAL_CHAT_ROOM_ID, roomId: null }
       : { scope: 'room', roomId };
   if (!validate || (roomId === GLOBAL_CHAT_ROOM_ID && !room)) {
     return target;
