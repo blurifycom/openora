@@ -1,10 +1,26 @@
-import { and, asc, eq, isNotNull, isNull, lte } from 'drizzle-orm';
-import { DrizzleService } from '@openora/core/server';
+import { and, asc, eq, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { AuditAction, AuditWritePort, Uuid } from '@openora/core/contracts';
 import { chatMute, chatPlatformBan } from '../schema/index.js';
 
 /** Rows considered per table per pass. A backlog just drains over the next few ticks. */
 const EXPIRY_SWEEP_BATCH_SIZE = 500;
+
+/**
+ * Takes lapsed rows out of the active set before a replacement is inserted. `lifted_at` is
+ * set to the row's own expiry with no `lifted_by`, so the sweep still records the lapse.
+ */
+export async function retireLapsedRows(
+  tx: DrizzleTx,
+  table: typeof chatMute | typeof chatPlatformBan,
+  active: SQL | undefined,
+  now: Date,
+) {
+  await tx
+    .update(table)
+    .set({ liftedAt: sql`${table.expiresAt}` })
+    .where(and(active, isNull(table.liftedAt), lte(table.expiresAt, now)));
+}
 
 /**
  * Writes the audit entry nothing else writes: a timed chat mute or platform ban lapsing
@@ -47,7 +63,7 @@ export class ChatModerationExpiryService {
       .from(table)
       .where(
         and(
-          isNull(table.liftedAt),
+          or(isNull(table.liftedAt), eq(table.liftedAt, table.expiresAt)),
           isNotNull(table.expiresAt),
           lte(table.expiresAt, now),
           isNull(table.expiryRecordedAt),

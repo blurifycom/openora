@@ -17,6 +17,7 @@ import type {
 import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
 import { resolveModerationTarget, type ModerationTarget } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
+import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 
 function activeBanFilter(userId: Uuid, target: ModerationTarget) {
   return and(
@@ -55,6 +56,7 @@ export class ChatBanService {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
         const now = new Date();
+        await retireLapsedRows(t, chatPlatformBan, activeBanFilter(userId, target), now);
         const [previous] = await t
           .update(chatPlatformBan)
           .set({ liftedAt: now, liftedBy: actorId })
@@ -75,14 +77,13 @@ export class ChatBanService {
             expiresAt,
           })
           .returning({ id: chatPlatformBan.id });
-        const previousActive = previous && (!previous.expiresAt || previous.expiresAt > now);
         await this.audit.recordInTransaction(t, {
           actorId,
           actorType: 'admin',
           action: 'chat.platform_ban.created',
           resourceType: 'chat_platform_ban',
           resourceId: created.id,
-          before: previousActive
+          before: previous
             ? {
                 banId: previous.id,
                 reason: previous.reason,
@@ -142,32 +143,34 @@ export class ChatBanService {
     userAgent,
   }: { userId: Uuid; roomId: ChatModerationRoomId; actorId: Uuid } & ClientMeta) {
     const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: false });
-    const liftedAt = new Date();
-    await this.drizzle.db.transaction(async (t) => {
-      const [lifted] = await t
-        .update(chatPlatformBan)
-        .set({ liftedAt, liftedBy: actorId })
-        .where(
-          and(
-            activeBanFilter(userId, target),
-            or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, liftedAt)),
-          ),
-        )
-        .returning({ id: chatPlatformBan.id });
-      if (!lifted) {
-        return;
-      }
-      await this.audit.recordInTransaction(t, {
-        actorId,
-        actorType: 'admin',
-        action: 'chat.platform_ban.lifted',
-        resourceType: 'chat_platform_ban',
-        resourceId: lifted.id,
-        after: { userId, scope: target.scope, roomId: target.roomId },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    });
+    await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
+        const liftedAt = new Date();
+        const [lifted] = await t
+          .update(chatPlatformBan)
+          .set({ liftedAt, liftedBy: actorId })
+          .where(
+            and(
+              activeBanFilter(userId, target),
+              or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, liftedAt)),
+            ),
+          )
+          .returning({ id: chatPlatformBan.id });
+        if (!lifted) {
+          return;
+        }
+        await this.audit.recordInTransaction(t, {
+          actorId,
+          actorType: 'admin',
+          action: 'chat.platform_ban.lifted',
+          resourceType: 'chat_platform_ban',
+          resourceId: lifted.id,
+          after: { userId, scope: target.scope, roomId: target.roomId },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }),
+    );
     return { success: true } as const;
   }
 

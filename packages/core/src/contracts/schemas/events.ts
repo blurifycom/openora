@@ -891,6 +891,10 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     reason: z.string().optional(),
     expiresAt: z.iso.datetime().nullable().optional(),
+    replaced: z
+      .object({ banId: UuidSchema, expiresAt: z.iso.datetime().nullable() })
+      .nullable()
+      .optional(),
   }),
 
   'chat.room.ownership.transferred': authContextBase.extend({

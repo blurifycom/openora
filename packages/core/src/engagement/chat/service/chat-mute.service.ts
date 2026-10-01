@@ -10,16 +10,15 @@ import {
   type Uuid,
 } from '@openora/core/contracts';
 import {
-  chatMessage,
   chatMute,
   chatPlatformBan,
   chatRoomConfiguration,
-  chatRoomMember,
   chatRoomMute,
   chatRoom,
 } from '../schema/index.js';
 import { ChatPlayerMutedError, ChatPlayerBannedError } from './errors/chat-moderation.errors.js';
 import { platformScopesFor, resolveModerationTarget } from '../moderation/index.js';
+import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 
 export class ChatMuteService {
   constructor(
@@ -29,22 +28,16 @@ export class ChatMuteService {
 
   async assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic = true) {
     const now = new Date();
-    const configColumns = {
-      roomId: chatRoomConfiguration.roomId,
-      readOnlyMode: chatRoomConfiguration.readOnlyMode,
-      slowMode: chatRoomConfiguration.slowMode,
-      slowModeSeconds: chatRoomConfiguration.slowModeSeconds,
-    };
     const [config] =
       roomId === null
         ? await this.drizzle.db
-            .select(configColumns)
+            .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
             .from(chatRoomConfiguration)
             .innerJoin(chatRoom, eq(chatRoomConfiguration.roomId, chatRoom.id))
             .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
             .limit(1)
         : await this.drizzle.db
-            .select(configColumns)
+            .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
             .from(chatRoomConfiguration)
             .where(eq(chatRoomConfiguration.roomId, roomId))
             .limit(1);
@@ -112,47 +105,6 @@ export class ChatMuteService {
     if (mute) {
       throw new ChatPlayerMutedError(mute.expiresAt);
     }
-    if (config?.slowMode && config.slowModeSeconds > 0) {
-      await this.assertSlowModeElapsed(userId, roomId, config);
-    }
-  }
-
-  private async assertSlowModeElapsed(
-    userId: Uuid,
-    roomId: Uuid | null,
-    config: { roomId: Uuid; slowModeSeconds: number },
-  ) {
-    const windowMs = config.slowModeSeconds * 1000;
-    const [last] = await this.drizzle.db
-      .select({ createdAt: chatMessage.createdAt })
-      .from(chatMessage)
-      .where(
-        and(
-          eq(chatMessage.userId, userId),
-          roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
-          eq(chatMessage.type, 'user'),
-          gt(chatMessage.createdAt, new Date(Date.now() - windowMs)),
-        ),
-      )
-      .orderBy(desc(chatMessage.createdAt))
-      .limit(1);
-    if (!last) {
-      return;
-    }
-    const [moderator] = await this.drizzle.db
-      .select({ id: chatRoomMember.id })
-      .from(chatRoomMember)
-      .where(
-        and(
-          eq(chatRoomMember.roomId, config.roomId),
-          eq(chatRoomMember.userId, userId),
-          inArray(chatRoomMember.role, ['moderator', 'owner']),
-        ),
-      )
-      .limit(1);
-    if (!moderator) {
-      throw new ChatPlayerMutedError(new Date(last.createdAt.getTime() + windowMs));
-    }
   }
 
   async mute({
@@ -176,17 +128,17 @@ export class ChatMuteService {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-mute:${userId}`, async () => {
         const now = new Date();
+        const targetMutes = and(
+          eq(chatMute.userId, userId),
+          eq(chatMute.scope, target.scope),
+          target.roomId ? eq(chatMute.roomId, target.roomId) : isNull(chatMute.roomId),
+          isNull(chatMute.liftedAt),
+        );
+        await retireLapsedRows(t, chatMute, targetMutes, now);
         const [previous] = await t
           .update(chatMute)
           .set({ liftedAt: now, liftedBy: actorId })
-          .where(
-            and(
-              eq(chatMute.userId, userId),
-              eq(chatMute.scope, target.scope),
-              target.roomId ? eq(chatMute.roomId, target.roomId) : isNull(chatMute.roomId),
-              isNull(chatMute.liftedAt),
-            ),
-          )
+          .where(targetMutes)
           .returning({ id: chatMute.id, reason: chatMute.reason, expiresAt: chatMute.expiresAt });
         const [created] = await t
           .insert(chatMute)
@@ -199,14 +151,13 @@ export class ChatMuteService {
             expiresAt,
           })
           .returning({ id: chatMute.id });
-        const previousActive = previous && (!previous.expiresAt || previous.expiresAt > now);
         await this.audit.recordInTransaction(t, {
           actorId,
           actorType: 'admin',
           action: 'chat.mute.created',
           resourceType: 'chat_mute',
           resourceId: created.id,
-          before: previousActive
+          before: previous
             ? {
                 muteId: previous.id,
                 reason: previous.reason,
@@ -240,43 +191,47 @@ export class ChatMuteService {
       roomId,
       { validate: false },
     );
-    const liftedAt = new Date();
-    await this.drizzle.db.transaction(async (t) => {
-      const rows = await t
-        .update(chatMute)
-        .set({ liftedAt, liftedBy: actorId })
-        .where(
-          and(
-            eq(chatMute.userId, userId),
-            or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, liftedAt)),
-            scope === 'room'
-              ? or(
-                  eq(chatMute.scope, 'room'),
-                  and(
-                    eq(chatMute.scope, GLOBAL_CHAT_ROOM_ID),
-                    eq(chatMute.roomId, concreteRoomId ?? ''),
-                  ),
-                )
-              : eq(chatMute.scope, scope),
-            concreteRoomId === null ? isNull(chatMute.roomId) : eq(chatMute.roomId, concreteRoomId),
-            isNull(chatMute.liftedAt),
-          ),
-        )
-        .returning({ id: chatMute.id });
-      if (rows.length === 0) {
-        return;
-      }
-      await this.audit.recordInTransaction(t, {
-        actorId,
-        actorType: 'admin',
-        action: 'chat.mute.lifted',
-        resourceType: 'chat_mute',
-        resourceId: rows[0]?.id ?? null,
-        after: { userId, scope, roomId: concreteRoomId, liftedAt: liftedAt.toISOString() },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    });
+    await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-mute:${userId}`, async () => {
+        const liftedAt = new Date();
+        const rows = await t
+          .update(chatMute)
+          .set({ liftedAt, liftedBy: actorId })
+          .where(
+            and(
+              eq(chatMute.userId, userId),
+              or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, liftedAt)),
+              scope === 'room'
+                ? or(
+                    eq(chatMute.scope, 'room'),
+                    and(
+                      eq(chatMute.scope, GLOBAL_CHAT_ROOM_ID),
+                      eq(chatMute.roomId, concreteRoomId ?? ''),
+                    ),
+                  )
+                : eq(chatMute.scope, scope),
+              concreteRoomId === null
+                ? isNull(chatMute.roomId)
+                : eq(chatMute.roomId, concreteRoomId),
+              isNull(chatMute.liftedAt),
+            ),
+          )
+          .returning({ id: chatMute.id });
+        if (rows.length === 0) {
+          return;
+        }
+        await this.audit.recordInTransaction(t, {
+          actorId,
+          actorType: 'admin',
+          action: 'chat.mute.lifted',
+          resourceType: 'chat_mute',
+          resourceId: rows[0]?.id ?? null,
+          after: { userId, scope, roomId: concreteRoomId, liftedAt: liftedAt.toISOString() },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }),
+    );
     return { success: true } as const;
   }
 

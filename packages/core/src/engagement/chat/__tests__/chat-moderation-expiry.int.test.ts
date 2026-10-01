@@ -187,4 +187,105 @@ describe('ChatModerationExpiryService.sweep', () => {
     const [muteRow] = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.id, mute.id));
     expect(muteRow!.liftedAt).toBeNull();
   });
+
+  it('leaves a lapsed mute to the sweep when the player is muted again', async () => {
+    const userId = randomUUID();
+    const expiresAt = secondsFromNow(-30);
+    const lapsed = await seedMute({ userId, expiresAt });
+
+    await makeModeration().mute({
+      userId,
+      roomId: '__global',
+      durationSeconds: 60,
+      reason: 'again',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+    await makeSweep().sweep();
+
+    const [row] = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.id, lapsed.id));
+    expect(row).toMatchObject({ liftedAt: expiresAt, liftedBy: null });
+    expect((await auditRowsFor(lapsed.id)).map((r) => r.action)).toEqual(['chat.mute.expired']);
+    const [created] = await db.drizzle.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, 'chat.mute.created'));
+    expect(created!.before).toBeNull();
+  });
+
+  it('leaves a lapsed ban to the sweep when the player is banned again', async () => {
+    const userId = randomUUID();
+    const expiresAt = secondsFromNow(-30);
+    const lapsed = await seedBan({ userId, expiresAt });
+
+    await makeModeration().ban({
+      userId,
+      roomId: '__all_public',
+      durationSeconds: 60,
+      reason: 'again',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+    await makeSweep().sweep();
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(chatPlatformBan)
+      .where(eq(chatPlatformBan.id, lapsed.id));
+    expect(row).toMatchObject({ liftedAt: expiresAt, liftedBy: null });
+    expect((await auditRowsFor(lapsed.id)).map((r) => r.action)).toEqual([
+      'chat.platform_ban.expired',
+    ]);
+  });
+
+  it('records the replaced terms when a running mute is replaced', async () => {
+    const userId = randomUUID();
+    const running = await seedMute({ userId, expiresAt: secondsFromNow(3600) });
+
+    await makeModeration().mute({
+      userId,
+      roomId: '__global',
+      durationSeconds: null,
+      reason: 'escalated',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+
+    const [created] = await db.drizzle.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, 'chat.mute.created'));
+    expect(created!.before).toMatchObject({ muteId: running.id, reason: 'spam' });
+    expect(await auditRowsFor(running.id)).toHaveLength(0);
+  });
+
+  it('lifts the replacement when an unmute races a re-mute', async () => {
+    const userId = randomUUID();
+    await seedMute({ userId, expiresAt: secondsFromNow(3600) });
+    const moderation = makeModeration();
+
+    await Promise.all([
+      moderation.mute({
+        userId,
+        roomId: '__global',
+        durationSeconds: null,
+        reason: 'escalated',
+        actorId: ADMIN_ID,
+        ...NO_CLIENT_META,
+      }),
+      moderation.unmute({ userId, roomId: '__global', actorId: ADMIN_ID, ...NO_CLIENT_META }),
+    ]);
+
+    const active = await db.drizzle.db
+      .select()
+      .from(chatMute)
+      .where(sql`${chatMute.userId} = ${userId} AND ${chatMute.liftedAt} IS NULL`);
+    const lifts = await db.drizzle.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, 'chat.mute.lifted'));
+    // Either order is valid, but an unmute that reports success has always lifted something.
+    expect(lifts).toHaveLength(1);
+    expect(active.length).toBeLessThanOrEqual(1);
+  });
 });

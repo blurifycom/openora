@@ -399,6 +399,7 @@ export async function mapEventToRecord(
       actorId: actorPlayerId ?? str(p['bannedBy']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
+      before: isRecord(p['replaced']) ? p['replaced'] : null,
       after: {
         roomId: str(p['roomId']),
         reason: str(p['reason']),

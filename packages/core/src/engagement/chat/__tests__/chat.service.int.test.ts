@@ -669,6 +669,44 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 
+  it('holds a send in slow mode until a concurrent send by the same player commits', async () => {
+    const { svc } = makeService();
+    const room = await seedRoom();
+    await db.drizzle.db
+      .insert(chatRoomConfiguration)
+      .values({ roomId: room.id, slowMode: true, slowModeSeconds: 60 });
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    let firstLocked!: () => void;
+    const locked = new Promise<void>((resolve) => (firstLocked = resolve));
+
+    const first = db.drizzle.db.transaction(async (t) => {
+      await t.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${`chat-send:${account.id}:${room.id}`}))`,
+      );
+      await t
+        .insert(chatMessage)
+        .values({ roomId: room.id, userId: account.id, username: 'alice', content: 'first' });
+      firstLocked();
+      await firstHeld;
+    });
+    await locked;
+    const second = svc
+      .sendRoomMessage({
+        userId: account.id,
+        username: 'alice',
+        roomId: room.id,
+        content: 'second',
+      })
+      .catch((err: unknown) => err);
+    await settle();
+    releaseFirst();
+    await first;
+
+    expect(await second).toBeInstanceOf(ChatPlayerMutedError);
+  });
+
   it('refuses a private room the sender has not joined', async () => {
     const { svc } = makeService();
     const room = await seedRoom({ isPublic: false, category: 'private-channels' });
@@ -2658,6 +2696,58 @@ describe('ChatService moderation (real PG)', () => {
       .from(chatRoomBan)
       .where(and(eq(chatRoomBan.roomId, room.id), isNull(chatRoomBan.liftedAt)));
     expect(active).toEqual([expect.objectContaining({ userId: memberId, expiresAt: null })]);
+  });
+
+  it('carries the replaced ban terms on the ban event', async () => {
+    const { svc, events, room, moderatorId, memberId } = await roomWithMember();
+    await svc.banMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META });
+    const [first] = await db.drizzle.db
+      .select()
+      .from(chatRoomBan)
+      .where(eq(chatRoomBan.roomId, room.id));
+
+    await svc.banMember({
+      moderatorId,
+      roomId: room.id,
+      userId: memberId,
+      durationSeconds: 1,
+      ...NO_CLIENT_META,
+    });
+
+    const payloads = events.emit.mock.calls
+      .filter(([topic]) => topic === 'chat.room.member.banned')
+      .map(([, payload]) => payload as { replaced: unknown });
+    expect(payloads.map((payload) => payload.replaced)).toEqual([
+      null,
+      { banId: first!.id, expiresAt: null },
+    ]);
+  });
+
+  it('records the replaced terms when a running room mute is replaced', async () => {
+    const { svc, audit, room, moderatorId, memberId } = await roomWithMember();
+    await svc.muteRoomMember({
+      roomId: room.id,
+      userId: memberId,
+      moderatorId,
+      reason: 'first',
+    });
+
+    await svc.muteRoomMember({
+      roomId: room.id,
+      userId: memberId,
+      moderatorId,
+      durationSeconds: 1,
+      reason: 'shortened',
+    });
+
+    const created = vi
+      .mocked(audit.recordInTransaction)
+      .mock.calls.map(([, entry]) => entry)
+      .filter((entry) => entry.action === 'chat.room.mute.created');
+    expect(created.map((entry) => entry.before)).toEqual([
+      null,
+      expect.objectContaining({ reason: 'first', expiresAt: null }),
+    ]);
   });
 
   it('refuses moderation by a plain member', async () => {

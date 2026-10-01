@@ -83,6 +83,7 @@ import {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatPlayerBannedError,
+  ChatPlayerMutedError,
 } from './errors/chat-moderation.errors.js';
 import type {
   AdminRoomSortBy,
@@ -1215,6 +1216,15 @@ export class ChatService {
     return toPublicMessages(messages);
   }
 
+  private async isGlobalRoomId(roomId: ChatRoom['id']) {
+    const [room] = await this.drizzle.db
+      .select({ id: chatRoom.id })
+      .from(chatRoom)
+      .where(and(eq(chatRoom.id, roomId), eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)))
+      .limit(1);
+    return room !== undefined;
+  }
+
   async listAdminRoomMessages({
     roomId,
     page,
@@ -1235,7 +1245,7 @@ export class ChatService {
         ? and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt))
         : and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt));
     const [room] = await this.drizzle.db
-      .select({ id: chatRoom.id })
+      .select({ id: chatRoom.id, slug: chatRoom.slug })
       .from(chatRoom)
       .where(roomWhere)
       .limit(1);
@@ -1244,7 +1254,7 @@ export class ChatService {
     }
 
     const where = and(
-      roomId === GLOBAL_CHAT_ROOM_ID ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
+      isGlobalRoom(room) ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, room.id),
       includeDeleted ? undefined : eq(chatMessage.isDeleted, false),
       senderId ? eq(chatMessage.userId, senderId) : undefined,
       playerId ? eq(player.id, playerId) : undefined,
@@ -1295,7 +1305,7 @@ export class ChatService {
     sortOrder: SortOrder;
   }) {
     const roomCondition =
-      roomId === GLOBAL_CHAT_ROOM_ID
+      roomId === GLOBAL_CHAT_ROOM_ID || (roomId && (await this.isGlobalRoomId(roomId)))
         ? isNull(chatMessage.roomId)
         : roomId
           ? eq(chatMessage.roomId, roomId)
@@ -1369,6 +1379,73 @@ export class ChatService {
     }
   }
 
+  // Slow mode is checked under a per-sender lock in the insert's transaction, so parallel
+  // sends cannot all pass the same check.
+  private insertUserMessage(values: typeof chatMessage.$inferInsert & { roomId: Uuid | null }) {
+    return this.drizzle.db.transaction(async (t) => {
+      const [config] = await t
+        .select({
+          roomId: chatRoomConfiguration.roomId,
+          slowMode: chatRoomConfiguration.slowMode,
+          slowModeSeconds: chatRoomConfiguration.slowModeSeconds,
+        })
+        .from(chatRoomConfiguration)
+        .innerJoin(chatRoom, eq(chatRoomConfiguration.roomId, chatRoom.id))
+        .where(
+          values.roomId === null
+            ? and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt))
+            : eq(chatRoom.id, values.roomId),
+        )
+        .limit(1);
+      if (config?.slowMode && config.slowModeSeconds > 0) {
+        await withAdvisoryXactLock(t, `chat-send:${values.userId}:${config.roomId}`, () =>
+          this.assertSlowModeElapsed(t, values.userId, values.roomId, config),
+        );
+      }
+      const [record] = await t.insert(chatMessage).values(values).returning();
+      return record;
+    });
+  }
+
+  private async assertSlowModeElapsed(
+    t: DrizzleTx,
+    userId: User['id'],
+    roomId: Uuid | null,
+    config: { roomId: Uuid; slowModeSeconds: number },
+  ) {
+    const windowMs = config.slowModeSeconds * 1000;
+    const [last] = await t
+      .select({ createdAt: chatMessage.createdAt })
+      .from(chatMessage)
+      .where(
+        and(
+          eq(chatMessage.userId, userId),
+          roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
+          eq(chatMessage.type, 'user'),
+          gt(chatMessage.createdAt, new Date(Date.now() - windowMs)),
+        ),
+      )
+      .orderBy(desc(chatMessage.createdAt))
+      .limit(1);
+    if (!last) {
+      return;
+    }
+    const [moderator] = await t
+      .select({ id: chatRoomMember.id })
+      .from(chatRoomMember)
+      .where(
+        and(
+          eq(chatRoomMember.roomId, config.roomId),
+          eq(chatRoomMember.userId, userId),
+          inArray(chatRoomMember.role, ['moderator', 'owner']),
+        ),
+      )
+      .limit(1);
+    if (!moderator) {
+      throw new ChatPlayerMutedError(new Date(last.createdAt.getTime() + windowMs));
+    }
+  }
+
   async sendRoomMessage({
     userId,
     username,
@@ -1392,16 +1469,13 @@ export class ChatService {
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
-    const [record] = await this.drizzle.db
-      .insert(chatMessage)
-      .values({
-        roomId,
-        userId,
-        username: resolvedUsername,
-        content: safeContent,
-        attachment,
-      })
-      .returning();
+    const record = await this.insertUserMessage({
+      roomId,
+      userId,
+      username: resolvedUsername,
+      content: safeContent,
+      attachment,
+    });
 
     this.events.emit('chat.message.sent', {
       messageId: record.id,
@@ -1478,16 +1552,13 @@ export class ChatService {
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
-    const [record] = await this.drizzle.db
-      .insert(chatMessage)
-      .values({
-        roomId: null,
-        userId,
-        username: resolvedUsername,
-        content: safeContent,
-        attachment,
-      })
-      .returning();
+    const record = await this.insertUserMessage({
+      roomId: null,
+      userId,
+      username: resolvedUsername,
+      content: safeContent,
+      attachment,
+    });
 
     this.events.emit('chat.message.sent', {
       messageId: record.id,

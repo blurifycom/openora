@@ -61,16 +61,23 @@ export class ChatRoomMuteService {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
-        await t
+        const now = new Date();
+        const [previous] = await t
           .update(chatRoomMute)
-          .set({ liftedAt: new Date(), liftedBy: moderatorId })
+          .set({ liftedAt: now, liftedBy: moderatorId })
           .where(
             and(
               eq(chatRoomMute.roomId, roomId),
               eq(chatRoomMute.userId, userId),
               isNull(chatRoomMute.liftedAt),
             ),
-          );
+          )
+          .returning({
+            id: chatRoomMute.id,
+            reason: chatRoomMute.reason,
+            expiresAt: chatRoomMute.expiresAt,
+          });
+        const previousActive = previous && (!previous.expiresAt || previous.expiresAt > now);
         const [created] = await t
           .insert(chatRoomMute)
           .values({ roomId, userId, mutedBy: moderatorId, reason, expiresAt })
@@ -81,6 +88,13 @@ export class ChatRoomMuteService {
           action: 'chat.room.mute.created',
           resourceType: 'chat_room_mute',
           resourceId: created.id,
+          before: previousActive
+            ? {
+                muteId: previous.id,
+                reason: previous.reason,
+                expiresAt: previous.expiresAt?.toISOString() ?? null,
+              }
+            : null,
           after: { roomId, userId, durationSeconds, reason },
         });
       }),

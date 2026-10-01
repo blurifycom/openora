@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { loadExtensions } from '@openora/core/server';
+import { eq } from 'drizzle-orm';
+import { DRIZZLE, loadExtensions } from '@openora/core/server';
+import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/core/iam/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { ChatMessageSchema, ChatRoomSchema } from '@openora/core/engagement/contracts/chat';
 import {
@@ -22,6 +25,21 @@ let globalRoomId: string;
 async function registerChatter(prefix: string) {
   const username = `${prefix.slice(0, 7)}_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   return registerAndMaterializePlayer(app, { email: `${username}@e2e.test`, username });
+}
+
+async function registerChatViewer() {
+  const viewer = await registerChatter('viewer');
+  const drizzle = app.container.get(DRIZZLE).db;
+  await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, viewer.userId));
+  const [role] = await drizzle
+    .insert(adminRole)
+    .values({ name: `chat viewer ${randomUUID()}` })
+    .returning({ id: adminRole.id });
+  await drizzle
+    .insert(adminRolePermission)
+    .values({ roleId: role!.id, resource: 'chat-room', level: 'read' });
+  await drizzle.insert(adminRoleAssignment).values({ userId: viewer.userId, roleId: role!.id });
+  return viewer;
 }
 
 async function createRoomWithMember(owner: TestClient, member: TestClient) {
@@ -100,6 +118,54 @@ describe('chat: the global room under its row id', () => {
     const sent = await banned.client.post('/chat/global', { content: 'still here' });
 
     expect(sent.status).toBe(403);
+  });
+});
+
+describe('chat: the global room in the back office', () => {
+  it('lists a message sent to the global room id under that id', async () => {
+    const sender = await registerChatter('global');
+    const content = `seen-${randomUUID()}`;
+    const sent = await sender.client.post(`/chat/rooms/${globalRoomId}/messages`, { content });
+    expect(sent.status).toBe(200);
+
+    const listed = await admin.get(`/backoffice/chat/rooms/${globalRoomId}/messages?limit=100`);
+    const searched = await admin.get(
+      `/backoffice/chat/messages?roomId=${globalRoomId}&search=${content}`,
+    );
+
+    expect(listed.status).toBe(200);
+    const { items } = (await listed.json()) as { items: { content: string }[] };
+    expect(items.map((message) => message.content)).toContain(content);
+    const found = (await searched.json()) as { items: { content: string }[] };
+    expect(found.items.map((message) => message.content)).toEqual([content]);
+  });
+});
+
+describe('chat: back-office room join', () => {
+  it('lets an admin join a private room', async () => {
+    const owner = await registerChatter('host');
+    const created = await owner.client.post('/chat/rooms/private', {
+      name: `room-${randomUUID()}`,
+    });
+    const room = ChatRoomSchema.parse(await created.json());
+
+    const joined = await admin.post(`/backoffice/chat/rooms/${room.id}/join`);
+
+    expect(joined.status).toBe(200);
+  });
+
+  it('refuses an admin who can only view chat rooms', async () => {
+    const owner = await registerChatter('host');
+    const viewer = await registerChatViewer();
+    const created = await owner.client.post('/chat/rooms/private', {
+      name: `room-${randomUUID()}`,
+    });
+    const room = ChatRoomSchema.parse(await created.json());
+    expect((await viewer.client.get('/backoffice/chat/rooms')).status).toBe(200);
+
+    const joined = await viewer.client.post(`/backoffice/chat/rooms/${room.id}/join`);
+
+    expect(joined.status).toBe(403);
   });
 });
 

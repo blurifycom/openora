@@ -71,23 +71,28 @@ export class ChatRoomBanService {
     }
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
-    await this.drizzle.db.transaction((t) =>
+    const replaced = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
-        await t
+        const now = new Date();
+        const [previous] = await t
           .update(chatRoomBan)
-          .set({ liftedAt: new Date(), liftedBy: moderatorId })
+          .set({ liftedAt: now, liftedBy: moderatorId })
           .where(
             and(
               eq(chatRoomBan.roomId, roomId),
               eq(chatRoomBan.userId, userId),
               isNull(chatRoomBan.liftedAt),
             ),
-          );
+          )
+          .returning({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt });
         await t.insert(chatRoomBan).values({ roomId, userId, bannedBy: moderatorId, expiresAt });
         await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+        return previous && (!previous.expiresAt || previous.expiresAt > now)
+          ? { banId: previous.id, expiresAt: previous.expiresAt?.toISOString() ?? null }
+          : null;
       }),
     );
     this.events.emit('chat.room.member.banned', {
@@ -97,6 +102,7 @@ export class ChatRoomBanService {
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(moderatorId),
       reason,
       expiresAt: expiresAt?.toISOString() ?? null,
+      replaced,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
