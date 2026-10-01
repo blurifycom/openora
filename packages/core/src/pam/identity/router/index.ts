@@ -31,8 +31,12 @@ import {
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { UsernameBlockedError } from '../../shared/username.js';
 
+// The routes an account owing a second-factor enrolment must still reach: the session
+// stream, its own sessions, and the phone verification an SMS factor needs.
+const DURING_TWO_FACTOR_SETUP = { allowPendingTwoFactorSetup: true } as const;
+
 function requireSessionId(context: OssContext) {
-  const sessionId = getSessionId(context);
+  const sessionId = getSessionId(context, DURING_TWO_FACTOR_SETUP);
   if (!sessionId) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
   }
@@ -145,7 +149,7 @@ export function createIdentityRouter(
     phoneVerification: {
       request: os.phoneVerification.request.handler(({ input, context }) =>
         phoneVerification.request({
-          userId: getUserId(context),
+          userId: getUserId(context, DURING_TWO_FACTOR_SETUP),
           sessionId: requireSessionId(context),
           input,
           reqHeaders: context.request.headers,
@@ -155,7 +159,7 @@ export function createIdentityRouter(
 
       confirm: os.phoneVerification.confirm.handler(({ input, context }) =>
         phoneVerification.confirm({
-          userId: getUserId(context),
+          userId: getUserId(context, DURING_TWO_FACTOR_SETUP),
           sessionId: requireSessionId(context),
           input,
           meta: context.clientMeta,
@@ -164,8 +168,8 @@ export function createIdentityRouter(
     },
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
-      const userId = getUserId(context);
-      const connectionSessionId = getSessionId(context);
+      const userId = getUserId(context, DURING_TWO_FACTOR_SETUP);
+      const connectionSessionId = getSessionId(context, DURING_TWO_FACTOR_SETUP);
       return createEventStreamGenerator(
         (push) =>
           realtime.subscribe<SessionEventsPush>(sessionEventsChannel(userId), (event) => {
@@ -324,8 +328,8 @@ export function createIdentityRouter(
 
       listMine: os.sessions.listMine.handler(({ input, context }) =>
         sessionSvc.listSessions({
-          userId: getUserId(context),
-          currentSessionId: getSessionId(context),
+          userId: getUserId(context, DURING_TWO_FACTOR_SETUP),
+          currentSessionId: getSessionId(context, DURING_TWO_FACTOR_SETUP),
           activeOnly: true,
           page: input.page,
           limit: input.limit,
@@ -337,14 +341,14 @@ export function createIdentityRouter(
       // Scoped to the caller's own userId, so a forged id cannot kill someone
       // else's device - a miss is a 404, not a cross-user revoke.
       revokeMine: os.sessions.revokeMine.handler(({ input, context }) => {
-        const userId = getUserId(context);
+        const userId = getUserId(context, DURING_TWO_FACTOR_SETUP);
         return mapErrors(
           { NOT_FOUND: SessionNotFoundError, CONFLICT: CurrentSessionRevokeError },
           () =>
             sessionSvc.revokeOwnSession(
               userId,
               input.id,
-              getSessionId(context),
+              getSessionId(context, DURING_TWO_FACTOR_SETUP),
               context.clientMeta,
             ),
         );

@@ -10,6 +10,7 @@ import {
   SelfTwoFactorResetError,
 } from '../service/admin-security.service.js';
 import { UserNotFoundError } from '../service/identity.service.js';
+import { TwoFactorSetupPolicyService } from '../service/two-factor-setup-policy.service.js';
 import { SessionService } from '../service/session.service.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
 
@@ -205,7 +206,7 @@ describe('AdminSecurityService.resetTwoFactor (real PG)', () => {
 });
 
 describe('AdminSecurityService.resetPlayerTwoFactor (real PG)', () => {
-  const enrolPlayer = async (userId: string) => {
+  const enrol = async (userId: string) => {
     await db.drizzle.db
       .update(user)
       .set({ twoFactorEnabled: true, requireTwoFactorOnLogin: true })
@@ -214,15 +215,15 @@ describe('AdminSecurityService.resetPlayerTwoFactor (real PG)', () => {
       .insert(twoFactor)
       .values({ userId, secret: 'seed-secret', backupCodes: '["aaaaa-bbbbb"]' });
   };
-  const makeMail = () => ({ toUser: vi.fn(), toAddress: vi.fn().mockResolvedValue(undefined) });
+  const makeMail = () => ({ toUser: vi.fn().mockResolvedValue(undefined), toAddress: vi.fn() });
 
   it('unenrols the player, ends their sessions, keeps "require 2FA" and mails them', async () => {
     const player = await seedUser(db, { name: 'Player', email: 'player@b.dev' });
     const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
-    await enrolPlayer(player.id);
+    await enrol(player.id);
     const live = await seedSession(player.id, CHROME_UA);
     const mail = makeMail();
-    const { service } = buildService({ playerUserIds: [player.id], mailDispatch: mail });
+    const { service } = buildService({ mailDispatch: mail });
 
     await service.resetPlayerTwoFactor(player.id, agent.id, 'lost phone, verified by chat');
 
@@ -235,36 +236,56 @@ describe('AdminSecurityService.resetPlayerTwoFactor (real PG)', () => {
       .where(eq(user.id, player.id));
     expect(row).toEqual({ twoFactorEnabled: false, requireTwoFactorOnLogin: true });
     expect(await isActive(live)).toBe(false);
-    expect(mail.toAddress).toHaveBeenCalledWith(
+    expect(mail.toUser).toHaveBeenCalledWith(
       expect.objectContaining({
-        email: 'player@b.dev',
+        userId: player.id,
         template: expect.objectContaining({ key: 'twoFactorReset' }),
       }),
     );
   });
 
-  it('refuses an account that is not a player', async () => {
+  it('refuses an admin account even when it also holds a player profile', async () => {
     const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
     const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
-    await enrolPlayer(admin.id);
+    await enrol(admin.id);
     const mail = makeMail();
-    const { service } = buildService({ mailDispatch: mail });
+    const { service } = buildService({ playerUserIds: [admin.id], mailDispatch: mail });
 
     await expect(service.resetPlayerTwoFactor(admin.id, agent.id, 'not allowed')).rejects.toThrow(
       UserNotFoundError,
     );
-    expect(mail.toAddress).not.toHaveBeenCalled();
+    const [row] = await db.drizzle.db
+      .select({ twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, admin.id));
+    expect(row?.twoFactorEnabled).toBe(true);
+    expect(mail.toUser).not.toHaveBeenCalled();
   });
 
   it('still succeeds when the notice cannot be queued', async () => {
     const player = await seedUser(db, { name: 'Player', email: 'player@b.dev' });
     const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
-    await enrolPlayer(player.id);
-    const mail = { toUser: vi.fn(), toAddress: vi.fn().mockRejectedValue(new Error('queue down')) };
-    const { service } = buildService({ playerUserIds: [player.id], mailDispatch: mail });
+    await enrol(player.id);
+    const mail = { toUser: vi.fn().mockRejectedValue(new Error('queue down')), toAddress: vi.fn() };
+    const { service } = buildService({ mailDispatch: mail });
 
     await expect(
       service.resetPlayerTwoFactor(player.id, agent.id, 'lost phone, verified by chat'),
     ).resolves.toEqual({ success: true });
+  });
+
+  it('holds the player to enrolment until a new factor is set up', async () => {
+    const player = await seedUser(db, { name: 'Player', email: 'player@b.dev' });
+    const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
+    await enrol(player.id);
+    const { service } = buildService({ mailDispatch: makeMail() });
+    const policy = new TwoFactorSetupPolicyService(db.drizzle);
+    expect(await policy.isSetupRequired(player.id)).toBe(false);
+
+    await service.resetPlayerTwoFactor(player.id, agent.id, 'lost phone, verified by chat');
+    expect(await policy.isSetupRequired(player.id)).toBe(true);
+
+    await db.drizzle.db.update(user).set({ twoFactorEnabled: true }).where(eq(user.id, player.id));
+    expect(await policy.isSetupRequired(player.id)).toBe(false);
   });
 });
