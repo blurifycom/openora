@@ -181,6 +181,34 @@ describe('createSseRealtimeClientAdapter', () => {
     expect(server.open).toHaveBeenCalledOnce();
   });
 
+  it('reopens a revoked channel on refresh while its subscriber stays mounted', async () => {
+    const server = fakeServer();
+    const adapter = createSseRealtimeClientAdapter({ open: server.open });
+    const onMessage = vi.fn();
+    const statuses: RealtimeClientStatus[] = [];
+
+    adapter.subscribe('chat:room:r1', {
+      onMessage,
+      onStatus: (status) => statuses.push(status),
+    });
+    await flush();
+    server.latest().push({
+      type: 'signal',
+      signal: { name: ACCESS_REVOKED_SIGNAL, payload: { channel: 'chat:room:r1' } },
+    });
+    await flush();
+    expect(statuses.at(-1)).toBe('closed');
+
+    adapter.refresh?.();
+    await flush();
+    server.latest().push({ type: 'message', message: 'readmitted' });
+    await flush();
+
+    expect(server.open).toHaveBeenCalledTimes(2);
+    expect(statuses.at(-1)).toBe('open');
+    expect(onMessage.mock.calls).toEqual([['readmitted']]);
+  });
+
   it('opens a fresh connection when the channel is subscribed again after a revocation', async () => {
     const server = fakeServer();
     const adapter = createSseRealtimeClientAdapter({ open: server.open });

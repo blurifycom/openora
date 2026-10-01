@@ -88,19 +88,7 @@ export function createSseRealtimeClientAdapter({
     stream.retryTimer = setTimeout(() => connect(channel, stream), delay);
   };
 
-  const revoke = (channel: string, stream: ChannelStream) => {
-    stop(stream);
-    if (streams.get(channel) === stream) {
-      streams.delete(channel);
-    }
-    setStatus(stream, 'closed');
-  };
-
-  const dispatch = (
-    channel: string,
-    stream: ChannelStream,
-    event: RealtimeStreamEvent<unknown>,
-  ) => {
+  const dispatch = (stream: ChannelStream, event: RealtimeStreamEvent<unknown>) => {
     if (event.type === 'message') {
       notify(stream.subscribers, (subscriber) => subscriber.onMessage(event.message));
       return;
@@ -108,7 +96,8 @@ export function createSseRealtimeClientAdapter({
     const { name, payload } = event.signal;
     notify(stream.subscribers, (subscriber) => subscriber.onSignal?.(name, payload));
     if (name === ACCESS_REVOKED_SIGNAL) {
-      revoke(channel, stream);
+      stop(stream);
+      setStatus(stream, 'closed');
     }
   };
 
@@ -128,7 +117,7 @@ export function createSseRealtimeClientAdapter({
           return;
         }
         stream.retryCount = 0;
-        dispatch(channel, stream, event);
+        dispatch(stream, event);
         if (controller.signal.aborted) {
           return;
         }

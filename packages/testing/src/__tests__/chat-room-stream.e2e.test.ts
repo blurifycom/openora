@@ -4,8 +4,10 @@ import { loadExtensions } from '@openora/core/server';
 import { ACCESS_REVOKED_SIGNAL, chatChannel } from '@openora/core/contracts';
 import {
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+  ChatMessageSchema,
   ChatRoomSchema,
   ChatRoomStreamEventSchema,
+  ChatSignalSchema,
   type ChatRoomStreamEvent,
 } from '@openora/core/engagement/contracts/chat';
 import {
@@ -23,13 +25,15 @@ const STREAM_PATH = '/chat/room-stream';
 
 let db: TestDb;
 let app: TestApp;
-const openStreams: RoomStream[] = [];
+const openStreams: EventStream<unknown>[] = [];
 
-type RoomStream = {
+type EventStream<T> = {
   response: Response;
-  next: () => Promise<ChatRoomStreamEvent | null>;
+  next: () => Promise<T | null>;
   close: () => Promise<void>;
 };
+type RoomStream = EventStream<ChatRoomStreamEvent>;
+type Request = (path: string, init?: RequestInit) => Promise<Response>;
 
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_SETTLE_MS));
@@ -45,11 +49,15 @@ function parseBlock(block: string): { event: string; data: string } {
   return { event: field('event'), data: field('data') };
 }
 
-function readRoomStream(response: Response, controller: AbortController): RoomStream {
+function readEventStream<T>(
+  response: Response,
+  controller: AbortController,
+  parse: (data: unknown) => T,
+): EventStream<T> {
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  const next = async (): Promise<ChatRoomStreamEvent | null> => {
+  const next = async (): Promise<T | null> => {
     if (!reader) {
       return null;
     }
@@ -62,7 +70,7 @@ function readRoomStream(response: Response, controller: AbortController): RoomSt
           return null;
         }
         if (event === 'message') {
-          return ChatRoomStreamEventSchema.parse(JSON.parse(data));
+          return parse(JSON.parse(data));
         }
         continue;
       }
@@ -80,19 +88,30 @@ function readRoomStream(response: Response, controller: AbortController): RoomSt
   return { response, next, close };
 }
 
-async function openRoomStream(
-  request: (path: string, init?: RequestInit) => Promise<Response>,
+async function openEventStream<T>(
+  request: Request,
+  path: string,
+  parse: (data: unknown) => T,
   roomId?: string,
-): Promise<RoomStream> {
+): Promise<EventStream<T>> {
   const controller = new AbortController();
   const query = roomId ? `?${new URLSearchParams({ roomId }).toString()}` : '';
-  const response = await request(`${STREAM_PATH}${query}`, {
+  const response = await request(`${path}${query}`, {
     method: 'GET',
     signal: controller.signal,
   });
-  const stream = readRoomStream(response, controller);
+  const stream = readEventStream(response, controller, parse);
   openStreams.push(stream);
   return stream;
+}
+
+function openRoomStream(request: Request, roomId?: string): Promise<RoomStream> {
+  return openEventStream(
+    request,
+    STREAM_PATH,
+    (data) => ChatRoomStreamEventSchema.parse(data),
+    roomId,
+  );
 }
 
 async function registerChatter(prefix: string) {
@@ -222,5 +241,59 @@ describe('chat room stream: both lanes of a room on one connection', () => {
 
     expect(stream.response.status).toBe(200);
     expect(stream.response.headers.get('content-type')).toContain('text/event-stream');
+  });
+});
+
+describe('deprecated single-lane chat streams', () => {
+  it('/chat/stream delivers plain room messages to a member', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const stream = await openEventStream(
+      member.client.request,
+      '/chat/stream',
+      (data) => ChatMessageSchema.parse(data),
+      room.id,
+    );
+    expect(stream.response.status).toBe(200);
+    await settle();
+
+    await owner.client.post(`/chat/rooms/${room.id}/messages`, { content: 'legacy hello' });
+
+    expect(await stream.next()).toMatchObject({ roomId: room.id, content: 'legacy hello' });
+  });
+
+  it('/chat/stream ends a removed member stream and refuses the reconnect', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('leaver');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const parse = (data: unknown) => ChatMessageSchema.parse(data);
+    const stream = await openEventStream(member.client.request, '/chat/stream', parse, room.id);
+    await settle();
+
+    await owner.client.post(`/chat/rooms/${room.id}/remove`, { userId: member.userId });
+
+    expect(await stream.next()).toBeNull();
+    const reconnect = await openEventStream(member.client.request, '/chat/stream', parse, room.id);
+    expect(reconnect.response.status).toBe(403);
+  });
+
+  it('/chat/signals delivers access-revoked to a removed member, ends, and refuses the reconnect', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('leaver');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const parse = (data: unknown) => ChatSignalSchema.parse(data);
+    const stream = await openEventStream(member.client.request, '/chat/signals', parse, room.id);
+    await settle();
+
+    await owner.client.post(`/chat/rooms/${room.id}/remove`, { userId: member.userId });
+
+    expect(await stream.next()).toEqual({
+      name: ACCESS_REVOKED_SIGNAL,
+      payload: { channel: chatChannel(room.id) },
+    });
+    expect(await stream.next()).toBeNull();
+    const reconnect = await openEventStream(member.client.request, '/chat/signals', parse, room.id);
+    expect(reconnect.response.status).toBe(403);
   });
 });

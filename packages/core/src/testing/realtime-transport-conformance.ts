@@ -113,10 +113,11 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
         expect(got).toEqual([1]);
       });
 
-      it('revoking on one instance signals and cuts only that user on a sibling instance', async () => {
+      it('revoking on one instance signals and cuts only that user on a sibling instance', async (ctx) => {
         const origin = harness.create();
         const sibling = harness.create();
         if (!origin.revokeUserFromChannel || !origin.signal || !sibling.subscribeSignal) {
+          ctx.skip();
           return;
         }
         const channel = `chat:room:${randomUUID()}`;

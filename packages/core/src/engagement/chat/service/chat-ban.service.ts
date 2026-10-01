@@ -1,5 +1,10 @@
 import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
-import { DrizzleService, serializeRow, withAdvisoryXactLock } from '@openora/core/server';
+import {
+  DrizzleService,
+  mapConcurrent,
+  serializeRow,
+  withAdvisoryXactLock,
+} from '@openora/core/server';
 import type {
   AuditWritePort,
   ChatModerationRoomId,
@@ -15,6 +20,8 @@ import {
   ChatAdminPrivateRoomModerationError,
   ChatRoomNotFoundError,
 } from './errors/chat-moderation.errors.js';
+
+const ROOM_REVOKE_CONCURRENCY = 10;
 
 export class ChatBanService {
   constructor(
@@ -115,23 +122,22 @@ export class ChatBanService {
         .select({ id: chatRoom.id })
         .from(chatRoom)
         .where(and(eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)));
-      await Promise.all([
-        this.transport?.revokeUserFromChannel?.(userId, chatChannel(null)),
-        ...publicRooms.map(({ id }) =>
-          this.transport?.revokeUserFromChannel?.(userId, `chat:room:${id}`),
-        ),
-      ]);
+      await this.revokeFromRooms(userId, publicRooms);
     } else if (scope === '__all') {
       const rooms = await this.drizzle.db
         .select({ id: chatRoom.id })
         .from(chatRoom)
         .where(isNull(chatRoom.deletedAt));
-      await Promise.all([
-        this.transport?.revokeUserFromChannel?.(userId, chatChannel(null)),
-        ...rooms.map(({ id }) => this.transport?.revokeUserFromChannel?.(userId, chatChannel(id))),
-      ]);
+      await this.revokeFromRooms(userId, rooms);
     }
     return { success: true } as const;
+  }
+
+  private async revokeFromRooms(userId: Uuid, rooms: { id: Uuid }[]) {
+    await this.transport?.revokeUserFromChannel?.(userId, chatChannel(null));
+    await mapConcurrent(rooms, ROOM_REVOKE_CONCURRENCY, async ({ id }) => {
+      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(id));
+    });
   }
 
   async unban({

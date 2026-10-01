@@ -107,8 +107,9 @@ export type RealtimeTransport = {
    *
    * Reach is every connection the deployment holds for that user on the channel.
    * `RedisPubSubRealtimeTransport` revokes its own synchronously and fans out over Redis to
-   * sibling replicas sharing its `SERVICE_NAME`; a replica disconnected from Redis at that
-   * moment misses it.
+   * sibling replicas sharing its `SERVICE_NAME`. The fan-out is best-effort: when the revoking
+   * replica cannot publish, the call still resolves and only its own connections are cut, and a
+   * sibling disconnected from Redis at that moment misses it.
    */
   revokeUserFromChannel?: (userId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;
