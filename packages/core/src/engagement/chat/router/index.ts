@@ -48,6 +48,7 @@ import {
   ChatPlayerMutedError,
   ChatPlayerBannedError,
   ChatAdminPrivateRoomModerationError,
+  ChatRoomLockedError,
   ChatRoomNotFoundError,
 } from '../service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
@@ -117,27 +118,14 @@ export function createChatRouter({
   const os = implement(chat).$context<OssContext>();
 
   // Private-room streams require membership; public-room and global streams are readable anonymously.
-  const authorizeChannel = async (
-    input: { roomId?: ChatRoom['id'] | null },
-    context: OssContext,
-  ) => {
-    const roomId = input.roomId ?? null;
-    const viewerId = resolveViewerId(context);
-    if (roomId) {
-      await mapErrors(
-        {
-          NOT_FOUND: ChatRoomNotFoundError,
-          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-        },
-        () => chatService.verifyRoomAccess(roomId, viewerId),
-      );
-    } else {
-      await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-        chatService.verifyGlobalAccess(viewerId),
-      );
-    }
-    return roomId;
-  };
+  const authorizeChannel = (input: { roomId?: ChatRoom['id'] | null }, context: OssContext) =>
+    mapErrors(
+      {
+        NOT_FOUND: ChatRoomNotFoundError,
+        FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+      },
+      () => chatService.verifyChannelAccess(input.roomId ?? null, resolveViewerId(context)),
+    );
 
   const openRoomStream = async (
     input: { roomId?: ChatRoom['id'] | null },
@@ -294,7 +282,7 @@ export function createChatRouter({
       ];
       return authorizer.issueGrant({
         userId: viewerId,
-        clientId: input.clientId ?? viewerId,
+        clientId: input.clientId ? `${viewerId}:${input.clientId}` : viewerId,
         channels,
       });
     }),
@@ -321,23 +309,9 @@ export function createChatRouter({
       );
     }),
 
-    getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) => {
-      const roomId = input.roomId ?? null;
-      if (roomId) {
-        await mapErrors(
-          {
-            NOT_FOUND: ChatRoomNotFoundError,
-            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-          },
-          () => chatService.verifyRoomAccess(roomId, resolveViewerId(context)),
-        );
-      } else {
-        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-          chatService.verifyGlobalAccess(resolveViewerId(context)),
-        );
-      }
-      return chatService.getOnlineCount(roomId);
-    }),
+    getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) =>
+      chatService.getOnlineCount(await authorizeChannel(input, context)),
+    ),
 
     listBlockedUsers: os.listBlockedUsers.handler(({ input, context }) =>
       chatService.listBlockedUsers({ blockerId: getUserId(context), ...input }),
@@ -393,7 +367,10 @@ export function createChatRouter({
         JOIN_ROOM_RATE_LIMIT,
       );
       return mapErrors(
-        { NOT_FOUND: ChatRoomJoinCodeNotFoundError, FORBIDDEN: ChatRoomBannedError },
+        {
+          NOT_FOUND: ChatRoomJoinCodeNotFoundError,
+          FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError],
+        },
         () =>
           membershipService.joinRoom({ userId, joinCode: input.joinCode, ...context.clientMeta }),
       );
@@ -406,13 +383,15 @@ export function createChatRouter({
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_JOIN, userId),
         JOIN_ROOM_RATE_LIMIT,
       );
-      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomBannedError }, () =>
-        membershipService.joinPublicRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError] },
+        () =>
+          membershipService.joinPublicRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
       );
     }),
 
     adminJoinRoom: os.adminJoinRoom.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'view');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'update');
       return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
         membershipService.adminJoinRoom({ roomId: input.roomId, userId, ip, userAgent }),
       );
@@ -458,21 +437,36 @@ export function createChatRouter({
           NOT_FOUND: ChatRoomNotFoundError,
           FORBIDDEN: [ChatRoomNotMemberError, ChatRoomNotModeratorError],
         },
-        () => chatService.createRoomRule({ ...input, actorId: getUserId(context) }),
+        () =>
+          chatService.createRoomRule({
+            ...input,
+            actorId: getUserId(context),
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     updateRoomRule: os.updateRoomRule.handler(({ input, context }) =>
       mapErrors(
         { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomRuleNotFoundError },
-        () => chatService.updateRoomRule({ ...input, actorId: getUserId(context) }),
+        () =>
+          chatService.updateRoomRule({
+            ...input,
+            actorId: getUserId(context),
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     deleteRoomRule: os.deleteRoomRule.handler(({ input, context }) =>
       mapErrors(
         { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomRuleNotFoundError },
-        () => chatService.deleteRoomRule({ ...input, actorId: getUserId(context) }),
+        () =>
+          chatService.deleteRoomRule({
+            ...input,
+            actorId: getUserId(context),
+            ...context.clientMeta,
+          }),
       ),
     ),
 
@@ -484,7 +478,11 @@ export function createChatRouter({
 
     updateRoomConfiguration: os.updateRoomConfiguration.handler(({ input, context }) =>
       mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        chatService.updateRoomConfiguration({ ...input, actorId: getUserId(context) }),
+        chatService.updateRoomConfiguration({
+          ...input,
+          actorId: getUserId(context),
+          ...context.clientMeta,
+        }),
       ),
     ),
 

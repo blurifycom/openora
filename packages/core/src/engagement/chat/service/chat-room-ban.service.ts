@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
 import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
 import type {
@@ -69,36 +69,22 @@ export class ChatRoomBanService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
+    const expiresAt =
+      durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
-        const [existing] = await t
-          .select({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt })
-          .from(chatRoomBan)
+        await t
+          .update(chatRoomBan)
+          .set({ liftedAt: new Date(), liftedBy: moderatorId })
           .where(
             and(
               eq(chatRoomBan.roomId, roomId),
               eq(chatRoomBan.userId, userId),
               isNull(chatRoomBan.liftedAt),
             ),
-          )
-          .limit(1);
-        if (existing && (!existing.expiresAt || existing.expiresAt > new Date())) {
-          return;
-        }
-        if (existing) {
-          await t
-            .update(chatRoomBan)
-            .set({ liftedAt: new Date(), liftedBy: moderatorId })
-            .where(eq(chatRoomBan.id, existing.id));
-        }
-        await t.insert(chatRoomBan).values({
-          roomId,
-          userId,
-          bannedBy: moderatorId,
-          expiresAt:
-            durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000),
-        });
+          );
+        await t.insert(chatRoomBan).values({ roomId, userId, bannedBy: moderatorId, expiresAt });
         await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
@@ -109,16 +95,10 @@ export class ChatRoomBanService {
       userId,
       bannedBy: moderatorId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(moderatorId),
+      reason,
+      expiresAt: expiresAt?.toISOString() ?? null,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
-    });
-    await this.audit.record({
-      actorId: moderatorId,
-      actorType: 'player',
-      action: 'chat.room.member.banned',
-      resourceType: 'chat_room_ban',
-      resourceId: null,
-      after: { roomId, userId, durationSeconds, reason },
     });
     await revokeChannelBestEffort(this.transport, userId, roomId);
     return { success: true } as const;
@@ -136,7 +116,7 @@ export class ChatRoomBanService {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId);
-        await t
+        const [lifted] = await t
           .update(chatRoomBan)
           .set({ liftedAt: new Date(), liftedBy: moderatorId })
           .where(
@@ -144,18 +124,23 @@ export class ChatRoomBanService {
               eq(chatRoomBan.roomId, roomId),
               eq(chatRoomBan.userId, userId),
               isNull(chatRoomBan.liftedAt),
+              or(isNull(chatRoomBan.expiresAt), gt(chatRoomBan.expiresAt, new Date())),
             ),
-          );
+          )
+          .returning({ id: chatRoomBan.id });
+        if (!lifted) {
+          return;
+        }
+        await this.audit.recordInTransaction(t, {
+          actorId: moderatorId,
+          actorType: 'player',
+          action: 'chat.room.member.unbanned',
+          resourceType: 'chat_room_ban',
+          resourceId: lifted.id,
+          after: { roomId, userId },
+        });
       }),
     );
-    await this.audit.record({
-      actorId: moderatorId,
-      actorType: 'player',
-      action: 'chat.room.member.unbanned',
-      resourceType: 'chat_room_ban',
-      resourceId: null,
-      after: { roomId, userId },
-    });
     return { success: true } as const;
   }
 }

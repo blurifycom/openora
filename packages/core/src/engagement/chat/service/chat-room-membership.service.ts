@@ -14,7 +14,13 @@ import {
   type RealtimeTransport,
   type Uuid,
 } from '@openora/core/contracts';
-import { chatRoom, chatRoomBan, chatRoomMember, chatRoomRemove } from '../schema/index.js';
+import {
+  chatRoom,
+  chatRoomBan,
+  chatRoomConfiguration,
+  chatRoomMember,
+  chatRoomRemove,
+} from '../schema/index.js';
 import type {
   ChatMemberRoleChangedSignal,
   ChatRoomAssignableRole,
@@ -30,6 +36,7 @@ import {
   ChatRoomBannedError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomLastModeratorError,
+  ChatRoomLockedError,
   ChatRoomNotFoundError,
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
@@ -73,7 +80,7 @@ export class ChatRoomMembershipService {
   private async join(
     roomId: Uuid,
     userId: Uuid,
-    meta: ClientMeta,
+    meta: ClientMeta & { adminId?: Uuid },
     predicate: ReturnType<typeof and>,
   ) {
     const { room, inserted } = await this.drizzle.db.transaction((t) =>
@@ -81,6 +88,16 @@ export class ChatRoomMembershipService {
         const [room] = await t.select().from(chatRoom).where(predicate).limit(1);
         if (!room) {
           throw new ChatRoomNotFoundError(roomId);
+        }
+        if (!meta.adminId) {
+          const [config] = await t
+            .select({ lockRoom: chatRoomConfiguration.lockRoom })
+            .from(chatRoomConfiguration)
+            .where(eq(chatRoomConfiguration.roomId, roomId))
+            .limit(1);
+          if (config?.lockRoom) {
+            throw new ChatRoomLockedError(roomId);
+          }
         }
         const [ban] = await t
           .select({ id: chatRoomBan.id })
@@ -110,6 +127,7 @@ export class ChatRoomMembershipService {
         roomId,
         userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        ...(meta.adminId ? { adminId: meta.adminId } : {}),
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
@@ -153,7 +171,7 @@ export class ChatRoomMembershipService {
     return this.join(
       roomId,
       userId,
-      { ip, userAgent },
+      { ip, userAgent, adminId: userId },
       and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)),
     );
   }
@@ -255,24 +273,28 @@ export class ChatRoomMembershipService {
         const removed = await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-          .returning();
-        if (removed.length > 0) {
-          await t.insert(chatRoomRemove).values({ roomId, userId, removedBy: moderatorId, reason });
+          .returning({ id: chatRoomMember.id });
+        if (removed.length === 0) {
+          return false;
         }
-        return removed;
+        const [removal] = await t
+          .insert(chatRoomRemove)
+          .values({ roomId, userId, removedBy: moderatorId, reason })
+          .returning({ id: chatRoomRemove.id });
+        await this.audit.recordInTransaction(t, {
+          actorId: moderatorId,
+          actorType: 'player',
+          action: 'chat.room.member.removed',
+          resourceType: 'chat_room_remove',
+          resourceId: removal.id,
+          after: { roomId, userId, reason },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+        return true;
       }),
     );
-    if (removed.length > 0) {
-      await this.audit?.record({
-        actorId: moderatorId,
-        actorType: 'player',
-        action: 'chat.room.member.removed',
-        resourceType: 'chat_room_remove',
-        resourceId: removed[0].id,
-        after: { roomId, userId, reason },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
+    if (removed) {
       this.events.emit('chat.room.member.removed', {
         roomId,
         userId,

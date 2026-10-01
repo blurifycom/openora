@@ -14,13 +14,18 @@ import type {
   RealtimeTransport,
   Uuid,
 } from '@openora/core/contracts';
-import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
-import {
-  ChatAdminPrivateRoomModerationError,
-  ChatRoomNotFoundError,
-} from './errors/chat-moderation.errors.js';
+import { resolveModerationTarget, type ModerationTarget } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
+
+function activeBanFilter(userId: Uuid, target: ModerationTarget) {
+  return and(
+    eq(chatPlatformBan.userId, userId),
+    eq(chatPlatformBan.scope, target.scope),
+    target.roomId ? eq(chatPlatformBan.roomId, target.roomId) : isNull(chatPlatformBan.roomId),
+    isNull(chatPlatformBan.liftedAt),
+  );
+}
 
 export class ChatBanService {
   constructor(
@@ -44,89 +49,66 @@ export class ChatBanService {
     reason: string;
     actorId: Uuid;
   } & ClientMeta) {
-    const scope =
-      roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
-    const concreteRoomId = scope === 'room' ? roomId : null;
-    if (concreteRoomId || scope === GLOBAL_CHAT_ROOM_ID) {
-      const [room] = await this.drizzle.db
-        .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
-        .from(chatRoom)
-        .where(
-          and(
-            concreteRoomId
-              ? eq(chatRoom.id, concreteRoomId)
-              : eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID),
-            isNull(chatRoom.deletedAt),
-          ),
-        )
-        .limit(1);
-      if (!room) {
-        throw new ChatRoomNotFoundError(concreteRoomId ?? GLOBAL_CHAT_ROOM_ID);
-      }
-      if (!room.isPublic) {
-        throw new ChatAdminPrivateRoomModerationError();
-      }
-    }
+    const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: true });
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
-    const created = await this.drizzle.db.transaction((t) =>
+    await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
         const now = new Date();
-        const [existing] = await t
-          .select({ id: chatPlatformBan.id, expiresAt: chatPlatformBan.expiresAt })
-          .from(chatPlatformBan)
-          .where(
-            and(
-              eq(chatPlatformBan.userId, userId),
-              eq(chatPlatformBan.scope, scope),
-              concreteRoomId
-                ? eq(chatPlatformBan.roomId, concreteRoomId)
-                : isNull(chatPlatformBan.roomId),
-              isNull(chatPlatformBan.liftedAt),
-            ),
-          )
-          .limit(1);
-        if (existing && (!existing.expiresAt || existing.expiresAt > now)) {
-          return existing;
-        }
-        if (existing) {
-          await t
-            .update(chatPlatformBan)
-            .set({ liftedAt: now, liftedBy: actorId })
-            .where(eq(chatPlatformBan.id, existing.id));
-        }
-        const [inserted] = await t
+        const [previous] = await t
+          .update(chatPlatformBan)
+          .set({ liftedAt: now, liftedBy: actorId })
+          .where(activeBanFilter(userId, target))
+          .returning({
+            id: chatPlatformBan.id,
+            reason: chatPlatformBan.reason,
+            expiresAt: chatPlatformBan.expiresAt,
+          });
+        const [created] = await t
           .insert(chatPlatformBan)
-          .values({ userId, bannedBy: actorId, roomId: concreteRoomId, scope, reason, expiresAt })
-          .returning();
-        return inserted;
+          .values({
+            userId,
+            bannedBy: actorId,
+            roomId: target.roomId,
+            scope: target.scope,
+            reason,
+            expiresAt,
+          })
+          .returning({ id: chatPlatformBan.id });
+        const previousActive = previous && (!previous.expiresAt || previous.expiresAt > now);
+        await this.audit.recordInTransaction(t, {
+          actorId,
+          actorType: 'admin',
+          action: 'chat.platform_ban.created',
+          resourceType: 'chat_platform_ban',
+          resourceId: created.id,
+          before: previousActive
+            ? {
+                banId: previous.id,
+                reason: previous.reason,
+                expiresAt: previous.expiresAt?.toISOString() ?? null,
+              }
+            : null,
+          after: {
+            userId,
+            scope: target.scope,
+            roomId: target.roomId,
+            reason,
+            expiresAt: expiresAt?.toISOString() ?? null,
+          },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
       }),
     );
-    await this.audit.record({
-      actorId,
-      actorType: 'admin',
-      action: 'chat.platform_ban.created',
-      resourceType: 'chat_platform_ban',
-      resourceId: created?.id ?? null,
-      after: { userId, roomId, reason, expiresAt: expiresAt?.toISOString() ?? null },
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
-    await this.revokeChannels(userId, await this.roomsToRevoke(userId, scope, concreteRoomId));
+    await this.revokeChannels(userId, await this.roomsToRevoke(userId, target));
     return { success: true } as const;
   }
 
   // `null` is the global channel.
-  private async roomsToRevoke(
-    userId: Uuid,
-    scope: ChatModerationScope,
-    concreteRoomId: Uuid | null,
-  ): Promise<(Uuid | null)[]> {
-    if (concreteRoomId) {
-      return [concreteRoomId];
-    }
-    if (scope === '__global') {
-      return [null];
+  private async roomsToRevoke(userId: Uuid, target: ModerationTarget): Promise<(Uuid | null)[]> {
+    if (target.scope !== '__all_public' && target.scope !== '__all') {
+      return [target.roomId];
     }
     const memberRoomIds = this.drizzle.db
       .select({ roomId: chatRoomMember.roomId })
@@ -138,7 +120,7 @@ export class ChatBanService {
       .where(
         and(
           isNull(chatRoom.deletedAt),
-          scope === '__all'
+          target.scope === '__all'
             ? or(eq(chatRoom.isPublic, true), inArray(chatRoom.id, memberRoomIds))
             : eq(chatRoom.isPublic, true),
         ),
@@ -159,37 +141,32 @@ export class ChatBanService {
     ip,
     userAgent,
   }: { userId: Uuid; roomId: ChatModerationRoomId; actorId: Uuid } & ClientMeta) {
-    const scope =
-      roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
-    const concreteRoomId = scope === 'room' ? roomId : null;
+    const target = await resolveModerationTarget(this.drizzle.db, roomId, { validate: false });
     const liftedAt = new Date();
-    const [lifted] = await this.drizzle.db
-      .update(chatPlatformBan)
-      .set({ liftedAt, liftedBy: actorId })
-      .where(
-        and(
-          eq(chatPlatformBan.userId, userId),
-          // Same predicate listBans and assertCanSend apply: a lapsed ban is not active,
-          // so there is nothing to lift. Without this an admin lifting a row that has
-          // just expired puts both `expired` and `lifted` on its trail.
-          or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, liftedAt)),
-          eq(chatPlatformBan.scope, scope),
-          concreteRoomId
-            ? eq(chatPlatformBan.roomId, concreteRoomId)
-            : isNull(chatPlatformBan.roomId),
-          isNull(chatPlatformBan.liftedAt),
-        ),
-      )
-      .returning({ id: chatPlatformBan.id });
-    await this.audit.record({
-      actorId,
-      actorType: 'admin',
-      action: 'chat.platform_ban.lifted',
-      resourceType: 'chat_platform_ban',
-      resourceId: lifted?.id ?? null,
-      after: { userId, roomId },
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
+    await this.drizzle.db.transaction(async (t) => {
+      const [lifted] = await t
+        .update(chatPlatformBan)
+        .set({ liftedAt, liftedBy: actorId })
+        .where(
+          and(
+            activeBanFilter(userId, target),
+            or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, liftedAt)),
+          ),
+        )
+        .returning({ id: chatPlatformBan.id });
+      if (!lifted) {
+        return;
+      }
+      await this.audit.recordInTransaction(t, {
+        actorId,
+        actorType: 'admin',
+        action: 'chat.platform_ban.lifted',
+        resourceType: 'chat_platform_ban',
+        resourceId: lifted.id,
+        after: { userId, scope: target.scope, roomId: target.roomId },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     });
     return { success: true } as const;
   }

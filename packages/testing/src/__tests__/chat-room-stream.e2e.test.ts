@@ -335,6 +335,26 @@ describe('chat room stream: both lanes of a room on one connection', () => {
     expect(await stream.next()).toBeNull();
   });
 
+  it('broadcasts a deleted message without its content', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const stream = await openRoomStream(owner.client.request, room.id);
+    await stream.waitUntilLive(postProbe(owner.client, room.id));
+    const sent = await member.client.post(`/chat/rooms/${room.id}/messages`, {
+      content: 'regrettable',
+    });
+    const { id } = (await sent.json()) as { id: string };
+    await stream.next();
+
+    expect((await owner.client.del(`/chat/messages/${id}`)).status).toBe(200);
+
+    expect(await stream.next()).toMatchObject({
+      type: 'message',
+      message: { id, isDeleted: true, content: '', attachment: null },
+    });
+  });
+
   it('cuts only the removed member, and keeps streaming to the rest', async () => {
     const owner = await registerChatter('host');
     const removedMember = await registerChatter('leaver');

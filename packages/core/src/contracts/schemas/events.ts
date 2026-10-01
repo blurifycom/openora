@@ -853,6 +853,7 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    adminId: UuidSchema.optional(),
   }),
   'chat.room.member.left': authContextBase.extend({
     roomId: UuidSchema,
@@ -888,6 +889,8 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     bannedBy: UuidSchema,
     playerId: UuidSchema.nullable(),
+    reason: z.string().optional(),
+    expiresAt: z.iso.datetime().nullable().optional(),
   }),
 
   'chat.room.ownership.transferred': authContextBase.extend({

@@ -64,3 +64,7 @@ export const ChatRoomBannedError = createDomainError(
   'ChatRoomBannedError',
   (roomId: Uuid) => `You are banned from room: ${roomId}`,
 );
+export const ChatRoomLockedError = createDomainError(
+  'ChatRoomLockedError',
+  (roomId: Uuid) => `Room is locked: ${roomId}`,
+);

@@ -2641,15 +2641,23 @@ describe('ChatService moderation (real PG)', () => {
     ).toHaveLength(1);
   });
 
-  it('is idempotent on a repeated ban', async () => {
+  it('replaces the active ban on a repeated ban', async () => {
     const { svc, room, moderatorId, memberId } = await roomWithMember();
 
-    await svc.banMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META });
+    await svc.banMember({
+      moderatorId,
+      roomId: room.id,
+      userId: memberId,
+      durationSeconds: 60,
+      ...NO_CLIENT_META,
+    });
     await svc.banMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META });
 
-    expect(
-      await db.drizzle.db.select().from(chatRoomBan).where(eq(chatRoomBan.roomId, room.id)),
-    ).toHaveLength(1);
+    const active = await db.drizzle.db
+      .select()
+      .from(chatRoomBan)
+      .where(and(eq(chatRoomBan.roomId, room.id), isNull(chatRoomBan.liftedAt)));
+    expect(active).toEqual([expect.objectContaining({ userId: memberId, expiresAt: null })]);
   });
 
   it('refuses moderation by a plain member', async () => {
@@ -2762,7 +2770,8 @@ describe('ChatService moderation (real PG)', () => {
     await expect(
       svc.sendRoomMessage({ userId, username: 'Muted', roomId: room.id, content: 'hello' }),
     ).rejects.toBeInstanceOf(ChatPlayerMutedError);
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ action: 'chat.mute.created', resourceType: 'chat_mute' }),
     );
   });
@@ -2953,8 +2962,9 @@ describe('ChatService moderation (real PG)', () => {
     await moderation.deleteMessage(message.id, randomUUID(), NO_CLIENT_META);
     await waitFor(() => received.length === 1);
 
-    expect(received[0]).toMatchObject({ id: message.id, isDeleted: true });
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(received[0]).toMatchObject({ id: message.id, isDeleted: true, content: '' });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ action: 'chat.message.deleted', resourceId: message.id }),
     );
     await expect(svc.getGlobalMessages()).resolves.toEqual([]);

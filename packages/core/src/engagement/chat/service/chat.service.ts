@@ -288,6 +288,21 @@ function toConfiguration(record: typeof chatRoomConfiguration.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
 
+function configurationSettings(record: typeof chatRoomConfiguration.$inferSelect) {
+  const {
+    id: _id,
+    roomId: _roomId,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    ...settings
+  } = record;
+  return settings;
+}
+
+function isGlobalRoom(room: { slug: string }) {
+  return room.slug === GLOBAL_CHAT_ROOM_ID;
+}
+
 const COMMAND_METADATA_MONEY_KEYS = ['amount', 'perRecipient'] as const;
 
 function canonicalizeMoneyString(value: string): string {
@@ -592,6 +607,7 @@ export class ChatService {
               ? or(
                   eq(chatPlatformBan.scope, '__all'),
                   eq(chatPlatformBan.scope, '__all_public'),
+                  isGlobalRoom(room) ? eq(chatPlatformBan.scope, '__global') : undefined,
                   and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
                 )
               : or(
@@ -619,6 +635,16 @@ export class ChatService {
       }
     }
     return room;
+  }
+
+  /** Verifies access and returns the room's channel key: null for the global room under either id. */
+  async verifyChannelAccess(roomId: ChatRoom['id'] | null, viewerId?: User['id']) {
+    if (roomId === null) {
+      await this.verifyGlobalAccess(viewerId);
+      return null;
+    }
+    const room = await this.verifyRoomAccess(roomId, viewerId);
+    return isGlobalRoom(room) ? null : room.id;
   }
 
   async verifyGlobalAccess(viewerId?: User['id']) {
@@ -898,27 +924,42 @@ export class ChatService {
     actorId,
     orderNum,
     content,
+    ip,
+    userAgent,
   }: {
     roomId: ChatRoom['id'];
     actorId: User['id'];
     orderNum?: number;
     content: string;
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    let nextOrder = orderNum;
-    if (nextOrder === undefined) {
-      const [last] = await this.drizzle.db
-        .select({ orderNum: chatRoomRule.orderNum })
-        .from(chatRoomRule)
-        .where(eq(chatRoomRule.roomId, roomId))
-        .orderBy(desc(chatRoomRule.orderNum))
-        .limit(1);
-      nextOrder = (last?.orderNum ?? 0) + 1;
-    }
-    const [created] = await this.drizzle.db
-      .insert(chatRoomRule)
-      .values({ roomId, createdBy: actorId, orderNum: nextOrder, content })
-      .returning();
+    const created = await this.drizzle.db.transaction(async (tx) => {
+      let nextOrder = orderNum;
+      if (nextOrder === undefined) {
+        const [last] = await tx
+          .select({ orderNum: chatRoomRule.orderNum })
+          .from(chatRoomRule)
+          .where(eq(chatRoomRule.roomId, roomId))
+          .orderBy(desc(chatRoomRule.orderNum))
+          .limit(1);
+        nextOrder = (last?.orderNum ?? 0) + 1;
+      }
+      const [rule] = await tx
+        .insert(chatRoomRule)
+        .values({ roomId, createdBy: actorId, orderNum: nextOrder, content })
+        .returning();
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.rule.created',
+        resourceType: 'chat_room_rule',
+        resourceId: rule.id,
+        after: { roomId, orderNum: rule.orderNum, content: rule.content },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+      return rule;
+    });
     return toRule(created);
   }
 
@@ -928,13 +969,15 @@ export class ChatService {
     actorId,
     orderNum,
     content,
+    ip,
+    userAgent,
   }: {
     roomId: ChatRoom['id'];
     id: string;
     actorId: User['id'];
     orderNum?: number;
     content?: string;
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
     const patch: Partial<typeof chatRoomRule.$inferInsert> = { updatedAt: new Date() };
     if (orderNum !== undefined) {
@@ -943,14 +986,33 @@ export class ChatService {
     if (content !== undefined) {
       patch.content = content;
     }
-    const updated = findOneOrThrow(
-      await this.drizzle.db
+    const updated = await this.drizzle.db.transaction(async (tx) => {
+      const before = findOneOrThrow(
+        await tx
+          .select()
+          .from(chatRoomRule)
+          .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
+          .for('update'),
+        new ChatRoomRuleNotFoundError(id),
+      );
+      const [after] = await tx
         .update(chatRoomRule)
         .set(patch)
-        .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
-        .returning(),
-      new ChatRoomRuleNotFoundError(id),
-    );
+        .where(eq(chatRoomRule.id, id))
+        .returning();
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.rule.updated',
+        resourceType: 'chat_room_rule',
+        resourceId: id,
+        before: { roomId, orderNum: before.orderNum, content: before.content },
+        after: { roomId, orderNum: after.orderNum, content: after.content },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+      return after;
+    });
     return toRule(updated);
   }
 
@@ -958,31 +1020,58 @@ export class ChatService {
     roomId,
     id,
     actorId,
+    ip,
+    userAgent,
   }: {
     roomId: ChatRoom['id'];
     id: string;
     actorId: User['id'];
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    findOneOrThrow(
-      await this.drizzle.db
-        .delete(chatRoomRule)
-        .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
-        .returning({ id: chatRoomRule.id }),
-      new ChatRoomRuleNotFoundError(id),
-    );
+    await this.drizzle.db.transaction(async (tx) => {
+      const deleted = findOneOrThrow(
+        await tx
+          .delete(chatRoomRule)
+          .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
+          .returning(),
+        new ChatRoomRuleNotFoundError(id),
+      );
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.rule.deleted',
+        resourceType: 'chat_room_rule',
+        resourceId: id,
+        before: { roomId, orderNum: deleted.orderNum, content: deleted.content },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    });
     return { success: true } as const;
   }
 
-  async getRoomConfiguration(roomId: ChatRoom['id'], viewerId?: User['id']) {
-    await this.verifyRoomAccess(roomId, viewerId);
-    let [config] = await this.drizzle.db
+  private async findRoomConfiguration(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id']) {
+    const [config] = await db
       .select()
       .from(chatRoomConfiguration)
       .where(eq(chatRoomConfiguration.roomId, roomId))
       .limit(1);
+    return config;
+  }
+
+  async getRoomConfiguration(roomId: ChatRoom['id'], viewerId?: User['id']) {
+    await this.verifyRoomAccess(roomId, viewerId);
+    const existing = await this.findRoomConfiguration(this.drizzle.db, roomId);
+    if (existing) {
+      return toConfiguration(existing);
+    }
+    await this.drizzle.db
+      .insert(chatRoomConfiguration)
+      .values({ roomId })
+      .onConflictDoNothing({ target: chatRoomConfiguration.roomId });
+    const config = await this.findRoomConfiguration(this.drizzle.db, roomId);
     if (!config) {
-      [config] = await this.drizzle.db.insert(chatRoomConfiguration).values({ roomId }).returning();
+      throw new ChatRoomConfigurationNotFoundError(roomId);
     }
     return toConfiguration(config);
   }
@@ -990,6 +1079,8 @@ export class ChatService {
   async updateRoomConfiguration({
     roomId,
     actorId,
+    ip,
+    userAgent,
     ...patch
   }: {
     roomId: ChatRoom['id'];
@@ -1000,16 +1091,31 @@ export class ChatService {
     onlyInvitedCanJoin?: boolean;
     lockRoom?: boolean;
     moderatorInvite?: boolean;
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    const [config] = await this.drizzle.db
-      .insert(chatRoomConfiguration)
-      .values({ roomId, ...patch, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: chatRoomConfiguration.roomId,
-        set: { ...patch, updatedAt: new Date() },
-      })
-      .returning();
+    const config = await this.drizzle.db.transaction(async (tx) => {
+      const before = await this.findRoomConfiguration(tx, roomId);
+      const [after] = await tx
+        .insert(chatRoomConfiguration)
+        .values({ roomId, ...patch, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: chatRoomConfiguration.roomId,
+          set: { ...patch, updatedAt: new Date() },
+        })
+        .returning();
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.configuration.updated',
+        resourceType: 'chat_room_configuration',
+        resourceId: after.id,
+        before: before ? { roomId, ...configurationSettings(before) } : null,
+        after: { roomId, ...configurationSettings(after) },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+      return after;
+    });
     return toConfiguration(config);
   }
 
@@ -1107,10 +1213,10 @@ export class ChatService {
     before?: string;
     viewerId?: User['id'];
   }) {
-    await this.verifyRoomAccess(roomId, viewerId);
+    const room = await this.verifyRoomAccess(roomId, viewerId);
 
     const conditions = [
-      eq(chatMessage.roomId, roomId),
+      isGlobalRoom(room) ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
       eq(chatMessage.isDeleted, false),
       isNull(chatMessage.deletedAt),
     ];
@@ -1296,6 +1402,9 @@ export class ChatService {
   }) {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
+    if (isGlobalRoom(room)) {
+      return this.sendGlobalMessage({ userId, username, content, attachment });
+    }
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
