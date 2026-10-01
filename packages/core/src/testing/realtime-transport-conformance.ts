@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RealtimeTransport } from '@openora/core/contracts';
+import { randomUUID } from 'node:crypto';
+import {
+  ACCESS_REVOKED_SIGNAL,
+  type RealtimeSignal,
+  type RealtimeTransport,
+} from '@openora/core/contracts';
 
 export type RealtimeTransportHarness = {
   /** Used only in describe() block naming for readable output. */
   name: string;
+  /** Every call returns an instance sharing one backend, the way two replicas would. */
   create: () => RealtimeTransport;
   /**
    * False for a transport whose subscribe() is a server-side no-op because
@@ -105,6 +111,49 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
         await transport.publish('c', 2);
         await settle();
         expect(got).toEqual([1]);
+      });
+
+      it('revoking on one instance signals and cuts only that user on a sibling instance', async () => {
+        const origin = harness.create();
+        const sibling = harness.create();
+        if (!origin.revokeUserFromChannel || !origin.signal || !sibling.subscribeSignal) {
+          return;
+        }
+        const channel = `chat:room:${randomUUID()}`;
+        const revokedMessages: unknown[] = [];
+        const revokedSignals: RealtimeSignal[] = [];
+        const throwingSignals: RealtimeSignal[] = [];
+        const otherMessages: unknown[] = [];
+        const otherSignals: RealtimeSignal[] = [];
+        sibling.subscribe(channel, (event) => revokedMessages.push(event), 'revoked-user');
+        sibling.subscribeSignal(
+          channel,
+          (signal) => {
+            throwingSignals.push(signal);
+            throw new Error('disconnected');
+          },
+          'revoked-user',
+        );
+        sibling.subscribeSignal(channel, (signal) => revokedSignals.push(signal), 'revoked-user');
+        sibling.subscribe(channel, (event) => otherMessages.push(event), 'other-user');
+        sibling.subscribeSignal(channel, (signal) => otherSignals.push(signal), 'other-user');
+        await settle();
+
+        await origin.revokeUserFromChannel('revoked-user', channel);
+        const revocation = { name: ACCESS_REVOKED_SIGNAL, payload: { channel } };
+        await vi.waitFor(() => {
+          expect(revokedSignals).toEqual([revocation]);
+          expect(throwingSignals).toEqual([revocation]);
+        });
+
+        await origin.publish(channel, 'after-revoke');
+        await origin.signal(channel, 'chat:room-changed', { channel });
+        await vi.waitFor(() => {
+          expect(otherMessages).toEqual(['after-revoke']);
+          expect(otherSignals).toEqual([{ name: 'chat:room-changed', payload: { channel } }]);
+        });
+        expect(revokedMessages).toEqual([]);
+        expect(revokedSignals).toEqual([revocation]);
       });
     }
 

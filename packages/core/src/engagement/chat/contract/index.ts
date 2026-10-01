@@ -102,7 +102,7 @@ export type ChatRoomScheduledForDeletionSignal = z.infer<
   typeof ChatRoomScheduledForDeletionSignalSchema
 >;
 
-// Envelope of the room channel's SIGNAL lane, served by `streamSignals`. `payload` stays
+// Envelope of the room channel's SIGNAL lane, served by `streamRoom`. `payload` stays
 // `unknown` because the vocabulary of names is open: a client parses the ones it asked for
 // (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.
 export const ChatSignalSchema = z.object({ name: z.string(), payload: z.unknown() });
@@ -182,6 +182,14 @@ export const AdminChatMessageDetailSchema = ChatMessageSchema.and(
   z.object({ playerId: UuidSchema.nullable() }),
 );
 export type AdminChatMessageDetail = z.infer<typeof AdminChatMessageDetailSchema>;
+
+export const ChatRoomStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('message'), message: ChatMessageSchema }),
+  z.object({ type: z.literal('signal'), signal: ChatSignalSchema }),
+]);
+export type ChatRoomStreamEvent = z.infer<typeof ChatRoomStreamEventSchema>;
+
+const ChatStreamInputSchema = z.object({ roomId: UuidSchema.nullable().optional() });
 
 export const AdminChatMessageSchema = z.object({
   id: UuidSchema,
@@ -359,16 +367,21 @@ export const chatContract = {
     .input(z.object({ clientId: z.string().optional() }))
     .output(ChatConnectionGrantSchema),
 
+  streamRoom: oc
+    .route({ method: 'GET', path: '/chat/room-stream' })
+    .input(ChatStreamInputSchema)
+    .output(eventIterator(ChatRoomStreamEventSchema)),
+
+  /** @deprecated Use `streamRoom`, which carries this lane and the signal lane on one connection. */
   streamMessages: oc
-    .route({ method: 'GET', path: '/chat/stream' })
-    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .route({ method: 'GET', path: '/chat/stream', deprecated: true })
+    .input(ChatStreamInputSchema)
     .output(eventIterator(ChatMessageSchema)),
 
-  // The signal lane of the same channel `streamMessages` serves, on its own stream so a
-  // control signal can never arrive as a message. Same access rules as the message stream.
+  /** @deprecated Use `streamRoom`, which carries this lane and the message lane on one connection. */
   streamSignals: oc
-    .route({ method: 'GET', path: '/chat/signals' })
-    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .route({ method: 'GET', path: '/chat/signals', deprecated: true })
+    .input(ChatStreamInputSchema)
     .output(eventIterator(ChatSignalSchema)),
 
   getOnlineCount: oc

@@ -90,6 +90,7 @@ import type {
   IgnoredUserSortBy,
   ChatRoom,
   ChatMessage,
+  ChatRoomStreamEvent,
   ChatRoomCategory,
   ChatRoomRole,
   SortOrder,
@@ -482,6 +483,27 @@ export class ChatService {
     viewerId?: User['id'],
   ) {
     return this.transport.subscribeSignal?.(chatChannel(roomId), listener, viewerId) ?? (() => {});
+  }
+
+  subscribeRoom(
+    roomId: ChatRoom['id'] | null,
+    listener: (event: ChatRoomStreamEvent) => void,
+    viewerId?: User['id'],
+  ) {
+    const unsubscribeMessages = this.subscribeMessages(
+      roomId,
+      (message) => listener({ type: 'message', message }),
+      viewerId,
+    );
+    const unsubscribeSignals = this.subscribeSignals(
+      roomId,
+      (signal) => listener({ type: 'signal', signal }),
+      viewerId,
+    );
+    return () => {
+      unsubscribeSignals();
+      unsubscribeMessages();
+    };
   }
 
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
