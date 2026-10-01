@@ -12,6 +12,7 @@ export {
   useVerify2fa,
   useDisable2fa,
   useTwoFactorStatus,
+  useRegenerateBackupCodes,
   useSendTwoFactorOtp,
   useVerifyEmail,
   useUpdateProfile,

@@ -122,6 +122,17 @@ export function useDisable2fa() {
   });
 }
 
+// Rotating the set spends nothing else, but it does change `backupCodesRemaining`, so
+// the status query has to refetch or the Security page keeps showing the old count.
+export function useRegenerateBackupCodes() {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.regenerateBackupCodes.mutationOptions(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.twoFactorStatus.key() }),
+  });
+}
+
 export function useVerifyEmail() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();

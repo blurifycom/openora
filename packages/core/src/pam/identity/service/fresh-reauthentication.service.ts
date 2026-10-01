@@ -11,6 +11,41 @@ import {
 } from './two-factor-challenge.service.js';
 
 /**
+ * Checks the account's standing password without touching any other state, so a caller
+ * holding a credential that is spent by being checked (a backup code) can reject a wrong
+ * password before burning it.
+ */
+export async function assertAccountPassword({
+  drizzle,
+  auth,
+  userId,
+  password,
+}: {
+  drizzle: DrizzleService;
+  auth: Auth;
+  userId: User['id'];
+  password: string;
+}): Promise<void> {
+  const [credential] = await drizzle.db
+    .select({ password: account.password })
+    .from(account)
+    .where(and(eq(account.userId, userId), isNotNull(account.password)))
+    .limit(1);
+  if (!credential?.password) {
+    throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
+  }
+
+  const authContext = await auth.$context;
+  const passwordMatches = await authContext.password.verify({
+    password: password,
+    hash: credential.password,
+  });
+  if (!passwordMatches) {
+    throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
+  }
+}
+
+/**
  * Requires the account's standing password plus (when 2FA is enrolled) a fresh
  * authenticator code before a security-sensitive self-service action proceeds. Shared by
  * every route that gates a mutation on "prove you're still you right now" - phone
@@ -37,23 +72,7 @@ export async function assertFreshReauthentication({
   twoFactorEnabled: boolean;
   meta: ClientMeta;
 }): Promise<void> {
-  const [credential] = await drizzle.db
-    .select({ password: account.password })
-    .from(account)
-    .where(and(eq(account.userId, userId), isNotNull(account.password)))
-    .limit(1);
-  if (!credential?.password) {
-    throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
-  }
-
-  const authContext = await auth.$context;
-  const passwordMatches = await authContext.password.verify({
-    password: currentPassword,
-    hash: credential.password,
-  });
-  if (!passwordMatches) {
-    throw new ORPCError('UNAUTHORIZED', { message: 'Current password is invalid.' });
-  }
+  await assertAccountPassword({ drizzle, auth, userId, password: currentPassword });
 
   if (!twoFactorEnabled) {
     return;

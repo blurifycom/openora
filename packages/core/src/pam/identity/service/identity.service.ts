@@ -38,6 +38,7 @@ import type {
   Verify2faInput,
   TwoFactorChallengeMethod,
   TwoFactorDeliveryMethod,
+  StepUpMethod,
   TwoFactorStatus,
   Disable2faInput,
   RegenerateBackupCodesInput,
@@ -79,8 +80,12 @@ import {
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
+import { countRemainingBackupCodes } from './backup-codes.service.js';
 import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
-import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
+import {
+  assertAccountPassword,
+  assertFreshReauthentication,
+} from './fresh-reauthentication.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -1560,6 +1565,7 @@ export class IdentityService {
       method: enabled ? (row.twoFactorMethod ?? null) : null,
       maskedEmail: maskEmail(row.email),
       maskedPhone: row.phoneVerified && row.phoneNumber ? maskPhone(row.phoneNumber) : null,
+      backupCodesRemaining: enabled ? await countRemainingBackupCodes(this.auth, userId) : null,
     };
   }
 
@@ -1881,19 +1887,41 @@ export class IdentityService {
 
   /**
    * A step-up gate for the self-service routes that change standing 2FA state: the
-   * caller has to clear a live authenticator code, not just the account password.
-   * Routed through TwoFactorLockoutService so a hijacked session plus a reused
-   * password cannot grind the second factor here the way the password-only paths let it.
+   * caller has to clear a second factor, not just the account password. Routed through
+   * TwoFactorLockoutService so a hijacked session plus a reused password cannot grind
+   * the second factor here the way the password-only paths let it.
+   *
+   * A backup code is accepted, and spends itself doing so. These routes are the ones an
+   * account reaches for once the enrolled method is gone, so holding them to a live code
+   * would make the recovery set enough to get back in but not enough to get straight -
+   * the player would be handed a session and still no way to retire a factor they can no
+   * longer answer. `trustCurrentDevice` is deliberately not on this path: banking a
+   * standing bypass is not recovery, and it stays authenticator-only.
+   *
+   * A backup code is spent by being checked, so the password is verified first: a typo
+   * there must not cost the player a code they may have no replacement for.
    */
-  private async assertFreshSecondFactor(
-    userId: User['id'],
-    headers: Headers,
-    meta: ClientMeta,
-    code: string,
-  ): Promise<void> {
+  private async assertFreshSecondFactor({
+    userId,
+    headers,
+    meta,
+    password,
+    code,
+    method,
+  }: {
+    userId: User['id'];
+    headers: Headers;
+    meta: ClientMeta;
+    password: string;
+    code: string;
+    method: StepUpMethod;
+  }): Promise<void> {
     await this.twoFactorLockout?.assertNotLocked(userId);
+    if (method === 'backup_code') {
+      await assertAccountPassword({ drizzle: this.drizzle, auth: this.auth, userId, password });
+    }
     const res = await this.verifyChallengeCode(
-      await resolveChallengeMethod(this.drizzle, userId),
+      method === 'backup_code' ? 'backup_code' : await resolveChallengeMethod(this.drizzle, userId),
       { code, trustDevice: false },
       headers,
     );
@@ -1920,7 +1948,14 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+    await this.assertFreshSecondFactor({
+      userId,
+      headers,
+      meta: { ip, userAgent },
+      password: input.password,
+      code: input.code,
+      method: input.method,
+    });
 
     const res = await this.api.generateBackupCodes({
       body: { password: input.password },
@@ -1956,7 +1991,14 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+    await this.assertFreshSecondFactor({
+      userId,
+      headers,
+      meta: { ip, userAgent },
+      password: input.password,
+      code: input.code,
+      method: input.method,
+    });
 
     // Read before the teardown clears it, so the audit trail records which method the
     // account was actually protected by rather than a blank.

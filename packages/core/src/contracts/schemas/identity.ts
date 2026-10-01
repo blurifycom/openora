@@ -162,14 +162,24 @@ export const Enable2faResultSchema = z.object({
 export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code', 'otp']);
 
 // A live second-factor code, six digits: a TOTP for the `app` method, a pushed
-// one-time code for `email`/`sms`. Used as the fresh factor a step-up action
-// (disable 2FA, regenerate backup codes, trust this device) has to clear on top of
-// the account password - a backup code is deliberately not accepted here.
+// one-time code for `email`/`sms`. Used as the fresh factor a step-up action has to
+// clear on top of the account password.
 export const TotpStepUpCodeSchema = z.string().length(6);
 
+// Which credential answers a step-up. `live` is the enrolled method's current code,
+// and which endpoint can spend it is resolved from the account rather than chosen by
+// the caller. `backup_code` is one of the standing recovery codes, accepted here
+// because the step-up paths are exactly the ones an account needs when the enrolled
+// method is what it lost: refusing it leaves a player who recovered a session with no
+// way to retire the second factor they can no longer satisfy.
+export const StepUpMethodSchema = z.enum(['live', 'backup_code']);
+
+// Either credential, whichever the caller presents: six digits for a live code, ten
+// characters split by a hyphen for a backup code.
+export const SecondFactorCodeSchema = z.string().min(6).max(11);
+
 export const Verify2faInputSchema = z.object({
-  // A TOTP code is six digits; a backup code is ten characters split by a hyphen.
-  code: z.string().min(6).max(11),
+  code: SecondFactorCodeSchema,
   method: TwoFactorChallengeMethodSchema.default('totp'),
   // Suppresses the second factor on this browser until the trust window lapses.
   // Honoured only for `method: 'totp'` - a spent recovery code buys a session, not
@@ -180,9 +190,12 @@ export const Verify2faInputSchema = z.object({
 
 export const RegenerateBackupCodesInputSchema = z.object({
   password: z.string().min(8),
-  // A fresh authenticator code: rotating the standing recovery credentials is a
-  // step-up action, not something a stolen session plus a reused password can do.
-  code: TotpStepUpCodeSchema,
+  // A fresh second factor: rotating the standing recovery credentials is a step-up
+  // action, not something a stolen session plus a reused password can do. Spending an
+  // old recovery code for it is allowed - that is how a player who is down to their
+  // last codes mints a new set without an operator reset.
+  code: SecondFactorCodeSchema,
+  method: StepUpMethodSchema.default('live'),
 });
 
 export const TrustCurrentDeviceInputSchema = z.object({
@@ -210,14 +223,20 @@ export const TwoFactorStatusSchema = z.object({
   maskedEmail: z.string().min(1),
   // Null when the account has no verified phone - the `sms` method is unavailable then.
   maskedPhone: z.string().min(1).nullable(),
+  // How much of the recovery set is left, so the account can be told to rotate before
+  // it runs out. Null when no second factor is set up, or when the operator stores the
+  // codes in a form this process cannot read back.
+  backupCodesRemaining: z.number().int().nonnegative().nullable(),
 });
 
 export const Disable2faInputSchema = z.object({
   password: z.string().min(8),
-  // Disabling the second factor tears down every standing bypass with it, so it
-  // takes a fresh authenticator code on top of the password - the same bar as a
-  // Super Admin reset, just self-served.
-  code: TotpStepUpCodeSchema,
+  // Disabling the second factor tears down every standing bypass with it, so it takes
+  // a fresh second factor on top of the password - the same bar as a Super Admin reset,
+  // just self-served. A backup code clears it too, which is what makes losing the
+  // enrolled method recoverable without one.
+  code: SecondFactorCodeSchema,
+  method: StepUpMethodSchema.default('live'),
 });
 
 // How long a session may sit idle before it is cut. Every account has a window - there
@@ -383,6 +402,7 @@ export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
 export type TwoFactorChallengeMethod = z.infer<typeof TwoFactorChallengeMethodSchema>;
+export type StepUpMethod = z.infer<typeof StepUpMethodSchema>;
 export type TwoFactorDeliveryMethod = z.infer<typeof TwoFactorDeliveryMethodSchema>;
 export type TwoFactorStatus = z.infer<typeof TwoFactorStatusSchema>;
 export type SendTwoFactorOtpResult = z.infer<typeof SendTwoFactorOtpResultSchema>;
