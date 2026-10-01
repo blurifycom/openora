@@ -1,5 +1,6 @@
-import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import {
+  createLogger,
   DrizzleService,
   mapConcurrent,
   serializeRow,
@@ -15,13 +16,14 @@ import type {
   Uuid,
 } from '@openora/core/contracts';
 import { GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
-import { chatPlatformBan, chatRoom } from '../schema/index.js';
+import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
 import {
   ChatAdminPrivateRoomModerationError,
   ChatRoomNotFoundError,
 } from './errors/chat-moderation.errors.js';
 
 const ROOM_REVOKE_CONCURRENCY = 10;
+const logger = createLogger('chat');
 
 export class ChatBanService {
   constructor(
@@ -124,19 +126,33 @@ export class ChatBanService {
         .where(and(eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)));
       await this.revokeFromRooms(userId, publicRooms);
     } else if (scope === '__all') {
+      const memberRoomIds = this.drizzle.db
+        .select({ roomId: chatRoomMember.roomId })
+        .from(chatRoomMember)
+        .where(eq(chatRoomMember.userId, userId));
       const rooms = await this.drizzle.db
         .select({ id: chatRoom.id })
         .from(chatRoom)
-        .where(isNull(chatRoom.deletedAt));
+        .where(
+          and(
+            isNull(chatRoom.deletedAt),
+            or(eq(chatRoom.isPublic, true), inArray(chatRoom.id, memberRoomIds)),
+          ),
+        );
       await this.revokeFromRooms(userId, rooms);
     }
     return { success: true } as const;
   }
 
+  // The ban is already committed, so one failed revoke must not stop the rest.
   private async revokeFromRooms(userId: Uuid, rooms: { id: Uuid }[]) {
-    await this.transport?.revokeUserFromChannel?.(userId, chatChannel(null));
-    await mapConcurrent(rooms, ROOM_REVOKE_CONCURRENCY, async ({ id }) => {
-      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(id));
+    const roomIds = [null, ...rooms.map(({ id }) => id)];
+    await mapConcurrent(roomIds, ROOM_REVOKE_CONCURRENCY, async (roomId) => {
+      try {
+        await this.transport?.revokeUserFromChannel?.(userId, chatChannel(roomId));
+      } catch (err: unknown) {
+        logger.error({ err, roomId, userId }, 'chat room channel revoke failed');
+      }
     });
   }
 

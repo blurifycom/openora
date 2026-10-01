@@ -94,9 +94,13 @@ export function createSseRealtimeClientAdapter({
       return;
     }
     const { name, payload } = event.signal;
-    notify(stream.subscribers, (subscriber) => subscriber.onSignal?.(name, payload));
-    if (name === ACCESS_REVOKED_SIGNAL) {
+    const revoked = name === ACCESS_REVOKED_SIGNAL;
+    // Stopped first, so a subscriber that unsubscribes in onSignal still gets torn down.
+    if (revoked) {
       stop(stream);
+    }
+    notify(stream.subscribers, (subscriber) => subscriber.onSignal?.(name, payload));
+    if (revoked) {
       setStatus(stream, 'closed');
     }
   };
