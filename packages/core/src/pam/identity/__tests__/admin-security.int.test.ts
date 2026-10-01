@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
-import { AdminSecurityConfigSchema } from '@openora/core/contracts';
+import { AdminSecurityConfigSchema, type MailDispatchPort } from '@openora/core/contracts';
 import { user, session, twoFactor, adminTrustedDevice } from '../schema/index.js';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -9,6 +9,7 @@ import {
   AdminSecurityService,
   SelfTwoFactorResetError,
 } from '../service/admin-security.service.js';
+import { UserNotFoundError } from '../service/identity.service.js';
 import { SessionService } from '../service/session.service.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
 
@@ -19,9 +20,16 @@ const SAFARI_UA =
 
 let db: TestDb;
 
-function buildService() {
+function buildService({
+  playerUserIds = [],
+  mailDispatch,
+}: { playerUserIds?: string[]; mailDispatch?: MailDispatchPort } = {}) {
   const events = makeEventBus();
   const drizzle = db.drizzle;
+  const identityReader = makeIdentityReader();
+  vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockImplementation(async (userId) =>
+    playerUserIds.includes(userId) ? crypto.randomUUID() : null,
+  );
   const trustedDevices = new TrustedDeviceService({
     drizzle,
     events,
@@ -33,8 +41,9 @@ function buildService() {
     events,
     sessions: new SessionService({ drizzle, events, identityReader: makeIdentityReader() }),
     trustedDevices,
-    identityReader: makeIdentityReader(),
+    identityReader,
     config: AdminSecurityConfigSchema.parse({ requireTwoFactor: true, bindSessionToDevice: true }),
+    mailDispatch,
   });
   return { service, trustedDevices, events };
 }
@@ -192,5 +201,70 @@ describe('AdminSecurityService.resetTwoFactor (real PG)', () => {
       .from(user)
       .where(eq(user.id, player.id));
     expect(row?.requireTwoFactorOnLogin).toBe(false);
+  });
+});
+
+describe('AdminSecurityService.resetPlayerTwoFactor (real PG)', () => {
+  const enrolPlayer = async (userId: string) => {
+    await db.drizzle.db
+      .update(user)
+      .set({ twoFactorEnabled: true, requireTwoFactorOnLogin: true })
+      .where(eq(user.id, userId));
+    await db.drizzle.db
+      .insert(twoFactor)
+      .values({ userId, secret: 'seed-secret', backupCodes: '["aaaaa-bbbbb"]' });
+  };
+  const makeMail = () => ({ toUser: vi.fn(), toAddress: vi.fn().mockResolvedValue(undefined) });
+
+  it('unenrols the player, ends their sessions, keeps "require 2FA" and mails them', async () => {
+    const player = await seedUser(db, { name: 'Player', email: 'player@b.dev' });
+    const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
+    await enrolPlayer(player.id);
+    const live = await seedSession(player.id, CHROME_UA);
+    const mail = makeMail();
+    const { service } = buildService({ playerUserIds: [player.id], mailDispatch: mail });
+
+    await service.resetPlayerTwoFactor(player.id, agent.id, 'lost phone, verified by chat');
+
+    const [row] = await db.drizzle.db
+      .select({
+        twoFactorEnabled: user.twoFactorEnabled,
+        requireTwoFactorOnLogin: user.requireTwoFactorOnLogin,
+      })
+      .from(user)
+      .where(eq(user.id, player.id));
+    expect(row).toEqual({ twoFactorEnabled: false, requireTwoFactorOnLogin: true });
+    expect(await isActive(live)).toBe(false);
+    expect(mail.toAddress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'player@b.dev',
+        template: expect.objectContaining({ key: 'twoFactorReset' }),
+      }),
+    );
+  });
+
+  it('refuses an account that is not a player', async () => {
+    const admin = await seedUser(db, { name: 'Admin', email: 'admin@b.dev', role: 'admin' });
+    const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
+    await enrolPlayer(admin.id);
+    const mail = makeMail();
+    const { service } = buildService({ mailDispatch: mail });
+
+    await expect(service.resetPlayerTwoFactor(admin.id, agent.id, 'not allowed')).rejects.toThrow(
+      UserNotFoundError,
+    );
+    expect(mail.toAddress).not.toHaveBeenCalled();
+  });
+
+  it('still succeeds when the notice cannot be queued', async () => {
+    const player = await seedUser(db, { name: 'Player', email: 'player@b.dev' });
+    const agent = await seedUser(db, { name: 'Agent', email: 'agent@b.dev', role: 'admin' });
+    await enrolPlayer(player.id);
+    const mail = { toUser: vi.fn(), toAddress: vi.fn().mockRejectedValue(new Error('queue down')) };
+    const { service } = buildService({ playerUserIds: [player.id], mailDispatch: mail });
+
+    await expect(
+      service.resetPlayerTwoFactor(player.id, agent.id, 'lost phone, verified by chat'),
+    ).resolves.toEqual({ success: true });
   });
 });

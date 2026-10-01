@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   type EventBus,
@@ -14,6 +15,7 @@ import {
   type GeoIpAdapter,
   type ClientMeta,
   type IdentityReader,
+  type MailDispatchPort,
   type User,
 } from '@openora/core/contracts';
 import {
@@ -51,6 +53,7 @@ export type AdminSecurityServiceDeps = {
   identityReader: IdentityReader;
   config: AdminSecurityConfig;
   geoIp?: GeoIpAdapter | undefined;
+  mailDispatch?: MailDispatchPort | undefined;
 };
 
 /**
@@ -69,6 +72,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
   private readonly identityReader: IdentityReader;
   private readonly config: AdminSecurityConfig;
   private readonly geoIp?: GeoIpAdapter | undefined;
+  private readonly mailDispatch?: MailDispatchPort | undefined;
 
   constructor({
     drizzle,
@@ -78,7 +82,9 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     identityReader,
     config,
     geoIp,
+    mailDispatch,
   }: AdminSecurityServiceDeps) {
+    this.mailDispatch = mailDispatch;
     this.drizzle = drizzle;
     this.events = events;
     this.sessions = sessions;
@@ -329,9 +335,57 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     if (userId === actorId) {
       throw new SelfTwoFactorResetError();
     }
+    await this.clearTwoFactor(userId, actorId, reason, meta, { keepRequirement: false });
+    return { success: true as const };
+  }
 
+  /**
+   * The support-desk twin of `resetTwoFactor`, for a player who lost their device: the
+   * caller only needs the player-update grant, so it refuses any account that is not a
+   * player - an admin's second factor stays a Super Admin matter.
+   *
+   * Unlike the admin path it leaves `requireTwoFactorOnLogin` as the player set it, so a
+   * player who demanded 2FA on every login is asked to enrol again rather than quietly
+   * dropping to password-only, and mails them that it happened.
+   */
+  async resetPlayerTwoFactor(
+    userId: User['id'],
+    actorId: User['id'],
+    reason: string,
+    meta?: ClientMeta,
+  ) {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    if (!playerId) {
+      throw new UserNotFoundError(userId);
+    }
+    const { email, language } = await this.clearTwoFactor(userId, actorId, reason, meta, {
+      keepRequirement: true,
+    });
+
+    // The reset has committed, so a failed enqueue must not fail it: the caller would
+    // retry a reset that already took effect.
+    try {
+      await this.mailDispatch?.toAddress({
+        email,
+        locale: language,
+        template: { key: 'twoFactorReset', data: { occurredAt: new Date().toISOString() } },
+        idempotencyKey: `two-factor-reset:${userId}:${randomUUID()}`,
+      });
+    } catch (err) {
+      logger.error({ err, userId }, 'two-factor reset notice enqueue failed');
+    }
+    return { success: true as const };
+  }
+
+  private async clearTwoFactor(
+    userId: User['id'],
+    actorId: User['id'],
+    reason: string,
+    meta: ClientMeta | undefined,
+    { keepRequirement }: { keepRequirement: boolean },
+  ) {
     const [account] = await this.drizzle.db
-      .select({ id: user.id })
+      .select({ id: user.id, email: user.email, language: user.language })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
@@ -356,8 +410,9 @@ export class AdminSecurityService implements AdminSecurityPolicy {
           twoFactorLockoutUntil: null,
           // Same reason `disableTwoFactor` clears it: left set, it strands the account
           // in an enforced-but-ungrantable state no route can undo (the setter itself
-          // requires `twoFactorEnabled`).
-          requireTwoFactorOnLogin: false,
+          // requires `twoFactorEnabled`). A player reset keeps it on purpose: the web
+          // app routes such an account to enrolment, which is what ends that state.
+          ...(keepRequirement ? {} : { requireTwoFactorOnLogin: false }),
         })
         .where(eq(user.id, userId));
     });
@@ -373,7 +428,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    return { success: true as const };
+    return account;
   }
 
   isTrustedDevice(userId: User['id'], userAgent: string | null): Promise<boolean> {

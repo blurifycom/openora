@@ -411,6 +411,18 @@ export function createIdentityRouter(
         },
       ),
 
+      resetPlayerTwoFactor: os.adminSecurity.resetPlayerTwoFactor.handler(
+        async ({ input, context }) => {
+          const caller = await adminGuard.assert(context, 'player', 'update');
+          return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+            adminSecurity.resetPlayerTwoFactor(input.userId, caller.userId, input.reason, {
+              ip: caller.ip,
+              userAgent: caller.userAgent,
+            }),
+          );
+        },
+      ),
+
       revokeUserTrustedDevice: os.adminSecurity.revokeUserTrustedDevice.handler(
         async ({ input, context }) => {
           const caller = await adminGuard.assertSuperAdmin(context);

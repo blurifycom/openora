@@ -91,6 +91,7 @@ function makeAdminSecurity(c: IdentityContainer) {
     identityReader,
     config: adminSecurityConfig(c),
     geoIp: c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : undefined,
+    mailDispatch: c.get(MAIL_DISPATCH),
   });
 }
 
