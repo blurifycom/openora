@@ -2,9 +2,8 @@
 
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 
-// Pluggable client-side realtime transport. Default receive model is first-party
-// SSE; a consumer targeting a managed vendor (Ably/GetStream) injects an adapter
-// here instead. Core ships no vendor SDK. See ADR-0007.
+// Mount `createSseRealtimeClientAdapter` for the first-party SSE transport, or a managed
+// vendor's adapter. Core ships no vendor SDK.
 
 export type RealtimeClientStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -22,8 +21,8 @@ export type RealtimeSubscribeHandlers<T> = {
    * own lane, so it never reaches `onMessage` and cannot corrupt the payload stream. `payload` is
    * `unknown` on purpose: the vocabulary of names is open, so the caller parses what it asked
    * for (eg `ChatMemberRoleChangedSignalSchema` for `chat:member-role-changed`) and ignores the
-   * rest. A managed adapter feeds this from the vendor's named events; an SSE-backed one feeds
-   * it from the `/chat/signals` stream, which carries the same lane for the default transport.
+   * rest. A managed adapter feeds this from the vendor's named events; the first-party adapter
+   * feeds it from the signal lane of its combined stream.
    */
   onSignal?: (name: string, payload: unknown) => void;
 };
@@ -54,7 +53,7 @@ export function RealtimeClientProvider({
   );
 }
 
-/** Returns null when no provider is mounted; the chat hook falls back to built-in SSE. */
+/** Returns null when no provider is mounted. */
 export function useOptionalRealtimeClient(): RealtimeClientAdapter | null {
   return useContext(RealtimeClientContext);
 }

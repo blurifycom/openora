@@ -10,6 +10,7 @@ import {
   type OssContext,
 } from '@openora/core/server';
 import {
+  ACCESS_REVOKED_SIGNAL,
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
   chatChannel,
@@ -17,7 +18,12 @@ import {
   type RateLimiterAdapter,
   type RealtimeClientAuthorizer,
 } from '@openora/core/contracts';
-import { chatContract } from '../contract/index.js';
+import {
+  chatContract,
+  type ChatMessage,
+  type ChatRoom,
+  type ChatRoomStreamEvent,
+} from '../contract/index.js';
 import {
   ChatService,
   ChatRoomOwnershipError,
@@ -75,6 +81,20 @@ function resolveViewerId(context: OssContext) {
   return context.auth?.userId;
 }
 
+function isAccessRevoked(event: ChatRoomStreamEvent) {
+  return event.type === 'signal' && event.signal.name === ACCESS_REVOKED_SIGNAL;
+}
+
+async function* messagesOf(
+  events: AsyncGenerator<ChatRoomStreamEvent>,
+): AsyncGenerator<ChatMessage> {
+  for await (const event of events) {
+    if (event.type === 'message') {
+      yield event.message;
+    }
+  }
+}
+
 export function createChatRouter({
   chatService,
   membershipService,
@@ -95,6 +115,48 @@ export function createChatRouter({
   limiter: RateLimiterAdapter;
 }) {
   const os = implement(chat).$context<OssContext>();
+
+  // Private-room streams require membership; public-room and global streams are readable anonymously.
+  const authorizeChannel = async (
+    input: { roomId?: ChatRoom['id'] | null },
+    context: OssContext,
+  ) => {
+    const roomId = input.roomId ?? null;
+    const viewerId = resolveViewerId(context);
+    if (roomId) {
+      await mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.verifyRoomAccess(roomId, viewerId),
+      );
+    } else {
+      await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
+        chatService.verifyGlobalAccess(viewerId),
+      );
+    }
+    return roomId;
+  };
+
+  const openRoomStream = async (
+    input: { roomId?: ChatRoom['id'] | null },
+    context: OssContext,
+    signal: AbortSignal | undefined,
+  ) => {
+    const roomId = await authorizeChannel(input, context);
+    return createEventStreamGenerator<ChatRoomStreamEvent>(
+      (push) => chatService.subscribeRoom(roomId, push, resolveViewerId(context)),
+      {
+        signal,
+        endAfter: isAccessRevoked,
+        ready: async () => {
+          await authorizeChannel(input, context);
+        },
+      },
+    );
+  };
+
   return os.router({
     listRooms: os.listRooms.handler(({ context }) => {
       return chatService.listRooms(resolveViewerId(context));
@@ -210,7 +272,7 @@ export function createChatRouter({
     }),
 
     // Grant includes all rooms the player has access to (public + private memberships)
-    // so Ably clients can subscribe to any accessible room without re-auth.
+    // so a client can subscribe to any accessible room without re-auth.
     getConnection: os.getConnection.handler(async ({ input, context }) => {
       context.resHeaders?.set('cache-control', 'no-store');
       const viewerId = resolveViewerId(context);
@@ -237,50 +299,25 @@ export function createChatRouter({
       });
     }),
 
-    streamMessages: os.streamMessages.handler(async ({ input, signal, context }) => {
-      const roomId =
-        input.roomId === '__global' || input.roomId === undefined ? null : input.roomId;
-      // Private-room streams require membership; public-room and global streams are readable anonymously.
-      const viewerId = resolveViewerId(context);
-      if (roomId) {
-        await mapErrors(
-          {
-            NOT_FOUND: ChatRoomNotFoundError,
-            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-          },
-          () => chatService.verifyRoomAccess(roomId, viewerId),
-        );
-      } else {
-        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-          chatService.verifyGlobalAccess(viewerId),
-        );
-      }
-      return createEventStreamGenerator(
-        (push) => chatService.subscribeMessages(roomId, push, viewerId),
-        { signal },
-      );
-    }),
+    streamRoom: os.streamRoom.handler(({ input, signal, context }) =>
+      openRoomStream(input, context, signal),
+    ),
+
+    streamMessages: os.streamMessages.handler(async ({ input, signal, context }) =>
+      messagesOf(await openRoomStream(input, context, signal)),
+    ),
 
     streamSignals: os.streamSignals.handler(async ({ input, signal, context }) => {
-      const roomId =
-        input.roomId === '__global' || input.roomId === undefined ? null : input.roomId;
-      const viewerId = resolveViewerId(context);
-      if (roomId) {
-        await mapErrors(
-          {
-            NOT_FOUND: ChatRoomNotFoundError,
-            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-          },
-          () => chatService.verifyRoomAccess(roomId, viewerId),
-        );
-      } else {
-        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-          chatService.verifyGlobalAccess(viewerId),
-        );
-      }
+      const roomId = await authorizeChannel(input, context);
       return createEventStreamGenerator(
-        (push) => chatService.subscribeSignals(roomId, push, viewerId),
-        { signal },
+        (push) => chatService.subscribeSignals(roomId, push, resolveViewerId(context)),
+        {
+          signal,
+          endAfter: (event) => event.name === ACCESS_REVOKED_SIGNAL,
+          ready: async () => {
+            await authorizeChannel(input, context);
+          },
+        },
       );
     }),
 

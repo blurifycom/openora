@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { createMultiplexedEventStreamGenerator } from '../event-stream.js';
+import {
+  createEventStreamGenerator,
+  createMultiplexedEventStreamGenerator,
+} from '../event-stream.js';
 
 async function collect<T>(iterable: AsyncGenerator<T>, count: number): Promise<T[]> {
   const results: T[] = [];
@@ -62,5 +65,61 @@ describe('createMultiplexedEventStreamGenerator', () => {
     const next = await generator.next();
 
     expect(next.done).toBe(true);
+  });
+});
+
+describe('createEventStreamGenerator', () => {
+  it('ends after yielding the event endAfter matches, and unsubscribes', async () => {
+    let push: ((event: string) => void) | undefined;
+    let unsubscribed = false;
+    const generator = createEventStreamGenerator<string>(
+      (p) => {
+        push = p;
+        return () => {
+          unsubscribed = true;
+        };
+      },
+      { endAfter: (event) => event === 'last' },
+    );
+
+    const resultPromise = collect(generator, 10);
+    push?.('first');
+    push?.('last');
+    push?.('after');
+
+    expect(await resultPromise).toEqual(['first', 'last']);
+    expect(unsubscribed).toBe(true);
+  });
+
+  it('subscribes before ready runs and delivers what arrived meanwhile', async () => {
+    let push: ((event: string) => void) | undefined;
+    const generator = createEventStreamGenerator<string>(
+      (p) => {
+        push = p;
+        return () => {};
+      },
+      {
+        ready: async () => {
+          push?.('during-ready');
+        },
+      },
+    );
+
+    const resultPromise = collect(generator, 1);
+
+    expect(await resultPromise).toEqual(['during-ready']);
+  });
+
+  it('ends with the ready rejection and unsubscribes', async () => {
+    let unsubscribed = false;
+    const generator = createEventStreamGenerator<string>(
+      () => () => {
+        unsubscribed = true;
+      },
+      { ready: () => Promise.reject(new Error('access revoked')) },
+    );
+
+    await expect(generator.next()).rejects.toThrow('access revoked');
+    expect(unsubscribed).toBe(true);
   });
 });

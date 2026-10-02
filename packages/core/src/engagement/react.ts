@@ -11,3 +11,4 @@ export {
   type UseMarkAllNotificationsReadResult,
   type UseNotificationStreamResult,
 } from './notifications/react/notifications.js';
+export { createChatSseRealtimeClientAdapter } from './chat/react/realtime-client.js';

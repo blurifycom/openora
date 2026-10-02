@@ -90,6 +90,7 @@ import type {
   IgnoredUserSortBy,
   ChatRoom,
   ChatMessage,
+  ChatRoomStreamEvent,
   ChatRoomCategory,
   ChatRoomRole,
   SortOrder,
@@ -102,12 +103,12 @@ import {
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
 import { validateAttachment } from '../moderation/index.js';
+import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 const logger = createLogger('chat');
 
 const MENTION_USERNAME_PATTERN = /(?<![\w.])@([a-zA-Z0-9_]{2,32})/g;
 const MAX_MENTIONS_PER_MESSAGE = 20;
 const MENTION_RESOLVE_CONCURRENCY = 5;
-const ROOM_REVOKE_CONCURRENCY = 10;
 
 function parseMentionedUsernames(content: string): string[] {
   const usernames = new Set<string>();
@@ -482,6 +483,27 @@ export class ChatService {
     viewerId?: User['id'],
   ) {
     return this.transport.subscribeSignal?.(chatChannel(roomId), listener, viewerId) ?? (() => {});
+  }
+
+  subscribeRoom(
+    roomId: ChatRoom['id'] | null,
+    listener: (event: ChatRoomStreamEvent) => void,
+    viewerId?: User['id'],
+  ) {
+    const unsubscribeMessages = this.subscribeMessages(
+      roomId,
+      (message) => listener({ type: 'message', message }),
+      viewerId,
+    );
+    const unsubscribeSignals = this.subscribeSignals(
+      roomId,
+      (signal) => listener({ type: 'signal', signal }),
+      viewerId,
+    );
+    return () => {
+      unsubscribeSignals();
+      unsubscribeMessages();
+    };
   }
 
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
@@ -1931,13 +1953,9 @@ export class ChatService {
     // The room is gone, so cut every member off the room channel rather than leaving them
     // subscribed to a room that 404s on every call. Per-member best-effort: one unreachable
     // client must not fail a delete that has already happened and cannot be retried.
-    await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, async ({ userId: memberId }) => {
-      try {
-        await this.transport.revokeUserFromChannel?.(memberId, chatChannel(roomId));
-      } catch (err: unknown) {
-        logger.error({ err, roomId, memberId }, 'chat room channel revoke failed');
-      }
-    });
+    await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, ({ userId: memberId }) =>
+      revokeChannelBestEffort(this.transport, memberId, roomId),
+    );
     return { success: true } as const;
   }
 
