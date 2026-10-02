@@ -163,7 +163,7 @@ export type RealtimeClientAuthorizerInput = {
    * is bound server-side and cannot be spoofed by the browser.
    */
   userId: string;
-  /** A stable per-connection id from the client (defaults to userId when absent). */
+  /** A stable per-connection id, namespaced under `userId` by the caller (defaults to userId). */
   clientId: string;
   /**
    * The channels the caller is allowed to subscribe to (the module computes these

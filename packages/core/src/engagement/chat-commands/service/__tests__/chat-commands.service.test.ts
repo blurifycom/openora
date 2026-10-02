@@ -4,6 +4,7 @@ import type {
   AdminUserDirectory,
   AuditWritePort,
   ChatBlockWriter,
+  ChatRoomAccess,
   RealtimeTransport,
 } from '@openora/core/contracts';
 import { ChatCommandsService } from '../chat-commands.service.js';
@@ -29,6 +30,7 @@ function makeService(select: Record<string, unknown>[][] = []) {
     mock<ChatBlockWriter>({ getExcludedUserIds: vi.fn().mockResolvedValue([]) }),
     mock<RealtimeTransport>({ getOnlineUserIds: vi.fn().mockResolvedValue([]) }),
     mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
+    mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) }),
   );
 }
 
@@ -68,6 +70,7 @@ function makeMentionService(deps: MentionDeps = {}) {
       getOnlineUserIds: vi.fn().mockResolvedValue(deps.onlineUserIds ?? []),
     }),
     mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
+    mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) }),
   );
 }
 
@@ -169,6 +172,7 @@ describe('ChatCommandsService searchMentions', () => {
       mock<ChatBlockWriter>({ getExcludedUserIds: vi.fn().mockResolvedValue(['blocked']) }),
       mock<RealtimeTransport>({ getOnlineUserIds: vi.fn().mockResolvedValue([]) }),
       mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
+      mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) }),
     );
 
     await service.searchMentions({ ...SEARCH, q: 'da', limit: 2 });

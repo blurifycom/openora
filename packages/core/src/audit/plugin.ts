@@ -380,7 +380,7 @@ export async function mapEventToRecord(
 
   // actorId = the moderator's resolved playerId; resource = the affected player in
   // that room (not player-typed - resourceId stays the raw member userId).
-  if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
+  if (topic === 'chat.room.member.kicked') {
     return {
       ...base,
       actorType: 'player',
@@ -388,6 +388,23 @@ export async function mapEventToRecord(
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },
+    };
+  }
+
+  // A room ban only comes from a room moderator on a player route, never from the back office.
+  if (topic === 'chat.room.member.banned') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['playerId']) ?? str(p['bannedBy']),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      before: isRecord(p['replaced']) ? p['replaced'] : null,
+      after: {
+        roomId: str(p['roomId']),
+        reason: str(p['reason']),
+        expiresAt: str(p['expiresAt']),
+      },
     };
   }
 
@@ -432,10 +449,11 @@ export async function mapEventToRecord(
   // actorId = the joining/leaving player's resolved playerId; resource is not
   // player-typed - resourceId stays the raw member userId.
   if (topic === 'chat.room.member.joined' || topic === 'chat.room.member.left') {
+    const adminId = str(p['adminId']);
     return {
       ...base,
-      actorType: 'player',
-      actorId: str(p['playerId']),
+      actorType: adminId ? 'admin' : 'player',
+      actorId: adminId ?? str(p['playerId']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },

@@ -1,5 +1,12 @@
-import { createLogger } from '@openora/core/server';
-import { chatChannel, type RealtimeTransport, type Uuid } from '@openora/core/contracts';
+import { eq } from 'drizzle-orm';
+import { createLogger, type DrizzleDb } from '@openora/core/server';
+import {
+  GLOBAL_CHAT_ROOM_ID,
+  chatChannel,
+  type RealtimeTransport,
+  type Uuid,
+} from '@openora/core/contracts';
+import { chatRoom } from '../schema/index.js';
 
 export const ROOM_REVOKE_CONCURRENCY = 10;
 
@@ -16,4 +23,27 @@ export async function revokeChannelBestEffort(
   } catch (err: unknown) {
     logger.error({ err, roomId, userId }, 'chat room channel revoke failed');
   }
+}
+
+/** The global room streams on `chat:global` under either id. */
+export async function revokeRoomChannelBestEffort(
+  db: DrizzleDb,
+  transport: RealtimeTransport | undefined,
+  userId: Uuid,
+  roomId: Uuid,
+): Promise<void> {
+  let channelRoomId: Uuid | null = roomId;
+  try {
+    const [room] = await db
+      .select({ slug: chatRoom.slug })
+      .from(chatRoom)
+      .where(eq(chatRoom.id, roomId))
+      .limit(1);
+    if (room?.slug === GLOBAL_CHAT_ROOM_ID) {
+      channelRoomId = null;
+    }
+  } catch (err: unknown) {
+    logger.error({ err, roomId, userId }, 'chat room channel lookup failed');
+  }
+  await revokeChannelBestEffort(transport, userId, channelRoomId);
 }

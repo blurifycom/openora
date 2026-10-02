@@ -335,6 +335,26 @@ describe('chat room stream: both lanes of a room on one connection', () => {
     expect(await stream.next()).toBeNull();
   });
 
+  it('broadcasts a deleted message without its content', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const stream = await openRoomStream(owner.client.request, room.id);
+    await stream.waitUntilLive(postProbe(owner.client, room.id));
+    const sent = await member.client.post(`/chat/rooms/${room.id}/messages`, {
+      content: 'regrettable',
+    });
+    const { id } = (await sent.json()) as { id: string };
+    await stream.next();
+
+    expect((await owner.client.del(`/chat/messages/${id}`)).status).toBe(200);
+
+    expect(await stream.next()).toMatchObject({
+      type: 'message',
+      message: { id, isDeleted: true, content: '', attachment: null },
+    });
+  });
+
   it('cuts only the removed member, and keeps streaming to the rest', async () => {
     const owner = await registerChatter('host');
     const removedMember = await registerChatter('leaver');
@@ -411,6 +431,24 @@ describe('chat room stream: both lanes of a room on one connection', () => {
 
     expect(stream.response.status).toBe(200);
     expect(stream.response.headers.get('content-type')).toContain('text/event-stream');
+  });
+
+  it('shows a player streaming the global room by its row id as online in mention search', async () => {
+    const rooms = ChatRoomSchema.array().parse(await (await app.app.request('/chat/rooms')).json());
+    const globalRoomId = rooms.find((room) => room.slug === '__global')!.id;
+    const streamer = await registerChatter('online');
+    const searcher = await registerChatter('search');
+    const stream = await openRoomStream(streamer.client.request, globalRoomId);
+    await stream.waitUntilLive(postProbe(streamer.client, globalRoomId));
+
+    const found = await searcher.client.get(
+      `/chat-command/mention-search?roomId=${globalRoomId}&q=`,
+    );
+
+    expect(found.status).toBe(200);
+    const results = (await found.json()) as { userId: string }[];
+    expect(results.map((result) => result.userId)).toContain(streamer.userId);
+    await stream.close();
   });
 });
 
