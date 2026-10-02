@@ -27,6 +27,7 @@ const STREAM_PATH = '/chat/room-stream';
 const PROBE = 'stream-probe';
 const PROBE_ATTEMPTS = 10;
 const PROBE_WAIT_MS = 500;
+const NEXT_EVENT_TIMEOUT_MS = 10_000;
 
 let db: TestDb;
 let app: TestApp;
@@ -37,9 +38,7 @@ type EventStream<T> = {
   response: Response;
   next: () => Promise<T | null>;
   close: () => Promise<void>;
-  // Re-sends a probe until one arrives, because a payload published before the
-  // server's Redis subscription is live is lost.
-  waitUntilLive: (sendProbe: (attempt: number) => Promise<unknown>) => Promise<void>;
+  waitUntilLive: (sendProbe: () => Promise<unknown>) => Promise<void>;
 };
 type RoomStream = EventStream<ChatRoomStreamEvent>;
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
@@ -54,16 +53,22 @@ function parseBlock(block: string): { event: string; data: string } {
   return { event: field('event'), data: field('data') };
 }
 
-function readEventStream<T>(
-  response: Response,
-  controller: AbortController,
-  parse: (data: unknown) => T,
-  isProbe: (event: T) => boolean,
-): EventStream<T> {
+type StreamShape<T> = {
+  parse: (data: unknown) => T;
+  isProbe: (event: T) => boolean;
+};
+
+function readEventStream<T>({
+  response,
+  controller,
+  parse,
+  isProbe,
+}: StreamShape<T> & { response: Response; controller: AbortController }): EventStream<T> {
   const reader = response.body?.getReader();
   const queue: (T | null)[] = [];
   const waiters = new Set<() => void>();
   let probes = 0;
+  let failure: unknown;
 
   const deliver = (event: T | null) => {
     if (event !== null && isProbe(event)) {
@@ -71,17 +76,23 @@ function readEventStream<T>(
     } else {
       queue.push(event);
     }
-    for (const wake of waiters) {
+    for (const wake of Array.from(waiters)) {
       wake();
     }
-    waiters.clear();
   };
-  const changed = (timeoutMs?: number) =>
+  const fail = (error: unknown) => {
+    failure = error;
+    deliver(null);
+  };
+  const changed = (timeoutMs: number) =>
     new Promise<void>((resolve) => {
-      waiters.add(resolve);
-      if (timeoutMs !== undefined) {
-        setTimeout(resolve, timeoutMs);
-      }
+      const wake = () => {
+        clearTimeout(timer);
+        waiters.delete(wake);
+        resolve();
+      };
+      const timer = setTimeout(wake, timeoutMs);
+      waiters.add(wake);
     });
 
   const pump = async () => {
@@ -101,6 +112,10 @@ function readEventStream<T>(
             deliver(null);
             return;
           }
+          if (event === 'error') {
+            fail(new Error(`stream sent an error event: ${data}`));
+            return;
+          }
           if (event === 'message') {
             deliver(parse(JSON.parse(data)));
           }
@@ -113,27 +128,42 @@ function readEventStream<T>(
         }
         buffer += decoder.decode(value, { stream: true });
       }
-    } catch {
-      deliver(null);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        deliver(null);
+      } else {
+        fail(error);
+      }
     }
   };
   void pump();
 
   const next = async (): Promise<T | null> => {
+    const deadline = Date.now() + NEXT_EVENT_TIMEOUT_MS;
     while (queue.length === 0) {
-      await changed();
+      if (Date.now() >= deadline) {
+        throw new Error(`no stream event within ${NEXT_EVENT_TIMEOUT_MS}ms`);
+      }
+      await changed(deadline - Date.now());
     }
-    return queue.shift() ?? null;
+    const event = queue.shift() ?? null;
+    if (event === null && failure !== undefined) {
+      throw failure;
+    }
+    return event;
   };
-  const waitUntilLive = async (sendProbe: (attempt: number) => Promise<unknown>) => {
+  const waitUntilLive = async (sendProbe: () => Promise<unknown>) => {
     for (let attempt = 0; attempt < PROBE_ATTEMPTS; attempt += 1) {
-      await sendProbe(attempt);
+      await sendProbe();
       const deadline = Date.now() + PROBE_WAIT_MS;
-      while (probes === 0 && Date.now() < deadline) {
+      while (probes === 0 && !queue.includes(null) && Date.now() < deadline) {
         await changed(deadline - Date.now());
       }
       if (probes > 0) {
         return;
+      }
+      if (queue.includes(null)) {
+        throw failure ?? new Error('stream ended before it went live');
       }
     }
     throw new Error(`stream never received a probe after ${PROBE_ATTEMPTS} attempts`);
@@ -145,57 +175,63 @@ function readEventStream<T>(
   return { response, next, close, waitUntilLive };
 }
 
-async function openEventStream<T>(
-  request: Request,
-  path: string,
-  parse: (data: unknown) => T,
-  isProbe: (event: T) => boolean,
-  roomId?: string,
-): Promise<EventStream<T>> {
+async function openEventStream<T>({
+  request,
+  path,
+  parse,
+  isProbe,
+  roomId,
+}: StreamShape<T> & { request: Request; path: string; roomId?: string | undefined }): Promise<
+  EventStream<T>
+> {
   const controller = new AbortController();
   const query = roomId ? `?${new URLSearchParams({ roomId }).toString()}` : '';
   const response = await request(`${path}${query}`, {
     method: 'GET',
     signal: controller.signal,
   });
-  const stream = readEventStream(response, controller, parse, isProbe);
+  const stream = readEventStream({ response, controller, parse, isProbe });
   openStreams.push(stream);
   return stream;
 }
 
 function openRoomStream(request: Request, roomId?: string): Promise<RoomStream> {
-  return openEventStream(
+  return openEventStream({
     request,
-    STREAM_PATH,
-    (data) => ChatRoomStreamEventSchema.parse(data),
-    (event) => event.type === 'message' && event.message.content === PROBE,
+    path: STREAM_PATH,
+    parse: (data) => ChatRoomStreamEventSchema.parse(data),
+    isProbe: (event) => event.type === 'message' && event.message.content === PROBE,
     roomId,
-  );
+  });
 }
 
 function openMessageStream(request: Request, roomId: string): Promise<EventStream<ChatMessage>> {
-  return openEventStream(
+  return openEventStream({
     request,
-    '/chat/stream',
-    (data) => ChatMessageSchema.parse(data),
-    (message) => message.content === PROBE,
+    path: '/chat/stream',
+    parse: (data) => ChatMessageSchema.parse(data),
+    isProbe: (message) => message.content === PROBE,
     roomId,
-  );
+  });
 }
 
 function openSignalStream(request: Request, roomId: string): Promise<EventStream<ChatSignal>> {
-  return openEventStream(
+  return openEventStream({
     request,
-    '/chat/signals',
-    (data) => ChatSignalSchema.parse(data),
-    (signal) => signal.name === CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
+    path: '/chat/signals',
+    parse: (data) => ChatSignalSchema.parse(data),
+    isProbe: (signal) => signal.name === CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
     roomId,
-  );
+  });
 }
 
 function postProbe(sender: TestClient, roomId?: string) {
-  return () =>
-    sender.post(roomId ? `/chat/rooms/${roomId}/messages` : '/chat/global', { content: PROBE });
+  return async () => {
+    const sent = await sender.post(roomId ? `/chat/rooms/${roomId}/messages` : '/chat/global', {
+      content: PROBE,
+    });
+    expect([200, 429]).toContain(sent.status);
+  };
 }
 
 async function registerChatter(prefix: string) {
@@ -280,6 +316,20 @@ describe('chat room stream: both lanes of a room on one connection', () => {
       userId: member.userId,
     });
     expect(removed.status).toBe(200);
+
+    expect(await stream.next()).toEqual({ type: 'signal', signal: accessRevoked(room.id) });
+    expect(await stream.next()).toBeNull();
+  });
+
+  it('cuts a member who leaves a private room', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('leaver');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const stream = await openRoomStream(member.client.request, room.id);
+    await stream.waitUntilLive(postProbe(owner.client, room.id));
+
+    const left = await member.client.post(`/chat/rooms/${room.id}/leave`, {});
+    expect(left.status).toBe(200);
 
     expect(await stream.next()).toEqual({ type: 'signal', signal: accessRevoked(room.id) });
     expect(await stream.next()).toBeNull();
@@ -403,11 +453,21 @@ describe('deprecated single-lane chat streams', () => {
     const member = await registerChatter('leaver');
     const room = await createRoomWithMember(owner.client, member.client);
     const stream = await openSignalStream(member.client.request, room.id);
-    await stream.waitUntilLive((attempt) =>
-      owner.client.post(`/chat/rooms/${room.id}/members/${member.userId}/role`, {
-        role: attempt % 2 === 0 ? 'moderator' : 'member',
-      }),
-    );
+    const setRole = async (role: 'member' | 'moderator') => {
+      const changed = await owner.client.post(
+        `/chat/rooms/${room.id}/members/${member.userId}/role`,
+        { role },
+      );
+      expect(changed.status).toBe(200);
+    };
+    let promoted = false;
+    await stream.waitUntilLive(async () => {
+      promoted = !promoted;
+      await setRole(promoted ? 'moderator' : 'member');
+    });
+    if (promoted) {
+      await setRole('member');
+    }
 
     const removed = await owner.client.post(`/chat/rooms/${room.id}/remove`, {
       userId: member.userId,

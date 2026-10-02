@@ -33,6 +33,7 @@ afterAll(async () => {
 runRealtimeTransportConformanceSuite({
   name: 'RedisPubSubRealtimeTransport',
   create: () => makeTransport(),
+  sharesBackendAcrossInstances: true,
   supportsServerSideSubscribe: true,
   addPresence: (transport, channel, entries) => {
     for (const { userId, connectionId } of entries) {

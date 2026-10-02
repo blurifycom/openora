@@ -36,7 +36,7 @@ import { migrate } from '../migrate.js';
 //   readPrivate,
 //   NO_CLIENT_META,
 // } from '../../../testing/mock.js';
-import { chatChannel } from '@openora/core/contracts';
+import { ACCESS_REVOKED_SIGNAL, GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
 import {
   ChatService,
   ChatMessageBlockedError,
@@ -1917,6 +1917,73 @@ describe('ChatService.joinRoom (real PG)', () => {
 });
 
 describe('ChatService.leaveRoom (real PG)', () => {
+  function revocationsOf(signals: RealtimeSignal[]) {
+    return signals.filter((signal) => signal.name === ACCESS_REVOKED_SIGNAL);
+  }
+
+  it('cuts a member who leaves a private room off its channel, and no one else', async () => {
+    const { svc, transport } = makeService();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await svc.createPrivateRoom({ userId: ownerId, name: 'Room', ...NO_CLIENT_META });
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    const memberSignals: RealtimeSignal[] = [];
+    const ownerSignals: RealtimeSignal[] = [];
+    transport.subscribeSignal?.(
+      chatChannel(room.id),
+      (signal) => memberSignals.push(signal),
+      memberId,
+    );
+    transport.subscribeSignal?.(
+      chatChannel(room.id),
+      (signal) => ownerSignals.push(signal),
+      ownerId,
+    );
+
+    await svc.leaveRoom({ userId: memberId, roomId: room.id, ...NO_CLIENT_META });
+
+    expect(revocationsOf(memberSignals)).toEqual([
+      { name: ACCESS_REVOKED_SIGNAL, payload: { channel: chatChannel(room.id) } },
+    ]);
+    expect(revocationsOf(ownerSignals)).toEqual([]);
+  });
+
+  it('leaves a member who leaves a public room on its channel, since it stays readable', async () => {
+    const { svc, transport } = makeService();
+    const room = await seedRoom({ isPublic: true });
+    const memberId = randomUUID();
+    await svc.joinPublicRoom({ roomId: room.id, userId: memberId, ...NO_CLIENT_META });
+    const memberSignals: RealtimeSignal[] = [];
+    transport.subscribeSignal?.(
+      chatChannel(room.id),
+      (signal) => memberSignals.push(signal),
+      memberId,
+    );
+
+    await svc.leaveRoom({ userId: memberId, roomId: room.id, ...NO_CLIENT_META });
+
+    expect(revocationsOf(memberSignals)).toEqual([]);
+  });
+
+  it('still records the leave when the channel revoke rejects', async () => {
+    const transport: RealtimeTransport = Object.assign(makeTransport(), {
+      revokeUserFromChannel: vi.fn().mockRejectedValue(new Error('transport down')),
+    });
+    const { svc, events } = makeService(undefined, undefined, [], transport);
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await svc.createPrivateRoom({ userId: ownerId, name: 'Room', ...NO_CLIENT_META });
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    await expect(
+      svc.leaveRoom({ userId: memberId, roomId: room.id, ...NO_CLIENT_META }),
+    ).resolves.toEqual({ success: true });
+    expect(events.emit).toHaveBeenCalledWith(
+      'chat.room.member.left',
+      expect.objectContaining({ roomId: room.id, userId: memberId }),
+    );
+  });
+
   it('refuses to let the owner leave', async () => {
     const { svc } = makeService();
     const creatorId = randomUUID();
@@ -2505,8 +2572,13 @@ describe('ChatService.setMemberRole (real PG)', () => {
 });
 
 describe('ChatService moderation (real PG)', () => {
-  async function roomWithMember() {
-    const { svc, events, audit, moderation, transport } = makeService();
+  async function roomWithMember(transportOverride?: RealtimeTransport) {
+    const { svc, events, audit, moderation, transport } = makeService(
+      undefined,
+      undefined,
+      [],
+      transportOverride,
+    );
     const moderatorId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
@@ -2551,6 +2623,22 @@ describe('ChatService moderation (real PG)', () => {
     await expect(
       svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META }),
     ).rejects.toBeInstanceOf(ChatRoomBannedError);
+  });
+
+  it('keeps a room ban when the channel revoke rejects', async () => {
+    const { svc, room, moderatorId, memberId } = await roomWithMember(
+      Object.assign(makeTransport(), {
+        revokeUserFromChannel: vi.fn().mockRejectedValue(new Error('transport down')),
+      }),
+    );
+
+    await expect(
+      svc.banMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META }),
+    ).resolves.toEqual({ success: true });
+
+    expect(
+      await db.drizzle.db.select().from(chatRoomBan).where(eq(chatRoomBan.roomId, room.id)),
+    ).toHaveLength(1);
   });
 
   it('is idempotent on a repeated ban', async () => {
@@ -3056,5 +3144,86 @@ describe('ChatService staff visibility in a room roster (real PG)', () => {
     });
 
     expect(owners.map((m) => m.userId)).toEqual([admin.id]);
+  });
+});
+
+describe('ChatBanService channel revocation (real PG)', () => {
+  function recordingTransport(failOn: readonly string[] = []) {
+    const revoked: string[] = [];
+    const transport: RealtimeTransport = Object.assign(makeTransport(), {
+      revokeUserFromChannel: vi.fn(async (_userId: string, channel: string) => {
+        revoked.push(channel);
+        if (failOn.includes(channel)) {
+          throw new Error('transport down');
+        }
+      }),
+    });
+    return { transport, revoked };
+  }
+
+  async function seedScene(transport: RealtimeTransport) {
+    const { svc, moderation } = makeService(undefined, undefined, [], transport);
+    const playerId = randomUUID();
+    const publicRoom = await seedRoom({ isPublic: true });
+    await seedRoom({ isPublic: true, deletedAt: new Date() });
+    const memberRoom = await svc.createPrivateRoom({
+      userId: randomUUID(),
+      name: 'Member room',
+      ...NO_CLIENT_META,
+    });
+    await svc.joinRoom({ userId: playerId, joinCode: memberRoom.joinCode!, ...NO_CLIENT_META });
+    await svc.createPrivateRoom({ userId: randomUUID(), name: 'Other room', ...NO_CLIENT_META });
+    const ban = (roomId: Parameters<typeof moderation.ban>[0]['roomId']) =>
+      moderation.ban({
+        userId: playerId,
+        roomId,
+        durationSeconds: null,
+        reason: 'abuse',
+        actorId: randomUUID(),
+        ...NO_CLIENT_META,
+      });
+    return { ban, publicRoom, memberRoom };
+  }
+
+  it('revokes an __all ban from global chat, live public rooms and the player rooms only', async () => {
+    const { transport, revoked } = recordingTransport();
+    const { ban, publicRoom, memberRoom } = await seedScene(transport);
+
+    await ban('__all');
+
+    expect(new Set(revoked)).toEqual(
+      new Set([chatChannel(null), chatChannel(publicRoom.id), chatChannel(memberRoom.id)]),
+    );
+  });
+
+  it('revokes an __all_public ban from global chat and live public rooms only', async () => {
+    const { transport, revoked } = recordingTransport();
+    const { ban, publicRoom } = await seedScene(transport);
+
+    await ban('__all_public');
+
+    expect(new Set(revoked)).toEqual(new Set([chatChannel(null), chatChannel(publicRoom.id)]));
+  });
+
+  it('keeps revoking the other channels when one revoke rejects', async () => {
+    const { transport, revoked } = recordingTransport([chatChannel(null)]);
+    const { ban, publicRoom, memberRoom } = await seedScene(transport);
+
+    await expect(ban('__all')).resolves.toEqual({ success: true });
+
+    expect(new Set(revoked)).toEqual(
+      new Set([chatChannel(null), chatChannel(publicRoom.id), chatChannel(memberRoom.id)]),
+    );
+  });
+
+  it('keeps a single-channel ban when its revoke rejects', async () => {
+    const { transport } = recordingTransport([chatChannel(null)]);
+    const { ban } = await seedScene(transport);
+    await seedRoom({ slug: GLOBAL_CHAT_ROOM_ID, isPublic: true });
+
+    await expect(ban('__global')).resolves.toEqual({ success: true });
+
+    const bans = await db.drizzle.db.select().from(chatPlatformBan);
+    expect(bans.map((row) => row.scope)).toEqual(['__global']);
   });
 });

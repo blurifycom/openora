@@ -1,6 +1,5 @@
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import {
-  createLogger,
   DrizzleService,
   mapConcurrent,
   serializeRow,
@@ -15,15 +14,13 @@ import type {
   RealtimeTransport,
   Uuid,
 } from '@openora/core/contracts';
-import { GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
+import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
 import {
   ChatAdminPrivateRoomModerationError,
   ChatRoomNotFoundError,
 } from './errors/chat-moderation.errors.js';
-
-const ROOM_REVOKE_CONCURRENCY = 10;
-const logger = createLogger('chat');
+import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 
 export class ChatBanService {
   constructor(
@@ -115,45 +112,44 @@ export class ChatBanService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    if (concreteRoomId) {
-      await this.transport?.revokeUserFromChannel?.(userId, `chat:room:${concreteRoomId}`);
-    } else if (scope === '__global') {
-      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(null));
-    } else if (scope === '__all_public') {
-      const publicRooms = await this.drizzle.db
-        .select({ id: chatRoom.id })
-        .from(chatRoom)
-        .where(and(eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)));
-      await this.revokeFromRooms(userId, publicRooms);
-    } else if (scope === '__all') {
-      const memberRoomIds = this.drizzle.db
-        .select({ roomId: chatRoomMember.roomId })
-        .from(chatRoomMember)
-        .where(eq(chatRoomMember.userId, userId));
-      const rooms = await this.drizzle.db
-        .select({ id: chatRoom.id })
-        .from(chatRoom)
-        .where(
-          and(
-            isNull(chatRoom.deletedAt),
-            or(eq(chatRoom.isPublic, true), inArray(chatRoom.id, memberRoomIds)),
-          ),
-        );
-      await this.revokeFromRooms(userId, rooms);
-    }
+    await this.revokeChannels(userId, await this.roomsToRevoke(userId, scope, concreteRoomId));
     return { success: true } as const;
   }
 
-  // The ban is already committed, so one failed revoke must not stop the rest.
-  private async revokeFromRooms(userId: Uuid, rooms: { id: Uuid }[]) {
-    const roomIds = [null, ...rooms.map(({ id }) => id)];
-    await mapConcurrent(roomIds, ROOM_REVOKE_CONCURRENCY, async (roomId) => {
-      try {
-        await this.transport?.revokeUserFromChannel?.(userId, chatChannel(roomId));
-      } catch (err: unknown) {
-        logger.error({ err, roomId, userId }, 'chat room channel revoke failed');
-      }
-    });
+  // `null` is the global channel.
+  private async roomsToRevoke(
+    userId: Uuid,
+    scope: ChatModerationScope,
+    concreteRoomId: Uuid | null,
+  ): Promise<(Uuid | null)[]> {
+    if (concreteRoomId) {
+      return [concreteRoomId];
+    }
+    if (scope === '__global') {
+      return [null];
+    }
+    const memberRoomIds = this.drizzle.db
+      .select({ roomId: chatRoomMember.roomId })
+      .from(chatRoomMember)
+      .where(eq(chatRoomMember.userId, userId));
+    const rooms = await this.drizzle.db
+      .select({ id: chatRoom.id })
+      .from(chatRoom)
+      .where(
+        and(
+          isNull(chatRoom.deletedAt),
+          scope === '__all'
+            ? or(eq(chatRoom.isPublic, true), inArray(chatRoom.id, memberRoomIds))
+            : eq(chatRoom.isPublic, true),
+        ),
+      );
+    return [null, ...rooms.map(({ id }) => id)];
+  }
+
+  private async revokeChannels(userId: Uuid, roomIds: (Uuid | null)[]) {
+    await mapConcurrent(roomIds, ROOM_REVOKE_CONCURRENCY, (roomId) =>
+      revokeChannelBestEffort(this.transport, userId, roomId),
+    );
   }
 
   async unban({

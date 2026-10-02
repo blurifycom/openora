@@ -59,7 +59,11 @@ function notify(subscribers: Iterable<Subscriber>, deliver: (subscriber: Subscri
   }
 }
 
-/** Reports `connecting` -> `open` on each reconnect so callers refetch what they missed; `ACCESS_REVOKED_SIGNAL` closes without reconnecting. */
+/**
+ * Reports `connecting` -> `open` on each reconnect so callers refetch what they missed.
+ * `ACCESS_REVOKED_SIGNAL` closes the channel without reconnecting until the next
+ * `subscribe` or `refresh`.
+ */
 export function createSseRealtimeClientAdapter({
   open,
 }: SseRealtimeClientAdapterOptions): RealtimeClientAdapter {
@@ -100,7 +104,8 @@ export function createSseRealtimeClientAdapter({
       stop(stream);
     }
     notify(stream.subscribers, (subscriber) => subscriber.onSignal?.(name, payload));
-    if (revoked) {
+    // A subscriber may already have reconnected from onSignal.
+    if (revoked && stream.controller === null) {
       setStatus(stream, 'closed');
     }
   };

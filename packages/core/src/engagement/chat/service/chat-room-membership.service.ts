@@ -36,6 +36,7 @@ import {
   ChatRoomOwnerCannotLeaveError,
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
+import { revokeChannelBestEffort } from './channel-revoke.service.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
 
@@ -158,7 +159,7 @@ export class ChatRoomMembershipService {
   }
 
   async leaveRoom({ userId, roomId, ip, userAgent }: { userId: Uuid; roomId: Uuid } & ClientMeta) {
-    const removed = await this.drizzle.db.transaction((t) =>
+    const { removed, isPublic } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t
           .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
@@ -196,10 +197,11 @@ export class ChatRoomMembershipService {
             throw new ChatRoomLastModeratorError();
           }
         }
-        return t
+        const deleted = await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
           .returning();
+        return { removed: deleted, isPublic: room.isPublic };
       }),
     );
     if (removed.length > 0) {
@@ -210,6 +212,10 @@ export class ChatRoomMembershipService {
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
+      // A public room stays readable to a non-member.
+      if (!isPublic) {
+        await revokeChannelBestEffort(this.transport, userId, roomId);
+      }
     }
     return { success: true } as const;
   }
@@ -274,9 +280,7 @@ export class ChatRoomMembershipService {
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
-    }
-    if (removed.length > 0) {
-      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(roomId));
+      await revokeChannelBestEffort(this.transport, userId, roomId);
     }
     return { success: true } as const;
   }
@@ -687,11 +691,7 @@ export class ChatRoomMembershipService {
     userId: Uuid,
     handover: OwnershipHandover | null,
   ) {
-    try {
-      await this.transport?.revokeUserFromChannel?.(userId, chatChannel(roomId));
-    } catch (err: unknown) {
-      logger.error({ err, roomId, userId }, 'chat room channel revoke failed');
-    }
+    await revokeChannelBestEffort(this.transport, userId, roomId);
     if (!handover) {
       return;
     }

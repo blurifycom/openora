@@ -13,6 +13,7 @@ import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
+import { revokeChannelBestEffort } from './channel-revoke.service.js';
 
 export class ChatRoomBanService {
   constructor(
@@ -119,7 +120,7 @@ export class ChatRoomBanService {
       resourceId: null,
       after: { roomId, userId, durationSeconds, reason },
     });
-    await this.transport.revokeUserFromChannel?.(userId, `chat:room:${roomId}`);
+    await revokeChannelBestEffort(this.transport, userId, roomId);
     return { success: true } as const;
   }
 

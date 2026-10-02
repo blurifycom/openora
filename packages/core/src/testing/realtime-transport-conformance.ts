@@ -9,8 +9,12 @@ import {
 export type RealtimeTransportHarness = {
   /** Used only in describe() block naming for readable output. */
   name: string;
-  /** Every call returns an instance sharing one backend, the way two replicas would. */
   create: () => RealtimeTransport;
+  /**
+   * True when every `create()` call returns an instance sharing one backend, the way two
+   * replicas would. Gates the cross-instance revocation assertions.
+   */
+  sharesBackendAcrossInstances?: boolean;
   /**
    * False for a transport whose subscribe() is a server-side no-op because
    * clients connect directly to a managed vendor's edge (eg AblyRealtimeTransport).
@@ -116,7 +120,12 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
       it('revoking on one instance signals and cuts only that user on a sibling instance', async (ctx) => {
         const origin = harness.create();
         const sibling = harness.create();
-        if (!origin.revokeUserFromChannel || !origin.signal || !sibling.subscribeSignal) {
+        if (
+          !harness.sharesBackendAcrossInstances ||
+          !origin.revokeUserFromChannel ||
+          !origin.signal ||
+          !sibling.subscribeSignal
+        ) {
           ctx.skip();
           return;
         }
