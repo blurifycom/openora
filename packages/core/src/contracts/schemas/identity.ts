@@ -168,11 +168,23 @@ export const TotpStepUpCodeSchema = z.string().length(6);
 
 // Which credential answers a step-up. `live` is the enrolled method's current code,
 // and which endpoint can spend it is resolved from the account rather than chosen by
-// the caller. `backup_code` is one of the standing recovery codes, accepted here
-// because the step-up paths are exactly the ones an account needs when the enrolled
-// method is what it lost: refusing it leaves a player who recovered a session with no
-// way to retire the second factor they can no longer satisfy.
+// the caller. `backup_code` is one of the standing recovery codes.
 export const StepUpMethodSchema = z.enum(['live', 'backup_code']);
+
+// better-auth mints a recovery code as ten letters and digits split by a hyphen after
+// the fifth, and matches the stored string exactly - every miss counting toward the 2FA
+// lockout. A code typed without the hyphen is put back into that shape rather than being
+// let through to fail.
+export function normalizeBackupCode(code: string): string {
+  const trimmed = code.trim();
+  return /^[A-Za-z0-9]{10}$/.test(trimmed) ? `${trimmed.slice(0, 5)}-${trimmed.slice(5)}` : trimmed;
+}
+
+export const BackupCodeSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9]{5}-?[A-Za-z0-9]{5}$/)
+  .transform(normalizeBackupCode);
 
 // Either credential, whichever the caller presents: six digits for a live code, ten
 // characters split by a hyphen for a backup code.
@@ -190,12 +202,13 @@ export const Verify2faInputSchema = z.object({
 
 export const RegenerateBackupCodesInputSchema = z.object({
   password: z.string().min(8),
-  // A fresh second factor: rotating the standing recovery credentials is a step-up
-  // action, not something a stolen session plus a reused password can do. Spending an
-  // old recovery code for it is allowed - that is how a player who is down to their
-  // last codes mints a new set without an operator reset.
-  code: SecondFactorCodeSchema,
-  method: StepUpMethodSchema.default('live'),
+  // A fresh authenticator code: rotating the standing recovery credentials is a step-up
+  // action, not something a stolen session plus a reused password can do. A backup code
+  // is deliberately not accepted: with the password and two leaked codes, one would buy
+  // a session and the other a fresh set that silently voids the owner's remaining codes.
+  // A player who lost the enrolled method recovers through `disable2fa` instead, which
+  // tears down every session and bypass with it.
+  code: TotpStepUpCodeSchema,
 });
 
 export const TrustCurrentDeviceInputSchema = z.object({
@@ -229,15 +242,24 @@ export const TwoFactorStatusSchema = z.object({
   backupCodesRemaining: z.number().int().nonnegative().nullable(),
 });
 
-export const Disable2faInputSchema = z.object({
-  password: z.string().min(8),
-  // Disabling the second factor tears down every standing bypass with it, so it takes
-  // a fresh second factor on top of the password - the same bar as a Super Admin reset,
-  // just self-served. A backup code clears it too, which is what makes losing the
-  // enrolled method recoverable without one.
-  code: SecondFactorCodeSchema,
-  method: StepUpMethodSchema.default('live'),
-});
+// Disabling the second factor tears down every standing bypass with it, so it takes a
+// fresh second factor on top of the password - the same bar as a Super Admin reset, just
+// self-served. A backup code clears it too, which is what makes losing the enrolled
+// method recoverable without one. Typed by `method` so the code's shape is checked before
+// anything is verified: a backup code sent without `method: 'backup_code'` is a 400, not
+// a TOTP check that spends a lockout strike. `live` stays the default for older callers.
+export const Disable2faInputSchema = z.union([
+  z.object({
+    password: z.string().min(8),
+    method: z.literal('backup_code'),
+    code: BackupCodeSchema,
+  }),
+  z.object({
+    password: z.string().min(8),
+    method: z.literal('live').default('live'),
+    code: TotpStepUpCodeSchema,
+  }),
+]);
 
 // How long a session may sit idle before it is cut. Every account has a window - there
 // is deliberately no "off": the longest option already coincides with better-auth's
@@ -407,6 +429,7 @@ export type TwoFactorDeliveryMethod = z.infer<typeof TwoFactorDeliveryMethodSche
 export type TwoFactorStatus = z.infer<typeof TwoFactorStatusSchema>;
 export type SendTwoFactorOtpResult = z.infer<typeof SendTwoFactorOtpResultSchema>;
 export type RegenerateBackupCodesInput = z.infer<typeof RegenerateBackupCodesInputSchema>;
+export type BackupCodesResult = z.infer<typeof BackupCodesResultSchema>;
 export type TrustCurrentDeviceInput = z.infer<typeof TrustCurrentDeviceInputSchema>;
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;

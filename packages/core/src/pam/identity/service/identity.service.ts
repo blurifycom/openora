@@ -81,7 +81,11 @@ import {
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
 import { countRemainingBackupCodes } from './backup-codes.service.js';
-import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
+import {
+  isLostBackupCodeRace,
+  resolveChallengeMethod,
+  verifyChallengeCode,
+} from './two-factor-challenge.service.js';
 import {
   assertAccountPassword,
   assertFreshReauthentication,
@@ -1728,8 +1732,11 @@ export class IdentityService {
       !(await this.requiresTwoFactorEveryLogin(challengedUserId));
     const body = { code: input.code, trustDevice };
     const res = await this.verifyChallengeCode(input.method, body, headers);
-    if (!res.ok && challengedUserId) {
-      await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
+    if (!res.ok && challengedUserId && !isLostBackupCodeRace(res)) {
+      await this.twoFactorLockout?.recordFailure(challengedUserId, input.method, {
+        ip,
+        userAgent,
+      });
     }
     await ensureOk(res);
     if (challengedUserId) {
@@ -1856,7 +1863,7 @@ export class IdentityService {
       challengeHeaders,
     );
     if (!verified.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
+      await this.twoFactorLockout?.recordFailure(userId, challengeMethod, { ip, userAgent });
     }
     await ensureOk(verified);
     await this.twoFactorLockout?.reset(userId);
@@ -1891,15 +1898,14 @@ export class IdentityService {
    * TwoFactorLockoutService so a hijacked session plus a reused password cannot grind
    * the second factor here the way the password-only paths let it.
    *
-   * A backup code is accepted, and spends itself doing so. These routes are the ones an
-   * account reaches for once the enrolled method is gone, so holding them to a live code
-   * would make the recovery set enough to get back in but not enough to get straight -
-   * the player would be handed a session and still no way to retire a factor they can no
-   * longer answer. `trustCurrentDevice` is deliberately not on this path: banking a
-   * standing bypass is not recovery, and it stays authenticator-only.
+   * A backup code is accepted only where the caller asks for it, and spends itself doing
+   * so - see `disableTwoFactor`. It is spent by being checked, so the password is verified
+   * first: a typo there must not cost the player a code they may have no replacement for.
+   * A wrong password on that path still banks a lockout strike, so the password check
+   * cannot be ground through it any faster than through the code itself.
    *
-   * A backup code is spent by being checked, so the password is verified first: a typo
-   * there must not cost the player a code they may have no replacement for.
+   * Returns the credential that cleared it, so the action's own audit event can say
+   * whether it was authorised by the enrolled method or by a recovery code.
    */
   private async assertFreshSecondFactor({
     userId,
@@ -1915,21 +1921,40 @@ export class IdentityService {
     password: string;
     code: string;
     method: StepUpMethod;
-  }): Promise<void> {
+  }): Promise<TwoFactorChallengeMethod> {
     await this.twoFactorLockout?.assertNotLocked(userId);
-    if (method === 'backup_code') {
-      await assertAccountPassword({ drizzle: this.drizzle, auth: this.auth, userId, password });
+    const challengeMethod =
+      method === 'backup_code' ? 'backup_code' : await resolveChallengeMethod(this.drizzle, userId);
+    if (challengeMethod === 'backup_code') {
+      try {
+        await assertAccountPassword({ drizzle: this.drizzle, auth: this.auth, userId, password });
+      } catch (err) {
+        await this.twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
+        throw err;
+      }
     }
     const res = await this.verifyChallengeCode(
-      method === 'backup_code' ? 'backup_code' : await resolveChallengeMethod(this.drizzle, userId),
+      challengeMethod,
       { code, trustDevice: false },
       headers,
     );
+    if (isLostBackupCodeRace(res)) {
+      throw new ORPCError('CONFLICT', { message: 'This backup code has just been used.' });
+    }
     if (!res.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, meta);
+      await this.twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
     }
     await ensureOk(res, { genericMessage: 'Invalid authenticator code' });
     await this.twoFactorLockout?.reset(userId);
+    this.events.emit('identity.2fa.verified', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      method: challengeMethod,
+      trustedDevice: false,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
+    });
+    return challengeMethod;
   }
 
   async regenerateBackupCodes(
@@ -1948,13 +1973,13 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor({
+    const stepUpMethod = await this.assertFreshSecondFactor({
       userId,
       headers,
       meta: { ip, userAgent },
       password: input.password,
       code: input.code,
-      method: input.method,
+      method: 'live',
     });
 
     const res = await this.api.generateBackupCodes({
@@ -1973,6 +1998,7 @@ export class IdentityService {
     this.events.emit('identity.2fa.backup_codes_regenerated', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      stepUpMethod,
       ip,
       userAgent,
     });
@@ -1991,7 +2017,7 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor({
+    const stepUpMethod = await this.assertFreshSecondFactor({
       userId,
       headers,
       meta: { ip, userAgent },
@@ -2030,6 +2056,7 @@ export class IdentityService {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       method: disabledMethod,
+      stepUpMethod,
       ip,
       userAgent,
     });

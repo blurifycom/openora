@@ -40,6 +40,7 @@ export {
   type UseSetAntiPhishingCodeResult,
   type UseRequestPhoneVerificationResult,
   type UseConfirmPhoneVerificationResult,
+  type UseRegenerateBackupCodesResult,
 } from './identity/react/account.js';
 export {
   usePlayerProfile,

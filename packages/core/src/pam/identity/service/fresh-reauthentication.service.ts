@@ -85,14 +85,15 @@ export async function assertFreshReauthentication({
 
   await twoFactorLockout?.assertNotLocked(userId);
   const api = auth.api as unknown as TwoFactorVerifyApi;
+  const challengeMethod = await resolveChallengeMethod(drizzle, userId);
   const verification = await verifyChallengeCode(
     api,
-    await resolveChallengeMethod(drizzle, userId),
+    challengeMethod,
     { code: totpCode, trustDevice: false },
     headers,
   );
   if (!verification.ok) {
-    await twoFactorLockout?.recordFailure(userId, meta);
+    await twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
     throw new ORPCError('UNAUTHORIZED', { message: 'Invalid second-factor code.' });
   }
   await twoFactorLockout?.reset(userId);
