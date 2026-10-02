@@ -5,8 +5,8 @@
  *
  * `isSetupRequired` answers true while an account requires a second factor on login but
  * has none enrolled - the state a support reset of a player's 2FA leaves behind. The
- * middleware then marks the request so `getUserId` refuses it; identity's own routes read
- * the session themselves, which is what keeps the enrolment flow reachable.
+ * middleware then marks the request: `getUserId` refuses it unless the route opts in, and
+ * the identity router refuses every route but the enrolment, sign-in and sign-out ones.
  */
 import { createToken, type Token } from './token.js';
 

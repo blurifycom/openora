@@ -31,8 +31,8 @@ export type OssContext = {
 
 export type ResolveAuthOptions = {
   // For the few routes an account must still reach while it owes a second-factor
-  // enrolment: the session stream, its own sessions, and the phone verification an SMS
-  // factor needs.
+  // enrolment: the session streams, its own sessions, the phone verification an SMS factor
+  // needs, and responsible-gambling self-protection.
   allowPendingTwoFactorSetup?: boolean;
 };
 

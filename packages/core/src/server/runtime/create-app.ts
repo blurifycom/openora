@@ -493,9 +493,9 @@ export async function createApp(
       }
     }
 
-    // Published as a flag rather than answered here: identity's enrolment routes read the
-    // session themselves and must stay reachable, while everything that resolves the caller
-    // through getUserId is refused. A DB error takes the unauthenticated path, as above.
+    // Published as a flag rather than answered here: getUserId refuses it unless a route
+    // opts in, and the identity router holds its own routes to an enrolment allowlist. A
+    // DB error takes the unauthenticated path, as above.
     let twoFactorSetupRequired = false;
     if (container.has(TWO_FACTOR_SETUP_POLICY)) {
       try {

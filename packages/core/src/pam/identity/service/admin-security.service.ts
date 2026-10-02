@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import {
   type EventBus,
@@ -39,6 +38,13 @@ const logger = createLogger('admin-security');
 export const SelfTwoFactorResetError = makeConflictError(
   'SelfTwoFactorResetError',
   'An admin cannot reset their own second factor - ask another Super Admin',
+);
+
+// A player reset signs the player out everywhere and mails them, so it is refused when
+// there is no second factor to reset rather than doing both for nothing.
+export const TwoFactorNotEnabledError = makeConflictError(
+  'TwoFactorNotEnabledError',
+  'This player has no second factor to reset',
 );
 
 // Recording activity on every admin request would be one write per call; the session
@@ -355,17 +361,20 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     reason: string,
     meta?: ClientMeta,
   ) {
-    await this.clearTwoFactor(userId, actorId, reason, meta, { forPlayer: true });
+    const { clearedEnrolmentId } = await this.clearTwoFactor(userId, actorId, reason, meta, {
+      forPlayer: true,
+    });
 
     // Addressed by user id so delivery resolves the recipient's name, locale and
-    // anti-phishing code - a security notice must carry the code. The reset has committed,
-    // so a failed enqueue must not fail it: the caller would retry a reset that already
-    // took effect.
+    // anti-phishing code - a security notice must carry the code. Keyed on the enrolment
+    // that was cleared, so one reset mails once however often the enqueue is retried. The
+    // reset has committed, so a failed enqueue must not fail it: the caller would retry a
+    // reset that already took effect.
     try {
       await this.mailDispatch?.toUser({
         userId,
         template: { key: 'twoFactorReset', data: { occurredAt: new Date().toISOString() } },
-        idempotencyKey: `two-factor-reset:${userId}:${randomUUID()}`,
+        idempotencyKey: `two-factor-reset:${clearedEnrolmentId ?? userId}`,
       });
     } catch (err) {
       logger.error({ err, userId }, 'two-factor reset notice enqueue failed');
@@ -379,15 +388,15 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     reason: string,
     meta: ClientMeta | undefined,
     { forPlayer }: { forPlayer: boolean },
-  ) {
+  ): Promise<{ clearedEnrolmentId: string | null }> {
     // Both writes commit together: a process death between them would leave
     // twoFactorEnabled true with no twoFactor row - locked out with no repair
     // route, since resetting requires a Super Admin who is themselves gated on
     // AdminGuard.assertEnrolled. The row is locked so a concurrent role change cannot
     // slip an admin past the player-only check between the read and the writes.
-    await this.drizzle.db.transaction(async (tx) => {
+    const clearedEnrolmentId = await this.drizzle.db.transaction(async (tx) => {
       const [account] = await tx
-        .select({ role: user.role })
+        .select({ role: user.role, twoFactorEnabled: user.twoFactorEnabled })
         .from(user)
         .where(eq(user.id, userId))
         .for('update')
@@ -395,8 +404,14 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       if (!account || (forPlayer && account.role !== 'player')) {
         throw new UserNotFoundError(userId);
       }
+      if (forPlayer && !account.twoFactorEnabled) {
+        throw new TwoFactorNotEnabledError();
+      }
 
-      await tx.delete(twoFactor).where(eq(twoFactor.userId, userId));
+      const [cleared] = await tx
+        .delete(twoFactor)
+        .where(eq(twoFactor.userId, userId))
+        .returning({ id: twoFactor.id });
       await tx
         .update(user)
         .set({
@@ -413,11 +428,11 @@ export class AdminSecurityService implements AdminSecurityPolicy {
           ...(forPlayer ? {} : { requireTwoFactorOnLogin: false }),
         })
         .where(eq(user.id, userId));
+      return cleared?.id ?? null;
     });
 
-    await this.trustedDevices.revokeAllForUser(userId, actorId);
-    await this.sessions.revokeAllSessions(userId, actorId, meta);
-
+    // Recorded before the revokes: the factor is already gone, so a revoke that throws must
+    // not also lose the only record of who cleared it and why.
     this.events.emit('identity.2fa.reset', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -426,6 +441,10 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
+
+    await this.trustedDevices.revokeAllForUser(userId, actorId);
+    await this.sessions.revokeAllSessions(userId, actorId, meta);
+    return { clearedEnrolmentId };
   }
 
   isTrustedDevice(userId: User['id'], userAgent: string | null): Promise<boolean> {
