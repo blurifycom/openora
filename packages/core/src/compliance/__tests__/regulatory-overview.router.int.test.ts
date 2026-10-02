@@ -33,6 +33,7 @@ const COUNTRY_RULE = {
   blacklisted: true,
   redirectIp: false,
   mirrorUrl: null,
+  effectiveAccess: 'blocked' as const,
   kycRequired: true,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',

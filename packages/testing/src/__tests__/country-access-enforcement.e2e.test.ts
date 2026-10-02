@@ -6,7 +6,14 @@ import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { countryRule } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
-import { bootTestApp, seedMinimal, setupTestDb, type TestApp, type TestDb } from '../index.js';
+import {
+  asAdmin,
+  bootTestApp,
+  seedMinimal,
+  setupTestDb,
+  type TestApp,
+  type TestDb,
+} from '../index.js';
 import { forceEmailVerified } from '../register.js';
 
 const BLOCKED_IP = '203.0.113.10';
@@ -46,18 +53,16 @@ function register(ip: string, email: string) {
   });
 }
 
-function blockedAuditRows(countryCode: string) {
+function geoAuditRows(action: string, countryCode: string) {
   return app.container
     .get(DRIZZLE)
     .db.select()
     .from(auditLog)
-    .where(
-      and(
-        eq(auditLog.action, 'compliance.geo.access_blocked'),
-        eq(auditLog.resourceId, countryCode),
-      ),
-    );
+    .where(and(eq(auditLog.action, action), eq(auditLog.resourceId, countryCode)));
 }
+
+const blockedAuditRows = (countryCode: string) =>
+  geoAuditRows('compliance.geo.access_blocked', countryCode);
 
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
@@ -72,6 +77,10 @@ beforeAll(async () => {
       {
         id: 'testing-geo-ip',
         path: fileURLToPath(new URL('../test-geo-ip-plugin.ts', import.meta.url)),
+      },
+      {
+        id: 'testing-mirror-target-policy',
+        path: fileURLToPath(new URL('../test-mirror-target-policy-plugin.ts', import.meta.url)),
       },
     ],
     databaseUrl: db.url,
@@ -127,7 +136,17 @@ describe('country access enforcement', () => {
       reason: null,
       redirectUrl: MIRROR_URL,
     });
+    const before = (await geoAuditRows('compliance.geo.access_redirected', REDIRECTED_COUNTRY))
+      .length;
     expect((await register(REDIRECTED_IP, `mirror-${randomUUID()}@e2e.test`)).status).toBe(200);
+    await vi.waitFor(async () => {
+      const rows = await geoAuditRows('compliance.geo.access_redirected', REDIRECTED_COUNTRY);
+      expect(rows.length).toBeGreaterThan(before);
+      expect(rows.at(-1)?.after).toEqual({
+        countryCode: REDIRECTED_COUNTRY,
+        redirectUrl: MIRROR_URL,
+      });
+    });
   });
 
   it('refuses registration from a blacklisted country', async () => {
@@ -183,5 +202,81 @@ describe('country access enforcement', () => {
 
     expect(lastStatus).toBe(429);
     expect((await geoCheck(ALLOWED_IP)).status).toBe(200);
+  });
+});
+
+describe('PUT /compliance/country-rules with a mirror', () => {
+  const ruleFor = (overrides: Record<string, unknown>) => ({
+    countryCode: 'FR',
+    blacklisted: true,
+    redirectIp: true,
+    mirrorUrl: MIRROR_URL,
+    kycRequired: true,
+    expectedUpdatedAt: null,
+    confirm: true,
+    ...overrides,
+  });
+
+  const reasonOf = async (res: Response) =>
+    ((await res.json()) as { data?: { reason?: string } }).data?.reason;
+
+  it('refuses a mirror that is not a bare https origin', async () => {
+    const admin = await asAdmin(app.app);
+
+    const res = await admin.put(
+      '/compliance/country-rules',
+      ruleFor({ mirrorUrl: `${MIRROR_URL}/play` }),
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  it('asks for confirmation before a mirror opens a blacklisted country', async () => {
+    const admin = await asAdmin(app.app);
+
+    const res = await admin.put('/compliance/country-rules', ruleFor({ confirm: undefined }));
+
+    expect(res.status).toBe(409);
+    expect(await reasonOf(res)).toBe('confirmation_required');
+  });
+
+  it('refuses a mirror origin the operator has not approved', async () => {
+    const admin = await asAdmin(app.app);
+
+    const res = await admin.put(
+      '/compliance/country-rules',
+      ruleFor({ mirrorUrl: 'https://unapproved.e2e.test' }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await reasonOf(res)).toBe('mirror_not_approved');
+    const rows = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(countryRule)
+      .where(eq(countryRule.countryCode, 'FR'));
+    expect(rows.at(0)?.mirrorUrl ?? null).toBeNull();
+  });
+
+  it('redirects a blacklisted country to an approved mirror and reports it as redirected', async () => {
+    const admin = await asAdmin(app.app);
+
+    const res = await admin.put('/compliance/country-rules', ruleFor({}));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      countryCode: 'FR',
+      blacklisted: true,
+      mirrorUrl: MIRROR_URL,
+      effectiveAccess: 'redirected',
+    });
+    const listed = (await (await admin.get('/compliance/country-rules')).json()) as Array<{
+      countryCode: string;
+      effectiveAccess: string;
+    }>;
+    expect(listed.find((rule) => rule.countryCode === 'FR')?.effectiveAccess).toBe('redirected');
+    expect(listed.find((rule) => rule.countryCode === BLOCKED_COUNTRY)?.effectiveAccess).toBe(
+      'blocked',
+    );
   });
 });

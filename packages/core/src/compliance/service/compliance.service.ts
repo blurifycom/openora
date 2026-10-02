@@ -46,6 +46,7 @@ import {
   type GeoIpAdapter,
   type GeoRuleAction,
   type IgamingConfig,
+  type MirrorTargetPolicy,
   type User,
 } from '@openora/core/contracts';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
@@ -74,6 +75,12 @@ export const LicensedJurisdictionBlacklistError = makeConflictError(
   'LicensedJurisdictionBlacklistError',
   'A licensed jurisdiction cannot be blacklisted.',
   { reason: 'licensed_jurisdiction' },
+);
+
+export const MirrorTargetNotApprovedError = makeConflictError(
+  'MirrorTargetNotApprovedError',
+  'This mirror URL is not an approved mirror domain',
+  { reason: 'mirror_not_approved' },
 );
 
 export const CountryRuleConfirmationRequiredError = makeConflictError(
@@ -115,13 +122,25 @@ function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: Co
   return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== next[field]);
 }
 
-function weakensCountryRule(before: typeof countryRule.$inferSelect, input: CountryRuleSettings) {
+// A change needs `confirm` when it moves a country on or off the blacklist, lets a denied
+// country in, sends a blacklisted country to a different mirror, or drops KYC. Closing
+// access - turning a mirror off on a blacklisted country - never does.
+function needsConfirmation(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
+  const prior = { ...before, blacklisted: before.action === 'block' };
+  const nextTarget = mirrorTargetOf(next);
   return (
-    (before.action === 'block' && !input.blacklisted) ||
-    (deniesAccess({ ...before, blacklisted: before.action === 'block' }) && !deniesAccess(input)) ||
-    (before.redirectIp && !input.redirectIp) ||
-    (before.kycRequired && !input.kycRequired)
+    prior.blacklisted !== next.blacklisted ||
+    (deniesAccess(prior) && !deniesAccess(next)) ||
+    (next.blacklisted && nextTarget !== null && nextTarget !== mirrorTargetOf(prior)) ||
+    (before.kycRequired && !next.kycRequired)
   );
+}
+
+function effectiveAccessOf(rule: CountryRuleSettings, isDeploymentBlocked: boolean) {
+  if (isDeploymentBlocked || deniesAccess(rule)) {
+    return 'blocked' as const;
+  }
+  return mirrorTargetOf(rule) === null ? ('open' as const) : ('redirected' as const);
 }
 
 function countryRuleFieldValue(
@@ -139,13 +158,15 @@ function hasExpectedVersion(actual: Date | null, expected: string | null) {
   return (actual ? actual.toISOString() : null) === expected;
 }
 
-function toCountryRuleView(row: typeof countryRule.$inferSelect) {
+function toCountryRuleView(row: typeof countryRule.$inferSelect, isDeploymentBlocked: boolean) {
+  const settings = { ...row, blacklisted: row.action === 'block' };
   return {
     id: row.id,
     countryCode: row.countryCode,
-    blacklisted: row.action === 'block',
+    blacklisted: settings.blacklisted,
     redirectIp: row.redirectIp,
     mirrorUrl: row.mirrorUrl,
+    effectiveAccess: effectiveAccessOf(settings, isDeploymentBlocked),
     kycRequired: row.kycRequired,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt?.toISOString() ?? null,
@@ -312,7 +333,26 @@ export class ComplianceService {
     private readonly audit: AuditWritePort,
     private readonly igaming: IgamingConfig | null = null,
     private readonly cache: CacheAdapter | null = null,
+    private readonly mirrorTargetPolicy: MirrorTargetPolicy | null = null,
   ) {}
+
+  private countryRuleView(row: typeof countryRule.$inferSelect) {
+    return toCountryRuleView(
+      row,
+      this.igaming?.blockedCountries.includes(row.countryCode) ?? false,
+    );
+  }
+
+  private emitAccessRedirected(
+    ipAddress: string | null,
+    { countryCode, redirectUrl }: { countryCode: string; redirectUrl: string },
+  ) {
+    this.events.emit('compliance.geo.access_redirected', {
+      countryCode,
+      redirectUrl,
+      ip: ipAddress,
+    });
+  }
 
   private emitAccessBlocked(
     ipAddress: string | null,
@@ -332,11 +372,19 @@ export class ComplianceService {
    *
    * `redirectUrl` rides along on an allowed decision: a redirected country passes here even
    * when blacklisted, because its players are meant to reach the platform through the mirror.
+   * The decision only sees the address, so holding such a player to the mirror is the
+   * consumer's job, with `redirectUrl` from `GEO_CHECK_COMMANDS.checkAccess`; letting a
+   * blacklisted country in this way is audited as `compliance.geo.access_redirected`.
    */
   async geoCheck(ipAddress: string | null) {
-    const decision = await this.decideCountryAccess(ipAddress);
+    const { isBlacklistAdmittedByMirror, ...decision } = await this.decideCountryAccess(ipAddress);
     if (!decision.allowed) {
       this.emitAccessBlocked(ipAddress, decision);
+    } else if (isBlacklistAdmittedByMirror && decision.countryCode && decision.redirectUrl) {
+      this.emitAccessRedirected(ipAddress, {
+        countryCode: decision.countryCode,
+        redirectUrl: decision.redirectUrl,
+      });
     }
     return decision;
   }
@@ -348,7 +396,8 @@ export class ComplianceService {
    * poll rather than none.
    */
   async visitorGeoCheck(ipAddress: string | null) {
-    const decision = await this.decideCountryAccess(ipAddress);
+    const { isBlacklistAdmittedByMirror: _admittedByMirror, ...decision } =
+      await this.decideCountryAccess(ipAddress);
     if (!decision.allowed && (await this.isFirstVisitorBlockInWindow(ipAddress, decision))) {
       this.emitAccessBlocked(ipAddress, decision);
     }
@@ -373,20 +422,41 @@ export class ComplianceService {
     }
   }
 
-  private async decideCountryAccess(
-    ipAddress: string | null,
-  ): Promise<
-    | { allowed: true; countryCode: string | null; reason: null; redirectUrl: string | null }
-    | { allowed: false; countryCode: string | null; reason: string; redirectUrl: null }
+  private async decideCountryAccess(ipAddress: string | null): Promise<
+    | {
+        allowed: true;
+        countryCode: string | null;
+        reason: null;
+        redirectUrl: string | null;
+        isBlacklistAdmittedByMirror: boolean;
+      }
+    | {
+        allowed: false;
+        countryCode: string | null;
+        reason: string;
+        redirectUrl: null;
+        isBlacklistAdmittedByMirror: false;
+      }
   > {
+    const open = (countryCode: string | null) =>
+      ({
+        allowed: true,
+        countryCode,
+        reason: null,
+        redirectUrl: null,
+        isBlacklistAdmittedByMirror: false,
+      }) as const;
+
     if (!this.geoIp) {
-      return { allowed: true, countryCode: null, reason: null, redirectUrl: null };
+      return open(null);
     }
 
     const countryCode = normalizeCountryCode(
       ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null,
     );
 
+    // Counts a redirected blacklisted country too, deliberately: without a country there is
+    // no mirror to send the visitor to, so an unresolved address stays denied.
     if (!countryCode) {
       const [blacklistedRule] = await this.drizzle.db
         .select({ countryCode: countryRule.countryCode })
@@ -399,8 +469,9 @@ export class ComplianceService {
             countryCode: null,
             reason: 'Geolocation could not be determined',
             redirectUrl: null,
+            isBlacklistAdmittedByMirror: false,
           }
-        : { allowed: true, countryCode: null, reason: null, redirectUrl: null };
+        : open(null);
     }
 
     const blocked = {
@@ -408,6 +479,7 @@ export class ComplianceService {
       countryCode,
       reason: `Country ${countryCode} is blocked`,
       redirectUrl: null,
+      isBlacklistAdmittedByMirror: false,
     } as const;
 
     // Deployment-level blocks are not the operator's to redirect around.
@@ -425,13 +497,18 @@ export class ComplianceService {
       .where(eq(countryRule.countryCode, countryCode));
 
     if (!rule) {
-      return { allowed: true, countryCode, reason: null, redirectUrl: null };
+      return open(countryCode);
     }
-    if (deniesAccess({ ...rule, blacklisted: rule.action === 'block' })) {
+    const settings = { ...rule, blacklisted: rule.action === 'block' };
+    if (deniesAccess(settings)) {
       return blocked;
     }
 
-    return { allowed: true, countryCode, reason: null, redirectUrl: mirrorTargetOf(rule) };
+    return {
+      ...open(countryCode),
+      redirectUrl: mirrorTargetOf(rule),
+      isBlacklistAdmittedByMirror: settings.blacklisted,
+    };
   }
 
   async checkGame(input: GameGeoCheckInput) {
@@ -493,7 +570,11 @@ export class ComplianceService {
 
   async checkAccess(ipAddress: string | null) {
     const result = await this.geoCheck(ipAddress);
-    return { allowed: result.allowed, countryCode: result.countryCode };
+    return {
+      allowed: result.allowed,
+      countryCode: result.countryCode,
+      redirectUrl: result.redirectUrl,
+    };
   }
 
   async listGloballyBlockedCountries(): Promise<string[]> {
@@ -539,11 +620,16 @@ export class ComplianceService {
         kycRequired: input.kycRequired,
         mirrorUrl: input.mirrorUrl === undefined ? before.mirrorUrl : input.mirrorUrl,
       };
-      if (
-        ((before.action !== 'block' && input.blacklisted) || weakensCountryRule(before, next)) &&
-        !input.confirm
-      ) {
+      if (needsConfirmation(before, next) && !input.confirm) {
         throw new CountryRuleConfirmationRequiredError();
+      }
+      const nextTarget = mirrorTargetOf(next);
+      if (
+        nextTarget !== null &&
+        this.mirrorTargetPolicy &&
+        !(await this.mirrorTargetPolicy.isApprovedTarget(tx, nextTarget))
+      ) {
+        throw new MirrorTargetNotApprovedError();
       }
       if (!hasCountryRuleChanges(before, next)) {
         if (inserted) {
@@ -570,9 +656,9 @@ export class ComplianceService {
             },
             ...meta,
           });
-          return toCountryRuleView(row);
+          return this.countryRuleView(row);
         }
-        return toCountryRuleView(before);
+        return this.countryRuleView(before);
       }
 
       const row = findOneOrThrow(
@@ -607,13 +693,13 @@ export class ComplianceService {
         });
       }
 
-      return toCountryRuleView(row);
+      return this.countryRuleView(row);
     });
   }
 
   async listCountryRules() {
     const rows = await this.drizzle.db.select().from(countryRule);
-    return rows.map(toCountryRuleView);
+    return rows.map((row) => this.countryRuleView(row));
   }
 
   async getGlobalKycConfig() {
@@ -745,6 +831,9 @@ export class ComplianceService {
         countryCode: input.countryCode,
         blacklisted,
         redirectIp: existing?.redirectIp ?? false,
+        // Blocking through this route means blocked: a stored mirror would otherwise keep
+        // the country open while the rule and its event both say `block`.
+        ...(blacklisted ? { mirrorUrl: null } : {}),
         kycRequired: existing?.kycRequired ?? true,
         expectedUpdatedAt: existing?.updatedAt?.toISOString() ?? null,
         confirm: input.confirm ?? true,

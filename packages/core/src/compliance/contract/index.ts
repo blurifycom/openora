@@ -182,12 +182,20 @@ export const MirrorUrlSchema = z
     'Mirror URL must be an https origin with no path, e.g. https://example.com',
   );
 
+// What a country actually gets, whatever the stored flags say: a blacklisted country with a
+// mirror in force is `redirected`, not `blocked`.
+export const CountryEffectiveAccessSchema = z.enum(['blocked', 'redirected', 'open']);
+export type CountryEffectiveAccess = z.infer<typeof CountryEffectiveAccessSchema>;
+
 export const CountryRuleSchema = z.object({
   id: UuidSchema,
   countryCode: CountryCodeSchema,
   blacklisted: z.boolean(),
   redirectIp: z.boolean(),
-  mirrorUrl: MirrorUrlSchema.nullable(),
+  // A plain string on output: the shape is enforced where it is written, and a row written
+  // outside the API must not fail every read of the list.
+  mirrorUrl: z.string().nullable(),
+  effectiveAccess: CountryEffectiveAccessSchema,
   kycRequired: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.nullable(),
@@ -308,9 +316,9 @@ const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
   countryCode: CountryCodeSchema.nullable(),
   reason: z.string().nullable(),
-  // Set when the country is redirected to a mirror. Independent of `allowed`: a consumer
-  // serving the primary domain sends the visitor there instead of rendering.
-  redirectUrl: MirrorUrlSchema.nullable(),
+  // Set on an allowed decision for a country redirected to a mirror, null on every denial:
+  // a consumer serving the primary domain sends the visitor there instead of rendering.
+  redirectUrl: z.string().nullable(),
 });
 
 export const GetBlockedCountriesOutputSchema = z.object({
