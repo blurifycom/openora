@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 
-// Pluggable client-side realtime transport: mount `createSseRealtimeClientAdapter` for the
-// first-party SSE transport, or a managed vendor's adapter. Core ships no vendor SDK. See ADR-0007.
+// Mount `createSseRealtimeClientAdapter` for the first-party SSE transport, or a managed
+// vendor's adapter. Core ships no vendor SDK.
 
 export type RealtimeClientStatus = 'idle' | 'connecting' | 'open' | 'closed';
 

@@ -73,8 +73,8 @@ export type RealtimeTransport = {
    * reaches a payload subscriber and cannot corrupt that stream. The first-party Redis Pub/Sub
    * transport implements it over a second Redis channel per chat channel, which the
    * `/chat/room-stream` SSE route serves alongside the payload lane, so the default deployment
-   * carries signals too. Optional per ADR-0007 all the same:
-   * a transport that only fans out payloads is still a valid transport.
+   * carries signals too. Optional per ADR-0007 all the same: a transport that only fans out
+   * payloads is still a valid transport.
    *
    * `subscribeSignal` below is the server-side receiving half; on the client it is
    * `RealtimeSubscribeHandlers.onSignal` in react/context/realtime-client, which a vendor

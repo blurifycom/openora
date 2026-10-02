@@ -10,10 +10,7 @@ export type RealtimeTransportHarness = {
   /** Used only in describe() block naming for readable output. */
   name: string;
   create: () => RealtimeTransport;
-  /**
-   * True when every `create()` call returns an instance sharing one backend, the way two
-   * replicas would. Gates the cross-instance revocation assertions.
-   */
+  /** True when every `create()` instance shares one backend, like two replicas; gates the cross-instance revocation test. */
   sharesBackendAcrossInstances?: boolean;
   /**
    * False for a transport whose subscribe() is a server-side no-op because
