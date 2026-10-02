@@ -58,20 +58,33 @@ export async function waitForConsumerGroup(
   }
 }
 
-/** Resolves once a session is blocked on an advisory lock; times out quietly so the test fails on its own assertion. */
-export async function waitForAdvisoryLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
+/** Resolves once a session is blocked on a lock; times out quietly so the test fails on its own assertion. */
+async function waitForLockWaiter(
+  db: TestDb,
+  locktype: 'advisory' | 'transactionid',
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
-      sql`select count(*)::int as waiting from pg_locks
-          where locktype = 'advisory' and not granted
-            and database = (select oid from pg_database where datname = current_database())`,
+      sql`select count(*)::int as waiting from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where l.locktype = ${locktype} and not l.granted
+            and a.datname = current_database()`,
     );
     if ((rows[0]?.waiting ?? 0) > 0) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+export function waitForAdvisoryLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
+  return waitForLockWaiter(db, 'advisory', timeoutMs);
+}
+
+export function waitForRowLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
+  return waitForLockWaiter(db, 'transactionid', timeoutMs);
 }
 
 function isConnectionError(err: unknown): boolean {

@@ -1,4 +1,5 @@
 -- Fold row-id bans on the global room into `__global`; per player the longest stays active, the rest are lifted.
+-- A lapsed row is lifted at its own expiry so the expiry sweep still records it.
 WITH "global_room" AS (
   SELECT "id" FROM "chat_room" WHERE "slug" = '__global'
 ), "ranked" AS (

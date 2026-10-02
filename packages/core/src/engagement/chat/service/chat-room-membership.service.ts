@@ -43,10 +43,7 @@ import {
   ChatRoomOwnerCannotLeaveError,
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
-import {
-  revokeChannelBestEffort,
-  revokeRoomChannelBestEffort,
-} from './channel-revoke.service.js';
+import { revokeChannelBestEffort, revokeRoomChannelBestEffort } from './channel-revoke.service.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
 

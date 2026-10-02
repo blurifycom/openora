@@ -32,13 +32,7 @@ import type {
   Uuid,
   ChatAttachment,
 } from '@openora/core/contracts';
-import {
-  CommandMetadataSchema,
-  chatBlockLockKey,
-  chatChannel,
-  GLOBAL_CHAT_ROOM_ID,
-  MONEY_SCALE,
-} from '@openora/core/contracts';
+import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -70,6 +64,7 @@ import {
   chatPlatformBan,
 } from '../schema/index.js';
 import { ChatMessageNotFoundError, ChatRoomNotFoundError } from './chat-moderation.service.js';
+import { toMessage, toSystemMessage } from './chat-message-mapping.service.js';
 export {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
@@ -278,10 +273,6 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
   );
 }
 
-function toMessage(record: typeof chatMessage.$inferSelect) {
-  return serializeRow(record, { dateFields: ['createdAt'] });
-}
-
 function toRule(record: typeof chatRoomRule.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
@@ -309,49 +300,6 @@ function latestExpiry(expiries: (Date | null)[]) {
 
 function isGlobalRoom(room: { slug: string }) {
   return room.slug === GLOBAL_CHAT_ROOM_ID;
-}
-
-const COMMAND_METADATA_MONEY_KEYS = ['amount', 'perRecipient'] as const;
-
-function canonicalizeMoneyString(value: string): string {
-  if (!/^\d+\.\d+$/.test(value)) {
-    return value;
-  }
-  const [whole, fraction] = value.split('.') as [string, string];
-  if (fraction.length <= MONEY_SCALE) {
-    return value;
-  }
-  const trimmed = fraction.slice(0, MONEY_SCALE).replace(/0+$/, '');
-  return trimmed ? `${whole}.${trimmed}` : whole;
-}
-
-function sanitizeCommandMetadata(metadata: unknown): unknown {
-  if (!metadata || typeof metadata !== 'object') {
-    return metadata;
-  }
-  const entries = Object.entries(metadata as Record<string, unknown>).map(([key, value]) =>
-    (COMMAND_METADATA_MONEY_KEYS as readonly string[]).includes(key) && typeof value === 'string'
-      ? [key, canonicalizeMoneyString(value)]
-      : [key, value],
-  );
-  return Object.fromEntries(entries);
-}
-
-// A system message IS its command metadata, and the column is jsonb - a shape Postgres never
-// enforced, so a row can outlive the contract that wrote it. Sanitizing first keeps the
-// deliberate repair path (legacy money strings) working; what still fails to parse cannot be
-// rendered as any system message the contract describes.
-function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage | null {
-  const message = toMessage(record);
-  const metadata = CommandMetadataSchema.safeParse(sanitizeCommandMetadata(message.metadata));
-  if (!metadata.success) {
-    logger.warn(
-      { messageId: record.id, issues: metadata.error.issues.slice(0, 3) },
-      'system message metadata no longer matches its contract, omitted from listing',
-    );
-    return null;
-  }
-  return { ...message, metadata: metadata.data, actorId: message.userId } as ChatSystemMessage;
 }
 
 function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage | null {

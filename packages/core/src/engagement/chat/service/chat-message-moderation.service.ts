@@ -1,22 +1,21 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { createLogger, findOneOrThrow, serializeRow, DrizzleService } from '@openora/core/server';
+import { createLogger, findOneOrThrow, DrizzleService } from '@openora/core/server';
 import type { AuditWritePort, ClientMeta, RealtimeTransport, Uuid } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
 import type { ChatMessage } from '../contract/index.js';
 import { chatMessage } from '../schema/index.js';
+import { toMessage, toSystemMessage } from './chat-message-mapping.service.js';
 import { ChatMessageNotFoundError } from './errors/chat-moderation.errors.js';
 export { ChatMessageNotFoundError } from './errors/chat-moderation.errors.js';
 
 const logger = createLogger('chat');
 
-function toTombstone(record: typeof chatMessage.$inferSelect): ChatMessage {
-  const message = serializeRow(record, { dateFields: ['createdAt'] });
-  const tombstone = { ...message, isDeleted: true };
-  return (
-    record.type === 'user'
-      ? { ...tombstone, content: '', attachment: null }
-      : { ...tombstone, actorId: record.userId }
-  ) as ChatMessage;
+function toTombstone(record: typeof chatMessage.$inferSelect): ChatMessage | null {
+  if (record.type === 'system') {
+    const message = toSystemMessage(record);
+    return message && { ...message, content: '', isDeleted: true };
+  }
+  return { ...toMessage(record), content: '', attachment: null, isDeleted: true } as ChatMessage;
 }
 
 export class ChatMessageModerationService {
@@ -64,9 +63,10 @@ export class ChatMessageModerationService {
       });
       return updated;
     });
-    if (deleted) {
+    const tombstone = deleted && toTombstone(deleted);
+    if (deleted && tombstone) {
       void Promise.resolve()
-        .then(() => this.transport.remove(chatChannel(deleted.roomId), toTombstone(deleted)))
+        .then(() => this.transport.remove(chatChannel(deleted.roomId), tombstone))
         .catch((err: unknown) => {
           logger.error({ err, messageId: id }, 'chat realtime removal failed');
         });

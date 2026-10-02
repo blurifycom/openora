@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, waitForAdvisoryLockWaiter, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  waitForAdvisoryLockWaiter,
+  waitForRowLockWaiter,
+  type TestDb,
+} from '@openora/core/testing';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
@@ -47,22 +52,6 @@ async function seedBan(overrides: Partial<typeof chatPlatformBan.$inferInsert> =
     })
     .returning();
   return row!;
-}
-
-async function waitForRowLockWaiter(timeoutMs = 3000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
-      sql`select count(*)::int as waiting from pg_locks l
-          join pg_stat_activity a on a.pid = l.pid
-          where l.locktype = 'transactionid' and not l.granted
-            and a.datname = current_database()`,
-    );
-    if ((rows[0]?.waiting ?? 0) > 0) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 const auditRowsFor = (resourceId: string) =>
@@ -184,7 +173,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     await liftWritten;
 
     const sweep = makeSweep().sweep();
-    await waitForRowLockWaiter();
+    await waitForRowLockWaiter(db);
     release();
     await lift;
 

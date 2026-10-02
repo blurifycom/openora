@@ -3067,22 +3067,33 @@ describe('ChatService moderation (real PG)', () => {
     await expect(svc.getGlobalMessages()).resolves.toEqual([]);
   });
 
-  it('publishes a system message tombstone the message contract accepts', async () => {
+  it('publishes a legacy system message tombstone without content that the contract accepts', async () => {
     const { svc, moderation } = makeService();
-    const posted = await svc.postSystemMessage({
-      roomId: null,
-      actorId: randomUUID(),
-      username: 'system',
-      metadata: { command: 'block', targetUserId: randomUUID(), displayName: 'someone' },
+    const message = await seedMessage({
+      type: 'system',
+      content: 'alice made it rain',
+      metadata: {
+        command: 'rain',
+        fromUserId: randomUUID(),
+        amount: '0.62000000000000000000',
+        currency: 'USD',
+        recipientCount: 1,
+        perRecipient: '0.62000000000000000000',
+      },
     });
     const received: ChatMessage[] = [];
     svc.subscribeMessages(null, (event) => received.push(event));
     await settle();
 
-    await moderation.deleteMessage(posted.id, randomUUID(), NO_CLIENT_META);
+    await moderation.deleteMessage(message.id, randomUUID(), NO_CLIENT_META);
     await waitFor(() => received.length === 1);
 
-    expect(ChatMessageSchema.parse(received[0])).toMatchObject({ id: posted.id, isDeleted: true });
+    expect(ChatMessageSchema.parse(received[0])).toMatchObject({
+      id: message.id,
+      isDeleted: true,
+      content: '',
+      metadata: { amount: '0.62', perRecipient: '0.62' },
+    });
   });
 });
 
