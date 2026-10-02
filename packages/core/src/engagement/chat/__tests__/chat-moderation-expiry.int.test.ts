@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, waitForAdvisoryLockWaiter, type TestDb } from '@openora/core/testing';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
@@ -259,33 +259,45 @@ describe('ChatModerationExpiryService.sweep', () => {
     expect(await auditRowsFor(running.id)).toHaveLength(0);
   });
 
-  it('lifts the replacement when an unmute races a re-mute', async () => {
+  it('lifts the replacement when an unmute arrives during a re-mute', async () => {
     const userId = randomUUID();
-    await seedMute({ userId, expiresAt: secondsFromNow(3600) });
-    const moderation = makeModeration();
+    const running = await seedMute({ userId, expiresAt: secondsFromNow(3600) });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let replaced!: () => void;
+    const midway = new Promise<void>((resolve) => (replaced = resolve));
 
-    await Promise.all([
-      moderation.mute({
-        userId,
-        roomId: '__global',
-        durationSeconds: null,
-        reason: 'escalated',
-        actorId: ADMIN_ID,
-        ...NO_CLIENT_META,
-      }),
-      moderation.unmute({ userId, roomId: '__global', actorId: ADMIN_ID, ...NO_CLIENT_META }),
-    ]);
+    const remute = db.drizzle.db.transaction(async (t) => {
+      await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-mute:${userId}`}))`);
+      await t
+        .update(chatMute)
+        .set({ liftedAt: new Date(), liftedBy: ADMIN_ID })
+        .where(eq(chatMute.id, running.id));
+      await t
+        .insert(chatMute)
+        .values({ userId, roomId: null, scope: '__global', mutedBy: ADMIN_ID, reason: 'again' });
+      replaced();
+      await held;
+    });
+    await midway;
+    const unmute = makeModeration().unmute({
+      userId,
+      roomId: '__global',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+    await waitForAdvisoryLockWaiter(db);
+    release();
+    await remute;
+    await unmute;
 
     const active = await db.drizzle.db
       .select()
       .from(chatMute)
       .where(sql`${chatMute.userId} = ${userId} AND ${chatMute.liftedAt} IS NULL`);
-    const lifts = await db.drizzle.db
-      .select()
-      .from(auditLog)
-      .where(eq(auditLog.action, 'chat.mute.lifted'));
-    // Either order is valid, but an unmute that reports success has always lifted something.
-    expect(lifts).toHaveLength(1);
-    expect(active.length).toBeLessThanOrEqual(1);
+    expect(active).toHaveLength(0);
+    expect(
+      await db.drizzle.db.select().from(auditLog).where(eq(auditLog.action, 'chat.mute.lifted')),
+    ).toHaveLength(1);
   });
 });

@@ -8,6 +8,7 @@ import {
   type TestDb,
   type TestRedis,
   seedUser,
+  waitForAdvisoryLockWaiter,
 } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -700,11 +701,13 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
         content: 'second',
       })
       .catch((err: unknown) => err);
-    await settle();
+    await waitForAdvisoryLockWaiter(db);
     releaseFirst();
     await first;
 
-    expect(await second).toBeInstanceOf(ChatPlayerMutedError);
+    const refused = await second;
+    expect(refused).toBeInstanceOf(ChatPlayerMutedError);
+    expect((refused as ChatPlayerMutedError).data.reason).toBe('slow_mode');
   });
 
   it('refuses a private room the sender has not joined', async () => {
@@ -2730,6 +2733,7 @@ describe('ChatService moderation (real PG)', () => {
       userId: memberId,
       moderatorId,
       reason: 'first',
+      ...NO_CLIENT_META,
     });
 
     await svc.muteRoomMember({
@@ -2738,6 +2742,7 @@ describe('ChatService moderation (real PG)', () => {
       moderatorId,
       durationSeconds: 1,
       reason: 'shortened',
+      ...NO_CLIENT_META,
     });
 
     const created = vi
@@ -2954,6 +2959,7 @@ describe('ChatService moderation (real PG)', () => {
       moderatorId,
       durationSeconds: 60,
       reason: 'new reason',
+      ...NO_CLIENT_META,
     });
 
     const rows = await db.drizzle.db
@@ -2961,8 +2967,10 @@ describe('ChatService moderation (real PG)', () => {
       .from(chatRoomMute)
       .where(eq(chatRoomMute.roomId, room.id));
     expect(rows).toHaveLength(2);
-    expect(rows.filter((row) => row.liftedAt)).toHaveLength(1);
     expect(rows.filter((row) => !row.liftedAt)).toHaveLength(1);
+    // The lapsed mute ended on its own: lifted at its expiry, by nobody.
+    const lapsed = rows.find((row) => row.reason === 'old reason');
+    expect(lapsed).toMatchObject({ liftedAt: lapsed!.expiresAt, liftedBy: null });
   });
 
   it('enforces a reversible platform ban only on public chat', async () => {
@@ -3325,5 +3333,264 @@ describe('ChatBanService channel revocation (real PG)', () => {
 
     const bans = await db.drizzle.db.select().from(chatPlatformBan);
     expect(bans.map((row) => row.scope)).toEqual(['__global']);
+  });
+});
+
+describe('ChatService: the global room under its row id (real PG)', () => {
+  async function globalRoomWithModerator() {
+    const context = makeService();
+    const globalRoom = await seedRoom({ slug: '__global' });
+    const moderatorId = randomUUID();
+    const playerId = randomUUID();
+    await db.drizzle.db.insert(chatRoomMember).values([
+      { roomId: globalRoom.id, userId: moderatorId, role: 'moderator' },
+      { roomId: globalRoom.id, userId: playerId, role: 'member' },
+    ]);
+    return { ...context, globalRoom, moderatorId, playerId };
+  }
+
+  it('holds a room mute on the global room on both send paths', async () => {
+    const { svc, globalRoom, moderatorId, playerId } = await globalRoomWithModerator();
+    await svc.muteRoomMember({
+      roomId: globalRoom.id,
+      userId: playerId,
+      moderatorId,
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.sendGlobalMessage({ userId: playerId, username: 'p', content: 'hi' }),
+    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
+    await expect(
+      svc.sendRoomMessage({
+        userId: playerId,
+        username: 'p',
+        roomId: globalRoom.id,
+        content: 'hi',
+      }),
+    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
+  });
+
+  it('holds a room ban on the global room on the __global routes', async () => {
+    const { svc, globalRoom, moderatorId, playerId } = await globalRoomWithModerator();
+    await svc.banMember({
+      moderatorId,
+      roomId: globalRoom.id,
+      userId: playerId,
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.sendGlobalMessage({ userId: playerId, username: 'p', content: 'hi' }),
+    ).rejects.toBeInstanceOf(ChatPlayerBannedError);
+    await expect(svc.getGlobalMessages(undefined, playerId)).rejects.toBeInstanceOf(
+      ChatPlayerBannedError,
+    );
+  });
+
+  it('stores a system message posted to the global room id as a global message', async () => {
+    const { svc, globalRoom } = await globalRoomWithModerator();
+
+    const posted = await svc.postSystemMessage({
+      roomId: globalRoom.id,
+      actorId: randomUUID(),
+      username: 'system',
+      metadata: { command: 'block', targetUserId: randomUUID(), displayName: 'someone' },
+    });
+
+    expect(posted.roomId).toBeNull();
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(chatMessage)
+      .where(eq(chatMessage.id, posted.id));
+    expect(stored!.roomId).toBeNull();
+  });
+});
+
+describe('ChatService.listRooms ban expiry (real PG)', () => {
+  it('reports the longest running ban that applies to a room', async () => {
+    const { svc, moderation } = makeService();
+    const globalRoom = await seedRoom({ slug: '__global' });
+    const viewerId = randomUUID();
+    await moderation.ban({
+      userId: viewerId,
+      roomId: '__global',
+      durationSeconds: 3600,
+      reason: 'short',
+      actorId: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+    await moderation.ban({
+      userId: viewerId,
+      roomId: '__all',
+      durationSeconds: null,
+      reason: 'permanent',
+      actorId: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+
+    const rooms = await svc.listRooms(viewerId);
+
+    expect(rooms.find((room) => room.id === globalRoom.id)).toMatchObject({
+      isBanned: true,
+      bannedUntil: null,
+    });
+  });
+});
+
+describe('ChatService.updateRoomConfiguration audit (real PG)', () => {
+  it('writes no audit row when the settings do not change', async () => {
+    const { svc, audit } = makeService();
+    const room = await seedRoom();
+    const ownerId = randomUUID();
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: room.id, userId: ownerId, role: 'owner' });
+    await svc.updateRoomConfiguration({
+      roomId: room.id,
+      actorId: ownerId,
+      slowMode: true,
+      ...NO_CLIENT_META,
+    });
+
+    await svc.updateRoomConfiguration({
+      roomId: room.id,
+      actorId: ownerId,
+      slowMode: true,
+      ...NO_CLIENT_META,
+    });
+
+    const configurationAudits = vi
+      .mocked(audit.recordInTransaction)
+      .mock.calls.filter(([, entry]) => entry.action === 'chat.room.configuration.updated');
+    expect(configurationAudits).toHaveLength(1);
+  });
+});
+
+describe('ChatService moderation follow-through (real PG)', () => {
+  async function privateRoomWithMember(transport?: RealtimeTransport) {
+    const context = makeService(undefined, undefined, [], transport);
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const room = await context.svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'Room',
+      ...NO_CLIENT_META,
+    });
+    await context.svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    return { ...context, room, ownerId, memberId };
+  }
+
+  it('cuts the global stream when a player is banned from the global room', async () => {
+    const transport = makeTransport();
+    const revoke = vi.spyOn(transport, 'revokeUserFromChannel');
+    const { svc } = makeService(undefined, undefined, [], transport);
+    const globalRoom = await seedRoom({ slug: '__global' });
+    const moderatorId = randomUUID();
+    const playerId = randomUUID();
+    await db.drizzle.db.insert(chatRoomMember).values([
+      { roomId: globalRoom.id, userId: moderatorId, role: 'moderator' },
+      { roomId: globalRoom.id, userId: playerId, role: 'member' },
+    ]);
+
+    await svc.banMember({
+      moderatorId,
+      roomId: globalRoom.id,
+      userId: playerId,
+      ...NO_CLIENT_META,
+    });
+
+    expect(revoke).toHaveBeenCalledWith(playerId, chatChannel(null));
+  });
+
+  it('refuses a send to a read-only room before checking its attachment', async () => {
+    const { svc, room, memberId } = await privateRoomWithMember();
+    await db.drizzle.db
+      .insert(chatRoomConfiguration)
+      .values({ roomId: room.id, readOnlyMode: true })
+      .onConflictDoUpdate({ target: chatRoomConfiguration.roomId, set: { readOnlyMode: true } });
+
+    const refused = await svc
+      .sendRoomMessage({
+        userId: memberId,
+        username: 'member',
+        roomId: room.id,
+        content: 'hi',
+        attachment: {
+          kind: 'gif',
+          provider: 'example',
+          externalId: 'x',
+          url: 'https://not-allowed.example/x.gif',
+          previewUrl: 'https://not-allowed.example/x.gif',
+          width: 1,
+          height: 1,
+          title: 'gif',
+        },
+      })
+      .catch((err: unknown) => err);
+
+    expect(refused).toBeInstanceOf(ChatPlayerMutedError);
+    expect((refused as ChatPlayerMutedError).data).toEqual({ until: null, reason: 'read_only' });
+  });
+
+  it('records the lifted terms on a room unmute and a room unban', async () => {
+    const { svc, audit, room, ownerId, memberId } = await privateRoomWithMember();
+    await svc.muteRoomMember({
+      roomId: room.id,
+      userId: memberId,
+      moderatorId: ownerId,
+      reason: 'noise',
+      ...NO_CLIENT_META,
+    });
+    await svc.unmuteRoomMember({
+      roomId: room.id,
+      userId: memberId,
+      moderatorId: ownerId,
+      ...NO_CLIENT_META,
+    });
+    await svc.banMember({
+      moderatorId: ownerId,
+      roomId: room.id,
+      userId: memberId,
+      ...NO_CLIENT_META,
+    });
+    await svc.unbanMember({
+      roomId: room.id,
+      userId: memberId,
+      moderatorId: ownerId,
+      ...NO_CLIENT_META,
+    });
+
+    const entries = vi.mocked(audit.recordInTransaction).mock.calls.map(([, entry]) => entry);
+    expect(entries.find((entry) => entry.action === 'chat.room.mute.lifted')?.before).toEqual({
+      reason: 'noise',
+      expiresAt: null,
+    });
+    expect(entries.find((entry) => entry.action === 'chat.room.member.unbanned')?.before).toEqual({
+      expiresAt: null,
+    });
+  });
+
+  it('writes no audit row for a rule update that changes nothing', async () => {
+    const { svc, audit, room, ownerId } = await privateRoomWithMember();
+    const rule = await svc.createRoomRule({
+      roomId: room.id,
+      actorId: ownerId,
+      content: 'Be kind',
+      ...NO_CLIENT_META,
+    });
+
+    await svc.updateRoomRule({
+      roomId: room.id,
+      id: rule.id,
+      actorId: ownerId,
+      content: 'Be kind',
+      ...NO_CLIENT_META,
+    });
+
+    const updates = vi
+      .mocked(audit.recordInTransaction)
+      .mock.calls.filter(([, entry]) => entry.action === 'chat.room.rule.updated');
+    expect(updates).toHaveLength(0);
   });
 });

@@ -391,12 +391,12 @@ export async function mapEventToRecord(
     };
   }
 
+  // A room ban only comes from a room moderator on a player route, never from the back office.
   if (topic === 'chat.room.member.banned') {
-    const actorPlayerId = str(p['playerId']);
     return {
       ...base,
-      actorType: actorPlayerId ? 'player' : 'admin',
-      actorId: actorPlayerId ?? str(p['bannedBy']),
+      actorType: 'player',
+      actorId: str(p['playerId']) ?? str(p['bannedBy']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       before: isRecord(p['replaced']) ? p['replaced'] : null,

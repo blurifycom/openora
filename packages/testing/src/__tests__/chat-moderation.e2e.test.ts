@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
+import { auditLog } from '@openora/core/audit/schema';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { ChatMessageSchema, ChatRoomSchema } from '@openora/core/engagement/contracts/chat';
 import {
@@ -310,5 +311,257 @@ describe('chat: message history', () => {
     const page = await member.client.get(`/chat/rooms/${room.id}/messages?before=yesterday`);
 
     expect(page.status).toBe(400);
+  });
+});
+
+async function auditRows(action: string, resourceId: string) {
+  return app.container
+    .get(DRIZZLE)
+    .db.select()
+    .from(auditLog)
+    .where(and(eq(auditLog.action, action), eq(auditLog.resourceId, resourceId)));
+}
+
+describe('chat: room bans and mutes by a room moderator', () => {
+  it('replaces a room ban and records the ban it replaced', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const ban = (body: Record<string, unknown>) =>
+      owner.client.post(`/chat/rooms/${room.id}/ban`, { userId: member.userId, ...body });
+
+    expect((await ban({ reason: 'first' })).status).toBe(200);
+    expect((await ban({ reason: 'shortened', durationSeconds: 60 })).status).toBe(200);
+
+    // The room-ban audit row is written from the event after commit.
+    await expect
+      .poll(async () =>
+        (await auditRows('chat.room.member.banned', member.userId)).map((row) => row.before),
+      )
+      .toContainEqual(expect.objectContaining({ expiresAt: null }));
+    expect((await member.client.post('/chat/rooms/join', { joinCode: room.joinCode })).status).toBe(
+      403,
+    );
+  });
+
+  it('refuses a room ban from a member who is not a moderator', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+
+    const ban = await member.client.post(`/chat/rooms/${room.id}/ban`, {
+      userId: owner.userId,
+      reason: 'coup',
+    });
+
+    expect(ban.status).toBe(403);
+  });
+
+  it('mutes a member in the room and lifts it again', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const send = () => member.client.post(`/chat/rooms/${room.id}/messages`, { content: 'hi' });
+
+    expect(
+      (
+        await owner.client.post(`/chat/rooms/${room.id}/mute`, {
+          userId: member.userId,
+          reason: 'noise',
+        })
+      ).status,
+    ).toBe(200);
+    expect((await send()).status).toBe(403);
+    expect(
+      (await owner.client.post(`/chat/rooms/${room.id}/mute/lift`, { userId: member.userId }))
+        .status,
+    ).toBe(200);
+
+    expect((await send()).status).toBe(200);
+  });
+
+  it('refuses a moderator muting themselves with 400', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+
+    const muted = await owner.client.post(`/chat/rooms/${room.id}/mute`, {
+      userId: owner.userId,
+      reason: 'self',
+    });
+
+    expect(muted.status).toBe(400);
+  });
+});
+
+describe('chat: back-office mutes and lifts', () => {
+  it('mutes a player in global chat and lifts it', async () => {
+    const player = await registerChatter('loud');
+    const send = () => player.client.post('/chat/global', { content: 'hello' });
+    const muted = await admin.post('/backoffice/chat/mutes', {
+      userId: player.userId,
+      roomId: GLOBAL_CHAT_ROOM_ID,
+      reason: 'noise',
+    });
+    expect(muted.status).toBe(200);
+    expect((await send()).status).toBe(403);
+
+    const lifted = await admin.post('/backoffice/chat/mutes/lift', {
+      userId: player.userId,
+      roomId: GLOBAL_CHAT_ROOM_ID,
+    });
+
+    expect(lifted.status).toBe(200);
+    expect((await send()).status).toBe(200);
+  });
+
+  it('lifts a platform ban', async () => {
+    const player = await registerChatter('banned');
+    await admin.post('/backoffice/chat/bans', {
+      userId: player.userId,
+      roomId: GLOBAL_CHAT_ROOM_ID,
+      reason: 'spam',
+    });
+
+    const lifted = await admin.post('/backoffice/chat/bans/lift', {
+      userId: player.userId,
+      roomId: GLOBAL_CHAT_ROOM_ID,
+    });
+
+    expect(lifted.status).toBe(200);
+    expect((await player.client.post('/chat/global', { content: 'back' })).status).toBe(200);
+  });
+
+  it('refuses a mute or a lift from a player', async () => {
+    const player = await registerChatter('rogue');
+    const target = await registerChatter('target');
+    const body = { userId: target.userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'x' };
+
+    expect((await player.client.post('/backoffice/chat/mutes', body)).status).toBe(403);
+    expect((await player.client.post('/backoffice/chat/mutes/lift', body)).status).toBe(403);
+    expect((await player.client.post('/backoffice/chat/bans/lift', body)).status).toBe(403);
+  });
+});
+
+describe('chat: room rules', () => {
+  it('creates, edits and deletes a rule, auditing each change', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    const created = await owner.client.post(`/chat/rooms/${room.id}/rules`, {
+      content: 'Be kind',
+    });
+    expect(created.status).toBe(200);
+    const { id } = (await created.json()) as { id: string };
+
+    expect(
+      (await owner.client.patch(`/chat/rooms/${room.id}/rules/${id}`, { content: 'Be kinder' }))
+        .status,
+    ).toBe(200);
+    expect((await owner.client.del(`/chat/rooms/${room.id}/rules/${id}`)).status).toBe(200);
+
+    expect(await auditRows('chat.room.rule.created', id)).toHaveLength(1);
+    expect(await auditRows('chat.room.rule.updated', id)).toHaveLength(1);
+    expect(await auditRows('chat.room.rule.deleted', id)).toHaveLength(1);
+  });
+
+  it('refuses a rule from a member and a rule over the length cap', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+
+    const fromMember = await member.client.post(`/chat/rooms/${room.id}/rules`, {
+      content: 'Mine',
+    });
+    const tooLong = await owner.client.post(`/chat/rooms/${room.id}/rules`, {
+      content: 'x'.repeat(1001),
+    });
+
+    expect(fromMember.status).toBe(403);
+    expect(tooLong.status).toBe(400);
+  });
+});
+
+describe('chat: connection grant', () => {
+  it('grants a connection with a client id and refuses an oversized one', async () => {
+    const player = await registerChatter('conn');
+
+    const granted = await player.client.get('/chat/connection?clientId=tab-1');
+    const oversized = await player.client.get(`/chat/connection?clientId=${'x'.repeat(129)}`);
+
+    expect(granted.status).toBe(200);
+    expect(oversized.status).toBe(400);
+  });
+});
+
+describe('chat: online count', () => {
+  it('counts the global room under its row id and refuses a banned player', async () => {
+    const player = await registerChatter('count');
+    const banned = await registerChatter('banned');
+    await admin.post('/backoffice/chat/bans', {
+      userId: banned.userId,
+      roomId: GLOBAL_CHAT_ROOM_ID,
+      reason: 'spam',
+    });
+
+    const counted = await player.client.get(`/chat/online-count?roomId=${globalRoomId}`);
+    const refused = await banned.client.get(`/chat/online-count?roomId=${globalRoomId}`);
+
+    expect(counted.status).toBe(200);
+    expect(refused.status).toBe(403);
+  });
+
+  it('answers 403, not 500, when a banned player reads the global room by its row id', async () => {
+    const banned = await registerChatter('banned');
+    await admin.post('/backoffice/chat/bans', {
+      userId: banned.userId,
+      roomId: GLOBAL_CHAT_ROOM_ID,
+      reason: 'spam',
+    });
+
+    for (const path of ['', '/configuration', '/members']) {
+      expect((await banned.client.get(`/chat/rooms/${globalRoomId}${path}`)).status).toBe(403);
+    }
+  });
+});
+
+describe('chat: locked public room', () => {
+  it('refuses a newcomer but lets a member join again', async () => {
+    const regular = await registerChatter('regular');
+    const newcomer = await registerChatter('late');
+    const created = await admin.post('/backoffice/chat/rooms', {
+      name: `public-${randomUUID()}`,
+      slug: `public-${randomUUID()}`,
+      category: 'games-sports',
+    });
+    expect(created.status).toBe(200);
+    const room = ChatRoomSchema.parse(await created.json());
+    expect((await regular.client.post(`/chat/rooms/${room.id}/join`)).status).toBe(200);
+    const locked = await admin.patch(`/chat/rooms/${room.id}/configuration`, { lockRoom: true });
+    expect(locked.status).toBe(200);
+
+    const refused = await newcomer.client.post(`/chat/rooms/${room.id}/join`);
+    const rejoined = await regular.client.post(`/chat/rooms/${room.id}/join`);
+
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { data?: { reason?: string } }).data?.reason).toBe('locked');
+    expect(rejoined.status).toBe(200);
+  });
+});
+
+describe('chat: message history cursor', () => {
+  it('pages older messages with an offset timestamp cursor', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('guest');
+    const room = await createRoomWithMember(owner.client, member.client);
+    await owner.client.post(`/chat/rooms/${room.id}/messages`, { content: 'older' });
+
+    const page = await member.client.get(
+      `/chat/rooms/${room.id}/messages?before=${encodeURIComponent('2999-01-01T00:00:00+02:00')}`,
+    );
+
+    expect(page.status).toBe(200);
+    const messages = ChatMessageSchema.array().parse(await page.json());
+    expect(messages.map((message) => message.content)).toContain('older');
   });
 });

@@ -9,13 +9,7 @@ import {
   type ChatModerationScope,
   type Uuid,
 } from '@openora/core/contracts';
-import {
-  chatMute,
-  chatPlatformBan,
-  chatRoomConfiguration,
-  chatRoomMute,
-  chatRoom,
-} from '../schema/index.js';
+import { chatMute, chatPlatformBan, chatRoomMute, chatRoom } from '../schema/index.js';
 import { ChatPlayerMutedError, ChatPlayerBannedError } from './errors/chat-moderation.errors.js';
 import { platformScopesFor, resolveModerationTarget } from '../moderation/index.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
@@ -28,38 +22,23 @@ export class ChatMuteService {
 
   async assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic = true) {
     const now = new Date();
-    const [config] =
-      roomId === null
-        ? await this.drizzle.db
-            .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
-            .from(chatRoomConfiguration)
-            .innerJoin(chatRoom, eq(chatRoomConfiguration.roomId, chatRoom.id))
-            .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
-            .limit(1)
-        : await this.drizzle.db
-            .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
-            .from(chatRoomConfiguration)
-            .where(eq(chatRoomConfiguration.roomId, roomId))
-            .limit(1);
-    if (config?.readOnlyMode) {
-      throw new ChatPlayerMutedError(null);
-    }
-    if (roomId !== null) {
-      const [roomMute] = await this.drizzle.db
-        .select({ id: chatRoomMute.id, expiresAt: chatRoomMute.expiresAt })
-        .from(chatRoomMute)
-        .where(
-          and(
-            eq(chatRoomMute.userId, userId),
-            eq(chatRoomMute.roomId, roomId),
-            isNull(chatRoomMute.liftedAt),
-            or(isNull(chatRoomMute.expiresAt), gt(chatRoomMute.expiresAt, now)),
-          ),
-        )
-        .limit(1);
-      if (roomMute) {
-        throw new ChatPlayerMutedError(roomMute.expiresAt);
-      }
+    const [roomMute] = await this.drizzle.db
+      .select({ id: chatRoomMute.id, expiresAt: chatRoomMute.expiresAt })
+      .from(chatRoomMute)
+      .innerJoin(chatRoom, eq(chatRoom.id, chatRoomMute.roomId))
+      .where(
+        and(
+          eq(chatRoomMute.userId, userId),
+          roomId === null
+            ? eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)
+            : eq(chatRoomMute.roomId, roomId),
+          isNull(chatRoomMute.liftedAt),
+          or(isNull(chatRoomMute.expiresAt), gt(chatRoomMute.expiresAt, now)),
+        ),
+      )
+      .limit(1);
+    if (roomMute) {
+      throw new ChatPlayerMutedError(roomMute.expiresAt);
     }
     const scopes = platformScopesFor(roomId === null ? 'global' : isPublic ? 'public' : 'private');
     const [ban] = await this.drizzle.db
@@ -201,23 +180,16 @@ export class ChatMuteService {
             and(
               eq(chatMute.userId, userId),
               or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, liftedAt)),
-              scope === 'room'
-                ? or(
-                    eq(chatMute.scope, 'room'),
-                    and(
-                      eq(chatMute.scope, GLOBAL_CHAT_ROOM_ID),
-                      eq(chatMute.roomId, concreteRoomId ?? ''),
-                    ),
-                  )
-                : eq(chatMute.scope, scope),
+              eq(chatMute.scope, scope),
               concreteRoomId === null
                 ? isNull(chatMute.roomId)
                 : eq(chatMute.roomId, concreteRoomId),
               isNull(chatMute.liftedAt),
             ),
           )
-          .returning({ id: chatMute.id });
-        if (rows.length === 0) {
+          .returning({ id: chatMute.id, reason: chatMute.reason, expiresAt: chatMute.expiresAt });
+        const [lifted] = rows;
+        if (!lifted) {
           return;
         }
         await this.audit.recordInTransaction(t, {
@@ -225,7 +197,8 @@ export class ChatMuteService {
           actorType: 'admin',
           action: 'chat.mute.lifted',
           resourceType: 'chat_mute',
-          resourceId: rows[0]?.id ?? null,
+          resourceId: lifted.id,
+          before: { reason: lifted.reason, expiresAt: lifted.expiresAt?.toISOString() ?? null },
           after: { userId, scope, roomId: concreteRoomId, liftedAt: liftedAt.toISOString() },
           ip: ip ?? null,
           userAgent: userAgent ?? null,

@@ -1,8 +1,9 @@
 import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
-import type { AuditWritePort, Uuid } from '@openora/core/contracts';
+import type { AuditWritePort, ClientMeta, Uuid } from '@openora/core/contracts';
 import { chatRoomMember, chatRoomMute } from '../schema/index.js';
+import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
@@ -46,13 +47,15 @@ export class ChatRoomMuteService {
     moderatorId,
     durationSeconds = null,
     reason = '',
+    ip,
+    userAgent,
   }: {
     roomId: Uuid;
     userId: Uuid;
     moderatorId: Uuid;
     durationSeconds?: number | null;
     reason?: string;
-  }) {
+  } & ClientMeta) {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
@@ -62,22 +65,21 @@ export class ChatRoomMuteService {
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
         const now = new Date();
+        const targetMutes = and(
+          eq(chatRoomMute.roomId, roomId),
+          eq(chatRoomMute.userId, userId),
+          isNull(chatRoomMute.liftedAt),
+        );
+        await retireLapsedRows(t, chatRoomMute, targetMutes, now);
         const [previous] = await t
           .update(chatRoomMute)
           .set({ liftedAt: now, liftedBy: moderatorId })
-          .where(
-            and(
-              eq(chatRoomMute.roomId, roomId),
-              eq(chatRoomMute.userId, userId),
-              isNull(chatRoomMute.liftedAt),
-            ),
-          )
+          .where(targetMutes)
           .returning({
             id: chatRoomMute.id,
             reason: chatRoomMute.reason,
             expiresAt: chatRoomMute.expiresAt,
           });
-        const previousActive = previous && (!previous.expiresAt || previous.expiresAt > now);
         const [created] = await t
           .insert(chatRoomMute)
           .values({ roomId, userId, mutedBy: moderatorId, reason, expiresAt })
@@ -88,7 +90,7 @@ export class ChatRoomMuteService {
           action: 'chat.room.mute.created',
           resourceType: 'chat_room_mute',
           resourceId: created.id,
-          before: previousActive
+          before: previous
             ? {
                 muteId: previous.id,
                 reason: previous.reason,
@@ -96,6 +98,8 @@ export class ChatRoomMuteService {
               }
             : null,
           after: { roomId, userId, durationSeconds, reason },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
         });
       }),
     );
@@ -106,11 +110,13 @@ export class ChatRoomMuteService {
     roomId,
     userId,
     moderatorId,
+    ip,
+    userAgent,
   }: {
     roomId: Uuid;
     userId: Uuid;
     moderatorId: Uuid;
-  }) {
+  } & ClientMeta) {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
@@ -125,7 +131,11 @@ export class ChatRoomMuteService {
               or(isNull(chatRoomMute.expiresAt), gt(chatRoomMute.expiresAt, new Date())),
             ),
           )
-          .returning({ id: chatRoomMute.id });
+          .returning({
+            id: chatRoomMute.id,
+            reason: chatRoomMute.reason,
+            expiresAt: chatRoomMute.expiresAt,
+          });
         if (!lifted) {
           return;
         }
@@ -135,7 +145,10 @@ export class ChatRoomMuteService {
           action: 'chat.room.mute.lifted',
           resourceType: 'chat_room_mute',
           resourceId: lifted.id,
+          before: { reason: lifted.reason, expiresAt: lifted.expiresAt?.toISOString() ?? null },
           after: { roomId, userId },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
         });
       }),
     );

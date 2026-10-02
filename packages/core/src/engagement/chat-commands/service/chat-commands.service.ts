@@ -12,7 +12,8 @@ import type {
   RealtimeTransport,
   AuditWritePort,
 } from '@openora/core/contracts';
-import { chatChannel } from '@openora/core/contracts';
+import { GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
+import { chatRoom } from '@openora/core/engagement/schema/chat';
 import type { SortOrder } from '@openora/core/contracts/kit';
 import type {
   ChatCommandDescriptor,
@@ -119,6 +120,19 @@ export class ChatCommandsService {
     return toDescriptor(row);
   }
 
+  // The global room is present on `chat:global` whether the client names it by slug or row id.
+  private async presenceChannel(roomId: Uuid | null) {
+    if (roomId === null) {
+      return chatChannel(null);
+    }
+    const [room] = await this.drizzle.db
+      .select({ slug: chatRoom.slug })
+      .from(chatRoom)
+      .where(eq(chatRoom.id, roomId))
+      .limit(1);
+    return chatChannel(room?.slug === GLOBAL_CHAT_ROOM_ID ? null : roomId);
+  }
+
   async searchMentions({
     q,
     limit,
@@ -131,7 +145,7 @@ export class ChatCommandsService {
     viewerId: Uuid;
   }) {
     const query = q.trim();
-    const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
+    const onlineUserIds = await this.transport.getOnlineUserIds(await this.presenceChannel(roomId));
     if (query.length === 0 && onlineUserIds.length === 0) {
       return [];
     }

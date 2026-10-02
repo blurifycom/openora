@@ -343,7 +343,7 @@ export const chatContract = {
         roomId: UuidSchema,
         // Bounded so a caller cannot request an unbounded page.
         limit: z.number().int().min(1).max(100).optional(),
-        before: TimestampSchema.optional(),
+        before: z.iso.datetime({ offset: true }).optional(),
       }),
     )
     .output(z.array(ChatMessageSchema)),
@@ -369,9 +369,7 @@ export const chatContract = {
 
   getConnection: oc
     .route({ method: 'GET', path: '/chat/connection' })
-    .input(
-      z.object({ clientId: z.string().min(1).max(CONNECTION_CLIENT_ID_MAX_LENGTH).optional() }),
-    )
+    .input(z.object({ clientId: z.string().max(CONNECTION_CLIENT_ID_MAX_LENGTH).optional() }))
     .output(ChatConnectionGrantSchema),
 
   streamRoom: oc

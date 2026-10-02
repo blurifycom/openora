@@ -43,7 +43,10 @@ import {
   ChatRoomOwnerCannotLeaveError,
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
-import { revokeChannelBestEffort } from './channel-revoke.service.js';
+import {
+  revokeChannelBestEffort,
+  revokeRoomChannelBestEffort,
+} from './channel-revoke.service.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
 
@@ -95,7 +98,14 @@ export class ChatRoomMembershipService {
             .from(chatRoomConfiguration)
             .where(eq(chatRoomConfiguration.roomId, roomId))
             .limit(1);
-          if (config?.lockRoom) {
+          const [member] = config?.lockRoom
+            ? await t
+                .select({ id: chatRoomMember.id })
+                .from(chatRoomMember)
+                .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+                .limit(1)
+            : [];
+          if (config?.lockRoom && !member) {
             throw new ChatRoomLockedError(roomId);
           }
         }
@@ -302,7 +312,7 @@ export class ChatRoomMembershipService {
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
-      await revokeChannelBestEffort(this.transport, userId, roomId);
+      await revokeRoomChannelBestEffort(this.drizzle.db, this.transport, userId, roomId);
     }
     return { success: true } as const;
   }
@@ -713,7 +723,7 @@ export class ChatRoomMembershipService {
     userId: Uuid,
     handover: OwnershipHandover | null,
   ) {
-    await revokeChannelBestEffort(this.transport, userId, roomId);
+    await revokeRoomChannelBestEffort(this.drizzle.db, this.transport, userId, roomId);
     if (!handover) {
       return;
     }

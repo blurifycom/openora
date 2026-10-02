@@ -1,7 +1,7 @@
 import { and, asc, eq, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { AuditAction, AuditWritePort, Uuid } from '@openora/core/contracts';
-import { chatMute, chatPlatformBan } from '../schema/index.js';
+import { chatMute, chatPlatformBan, chatRoomBan, chatRoomMute } from '../schema/index.js';
 
 /** Rows considered per table per pass. A backlog just drains over the next few ticks. */
 const EXPIRY_SWEEP_BATCH_SIZE = 500;
@@ -12,7 +12,7 @@ const EXPIRY_SWEEP_BATCH_SIZE = 500;
  */
 export async function retireLapsedRows(
   tx: DrizzleTx,
-  table: typeof chatMute | typeof chatPlatformBan,
+  table: typeof chatMute | typeof chatPlatformBan | typeof chatRoomBan | typeof chatRoomMute,
   active: SQL | undefined,
   now: Date,
 ) {

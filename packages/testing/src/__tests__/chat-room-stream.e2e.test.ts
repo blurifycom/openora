@@ -432,6 +432,24 @@ describe('chat room stream: both lanes of a room on one connection', () => {
     expect(stream.response.status).toBe(200);
     expect(stream.response.headers.get('content-type')).toContain('text/event-stream');
   });
+
+  it('shows a player streaming the global room by its row id as online in mention search', async () => {
+    const rooms = ChatRoomSchema.array().parse(await (await app.app.request('/chat/rooms')).json());
+    const globalRoomId = rooms.find((room) => room.slug === '__global')!.id;
+    const streamer = await registerChatter('online');
+    const searcher = await registerChatter('search');
+    const stream = await openRoomStream(streamer.client.request, globalRoomId);
+    await stream.waitUntilLive(postProbe(streamer.client, globalRoomId));
+
+    const found = await searcher.client.get(
+      `/chat-command/mention-search?roomId=${globalRoomId}&q=`,
+    );
+
+    expect(found.status).toBe(200);
+    const results = (await found.json()) as { userId: string }[];
+    expect(results.map((result) => result.userId)).toContain(streamer.userId);
+    await stream.close();
+  });
 });
 
 describe('deprecated single-lane chat streams', () => {

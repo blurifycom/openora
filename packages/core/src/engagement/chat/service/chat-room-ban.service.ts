@@ -9,11 +9,12 @@ import type {
   Uuid,
 } from '@openora/core/contracts';
 import { chatRoomBan, chatRoomMember } from '../schema/index.js';
+import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
-import { revokeChannelBestEffort } from './channel-revoke.service.js';
+import { revokeRoomChannelBestEffort } from './channel-revoke.service.js';
 
 export class ChatRoomBanService {
   constructor(
@@ -75,22 +76,22 @@ export class ChatRoomBanService {
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId, userId);
         const now = new Date();
+        const targetBans = and(
+          eq(chatRoomBan.roomId, roomId),
+          eq(chatRoomBan.userId, userId),
+          isNull(chatRoomBan.liftedAt),
+        );
+        await retireLapsedRows(t, chatRoomBan, targetBans, now);
         const [previous] = await t
           .update(chatRoomBan)
           .set({ liftedAt: now, liftedBy: moderatorId })
-          .where(
-            and(
-              eq(chatRoomBan.roomId, roomId),
-              eq(chatRoomBan.userId, userId),
-              isNull(chatRoomBan.liftedAt),
-            ),
-          )
+          .where(targetBans)
           .returning({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt });
         await t.insert(chatRoomBan).values({ roomId, userId, bannedBy: moderatorId, expiresAt });
         await t
           .delete(chatRoomMember)
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
-        return previous && (!previous.expiresAt || previous.expiresAt > now)
+        return previous
           ? { banId: previous.id, expiresAt: previous.expiresAt?.toISOString() ?? null }
           : null;
       }),
@@ -106,7 +107,7 @@ export class ChatRoomBanService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    await revokeChannelBestEffort(this.transport, userId, roomId);
+    await revokeRoomChannelBestEffort(this.drizzle.db, this.transport, userId, roomId);
     return { success: true } as const;
   }
 
@@ -114,11 +115,13 @@ export class ChatRoomBanService {
     roomId,
     userId,
     moderatorId,
+    ip,
+    userAgent,
   }: {
     roomId: Uuid;
     userId: Uuid;
     moderatorId: Uuid;
-  }) {
+  } & ClientMeta) {
     await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         await this.assertModerator(t, roomId, moderatorId);
@@ -133,7 +136,7 @@ export class ChatRoomBanService {
               or(isNull(chatRoomBan.expiresAt), gt(chatRoomBan.expiresAt, new Date())),
             ),
           )
-          .returning({ id: chatRoomBan.id });
+          .returning({ id: chatRoomBan.id, expiresAt: chatRoomBan.expiresAt });
         if (!lifted) {
           return;
         }
@@ -143,7 +146,10 @@ export class ChatRoomBanService {
           action: 'chat.room.member.unbanned',
           resourceType: 'chat_room_ban',
           resourceId: lifted.id,
+          before: { expiresAt: lifted.expiresAt?.toISOString() ?? null },
           after: { roomId, userId },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
         });
       }),
     );

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { sql } from 'drizzle-orm';
 import { createClient } from 'redis';
 import { DrizzleService } from '@openora/core/server';
 
@@ -52,6 +53,27 @@ export async function waitForConsumerGroup(
     }
     if (Date.now() > deadline) {
       throw new Error(`consumer group '${group}' on '${stream}' not ready within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/**
+ * Resolves once another session in this test's database is blocked on an advisory lock, so a
+ * concurrency test can release its held transaction only after the contender is queued behind it.
+ * Times out quietly: with the lock removed nothing ever waits, and the test then fails on its
+ * own assertion rather than here.
+ */
+export async function waitForAdvisoryLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_locks
+          where locktype = 'advisory' and not granted
+            and database = (select oid from pg_database where datname = current_database())`,
+    );
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

@@ -411,14 +411,22 @@ export function createChatRouter({
     }),
 
     getRoom: os.getRoom.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoom({ roomId: input.roomId, viewerId: resolveViewerId(context) }),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.getRoom({ roomId: input.roomId, viewerId: resolveViewerId(context) }),
       ),
     ),
 
     getRoomRules: os.getRoomRules.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.listRoomRules(input.roomId, resolveViewerId(context)),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.listRoomRules(input.roomId, resolveViewerId(context)),
       ),
     ),
 
@@ -472,8 +480,12 @@ export function createChatRouter({
     ),
 
     getRoomConfiguration: os.getRoomConfiguration.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoomConfiguration(input.roomId, resolveViewerId(context)),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.getRoomConfiguration(input.roomId, resolveViewerId(context)),
       ),
     ),
 
@@ -557,34 +569,50 @@ export function createChatRouter({
 
     unbanRoomMember: os.unbanRoomMember.handler(({ input, context }) =>
       mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        roomBanService.unbanMember({ ...input, moderatorId: getUserId(context) }),
+        roomBanService.unbanMember({
+          ...input,
+          moderatorId: getUserId(context),
+          ...context.clientMeta,
+        }),
       ),
     ),
 
     muteRoomMember: os.muteRoomMember.handler(({ input, context }) =>
-      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        roomMuteService.muteRoomMember({
-          roomId: input.roomId,
-          userId: input.userId,
-          moderatorId: getUserId(context),
-          durationSeconds: input.durationSeconds,
-          reason: input.reason,
-        }),
+      mapErrors(
+        { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomSelfModerationError },
+        () =>
+          roomMuteService.muteRoomMember({
+            roomId: input.roomId,
+            userId: input.userId,
+            moderatorId: getUserId(context),
+            durationSeconds: input.durationSeconds,
+            reason: input.reason,
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     unmuteRoomMember: os.unmuteRoomMember.handler(({ input, context }) =>
       mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        roomMuteService.unmuteRoomMember({ ...input, moderatorId: getUserId(context) }),
+        roomMuteService.unmuteRoomMember({
+          ...input,
+          moderatorId: getUserId(context),
+          ...context.clientMeta,
+        }),
       ),
     ),
 
     listRoomMembers: os.listRoomMembers.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.listRoomMembers({
-          roomId: input.roomId,
-          viewerId: getUserId(context),
-        }),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () =>
+          chatService.listRoomMembers({
+            roomId: input.roomId,
+            viewerId: getUserId(context),
+          }),
       ),
     ),
 

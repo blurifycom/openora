@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import {
   DrizzleService,
+  createLogger,
   mapConcurrent,
   serializeRow,
   withAdvisoryXactLock,
@@ -18,6 +19,8 @@ import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
 import { resolveModerationTarget, type ModerationTarget } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
+
+const logger = createLogger('chat');
 
 function activeBanFilter(userId: Uuid, target: ModerationTarget) {
   return and(
@@ -102,7 +105,12 @@ export class ChatBanService {
         });
       }),
     );
-    await this.revokeChannels(userId, await this.roomsToRevoke(userId, target));
+    // The ban is committed; failing to list its channels must not turn it into a 500 and a retry.
+    await this.roomsToRevoke(userId, target)
+      .then((roomIds) => this.revokeChannels(userId, roomIds))
+      .catch((err: unknown) => {
+        logger.error({ err, userId, scope: target.scope }, 'chat ban channel revoke failed');
+      });
     return { success: true } as const;
   }
 
@@ -155,7 +163,11 @@ export class ChatBanService {
               or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, liftedAt)),
             ),
           )
-          .returning({ id: chatPlatformBan.id });
+          .returning({
+            id: chatPlatformBan.id,
+            reason: chatPlatformBan.reason,
+            expiresAt: chatPlatformBan.expiresAt,
+          });
         if (!lifted) {
           return;
         }
@@ -165,6 +177,7 @@ export class ChatBanService {
           action: 'chat.platform_ban.lifted',
           resourceType: 'chat_platform_ban',
           resourceId: lifted.id,
+          before: { reason: lifted.reason, expiresAt: lifted.expiresAt?.toISOString() ?? null },
           after: { userId, scope: target.scope, roomId: target.roomId },
           ip: ip ?? null,
           userAgent: userAgent ?? null,

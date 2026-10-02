@@ -30,6 +30,7 @@ export type ChatModerationRoomId = Uuid | (typeof CHAT_MODERATION_SCOPES)[number
 export type ChatModerationScope = (typeof CHAT_MODERATION_SCOPE_VALUES)[number];
 
 export type ChatModeration = {
+  /** Bans and mutes only; room settings (read-only, slow mode) are enforced by the chat send path. */
   assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic?: boolean): Promise<void>;
   deleteMessage(
     id: Uuid,
