@@ -13,7 +13,7 @@ export type GeoCheckCommands = {
    */
   visitorGeoCheck?(
     ipAddress: string | null,
-  ): Promise<{ allowed: boolean; countryCode: string | null }>;
+  ): Promise<{ allowed: boolean; countryCode: string | null; redirectUrl: string | null }>;
 };
 
 export const GEO_CHECK_COMMANDS: Token<GeoCheckCommands> = createToken('GEO_CHECK_COMMANDS');
