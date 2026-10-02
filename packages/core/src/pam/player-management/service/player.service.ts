@@ -188,7 +188,7 @@ export class PlayerService implements PlayerActivityTracker {
       await this.drizzle.db.select().from(player).where(eq(player.userId, userId)),
       new PlayerNotFoundError(userId),
     );
-    const identity = await fetchIdentityByUserId(this.drizzle, record.userId);
+    const identity = await fetchIdentityByUserId(this.drizzle.db, record.userId);
     return toPlayer(record, identity?.email ?? '', identity?.username ?? '');
   }
 

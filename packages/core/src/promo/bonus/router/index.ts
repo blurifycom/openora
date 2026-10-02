@@ -1,5 +1,6 @@
 import { implement } from '@orpc/server';
 import {
+  assertRateLimit,
   createEventStreamGenerator,
   getUserId,
   mapErrors,
@@ -7,7 +8,15 @@ import {
   type EventBus,
   type OssContext,
 } from '@openora/core/server';
-import type { RealtimeTransport, Uuid } from '@openora/core/contracts';
+import {
+  RATE_LIMIT_KEYS,
+  makeRateLimitKey,
+  type GeoCheckCommands,
+  type RateLimitKey,
+  type RateLimiterAdapter,
+  type RealtimeTransport,
+  type Uuid,
+} from '@openora/core/contracts';
 import { bonusContract, type BonusBalanceUpdate } from '../contract/index.js';
 
 /** One channel per player: a bonus position is never another player's business. */
@@ -33,6 +42,9 @@ import {
   WeightService,
 } from '../service/weight.service.js';
 
+// Anonymous and read-only, so throttled per address like the anonymous geo-check.
+const PUBLIC_OFFERS_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
+
 export function createBonusRouter({
   grants,
   offers,
@@ -41,6 +53,8 @@ export function createBonusRouter({
   events,
   realtime,
   adminGuard,
+  limiter,
+  geoCheck,
 }: {
   grants: GrantReaderService;
   offers: OfferService;
@@ -49,12 +63,35 @@ export function createBonusRouter({
   events: EventBus;
   realtime: RealtimeTransport;
   adminGuard: AdminGuard;
+  limiter: RateLimiterAdapter<RateLimitKey>;
+  /** Absent when no compliance plugin is loaded, in which case there is no country rule. */
+  geoCheck?: GeoCheckCommands;
 }) {
   const os = implement(bonusContract).$context<OssContext>();
 
   return os.router({
     offers: {
       list: os.offers.list.handler(({ context }) => offers.listForPlayer(getUserId(context))),
+
+      // A visitor from a country the operator refuses cannot register, so they are not marketed
+      // to either: an empty catalogue rather than an error, so the page renders the same way.
+      listPublic: os.offers.listPublic.handler(async ({ context }) => {
+        const { ip } = context.clientMeta;
+        await assertRateLimit(
+          limiter,
+          makeRateLimitKey(RATE_LIMIT_KEYS.PROMO_PUBLIC_OFFERS_IP, ip ?? 'unknown'),
+          PUBLIC_OFFERS_RATE_LIMIT,
+        );
+        // Browsing, not an enforcement point: the deduped visitor check keeps a blocked visitor's
+        // page loads from writing an audit row each.
+        const decision = geoCheck?.visitorGeoCheck
+          ? await geoCheck.visitorGeoCheck(ip)
+          : await geoCheck?.checkAccess(ip);
+        if (decision && !decision.allowed) {
+          return [];
+        }
+        return offers.listPublic();
+      }),
 
       optIn: os.offers.optIn.handler(({ input, context }) =>
         mapErrors({ NOT_FOUND: OfferNotFoundError, CONFLICT: OfferNotEligibleError }, () =>

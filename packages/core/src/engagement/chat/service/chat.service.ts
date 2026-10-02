@@ -10,6 +10,7 @@ import {
   findOneOrThrow,
   serializeRow,
   mapConcurrent,
+  moderateContent,
   pageToOffset,
   withAdvisoryXactLock,
   type DrizzleDb,
@@ -100,7 +101,7 @@ import {
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
-import { moderateContent, validateAttachment } from '../moderation/index.js';
+import { validateAttachment } from '../moderation/index.js';
 const logger = createLogger('chat');
 
 const MENTION_USERNAME_PATTERN = /(?<![\w.])@([a-zA-Z0-9_]{2,32})/g;
@@ -1008,7 +1009,7 @@ export class ChatService {
       .where(eq(chatRoom.id, roomId))
       .limit(1);
     const members = await this.drizzle.db
-      .select({ member: chatRoomMember, username: user.name })
+      .select({ member: chatRoomMember, username: user.username })
       .from(chatRoomMember)
       .leftJoin(user, eq(user.id, chatRoomMember.userId))
       .where(
@@ -2100,7 +2101,7 @@ export class ChatService {
         role: chatRoomMember.role,
         joinedAt: chatRoomMember.joinedAt,
         accountClosedAt: chatRoomMember.accountClosedAt,
-        username: user.name,
+        username: user.username,
       })
       .from(chatRoomMember)
       .leftJoin(user, eq(user.id, chatRoomMember.userId))

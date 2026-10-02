@@ -29,6 +29,7 @@ describe('DrizzleUserCommands.setUsername', () => {
 
     const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
     expect(row?.username).toBe('after_name');
+    expect(row?.name).toBe('after_name');
   });
 
   it('rejects a handle already taken, case-insensitively', async () => {
@@ -38,5 +39,31 @@ describe('DrizzleUserCommands.setUsername', () => {
     await expect(commands().setUsername(account.id, 'TAKEN_NAME')).rejects.toMatchObject({
       code: 'CONFLICT',
     });
+  });
+
+  it("writes inside the caller's transaction and rolls back with it", async () => {
+    const account = await seedUser(db, { name: 'kept_name', username: 'kept_name' });
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await commands().setUsername(account.id, 'rolled_back', tx);
+        throw new Error('caller aborts');
+      }),
+    ).rejects.toThrow('caller aborts');
+
+    const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
+    expect(row?.username).toBe('kept_name');
+  });
+
+  it('maps a taken handle inside a transaction to CONFLICT and aborts it', async () => {
+    await seedUser(db, { name: 'held_name', username: 'held_name' });
+    const account = await seedUser(db, { name: 'mover_name', username: 'mover_name' });
+
+    await expect(
+      db.drizzle.db.transaction((tx) => commands().setUsername(account.id, 'HELD_NAME', tx)),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
+    expect(row?.username).toBe('mover_name');
   });
 });

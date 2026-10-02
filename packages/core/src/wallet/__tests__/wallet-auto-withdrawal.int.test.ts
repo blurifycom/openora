@@ -233,7 +233,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       expect.objectContaining({
         actorType: 'system',
         action: 'wallet.withdrawal.auto_approved',
-        resourceType: 'wallet_transaction',
+        resourceType: 'withdrawal',
         resourceId: result.transactionId,
         after: expect.objectContaining({
           threshold: '1000.000000000000000000',

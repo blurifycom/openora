@@ -32,6 +32,7 @@ export const player = pgTable(
     // profile field into a phone-enumeration oracle and let anyone squat a stranger's number.
     phone: text(),
     country: text(),
+    bio: text(),
     currency: text().notNull().default('USD'),
     displayCurrency: text(),
     displayDecimalPlaces: integer(),

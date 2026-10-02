@@ -1,8 +1,6 @@
 // @2toad/profanity ships CJS only; the named import resolves via Node16 ESM/CJS interop.
 import { Profanity } from '@2toad/profanity';
 
-// Launch languages (ABC-45). @2toad/profanity ships these lists; swap to a managed
-// moderation vendor later behind the same `hasProfanity` signature.
 export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'ru', 'pt'] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
