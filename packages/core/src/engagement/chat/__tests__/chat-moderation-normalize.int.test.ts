@@ -152,7 +152,6 @@ describe('migration 0015 normalize chat moderation rows', () => {
 
     const mutes = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.userId, muted));
     expect(mutes.find((mute) => mute.id === runningMute!.id)?.liftedAt).toBeNull();
-    // Lifted at its own expiry with no actor, so the expiry sweep still records it.
     expect(mutes.find((mute) => mute.id === lapsedMute!.id)).toMatchObject({
       liftedAt: lapsedAt,
       liftedBy: null,

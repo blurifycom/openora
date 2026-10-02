@@ -58,12 +58,7 @@ export async function waitForConsumerGroup(
   }
 }
 
-/**
- * Resolves once another session in this test's database is blocked on an advisory lock, so a
- * concurrency test can release its held transaction only after the contender is queued behind it.
- * Times out quietly: with the lock removed nothing ever waits, and the test then fails on its
- * own assertion rather than here.
- */
+/** Resolves once a session is blocked on an advisory lock; times out quietly so the test fails on its own assertion. */
 export async function waitForAdvisoryLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

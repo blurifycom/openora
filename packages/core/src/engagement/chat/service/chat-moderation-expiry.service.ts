@@ -6,10 +6,7 @@ import { chatMute, chatPlatformBan, chatRoomBan, chatRoomMute } from '../schema/
 /** Rows considered per table per pass. A backlog just drains over the next few ticks. */
 const EXPIRY_SWEEP_BATCH_SIZE = 500;
 
-/**
- * Takes lapsed rows out of the active set before a replacement is inserted. `lifted_at` is
- * set to the row's own expiry with no `lifted_by`, so the sweep still records the lapse.
- */
+/** Lifts lapsed rows at their own expiry with no `lifted_by`, so the sweep still records the lapse. */
 export async function retireLapsedRows(
   tx: DrizzleTx,
   table: typeof chatMute | typeof chatPlatformBan | typeof chatRoomBan | typeof chatRoomMute,
@@ -95,13 +92,17 @@ export class ChatModerationExpiryService {
     },
   ) {
     return this.drizzle.db.transaction(async (tx) => {
-      // The claim re-applies the scan's `expiryRecordedAt IS NULL` guard as an UPDATE:
-      // two workers can select the same row, but only one UPDATE returns it. That is
-      // what makes "exactly one entry per lapse" hold rather than "usually one".
+      // Re-applies the scan's guards so only one worker claims a row and a later lift drops it.
       const claimed = await tx
         .update(table)
         .set({ expiryRecordedAt: new Date() })
-        .where(and(eq(table.id, row.id), isNull(table.expiryRecordedAt)))
+        .where(
+          and(
+            eq(table.id, row.id),
+            or(isNull(table.liftedAt), eq(table.liftedAt, table.expiresAt)),
+            isNull(table.expiryRecordedAt),
+          ),
+        )
         .returning({ id: table.id });
       if (claimed.length === 0) {
         return false;

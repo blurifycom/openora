@@ -11,6 +11,7 @@ import type {
   AdminUserDirectory,
   RealtimeTransport,
   AuditWritePort,
+  ChatRoomAccess,
 } from '@openora/core/contracts';
 import { GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
 import { chatRoom } from '@openora/core/engagement/schema/chat';
@@ -50,6 +51,7 @@ export class ChatCommandsService {
     private readonly blockWriter: ChatBlockWriter,
     private readonly transport: RealtimeTransport,
     private readonly audit: AuditWritePort,
+    private readonly roomAccess: ChatRoomAccess,
   ) {}
 
   async listCommands(includeDisabled = false): Promise<ChatCommandDescriptor[]> {
@@ -121,16 +123,17 @@ export class ChatCommandsService {
   }
 
   // The global room is present on `chat:global` whether the client names it by slug or row id.
-  private async presenceChannel(roomId: Uuid | null) {
-    if (roomId === null) {
-      return chatChannel(null);
-    }
+  private async presenceChannel(roomId: Uuid | null, viewerId: Uuid) {
     const [room] = await this.drizzle.db
-      .select({ slug: chatRoom.slug })
+      .select({ id: chatRoom.id, slug: chatRoom.slug })
       .from(chatRoom)
-      .where(eq(chatRoom.id, roomId))
+      .where(roomId === null ? eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID) : eq(chatRoom.id, roomId))
       .limit(1);
-    return chatChannel(room?.slug === GLOBAL_CHAT_ROOM_ID ? null : roomId);
+    const accessRoomId = room?.id ?? roomId;
+    if (accessRoomId !== null) {
+      await this.roomAccess.verifyRoomAccess(accessRoomId, viewerId);
+    }
+    return chatChannel(roomId === null || room?.slug === GLOBAL_CHAT_ROOM_ID ? null : roomId);
   }
 
   async searchMentions({
@@ -145,7 +148,9 @@ export class ChatCommandsService {
     viewerId: Uuid;
   }) {
     const query = q.trim();
-    const onlineUserIds = await this.transport.getOnlineUserIds(await this.presenceChannel(roomId));
+    const onlineUserIds = await this.transport.getOnlineUserIds(
+      await this.presenceChannel(roomId, viewerId),
+    );
     if (query.length === 0 && onlineUserIds.length === 0) {
       return [];
     }

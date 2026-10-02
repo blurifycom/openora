@@ -638,7 +638,7 @@ export class ChatService {
     return room;
   }
 
-  /** Verifies access and returns the room's channel key: null for the global room under either id. */
+  /** Null for the global room under either id. */
   async verifyChannelAccess(roomId: ChatRoom['id'] | null, viewerId?: User['id']) {
     if (roomId === null) {
       await this.verifyGlobalAccess(viewerId);
@@ -1414,8 +1414,7 @@ export class ChatService {
     }
   }
 
-  // Read-only and slow mode are room settings, so the send path enforces them rather than the
-  // moderation port. Read before content checks so a read-only room refuses first.
+  // Read-only and slow mode are enforced here, not by the moderation port.
   private async roomSendSettings(roomId: Uuid | null) {
     const [config] = await this.drizzle.db
       .select({
@@ -1440,8 +1439,7 @@ export class ChatService {
       : null;
   }
 
-  // Slow mode is checked under a per-sender lock in the insert's transaction, so parallel
-  // sends cannot all pass the same check.
+  // Slow mode is checked under a per-sender lock so parallel sends cannot all pass.
   private async insertUserMessage(
     values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
     slowMode: { roomId: Uuid; slowModeSeconds: number } | null,

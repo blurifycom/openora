@@ -23,7 +23,6 @@ export function roomReach(room: { slug: string; isPublic: boolean }): ChatRoomRe
   return room.isPublic ? 'public' : 'private';
 }
 
-/** The platform-wide scopes that restrict a player in a room of this reach; `room` scope is per room. */
 export function platformScopesFor(reach: ChatRoomReach): ChatModerationScope[] {
   switch (reach) {
     case 'global':

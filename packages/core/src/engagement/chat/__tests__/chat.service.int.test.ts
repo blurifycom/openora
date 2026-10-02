@@ -2968,7 +2968,6 @@ describe('ChatService moderation (real PG)', () => {
       .where(eq(chatRoomMute.roomId, room.id));
     expect(rows).toHaveLength(2);
     expect(rows.filter((row) => !row.liftedAt)).toHaveLength(1);
-    // The lapsed mute ended on its own: lifted at its expiry, by nobody.
     const lapsed = rows.find((row) => row.reason === 'old reason');
     expect(lapsed).toMatchObject({ liftedAt: lapsed!.expiresAt, liftedBy: null });
   });
@@ -3066,6 +3065,24 @@ describe('ChatService moderation (real PG)', () => {
       expect.objectContaining({ action: 'chat.message.deleted', resourceId: message.id }),
     );
     await expect(svc.getGlobalMessages()).resolves.toEqual([]);
+  });
+
+  it('publishes a system message tombstone the message contract accepts', async () => {
+    const { svc, moderation } = makeService();
+    const posted = await svc.postSystemMessage({
+      roomId: null,
+      actorId: randomUUID(),
+      username: 'system',
+      metadata: { command: 'block', targetUserId: randomUUID(), displayName: 'someone' },
+    });
+    const received: ChatMessage[] = [];
+    svc.subscribeMessages(null, (event) => received.push(event));
+    await settle();
+
+    await moderation.deleteMessage(posted.id, randomUUID(), NO_CLIENT_META);
+    await waitFor(() => received.length === 1);
+
+    expect(ChatMessageSchema.parse(received[0])).toMatchObject({ id: posted.id, isDeleted: true });
   });
 });
 

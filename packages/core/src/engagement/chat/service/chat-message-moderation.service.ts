@@ -13,7 +13,9 @@ function toTombstone(record: typeof chatMessage.$inferSelect): ChatMessage {
   const message = serializeRow(record, { dateFields: ['createdAt'] });
   const tombstone = { ...message, isDeleted: true };
   return (
-    record.type === 'user' ? { ...tombstone, content: '', attachment: null } : tombstone
+    record.type === 'user'
+      ? { ...tombstone, content: '', attachment: null }
+      : { ...tombstone, actorId: record.userId }
   ) as ChatMessage;
 }
 

@@ -53,7 +53,6 @@ export type CommandChatMessage = SystemChatMessage;
  */
 export const GLOBAL_CHAT_ROOM_ID = '__global';
 
-/** Platform-wide moderation scopes an admin restriction can target instead of one room. */
 export const CHAT_MODERATION_SCOPES = [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'] as const;
 export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;
 

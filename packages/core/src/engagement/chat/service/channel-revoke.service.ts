@@ -25,21 +25,25 @@ export async function revokeChannelBestEffort(
   }
 }
 
-/** Revokes the channel a room streams on: the global room streams on `chat:global` under either id. */
+/** The global room streams on `chat:global` under either id. */
 export async function revokeRoomChannelBestEffort(
   db: DrizzleDb,
   transport: RealtimeTransport | undefined,
   userId: Uuid,
   roomId: Uuid,
 ): Promise<void> {
-  const [room] = await db
-    .select({ slug: chatRoom.slug })
-    .from(chatRoom)
-    .where(eq(chatRoom.id, roomId))
-    .limit(1);
-  await revokeChannelBestEffort(
-    transport,
-    userId,
-    room?.slug === GLOBAL_CHAT_ROOM_ID ? null : roomId,
-  );
+  let channelRoomId: Uuid | null = roomId;
+  try {
+    const [room] = await db
+      .select({ slug: chatRoom.slug })
+      .from(chatRoom)
+      .where(eq(chatRoom.id, roomId))
+      .limit(1);
+    if (room?.slug === GLOBAL_CHAT_ROOM_ID) {
+      channelRoomId = null;
+    }
+  } catch (err: unknown) {
+    logger.error({ err, roomId, userId }, 'chat room channel lookup failed');
+  }
+  await revokeChannelBestEffort(transport, userId, channelRoomId);
 }

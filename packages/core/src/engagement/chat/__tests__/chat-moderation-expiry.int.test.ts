@@ -49,6 +49,22 @@ async function seedBan(overrides: Partial<typeof chatPlatformBan.$inferInsert> =
   return row!;
 }
 
+async function waitForRowLockWaiter(timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where l.locktype = 'transactionid' and not l.granted
+            and a.datname = current_database()`,
+    );
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 const auditRowsFor = (resourceId: string) =>
   db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, resourceId));
 
@@ -149,6 +165,31 @@ describe('ChatModerationExpiryService.sweep', () => {
     expect(a.bans + b.bans).toBe(1);
     expect(await auditRowsFor(mute.id)).toHaveLength(1);
     expect(await auditRowsFor(ban.id)).toHaveLength(1);
+  });
+
+  it('records no expiry for a lift that commits while the sweep waits on the row', async () => {
+    const mute = await seedMute({ expiresAt: secondsFromNow(-30) });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let markLifted!: () => void;
+    const liftWritten = new Promise<void>((resolve) => (markLifted = resolve));
+    const lift = db.drizzle.db.transaction(async (tx) => {
+      await tx
+        .update(chatMute)
+        .set({ liftedAt: secondsFromNow(-60), liftedBy: ADMIN_ID })
+        .where(eq(chatMute.id, mute.id));
+      markLifted();
+      await released;
+    });
+    await liftWritten;
+
+    const sweep = makeSweep().sweep();
+    await waitForRowLockWaiter();
+    release();
+    await lift;
+
+    expect(await sweep).toEqual({ mutes: 0, bans: 0 });
+    expect(await auditRowsFor(mute.id)).toEqual([]);
   });
 
   it('stamps expiryRecordedAt so the row stops matching the scan', async () => {

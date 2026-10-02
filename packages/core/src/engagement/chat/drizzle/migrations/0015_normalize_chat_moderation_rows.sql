@@ -1,6 +1,4 @@
--- Fold row-id bans on the global room into `__global`; where a player holds both, the longest
--- stays active and the other is lifted. A lapsed row is lifted at its own expiry so the expiry
--- sweep still records it.
+-- Fold row-id bans on the global room into `__global`; per player the longest stays active, the rest are lifted.
 WITH "global_room" AS (
   SELECT "id" FROM "chat_room" WHERE "slug" = '__global'
 ), "ranked" AS (
@@ -21,8 +19,7 @@ WHERE "id" IN (SELECT "id" FROM "ranked" WHERE "rank" > 1);--> statement-breakpo
 UPDATE "chat_platform_ban" SET "scope" = '__global', "room_id" = NULL
 WHERE "scope" = 'room'
   AND "room_id" IN (SELECT "id" FROM "chat_room" WHERE "slug" = '__global');--> statement-breakpoint
--- Older writes kept the room a `__global` mute was issued from; it was enforced in global chat
--- only, so it stays a global mute.
+-- Older `__global` mutes kept the issuing room; they only ever applied in global chat.
 UPDATE "chat_mute" SET "room_id" = NULL
 WHERE "scope" = '__global' AND "room_id" IS NOT NULL;--> statement-breakpoint
 UPDATE "chat_mute" SET "scope" = '__global', "room_id" = NULL
