@@ -98,9 +98,10 @@ type CountryRuleSettings = Pick<
   mirrorUrl: string | null;
 };
 
-// Redirection needs both the toggle and a target; either alone changes nothing.
+// Redirection needs both the toggle and a target; either alone changes nothing. An empty
+// target (a row written outside the API) is no target, so it cannot open a blocked country.
 function mirrorTargetOf(rule: { redirectIp: boolean; mirrorUrl: string | null }) {
-  return rule.redirectIp ? rule.mirrorUrl : null;
+  return rule.redirectIp && rule.mirrorUrl ? rule.mirrorUrl : null;
 }
 
 // A blacklisted country that is redirected plays on the mirror, so the API lets it through
@@ -115,7 +116,11 @@ function deniesAccess(rule: {
 
 const countryRuleDeniesAccess = and(
   eq(countryRule.action, 'block'),
-  or(eq(countryRule.redirectIp, false), isNull(countryRule.mirrorUrl)),
+  or(
+    eq(countryRule.redirectIp, false),
+    isNull(countryRule.mirrorUrl),
+    eq(countryRule.mirrorUrl, ''),
+  ),
 );
 
 function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
@@ -861,7 +866,10 @@ export class ComplianceService {
 
   async listGeoRules() {
     const rows = await this.drizzle.db.select().from(countryRule);
-    return rows.map(toGeoRuleView);
+    return rows.map((row) => ({
+      ...toGeoRuleView(row),
+      effectiveAccess: this.countryRuleView(row).effectiveAccess,
+    }));
   }
 
   async upsertGameGeoRules(input: UpsertGameGeoRulesInput, actorId: User['id'], meta: ClientMeta) {

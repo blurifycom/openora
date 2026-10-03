@@ -371,7 +371,7 @@ export const complianceContract = {
 
   listGeoRules: oc
     .route({ method: 'GET', path: '/compliance/geo-rules' })
-    .output(z.array(GeoRuleSchema)),
+    .output(z.array(GeoRuleSchema.extend({ effectiveAccess: CountryEffectiveAccessSchema }))),
 
   upsertGameGeoRules: oc
     .route({ method: 'PUT', path: '/compliance/game-geo-rules/{gameId}' })

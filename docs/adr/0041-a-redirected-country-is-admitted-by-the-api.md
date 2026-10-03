@@ -42,7 +42,12 @@ so a blacklisted country that is in fact open through a mirror is not shown as b
 ## Consequences
 
 - A consumer that turns redirection on without enforcing it on the primary domain lets the
-  country in there too. The audit row makes that visible; it does not prevent it.
+  country in there too. The audit row makes that visible; it does not prevent it. Nothing in core
+  reads `redirectUrl`, so an operator must not set a mirror before the consumer's host check ships.
+- `checkAccess` now returns a required `redirectUrl`; a consumer binding its own
+  `GEO_CHECK_COMMANDS` adds it (`null` when it does not redirect).
+- An empty stored `mirrorUrl` (a row written outside the API) counts as no mirror, so it cannot
+  open a blacklisted country.
 - Core stays free of origin routing and of any marker the web tier would have to protect.
 - Confirmation (`confirm: true`) follows access rather than flags: opening a country or sending a
   blacklisted country to a different mirror needs it, closing access does not.

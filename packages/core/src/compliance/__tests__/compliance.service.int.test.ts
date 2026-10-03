@@ -124,6 +124,18 @@ describe('ComplianceService.geoCheck (real PG)', () => {
     });
   });
 
+  it('fails closed on an unresolvable address even when the only block row is redirected', async () => {
+    const { svc } = makeService(null);
+    await db.drizzle.db.insert(countryRule).values({
+      countryCode: 'TR',
+      action: 'block',
+      redirectIp: true,
+      mirrorUrl: 'https://mirror.example',
+    });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, countryCode: null });
+  });
+
   it('allows an unresolvable address when country rules exist but none blacklists', async () => {
     const { svc } = makeService(null);
     await db.drizzle.db
@@ -186,6 +198,16 @@ describe('ComplianceService.geoCheck (real PG)', () => {
       .values({ countryCode: 'TR', action: 'block', redirectIp: true });
 
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, redirectUrl: null });
+  });
+
+  it('keeps a blacklisted country blocked when its stored target is empty', async () => {
+    const { svc } = makeService('TR');
+    await db.drizzle.db
+      .insert(countryRule)
+      .values({ countryCode: 'TR', action: 'block', redirectIp: true, mirrorUrl: '' });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false, redirectUrl: null });
+    expect((await svc.listCountryRules()).at(0)).toMatchObject({ effectiveAccess: 'blocked' });
   });
 
   it('keeps a blacklisted country blocked when a target is stored but redirection is off', async () => {
@@ -866,6 +888,25 @@ describe('ComplianceService legacy geo rules (real PG)', () => {
     expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: false });
     expect((await svc.listCountryRules()).at(0)).toMatchObject({
       mirrorUrl: null,
+      effectiveAccess: 'blocked',
+    });
+  });
+
+  it('reports what a country actually gets on the legacy list', async () => {
+    const { svc } = makeService();
+    await db.drizzle.db.insert(countryRule).values([
+      { countryCode: 'TR', action: 'block', redirectIp: true, mirrorUrl: 'https://mirror.example' },
+      { countryCode: 'US', action: 'block' },
+    ]);
+
+    const rules = await svc.listGeoRules();
+
+    expect(rules.find((rule) => rule.countryCode === 'TR')).toMatchObject({
+      action: 'block',
+      effectiveAccess: 'redirected',
+    });
+    expect(rules.find((rule) => rule.countryCode === 'US')).toMatchObject({
+      action: 'block',
       effectiveAccess: 'blocked',
     });
   });
