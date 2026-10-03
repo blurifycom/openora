@@ -16,6 +16,7 @@ import {
   PLATFORM_CONFIG,
   SESSION_COMMANDS,
   SESSION_IDLE_POLICY,
+  TWO_FACTOR_SETUP_POLICY,
   USER_COMMANDS,
   SMS_ADAPTER,
   REALTIME_TRANSPORT,
@@ -51,6 +52,7 @@ import { SessionIdleService } from './service/session-idle.service.js';
 import { TwoFactorLockoutService } from './service/two-factor-lockout.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
+import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.service.js';
 
 type IdentityContainer = TypedContainer<CoreTokenCatalog>;
 
@@ -91,6 +93,7 @@ function makeAdminSecurity(c: IdentityContainer) {
     identityReader,
     config: adminSecurityConfig(c),
     geoIp: c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : undefined,
+    mailDispatch: c.get(MAIL_DISPATCH),
   });
 }
 
@@ -190,6 +193,9 @@ export default {
         }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    // Holds an account that owes a second-factor enrolment (a support reset of a player who
+    // required 2FA on login) to the enrolment flow until it is done.
+    ctx.provide(TWO_FACTOR_SETUP_POLICY, (c) => new TwoFactorSetupPolicyService(c.get(DRIZZLE)));
     // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every
     // admin request; leaving it unbound turns both checks off, which is why it is bound
     // here rather than behind a feature flag.
