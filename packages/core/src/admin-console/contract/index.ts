@@ -12,6 +12,7 @@ import {
   IdInputSchema,
   KycStatusSchema,
   MoneyAmountSchema,
+  QueryBooleanSchema,
   SignedMoneyAmountSchema,
   TimestampSchema,
   UserIdInputSchema,
@@ -192,6 +193,7 @@ export const backofficeContract = {
     .input(
       PageQuerySchema.extend({
         search: z.string().optional(),
+        staffOnly: QueryBooleanSchema.optional(),
         sortBy: AdminUserSortBySchema.optional(),
         sortOrder: SortOrderSchema.default('desc').optional(),
       }),

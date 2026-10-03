@@ -6,13 +6,17 @@
 export type EventStreamOptions<T> = {
   signal?: AbortSignal;
   prime?: readonly T[];
+  /** Ends the stream right after yielding the first event this returns true for. */
+  endAfter?: (event: T) => boolean;
+  /** Awaited once subscribed, before the first yield; a rejection ends the stream with it. */
+  ready?: () => Promise<void>;
 };
 
 export async function* createEventStreamGenerator<T>(
   subscribe: (push: (event: T) => void) => () => void,
   options: EventStreamOptions<T> = {},
 ): AsyncGenerator<T> {
-  const { signal, prime = [] } = options;
+  const { signal, prime = [], endAfter, ready } = options;
   const queue: T[] = [...prime];
   let resolve: (() => void) | undefined;
   let done = false;
@@ -51,6 +55,7 @@ export async function* createEventStreamGenerator<T>(
   }
 
   try {
+    await ready?.();
     while (!done && !signal?.aborted) {
       if (queue.length === 0) {
         await new Promise<void>((r) => {
@@ -59,8 +64,12 @@ export async function* createEventStreamGenerator<T>(
         continue;
       }
       const next = queue.shift();
-      if (next !== undefined) {
-        yield next;
+      if (next === undefined) {
+        continue;
+      }
+      yield next;
+      if (endAfter?.(next)) {
+        return;
       }
     }
   } finally {

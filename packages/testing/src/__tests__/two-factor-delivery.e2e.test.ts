@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID, createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { auditLog } from '@openora/core/audit/schema';
 import {
   setupTestDb,
   bootTestApp,
@@ -411,5 +412,135 @@ describe('IdentityService.trustCurrentDevice - real second-factor flows', () => 
     expect(trust.status).toBe(409);
     const status = (await (await live.get('/identity/2fa/status')).json()) as { enabled: boolean };
     expect(status.enabled).toBe(true);
+  });
+});
+
+describe('backup-code recovery - real better-auth', () => {
+  const enrolAuthenticator = async () => {
+    const { userId, client } = await newPlayer();
+    const enable = await client.post('/identity/2fa/enable', { password: PASSWORD, method: 'app' });
+    const { totpUri, backupCodes } = (await enable.json()) as {
+      totpUri: string;
+      backupCodes: string[];
+    };
+    const secret = secretFromTotpUri(totpUri);
+    const verify = await client.post('/identity/2fa/verify', {
+      code: totpCode(secret),
+      method: 'totp',
+    });
+    expect(verify.status).toBe(200);
+    return { userId, secret, backupCodes, live: followCookie(verify) };
+  };
+
+  const remaining = async (live: ReturnType<typeof followCookie>) => {
+    const status = (await (await live.get('/identity/2fa/status')).json()) as {
+      backupCodesRemaining: number | null;
+    };
+    return status.backupCodesRemaining;
+  };
+
+  const isEnrolled = async (userId: string) => {
+    const [row] = await app.container
+      .get(DRIZZLE)
+      .db.select({ twoFactorEnabled: user.twoFactorEnabled })
+      .from(user)
+      .where(eq(user.id, userId));
+    return row?.twoFactorEnabled;
+  };
+
+  // better-auth stores the set encrypted, so only a real stack proves the count is
+  // decrypted rather than reported as unknown.
+  it('reports the remaining recovery set', async () => {
+    const { live, backupCodes } = await enrolAuthenticator();
+
+    expect(await remaining(live)).toBe(backupCodes.length);
+  });
+
+  it('refuses a backup code sent without its method instead of checking it as a TOTP', async () => {
+    const { live, backupCodes } = await enrolAuthenticator();
+
+    const res = await live.post('/identity/2fa/disable', {
+      password: PASSWORD,
+      code: backupCodes[0],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await remaining(live)).toBe(backupCodes.length);
+  });
+
+  it('does not let a backup code rotate the recovery set', async () => {
+    const { live, backupCodes } = await enrolAuthenticator();
+
+    const res = await live.post('/identity/2fa/backup-codes/regenerate', {
+      password: PASSWORD,
+      code: backupCodes[0],
+      method: 'backup_code',
+    });
+
+    expect(res.status).toBe(400);
+    expect(await remaining(live)).toBe(backupCodes.length);
+  });
+
+  it('keeps the code when the password is wrong', async () => {
+    const { live, userId, backupCodes } = await enrolAuthenticator();
+
+    const res = await live.post('/identity/2fa/disable', {
+      password: 'not-the-password',
+      code: backupCodes[0],
+      method: 'backup_code',
+    });
+
+    expect(res.status).toBe(401);
+    expect(await remaining(live)).toBe(backupCodes.length);
+    expect(await isEnrolled(userId)).toBe(true);
+  });
+
+  it('retires 2FA with a backup code typed without its hyphen', async () => {
+    const { live, userId, backupCodes } = await enrolAuthenticator();
+
+    const res = await live.post('/identity/2fa/disable', {
+      password: PASSWORD,
+      code: backupCodes[0]!.replace('-', ''),
+      method: 'backup_code',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await isEnrolled(userId)).toBe(false);
+
+    // A teardown authorised by a recovery code must read differently in the audit
+    // trail from one authorised by the authenticator.
+    const auditedAfter = (action: string) =>
+      app.container
+        .get(DRIZZLE)
+        .db.select({ after: auditLog.after })
+        .from(auditLog)
+        .where(and(eq(auditLog.action, action), sql`${auditLog.after}->>'userId' = ${userId}`));
+    await vi.waitFor(async () => {
+      expect(await auditedAfter('identity.2fa.disabled')).toEqual([
+        { after: expect.objectContaining({ method: 'totp', stepUpMethod: 'backup_code' }) },
+      ]);
+      expect(await auditedAfter('identity.2fa.verified')).toContainEqual({
+        after: expect.objectContaining({ method: 'backup_code', trustedDevice: false }),
+      });
+    });
+  });
+
+  it('rotates the set with a live code, voiding the old one', async () => {
+    const { live, secret, backupCodes } = await enrolAuthenticator();
+
+    const res = await live.post('/identity/2fa/backup-codes/regenerate', {
+      password: PASSWORD,
+      code: totpCode(secret),
+    });
+    expect(res.status).toBe(200);
+    const { backupCodes: fresh } = (await res.json()) as { backupCodes: string[] };
+    expect(fresh).not.toContain(backupCodes[0]);
+
+    const stale = await live.post('/identity/2fa/disable', {
+      password: PASSWORD,
+      code: backupCodes[0],
+      method: 'backup_code',
+    });
+    expect(stale.status).toBe(401);
   });
 });

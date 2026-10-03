@@ -4,6 +4,7 @@ import {
   ADMIN_USER_DIRECTORY,
   CHAT_BLOCK_WRITER,
   CHAT_REALTIME_TRANSPORT,
+  CHAT_ROOM_ACCESS,
   AUDIT_WRITER,
 } from '@openora/core/contracts';
 import { ChatCommandsService } from './service/chat-commands.service.js';
@@ -20,6 +21,7 @@ export default {
         c.get(CHAT_BLOCK_WRITER),
         c.get(CHAT_REALTIME_TRANSPORT),
         c.get(AUDIT_WRITER),
+        c.get(CHAT_ROOM_ACCESS),
       );
       return createChatCommandsRouter(svc, c.get(ADMIN_GUARD));
     });

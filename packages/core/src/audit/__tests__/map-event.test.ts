@@ -939,3 +939,71 @@ describe('mapEventToRecord: compliance.geo.access_blocked', () => {
     expect(row).toMatchObject({ resourceId: null, result: 'failure' });
   });
 });
+
+describe('mapEventToRecord: chat.room.member.banned', () => {
+  const roomId = '77777777-7777-4777-8777-777777777777';
+  const banId = '88888888-8888-4888-8888-888888888888';
+
+  it('records the ban it replaced as before', async () => {
+    const row = await mapEventToRecord('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: adminId,
+      playerId,
+      reason: 'spam',
+      expiresAt: '2026-01-01T00:00:01.000Z',
+      replaced: { banId, expiresAt: null },
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      before: { banId, expiresAt: null },
+      after: { roomId, reason: 'spam', expiresAt: '2026-01-01T00:00:01.000Z' },
+    });
+  });
+
+  it('stays a player action when the moderator has no player profile', async () => {
+    const row = await mapEventToRecord('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: adminId,
+      playerId: null,
+    });
+
+    expect(row).toMatchObject({ actorType: 'player', actorId: adminId });
+  });
+
+  it('leaves before empty for a first ban', async () => {
+    const row = await mapEventToRecord('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: adminId,
+      playerId,
+      replaced: null,
+    });
+
+    expect(row.before).toBeNull();
+  });
+});
+
+describe('mapEventToRecord: chat.room.member.joined', () => {
+  const roomId = '99999999-9999-4999-8999-999999999999';
+
+  it('credits a back-office join to the admin', async () => {
+    const row = await mapEventToRecord('chat.room.member.joined', {
+      roomId,
+      userId: adminId,
+      playerId: null,
+      adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId });
+  });
+
+  it('credits a player join to the player', async () => {
+    const row = await mapEventToRecord('chat.room.member.joined', { roomId, userId, playerId });
+
+    expect(row).toMatchObject({ actorType: 'player', actorId: playerId });
+  });
+});

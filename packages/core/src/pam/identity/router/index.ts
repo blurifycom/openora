@@ -7,7 +7,7 @@ import {
   getSessionId,
   createEventStreamGenerator,
 } from '@openora/core/server';
-import type { RealtimeTransport } from '@openora/core/contracts';
+import { AuthGuardReasonSchema, type RealtimeTransport } from '@openora/core/contracts';
 import { identityContract } from '../contract/index.js';
 import type { User, Session } from '../schema/index.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
@@ -27,12 +27,48 @@ import { TrustedDeviceNotFoundError } from '../service/trusted-device.service.js
 import {
   type AdminSecurityService,
   SelfTwoFactorResetError,
+  TwoFactorNotEnabledError,
 } from '../service/admin-security.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { UsernameBlockedError } from '../../shared/username.js';
 
+// The routes an account owing a second-factor enrolment must still reach: the session
+// stream, its own sessions, and the phone verification an SMS factor needs.
+const DURING_TWO_FACTOR_SETUP = { allowPendingTwoFactorSetup: true } as const;
+
+// Identity routes mostly read the caller from the session headers rather than through
+// getUserId, so getUserId's hold does not reach them. While an account owes a
+// second-factor enrolment every identity route is refused except these: signing in or
+// out, the anonymous recovery flows, reading who it is and its security state, enrolling
+// a factor, the phone verification an SMS factor needs, and its own sessions. Anything
+// else - turning "require 2FA on login" off, changing the email, the profile, the
+// password - would let a password-only session settle in or hand over the account before
+// the player has a second factor again.
+const REACHABLE_DURING_TWO_FACTOR_SETUP: ReadonlySet<string> = new Set([
+  'register',
+  'usernameAvailable',
+  'login',
+  'phoneLoginRequest',
+  'phoneLoginVerify',
+  'logout',
+  'requestPasswordReset',
+  'verifyPasswordResetOtp',
+  'resetPassword',
+  'me',
+  'security.me',
+  'streamSession',
+  'enable2fa',
+  'verify2fa',
+  'sendTwoFactorOtp',
+  'twoFactorStatus',
+  'phoneVerification.request',
+  'phoneVerification.confirm',
+  'sessions.listMine',
+  'sessions.revokeMine',
+]);
+
 function requireSessionId(context: OssContext) {
-  const sessionId = getSessionId(context);
+  const sessionId = getSessionId(context, DURING_TWO_FACTOR_SETUP);
   if (!sessionId) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
   }
@@ -68,7 +104,22 @@ export function createIdentityRouter(
   adminSecurity: AdminSecurityService,
   withdrawalPin: WithdrawalPinService,
 ) {
-  const os = implement(identityContract).$context<OssContext>();
+  const os = implement(identityContract)
+    .$context<OssContext>()
+    .use(({ context, path, next }) => {
+      // The first segment is the namespace this router is mounted under.
+      const procedure = path.slice(1).join('.');
+      if (
+        context.auth?.twoFactorSetupRequired &&
+        !REACHABLE_DURING_TWO_FACTOR_SETUP.has(procedure)
+      ) {
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Set up two-factor authentication to continue',
+          data: { reason: AuthGuardReasonSchema.enum.two_factor_setup_required },
+        });
+      }
+      return next();
+    });
 
   return os.router({
     register: os.register.handler(({ input, context }) =>
@@ -145,7 +196,7 @@ export function createIdentityRouter(
     phoneVerification: {
       request: os.phoneVerification.request.handler(({ input, context }) =>
         phoneVerification.request({
-          userId: getUserId(context),
+          userId: getUserId(context, DURING_TWO_FACTOR_SETUP),
           sessionId: requireSessionId(context),
           input,
           reqHeaders: context.request.headers,
@@ -155,7 +206,7 @@ export function createIdentityRouter(
 
       confirm: os.phoneVerification.confirm.handler(({ input, context }) =>
         phoneVerification.confirm({
-          userId: getUserId(context),
+          userId: getUserId(context, DURING_TWO_FACTOR_SETUP),
           sessionId: requireSessionId(context),
           input,
           meta: context.clientMeta,
@@ -164,8 +215,8 @@ export function createIdentityRouter(
     },
 
     streamSession: os.streamSession.handler(({ signal, context }) => {
-      const userId = getUserId(context);
-      const connectionSessionId = getSessionId(context);
+      const userId = getUserId(context, DURING_TWO_FACTOR_SETUP);
+      const connectionSessionId = getSessionId(context, DURING_TWO_FACTOR_SETUP);
       return createEventStreamGenerator(
         (push) =>
           realtime.subscribe<SessionEventsPush>(sessionEventsChannel(userId), (event) => {
@@ -324,8 +375,8 @@ export function createIdentityRouter(
 
       listMine: os.sessions.listMine.handler(({ input, context }) =>
         sessionSvc.listSessions({
-          userId: getUserId(context),
-          currentSessionId: getSessionId(context),
+          userId: getUserId(context, DURING_TWO_FACTOR_SETUP),
+          currentSessionId: getSessionId(context, DURING_TWO_FACTOR_SETUP),
           activeOnly: true,
           page: input.page,
           limit: input.limit,
@@ -337,14 +388,14 @@ export function createIdentityRouter(
       // Scoped to the caller's own userId, so a forged id cannot kill someone
       // else's device - a miss is a 404, not a cross-user revoke.
       revokeMine: os.sessions.revokeMine.handler(({ input, context }) => {
-        const userId = getUserId(context);
+        const userId = getUserId(context, DURING_TWO_FACTOR_SETUP);
         return mapErrors(
           { NOT_FOUND: SessionNotFoundError, CONFLICT: CurrentSessionRevokeError },
           () =>
             sessionSvc.revokeOwnSession(
               userId,
               input.id,
-              getSessionId(context),
+              getSessionId(context, DURING_TWO_FACTOR_SETUP),
               context.clientMeta,
             ),
         );
@@ -404,6 +455,20 @@ export function createIdentityRouter(
             { NOT_FOUND: UserNotFoundError, CONFLICT: SelfTwoFactorResetError },
             () =>
               adminSecurity.resetTwoFactor(input.userId, caller.userId, input.reason, {
+                ip: caller.ip,
+                userAgent: caller.userAgent,
+              }),
+          );
+        },
+      ),
+
+      resetPlayerTwoFactor: os.adminSecurity.resetPlayerTwoFactor.handler(
+        async ({ input, context }) => {
+          const caller = await adminGuard.assert(context, 'player', 'update');
+          return mapErrors(
+            { NOT_FOUND: UserNotFoundError, CONFLICT: TwoFactorNotEnabledError },
+            () =>
+              adminSecurity.resetPlayerTwoFactor(input.userId, caller.userId, input.reason, {
                 ip: caller.ip,
                 userAgent: caller.userAgent,
               }),

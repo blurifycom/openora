@@ -1,6 +1,10 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleService } from '@openora/core/server';
-import type { TwoFactorChallengeMethod, User } from '@openora/core/contracts';
+import {
+  normalizeBackupCode,
+  type TwoFactorChallengeMethod,
+  type User,
+} from '@openora/core/contracts';
 import { user } from '../schema/index.js';
 
 /**
@@ -48,10 +52,23 @@ export function verifyChallengeCode(
   headers: Headers,
 ): Promise<Response> {
   if (method === 'backup_code') {
-    return api.verifyBackupCode({ body, headers, asResponse: true });
+    return api.verifyBackupCode({
+      body: { ...body, code: normalizeBackupCode(body.code) },
+      headers,
+      asResponse: true,
+    });
   }
   if (method === 'otp') {
     return api.verifyTwoFactorOTP({ body, headers, asResponse: true });
   }
   return api.verifyTOTP({ body, headers, asResponse: true });
+}
+
+/**
+ * better-auth answers 409 when two requests spend the same backup code at once and the
+ * other one won. That is a race the caller lost, not a wrong code, so it must not cost a
+ * lockout strike.
+ */
+export function isLostBackupCodeRace(res: Response): boolean {
+  return res.status === 409;
 }

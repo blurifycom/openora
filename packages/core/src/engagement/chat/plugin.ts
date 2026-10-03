@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger, mapErrors } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import type { JobQueueAdapter } from '@openora/core/contracts';
 import {
@@ -23,8 +23,12 @@ import {
   CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
 } from '@openora/core/contracts';
-import { ChatService } from './service/chat.service.js';
-import { ChatModerationService } from './service/chat-moderation.service.js';
+import { ChatService, ChatRoomNotMemberError } from './service/chat.service.js';
+import {
+  ChatModerationService,
+  ChatPlayerBannedError,
+  ChatRoomNotFoundError,
+} from './service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
@@ -101,7 +105,13 @@ export default {
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
       verifyRoomAccess: async (roomId, viewerId) => {
-        await createChatService(c).verifyRoomAccess(roomId, viewerId);
+        await mapErrors(
+          {
+            NOT_FOUND: ChatRoomNotFoundError,
+            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+          },
+          () => createChatService(c).verifyRoomAccess(roomId, viewerId),
+        );
       },
     }));
 

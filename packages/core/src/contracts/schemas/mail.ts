@@ -29,6 +29,7 @@ export const MAIL_TEMPLATE_KEYS = [
   'raceWon',
   'rankChallengeWon',
   'bonusUnlocked',
+  'twoFactorReset',
 ] as const;
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
@@ -93,6 +94,10 @@ export const EmailTemplateDataSchemas = {
     isNewAddress: z.boolean(),
   }),
   securityAntiPhishingCodeChanged: z.object({ previousAntiPhishingCode: z.string().nullable() }),
+  // An admin cleared the player's second factor (lost device); the mail tells them to set
+  // one up again. No token: enrolment happens in the signed-in account, so the link is
+  // the operator's own settings page, which the template knows.
+  twoFactorReset: z.object({ occurredAt: TimestampSchema }),
   raceWon: z.object({
     raceName: z.string(),
     position: z.number().int().positive(),
@@ -145,6 +150,7 @@ export const MailTemplateSchema = z.discriminatedUnion('key', [
   templateVariant('raceWon'),
   templateVariant('rankChallengeWon'),
   templateVariant('bonusUnlocked'),
+  templateVariant('twoFactorReset'),
 ]);
 
 export type MailTemplate = {

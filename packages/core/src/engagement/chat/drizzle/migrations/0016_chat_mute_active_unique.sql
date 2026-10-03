@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "chat_mute_active_scope_key" ON "chat_mute" USING btree ("user_id","scope") WHERE "chat_mute"."lifted_at" IS NULL AND "chat_mute"."room_id" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "chat_mute_active_room_key" ON "chat_mute" USING btree ("user_id","scope","room_id") WHERE "chat_mute"."lifted_at" IS NULL AND "chat_mute"."room_id" IS NOT NULL;

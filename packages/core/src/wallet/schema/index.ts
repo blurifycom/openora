@@ -171,6 +171,8 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_currency_idx').on(t.currency),
     index('wallet_transaction_currency_network_idx').on(t.currency, t.network),
     index('wallet_transaction_tx_hash_idx').on(t.txHash),
+    // Lowercased so the queue search finds an EVM address whatever case the player pasted it in.
+    index('wallet_transaction_destination_address_idx').on(sql`lower(${t.destinationAddress})`),
     index('wallet_transaction_provider_ref_idx').on(t.providerRefId),
     index('wallet_transaction_status_type_created_at_idx').on(t.status, t.type, t.createdAt),
     index('wallet_transaction_wallet_id_type_status_idx').on(t.walletId, t.type, t.status),

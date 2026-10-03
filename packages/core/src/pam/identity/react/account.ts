@@ -9,11 +9,13 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query';
 import type {
+  BackupCodesResult,
   Enable2faResult,
   IdentitySuccess,
   PhoneVerificationConfirmInput,
   PhoneVerificationRequestInput,
   PhoneVerificationRequestOutput,
+  RegenerateBackupCodesInput,
   SecurityControls,
   SendTwoFactorOtpResult,
   SetAntiPhishingCodeInput,
@@ -65,6 +67,11 @@ export type UseConfirmPhoneVerificationResult = UseMutationResult<
 export type UseTwoFactorStatusResult = UseQueryResult<TwoFactorStatus, Error>;
 // The route takes no body, so the mutation carries no variables of its own.
 export type UseSendTwoFactorOtpResult = UseMutationResult<SendTwoFactorOtpResult, Error, unknown>;
+export type UseRegenerateBackupCodesResult = UseMutationResult<
+  BackupCodesResult,
+  Error,
+  RegenerateBackupCodesInput
+>;
 
 export type { Enable2faResult, TwoFactorDeliveryMethod, TwoFactorStatus };
 
@@ -119,6 +126,17 @@ export function useDisable2fa() {
   return useMutation({
     ...utils.disable2fa.mutationOptions(),
     onSuccess: invalidateSecurityControls(utils, queryClient),
+  });
+}
+
+// Rotating the set spends nothing else, but it does change `backupCodesRemaining`, so
+// the status query has to refetch or the Security page keeps showing the old count.
+export function useRegenerateBackupCodes(): UseRegenerateBackupCodesResult {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.regenerateBackupCodes.mutationOptions(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.twoFactorStatus.key() }),
   });
 }
 

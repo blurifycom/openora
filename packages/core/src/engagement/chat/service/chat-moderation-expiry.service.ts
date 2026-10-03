@@ -1,10 +1,23 @@
-import { and, asc, eq, isNotNull, isNull, lte } from 'drizzle-orm';
-import { DrizzleService } from '@openora/core/server';
+import { and, asc, eq, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { AuditAction, AuditWritePort, Uuid } from '@openora/core/contracts';
-import { chatMute, chatPlatformBan } from '../schema/index.js';
+import { chatMute, chatPlatformBan, chatRoomBan, chatRoomMute } from '../schema/index.js';
 
 /** Rows considered per table per pass. A backlog just drains over the next few ticks. */
 const EXPIRY_SWEEP_BATCH_SIZE = 500;
+
+/** Lifts lapsed rows at their own expiry with no `lifted_by`, so the sweep still records the lapse. */
+export async function retireLapsedRows(
+  tx: DrizzleTx,
+  table: typeof chatMute | typeof chatPlatformBan | typeof chatRoomBan | typeof chatRoomMute,
+  active: SQL | undefined,
+  now: Date,
+) {
+  await tx
+    .update(table)
+    .set({ liftedAt: sql`${table.expiresAt}` })
+    .where(and(active, isNull(table.liftedAt), lte(table.expiresAt, now)));
+}
 
 /**
  * Writes the audit entry nothing else writes: a timed chat mute or platform ban lapsing
@@ -47,7 +60,7 @@ export class ChatModerationExpiryService {
       .from(table)
       .where(
         and(
-          isNull(table.liftedAt),
+          or(isNull(table.liftedAt), eq(table.liftedAt, table.expiresAt)),
           isNotNull(table.expiresAt),
           lte(table.expiresAt, now),
           isNull(table.expiryRecordedAt),
@@ -79,13 +92,17 @@ export class ChatModerationExpiryService {
     },
   ) {
     return this.drizzle.db.transaction(async (tx) => {
-      // The claim re-applies the scan's `expiryRecordedAt IS NULL` guard as an UPDATE:
-      // two workers can select the same row, but only one UPDATE returns it. That is
-      // what makes "exactly one entry per lapse" hold rather than "usually one".
+      // Re-applies the scan's guards so only one worker claims a row and a later lift drops it.
       const claimed = await tx
         .update(table)
         .set({ expiryRecordedAt: new Date() })
-        .where(and(eq(table.id, row.id), isNull(table.expiryRecordedAt)))
+        .where(
+          and(
+            eq(table.id, row.id),
+            or(isNull(table.liftedAt), eq(table.liftedAt, table.expiresAt)),
+            isNull(table.expiryRecordedAt),
+          ),
+        )
         .returning({ id: table.id });
       if (claimed.length === 0) {
         return false;

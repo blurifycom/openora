@@ -72,8 +72,9 @@ export type RealtimeTransport = {
    * `revokeUserFromChannel` already surfaces `ACCESS_REVOKED_SIGNAL`, so a signal never
    * reaches a payload subscriber and cannot corrupt that stream. The first-party Redis Pub/Sub
    * transport implements it over a second Redis channel per chat channel, which the
-   * `/chat/signals` SSE route serves, so the default deployment carries signals too. Optional per ADR-0007 all the same:
-   * a transport that only fans out payloads is still a valid transport.
+   * `/chat/room-stream` SSE route serves alongside the payload lane, so the default deployment
+   * carries signals too. Optional per ADR-0007 all the same: a transport that only fans out
+   * payloads is still a valid transport.
    *
    * `subscribeSignal` below is the server-side receiving half; on the client it is
    * `RealtimeSubscribeHandlers.onSignal` in react/context/realtime-client, which a vendor
@@ -104,11 +105,11 @@ export type RealtimeTransport = {
    * `userId` in its payload. Message and signal lanes remain separate, and every connection on
    * both lanes is removed even when a signal handler fails.
    *
-   * Reach is whatever the transport itself owns. `RedisPubSubRealtimeTransport` holds
-   * subscriptions per replica, so it signals and cuts only the connections on the replica the
-   * call lands on - the same user's tabs on a sibling replica keep streaming until they
-   * reconnect. A managed adapter owns every connection centrally and must therefore signal and
-   * cut all of them, which is the behaviour a multi-replica deployment needs.
+   * Reach is every connection the deployment holds for that user on the channel.
+   * `RedisPubSubRealtimeTransport` revokes its own synchronously and fans out over Redis to
+   * sibling replicas sharing its `SERVICE_NAME`. The fan-out is best-effort: when the revoking
+   * replica cannot publish, the call still resolves and only its own connections are cut, and a
+   * sibling disconnected from Redis at that moment misses it.
    */
   revokeUserFromChannel?: (userId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;
@@ -162,7 +163,7 @@ export type RealtimeClientAuthorizerInput = {
    * is bound server-side and cannot be spoofed by the browser.
    */
   userId: string;
-  /** A stable per-connection id from the client (defaults to userId when absent). */
+  /** A stable per-connection id, namespaced under `userId` by the caller (defaults to userId). */
   clientId: string;
   /**
    * The channels the caller is allowed to subscribe to (the module computes these

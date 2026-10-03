@@ -9,6 +9,7 @@ export type { SystemChatMessage as ChatSystemMessage };
 export type { CommandChatMessage };
 
 export type ChatSystemWriter = {
+  /** The returned `roomId` is canonical (null for the global room); publish to it, not to `args.roomId`. */
   postSystemMessage(args: {
     roomId: string | null;
     actorId: string;

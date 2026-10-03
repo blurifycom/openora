@@ -64,6 +64,12 @@ import {
 // gates page access on this answer goes dark if a limiter outage starts denying it.
 const GEO_CHECK_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
 
+// Responsible-gambling self-protection stays reachable for any signed-in player, including
+// one held to a second-factor enrolment after a support reset: excluding yourself, cooling
+// off, tightening a limit or cancelling a pending loosening never waits on 2FA. Removing a
+// limit or confirming a loosening does.
+const RG_SELF_PROTECTION = { allowPendingTwoFactorSetup: true } as const;
+
 export function kycStatusChannel(userId: User['id']): string {
   return `compliance:kyc-status:${userId}`;
 }
@@ -111,11 +117,17 @@ export function createComplianceRouter({
   const os = implement(complianceContract).$context<OssContext>();
 
   return os.router({
-    getLimits: os.getLimits.handler(({ context }) => rgSelfService.getLimits(getUserId(context))),
+    getLimits: os.getLimits.handler(({ context }) =>
+      rgSelfService.getLimits(getUserId(context, RG_SELF_PROTECTION)),
+    ),
 
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
       return mapErrors({ CONFLICT: LimitOrderingViolationError }, () =>
-        rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta),
+        rgSelfService.upsertLimit(
+          getUserId(context, RG_SELF_PROTECTION),
+          input,
+          context.clientMeta,
+        ),
       );
     }),
 
@@ -428,7 +440,7 @@ export function createComplianceRouter({
     }),
 
     getMyRgSection: os.getMyRgSection.handler(({ context }) =>
-      rgSelfService.getSection(getUserId(context)),
+      rgSelfService.getSection(getUserId(context, RG_SELF_PROTECTION)),
     ),
 
     confirmPendingLimitChange: os.confirmPendingLimitChange.handler(({ input, context }) =>
@@ -444,19 +456,31 @@ export function createComplianceRouter({
 
     cancelPendingLimitChange: os.cancelPendingLimitChange.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
-        rgSelfService.cancelPendingChange(input.id, getUserId(context), context.clientMeta),
+        rgSelfService.cancelPendingChange(
+          input.id,
+          getUserId(context, RG_SELF_PROTECTION),
+          context.clientMeta,
+        ),
       ),
     ),
 
     requestCoolingOff: os.requestCoolingOff.handler(({ input, context }) =>
       mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rgSelfService.requestCoolingOff(getUserId(context), input, context.clientMeta),
+        rgSelfService.requestCoolingOff(
+          getUserId(context, RG_SELF_PROTECTION),
+          input,
+          context.clientMeta,
+        ),
       ),
     ),
 
     requestSelfExclusion: os.requestSelfExclusion.handler(({ input, context }) =>
       mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rgSelfService.requestSelfExclusion(getUserId(context), input, context.clientMeta),
+        rgSelfService.requestSelfExclusion(
+          getUserId(context, RG_SELF_PROTECTION),
+          input,
+          context.clientMeta,
+        ),
       ),
     ),
   });

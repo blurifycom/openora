@@ -22,6 +22,7 @@ import {
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  UuidSchema,
   RgLimitExceededError,
   DEFAULT_PAYMENT_PROVIDER,
   PaymentRejectedError,
@@ -624,6 +625,8 @@ function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
     hex.slice(20, 32),
   ].join('-');
 }
+
+const EVM_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
 // ponytail: a flat threshold - a starter heuristic, not a compliance risk engine. Auto-approval
 // reads it in the fx pivot; the review-queue tag still compares the raw amount, so it is only
@@ -1643,16 +1646,42 @@ export class WalletService {
   }
 
   /**
-   * The withdrawal-type + status/currency/rail/amount/date conditions shared by the queue
+   * One search term against the three things an admin pastes into the queue: a user id or a
+   * destination address (both exact, so both stay on an index), or an email or username
+   * fragment resolved through the directory to a capped userId set. EVM addresses are hex, so
+   * their case carries no meaning and is ignored; every other chain's address is case-sensitive.
+   */
+  private async withdrawalSearchCondition(search: string): Promise<SQL> {
+    const sameAddressIgnoringCase = sql`lower(${walletTransaction.destinationAddress}) = ${search.toLowerCase()}`;
+    const matches = [
+      EVM_ADDRESS_PATTERN.test(search)
+        ? sameAddressIgnoringCase
+        : sql`(${sameAddressIgnoringCase} and ${walletTransaction.destinationAddress} = ${search})`,
+    ];
+    if (UuidSchema.safeParse(search).success) {
+      matches.push(eq(wallet.userId, search));
+    }
+    const userIds = this.directory ? await this.directory.findPlayerIds(search) : [];
+    if (userIds.length > 0) {
+      matches.push(inArray(wallet.userId, userIds));
+    }
+    return sql`(${sql.join(matches, sql` or `)})`;
+  }
+
+  /**
+   * The withdrawal-type + status/search/currency/rail/amount/date conditions shared by the queue
    * list and its summary. Excludes the KYC filter: that one needs the player directory, so
    * each caller resolves it against its own data shape (row-level for the list, a bounded
    * userId set for the summary's SQL aggregate).
    */
-  private withdrawalConditions(
+  private async withdrawalConditions(
     filters: WithdrawalQueueSummaryFilter & Pick<WithdrawalQueueFilter, 'status'>,
     statuses?: readonly WalletTransaction['status'][],
   ) {
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
+    if (filters.search) {
+      conditions.push(await this.withdrawalSearchCondition(filters.search));
+    }
     if (filters.status) {
       conditions.push(eq(walletTransaction.status, filters.status));
     }
@@ -1695,7 +1724,7 @@ export class WalletService {
     }: { statuses?: readonly WalletTransaction['status'][]; withPlayers: boolean },
   ) {
     const db = this.drizzle.db;
-    const conditions = this.withdrawalConditions(filters, statuses);
+    const conditions = await this.withdrawalConditions(filters, statuses);
 
     // Bounded queue: fetch all SQL-matching rows, then enrich + kycStatus-filter + paginate in memory,
     // else DB-side pagination makes `total` wrong once kycStatus prunes.
@@ -1771,7 +1800,7 @@ export class WalletService {
       }
     }
 
-    const conditions = this.withdrawalConditions(filters, QUEUED_WITHDRAWAL_STATUSES);
+    const conditions = await this.withdrawalConditions(filters, QUEUED_WITHDRAWAL_STATUSES);
     if (kycUserIds) {
       conditions.push(inArray(wallet.userId, kycUserIds));
     }

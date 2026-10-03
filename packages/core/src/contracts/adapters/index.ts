@@ -395,6 +395,7 @@ export type { PlayerActivityTracker } from './player-activity.js';
 export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
 export { SESSION_IDLE_POLICY, type SessionIdlePolicy } from './session-idle-policy.js';
 export { MIRROR_TARGET_POLICY, type MirrorTargetPolicy } from './mirror-target-policy.js';
+export { TWO_FACTOR_SETUP_POLICY, type TwoFactorSetupPolicy } from './two-factor-setup-policy.js';
 
 export type { SocialCommands, FriendshipDissolvedPayload } from './social-commands.js';
 export { SOCIAL_COMMANDS } from './social-commands.js';

@@ -1,22 +1,9 @@
 import { and, count, eq, isNotNull, isNull, lte } from 'drizzle-orm';
-import {
-  DrizzleService,
-  withAdvisoryXactLock,
-  mapConcurrent,
-  createLogger,
-} from '@openora/core/server';
+import { DrizzleService, withAdvisoryXactLock, mapConcurrent } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import {
-  chatChannel,
-  type AuditWritePort,
-  type RealtimeTransport,
-  type Uuid,
-} from '@openora/core/contracts';
+import type { AuditWritePort, RealtimeTransport, Uuid } from '@openora/core/contracts';
 import { chatMessage, chatMute, chatRoom, chatRoomMember } from '../schema/index.js';
-
-const ROOM_REVOKE_CONCURRENCY = 10;
-
-const logger = createLogger('chat');
+import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 
 export class ChatRoomPurgeService {
   constructor(
@@ -90,13 +77,9 @@ export class ChatRoomPurgeService {
       roomId,
       messageCount: result.messageCount,
     });
-    await mapConcurrent(result.memberIds, ROOM_REVOKE_CONCURRENCY, async (memberId) => {
-      try {
-        await this.transport.revokeUserFromChannel?.(memberId, chatChannel(roomId));
-      } catch (err: unknown) {
-        logger.error({ err, roomId, memberId }, 'chat room channel revoke failed');
-      }
-    });
+    await mapConcurrent(result.memberIds, ROOM_REVOKE_CONCURRENCY, (memberId) =>
+      revokeChannelBestEffort(this.transport, memberId, roomId),
+    );
     return true;
   }
 }
