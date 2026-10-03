@@ -280,7 +280,10 @@ export const WithdrawalQueueItemSchema = z.object({
 });
 export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
 
+// `search` matches a user id or a destination address exactly, or an email or username by
+// fragment. It narrows the list and the summary alike, so the header agrees with the rows.
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
+  search: z.string().trim().min(1).max(128).optional(),
   status: WalletTransactionStatusSchema.optional(),
   currency: WalletCurrencyInputSchema.optional(),
   rail: WalletRailSchema.optional(),
