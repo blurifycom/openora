@@ -376,6 +376,22 @@ describe('AuditService.list() (real PG)', () => {
     expect(result.total).toBe(1);
   });
 
+  it('q with several whitespace-separated ids matches rows filed under any of them', async () => {
+    await seed([
+      { actorType: 'admin', action: 'a', resourceType: 'player', resourceId: 'profile-1' },
+      { actorType: 'admin', action: 'b', resourceType: 'rank', resourceId: 'user-1' },
+      { actorId: 'user-1', actorType: 'player', action: 'c', resourceType: 'x' },
+      { actorType: 'admin', action: 'd', resourceType: 'player', resourceId: 'profile-2' },
+    ]);
+
+    const result = await makeService().list({ q: 'profile-1  user-1', page: 1, limit: 10 });
+
+    expect(result.items.map((item) => item.action)).toEqual(
+      expect.arrayContaining(['a', 'b', 'c']),
+    );
+    expect(result.total).toBe(3);
+  });
+
   it('applies explicit resourceId filter', async () => {
     await seed([
       { actorType: 'system', action: 'a', resourceType: 'transaction', resourceId: 'txn-42' },

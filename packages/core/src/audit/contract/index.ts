@@ -65,7 +65,9 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   actionPrefix: z.string().trim().min(1).optional(),
   resourceType: z.string().optional(),
   resourceId: z.string().optional(),
-  // Single search box: exact-match the subject against actorId OR resourceId.
+  // Single search box: whitespace-separated ids, each exact-matched against actorId OR
+  // resourceId. Several ids cover one subject filed under more than one id (a player's
+  // profile id and user id).
   q: z.string().trim().min(1).optional(),
   fromDate: z.iso.date().optional(),
   toDate: z.iso.date().optional(),

@@ -10,6 +10,8 @@ import {
   type OssContext,
 } from '@openora/core/server';
 import {
+  ACCESS_REVOKED_SIGNAL,
+  GLOBAL_CHAT_ROOM_ID,
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
   chatChannel,
@@ -17,7 +19,12 @@ import {
   type RateLimiterAdapter,
   type RealtimeClientAuthorizer,
 } from '@openora/core/contracts';
-import { chatContract } from '../contract/index.js';
+import {
+  chatContract,
+  type ChatMessage,
+  type ChatRoom,
+  type ChatRoomStreamEvent,
+} from '../contract/index.js';
 import {
   ChatService,
   ChatRoomOwnershipError,
@@ -42,6 +49,7 @@ import {
   ChatPlayerMutedError,
   ChatPlayerBannedError,
   ChatAdminPrivateRoomModerationError,
+  ChatRoomLockedError,
   ChatRoomNotFoundError,
 } from '../service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
@@ -75,6 +83,20 @@ function resolveViewerId(context: OssContext) {
   return context.auth?.userId;
 }
 
+function isAccessRevoked(event: ChatRoomStreamEvent) {
+  return event.type === 'signal' && event.signal.name === ACCESS_REVOKED_SIGNAL;
+}
+
+async function* messagesOf(
+  events: AsyncGenerator<ChatRoomStreamEvent>,
+): AsyncGenerator<ChatMessage> {
+  for await (const event of events) {
+    if (event.type === 'message') {
+      yield event.message;
+    }
+  }
+}
+
 export function createChatRouter({
   chatService,
   membershipService,
@@ -95,6 +117,35 @@ export function createChatRouter({
   limiter: RateLimiterAdapter;
 }) {
   const os = implement(chat).$context<OssContext>();
+
+  // Private-room streams require membership; public-room and global streams are readable anonymously.
+  const authorizeChannel = (input: { roomId?: ChatRoom['id'] | null }, context: OssContext) =>
+    mapErrors(
+      {
+        NOT_FOUND: ChatRoomNotFoundError,
+        FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+      },
+      () => chatService.verifyChannelAccess(input.roomId ?? null, resolveViewerId(context)),
+    );
+
+  const openRoomStream = async (
+    input: { roomId?: ChatRoom['id'] | null },
+    context: OssContext,
+    signal: AbortSignal | undefined,
+  ) => {
+    const roomId = await authorizeChannel(input, context);
+    return createEventStreamGenerator<ChatRoomStreamEvent>(
+      (push) => chatService.subscribeRoom(roomId, push, resolveViewerId(context)),
+      {
+        signal,
+        endAfter: isAccessRevoked,
+        ready: async () => {
+          await authorizeChannel(input, context);
+        },
+      },
+    );
+  };
+
   return os.router({
     listRooms: os.listRooms.handler(({ context }) => {
       return chatService.listRooms(resolveViewerId(context));
@@ -210,7 +261,7 @@ export function createChatRouter({
     }),
 
     // Grant includes all rooms the player has access to (public + private memberships)
-    // so Ably clients can subscribe to any accessible room without re-auth.
+    // so a client can subscribe to any accessible room without re-auth.
     getConnection: os.getConnection.handler(async ({ input, context }) => {
       context.resHeaders?.set('cache-control', 'no-store');
       const viewerId = resolveViewerId(context);
@@ -223,84 +274,45 @@ export function createChatRouter({
         });
       }
       const rooms = await chatService.listRooms(viewerId);
-      const globalRoom = rooms.find((room) => room.slug === '__global');
+      const globalRoom = rooms.find((room) => room.slug === GLOBAL_CHAT_ROOM_ID);
       const channels = [
         ...(globalRoom && !globalRoom.isBanned ? [chatChannel(null)] : []),
         ...rooms
-          .filter((room) => room.slug !== '__global' && !room.isBanned)
+          .filter((room) => room.slug !== GLOBAL_CHAT_ROOM_ID && !room.isBanned)
           .map((room) => chatChannel(room.id)),
       ];
       return authorizer.issueGrant({
         userId: viewerId,
-        clientId: input.clientId ?? viewerId,
+        clientId: input.clientId ? `${viewerId}:${input.clientId}` : viewerId,
         channels,
       });
     }),
 
-    streamMessages: os.streamMessages.handler(async ({ input, signal, context }) => {
-      const roomId =
-        input.roomId === '__global' || input.roomId === undefined ? null : input.roomId;
-      // Private-room streams require membership; public-room and global streams are readable anonymously.
-      const viewerId = resolveViewerId(context);
-      if (roomId) {
-        await mapErrors(
-          {
-            NOT_FOUND: ChatRoomNotFoundError,
-            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-          },
-          () => chatService.verifyRoomAccess(roomId, viewerId),
-        );
-      } else {
-        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-          chatService.verifyGlobalAccess(viewerId),
-        );
-      }
-      return createEventStreamGenerator(
-        (push) => chatService.subscribeMessages(roomId, push, viewerId),
-        { signal },
-      );
-    }),
+    streamRoom: os.streamRoom.handler(({ input, signal, context }) =>
+      openRoomStream(input, context, signal),
+    ),
+
+    streamMessages: os.streamMessages.handler(async ({ input, signal, context }) =>
+      messagesOf(await openRoomStream(input, context, signal)),
+    ),
 
     streamSignals: os.streamSignals.handler(async ({ input, signal, context }) => {
-      const roomId =
-        input.roomId === '__global' || input.roomId === undefined ? null : input.roomId;
-      const viewerId = resolveViewerId(context);
-      if (roomId) {
-        await mapErrors(
-          {
-            NOT_FOUND: ChatRoomNotFoundError,
-            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-          },
-          () => chatService.verifyRoomAccess(roomId, viewerId),
-        );
-      } else {
-        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-          chatService.verifyGlobalAccess(viewerId),
-        );
-      }
+      const roomId = await authorizeChannel(input, context);
       return createEventStreamGenerator(
-        (push) => chatService.subscribeSignals(roomId, push, viewerId),
-        { signal },
+        (push) => chatService.subscribeSignals(roomId, push, resolveViewerId(context)),
+        {
+          signal,
+          endAfter: (event) => event.name === ACCESS_REVOKED_SIGNAL,
+          ready: async () => {
+            await authorizeChannel(input, context);
+          },
+        },
       );
     }),
 
-    getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) => {
-      const roomId = input.roomId ?? null;
-      if (roomId) {
-        await mapErrors(
-          {
-            NOT_FOUND: ChatRoomNotFoundError,
-            FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
-          },
-          () => chatService.verifyRoomAccess(roomId, resolveViewerId(context)),
-        );
-      } else {
-        await mapErrors({ FORBIDDEN: ChatPlayerBannedError }, () =>
-          chatService.verifyGlobalAccess(resolveViewerId(context)),
-        );
-      }
-      return chatService.getOnlineCount(roomId);
-    }),
+    getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) =>
+      chatService.getOnlineCount(await authorizeChannel(input, context)),
+    ),
 
     listBlockedUsers: os.listBlockedUsers.handler(({ input, context }) =>
       chatService.listBlockedUsers({ blockerId: getUserId(context), ...input }),
@@ -356,7 +368,10 @@ export function createChatRouter({
         JOIN_ROOM_RATE_LIMIT,
       );
       return mapErrors(
-        { NOT_FOUND: ChatRoomJoinCodeNotFoundError, FORBIDDEN: ChatRoomBannedError },
+        {
+          NOT_FOUND: ChatRoomJoinCodeNotFoundError,
+          FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError],
+        },
         () =>
           membershipService.joinRoom({ userId, joinCode: input.joinCode, ...context.clientMeta }),
       );
@@ -369,13 +384,15 @@ export function createChatRouter({
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_JOIN, userId),
         JOIN_ROOM_RATE_LIMIT,
       );
-      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomBannedError }, () =>
-        membershipService.joinPublicRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError] },
+        () =>
+          membershipService.joinPublicRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
       );
     }),
 
     adminJoinRoom: os.adminJoinRoom.handler(async ({ input, context }) => {
-      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'view');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'update');
       return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
         membershipService.adminJoinRoom({ roomId: input.roomId, userId, ip, userAgent }),
       );
@@ -394,14 +411,22 @@ export function createChatRouter({
     }),
 
     getRoom: os.getRoom.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoom({ roomId: input.roomId, viewerId: resolveViewerId(context) }),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.getRoom({ roomId: input.roomId, viewerId: resolveViewerId(context) }),
       ),
     ),
 
     getRoomRules: os.getRoomRules.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.listRoomRules(input.roomId, resolveViewerId(context)),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.listRoomRules(input.roomId, resolveViewerId(context)),
       ),
     ),
 
@@ -421,33 +446,56 @@ export function createChatRouter({
           NOT_FOUND: ChatRoomNotFoundError,
           FORBIDDEN: [ChatRoomNotMemberError, ChatRoomNotModeratorError],
         },
-        () => chatService.createRoomRule({ ...input, actorId: getUserId(context) }),
+        () =>
+          chatService.createRoomRule({
+            ...input,
+            actorId: getUserId(context),
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     updateRoomRule: os.updateRoomRule.handler(({ input, context }) =>
       mapErrors(
         { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomRuleNotFoundError },
-        () => chatService.updateRoomRule({ ...input, actorId: getUserId(context) }),
+        () =>
+          chatService.updateRoomRule({
+            ...input,
+            actorId: getUserId(context),
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     deleteRoomRule: os.deleteRoomRule.handler(({ input, context }) =>
       mapErrors(
         { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomRuleNotFoundError },
-        () => chatService.deleteRoomRule({ ...input, actorId: getUserId(context) }),
+        () =>
+          chatService.deleteRoomRule({
+            ...input,
+            actorId: getUserId(context),
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     getRoomConfiguration: os.getRoomConfiguration.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoomConfiguration(input.roomId, resolveViewerId(context)),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () => chatService.getRoomConfiguration(input.roomId, resolveViewerId(context)),
       ),
     ),
 
     updateRoomConfiguration: os.updateRoomConfiguration.handler(({ input, context }) =>
       mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        chatService.updateRoomConfiguration({ ...input, actorId: getUserId(context) }),
+        chatService.updateRoomConfiguration({
+          ...input,
+          actorId: getUserId(context),
+          ...context.clientMeta,
+        }),
       ),
     ),
 
@@ -521,34 +569,50 @@ export function createChatRouter({
 
     unbanRoomMember: os.unbanRoomMember.handler(({ input, context }) =>
       mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        roomBanService.unbanMember({ ...input, moderatorId: getUserId(context) }),
+        roomBanService.unbanMember({
+          ...input,
+          moderatorId: getUserId(context),
+          ...context.clientMeta,
+        }),
       ),
     ),
 
     muteRoomMember: os.muteRoomMember.handler(({ input, context }) =>
-      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        roomMuteService.muteRoomMember({
-          roomId: input.roomId,
-          userId: input.userId,
-          moderatorId: getUserId(context),
-          durationSeconds: input.durationSeconds,
-          reason: input.reason,
-        }),
+      mapErrors(
+        { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomSelfModerationError },
+        () =>
+          roomMuteService.muteRoomMember({
+            roomId: input.roomId,
+            userId: input.userId,
+            moderatorId: getUserId(context),
+            durationSeconds: input.durationSeconds,
+            reason: input.reason,
+            ...context.clientMeta,
+          }),
       ),
     ),
 
     unmuteRoomMember: os.unmuteRoomMember.handler(({ input, context }) =>
       mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
-        roomMuteService.unmuteRoomMember({ ...input, moderatorId: getUserId(context) }),
+        roomMuteService.unmuteRoomMember({
+          ...input,
+          moderatorId: getUserId(context),
+          ...context.clientMeta,
+        }),
       ),
     ),
 
     listRoomMembers: os.listRoomMembers.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.listRoomMembers({
-          roomId: input.roomId,
-          viewerId: getUserId(context),
-        }),
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerBannedError],
+        },
+        () =>
+          chatService.listRoomMembers({
+            roomId: input.roomId,
+            viewerId: getUserId(context),
+          }),
       ),
     ),
 

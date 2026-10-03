@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { loadExtensions } from '@openora/core/server';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { MentionResultSchema } from '@openora/core/engagement/contracts/chat-commands';
+import { ChatRoomSchema } from '@openora/core/engagement/contracts/chat';
 import {
   setupTestDb,
   bootTestApp,
@@ -102,5 +103,18 @@ describe('mentionSearch: authorization', () => {
     const res = await app.app.request(mentionUrl('anyone'), { method: 'GET' });
 
     expect(res.status).toBe(401);
+  });
+
+  it("refuses a private room's online list to a non-member and serves its members", async () => {
+    const owner = await registerPlayer('privowner');
+    const outsider = await registerPlayer('outsider');
+    const created = await owner.client.post('/chat/rooms/private', {
+      name: `room-${randomUUID()}`,
+    });
+    expect(created.status).toBe(200);
+    const room = ChatRoomSchema.parse(await created.json());
+
+    expect((await outsider.client.get(mentionUrl('', room.id))).status).toBe(403);
+    expect((await owner.client.get(mentionUrl('', room.id))).status).toBe(200);
   });
 });

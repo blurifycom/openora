@@ -5,6 +5,8 @@ import {
   TimestampSchema,
   UuidSchema,
   GLOBAL_CHAT_ROOM_ID,
+  CHAT_MODERATION_SCOPES,
+  CHAT_MODERATION_SCOPE_VALUES,
   CommandMetadataSchema,
   SystemChatMessageSchema,
   ChatAttachmentSchema,
@@ -14,6 +16,8 @@ import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
   ROOM_SLUG_MAX_LENGTH,
+  ROOM_RULE_MAX_LENGTH,
+  CONNECTION_CLIENT_ID_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
   CHAT_ROOM_ASSIGNABLE_ROLES,
@@ -43,6 +47,8 @@ export const ChatRoomSlugSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 
 export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
+
+const RoomRuleContentSchema = z.string().trim().min(1).max(ROOM_RULE_MAX_LENGTH);
 
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
@@ -102,7 +108,7 @@ export type ChatRoomScheduledForDeletionSignal = z.infer<
   typeof ChatRoomScheduledForDeletionSignalSchema
 >;
 
-// Envelope of the room channel's SIGNAL lane, served by `streamSignals`. `payload` stays
+// Envelope of the room channel's SIGNAL lane, served by `streamRoom`. `payload` stays
 // `unknown` because the vocabulary of names is open: a client parses the ones it asked for
 // (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.
 export const ChatSignalSchema = z.object({ name: z.string(), payload: z.unknown() });
@@ -183,6 +189,14 @@ export const AdminChatMessageDetailSchema = ChatMessageSchema.and(
 );
 export type AdminChatMessageDetail = z.infer<typeof AdminChatMessageDetailSchema>;
 
+export const ChatRoomStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('message'), message: ChatMessageSchema }),
+  z.object({ type: z.literal('signal'), signal: ChatSignalSchema }),
+]);
+export type ChatRoomStreamEvent = z.infer<typeof ChatRoomStreamEventSchema>;
+
+const ChatStreamInputSchema = z.object({ roomId: UuidSchema.nullable().optional() });
+
 export const AdminChatMessageSchema = z.object({
   id: UuidSchema,
   date: TimestampSchema,
@@ -240,8 +254,7 @@ export const ChatConnectionGrantSchema = z
   .loose();
 
 export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
-export const CHAT_MODERATION_SCOPES = ['__global', '__all_public', '__all'] as const;
-export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;
+export { CHAT_MODERATION_SCOPES, CHAT_MODERATION_SCOPE_VALUES };
 export const ChatModerationScopeSchema = z.enum(CHAT_MODERATION_SCOPE_VALUES);
 export type ChatModerationScope = z.infer<typeof ChatModerationScopeSchema>;
 export const ChatModerationRoomIdSchema = z.union([UuidSchema, z.enum(CHAT_MODERATION_SCOPES)]);
@@ -330,7 +343,7 @@ export const chatContract = {
         roomId: UuidSchema,
         // Bounded so a caller cannot request an unbounded page.
         limit: z.number().int().min(1).max(100).optional(),
-        before: z.string().optional(),
+        before: z.iso.datetime({ offset: true }).optional(),
       }),
     )
     .output(z.array(ChatMessageSchema)),
@@ -356,19 +369,24 @@ export const chatContract = {
 
   getConnection: oc
     .route({ method: 'GET', path: '/chat/connection' })
-    .input(z.object({ clientId: z.string().optional() }))
+    .input(z.object({ clientId: z.string().max(CONNECTION_CLIENT_ID_MAX_LENGTH).optional() }))
     .output(ChatConnectionGrantSchema),
 
+  streamRoom: oc
+    .route({ method: 'GET', path: '/chat/room-stream' })
+    .input(ChatStreamInputSchema)
+    .output(eventIterator(ChatRoomStreamEventSchema)),
+
+  /** @deprecated Use `streamRoom`, which carries this lane and the signal lane on one connection. */
   streamMessages: oc
-    .route({ method: 'GET', path: '/chat/stream' })
-    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .route({ method: 'GET', path: '/chat/stream', deprecated: true })
+    .input(ChatStreamInputSchema)
     .output(eventIterator(ChatMessageSchema)),
 
-  // The signal lane of the same channel `streamMessages` serves, on its own stream so a
-  // control signal can never arrive as a message. Same access rules as the message stream.
+  /** @deprecated Use `streamRoom`, which carries this lane and the message lane on one connection. */
   streamSignals: oc
-    .route({ method: 'GET', path: '/chat/signals' })
-    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .route({ method: 'GET', path: '/chat/signals', deprecated: true })
+    .input(ChatStreamInputSchema)
     .output(eventIterator(ChatSignalSchema)),
 
   getOnlineCount: oc
@@ -464,7 +482,7 @@ export const chatContract = {
       z.object({
         roomId: UuidSchema,
         orderNum: z.number().int().positive().optional(),
-        content: z.string().trim().min(1),
+        content: RoomRuleContentSchema,
       }),
     )
     .output(ChatRoomRuleSchema),
@@ -477,7 +495,7 @@ export const chatContract = {
           roomId: UuidSchema,
           id: UuidSchema,
           orderNum: z.number().int().positive().optional(),
-          content: z.string().trim().min(1).optional(),
+          content: RoomRuleContentSchema.optional(),
         })
         .refine(({ orderNum, content }) => orderNum !== undefined || content !== undefined, {
           message: 'At least one rule field is required',

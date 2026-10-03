@@ -1,0 +1,1 @@
+CREATE INDEX "wallet_transaction_destination_address_idx" ON "wallet_transaction" USING btree (lower("destination_address"));

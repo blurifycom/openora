@@ -15,6 +15,7 @@ import {
   type GeoIpAdapter,
   type ClientMeta,
   type IdentityReader,
+  type MailDispatchPort,
   type User,
 } from '@openora/core/contracts';
 import {
@@ -41,6 +42,13 @@ export const SelfTwoFactorResetError = makeConflictError(
   'An admin cannot reset their own second factor - ask another Super Admin',
 );
 
+// A player reset signs the player out everywhere and mails them, so it is refused when
+// there is no second factor to reset rather than doing both for nothing.
+export const TwoFactorNotEnabledError = makeConflictError(
+  'TwoFactorNotEnabledError',
+  'This player has no second factor to reset',
+);
+
 // Recording activity on every admin request would be one write per call; the session
 // list only needs minute-level resolution.
 const LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000;
@@ -56,6 +64,7 @@ export type AdminSecurityServiceDeps = {
   identityReader: IdentityReader;
   config: AdminSecurityConfig;
   geoIp?: GeoIpAdapter | undefined;
+  mailDispatch?: MailDispatchPort | undefined;
 };
 
 /**
@@ -75,6 +84,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
   private readonly identityReader: IdentityReader;
   private readonly config: AdminSecurityConfig;
   private readonly geoIp?: GeoIpAdapter | undefined;
+  private readonly mailDispatch?: MailDispatchPort | undefined;
 
   constructor({
     drizzle,
@@ -85,7 +95,9 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     identityReader,
     config,
     geoIp,
+    mailDispatch,
   }: AdminSecurityServiceDeps) {
+    this.mailDispatch = mailDispatch;
     this.drizzle = drizzle;
     this.auth = auth;
     this.events = events;
@@ -315,22 +327,77 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     if (userId === actorId) {
       throw new SelfTwoFactorResetError();
     }
+    await this.clearTwoFactor(userId, actorId, reason, meta, { forPlayer: false });
+    return { success: true as const };
+  }
 
-    const [account] = await this.drizzle.db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-    if (!account) {
-      throw new UserNotFoundError(userId);
+  /**
+   * The support-desk twin of `resetTwoFactor`, for a player who lost their device: the
+   * caller only needs the player-update grant, so it refuses any account whose role is not
+   * `player` - an admin's second factor stays a Super Admin matter, even when that admin
+   * also holds a player profile.
+   *
+   * Unlike the admin path it leaves `requireTwoFactorOnLogin` as the player set it. With no
+   * factor enrolled, TWO_FACTOR_SETUP_POLICY then holds the account to the enrolment flow
+   * until a new one is set up, rather than letting it drop to password-only.
+   */
+  async resetPlayerTwoFactor(
+    userId: User['id'],
+    actorId: User['id'],
+    reason: string,
+    meta?: ClientMeta,
+  ) {
+    const { clearedEnrolmentId } = await this.clearTwoFactor(userId, actorId, reason, meta, {
+      forPlayer: true,
+    });
+
+    // Addressed by user id so delivery resolves the recipient's name, locale and
+    // anti-phishing code - a security notice must carry the code. Keyed on the enrolment
+    // that was cleared, so one reset mails once however often the enqueue is retried. The
+    // reset has committed, so a failed enqueue must not fail it: the caller would retry a
+    // reset that already took effect.
+    try {
+      await this.mailDispatch?.toUser({
+        userId,
+        template: { key: 'twoFactorReset', data: { occurredAt: new Date().toISOString() } },
+        idempotencyKey: `two-factor-reset:${clearedEnrolmentId ?? userId}`,
+      });
+    } catch (err) {
+      logger.error({ err, userId }, 'two-factor reset notice enqueue failed');
     }
+    return { success: true as const };
+  }
 
+  private async clearTwoFactor(
+    userId: User['id'],
+    actorId: User['id'],
+    reason: string,
+    meta: ClientMeta | undefined,
+    { forPlayer }: { forPlayer: boolean },
+  ): Promise<{ clearedEnrolmentId: string | null }> {
     // Both writes commit together: a process death between them would leave
     // twoFactorEnabled true with no twoFactor row - locked out with no repair
     // route, since resetting requires a Super Admin who is themselves gated on
-    // AdminGuard.assertEnrolled.
-    await this.drizzle.db.transaction(async (tx) => {
-      await tx.delete(twoFactor).where(eq(twoFactor.userId, userId));
+    // AdminGuard.assertEnrolled. The row is locked so a concurrent role change cannot
+    // slip an admin past the player-only check between the read and the writes.
+    const clearedEnrolmentId = await this.drizzle.db.transaction(async (tx) => {
+      const [account] = await tx
+        .select({ role: user.role, twoFactorEnabled: user.twoFactorEnabled })
+        .from(user)
+        .where(eq(user.id, userId))
+        .for('update')
+        .limit(1);
+      if (!account || (forPlayer && account.role !== 'player')) {
+        throw new UserNotFoundError(userId);
+      }
+      if (forPlayer && !account.twoFactorEnabled) {
+        throw new TwoFactorNotEnabledError();
+      }
+
+      const [cleared] = await tx
+        .delete(twoFactor)
+        .where(eq(twoFactor.userId, userId))
+        .returning({ id: twoFactor.id });
       await tx
         .update(user)
         .set({
@@ -340,17 +407,18 @@ export class AdminSecurityService implements AdminSecurityPolicy {
           twoFactorMethod: null,
           failedTwoFactorAttempts: 0,
           twoFactorLockoutUntil: null,
-          // Same reason `disableTwoFactor` clears it: left set, it strands the account
-          // in an enforced-but-ungrantable state no route can undo (the setter itself
-          // requires `twoFactorEnabled`).
-          requireTwoFactorOnLogin: false,
+          // Same reason `disableTwoFactor` clears it: left set on an admin, it strands the
+          // account in an enforced-but-ungrantable state (the setter itself requires
+          // `twoFactorEnabled`). A player reset keeps it on purpose: TWO_FACTOR_SETUP_POLICY
+          // holds that state to the enrolment flow, which is what ends it.
+          ...(forPlayer ? {} : { requireTwoFactorOnLogin: false }),
         })
         .where(eq(user.id, userId));
+      return cleared?.id ?? null;
     });
 
-    await this.trustedDevices.revokeAllForUser(userId, actorId);
-    await this.sessions.revokeAllSessions(userId, actorId, meta);
-
+    // Recorded before the revokes: the factor is already gone, so a revoke that throws must
+    // not also lose the only record of who cleared it and why.
     this.events.emit('identity.2fa.reset', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
@@ -359,7 +427,10 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    return { success: true as const };
+
+    await this.trustedDevices.revokeAllForUser(userId, actorId);
+    await this.sessions.revokeAllSessions(userId, actorId, meta);
+    return { clearedEnrolmentId };
   }
 
   isTrustedDevice(userId: User['id'], userAgent: string | null): Promise<boolean> {

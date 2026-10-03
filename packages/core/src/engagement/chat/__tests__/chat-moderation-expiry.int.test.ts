@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  waitForAdvisoryLockWaiter,
+  waitForRowLockWaiter,
+  type TestDb,
+} from '@openora/core/testing';
 import type { AuditWritePort, RealtimeTransport } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
 import { migrate as migrateAudit } from '@openora/core/audit/migrate';
@@ -151,6 +156,31 @@ describe('ChatModerationExpiryService.sweep', () => {
     expect(await auditRowsFor(ban.id)).toHaveLength(1);
   });
 
+  it('records no expiry for a lift that commits while the sweep waits on the row', async () => {
+    const mute = await seedMute({ expiresAt: secondsFromNow(-30) });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let markLifted!: () => void;
+    const liftWritten = new Promise<void>((resolve) => (markLifted = resolve));
+    const lift = db.drizzle.db.transaction(async (tx) => {
+      await tx
+        .update(chatMute)
+        .set({ liftedAt: secondsFromNow(-60), liftedBy: ADMIN_ID })
+        .where(eq(chatMute.id, mute.id));
+      markLifted();
+      await released;
+    });
+    await liftWritten;
+
+    const sweep = makeSweep().sweep();
+    await waitForRowLockWaiter(db);
+    release();
+    await lift;
+
+    expect(await sweep).toEqual({ mutes: 0, bans: 0 });
+    expect(await auditRowsFor(mute.id)).toEqual([]);
+  });
+
   it('stamps expiryRecordedAt so the row stops matching the scan', async () => {
     const mute = await seedMute({ expiresAt: secondsFromNow(-30) });
 
@@ -186,5 +216,118 @@ describe('ChatModerationExpiryService.sweep', () => {
     ]);
     const [muteRow] = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.id, mute.id));
     expect(muteRow!.liftedAt).toBeNull();
+  });
+
+  it('leaves a lapsed mute to the sweep when the player is muted again', async () => {
+    const userId = randomUUID();
+    const expiresAt = secondsFromNow(-30);
+    const lapsed = await seedMute({ userId, expiresAt });
+
+    await makeModeration().mute({
+      userId,
+      roomId: '__global',
+      durationSeconds: 60,
+      reason: 'again',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+    await makeSweep().sweep();
+
+    const [row] = await db.drizzle.db.select().from(chatMute).where(eq(chatMute.id, lapsed.id));
+    expect(row).toMatchObject({ liftedAt: expiresAt, liftedBy: null });
+    expect((await auditRowsFor(lapsed.id)).map((r) => r.action)).toEqual(['chat.mute.expired']);
+    const [created] = await db.drizzle.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, 'chat.mute.created'));
+    expect(created!.before).toBeNull();
+  });
+
+  it('leaves a lapsed ban to the sweep when the player is banned again', async () => {
+    const userId = randomUUID();
+    const expiresAt = secondsFromNow(-30);
+    const lapsed = await seedBan({ userId, expiresAt });
+
+    await makeModeration().ban({
+      userId,
+      roomId: '__all_public',
+      durationSeconds: 60,
+      reason: 'again',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+    await makeSweep().sweep();
+
+    const [row] = await db.drizzle.db
+      .select()
+      .from(chatPlatformBan)
+      .where(eq(chatPlatformBan.id, lapsed.id));
+    expect(row).toMatchObject({ liftedAt: expiresAt, liftedBy: null });
+    expect((await auditRowsFor(lapsed.id)).map((r) => r.action)).toEqual([
+      'chat.platform_ban.expired',
+    ]);
+  });
+
+  it('records the replaced terms when a running mute is replaced', async () => {
+    const userId = randomUUID();
+    const running = await seedMute({ userId, expiresAt: secondsFromNow(3600) });
+
+    await makeModeration().mute({
+      userId,
+      roomId: '__global',
+      durationSeconds: null,
+      reason: 'escalated',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+
+    const [created] = await db.drizzle.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, 'chat.mute.created'));
+    expect(created!.before).toMatchObject({ muteId: running.id, reason: 'spam' });
+    expect(await auditRowsFor(running.id)).toHaveLength(0);
+  });
+
+  it('lifts the replacement when an unmute arrives during a re-mute', async () => {
+    const userId = randomUUID();
+    const running = await seedMute({ userId, expiresAt: secondsFromNow(3600) });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let replaced!: () => void;
+    const midway = new Promise<void>((resolve) => (replaced = resolve));
+
+    const remute = db.drizzle.db.transaction(async (t) => {
+      await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-mute:${userId}`}))`);
+      await t
+        .update(chatMute)
+        .set({ liftedAt: new Date(), liftedBy: ADMIN_ID })
+        .where(eq(chatMute.id, running.id));
+      await t
+        .insert(chatMute)
+        .values({ userId, roomId: null, scope: '__global', mutedBy: ADMIN_ID, reason: 'again' });
+      replaced();
+      await held;
+    });
+    await midway;
+    const unmute = makeModeration().unmute({
+      userId,
+      roomId: '__global',
+      actorId: ADMIN_ID,
+      ...NO_CLIENT_META,
+    });
+    await waitForAdvisoryLockWaiter(db);
+    release();
+    await remute;
+    await unmute;
+
+    const active = await db.drizzle.db
+      .select()
+      .from(chatMute)
+      .where(sql`${chatMute.userId} = ${userId} AND ${chatMute.liftedAt} IS NULL`);
+    expect(active).toHaveLength(0);
+    expect(
+      await db.drizzle.db.select().from(auditLog).where(eq(auditLog.action, 'chat.mute.lifted')),
+    ).toHaveLength(1);
   });
 });

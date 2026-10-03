@@ -4,18 +4,25 @@ import type { Uuid } from '@openora/core/contracts';
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
 export type ChatRestrictionData = { until: string | null };
+export type ChatMuteReason = 'muted' | 'slow_mode' | 'read_only';
+
+const MUTE_MESSAGES: Record<ChatMuteReason, (until: string | null) => string> = {
+  muted: (until) =>
+    until === null
+      ? "You are muted until a chat moderator's decision"
+      : `You are muted until ${until}`,
+  slow_mode: (until) => `Slow mode: you can post again at ${until}`,
+  read_only: () => 'This room is read-only',
+};
 
 export class ChatPlayerMutedError extends Error {
-  readonly data: ChatRestrictionData;
+  readonly data: ChatRestrictionData & { reason: ChatMuteReason };
 
-  constructor(until: Date | string | null) {
-    super(
-      until === null
-        ? "You are muted until a chat moderator's decision"
-        : `You are muted until ${until instanceof Date ? until.toISOString() : until}`,
-    );
+  constructor(until: Date | string | null, reason: ChatMuteReason = 'muted') {
+    const untilIso = until instanceof Date ? until.toISOString() : until;
+    super(MUTE_MESSAGES[reason](untilIso));
     this.name = 'ChatPlayerMutedError';
-    this.data = { until: until instanceof Date ? until.toISOString() : until };
+    this.data = { until: untilIso, reason };
   }
 }
 
@@ -63,4 +70,9 @@ export const ChatRoomJoinCodeNotFoundError = createDomainError(
 export const ChatRoomBannedError = createDomainError(
   'ChatRoomBannedError',
   (roomId: Uuid) => `You are banned from room: ${roomId}`,
+);
+export const ChatRoomLockedError = createDomainError(
+  'ChatRoomLockedError',
+  (roomId: Uuid) => `Room is locked: ${roomId}`,
+  { reason: 'locked' },
 );

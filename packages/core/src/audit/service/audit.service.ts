@@ -9,7 +9,7 @@ import {
   type EventBus,
   type SerializedRow,
 } from '@openora/core/server';
-import { eq, and, or, gt, gte, lte, like, asc, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gt, gte, lte, like, asc, desc, sql, inArray } from 'drizzle-orm';
 import {
   LimitChangeKindSchema,
   LimitPeriodSchema,
@@ -152,6 +152,8 @@ function buildWhere(filters: AuditExportFilters) {
     toDate,
   } = filters;
 
+  const searchTerms = q?.split(/\s+/).filter(Boolean) ?? [];
+
   return and(
     actorId ? eq(auditLog.actorId, actorId) : undefined,
     actorType ? eq(auditLog.actorType, actorType as AuditLog['actorType']) : undefined,
@@ -159,7 +161,9 @@ function buildWhere(filters: AuditExportFilters) {
     actionPrefix ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
     resourceType ? eq(auditLog.resourceType, resourceType) : undefined,
     resourceId ? eq(auditLog.resourceId, resourceId) : undefined,
-    q ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
+    searchTerms.length > 0
+      ? or(inArray(auditLog.actorId, searchTerms), inArray(auditLog.resourceId, searchTerms))
+      : undefined,
     fromDate ? gte(auditLog.createdAt, startOfDayUtc(fromDate)) : undefined,
     toDate ? lte(auditLog.createdAt, endOfDayUtc(toDate)) : undefined,
   );
