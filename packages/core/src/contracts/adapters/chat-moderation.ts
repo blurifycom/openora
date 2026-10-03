@@ -26,6 +26,7 @@ export type ChatPlatformBan = {
   scope: ChatModerationScope;
 };
 
+export type ChatModerationUserFilter = Uuid | readonly Uuid[];
 export type ChatModerationRoomId = Uuid | (typeof CHAT_MODERATION_SCOPES)[number];
 export type ChatModerationScope = (typeof CHAT_MODERATION_SCOPE_VALUES)[number];
 
@@ -54,7 +55,8 @@ export type ChatModeration = {
     ip: string | null;
     userAgent: string | null;
   }): Promise<{ success: true }>;
-  listMutes(userId?: Uuid): Promise<ChatModerationEntry[]>;
+  // Property form: a binding written for a single user id fails to compile against the array filter.
+  listMutes: (users?: ChatModerationUserFilter) => Promise<ChatModerationEntry[]>;
   ban(input: {
     userId: Uuid;
     roomId: ChatModerationRoomId;
@@ -71,7 +73,7 @@ export type ChatModeration = {
     ip: string | null;
     userAgent: string | null;
   }): Promise<{ success: true }>;
-  listBans(userId?: Uuid): Promise<ChatPlatformBan[]>;
+  listBans: (users?: ChatModerationUserFilter) => Promise<ChatPlatformBan[]>;
 };
 
 export const CHAT_MODERATION = createToken<ChatModeration>('ChatModeration');

@@ -7,11 +7,16 @@ import {
   type ChatModerationRoomId,
   type ChatModerationEntry,
   type ChatModerationScope,
+  type ChatModerationUserFilter,
   type Uuid,
 } from '@openora/core/contracts';
 import { chatMute, chatPlatformBan, chatRoomMute, chatRoom } from '../schema/index.js';
 import { ChatPlayerMutedError, ChatPlayerBannedError } from './errors/chat-moderation.errors.js';
-import { platformScopesFor, resolveModerationTarget } from '../moderation/index.js';
+import {
+  moderatedUserFilter,
+  platformScopesFor,
+  resolveModerationTarget,
+} from '../moderation/index.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 
 export class ChatMuteService {
@@ -208,7 +213,7 @@ export class ChatMuteService {
     return { success: true } as const;
   }
 
-  async listMutes(userId?: Uuid): Promise<ChatModerationEntry[]> {
+  async listMutes(users?: ChatModerationUserFilter): Promise<ChatModerationEntry[]> {
     const rows = await this.drizzle.db
       .select({
         id: chatMute.id,
@@ -227,7 +232,7 @@ export class ChatMuteService {
           // predicate, so a listing that omits it reports a player as muted after the
           // duration has run out - while chat itself already lets them post.
           or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, new Date())),
-          userId ? eq(chatMute.userId, userId) : undefined,
+          moderatedUserFilter(chatMute.userId, users),
         ),
       )
       .orderBy(desc(chatMute.createdAt));

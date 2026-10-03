@@ -3,6 +3,9 @@ export const DEFAULT_MESSAGE_LIMIT = 50;
 export const ROOM_NAME_MAX_LENGTH = 100;
 export const ROOM_SLUG_MAX_LENGTH = 100;
 export const ROOM_RULE_MAX_LENGTH = 1000;
+export const ROOM_RULE_ORDER_MAX = 1_000_000;
+// The slow-mode column is a Postgres integer.
+export const SLOW_MODE_SECONDS_MAX = 2_147_483_647;
 export const CONNECTION_CLIENT_ID_MAX_LENGTH = 128;
 
 export const JOIN_CODE_LENGTH = 6;

@@ -6,7 +6,12 @@ import { adminRole, adminRolePermission, adminRoleAssignment } from '@openora/co
 import { user } from '@openora/core/pam/schema/identity';
 import { auditLog } from '@openora/core/audit/schema';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
-import { ChatMessageSchema, ChatRoomSchema } from '@openora/core/engagement/contracts/chat';
+import {
+  ChatMessageSchema,
+  ChatModerationEntrySchema,
+  ChatPlatformBanSchema,
+  ChatRoomSchema,
+} from '@openora/core/engagement/contracts/chat';
 import {
   setupTestDb,
   bootTestApp,
@@ -440,6 +445,56 @@ describe('chat: back-office mutes and lifts', () => {
     expect((await player.client.post('/backoffice/chat/mutes', body)).status).toBe(403);
     expect((await player.client.post('/backoffice/chat/mutes/lift', body)).status).toBe(403);
     expect((await player.client.post('/backoffice/chat/bans/lift', body)).status).toBe(403);
+  });
+});
+
+describe('chat: back-office moderation lookups by user ids', () => {
+  const userIdsQuery = (userIds: readonly string[]) =>
+    userIds.map((id) => `userIds[]=${id}`).join('&');
+
+  it('lists only the active mutes and bans of the requested users', async () => {
+    const first = await registerChatter('first');
+    const second = await registerChatter('second');
+    const other = await registerChatter('other');
+    for (const { userId } of [first, second, other]) {
+      const body = { userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'lookup' };
+      expect((await admin.post('/backoffice/chat/mutes', body)).status).toBe(200);
+      expect((await admin.post('/backoffice/chat/bans', body)).status).toBe(200);
+    }
+    const requested = [first.userId, second.userId];
+    const query = userIdsQuery(requested);
+
+    const mutes = await admin.get(`/backoffice/chat/mutes?${query}`);
+    const bans = await admin.get(`/backoffice/chat/bans?${query}`);
+
+    expect(mutes.status).toBe(200);
+    expect(bans.status).toBe(200);
+    const mutedUsers = ChatModerationEntrySchema.array()
+      .parse(await mutes.json())
+      .map((entry) => entry.userId);
+    const bannedUsers = ChatPlatformBanSchema.array()
+      .parse(await bans.json())
+      .map((entry) => entry.userId);
+    for (const listed of [mutedUsers, bannedUsers]) {
+      expect(listed).toHaveLength(requested.length);
+      expect(listed).toEqual(expect.arrayContaining(requested));
+      expect(listed).not.toContain(other.userId);
+    }
+  });
+
+  it('refuses userId together with userIds', async () => {
+    const player = await registerChatter('both');
+    const query = `userId=${player.userId}&${userIdsQuery([player.userId])}`;
+
+    expect((await admin.get(`/backoffice/chat/mutes?${query}`)).status).toBe(400);
+    expect((await admin.get(`/backoffice/chat/bans?${query}`)).status).toBe(400);
+  });
+
+  it('refuses more than 100 user ids', async () => {
+    const query = userIdsQuery(Array.from({ length: 101 }, () => randomUUID()));
+
+    expect((await admin.get(`/backoffice/chat/mutes?${query}`)).status).toBe(400);
+    expect((await admin.get(`/backoffice/chat/bans?${query}`)).status).toBe(400);
   });
 });
 

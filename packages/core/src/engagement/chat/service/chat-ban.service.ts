@@ -11,12 +11,17 @@ import type {
   ChatModerationRoomId,
   ChatPlatformBan,
   ChatModerationScope,
+  ChatModerationUserFilter,
   ClientMeta,
   RealtimeTransport,
   Uuid,
 } from '@openora/core/contracts';
 import { chatPlatformBan, chatRoom, chatRoomMember } from '../schema/index.js';
-import { resolveModerationTarget, type ModerationTarget } from '../moderation/index.js';
+import {
+  moderatedUserFilter,
+  resolveModerationTarget,
+  type ModerationTarget,
+} from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 import { retireLapsedRows } from './chat-moderation-expiry.service.js';
 
@@ -187,7 +192,7 @@ export class ChatBanService {
     return { success: true } as const;
   }
 
-  async listBans(userId?: Uuid): Promise<ChatPlatformBan[]> {
+  async listBans(users?: ChatModerationUserFilter): Promise<ChatPlatformBan[]> {
     const rows = await this.drizzle.db
       .select({
         id: chatPlatformBan.id,
@@ -204,7 +209,7 @@ export class ChatBanService {
         and(
           isNull(chatPlatformBan.liftedAt),
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, new Date())),
-          userId ? eq(chatPlatformBan.userId, userId) : undefined,
+          moderatedUserFilter(chatPlatformBan.userId, users),
         ),
       )
       .orderBy(desc(chatPlatformBan.createdAt));
