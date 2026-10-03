@@ -4,6 +4,7 @@ import type {
   AdminSecurityConfig,
   ClientMeta,
   IdentityReader,
+  TwoFactorChallengeMethod,
   User,
 } from '@openora/core/contracts';
 import { user, verification } from '../schema/index.js';
@@ -78,7 +79,15 @@ export class TwoFactorLockoutService {
     }
   }
 
-  async recordFailure(userId: User['id'], meta: ClientMeta): Promise<void> {
+  /**
+   * `method` is the credential that was presented, so the audit trail can tell a wrong
+   * recovery code from a wrong authenticator code.
+   */
+  async recordFailure(
+    userId: User['id'],
+    method: TwoFactorChallengeMethod,
+    meta: ClientMeta,
+  ): Promise<void> {
     const [row] = await this.drizzle.db
       .select({
         failedAttempts: user.failedTwoFactorAttempts,
@@ -121,7 +130,7 @@ export class TwoFactorLockoutService {
     this.events.emit('identity.2fa.failed', {
       userId,
       playerId,
-      method: 'totp',
+      method,
       attemptsRemaining: isLocking ? 0 : Math.max(this.config.maxAttempts - attempts, 0),
       ip: meta.ip ?? null,
       userAgent: meta.userAgent ?? null,

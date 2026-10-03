@@ -83,6 +83,7 @@ function makeAdminSecurity(c: IdentityContainer) {
   const identityReader = c.get(IDENTITY_READER);
   return new AdminSecurityService({
     drizzle: c.get(DRIZZLE),
+    auth: c.get(AUTH_SESSION).auth,
     events: c.get(EVENT_BUS),
     sessions: new SessionService({
       drizzle: c.get(DRIZZLE),

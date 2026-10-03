@@ -38,6 +38,7 @@ import type {
   Verify2faInput,
   TwoFactorChallengeMethod,
   TwoFactorDeliveryMethod,
+  StepUpMethod,
   TwoFactorStatus,
   Disable2faInput,
   RegenerateBackupCodesInput,
@@ -79,8 +80,16 @@ import {
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
-import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
-import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
+import { countRemainingBackupCodes } from './backup-codes.service.js';
+import {
+  isLostBackupCodeRace,
+  resolveChallengeMethod,
+  verifyChallengeCode,
+} from './two-factor-challenge.service.js';
+import {
+  assertAccountPassword,
+  assertFreshReauthentication,
+} from './fresh-reauthentication.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -1560,6 +1569,7 @@ export class IdentityService {
       method: enabled ? (row.twoFactorMethod ?? null) : null,
       maskedEmail: maskEmail(row.email),
       maskedPhone: row.phoneVerified && row.phoneNumber ? maskPhone(row.phoneNumber) : null,
+      backupCodesRemaining: enabled ? await countRemainingBackupCodes(this.auth, userId) : null,
     };
   }
 
@@ -1722,8 +1732,11 @@ export class IdentityService {
       !(await this.requiresTwoFactorEveryLogin(challengedUserId));
     const body = { code: input.code, trustDevice };
     const res = await this.verifyChallengeCode(input.method, body, headers);
-    if (!res.ok && challengedUserId) {
-      await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
+    if (!res.ok && challengedUserId && !isLostBackupCodeRace(res)) {
+      await this.twoFactorLockout?.recordFailure(challengedUserId, input.method, {
+        ip,
+        userAgent,
+      });
     }
     await ensureOk(res);
     if (challengedUserId) {
@@ -1850,7 +1863,7 @@ export class IdentityService {
       challengeHeaders,
     );
     if (!verified.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
+      await this.twoFactorLockout?.recordFailure(userId, challengeMethod, { ip, userAgent });
     }
     await ensureOk(verified);
     await this.twoFactorLockout?.reset(userId);
@@ -1881,27 +1894,67 @@ export class IdentityService {
 
   /**
    * A step-up gate for the self-service routes that change standing 2FA state: the
-   * caller has to clear a live authenticator code, not just the account password.
-   * Routed through TwoFactorLockoutService so a hijacked session plus a reused
-   * password cannot grind the second factor here the way the password-only paths let it.
+   * caller has to clear a second factor, not just the account password. Routed through
+   * TwoFactorLockoutService so a hijacked session plus a reused password cannot grind
+   * the second factor here the way the password-only paths let it.
+   *
+   * A backup code is accepted only where the caller asks for it, and spends itself doing
+   * so - see `disableTwoFactor`. It is spent by being checked, so the password is verified
+   * first: a typo there must not cost the player a code they may have no replacement for.
+   * A wrong password on that path still banks a lockout strike, so the password check
+   * cannot be ground through it any faster than through the code itself.
+   *
+   * Returns the credential that cleared it, so the action's own audit event can say
+   * whether it was authorised by the enrolled method or by a recovery code.
    */
-  private async assertFreshSecondFactor(
-    userId: User['id'],
-    headers: Headers,
-    meta: ClientMeta,
-    code: string,
-  ): Promise<void> {
+  private async assertFreshSecondFactor({
+    userId,
+    headers,
+    meta,
+    password,
+    code,
+    method,
+  }: {
+    userId: User['id'];
+    headers: Headers;
+    meta: ClientMeta;
+    password: string;
+    code: string;
+    method: StepUpMethod;
+  }): Promise<TwoFactorChallengeMethod> {
     await this.twoFactorLockout?.assertNotLocked(userId);
+    const challengeMethod =
+      method === 'backup_code' ? 'backup_code' : await resolveChallengeMethod(this.drizzle, userId);
+    if (challengeMethod === 'backup_code') {
+      try {
+        await assertAccountPassword({ drizzle: this.drizzle, auth: this.auth, userId, password });
+      } catch (err) {
+        await this.twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
+        throw err;
+      }
+    }
     const res = await this.verifyChallengeCode(
-      await resolveChallengeMethod(this.drizzle, userId),
+      challengeMethod,
       { code, trustDevice: false },
       headers,
     );
+    if (isLostBackupCodeRace(res)) {
+      throw new ORPCError('CONFLICT', { message: 'This backup code has just been used.' });
+    }
     if (!res.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, meta);
+      await this.twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
     }
     await ensureOk(res, { genericMessage: 'Invalid authenticator code' });
     await this.twoFactorLockout?.reset(userId);
+    this.events.emit('identity.2fa.verified', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      method: challengeMethod,
+      trustedDevice: false,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
+    });
+    return challengeMethod;
   }
 
   async regenerateBackupCodes(
@@ -1920,7 +1973,14 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+    const stepUpMethod = await this.assertFreshSecondFactor({
+      userId,
+      headers,
+      meta: { ip, userAgent },
+      password: input.password,
+      code: input.code,
+      method: 'live',
+    });
 
     const res = await this.api.generateBackupCodes({
       body: { password: input.password },
@@ -1938,6 +1998,7 @@ export class IdentityService {
     this.events.emit('identity.2fa.backup_codes_regenerated', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      stepUpMethod,
       ip,
       userAgent,
     });
@@ -1956,7 +2017,14 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+    const stepUpMethod = await this.assertFreshSecondFactor({
+      userId,
+      headers,
+      meta: { ip, userAgent },
+      password: input.password,
+      code: input.code,
+      method: input.method,
+    });
 
     // Read before the teardown clears it, so the audit trail records which method the
     // account was actually protected by rather than a blank.
@@ -1988,6 +2056,7 @@ export class IdentityService {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       method: disabledMethod,
+      stepUpMethod,
       ip,
       userAgent,
     });

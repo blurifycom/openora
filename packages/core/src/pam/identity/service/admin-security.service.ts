@@ -1,5 +1,6 @@
 import { ORPCError } from '@orpc/server';
 import {
+  type Auth,
   type EventBus,
   DrizzleService,
   createLogger,
@@ -29,6 +30,7 @@ import { isSameDevice, isSuspiciousIpChange } from './device-fingerprint.service
 import type { SessionService } from './session.service.js';
 import type { TrustedDeviceService } from './trusted-device.service.js';
 import { UserNotFoundError } from './identity.service.js';
+import { countRemainingBackupCodes } from './backup-codes.service.js';
 
 const logger = createLogger('admin-security');
 
@@ -53,6 +55,9 @@ const LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000;
 
 export type AdminSecurityServiceDeps = {
   drizzle: DrizzleService;
+  // Read-only here: the recovery set is stored encrypted, and only better-auth's own
+  // server-side reader can count it.
+  auth: Auth;
   events: EventBus;
   sessions: SessionService;
   trustedDevices: TrustedDeviceService;
@@ -72,6 +77,7 @@ export type AdminSecurityServiceDeps = {
  */
 export class AdminSecurityService implements AdminSecurityPolicy {
   private readonly drizzle: DrizzleService;
+  private readonly auth: Auth;
   private readonly events: EventBus;
   private readonly sessions: SessionService;
   private readonly trustedDevices: TrustedDeviceService;
@@ -82,6 +88,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
 
   constructor({
     drizzle,
+    auth,
     events,
     sessions,
     trustedDevices,
@@ -92,6 +99,7 @@ export class AdminSecurityService implements AdminSecurityPolicy {
   }: AdminSecurityServiceDeps) {
     this.mailDispatch = mailDispatch;
     this.drizzle = drizzle;
+    this.auth = auth;
     this.events = events;
     this.sessions = sessions;
     this.trustedDevices = trustedDevices;
@@ -255,36 +263,14 @@ export class AdminSecurityService implements AdminSecurityPolicy {
 
     return {
       twoFactorEnabled,
-      backupCodesRemaining: twoFactorEnabled ? await this.countBackupCodes(userId) : null,
+      backupCodesRemaining: twoFactorEnabled
+        ? await countRemainingBackupCodes(this.auth, userId)
+        : null,
       enrollmentRequired: this.config.requireTwoFactor && !twoFactorEnabled,
       trustedDeviceDays: this.config.trustedDeviceDays,
       trustedDeviceUntil: currentDevice?.expiresAt ?? null,
       lockedUntil: lockedUntil ? lockedUntil.toISOString() : null,
     };
-  }
-
-  /**
-   * Counts what is left of the recovery set. better-auth stores the codes as a JSON
-   * array unless the operator opts into encryption, so an unreadable column is reported
-   * as unknown rather than as zero - claiming no codes remain would be worse than
-   * admitting the count cannot be taken.
-   */
-  private async countBackupCodes(userId: User['id']): Promise<number | null> {
-    const [row] = await this.drizzle.db
-      .select({ backupCodes: twoFactor.backupCodes })
-      .from(twoFactor)
-      .where(eq(twoFactor.userId, userId))
-      .limit(1);
-
-    if (!row) {
-      return null;
-    }
-    try {
-      const parsed: unknown = JSON.parse(row.backupCodes);
-      return Array.isArray(parsed) ? parsed.length : null;
-    } catch {
-      return null;
-    }
   }
 
   listTrustedDevices(userId: User['id'], userAgent: string | null): Promise<TrustedDeviceItem[]> {

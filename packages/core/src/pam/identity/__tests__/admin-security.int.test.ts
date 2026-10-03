@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { AdminSecurityConfigSchema, type MailDispatchPort } from '@openora/core/contracts';
+import type { Auth } from '@openora/core/server';
 import { user, session, twoFactor, adminTrustedDevice } from '../schema/index.js';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -21,6 +22,12 @@ const SAFARI_UA =
 
 let db: TestDb;
 
+// The recovery-set count is read through better-auth's server-only reader; nothing in
+// this suite asserts on it.
+const stubAuth = {
+  api: { viewBackupCodes: async () => ({ backupCodes: [] }) },
+} as unknown as Auth;
+
 function buildService({
   playerUserIds = [],
   mailDispatch,
@@ -39,6 +46,7 @@ function buildService({
   });
   const service = new AdminSecurityService({
     drizzle,
+    auth: stubAuth,
     events,
     sessions: new SessionService({ drizzle, events, identityReader: makeIdentityReader() }),
     trustedDevices,

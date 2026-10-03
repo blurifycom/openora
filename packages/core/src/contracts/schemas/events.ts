@@ -259,7 +259,11 @@ export const domainEventSchemas = {
   'identity.2fa.disabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // The method the account was enrolled with, i.e. what was turned off.
     method: TwoFactorMethodSchema,
+    // The credential that authorised turning it off: the enrolled method's live code, or
+    // a recovery code when that method is what the player lost.
+    stepUpMethod: TwoFactorMethodSchema,
   }),
   'identity.2fa.verified': authContextBase.extend({
     userId: UuidSchema,
@@ -278,6 +282,8 @@ export const domainEventSchemas = {
   'identity.2fa.backup_codes_regenerated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // The credential that authorised the rotation.
+    stepUpMethod: TwoFactorMethodSchema,
   }),
   // A Super Admin cleared someone else's second factor; the account is back to the
   // unenrolled state and must set one up before it reaches any admin route again.
@@ -1270,7 +1276,10 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'identity.sessions.revoked_all': 2,
   // v2: `method` records which factor was used, required by the audit trail.
   'identity.2fa.enabled': 2,
-  'identity.2fa.disabled': 2,
+  // v3: stepUpMethod records whether a live code or a recovery code authorised it.
+  'identity.2fa.disabled': 3,
+  // v2: stepUpMethod records the credential that authorised the rotation.
+  'identity.2fa.backup_codes_regenerated': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,
