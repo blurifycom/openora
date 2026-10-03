@@ -121,6 +121,16 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'compliance.geo.access_redirected') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'geo-access',
+      resourceId: str(p['countryCode']),
+      after: { countryCode: p['countryCode'] ?? null, redirectUrl: p['redirectUrl'] ?? null },
+    };
+  }
+
   if (topic === 'compliance.geo-rule.added') {
     return {
       ...base,
@@ -1241,6 +1251,7 @@ export async function mapEventToRecord(
 
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.geo.access_blocked',
+  'compliance.geo.access_redirected',
   'identity.user.registered',
   'identity.user.registration.failed',
   'identity.user.login',

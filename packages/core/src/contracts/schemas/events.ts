@@ -941,6 +941,12 @@ export const domainEventSchemas = {
     countryCode: CountryCodeSchema.nullable(),
     reason: z.string(),
   }),
+  // A blacklisted country was let through because the operator redirects it to a mirror.
+  // The access itself is allowed, so it is recorded separately from a block.
+  'compliance.geo.access_redirected': authContextBase.extend({
+    countryCode: CountryCodeSchema,
+    redirectUrl: z.string(),
+  }),
 
   'compliance.game-geo-rule.upserted': authContextBase.extend({
     ruleId: UuidSchema,

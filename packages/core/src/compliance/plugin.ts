@@ -13,6 +13,7 @@ import {
   KYC_ADAPTER,
   IDENTITY_READER,
   IGAMING_CONFIG,
+  MIRROR_TARGET_POLICY,
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
@@ -62,6 +63,7 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.get(AUDIT_WRITER),
     c.has(IGAMING_CONFIG) ? c.get(IGAMING_CONFIG) : null,
     c.get(CACHE),
+    c.has(MIRROR_TARGET_POLICY) ? c.get(MIRROR_TARGET_POLICY) : null,
   );
 
 const RG_EVAL_QUEUE = queue('rg-eval');
