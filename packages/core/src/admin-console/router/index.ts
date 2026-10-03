@@ -29,6 +29,7 @@ export function createBackofficeRouter(
         page: input.page,
         limit: input.limit,
         search: input.search,
+        staffOnly: input.staffOnly,
         sortBy: input.sortBy,
         sortOrder: input.sortOrder,
       });
