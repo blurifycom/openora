@@ -338,6 +338,10 @@ describe('chat admin: listing the restrictions in a room', () => {
       (await owner.client.post(`/chat/rooms/${room.id}/ban`, { userId: members[3]!.userId }))
         .status,
     ).toBe(200);
+    const publicRoom = await createPublicRoom();
+    const otherRoom = await createPublicRoom();
+    const slowed = await registerChatter('slowed');
+    await adminRestrict('cooldowns', slowed.userId, publicRoom.id);
 
     const mutes = await listRestrictions(room.id, '?type=mute');
     const bans = await listRestrictions(room.id, '?type=ban');
@@ -345,7 +349,22 @@ describe('chat admin: listing the restrictions in a room', () => {
     const everything = await listRestrictions(room.id);
     const firstPage = await listRestrictions(room.id, '?type=mute&page=1&limit=2');
     const secondPage = await listRestrictions(room.id, '?type=mute&page=2&limit=2');
+    const publicCooldowns = await listRestrictions(publicRoom.id, '?type=cooldown');
 
+    expect(forUser(publicCooldowns.items, slowed.userId)).toEqual([
+      expect.objectContaining({
+        type: 'cooldown',
+        source: 'admin',
+        scope: 'room',
+        roomId: publicRoom.id,
+        cooldownSeconds: 30,
+      }),
+    ]);
+    expect(publicCooldowns.items.every((item) => item.type === 'cooldown')).toBe(true);
+    expect(
+      forUser((await listRestrictions(publicRoom.id, '?type=mute')).items, slowed.userId),
+    ).toEqual([]);
+    expect(forUser((await listRestrictions(otherRoom.id)).items, slowed.userId)).toEqual([]);
     expect(mutes.items.every((item) => item.type === 'mute')).toBe(true);
     expect(bans.items.every((item) => item.type === 'ban')).toBe(true);
     expect(cooldowns.items.every((item) => item.type === 'cooldown')).toBe(true);
