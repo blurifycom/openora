@@ -8,6 +8,7 @@ import { auditLog } from '@openora/core/audit/schema';
 import { GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import { paginated } from '@openora/core/contracts/kit';
 import {
+  AdminChatRoomConfigurationSchema,
   AdminChatRoomSchema,
   ChatMessageSchema,
   ChatRoomSchema,
@@ -16,7 +17,11 @@ import {
   ROOM_RULE_ORDER_MAX,
   type ChatRoomCategory,
 } from '@openora/core/engagement/contracts/chat';
-import { chatMessage } from '@openora/core/engagement/schema/chat';
+import {
+  chatMessage,
+  chatRoomConfiguration,
+  chatRoomRule,
+} from '@openora/core/engagement/schema/chat';
 import {
   setupTestDb,
   bootTestApp,
@@ -126,6 +131,27 @@ describe('chat admin: reading a room', () => {
     ).toEqual(['Be kind']);
     expect(configuration.status).toBe(200);
     expect(ChatRoomConfigurationSchema.parse(await configuration.json()).roomId).toBe(room.id);
+  });
+
+  it('reads the defaults of a room with no stored configuration without storing one', async () => {
+    const owner = await registerChatter('host');
+    const room = await createPrivateRoom(owner.client);
+    const drizzle = app.container.get(DRIZZLE).db;
+    const storedConfiguration = () =>
+      drizzle.select().from(chatRoomConfiguration).where(eq(chatRoomConfiguration.roomId, room.id));
+    await drizzle.delete(chatRoomConfiguration).where(eq(chatRoomConfiguration.roomId, room.id));
+
+    const configuration = await admin.get(`/backoffice/chat/rooms/${room.id}/configuration`);
+
+    expect(configuration.status).toBe(200);
+    expect(AdminChatRoomConfigurationSchema.parse(await configuration.json())).toMatchObject({
+      id: null,
+      roomId: room.id,
+      readOnlyMode: false,
+      slowMode: false,
+      slowModeSeconds: 0,
+    });
+    expect(await storedConfiguration()).toEqual([]);
   });
 
   it('refuses a player without the chat-room permission and an anonymous caller', async () => {
@@ -248,6 +274,30 @@ describe('chat admin: room rules', () => {
         .parse(await (await admin.get(rulesPath)).json())
         .map((r) => r.content),
     ).toEqual(['First', 'Second']);
+  });
+
+  it('lists a new rule after one saved above the order limit before the limit existed', async () => {
+    const owner = await registerChatter('host');
+    const room = await createPrivateRoom(owner.client);
+    const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
+    await app.container
+      .get(DRIZZLE)
+      .db.insert(chatRoomRule)
+      .values({
+        roomId: room.id,
+        createdBy: owner.userId,
+        orderNum: ROOM_RULE_ORDER_MAX * 5,
+        content: 'Legacy',
+      });
+
+    const created = await admin.post(rulesPath, { content: 'Newer' });
+
+    expect(created.status).toBe(200);
+    expect(
+      ChatRoomRuleSchema.array()
+        .parse(await (await admin.get(rulesPath)).json())
+        .map((r) => r.content),
+    ).toEqual(['Legacy', 'Newer']);
   });
 
   it('answers not found for a rule that belongs to another room', async () => {

@@ -306,6 +306,16 @@ function toConfiguration(record: typeof chatRoomConfiguration.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
 
+// The column defaults, for a room that has never been configured.
+const DEFAULT_ROOM_CONFIGURATION = {
+  slowMode: false,
+  slowModeSeconds: 0,
+  readOnlyMode: false,
+  onlyInvitedCanJoin: false,
+  lockRoom: false,
+  moderatorInvite: false,
+} satisfies ChatRoomConfigurationSettings;
+
 function configurationSettings(record: typeof chatRoomConfiguration.$inferSelect) {
   const {
     id: _id,
@@ -1013,8 +1023,10 @@ export class ChatService {
         .where(eq(chatRoomRule.roomId, roomId))
         .orderBy(desc(chatRoomRule.orderNum))
         .limit(1);
-      // Ties sort by creation time, so a rule capped at the max still lands last.
-      nextOrder = Math.min((last?.orderNum ?? 0) + 1, ROOM_RULE_ORDER_MAX);
+      const lastOrder = last?.orderNum ?? 0;
+      // Ties sort by creation time. At the cap, or past it on a rule saved before the cap existed,
+      // the new rule shares the last order so it still lands last.
+      nextOrder = lastOrder < ROOM_RULE_ORDER_MAX ? lastOrder + 1 : lastOrder;
     }
     const [rule] = await tx
       .insert(chatRoomRule)
@@ -1197,30 +1209,27 @@ export class ChatService {
 
   async getRoomConfiguration(roomId: ChatRoom['id'], viewerId?: User['id']) {
     await this.verifyRoomAccess(roomId, viewerId);
-    return this.ensureRoomConfiguration(this.drizzle.db, roomId);
-  }
-
-  async adminGetRoomConfiguration(roomId: ChatRoom['id']) {
-    return this.drizzle.db.transaction(async (tx) => {
-      await this.lockActiveRoom(tx, roomId);
-      return this.ensureRoomConfiguration(tx, roomId);
-    });
-  }
-
-  private async ensureRoomConfiguration(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id']) {
-    const existing = await this.findRoomConfiguration(db, roomId);
+    const existing = await this.findRoomConfiguration(this.drizzle.db, roomId);
     if (existing) {
       return toConfiguration(existing);
     }
-    await db
+    await this.drizzle.db
       .insert(chatRoomConfiguration)
       .values({ roomId })
       .onConflictDoNothing({ target: chatRoomConfiguration.roomId });
-    const config = await this.findRoomConfiguration(db, roomId);
+    const config = await this.findRoomConfiguration(this.drizzle.db, roomId);
     if (!config) {
       throw new ChatRoomConfigurationNotFoundError(roomId);
     }
     return toConfiguration(config);
+  }
+
+  async adminGetRoomConfiguration(roomId: ChatRoom['id']) {
+    await this.findActiveRoom(roomId);
+    const config = await this.findRoomConfiguration(this.drizzle.db, roomId);
+    return config
+      ? toConfiguration(config)
+      : { id: null, roomId, ...DEFAULT_ROOM_CONFIGURATION, createdAt: null, updatedAt: null };
   }
 
   async updateRoomConfiguration({

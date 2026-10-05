@@ -11,12 +11,7 @@ import {
   SystemChatMessageSchema,
   ChatAttachmentSchema,
 } from '@openora/core/contracts';
-import {
-  PageQuerySchema,
-  SortOrderSchema,
-  paginated,
-  queryArraySchema,
-} from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
@@ -54,7 +49,7 @@ export const ChatRoomSlugSchema = z
 
 export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 
-const RoomRuleContentSchema = z.string().trim().min(1).max(ROOM_RULE_MAX_LENGTH);
+export const RoomRuleContentSchema = z.string().trim().min(1).max(ROOM_RULE_MAX_LENGTH);
 
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
@@ -153,6 +148,14 @@ export const ChatRoomConfigurationSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type ChatRoomConfiguration = z.infer<typeof ChatRoomConfigurationSchema>;
+
+// A room that has never been configured has no stored row, so the row fields are null.
+export const AdminChatRoomConfigurationSchema = ChatRoomConfigurationSchema.extend({
+  id: UuidSchema.nullable(),
+  createdAt: TimestampSchema.nullable(),
+  updatedAt: TimestampSchema.nullable(),
+});
+export type AdminChatRoomConfiguration = z.infer<typeof AdminChatRoomConfigurationSchema>;
 
 export const ChatRoomAccessStatusSchema = z.enum(['all', 'member', 'owner']);
 export type ChatRoomAccessStatus = z.infer<typeof ChatRoomAccessStatusSchema>;
@@ -337,7 +340,11 @@ const MODERATION_LOOKUP_MAX_USERS = 100;
 const ModerationListInputSchema = z
   .object({
     userId: UuidSchema.optional(),
-    userIds: queryArraySchema(UuidSchema, MODERATION_LOOKUP_MAX_USERS).optional(),
+    // A bare `?userIds=a` arrives as a string, a repeated `userIds[]` key as an array.
+    userIds: z
+      .union([UuidSchema, z.array(UuidSchema).min(1).max(MODERATION_LOOKUP_MAX_USERS)])
+      .transform((ids) => [...new Set([ids].flat())])
+      .optional(),
   })
   .refine(({ userId, userIds }) => userId === undefined || userIds === undefined, {
     message: 'Pass either userId or userIds, not both',
@@ -670,7 +677,7 @@ export const chatContract = {
   adminGetRoomConfiguration: oc
     .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/configuration' })
     .input(RoomIdInput)
-    .output(ChatRoomConfigurationSchema),
+    .output(AdminChatRoomConfigurationSchema),
 
   adminUpdateRoomConfiguration: oc
     .route({ method: 'PATCH', path: '/backoffice/chat/rooms/{roomId}/configuration' })
