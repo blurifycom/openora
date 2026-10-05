@@ -13,7 +13,8 @@ export type AdminRoomStats = {
   lastMessageAt: Date | null;
 };
 
-const visiblePlayerMessage = and(eq(chatMessage.type, 'user'), eq(chatMessage.isDeleted, false));
+// Literal, not bound parameters, so the planner can match the partial index on these rows.
+const visiblePlayerMessage = sql`${chatMessage.type} = 'user' AND ${chatMessage.isDeleted} = false`;
 
 function countMembers(db: DrizzleDb, roomIds: string[]) {
   if (roomIds.length === 0) {
