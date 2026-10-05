@@ -46,7 +46,10 @@ async function registerChatter(prefix: string) {
   return { ...registered, username };
 }
 
-async function registerBackofficeViewer(resource: 'chat-room' | 'chat-moderation') {
+async function registerBackofficeViewer(
+  resource: 'chat-room' | 'chat-moderation',
+  level: 'read' | 'read_write' = 'read',
+) {
   const viewer = await registerChatter('viewer');
   const drizzle = app.container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, viewer.userId));
@@ -54,7 +57,7 @@ async function registerBackofficeViewer(resource: 'chat-room' | 'chat-moderation
     .insert(adminRole)
     .values({ name: `${resource} viewer ${randomUUID()}` })
     .returning({ id: adminRole.id });
-  await drizzle.insert(adminRolePermission).values({ roleId: role!.id, resource, level: 'read' });
+  await drizzle.insert(adminRolePermission).values({ roleId: role!.id, resource, level });
   await drizzle.insert(adminRoleAssignment).values({ userId: viewer.userId, roleId: role!.id });
   return viewer;
 }
@@ -171,7 +174,7 @@ describe('chat admin: listing the restrictions in a room', () => {
         scope: 'room',
         roomId: room.id,
         reason: 'flooding',
-        setBy: { id: owner.userId, name: owner.username },
+        setByName: owner.username,
         createdAt: expect.any(String),
         expiresAt: expect.any(String),
         cooldownSeconds: null,
@@ -184,7 +187,7 @@ describe('chat admin: listing the restrictions in a room', () => {
         scope: 'room',
         roomId: room.id,
         reason: null,
-        setBy: { id: owner.userId, name: owner.username },
+        setByName: owner.username,
         expiresAt: null,
       }),
     ]);
@@ -196,7 +199,7 @@ describe('chat admin: listing the restrictions in a room', () => {
         scope: '__all',
         roomId: null,
         reason: `mutes for ${everywhere.userId}`,
-        setBy: { id: adminAccount.id, name: adminAccount.name },
+        setByName: adminAccount.name,
       }),
     ]);
     expect(forUser(items, throttled.userId)).toEqual([
@@ -207,7 +210,7 @@ describe('chat admin: listing the restrictions in a room', () => {
         scope: '__all',
         roomId: null,
         reason: `cooldowns for ${throttled.userId}`,
-        setBy: { id: adminAccount.id, name: adminAccount.name },
+        setByName: adminAccount.name,
         expiresAt: expect.any(String),
         cooldownSeconds: 30,
       }),
@@ -378,6 +381,32 @@ describe('chat admin: listing the restrictions in a room', () => {
     expect(firstPage).toMatchObject({ total: mutes.total, page: 1, limit: 2 });
     expect(firstPage.items).toHaveLength(2);
     expect([...firstPage.items, ...secondPage.items]).toEqual(mutes.items.slice(0, 4));
+  });
+
+  it('names a staff restriction by account name after its setter is back in the player role', async () => {
+    const room = await createPublicRoom();
+    const moderator = await registerBackofficeViewer('chat-moderation', 'read_write');
+    const muted = await registerChatter('muted');
+    const staffName = `Moderator ${randomUUID().slice(0, 8)}`;
+    const drizzle = app.container.get(DRIZZLE).db;
+    await drizzle.update(user).set({ name: staffName }).where(eq(user.id, moderator.userId));
+    expect(
+      (
+        await moderator.client.post('/backoffice/chat/mutes', {
+          userId: muted.userId,
+          roomId: room.id,
+          reason: 'spam',
+          durationSeconds: null,
+        })
+      ).status,
+    ).toBe(200);
+    await drizzle.update(user).set({ role: 'player' }).where(eq(user.id, moderator.userId));
+
+    const { items } = await listRestrictions(room.id);
+
+    expect(forUser(items, muted.userId)).toEqual([
+      expect.objectContaining({ source: 'admin', setByName: staffName }),
+    ]);
   });
 
   it('refuses a caller without the chat-moderation permission and an unknown or deleted room', async () => {

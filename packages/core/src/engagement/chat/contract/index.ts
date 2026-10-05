@@ -307,7 +307,7 @@ export const ChatRoomRestrictionSchema = ChatModerationEntrySchema.extend({
   username: z.string().nullable(),
   // Null for a room-moderator ban, which records no reason.
   reason: z.string().nullable(),
-  setBy: z.object({ id: UuidSchema, name: z.string().nullable() }),
+  setByName: z.string().nullable(),
   cooldownSeconds: z.number().int().positive().nullable(),
 });
 export type ChatRoomRestriction = z.infer<typeof ChatRoomRestrictionSchema>;
