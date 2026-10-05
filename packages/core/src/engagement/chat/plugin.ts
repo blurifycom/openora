@@ -20,6 +20,7 @@ import {
   AUDIT_WRITER,
   IDENTITY_READER,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   CHAT_MODERATION_EXPIRY_DEFAULT_CRON,
   UuidSchema,
 } from '@openora/core/contracts';
@@ -326,6 +327,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(IDENTITY_READER),
           membershipService,
+          c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
         ),
         roomBanService: new ChatRoomBanService(
           c.get(DRIZZLE),

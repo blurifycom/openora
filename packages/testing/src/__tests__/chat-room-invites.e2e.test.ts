@@ -187,6 +187,42 @@ describe('chat room invites: who may invite', () => {
     await expectRejected(await invite(member, room, invitee.userId), 403, 'forbidden');
   });
 
+  it('audits a refused invite, search and status lookup', async () => {
+    const owner = await registerChatter('host');
+    const member = await registerChatter('member');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    await joinByCode(member, room);
+
+    expect((await invite(member, room, invitee.userId)).status).toBe(403);
+    expect((await member.client.get(`/chat/rooms/${room.id}/invite-candidates?q=gue`)).status).toBe(
+      403,
+    );
+    expect(
+      (
+        await member.client.post(`/chat/rooms/${room.id}/invite-statuses`, {
+          userIds: [invitee.userId],
+        })
+      ).status,
+    ).toBe(403);
+
+    for (const action of ['create', 'search', 'lookup']) {
+      await vi.waitFor(async () => {
+        const auditRes = await admin.get(
+          `/audit/logs?actorId=${member.playerId}&resourceId=chat.room_invite:${action}&action=identity.user.unauthorized_access`,
+        );
+        expect(auditRes.status).toBe(200);
+        const { items } = (await auditRes.json()) as { items: unknown[] };
+        expect(items[0]).toMatchObject({
+          actorType: 'player',
+          actorId: member.playerId,
+          resourceType: 'chat.room_invite',
+          result: 'failure',
+        });
+      }, WAIT);
+    }
+  });
+
   it('answers a non-member as if the room did not exist', async () => {
     const owner = await registerChatter('host');
     const outsider = await registerChatter('outside');
@@ -243,6 +279,42 @@ describe('chat room invites: rejections', () => {
     );
 
     await expectRejected(await invite(owner, room, blocker.userId), 403, 'unavailable');
+  });
+
+  it('refuses a player under a responsible-gambling exclusion, without saying why', async () => {
+    const owner = await registerChatter('host');
+    const room = await createRoom(owner);
+    const coolingOff = await registerChatter('resting');
+    const selfExcluded = await registerChatter('excluded');
+    const cooled = await admin.post(`/compliance/players/${coolingOff.userId}/cooling-off`, {
+      durationHours: 24,
+      reason: 'player requested a break',
+    });
+    expect(cooled.status).toBe(200);
+    const excluded = await admin.post(`/compliance/players/${selfExcluded.userId}/self-exclusion`, {
+      isPermanent: false,
+      durationMonths: 6,
+      reason: 'player requested',
+      confirm: true,
+    });
+    expect(excluded.status).toBe(200);
+
+    await vi.waitFor(async () => {
+      const res = await owner.client.post(`/chat/rooms/${room.id}/invite-statuses`, {
+        userIds: [coolingOff.userId, selfExcluded.userId],
+      });
+      expect(ChatRoomInviteLookupSchema.array().parse(await res.json())).toEqual([
+        { userId: coolingOff.userId, inviteStatus: 'unavailable' },
+        { userId: selfExcluded.userId, inviteStatus: 'unavailable' },
+      ]);
+    }, WAIT);
+    for (const excludedPlayer of [coolingOff, selfExcluded]) {
+      await expectRejected(await invite(owner, room, excludedPlayer.userId), 403, 'unavailable');
+      const search = await owner.client.get(
+        `/chat/rooms/${room.id}/invite-candidates?q=${excludedPlayer.username}`,
+      );
+      expect(ChatRoomInviteCandidateSchema.array().parse(await search.json())).toEqual([]);
+    }
   });
 
   it('refuses a suspended player', async () => {
@@ -445,6 +517,58 @@ describe('chat room invites: accepting', () => {
     }
   });
 
+  it('does not signal a join to a public room', async () => {
+    const member = await registerChatter('member');
+    const created = await admin.post('/backoffice/chat/rooms', {
+      name: `public-${randomUUID()}`,
+      slug: `public-${randomUUID()}`,
+      category: 'games-sports',
+    });
+    expect(created.status).toBe(200);
+    const room = ChatRoomSchema.parse(await created.json());
+    const transport = app.container.get(CHAT_REALTIME_TRANSPORT);
+    const marker = `after-join-${randomUUID()}`;
+
+    const signals = await watchRoomSignals(room.id);
+    try {
+      expect((await member.client.post(`/chat/rooms/${room.id}/join`)).status).toBe(200);
+      await transport.signal?.(chatChannel(room.id), marker, {});
+      await vi.waitFor(() => {
+        expect(signals.received.some((signal) => signal.name === marker)).toBe(true);
+      }, WAIT);
+      expect(signals.received.some((s) => s.name === CHAT_MEMBER_JOINED_SIGNAL)).toBe(false);
+    } finally {
+      signals.unsubscribe();
+    }
+  });
+
+  it('returns the joined room when an accept is retried', async () => {
+    const owner = await registerChatter('host');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    const sent = await sendInvite(owner, room, invitee);
+
+    const first = await invitee.client.post(`/chat/invites/${sent.id}/accept`);
+    const retried = await invitee.client.post(`/chat/invites/${sent.id}/accept`);
+
+    expect(first.status).toBe(200);
+    expect(retried.status).toBe(200);
+    expect(ChatRoomSchema.parse(await retried.json()).id).toBe(room.id);
+    expect(await inviteRow(sent.id)).toMatchObject({ status: 'accepted' });
+  });
+
+  it('refuses a retried accept once the invitee has left the room', async () => {
+    const owner = await registerChatter('host');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    const sent = await sendInvite(owner, room, invitee);
+    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(200);
+    expect((await invitee.client.post(`/chat/rooms/${room.id}/leave`)).status).toBe(200);
+
+    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
+    expect(await roomMemberIds(owner, room)).not.toContain(invitee.userId);
+  });
+
   it('refuses an invite addressed to someone else', async () => {
     const owner = await registerChatter('host');
     const invitee = await registerChatter('guest');
@@ -614,7 +738,7 @@ describe('chat room invites: declining and expiry', () => {
 });
 
 describe('chat room invites: finding players', () => {
-  it('matches usernames only, hides blockers and reports each status', async () => {
+  it('matches usernames only, keeps blocks private and reports each status', async () => {
     const owner = await registerChatter('host');
     const room = await createRoom(owner);
     const tag = `pk${randomInt(10 ** 4, 10 ** 5)}`;
@@ -639,7 +763,7 @@ describe('chat room invites: finding players', () => {
     expect(byId.get(available.userId)).toBe('available');
     expect(byId.get(member.userId)).toBe('member');
     expect(byId.get(invited.userId)).toBe('invited');
-    expect(byId.has(blocker.userId)).toBe(false);
+    expect(byId.get(blocker.userId)).toBe('available');
     expect(byId.has(emailOnly.userId)).toBe(false);
     expect(byId.has(owner.userId)).toBe(false);
     expect(candidates.find((row) => row.userId === available.userId)).toMatchObject({
@@ -648,7 +772,7 @@ describe('chat room invites: finding players', () => {
     });
   });
 
-  it('reports a blocker as unavailable in the status lookup', async () => {
+  it('does not reveal a block in the status lookup', async () => {
     const owner = await registerChatter('host');
     const room = await createRoom(owner);
     const blocker = await registerChatter('blocker');
@@ -664,7 +788,7 @@ describe('chat room invites: finding players', () => {
     const rows = ChatRoomInviteLookupSchema.array().parse(await res.json());
 
     expect(rows).toEqual([
-      { userId: blocker.userId, inviteStatus: 'unavailable' },
+      { userId: blocker.userId, inviteStatus: 'available' },
       { userId: available.userId, inviteStatus: 'available' },
       { userId: expect.any(String), inviteStatus: 'unavailable' },
     ]);

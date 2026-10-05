@@ -39,7 +39,7 @@ export const CHAT_ROOM_INVITE_CANDIDATE_STATUSES = [
   'banned',
 ] as const;
 
-// `unavailable` hides why a player cannot be invited, a block by them included.
+// `unavailable` hides why a player cannot be invited.
 export const CHAT_ROOM_INVITE_LOOKUP_STATUSES = [
   ...CHAT_ROOM_INVITE_CANDIDATE_STATUSES,
   'unavailable',
@@ -50,5 +50,7 @@ export const ROOM_INVITE_EXPIRY_DAYS = 7;
 export const ROOM_INVITE_STATUS_LOOKUP_MAX = 100;
 
 export const ROOM_INVITE_CANDIDATE_LIMIT_MAX = 50;
+
+export const ROOM_INVITE_SEARCH_MIN_LENGTH = 3;
 
 export const ROOM_INVITE_SEARCH_MAX_LENGTH = 50;

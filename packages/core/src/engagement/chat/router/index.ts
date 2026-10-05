@@ -84,7 +84,7 @@ const ROOM_INVITE_RATE_LIMIT = {
 const ROOM_INVITE_LOOKUP_RATE_LIMIT = {
   limit: 120,
   windowMs: 60 * 1_000,
-  onUnavailable: 'allow',
+  onUnavailable: 'deny',
 } as const;
 
 const SEND_MESSAGE_RATE_LIMIT = {
@@ -476,7 +476,12 @@ export function createChatRouter({
         );
         return mapErrors(
           { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomInviteForbiddenError },
-          () => inviteService.searchRoomInviteCandidates({ actorId, ...input }),
+          () =>
+            inviteService.searchRoomInviteCandidates({
+              actorId,
+              ...input,
+              ...context.clientMeta,
+            }),
         );
       },
     ),
@@ -490,7 +495,7 @@ export function createChatRouter({
       );
       return mapErrors(
         { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomInviteForbiddenError },
-        () => inviteService.getRoomInviteStatuses({ actorId, ...input }),
+        () => inviteService.getRoomInviteStatuses({ actorId, ...input, ...context.clientMeta }),
       );
     }),
 

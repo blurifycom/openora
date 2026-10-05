@@ -156,7 +156,7 @@ export class ChatRoomMembershipService {
         userAgent: meta.userAgent ?? null,
       });
       // The member list hides staff from ordinary viewers, so their joins are not signalled.
-      if (!STAFF_USER_ROLES.some((role) => role === joinerRole)) {
+      if (!room.isPublic && !STAFF_USER_ROLES.some((role) => role === joinerRole)) {
         await this.signalMemberJoined(roomId, userId);
       }
     }
@@ -210,6 +210,19 @@ export class ChatRoomMembershipService {
       ),
       inTransaction,
     });
+  }
+
+  async findMemberRoom(roomId: Uuid, userId: Uuid) {
+    const [row] = await this.drizzle.db
+      .select({ room: chatRoom })
+      .from(chatRoom)
+      .innerJoin(
+        chatRoomMember,
+        and(eq(chatRoomMember.roomId, chatRoom.id), eq(chatRoomMember.userId, userId)),
+      )
+      .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+      .limit(1);
+    return row ? toRoom(row.room) : null;
   }
 
   joinPublicRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {

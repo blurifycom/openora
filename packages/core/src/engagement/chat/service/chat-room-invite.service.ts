@@ -18,11 +18,17 @@ import {
   DrizzleService,
   likeContains,
   likePrefix,
+  mapConcurrent,
   serializeRow,
   withAdvisoryXactLock,
 } from '@openora/core/server';
 import type { DrizzleDb, DrizzleTx, EventBus } from '@openora/core/server';
-import type { ClientMeta, IdentityReader, Uuid } from '@openora/core/contracts';
+import type {
+  ClientMeta,
+  IdentityReader,
+  PlayEligibilityPort,
+  Uuid,
+} from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
@@ -63,7 +69,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const MY_INVITES_LIMIT = 100;
 
-const UNAVAILABLE_PLAYER_STATUSES = ['suspended', 'closed'] as const;
+const UNAVAILABLE_PLAYER_STATUSES = ['self_excluded', 'suspended', 'closed'] as const;
+
+const ELIGIBILITY_CHECK_CONCURRENCY = 8;
+
+const INVITE_AUDIT_RESOURCE = 'chat.room_invite';
+
+type InviteAction = 'create' | 'search' | 'lookup';
 
 type Db = DrizzleDb | DrizzleTx;
 
@@ -125,7 +137,7 @@ function activePlatformBan(roomId: Uuid | typeof chatRoomInvite.roomId, now: Dat
   );
 }
 
-function activeBlock(blockerId: Uuid | typeof user.id, blockedId: Uuid) {
+function activeBlock(blockerId: Uuid, blockedId: Uuid) {
   return and(
     eq(chatUserBlock.blockerId, blockerId),
     eq(chatUserBlock.blockedId, blockedId),
@@ -142,43 +154,51 @@ function aliveInvitableRoom(roomId: Uuid) {
   );
 }
 
-// Blocks, platform bans and account state only hide a player who would otherwise read as
+function memberRow(db: Db, roomId: Uuid) {
+  return db
+    .select({ id: chatRoomMember.id })
+    .from(chatRoomMember)
+    .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, user.id)));
+}
+
+function roomBanRow(db: Db, roomId: Uuid, now: Date) {
+  return db
+    .select({ id: chatRoomBan.id })
+    .from(chatRoomBan)
+    .where(and(activeRoomBan(roomId, now), eq(chatRoomBan.userId, user.id)));
+}
+
+function liveInviteRow(db: Db, roomId: Uuid, now: Date) {
+  return db
+    .select({ id: chatRoomInvite.id })
+    .from(chatRoomInvite)
+    .where(
+      and(
+        eq(chatRoomInvite.roomId, roomId),
+        eq(chatRoomInvite.inviteeId, user.id),
+        liveInvite(db, now),
+      ),
+    );
+}
+
+function inviteStatus(db: Db, roomId: Uuid, now: Date) {
+  return sql<ChatRoomInviteCandidateStatus>`case
+    when ${exists(memberRow(db, roomId))} then 'member'
+    when ${exists(roomBanRow(db, roomId, now))} then 'banned'
+    when ${exists(liveInviteRow(db, roomId, now))} then 'invited'
+    else 'available' end`;
+}
+
+// Platform bans and account state only hide a player who would otherwise read as
 // available; a member, room-banned or invited player keeps that status, so nothing leaks.
-function visibleCandidate(db: Db, actorId: Uuid, roomId: Uuid, now: Date) {
+function visibleCandidate(db: Db, roomId: Uuid, now: Date) {
   const knownToRoom = or(
-    exists(
-      db
-        .select({ id: chatRoomMember.id })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, user.id))),
-    ),
-    exists(
-      db
-        .select({ id: chatRoomBan.id })
-        .from(chatRoomBan)
-        .where(and(activeRoomBan(roomId, now), eq(chatRoomBan.userId, user.id))),
-    ),
-    exists(
-      db
-        .select({ id: chatRoomInvite.id })
-        .from(chatRoomInvite)
-        .where(
-          and(
-            eq(chatRoomInvite.roomId, roomId),
-            eq(chatRoomInvite.inviteeId, user.id),
-            liveInvite(db, now),
-          ),
-        ),
-    ),
+    exists(memberRow(db, roomId)),
+    exists(roomBanRow(db, roomId, now)),
+    exists(liveInviteRow(db, roomId, now)),
   );
   const unmasked = and(
     notInArray(player.status, [...UNAVAILABLE_PLAYER_STATUSES]),
-    notExists(
-      db
-        .select({ blockerId: chatUserBlock.blockerId })
-        .from(chatUserBlock)
-        .where(activeBlock(user.id, actorId)),
-    ),
     notExists(
       db
         .select({ id: chatPlatformBan.id })
@@ -194,11 +214,18 @@ export class ChatRoomInviteService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly identityReader: IdentityReader,
-    private readonly membership: Pick<ChatRoomMembershipService, 'joinByInvite'>,
+    private readonly membership: Pick<ChatRoomMembershipService, 'joinByInvite' | 'findMemberRoom'>,
+    private readonly playEligibility?: PlayEligibilityPort,
   ) {}
 
   // A non-member gets NOT_FOUND so a private room's existence is not revealed.
-  private async assertCanInvite(db: Db, actorId: Uuid, roomId: Uuid) {
+  private async assertCanInvite(
+    db: Db,
+    actorId: Uuid,
+    roomId: Uuid,
+    action: InviteAction,
+    meta: ClientMeta,
+  ) {
     const [room] = await db
       .select({
         name: chatRoom.name,
@@ -215,11 +242,9 @@ export class ChatRoomInviteService {
       .leftJoin(chatRoomConfiguration, eq(chatRoomConfiguration.roomId, chatRoom.id))
       .where(aliveInvitableRoom(roomId))
       .limit(1);
-    if (!room) {
-      throw new ChatRoomNotFoundError(roomId);
-    }
-    if (!room.canInvite) {
-      throw new ChatRoomInviteForbiddenError(roomId);
+    if (!room?.canInvite) {
+      await this.auditRefusal(db, actorId, action, meta);
+      throw room ? new ChatRoomInviteForbiddenError(roomId) : new ChatRoomNotFoundError(roomId);
     }
     return {
       name: room.name,
@@ -228,46 +253,39 @@ export class ChatRoomInviteService {
     };
   }
 
-  private async statusesFor(
+  // This check rejects before any shared guard runs, so it owes the audit log AdminGuard's signal.
+  private async auditRefusal(
     db: Db,
-    roomId: Uuid,
-    userIds: Uuid[],
-  ): Promise<Map<Uuid, ChatRoomInviteCandidateStatus>> {
-    const now = new Date();
-    const [members, roomBans, pending] = await Promise.all([
-      db
-        .select({ userId: chatRoomMember.userId })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), inArray(chatRoomMember.userId, userIds))),
-      db
-        .select({ userId: chatRoomBan.userId })
-        .from(chatRoomBan)
-        .where(and(activeRoomBan(roomId, now), inArray(chatRoomBan.userId, userIds))),
-      db
-        .select({ userId: chatRoomInvite.inviteeId })
-        .from(chatRoomInvite)
-        .where(
-          and(
-            eq(chatRoomInvite.roomId, roomId),
-            inArray(chatRoomInvite.inviteeId, userIds),
-            liveInvite(db, now),
-          ),
-        ),
-    ]);
-    const memberIds = new Set(members.map((row) => row.userId));
-    const bannedIds = new Set(roomBans.map((row) => row.userId));
-    const invitedIds = new Set(pending.map((row) => row.userId));
-    return new Map(
-      userIds.map((id) => {
-        if (memberIds.has(id)) {
-          return [id, 'member'];
-        }
-        if (bannedIds.has(id)) {
-          return [id, 'banned'];
-        }
-        return [id, invitedIds.has(id) ? 'invited' : 'available'];
-      }),
+    actorId: Uuid,
+    action: InviteAction,
+    { ip, userAgent }: ClientMeta,
+  ) {
+    const [caller] = await db
+      .select({ role: user.role, playerId: player.id })
+      .from(user)
+      .leftJoin(player, eq(player.userId, user.id))
+      .where(eq(user.id, actorId))
+      .limit(1);
+    this.events.emit('identity.user.unauthorized_access', {
+      userId: actorId,
+      playerId: caller?.playerId ?? null,
+      resource: INVITE_AUDIT_RESOURCE,
+      action,
+      ...(caller?.role ? { role: caller.role } : {}),
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+  }
+
+  private async restrictedAmong(userIds: Uuid[]) {
+    const eligibility = this.playEligibility;
+    if (!eligibility || userIds.length === 0) {
+      return new Set<Uuid>();
+    }
+    const restricted = await mapConcurrent(userIds, ELIGIBILITY_CHECK_CONCURRENCY, (id) =>
+      eligibility.isRestricted(id),
     );
+    return new Set(userIds.filter((_, index) => restricted[index]));
   }
 
   async inviteToRoom({
@@ -283,7 +301,7 @@ export class ChatRoomInviteService {
     const { invite, room, lapsed } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const now = new Date();
-        const room = await this.assertCanInvite(t, actorId, roomId);
+        const room = await this.assertCanInvite(t, actorId, roomId, 'create', { ip, userAgent });
         if (room.lockRoom) {
           throw new ChatRoomLockedError(roomId);
         }
@@ -296,7 +314,12 @@ export class ChatRoomInviteService {
           throw new ChatRoomBannedError(roomId);
         }
         const [target] = await t
-          .select({ role: user.role, status: player.status })
+          .select({
+            role: user.role,
+            status: player.status,
+            inviteStatus: inviteStatus(t, roomId, now),
+            visible: sql<boolean>`coalesce(${visibleCandidate(t, roomId, now)}, false)`,
+          })
           .from(user)
           .leftJoin(player, eq(player.userId, user.id))
           .where(eq(user.id, userId))
@@ -304,23 +327,21 @@ export class ChatRoomInviteService {
         if (!target || target.role !== 'player' || target.status === null) {
           throw new ChatRoomInviteeNotPlayerError(userId);
         }
-        const status = (await this.statusesFor(t, roomId, [userId])).get(userId);
-        if (status === 'member') {
+        if (target.inviteStatus === 'member') {
           throw new ChatRoomInviteeAlreadyMemberError(userId);
         }
-        if (status === 'banned') {
+        if (target.inviteStatus === 'banned') {
           throw new ChatRoomInviteeBannedError(userId);
         }
-        if (status === 'invited') {
+        if (target.inviteStatus === 'invited') {
           throw new ChatRoomInvitePendingError(userId);
         }
-        const [visible] = await t
-          .select({ id: user.id })
-          .from(user)
-          .innerJoin(player, eq(player.userId, user.id))
-          .where(and(eq(user.id, userId), visibleCandidate(t, actorId, roomId, now)))
+        const [block] = await t
+          .select({ blockerId: chatUserBlock.blockerId })
+          .from(chatUserBlock)
+          .where(activeBlock(userId, actorId))
           .limit(1);
-        if (!visible) {
+        if (!target.visible || block || (await this.restrictedAmong([userId])).size > 0) {
           throw new ChatRoomInviteeUnavailableError(userId);
         }
         // A lapsed invite still holds the one-pending slot in the partial unique index.
@@ -374,23 +395,31 @@ export class ChatRoomInviteService {
     roomId,
     q,
     limit,
+    ip,
+    userAgent,
   }: {
     actorId: Uuid;
     roomId: Uuid;
     q: string;
     limit: number;
-  }): Promise<ChatRoomInviteCandidate[]> {
+  } & ClientMeta): Promise<ChatRoomInviteCandidate[]> {
     const db = this.drizzle.db;
-    await this.assertCanInvite(db, actorId, roomId);
+    await this.assertCanInvite(db, actorId, roomId, 'search', { ip, userAgent });
+    const now = new Date();
     const rows = await db
-      .select({ userId: user.id, username: user.username, avatarUrl: user.image })
+      .select({
+        userId: user.id,
+        username: user.username,
+        avatarUrl: user.image,
+        inviteStatus: inviteStatus(db, roomId, now),
+      })
       .from(user)
       .innerJoin(player, eq(player.userId, user.id))
       .where(
         and(
           ne(user.id, actorId),
           ilike(user.username, likeContains(q)),
-          visibleCandidate(db, actorId, roomId, new Date()),
+          visibleCandidate(db, roomId, now),
         ),
       )
       .orderBy(
@@ -398,42 +427,41 @@ export class ChatRoomInviteService {
         asc(user.username),
       )
       .limit(limit);
-    if (rows.length === 0) {
-      return [];
-    }
-    const statuses = await this.statusesFor(
-      db,
-      roomId,
-      rows.map((row) => row.userId),
+    const restricted = await this.restrictedAmong(
+      rows.filter((row) => row.inviteStatus === 'available').map((row) => row.userId),
     );
-    return rows.map((row) => ({ ...row, inviteStatus: statuses.get(row.userId) ?? 'available' }));
+    return rows.filter((row) => !restricted.has(row.userId));
   }
 
   async getRoomInviteStatuses({
     actorId,
     roomId,
     userIds,
+    ip,
+    userAgent,
   }: {
     actorId: Uuid;
     roomId: Uuid;
     userIds: Uuid[];
-  }): Promise<ChatRoomInviteLookup[]> {
+  } & ClientMeta): Promise<ChatRoomInviteLookup[]> {
     const db = this.drizzle.db;
-    await this.assertCanInvite(db, actorId, roomId);
+    await this.assertCanInvite(db, actorId, roomId, 'lookup', { ip, userAgent });
     const ids = [...new Set(userIds)];
-    const [visible, statuses] = await Promise.all([
-      db
-        .select({ userId: user.id })
-        .from(user)
-        .innerJoin(player, eq(player.userId, user.id))
-        .where(and(inArray(user.id, ids), visibleCandidate(db, actorId, roomId, new Date()))),
-      this.statusesFor(db, roomId, ids),
-    ]);
-    const visibleIds = new Set(visible.map((row) => row.userId));
-    return ids.map((id) => ({
-      userId: id,
-      inviteStatus: visibleIds.has(id) ? (statuses.get(id) ?? 'available') : 'unavailable',
-    }));
+    const now = new Date();
+    const rows = await db
+      .select({ userId: user.id, inviteStatus: inviteStatus(db, roomId, now) })
+      .from(user)
+      .innerJoin(player, eq(player.userId, user.id))
+      .where(and(inArray(user.id, ids), visibleCandidate(db, roomId, now)));
+    const restricted = await this.restrictedAmong(
+      rows.filter((row) => row.inviteStatus === 'available').map((row) => row.userId),
+    );
+    const statuses = new Map(
+      rows
+        .filter((row) => !restricted.has(row.userId))
+        .map((row) => [row.userId, row.inviteStatus]),
+    );
+    return ids.map((id) => ({ userId: id, inviteStatus: statuses.get(id) ?? 'unavailable' }));
   }
 
   async listMyRoomInvites(userId: Uuid) {
@@ -498,7 +526,11 @@ export class ChatRoomInviteService {
       .where(addressedToCaller(this.drizzle.db, new Date()))
       .limit(1);
     if (!invite) {
-      throw new ChatRoomInviteNotFoundError(inviteId);
+      const room = await this.acceptedRoom(userId, inviteId);
+      if (!room) {
+        throw new ChatRoomInviteNotFoundError(inviteId);
+      }
+      return room;
     }
     const room = await this.membership.joinByInvite({
       roomId: invite.roomId,
@@ -548,6 +580,22 @@ export class ChatRoomInviteService {
       userAgent: userAgent ?? null,
     });
     return room;
+  }
+
+  // A retried accept returns the room it already joined, while the invitee is still in it.
+  private async acceptedRoom(userId: Uuid, inviteId: Uuid) {
+    const [accepted] = await this.drizzle.db
+      .select({ roomId: chatRoomInvite.roomId })
+      .from(chatRoomInvite)
+      .where(
+        and(
+          eq(chatRoomInvite.id, inviteId),
+          eq(chatRoomInvite.inviteeId, userId),
+          eq(chatRoomInvite.status, 'accepted'),
+        ),
+      )
+      .limit(1);
+    return accepted ? this.membership.findMemberRoom(accepted.roomId, userId) : null;
   }
 
   async declineRoomInvite({

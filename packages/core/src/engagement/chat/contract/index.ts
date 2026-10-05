@@ -26,6 +26,7 @@ import {
   CHAT_ROOM_INVITE_LOOKUP_STATUSES,
   ROOM_INVITE_STATUS_LOOKUP_MAX,
   ROOM_INVITE_CANDIDATE_LIMIT_MAX,
+  ROOM_INVITE_SEARCH_MIN_LENGTH,
   ROOM_INVITE_SEARCH_MAX_LENGTH,
 } from './constants.js';
 
@@ -376,7 +377,7 @@ export type MyChatRoomInvite = z.infer<typeof MyChatRoomInviteSchema>;
 
 export const SearchRoomInviteCandidatesInputSchema = z.object({
   roomId: UuidSchema,
-  q: z.string().trim().min(3).max(ROOM_INVITE_SEARCH_MAX_LENGTH),
+  q: z.string().trim().min(ROOM_INVITE_SEARCH_MIN_LENGTH).max(ROOM_INVITE_SEARCH_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(ROOM_INVITE_CANDIDATE_LIMIT_MAX).default(20),
 });
 
