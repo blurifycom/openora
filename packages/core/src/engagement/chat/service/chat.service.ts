@@ -104,6 +104,7 @@ import {
   JOIN_CODE_LENGTH,
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
+  ROOM_RULE_ORDER_MAX,
 } from '../contract/constants.js';
 import { platformScopesFor, roomReach, validateAttachment } from '../moderation/index.js';
 import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
@@ -1012,7 +1013,8 @@ export class ChatService {
         .where(eq(chatRoomRule.roomId, roomId))
         .orderBy(desc(chatRoomRule.orderNum))
         .limit(1);
-      nextOrder = (last?.orderNum ?? 0) + 1;
+      // Ties sort by creation time, so a rule capped at the max still lands last.
+      nextOrder = Math.min((last?.orderNum ?? 0) + 1, ROOM_RULE_ORDER_MAX);
     }
     const [rule] = await tx
       .insert(chatRoomRule)

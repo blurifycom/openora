@@ -482,6 +482,29 @@ describe('chat: back-office moderation lookups by user ids', () => {
     }
   });
 
+  it('accepts a single user id passed as a bare query key', async () => {
+    const player = await registerChatter('single');
+    const body = { userId: player.userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'lookup' };
+    expect((await admin.post('/backoffice/chat/mutes', body)).status).toBe(200);
+    expect((await admin.post('/backoffice/chat/bans', body)).status).toBe(200);
+
+    const mutes = await admin.get(`/backoffice/chat/mutes?userIds=${player.userId}`);
+    const bans = await admin.get(`/backoffice/chat/bans?userIds=${player.userId}`);
+
+    expect(mutes.status).toBe(200);
+    expect(bans.status).toBe(200);
+    expect(
+      ChatModerationEntrySchema.array()
+        .parse(await mutes.json())
+        .map((entry) => entry.userId),
+    ).toEqual([player.userId]);
+    expect(
+      ChatPlatformBanSchema.array()
+        .parse(await bans.json())
+        .map((entry) => entry.userId),
+    ).toEqual([player.userId]);
+  });
+
   it('refuses userId together with userIds', async () => {
     const player = await registerChatter('both');
     const query = `userId=${player.userId}&${userIdsQuery([player.userId])}`;

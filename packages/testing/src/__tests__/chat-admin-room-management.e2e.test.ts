@@ -227,6 +227,29 @@ describe('chat admin: room rules', () => {
     ).toBe(400);
   });
 
+  it('keeps an auto-assigned order within the limit, listing the newer rule last', async () => {
+    const owner = await registerChatter('host');
+    const room = await createPrivateRoom(owner.client);
+    const rulesPath = `/backoffice/chat/rooms/${room.id}/rules`;
+    expect(
+      (await admin.post(rulesPath, { content: 'First', orderNum: ROOM_RULE_ORDER_MAX })).status,
+    ).toBe(200);
+
+    const next = ChatRoomRuleSchema.parse(
+      await (await admin.post(rulesPath, { content: 'Second' })).json(),
+    );
+
+    expect(next.orderNum).toBe(ROOM_RULE_ORDER_MAX);
+    expect((await admin.patch(`${rulesPath}/${next.id}`, { orderNum: next.orderNum })).status).toBe(
+      200,
+    );
+    expect(
+      ChatRoomRuleSchema.array()
+        .parse(await (await admin.get(rulesPath)).json())
+        .map((r) => r.content),
+    ).toEqual(['First', 'Second']);
+  });
+
   it('answers not found for a rule that belongs to another room', async () => {
     const owner = await registerChatter('host');
     const room = await createPrivateRoom(owner.client);

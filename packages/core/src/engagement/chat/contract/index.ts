@@ -11,14 +11,18 @@ import {
   SystemChatMessageSchema,
   ChatAttachmentSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
+import {
+  PageQuerySchema,
+  SortOrderSchema,
+  paginated,
+  queryArraySchema,
+} from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
   ROOM_SLUG_MAX_LENGTH,
   ROOM_RULE_MAX_LENGTH,
   ROOM_RULE_ORDER_MAX,
-  SLOW_MODE_SECONDS_MAX,
   CONNECTION_CLIENT_ID_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
   CHAT_ROOM_ROLES,
@@ -325,7 +329,7 @@ export type UpdateRoomRuleInput = z.infer<typeof UpdateRoomRuleInputSchema>;
 const RoomPostingConfigurationInputSchema = z.object({
   roomId: UuidSchema,
   slowMode: z.boolean().optional(),
-  slowModeSeconds: z.number().int().min(0).max(SLOW_MODE_SECONDS_MAX).optional(),
+  slowModeSeconds: z.int32().min(0).optional(),
   readOnlyMode: z.boolean().optional(),
 });
 export type RoomPostingConfigurationInput = z.infer<typeof RoomPostingConfigurationInputSchema>;
@@ -333,7 +337,7 @@ const MODERATION_LOOKUP_MAX_USERS = 100;
 const ModerationListInputSchema = z
   .object({
     userId: UuidSchema.optional(),
-    userIds: z.array(UuidSchema).min(1).max(MODERATION_LOOKUP_MAX_USERS).optional(),
+    userIds: queryArraySchema(UuidSchema, MODERATION_LOOKUP_MAX_USERS).optional(),
   })
   .refine(({ userId, userIds }) => userId === undefined || userIds === undefined, {
     message: 'Pass either userId or userIds, not both',
