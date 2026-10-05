@@ -335,8 +335,8 @@ export const AdminLiftChatCooldownInputSchema = z.object({
 });
 
 const RoomIdInput = z.object({ roomId: UuidSchema });
-const RoomRulesInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
-const ListRoomRestrictionsInputSchema = RoomRulesInput.extend({
+const RoomRefInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
+const ListRoomRestrictionsInputSchema = RoomRefInput.extend({
   type: ChatRoomRestrictionTypeSchema.optional(),
   ...PageQuerySchema.shape,
 });
@@ -558,7 +558,7 @@ export const chatContract = {
 
   getRoomRules: oc
     .route({ method: 'GET', path: '/chat/rooms/{roomId}/rules' })
-    .input(RoomRulesInput)
+    .input(RoomRefInput)
     .output(z.array(ChatRoomRuleSchema)),
 
   createRoomRule: oc
