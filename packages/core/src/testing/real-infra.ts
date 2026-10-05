@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { sql } from 'drizzle-orm';
 import { createClient } from 'redis';
 import { DrizzleService } from '@openora/core/server';
 
@@ -7,8 +8,8 @@ const INFRA_HINT = 'real-infra tests need postgres+redis - run `docker compose u
 
 const ADMIN_DATABASE_URL =
   process.env['TEST_ADMIN_DATABASE_URL'] ??
-  'postgresql://postgres:postgres@localhost:5432/postgres';
-const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
+  'postgresql://postgres:postgres@localhost:5434/postgres';
+const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
 
 // Databases 0-7 belong to this tier; `@openora/testing` claims 8-15 (see its redis.ts).
 // The split is what lets both integration suites run concurrently without flushing
@@ -55,6 +56,35 @@ export async function waitForConsumerGroup(
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+/** Resolves once a session is blocked on a lock; times out quietly so the test fails on its own assertion. */
+async function waitForLockWaiter(
+  db: TestDb,
+  locktype: 'advisory' | 'transactionid',
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where l.locktype = ${locktype} and not l.granted
+            and a.datname = current_database()`,
+    );
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+export function waitForAdvisoryLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
+  return waitForLockWaiter(db, 'advisory', timeoutMs);
+}
+
+export function waitForRowLockWaiter(db: TestDb, timeoutMs = 3000): Promise<void> {
+  return waitForLockWaiter(db, 'transactionid', timeoutMs);
 }
 
 function isConnectionError(err: unknown): boolean {

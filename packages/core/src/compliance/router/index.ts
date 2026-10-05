@@ -2,19 +2,25 @@ import { createHash } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import {
   AdminGuard,
+  assertRateLimit,
   createEventStreamGenerator,
   getUserId,
   mapErrors,
   type OssContext,
 } from '@openora/core/server';
-import type {
-  AuditWritePort,
-  JobQueueAdapter,
-  KycAdapter,
-  KycWebhookVerifier,
-  QueueName,
-  RealtimeTransport,
-  User,
+import {
+  GameBulkTooManyGamesError,
+  RATE_LIMIT_KEYS,
+  makeRateLimitKey,
+  type AuditWritePort,
+  type JobQueueAdapter,
+  type KycAdapter,
+  type KycWebhookVerifier,
+  type QueueName,
+  type RateLimitKey,
+  type RateLimiterAdapter,
+  type RealtimeTransport,
+  type User,
 } from '@openora/core/contracts';
 import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
@@ -24,6 +30,7 @@ import {
   GeoRuleProviderNotFoundError,
   ProviderGeoRuleNotFoundError,
   CountryRuleConfirmationRequiredError,
+  MirrorTargetNotApprovedError,
   CountryRuleVersionConflictError,
   GlobalKycConfigVersionConflictError,
   LicensedJurisdictionBlacklistError,
@@ -42,6 +49,7 @@ import {
   PermanentExclusionLiftError,
   ExclusionPeriodNotElapsedError,
   LimitRaiseNotAllowedError,
+  LimitOrderingViolationError,
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import {
@@ -50,6 +58,17 @@ import {
   LimitChangeExpiredError,
   NoPendingLimitChangeError,
 } from '../service/rg-self-service.service.js';
+
+// Volume throttle on the module's one anonymous route, sized for a browser rather than for
+// a credential-guessing surface. Deliberately left on the default fail-open: a consumer that
+// gates page access on this answer goes dark if a limiter outage starts denying it.
+const GEO_CHECK_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
+
+// Responsible-gambling self-protection stays reachable for any signed-in player, including
+// one held to a second-factor enrolment after a support reset: excluding yourself, cooling
+// off, tightening a limit or cancelling a pending loosening never waits on 2FA. Removing a
+// limit or confirming a loosening does.
+const RG_SELF_PROTECTION = { allowPendingTwoFactorSetup: true } as const;
 
 export function kycStatusChannel(userId: User['id']): string {
   return `compliance:kyc-status:${userId}`;
@@ -75,6 +94,7 @@ export function createComplianceRouter({
   webhookVerifier,
   jobQueue,
   kycDecisionSyncQueue,
+  limiter,
   realtime,
   rg,
   rgMonitoring,
@@ -91,15 +111,24 @@ export function createComplianceRouter({
   webhookVerifier: KycWebhookVerifier;
   jobQueue: JobQueueAdapter;
   kycDecisionSyncQueue: QueueName;
+  limiter: RateLimiterAdapter<RateLimitKey>;
   realtime: RealtimeTransport;
 }) {
   const os = implement(complianceContract).$context<OssContext>();
 
   return os.router({
-    getLimits: os.getLimits.handler(({ context }) => rgSelfService.getLimits(getUserId(context))),
+    getLimits: os.getLimits.handler(({ context }) =>
+      rgSelfService.getLimits(getUserId(context, RG_SELF_PROTECTION)),
+    ),
 
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
-      return rgSelfService.upsertLimit(getUserId(context), input, context.clientMeta);
+      return mapErrors({ CONFLICT: LimitOrderingViolationError }, () =>
+        rgSelfService.upsertLimit(
+          getUserId(context, RG_SELF_PROTECTION),
+          input,
+          context.clientMeta,
+        ),
+      );
     }),
 
     deleteLimit: os.deleteLimit.handler(({ input, context }) => {
@@ -108,9 +137,14 @@ export function createComplianceRouter({
       );
     }),
 
-    geoCheck: os.geoCheck.handler(({ context }) => {
+    geoCheck: os.geoCheck.handler(async ({ context }) => {
       const { ip } = context.clientMeta;
-      return compliance.geoCheck(ip ?? '127.0.0.1');
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.GEO_CHECK_IP, ip ?? 'unknown'),
+        GEO_CHECK_RATE_LIMIT,
+      );
+      return compliance.visitorGeoCheck(ip ?? '127.0.0.1');
     }),
 
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
@@ -125,6 +159,7 @@ export function createComplianceRouter({
             CountryRuleConfirmationRequiredError,
             CountryRuleVersionConflictError,
             LicensedJurisdictionBlacklistError,
+            MirrorTargetNotApprovedError,
           ],
         },
         () => compliance.addGeoRule(input, userId, { ip, userAgent }),
@@ -161,6 +196,35 @@ export function createComplianceRouter({
     listGameGeoRules: os.listGameGeoRules.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGameGeoRules(input);
+    }),
+
+    bulkRestrictGameGeoRules: os.bulkRestrictGameGeoRules.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'manage-geo',
+      );
+      return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
+        compliance.bulkRestrictGameGeoRules(input, userId, { ip, userAgent }),
+      );
+    }),
+
+    bulkUnrestrictGameGeoRules: os.bulkUnrestrictGameGeoRules.handler(
+      async ({ input, context }) => {
+        const { userId, ip, userAgent } = await adminGuard.assert(
+          context,
+          'compliance',
+          'manage-geo',
+        );
+        return mapErrors({ BAD_REQUEST: GameBulkTooManyGamesError }, () =>
+          compliance.bulkUnrestrictGameGeoRules(input, userId, { ip, userAgent }),
+        );
+      },
+    ),
+
+    getBlockedCountries: os.getBlockedCountries.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return { countryCodes: await compliance.listGloballyBlockedCountries() };
     }),
 
     upsertProviderGeoRules: os.upsertProviderGeoRules.handler(async ({ input, context }) => {
@@ -202,6 +266,7 @@ export function createComplianceRouter({
             CountryRuleConfirmationRequiredError,
             CountryRuleVersionConflictError,
             LicensedJurisdictionBlacklistError,
+            MirrorTargetNotApprovedError,
           ],
         },
         () => compliance.upsertCountryRule(input, userId, { ip, userAgent }),
@@ -327,7 +392,7 @@ export function createComplianceRouter({
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return mapErrors({ CONFLICT: LimitRaiseNotAllowedError }, () =>
+      return mapErrors({ CONFLICT: [LimitRaiseNotAllowedError, LimitOrderingViolationError] }, () =>
         rg.setPlayerLimit(input.userId, input, userId, 'admin', { ip, userAgent }),
       );
     }),
@@ -375,7 +440,7 @@ export function createComplianceRouter({
     }),
 
     getMyRgSection: os.getMyRgSection.handler(({ context }) =>
-      rgSelfService.getSection(getUserId(context)),
+      rgSelfService.getSection(getUserId(context, RG_SELF_PROTECTION)),
     ),
 
     confirmPendingLimitChange: os.confirmPendingLimitChange.handler(({ input, context }) =>
@@ -391,19 +456,31 @@ export function createComplianceRouter({
 
     cancelPendingLimitChange: os.cancelPendingLimitChange.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
-        rgSelfService.cancelPendingChange(input.id, getUserId(context), context.clientMeta),
+        rgSelfService.cancelPendingChange(
+          input.id,
+          getUserId(context, RG_SELF_PROTECTION),
+          context.clientMeta,
+        ),
       ),
     ),
 
     requestCoolingOff: os.requestCoolingOff.handler(({ input, context }) =>
       mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rgSelfService.requestCoolingOff(getUserId(context), input, context.clientMeta),
+        rgSelfService.requestCoolingOff(
+          getUserId(context, RG_SELF_PROTECTION),
+          input,
+          context.clientMeta,
+        ),
       ),
     ),
 
     requestSelfExclusion: os.requestSelfExclusion.handler(({ input, context }) =>
       mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rgSelfService.requestSelfExclusion(getUserId(context), input, context.clientMeta),
+        rgSelfService.requestSelfExclusion(
+          getUserId(context, RG_SELF_PROTECTION),
+          input,
+          context.clientMeta,
+        ),
       ),
     ),
   });

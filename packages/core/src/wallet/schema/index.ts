@@ -133,6 +133,17 @@ export const walletTransaction = pgTable(
     // sums these, so a rate move after approval cannot shrink what the player already took.
     // NULL on every other row, and on auto-approvals written before this column existed.
     autoApprovalPivotAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    // Deposit, withdrawal and manual adjustment rows: the amount converted into the player's
+    // reference currency when the row was written, with the rate and the rate's own timestamp.
+    // Written once and never recalculated. NULL on every other row type, and on rows written
+    // before these columns existed.
+    referenceCurrency: text(),
+    referenceAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    referenceRate: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    referenceRateAsOf: timestamp({ withTimezone: true }),
+    // Withdrawal rows: the network fee kept from the debited `amount`, so the payout sent to the
+    // provider is `amount - fee`. NULL on every other row type and on withdrawals without a fee.
+    fee: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     // The concrete settlement provider (eg a PSP name) and its reference id (eg the
     // PSP charge id), as first-class typed columns so they are filterable for
     // reconciliation rather than buried in free-form JSON.
@@ -160,6 +171,9 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_currency_idx').on(t.currency),
     index('wallet_transaction_currency_network_idx').on(t.currency, t.network),
     index('wallet_transaction_tx_hash_idx').on(t.txHash),
+    // Lowercased so the queue search finds an EVM address whatever case the player pasted it in.
+    index('wallet_transaction_destination_address_idx').on(sql`lower(${t.destinationAddress})`),
+    index('wallet_transaction_provider_ref_idx').on(t.providerRefId),
     index('wallet_transaction_status_type_created_at_idx').on(t.status, t.type, t.createdAt),
     index('wallet_transaction_wallet_id_type_status_idx').on(t.walletId, t.type, t.status),
     uniqueIndex('wallet_transaction_provider_ref_id_idx')

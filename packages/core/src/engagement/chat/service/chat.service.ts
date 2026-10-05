@@ -10,6 +10,7 @@ import {
   findOneOrThrow,
   serializeRow,
   mapConcurrent,
+  moderateContent,
   pageToOffset,
   withAdvisoryXactLock,
   type DrizzleDb,
@@ -31,13 +32,7 @@ import type {
   Uuid,
   ChatAttachment,
 } from '@openora/core/contracts';
-import {
-  CommandMetadataSchema,
-  chatBlockLockKey,
-  chatChannel,
-  GLOBAL_CHAT_ROOM_ID,
-  MONEY_SCALE,
-} from '@openora/core/contracts';
+import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -52,6 +47,7 @@ import {
   count,
   ne,
   ilike,
+  sql,
 } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -68,6 +64,7 @@ import {
   chatPlatformBan,
 } from '../schema/index.js';
 import { ChatMessageNotFoundError, ChatRoomNotFoundError } from './chat-moderation.service.js';
+import { toMessage, toSystemMessage } from './chat-message-mapping.service.js';
 export {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
@@ -82,6 +79,7 @@ import {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatPlayerBannedError,
+  ChatPlayerMutedError,
 } from './errors/chat-moderation.errors.js';
 import type {
   AdminRoomSortBy,
@@ -89,6 +87,7 @@ import type {
   IgnoredUserSortBy,
   ChatRoom,
   ChatMessage,
+  ChatRoomStreamEvent,
   ChatRoomCategory,
   ChatRoomRole,
   SortOrder,
@@ -100,13 +99,13 @@ import {
   MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
-import { moderateContent, validateAttachment } from '../moderation/index.js';
+import { platformScopesFor, roomReach, validateAttachment } from '../moderation/index.js';
+import { revokeChannelBestEffort, ROOM_REVOKE_CONCURRENCY } from './channel-revoke.service.js';
 const logger = createLogger('chat');
 
 const MENTION_USERNAME_PATTERN = /(?<![\w.])@([a-zA-Z0-9_]{2,32})/g;
 const MAX_MENTIONS_PER_MESSAGE = 20;
 const MENTION_RESOLVE_CONCURRENCY = 5;
-const ROOM_REVOKE_CONCURRENCY = 10;
 
 function parseMentionedUsernames(content: string): string[] {
   const usernames = new Set<string>();
@@ -274,10 +273,6 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
   );
 }
 
-function toMessage(record: typeof chatMessage.$inferSelect) {
-  return serializeRow(record, { dateFields: ['createdAt'] });
-}
-
 function toRule(record: typeof chatRoomRule.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
@@ -286,47 +281,25 @@ function toConfiguration(record: typeof chatRoomConfiguration.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt', 'updatedAt'] });
 }
 
-const COMMAND_METADATA_MONEY_KEYS = ['amount', 'perRecipient'] as const;
-
-function canonicalizeMoneyString(value: string): string {
-  if (!/^\d+\.\d+$/.test(value)) {
-    return value;
-  }
-  const [whole, fraction] = value.split('.') as [string, string];
-  if (fraction.length <= MONEY_SCALE) {
-    return value;
-  }
-  const trimmed = fraction.slice(0, MONEY_SCALE).replace(/0+$/, '');
-  return trimmed ? `${whole}.${trimmed}` : whole;
+function configurationSettings(record: typeof chatRoomConfiguration.$inferSelect) {
+  const {
+    id: _id,
+    roomId: _roomId,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    ...settings
+  } = record;
+  return settings;
 }
 
-function sanitizeCommandMetadata(metadata: unknown): unknown {
-  if (!metadata || typeof metadata !== 'object') {
-    return metadata;
-  }
-  const entries = Object.entries(metadata as Record<string, unknown>).map(([key, value]) =>
-    (COMMAND_METADATA_MONEY_KEYS as readonly string[]).includes(key) && typeof value === 'string'
-      ? [key, canonicalizeMoneyString(value)]
-      : [key, value],
-  );
-  return Object.fromEntries(entries);
+// The restriction that lasts longest decides when a player is let back in; null is permanent.
+function latestExpiry(expiries: (Date | null)[]) {
+  const times = expiries.flatMap((expiry) => (expiry ? [expiry.getTime()] : []));
+  return times.length === 0 || times.length < expiries.length ? null : new Date(Math.max(...times));
 }
 
-// A system message IS its command metadata, and the column is jsonb - a shape Postgres never
-// enforced, so a row can outlive the contract that wrote it. Sanitizing first keeps the
-// deliberate repair path (legacy money strings) working; what still fails to parse cannot be
-// rendered as any system message the contract describes.
-function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage | null {
-  const message = toMessage(record);
-  const metadata = CommandMetadataSchema.safeParse(sanitizeCommandMetadata(message.metadata));
-  if (!metadata.success) {
-    logger.warn(
-      { messageId: record.id, issues: metadata.error.issues.slice(0, 3) },
-      'system message metadata no longer matches its contract, omitted from listing',
-    );
-    return null;
-  }
-  return { ...message, metadata: metadata.data, actorId: message.userId } as ChatSystemMessage;
+function isGlobalRoom(room: { slug: string }) {
+  return room.slug === GLOBAL_CHAT_ROOM_ID;
 }
 
 function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage | null {
@@ -483,6 +456,27 @@ export class ChatService {
     return this.transport.subscribeSignal?.(chatChannel(roomId), listener, viewerId) ?? (() => {});
   }
 
+  subscribeRoom(
+    roomId: ChatRoom['id'] | null,
+    listener: (event: ChatRoomStreamEvent) => void,
+    viewerId?: User['id'],
+  ) {
+    const unsubscribeMessages = this.subscribeMessages(
+      roomId,
+      (message) => listener({ type: 'message', message }),
+      viewerId,
+    );
+    const unsubscribeSignals = this.subscribeSignals(
+      roomId,
+      (signal) => listener({ type: 'signal', signal }),
+      viewerId,
+    );
+    return () => {
+      unsubscribeSignals();
+      unsubscribeMessages();
+    };
+  }
+
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
     const onlineUsers = await this.directory.lookupUsers(onlineUserIds);
@@ -565,16 +559,10 @@ export class ChatService {
             eq(chatPlatformBan.userId, viewerId),
             isNull(chatPlatformBan.liftedAt),
             or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, now)),
-            room.isPublic
-              ? or(
-                  eq(chatPlatformBan.scope, '__all'),
-                  eq(chatPlatformBan.scope, '__all_public'),
-                  and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
-                )
-              : or(
-                  eq(chatPlatformBan.scope, '__all'),
-                  and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
-                ),
+            or(
+              inArray(chatPlatformBan.scope, platformScopesFor(roomReach(room))),
+              and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
+            ),
           ),
         )
         .limit(1);
@@ -598,6 +586,16 @@ export class ChatService {
     return room;
   }
 
+  /** Null for the global room under either id. */
+  async verifyChannelAccess(roomId: ChatRoom['id'] | null, viewerId?: User['id']) {
+    if (roomId === null) {
+      await this.verifyGlobalAccess(viewerId);
+      return null;
+    }
+    const room = await this.verifyRoomAccess(roomId, viewerId);
+    return isGlobalRoom(room) ? null : room.id;
+  }
+
   async verifyGlobalAccess(viewerId?: User['id']) {
     if (!viewerId) {
       return;
@@ -610,16 +608,32 @@ export class ChatService {
           eq(chatPlatformBan.userId, viewerId),
           isNull(chatPlatformBan.liftedAt),
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, new Date())),
-          or(
-            eq(chatPlatformBan.scope, '__global'),
-            eq(chatPlatformBan.scope, '__all_public'),
-            eq(chatPlatformBan.scope, '__all'),
-          ),
+          inArray(chatPlatformBan.scope, platformScopesFor('global')),
         ),
       )
       .limit(1);
     if (platformBan) {
       throw new ChatPlayerBannedError(platformBan.expiresAt);
+    }
+    await this.assertNotBannedFromGlobalRoom(viewerId);
+  }
+
+  private async assertNotBannedFromGlobalRoom(userId: User['id']) {
+    const [roomBan] = await this.drizzle.db
+      .select({ expiresAt: chatRoomBan.expiresAt })
+      .from(chatRoomBan)
+      .innerJoin(chatRoom, eq(chatRoom.id, chatRoomBan.roomId))
+      .where(
+        and(
+          eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID),
+          eq(chatRoomBan.userId, userId),
+          isNull(chatRoomBan.liftedAt),
+          or(isNull(chatRoomBan.expiresAt), gt(chatRoomBan.expiresAt, new Date())),
+        ),
+      )
+      .limit(1);
+    if (roomBan) {
+      throw new ChatPlayerBannedError(roomBan.expiresAt);
     }
   }
 
@@ -650,7 +664,6 @@ export class ChatService {
           or(isNull(chatRoomBan.expiresAt), gt(chatRoomBan.expiresAt, now)),
         ),
       );
-    const roomBanById = new Map(bans.map((ban) => [ban.roomId, ban.expiresAt]));
     const bannedPrivateIds = bans.map((ban) => ban.roomId);
     const platformBans = await this.drizzle.db
       .select({
@@ -666,16 +679,6 @@ export class ChatService {
           or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, now)),
         ),
       );
-    const allPublicBan = platformBans.find(
-      (ban) => ban.scope === '__all_public' || ban.scope === '__all',
-    );
-    const allPrivateBan = platformBans.find((ban) => ban.scope === '__all');
-    const globalBan = platformBans.find((ban) => ban.scope === '__global');
-    for (const ban of platformBans) {
-      if (ban.scope === 'room' && ban.roomId) {
-        roomBanById.set(ban.roomId, ban.expiresAt);
-      }
-    }
 
     const privateRooms = await this.drizzle.db
       .select()
@@ -708,18 +711,18 @@ export class ChatService {
       (room, index, rows) => rows.findIndex((candidate) => candidate.id === room.id) === index,
     );
     return uniqueRooms.map((room) => {
-      const roomBanUntil = roomBanById.get(room.id) ?? null;
-      const platformBanUntil = room.isPublic
-        ? (allPublicBan?.expiresAt ?? null)
-        : (allPrivateBan?.expiresAt ?? null);
+      const scopes = platformScopesFor(roomReach(room));
+      const expiries = [
+        ...bans.filter((ban) => ban.roomId === room.id),
+        ...platformBans.filter((ban) =>
+          ban.scope === 'room' ? ban.roomId === room.id : scopes.includes(ban.scope),
+        ),
+      ].map((ban) => ban.expiresAt);
       return serializeRow(
         {
           ...room,
-          isBanned:
-            room.slug === GLOBAL_CHAT_ROOM_ID
-              ? Boolean(globalBan || allPublicBan)
-              : roomBanById.has(room.id) || Boolean(room.isPublic ? allPublicBan : allPrivateBan),
-          bannedUntil: roomBanById.has(room.id) ? roomBanUntil : platformBanUntil,
+          isBanned: expiries.length > 0,
+          bannedUntil: latestExpiry(expiries),
         },
         { dateFields: ['createdAt', 'bannedUntil', 'scheduledDeletionAt'] },
       );
@@ -875,27 +878,42 @@ export class ChatService {
     actorId,
     orderNum,
     content,
+    ip,
+    userAgent,
   }: {
     roomId: ChatRoom['id'];
     actorId: User['id'];
     orderNum?: number;
     content: string;
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    let nextOrder = orderNum;
-    if (nextOrder === undefined) {
-      const [last] = await this.drizzle.db
-        .select({ orderNum: chatRoomRule.orderNum })
-        .from(chatRoomRule)
-        .where(eq(chatRoomRule.roomId, roomId))
-        .orderBy(desc(chatRoomRule.orderNum))
-        .limit(1);
-      nextOrder = (last?.orderNum ?? 0) + 1;
-    }
-    const [created] = await this.drizzle.db
-      .insert(chatRoomRule)
-      .values({ roomId, createdBy: actorId, orderNum: nextOrder, content })
-      .returning();
+    const created = await this.drizzle.db.transaction(async (tx) => {
+      let nextOrder = orderNum;
+      if (nextOrder === undefined) {
+        const [last] = await tx
+          .select({ orderNum: chatRoomRule.orderNum })
+          .from(chatRoomRule)
+          .where(eq(chatRoomRule.roomId, roomId))
+          .orderBy(desc(chatRoomRule.orderNum))
+          .limit(1);
+        nextOrder = (last?.orderNum ?? 0) + 1;
+      }
+      const [rule] = await tx
+        .insert(chatRoomRule)
+        .values({ roomId, createdBy: actorId, orderNum: nextOrder, content })
+        .returning();
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.rule.created',
+        resourceType: 'chat_room_rule',
+        resourceId: rule.id,
+        after: { roomId, orderNum: rule.orderNum, content: rule.content },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+      return rule;
+    });
     return toRule(created);
   }
 
@@ -905,13 +923,15 @@ export class ChatService {
     actorId,
     orderNum,
     content,
+    ip,
+    userAgent,
   }: {
     roomId: ChatRoom['id'];
     id: string;
     actorId: User['id'];
     orderNum?: number;
     content?: string;
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
     const patch: Partial<typeof chatRoomRule.$inferInsert> = { updatedAt: new Date() };
     if (orderNum !== undefined) {
@@ -920,14 +940,36 @@ export class ChatService {
     if (content !== undefined) {
       patch.content = content;
     }
-    const updated = findOneOrThrow(
-      await this.drizzle.db
+    const updated = await this.drizzle.db.transaction(async (tx) => {
+      const before = findOneOrThrow(
+        await tx
+          .select()
+          .from(chatRoomRule)
+          .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
+          .for('update'),
+        new ChatRoomRuleNotFoundError(id),
+      );
+      const [after] = await tx
         .update(chatRoomRule)
         .set(patch)
-        .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
-        .returning(),
-      new ChatRoomRuleNotFoundError(id),
-    );
+        .where(eq(chatRoomRule.id, id))
+        .returning();
+      if (after.orderNum === before.orderNum && after.content === before.content) {
+        return after;
+      }
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.rule.updated',
+        resourceType: 'chat_room_rule',
+        resourceId: id,
+        before: { roomId, orderNum: before.orderNum, content: before.content },
+        after: { roomId, orderNum: after.orderNum, content: after.content },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+      return after;
+    });
     return toRule(updated);
   }
 
@@ -935,31 +977,58 @@ export class ChatService {
     roomId,
     id,
     actorId,
+    ip,
+    userAgent,
   }: {
     roomId: ChatRoom['id'];
     id: string;
     actorId: User['id'];
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    findOneOrThrow(
-      await this.drizzle.db
-        .delete(chatRoomRule)
-        .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
-        .returning({ id: chatRoomRule.id }),
-      new ChatRoomRuleNotFoundError(id),
-    );
+    await this.drizzle.db.transaction(async (tx) => {
+      const deleted = findOneOrThrow(
+        await tx
+          .delete(chatRoomRule)
+          .where(and(eq(chatRoomRule.id, id), eq(chatRoomRule.roomId, roomId)))
+          .returning(),
+        new ChatRoomRuleNotFoundError(id),
+      );
+      await this.audit.recordInTransaction(tx, {
+        actorId,
+        actorType: 'player',
+        action: 'chat.room.rule.deleted',
+        resourceType: 'chat_room_rule',
+        resourceId: id,
+        before: { roomId, orderNum: deleted.orderNum, content: deleted.content },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    });
     return { success: true } as const;
   }
 
-  async getRoomConfiguration(roomId: ChatRoom['id'], viewerId?: User['id']) {
-    await this.verifyRoomAccess(roomId, viewerId);
-    let [config] = await this.drizzle.db
+  private async findRoomConfiguration(db: DrizzleDb | DrizzleTx, roomId: ChatRoom['id']) {
+    const [config] = await db
       .select()
       .from(chatRoomConfiguration)
       .where(eq(chatRoomConfiguration.roomId, roomId))
       .limit(1);
+    return config;
+  }
+
+  async getRoomConfiguration(roomId: ChatRoom['id'], viewerId?: User['id']) {
+    await this.verifyRoomAccess(roomId, viewerId);
+    const existing = await this.findRoomConfiguration(this.drizzle.db, roomId);
+    if (existing) {
+      return toConfiguration(existing);
+    }
+    await this.drizzle.db
+      .insert(chatRoomConfiguration)
+      .values({ roomId })
+      .onConflictDoNothing({ target: chatRoomConfiguration.roomId });
+    const config = await this.findRoomConfiguration(this.drizzle.db, roomId);
     if (!config) {
-      [config] = await this.drizzle.db.insert(chatRoomConfiguration).values({ roomId }).returning();
+      throw new ChatRoomConfigurationNotFoundError(roomId);
     }
     return toConfiguration(config);
   }
@@ -967,6 +1036,8 @@ export class ChatService {
   async updateRoomConfiguration({
     roomId,
     actorId,
+    ip,
+    userAgent,
     ...patch
   }: {
     roomId: ChatRoom['id'];
@@ -977,16 +1048,37 @@ export class ChatService {
     onlyInvitedCanJoin?: boolean;
     lockRoom?: boolean;
     moderatorInvite?: boolean;
-  }) {
+  } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
-    const [config] = await this.drizzle.db
-      .insert(chatRoomConfiguration)
-      .values({ roomId, ...patch, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: chatRoomConfiguration.roomId,
-        set: { ...patch, updatedAt: new Date() },
-      })
-      .returning();
+    const config = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, `chat-room-configuration:${roomId}`, async () => {
+        const before = await this.findRoomConfiguration(tx, roomId);
+        const [after] = await tx
+          .insert(chatRoomConfiguration)
+          .values({ roomId, ...patch, updatedAt: new Date() })
+          .onConflictDoUpdate({
+            target: chatRoomConfiguration.roomId,
+            set: { ...patch, updatedAt: new Date() },
+          })
+          .returning();
+        const beforeSettings = before ? configurationSettings(before) : null;
+        const afterSettings = configurationSettings(after);
+        if (JSON.stringify(beforeSettings) !== JSON.stringify(afterSettings)) {
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'player',
+            action: 'chat.room.configuration.updated',
+            resourceType: 'chat_room_configuration',
+            resourceId: after.id,
+            before: beforeSettings ? { roomId, ...beforeSettings } : null,
+            after: { roomId, ...afterSettings },
+            ip: ip ?? null,
+            userAgent: userAgent ?? null,
+          });
+        }
+        return after;
+      }),
+    );
     return toConfiguration(config);
   }
 
@@ -1008,7 +1100,7 @@ export class ChatService {
       .where(eq(chatRoom.id, roomId))
       .limit(1);
     const members = await this.drizzle.db
-      .select({ member: chatRoomMember, username: user.name })
+      .select({ member: chatRoomMember, username: user.username })
       .from(chatRoomMember)
       .leftJoin(user, eq(user.id, chatRoomMember.userId))
       .where(
@@ -1084,10 +1176,10 @@ export class ChatService {
     before?: string;
     viewerId?: User['id'];
   }) {
-    await this.verifyRoomAccess(roomId, viewerId);
+    const room = await this.verifyRoomAccess(roomId, viewerId);
 
     const conditions = [
-      eq(chatMessage.roomId, roomId),
+      isGlobalRoom(room) ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
       eq(chatMessage.isDeleted, false),
       isNull(chatMessage.deletedAt),
     ];
@@ -1102,6 +1194,18 @@ export class ChatService {
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
     return toPublicMessages(messages);
+  }
+
+  private async isGlobalRoomId(
+    roomId: ChatRoom['id'],
+    db: DrizzleDb | DrizzleTx = this.drizzle.db,
+  ) {
+    const [room] = await db
+      .select({ id: chatRoom.id })
+      .from(chatRoom)
+      .where(and(eq(chatRoom.id, roomId), eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID)))
+      .limit(1);
+    return room !== undefined;
   }
 
   async listAdminRoomMessages({
@@ -1124,7 +1228,7 @@ export class ChatService {
         ? and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt))
         : and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt));
     const [room] = await this.drizzle.db
-      .select({ id: chatRoom.id })
+      .select({ id: chatRoom.id, slug: chatRoom.slug })
       .from(chatRoom)
       .where(roomWhere)
       .limit(1);
@@ -1133,7 +1237,7 @@ export class ChatService {
     }
 
     const where = and(
-      roomId === GLOBAL_CHAT_ROOM_ID ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
+      isGlobalRoom(room) ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, room.id),
       includeDeleted ? undefined : eq(chatMessage.isDeleted, false),
       senderId ? eq(chatMessage.userId, senderId) : undefined,
       playerId ? eq(player.id, playerId) : undefined,
@@ -1184,7 +1288,7 @@ export class ChatService {
     sortOrder: SortOrder;
   }) {
     const roomCondition =
-      roomId === GLOBAL_CHAT_ROOM_ID
+      roomId === GLOBAL_CHAT_ROOM_ID || (roomId && (await this.isGlobalRoomId(roomId)))
         ? isNull(chatMessage.roomId)
         : roomId
           ? eq(chatMessage.roomId, roomId)
@@ -1258,6 +1362,88 @@ export class ChatService {
     }
   }
 
+  // Read-only and slow mode are enforced here, not by the moderation port.
+  private async roomSendSettings(roomId: Uuid | null) {
+    const [config] = await this.drizzle.db
+      .select({
+        roomId: chatRoomConfiguration.roomId,
+        readOnlyMode: chatRoomConfiguration.readOnlyMode,
+        slowMode: chatRoomConfiguration.slowMode,
+        slowModeSeconds: chatRoomConfiguration.slowModeSeconds,
+      })
+      .from(chatRoomConfiguration)
+      .innerJoin(chatRoom, eq(chatRoomConfiguration.roomId, chatRoom.id))
+      .where(
+        roomId === null
+          ? and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt))
+          : eq(chatRoom.id, roomId),
+      )
+      .limit(1);
+    if (config?.readOnlyMode) {
+      throw new ChatPlayerMutedError(null, 'read_only');
+    }
+    return config?.slowMode && config.slowModeSeconds > 0
+      ? { roomId: config.roomId, slowModeSeconds: config.slowModeSeconds }
+      : null;
+  }
+
+  // Slow mode is checked under a per-sender lock so parallel sends cannot all pass.
+  private async insertUserMessage(
+    values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
+    slowMode: { roomId: Uuid; slowModeSeconds: number } | null,
+  ) {
+    if (!slowMode) {
+      const [record] = await this.drizzle.db.insert(chatMessage).values(values).returning();
+      return record;
+    }
+    return this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-send:${values.userId}:${slowMode.roomId}`, async () => {
+        await this.assertSlowModeElapsed(t, values.userId, values.roomId, slowMode);
+        const [record] = await t.insert(chatMessage).values(values).returning();
+        return record;
+      }),
+    );
+  }
+
+  private async assertSlowModeElapsed(
+    t: DrizzleTx,
+    userId: User['id'],
+    roomId: Uuid | null,
+    config: { roomId: Uuid; slowModeSeconds: number },
+  ) {
+    const windowMs = config.slowModeSeconds * 1000;
+    const [last] = await t
+      .select({ createdAt: chatMessage.createdAt })
+      .from(chatMessage)
+      .where(
+        and(
+          eq(chatMessage.userId, userId),
+          roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId),
+          eq(chatMessage.type, 'user'),
+          gt(chatMessage.createdAt, sql`now() - make_interval(secs => ${config.slowModeSeconds})`),
+        ),
+      )
+      .orderBy(desc(chatMessage.createdAt))
+      .limit(1);
+    if (!last) {
+      return;
+    }
+    const [moderator] = await t
+      .select({ id: chatRoomMember.id })
+      .from(chatRoomMember)
+      .where(
+        and(
+          eq(chatRoomMember.roomId, config.roomId),
+          eq(chatRoomMember.userId, userId),
+          inArray(chatRoomMember.role, ['moderator', 'owner']),
+        ),
+      )
+      .limit(1);
+    if (!moderator) {
+      throw new ChatPlayerMutedError(new Date(last.createdAt.getTime() + windowMs), 'slow_mode');
+    }
+  }
+
   async sendRoomMessage({
     userId,
     username,
@@ -1273,21 +1459,19 @@ export class ChatService {
   }) {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
+    if (isGlobalRoom(room)) {
+      return this.postToGlobalRoom({ userId, username, content, attachment });
+    }
+    const slowMode = await this.roomSendSettings(roomId);
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
 
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
-    const [record] = await this.drizzle.db
-      .insert(chatMessage)
-      .values({
-        roomId,
-        userId,
-        username: resolvedUsername,
-        content: safeContent,
-        attachment,
-      })
-      .returning();
+    const record = await this.insertUserMessage(
+      { roomId, userId, username: resolvedUsername, content: safeContent, attachment },
+      slowMode,
+    );
 
     this.events.emit('chat.message.sent', {
       messageId: record.id,
@@ -1320,10 +1504,10 @@ export class ChatService {
       const [globalRoom] = await this.drizzle.db
         .select({ id: chatRoom.id })
         .from(chatRoom)
-        .where(and(eq(chatRoom.slug, '__global'), isNull(chatRoom.deletedAt)))
+        .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
         .limit(1);
       if (!globalRoom) {
-        throw new ChatRoomNotFoundError('__global');
+        throw new ChatRoomNotFoundError(GLOBAL_CHAT_ROOM_ID);
       }
       roomId = globalRoom.id;
     }
@@ -1348,7 +1532,17 @@ export class ChatService {
     return toPublicMessages(messages);
   }
 
-  async sendGlobalMessage({
+  async sendGlobalMessage(input: {
+    userId: User['id'];
+    username: string;
+    content: string;
+    attachment?: ChatAttachment | null;
+  }) {
+    await this.assertNotBannedFromGlobalRoom(input.userId);
+    return this.postToGlobalRoom(input);
+  }
+
+  private async postToGlobalRoom({
     userId,
     username,
     content,
@@ -1360,20 +1554,15 @@ export class ChatService {
     attachment?: ChatAttachment | null;
   }) {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
+    const slowMode = await this.roomSendSettings(null);
     await this.moderation.assertCanSend(userId, null);
     assertAttachmentAllowed(attachment, this.allowedAttachmentHosts);
     const safeContent = gateContent(content);
     const resolvedUsername = await this.resolveUsername(userId, username);
-    const [record] = await this.drizzle.db
-      .insert(chatMessage)
-      .values({
-        roomId: null,
-        userId,
-        username: resolvedUsername,
-        content: safeContent,
-        attachment,
-      })
-      .returning();
+    const record = await this.insertUserMessage(
+      { roomId: null, userId, username: resolvedUsername, content: safeContent, attachment },
+      slowMode,
+    );
 
     this.events.emit('chat.message.sent', {
       messageId: record.id,
@@ -1930,13 +2119,9 @@ export class ChatService {
     // The room is gone, so cut every member off the room channel rather than leaving them
     // subscribed to a room that 404s on every call. Per-member best-effort: one unreachable
     // client must not fail a delete that has already happened and cannot be retried.
-    await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, async ({ userId: memberId }) => {
-      try {
-        await this.transport.revokeUserFromChannel?.(memberId, chatChannel(roomId));
-      } catch (err: unknown) {
-        logger.error({ err, roomId, memberId }, 'chat room channel revoke failed');
-      }
-    });
+    await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, ({ userId: memberId }) =>
+      revokeChannelBestEffort(this.transport, memberId, roomId),
+    );
     return { success: true } as const;
   }
 
@@ -2051,10 +2236,11 @@ export class ChatService {
     tx?: unknown;
   }): Promise<ChatSystemMessage> {
     const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
+    const roomId = args.roomId && (await this.isGlobalRoomId(args.roomId, db)) ? null : args.roomId;
     const [record] = await db
       .insert(chatMessage)
       .values({
-        roomId: args.roomId,
+        roomId,
         userId: args.actorId,
         username: args.username,
         content: '',
@@ -2068,7 +2254,7 @@ export class ChatService {
     // here would leak a message to clients before (or even if) it actually commits.
     // The caller must publish itself after its transaction resolves.
     if (!args.tx) {
-      publishChatEvent(this.transport, args.roomId, msg);
+      publishChatEvent(this.transport, roomId, msg);
     }
     return msg;
   }
@@ -2100,7 +2286,7 @@ export class ChatService {
         role: chatRoomMember.role,
         joinedAt: chatRoomMember.joinedAt,
         accountClosedAt: chatRoomMember.accountClosedAt,
-        username: user.name,
+        username: user.username,
       })
       .from(chatRoomMember)
       .leftJoin(user, eq(user.id, chatRoomMember.userId))

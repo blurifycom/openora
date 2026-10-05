@@ -1,0 +1,2 @@
+ALTER TABLE "player" ADD COLUMN "display_decimal_places" integer;--> statement-breakpoint
+ALTER TABLE "player" ADD CONSTRAINT "player_display_decimal_places_range" CHECK ("player"."display_decimal_places" BETWEEN 0 AND 18);

@@ -25,7 +25,7 @@ import {
   type IdentityServiceDeps,
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-import { user, session } from '../schema/index.js';
+import { user, session, account } from '../schema/index.js';
 import { TrustedDeviceService } from '../service/trusted-device.service.js';
 import { SessionService } from '../service/session.service.js';
 import type { TwoFactorLockoutService } from '../service/two-factor-lockout.service.js';
@@ -37,6 +37,8 @@ const {
   verifyTotpMock,
   verifyBackupCodeMock,
   generateBackupCodesMock,
+  viewBackupCodesMock,
+  passwordVerifyMock,
   disableTwoFactorMock,
   enableTwoFactorMock,
   verifyTwoFactorOtpMock,
@@ -54,6 +56,8 @@ const {
   verifyTotpMock: vi.fn(),
   verifyBackupCodeMock: vi.fn(),
   generateBackupCodesMock: vi.fn(),
+  viewBackupCodesMock: vi.fn(),
+  passwordVerifyMock: vi.fn(),
   disableTwoFactorMock: vi.fn(),
   enableTwoFactorMock: vi.fn(),
   verifyTwoFactorOtpMock: vi.fn(),
@@ -80,6 +84,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
     return {
+      $context: Promise.resolve({ password: { verify: passwordVerifyMock } }),
       options: {
         session: {
           expiresIn: SESSION_DURATION_IN_SECONDS,
@@ -92,6 +97,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         verifyTOTP: verifyTotpMock,
         verifyBackupCode: verifyBackupCodeMock,
         generateBackupCodes: generateBackupCodesMock,
+        viewBackupCodes: viewBackupCodesMock,
         disableTwoFactor: disableTwoFactorMock,
         enableTwoFactor: enableTwoFactorMock,
         verifyTwoFactorOTP: verifyTwoFactorOtpMock,
@@ -153,6 +159,11 @@ const EMAIL = 'a@b.dev';
 const seedUser = (over: Partial<typeof user.$inferInsert> = {}) =>
   insertUser(db, { name: 'A', email: EMAIL, ...over });
 
+const seedCredential = (userId: string) =>
+  db.drizzle.db
+    .insert(account)
+    .values({ accountId: userId, providerId: 'credential', userId, password: 'stored-hash' });
+
 async function readUser(userId: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
   return row;
@@ -182,6 +193,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // clearAllMocks keeps an implementation set by an earlier test, which would let a
+  // later one pass on a verifier it never configured.
+  verifyTotpMock.mockReset();
+  verifyBackupCodeMock.mockReset();
   getSessionMock.mockResolvedValue(null);
   requestEmailChangeMock.mockReset();
   confirmEmailChangeMock.mockReset();
@@ -725,6 +740,7 @@ describe('IdentityService - trusted device login (real PG)', () => {
     new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
+      identityReader: makeIdentityReader(),
       trustedDeviceDays: 30,
     });
 
@@ -1295,7 +1311,11 @@ describe('IdentityService.verifyTwoFactor', () => {
         new Headers(),
       ),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(lockout.recordFailure).toHaveBeenCalledWith(account.id, expect.anything());
+    expect(lockout.recordFailure).toHaveBeenCalledWith(
+      account.id,
+      'backup_code',
+      expect.anything(),
+    );
   });
 
   it('announces enrolment only for the challenge answered from a live session', async () => {
@@ -1338,6 +1358,7 @@ describe('IdentityService.verifyTwoFactor', () => {
       new TrustedDeviceService({
         drizzle: db.drizzle,
         events: makeEventBus(),
+        identityReader: makeIdentityReader(),
         trustedDeviceDays: 30,
       });
 
@@ -1387,6 +1408,7 @@ describe('IdentityService 2fa step-up teardown', () => {
     const trustedDevices = new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
+      identityReader: makeIdentityReader(),
       trustedDeviceDays: 30,
     });
     const sessions = new SessionService({
@@ -1437,7 +1459,7 @@ describe('IdentityService 2fa step-up teardown', () => {
     const svc = buildService({ events, trustedDevices, sessions });
 
     await svc.disableTwoFactor(
-      { password: 'rightpass1', code: '123456' },
+      { password: 'rightpass1', code: '123456', method: 'live' },
       { cookie: 'better-auth.session_token=live', 'user-agent': BROWSER_UA },
       new Headers(),
     );
@@ -1462,7 +1484,7 @@ describe('IdentityService 2fa step-up teardown', () => {
     const svc = buildService({ events, trustedDevices, sessions });
 
     await svc.disableTwoFactor(
-      { password: 'rightpass1', code: '123456' },
+      { password: 'rightpass1', code: '123456', method: 'live' },
       { cookie: 'better-auth.session_token=live' },
       new Headers(),
     );
@@ -1482,7 +1504,7 @@ describe('IdentityService 2fa step-up teardown', () => {
 
     await expect(
       svc.disableTwoFactor(
-        { password: 'rightpass1', code: '000000' },
+        { password: 'rightpass1', code: '000000', method: 'live' },
         { cookie: 'better-auth.session_token=live' },
         new Headers(),
       ),
@@ -1543,6 +1565,196 @@ describe('IdentityService 2fa step-up teardown', () => {
     expect(result.backupCodes).toEqual(['aaaaa-bbbbb']);
     expect(verifyTotpMock).toHaveBeenCalled();
     expect(await trustedDevices.isTrusted(account.id, BROWSER_UA)).toBe(false);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.backup_codes_regenerated',
+      expect.objectContaining({ stepUpMethod: 'totp' }),
+    );
+  });
+
+  // The whole point of the recovery set: the account that reaches for it is the one
+  // whose enrolled method is gone, so the step-up has to take the code it can present.
+  it('disableTwoFactor accepts a backup code in place of the enrolled method', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    await seedCredential(account.id);
+    passwordVerifyMock.mockResolvedValue(true);
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    verifyBackupCodeMock.mockResolvedValue(okResponse());
+    disableTwoFactorMock.mockResolvedValue(okResponse());
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await svc.disableTwoFactor(
+      { password: 'rightpass1', code: 'aaaaa-bbbbb', method: 'backup_code' },
+      { cookie: 'better-auth.session_token=live' },
+      new Headers(),
+    );
+
+    expect(verifyBackupCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { code: 'aaaaa-bbbbb', trustDevice: false } }),
+    );
+    // The enrolled method never gets consulted - an account on `email`/`sms` would
+    // otherwise have its recovery code checked against a pushed-code endpoint.
+    expect(verifyTotpMock).not.toHaveBeenCalled();
+    expect(disableTwoFactorMock).toHaveBeenCalled();
+    // A teardown authorised by a recovery code has to read differently in the audit
+    // trail from one authorised by the enrolled method.
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.verified',
+      expect.objectContaining({ method: 'backup_code', trustedDevice: false }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.2fa.disabled',
+      expect.objectContaining({ method: 'totp', stepUpMethod: 'backup_code' }),
+    );
+  });
+
+  it('rejects a wrong password without spending the backup code', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    await seedCredential(account.id);
+    passwordVerifyMock.mockResolvedValue(false);
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await expect(
+      svc.disableTwoFactor(
+        { password: 'wrongpass1', code: 'aaaaa-bbbbb', method: 'backup_code' },
+        { cookie: 'better-auth.session_token=live' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(verifyBackupCodeMock).not.toHaveBeenCalled();
+    expect(disableTwoFactorMock).not.toHaveBeenCalled();
+  });
+
+  it('banks a lockout strike for a wrong password on the backup-code path', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    await seedCredential(account.id);
+    passwordVerifyMock.mockResolvedValue(false);
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    const lockout = mock<TwoFactorLockoutService>({
+      assertNotLocked: vi.fn(async () => undefined),
+      recordFailure: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ events, trustedDevices, sessions, twoFactorLockout: lockout });
+
+    await expect(
+      svc.disableTwoFactor(
+        { password: 'wrongpass1', code: 'aaaaa-bbbbb', method: 'backup_code' },
+        { cookie: 'better-auth.session_token=live' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(lockout.recordFailure).toHaveBeenCalledWith(
+      account.id,
+      'backup_code',
+      expect.anything(),
+    );
+  });
+
+  it('does not bank a strike when a concurrent request spent the same backup code', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    await seedCredential(account.id);
+    passwordVerifyMock.mockResolvedValue(true);
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    verifyBackupCodeMock.mockResolvedValue(jsonResponse({ message: 'Conflict' }, 409));
+    const lockout = mock<TwoFactorLockoutService>({
+      assertNotLocked: vi.fn(async () => undefined),
+      recordFailure: vi.fn(async () => undefined),
+    });
+    const svc = buildService({ events, trustedDevices, sessions, twoFactorLockout: lockout });
+
+    await expect(
+      svc.disableTwoFactor(
+        { password: 'rightpass1', code: 'aaaaa-bbbbb', method: 'backup_code' },
+        { cookie: 'better-auth.session_token=live' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(lockout.recordFailure).not.toHaveBeenCalled();
+    expect(disableTwoFactorMock).not.toHaveBeenCalled();
+  });
+
+  it('puts the hyphen back into a backup code typed without it', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    await seedCredential(account.id);
+    passwordVerifyMock.mockResolvedValue(true);
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    verifyBackupCodeMock.mockResolvedValue(okResponse());
+    disableTwoFactorMock.mockResolvedValue(okResponse());
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await svc.disableTwoFactor(
+      { password: 'rightpass1', code: 'aaaaabbbbb', method: 'backup_code' },
+      { cookie: 'better-auth.session_token=live' },
+      new Headers(),
+    );
+
+    expect(verifyBackupCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { code: 'aaaaa-bbbbb', trustDevice: false } }),
+    );
+  });
+
+  it('rejects a wrong backup code before better-auth is asked to disable anything', async () => {
+    const account = await seedUser({ twoFactorEnabled: true });
+    await seedCredential(account.id);
+    passwordVerifyMock.mockResolvedValue(true);
+    const { events, trustedDevices, sessions } = buildTeardownDeps(account.id);
+    verifyBackupCodeMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService({ events, trustedDevices, sessions });
+
+    await expect(
+      svc.disableTwoFactor(
+        { password: 'rightpass1', code: 'zzzzz-zzzzz', method: 'backup_code' },
+        { cookie: 'better-auth.session_token=live' },
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(verifyBackupCodeMock).toHaveBeenCalled();
+    expect(verifyTotpMock).not.toHaveBeenCalled();
+    expect(disableTwoFactorMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('IdentityService.twoFactorStatus backup-code count', () => {
+  const signedInAs = (userId: string) => {
+    getSessionMock.mockResolvedValue({ user: { ...betterAuthUser, id: userId } });
+  };
+
+  it('reports how much of the recovery set is left', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    viewBackupCodesMock.mockResolvedValue({ backupCodes: ['aaaaa-bbbbb', 'ccccc-ddddd'] });
+    signedInAs(account.id);
+
+    const status = await buildService({}).twoFactorStatus({
+      cookie: 'better-auth.session_token=live',
+    });
+
+    expect(status.backupCodesRemaining).toBe(2);
+    expect(viewBackupCodesMock).toHaveBeenCalledWith({ body: { userId: account.id } });
+  });
+
+  // Reporting zero would tell the player to panic about a set that may be intact.
+  it('reports unknown rather than zero when the stored codes cannot be read back', async () => {
+    const account = await seedUser({ twoFactorEnabled: true, twoFactorMethod: 'app' });
+    viewBackupCodesMock.mockRejectedValue(new Error('cannot decrypt'));
+    signedInAs(account.id);
+
+    const status = await buildService({}).twoFactorStatus({
+      cookie: 'better-auth.session_token=live',
+    });
+
+    expect(status.backupCodesRemaining).toBeNull();
+  });
+
+  it('reports no count for an account with no second factor', async () => {
+    const account = await seedUser({ twoFactorEnabled: false });
+    signedInAs(account.id);
+
+    const status = await buildService({}).twoFactorStatus({
+      cookie: 'better-auth.session_token=live',
+    });
+
+    expect(status.enabled).toBe(false);
+    expect(status.backupCodesRemaining).toBeNull();
   });
 });
 
@@ -1560,6 +1772,7 @@ describe('IdentityService.trustCurrentDevice', () => {
     new TrustedDeviceService({
       drizzle: db.drizzle,
       events: makeEventBus(),
+      identityReader: makeIdentityReader(),
       trustedDeviceDays: 30,
     });
 

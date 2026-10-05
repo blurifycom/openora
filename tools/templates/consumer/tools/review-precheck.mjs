@@ -177,6 +177,7 @@ const report = (check, severity, location, detail) =>
 const CAST = /\bas\s+(?!const\b)[A-Za-z_$][\w.$]*(?:<[^>]*>)?(?:\[\])?/;
 const LIMIT_LITERAL = /\b(limit|pageSize|perPage|take)\s*:\s*\d+\b/;
 const LIMIT_CONSTANT = /\b[A-Z][A-Z0-9_]*(LIMIT|PAGE_SIZE|PER_PAGE|MAX_ROWS)\s*=\s*\d+/;
+const TS_ENUM = /^\s*(?:export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+\w/;
 const HAND_MEMO = /\b(useMemo|useCallback|React\.memo|memo)\s*\(/;
 const STRING_LITERAL = /(['"`])((?:\\.|(?!\1).)*)\1/g;
 const CLASS_TOKEN = /^[a-z0-9:!\[\]\-/.%#_]+$/;
@@ -209,6 +210,9 @@ for (const { file, line, text } of added) {
       location,
       `\`${limit[0]}\` - rows past it must stay reachable`,
     );
+  }
+  if (TS_ENUM.test(text)) {
+    report('ts-enum', 'WARN', location, '`enum` - use a values + schema + type triple');
   }
   if (under(config.reactCompilerPaths, file) && HAND_MEMO.test(text)) {
     report(
@@ -388,7 +392,8 @@ const DOMAIN_PATTERNS = {
   compliance: [
     'wallet',
     'ledger',
-    'balance',
+    // Not a hyphenated utility class such as Tailwind's `text-balance`.
+    '(?<!-)balance',
     'deposit',
     'withdraw',
     '\\bkyc\\b',
@@ -407,6 +412,7 @@ const DOMAIN_PATTERNS = {
     '\\baml\\b',
   ],
 };
+const domainHitFiles = new Map();
 for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
   const patterns = [...defaults, ...(config.domainPatterns?.[domain] ?? [])].map(
     (source) => new RegExp(source, 'i'),
@@ -429,6 +435,10 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       }),
     ),
   ];
+  domainHitFiles.set(
+    domain,
+    hits.map((hit) => hit.split(' - ')[0].replace(/:\d+$/, '')),
+  );
   findings.set(`domain:${domain}`, [
     `DOMAIN: ${domain} hits ${hits.length}`,
     ...hits.slice(0, MAX_HITS_PER_DOMAIN).map((hit) => `DOMAIN-HIT: ${domain} ${hit}`),
@@ -436,6 +446,47 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       ? [`DOMAIN-HIT: ${domain} +${hits.length - MAX_HITS_PER_DOMAIN} more`]
       : []),
   ]);
+}
+
+// ---- risk tier ----------------------------------------------------------------------------
+// Picks the reviewer's effort from what the diff touches, never from the title or its size:
+// a 30-line change can still add a route, a table, or a migration.
+
+const BACKEND_PATHS = [
+  /(^|\/)(apps\/api|api|server|schema|drizzle|migrations?|migrate|seeds?|contracts?|routers?|routes?|services?|middleware)(\/|\.|$)/,
+  /(^|\/)(extensions?|plugins?|jobs?|workers?)\//,
+  /-contract\//,
+  /\.sql$/,
+  /(^|\/)(\.env|env\.ts|Dockerfile|package\.json$)/,
+  /(^|\/)\.github\/workflows\//,
+];
+const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.[cm]?[jt]s$/];
+
+const E2E_PATH = /(^|\/)e2e\//;
+const isBackend = (path) => BACKEND_PATHS.some((re) => re.test(path));
+const isLogic = (path) => !E2E_PATH.test(path) && FRONTEND_LOGIC_PATHS.some((re) => re.test(path));
+
+// A security keyword in a component or a layout ("session" in a skeleton, an `href`) says little;
+// the same keyword in a service, a router, or a hook is where the risk lives. Compliance keywords
+// stay strong on any screen (an RG or KYC page), and e2e page objects never raise the tier.
+function riskTier() {
+  // A path hit on a doc or an asset (`docs/wallet.md`) is not code that moves money.
+  const compliance = domainHitFiles
+    .get('compliance')
+    .filter((path) => !E2E_PATH.test(path) && CODE_FILE.test(path));
+  if (compliance.length > 0)
+    return `critical - compliance hits ${compliance.length} in ${compliance[0]}`;
+  const security = domainHitFiles
+    .get('security')
+    .filter((path) => isBackend(path) || isLogic(path));
+  if (security.length > 0) return `high - security hits ${security.length} in ${security[0]}`;
+  const backend = reviewable.find(isBackend);
+  if (backend) return `high - ${backend} is server-side`;
+  const logic = reviewable.find(isLogic);
+  if (logic) return `medium - ${logic} is client logic`;
+  const keyword = [...domainHitFiles.values()].flat().find((path) => !E2E_PATH.test(path));
+  if (keyword) return `medium - domain keyword in ${keyword}`;
+  return 'low - components, styles, or copy only';
 }
 
 // ---- output --------------------------------------------------------------------------------
@@ -462,6 +513,7 @@ const reviewableChanged = reviewable.reduce(
 console.log(
   `SCOPE: files ${scoped.length} lines +${totals.added}/-${totals.deleted} reviewable ${reviewable.length} (${reviewableChanged} changed lines) skipped ${skipped.length} mode ${mode}`,
 );
+console.log(`RISK: ${riskTier()}`);
 notes.forEach((note) => console.log(note));
 reviewable.forEach((path) =>
   console.log(`REVIEWABLE: ${path} +${lines(path).added}/-${lines(path).deleted}`),

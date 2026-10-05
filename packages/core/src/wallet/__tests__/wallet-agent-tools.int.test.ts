@@ -361,7 +361,13 @@ describe('hold_withdrawal through the MCP kernel (real PG)', () => {
         actorId: adminId,
         action: 'wallet.withdrawal.held',
         resourceId: withdrawal.id,
-        after: { status: 'on_hold', reason: HOLD_REASON, proposalId: proposal.proposalId },
+        after: {
+          userId: player.userId,
+          transactionId: withdrawal.id,
+          status: 'on_hold',
+          reason: HOLD_REASON,
+          proposalId: proposal.proposalId,
+        },
       }),
     );
   });

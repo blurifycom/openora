@@ -57,6 +57,31 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
+// Withdrawals here are far below the default KYC triggers, so a test that needs KYC to be
+// required lowers the single-withdrawal threshold for its duration.
+async function withKycWithdrawalThreshold(
+  admin: Awaited<ReturnType<typeof asAdmin>>,
+  withdrawalThreshold: string,
+  run: () => Promise<void>,
+) {
+  const set = async (value: string | null) => {
+    const current = await readJson(await admin.get('/compliance/global-kyc'));
+    const res = await admin.put('/compliance/global-kyc', {
+      enabled: true,
+      withdrawalThreshold: value,
+      confirm: true,
+      expectedUpdatedAt: current.updatedAt,
+    });
+    expect(res.status).toBe(200);
+  };
+  await set(withdrawalThreshold);
+  try {
+    await run();
+  } finally {
+    await set(null);
+  }
+}
+
 async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, userId: string) {
   await container
     .get(DRIZZLE)
@@ -360,12 +385,17 @@ describe('KYC withdrawal gate (gated stack)', () => {
     });
     expect(depositRes.status).toBe(200);
 
-    const blockedRes = await client.post('/wallet/withdraw', {
-      idempotencyKey: randomUUID(),
-      amount: '0.5',
-      currency: 'USD',
+    await withKycWithdrawalThreshold(admin, '0.1', async () => {
+      const blockedRes = await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '0.5',
+        currency: 'USD',
+      });
+      expect(blockedRes.status).toBe(409);
+      expect(await readJson(await client.get('/wallet/balance'))).toMatchObject({
+        balance: '2.000000000000000000',
+      });
     });
-    expect(blockedRes.status).toBe(409);
 
     const overrideRes = await admin.post(`/compliance/players/${userId}/kyc/override`, {
       tier: 'basic',

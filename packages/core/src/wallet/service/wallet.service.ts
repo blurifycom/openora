@@ -17,9 +17,12 @@ import {
   moneyAdd,
   moneyCompare,
   moneySubtract,
+  moneyScaleBy,
+  escapeLike,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  UuidSchema,
   RgLimitExceededError,
   DEFAULT_PAYMENT_PROVIDER,
   PaymentRejectedError,
@@ -34,8 +37,11 @@ import {
   type WalletRail,
   railFor as sharedRailFor,
   resolveExchangeRatePivot,
+  resolveWalletReferenceCurrency,
+  type Player,
   type PlayerTags,
   type RgLimitsPort,
+  type KycWithdrawalPolicy,
   type ExchangeRateReader,
   type AuditWritePort,
   type TagEvaluationCommands,
@@ -47,8 +53,25 @@ import {
   type PaginationOptions,
   type WalletProviderRef,
   type ActionExecutionContext,
+  type WalletTransactionType,
+  type WalletTransactionStatus,
+  type BonusGrantLedgerReader,
 } from '@openora/core/contracts';
-import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
+import {
+  eq,
+  asc,
+  desc,
+  sql,
+  and,
+  gte,
+  lte,
+  count,
+  inArray,
+  notInArray,
+  isNull,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
@@ -81,6 +104,7 @@ import type {
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
+  WalletTransactionListQuery,
   WalletAsset,
   PublicWalletAsset,
   CreateWalletAssetInput,
@@ -88,10 +112,22 @@ import type {
   ManualAdjustmentDirection,
   WithdrawalAddress,
   CreateWithdrawalAddressInput,
+  WalletReferenceConversion,
 } from '../contract/index.js';
 import { OPEN_WITHDRAWALS_LIMIT } from '../contract/index.js';
 
 const logger = createLogger('wallet');
+
+// Filed under the player so the player-scoped audit view finds it; `after.transactionId`
+// keeps the withdrawal link. Falls back to the withdrawal when no player backs the wallet.
+function withdrawalAuditSubject(
+  playerId: Player['id'] | null,
+  transactionId: WalletTransaction['id'],
+) {
+  return playerId
+    ? { resourceType: 'player', resourceId: playerId }
+    : { resourceType: 'withdrawal', resourceId: transactionId };
+}
 
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
@@ -103,6 +139,14 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
 
+export const WalletReferenceRateUnavailableError = createDomainError<
+  [currency: string, referenceCurrency: string]
+>(
+  'WalletReferenceRateUnavailableError',
+  (currency, referenceCurrency) =>
+    `no fresh ${currency}/${referenceCurrency} exchange rate to record this transaction's reference value`,
+);
+
 export const WithdrawalNotPendingError = makeConflictError(
   'WithdrawalNotPendingError',
   'Withdrawal is not pending and cannot be reviewed',
@@ -111,6 +155,14 @@ export const WithdrawalNotPendingError = makeConflictError(
 export const KycRequiredError = makeConflictError(
   'KycRequiredError',
   'KYC verification required before withdrawal',
+);
+
+export const WithdrawalAmountNotAboveFeeError = createDomainError<
+  [amount: string, fee: string, currency: string]
+>(
+  'WithdrawalAmountNotAboveFeeError',
+  (amount, fee, currency) =>
+    `Withdrawal of ${amount} ${currency} does not exceed the ${fee} ${currency} network fee`,
 );
 
 export const IdempotencyKeyReuseError = makeConflictError(
@@ -216,6 +268,9 @@ export const BelowMinimumDepositError = createDomainError(
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
+const isKycPassed = (status: KycStatus | null) =>
+  status !== null && KYC_PASS_STATUSES.has(normalizeKycStatus(status));
+
 export const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
   (address, network) =>
@@ -252,6 +307,7 @@ const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 type WithdrawalAsset = {
   network: string;
   minWithdrawal: string;
+  withdrawalFee?: string;
   withdrawalEnabled: boolean;
 };
 
@@ -303,12 +359,36 @@ export function assertAboveMinimumWithdrawal(
   currency: string,
   network: string | null,
 ): void {
-  const asset = assets.find(
-    (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
-  );
+  const asset = payableAsset(assets, network);
   if (asset && moneyCompare(amount, asset.minWithdrawal) < 0) {
     throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
   }
+}
+
+function payableAsset(assets: readonly WithdrawalAsset[], network: string | null) {
+  return assets.find(
+    (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
+  );
+}
+
+/**
+ * The network fee kept from a withdrawal: the player is debited `amount` and the provider pays
+ * out `amount - fee`, so the operator never funds the fee. `null` when the network charges none.
+ */
+export function withdrawalFeeFor(
+  assets: readonly WithdrawalAsset[],
+  amount: string,
+  currency: string,
+  network: string | null,
+): string | null {
+  const fee = payableAsset(assets, network)?.withdrawalFee;
+  if (fee === undefined || moneyCompare(fee, '0') <= 0) {
+    return null;
+  }
+  if (moneyCompare(amount, fee) <= 0) {
+    throw new WithdrawalAmountNotAboveFeeError(amount, fee, currency);
+  }
+  return fee;
 }
 
 type DepositAsset = {
@@ -503,6 +583,40 @@ const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
 
 const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', 'manual_debit']);
 
+// Columns of the history UNION in `getTransactions`, as the driver returns them: numerics as
+// strings, timestamps as Postgres text.
+type TransactionHistoryRow = {
+  id: string;
+  type: WalletTransactionType;
+  amount: string;
+  currency: string;
+  network: string | null;
+  status: WalletTransactionStatus;
+  direction: ManualAdjustmentDirection | null;
+  created_at: string;
+  rail: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_reason: string | null;
+  reference_currency: string | null;
+  reference_amount: string | null;
+  reference_rate: string | null;
+  reference_rate_as_of: string | null;
+  provider_ref_id: string | null;
+  tx_hash: string | null;
+  fee: string | null;
+};
+
+const TX_SORT_COLUMNS = {
+  createdAt: 'created_at',
+  amount: 'amount',
+  type: 'type',
+  status: 'status',
+  currency: 'currency',
+  rail: 'rail',
+  reviewedAt: 'reviewed_at',
+} as const satisfies Record<WalletTransactionSortBy, keyof TransactionHistoryRow>;
+
 function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
   return [
@@ -514,6 +628,8 @@ function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   ].join('-');
 }
 
+const EVM_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+
 // ponytail: a flat threshold - a starter heuristic, not a compliance risk engine. Auto-approval
 // reads it in the fx pivot; the review-queue tag still compares the raw amount, so it is only
 // a display hint there. Revisit with a real risk service if/when one exists.
@@ -522,6 +638,10 @@ const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
+// A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation
+// must not send the player's next small withdrawal to the manual queue. An admin rejection
+// still counts: it is a human judgement on this player and leaves no risk tag behind.
+const VELOCITY_IGNORED_STATUSES = ['failed', 'cancelled'] as const;
 
 // A withdrawal still waiting on a decision: the queue summary counts and totals only these, and
 // an admin may approve or reject only these.
@@ -560,7 +680,8 @@ function playerWithdrawal(userId: User['id'], withdrawalId: WalletTransaction['i
 type AutoApprovalDecision = {
   threshold: string;
   thresholdSource: 'per-player' | 'global';
-  kycStatus: KycStatus;
+  kycRequired: boolean;
+  kycStatus: KycStatus | null;
   riskTagsEvaluated: TagKey[];
   effectiveExcludeTags: TagKey[];
   // The withdrawal's value in `pivotCurrency`, the unit of `threshold`, the daily amount cap
@@ -579,12 +700,39 @@ type AutoApprovalGates = Pick<
   AutoApprovalDecision,
   | 'threshold'
   | 'thresholdSource'
+  | 'kycRequired'
   | 'kycStatus'
   | 'riskTagsEvaluated'
   | 'effectiveExcludeTags'
   | 'pivotAmount'
   | 'pivotCurrency'
 >;
+
+type ReferenceSnapshot = Pick<
+  WalletTransaction,
+  'referenceCurrency' | 'referenceAmount' | 'referenceRate' | 'referenceRateAsOf'
+>;
+
+function payoutAmount(tx: Pick<WalletTransaction, 'amount' | 'fee'>): string {
+  return tx.fee === null ? tx.amount : moneySubtract(tx.amount, tx.fee);
+}
+
+function toReferenceDto(row: ReferenceSnapshot): WalletReferenceConversion | null {
+  if (
+    row.referenceCurrency === null ||
+    row.referenceAmount === null ||
+    row.referenceRate === null ||
+    row.referenceRateAsOf === null
+  ) {
+    return null;
+  }
+  return {
+    currency: row.referenceCurrency,
+    amount: row.referenceAmount,
+    rate: row.referenceRate,
+    rateAsOf: row.referenceRateAsOf.toISOString(),
+  };
+}
 
 type DepositAddressResult = {
   address: string;
@@ -665,6 +813,10 @@ export type WalletServiceDeps = {
   // Optional: bound by the fx module. Auto-approval thresholds and caps are denominated in
   // the fx pivot; without a reader, a withdrawal in any other currency is never auto-approved.
   rates?: ExchangeRateReader;
+  // Optional: bound by compliance. Absent = every gated withdrawal requires KYC (fail closed).
+  kycPolicy?: KycWithdrawalPolicy;
+  // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
+  grantLedger?: BonusGrantLedgerReader;
 };
 
 /**
@@ -689,6 +841,9 @@ export class WalletService {
   private readonly audit: AuditWritePort;
   private readonly rgLimits?: RgLimitsPort;
   private readonly rates?: ExchangeRateReader;
+  private readonly kycPolicy?: KycWithdrawalPolicy;
+
+  private readonly grantLedger?: BonusGrantLedgerReader;
 
   constructor({
     drizzle,
@@ -704,6 +859,8 @@ export class WalletService {
     audit,
     rgLimits,
     rates,
+    kycPolicy,
+    grantLedger,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -718,6 +875,8 @@ export class WalletService {
     this.audit = audit;
     this.rgLimits = rgLimits;
     this.rates = rates;
+    this.kycPolicy = kycPolicy;
+    this.grantLedger = grantLedger;
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -727,6 +886,7 @@ export class WalletService {
       .select({
         network: walletAsset.network,
         minWithdrawal: walletAsset.minWithdrawal,
+        withdrawalFee: walletAsset.withdrawalFee,
         withdrawalEnabled: walletAsset.withdrawalEnabled,
       })
       .from(walletAsset)
@@ -817,20 +977,65 @@ export class WalletService {
     return { providerName, adapter };
   }
 
+  /**
+   * The ledger row's value in the player's reference currency, at a rate that is fresh now.
+   * Fails closed: without a rate the reader will vouch for, the row is not written at all
+   * rather than written without its conversion.
+   */
+  private async referenceSnapshot(
+    tx: DrizzleDb | DrizzleTx,
+    userId: User['id'],
+    amount: string,
+    currency: string,
+  ) {
+    const referenceCurrency =
+      (await this.rgLimits?.referenceCurrency(tx, userId)) ??
+      resolveWalletReferenceCurrency(this.platformConfig?.wallet);
+    const quote =
+      currency.toUpperCase() === referenceCurrency
+        ? { rate: '1', asOf: new Date().toISOString() }
+        : await this.rates?.getRate(currency, referenceCurrency);
+    if (!quote) {
+      throw new WalletReferenceRateUnavailableError(currency, referenceCurrency);
+    }
+    return {
+      referenceCurrency,
+      referenceAmount: moneyScaleBy(amount, quote.rate),
+      referenceRate: quote.rate,
+      referenceRateAsOf: new Date(quote.asOf),
+    };
+  }
+
   private rateLimit(userId: User['id']) {
     return this.limiter
       ? assertRateLimit(this.limiter, `wallet-mutation:${userId}`, WALLET_MUTATION_RATE_LIMIT)
       : Promise.resolve();
   }
 
-  private async assertKycForWithdrawal(userId: User['id']) {
+  // `kyc.gateWithdrawals` is the operator's master switch; once on, the compliance policy
+  // decides per withdrawal. Runs before any debit, so a refused withdrawal moves no funds.
+  private async assertKycForWithdrawal(userId: User['id'], amount: string, currency: string) {
     if (!this.platformConfig?.kyc?.gateWithdrawals) {
       return;
     }
-    const status = await this.autoApprovalKycStatus(userId);
-    if (!status || !KYC_PASS_STATUSES.has(normalizeKycStatus(status))) {
+    const pivotCurrency = resolveExchangeRatePivot(this.platformConfig.exchangeRate);
+    const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
+    if (!(await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency))) {
+      return;
+    }
+    if (!isKycPassed(await this.autoApprovalKycStatus(userId))) {
       throw new KycRequiredError();
     }
+  }
+
+  private withdrawalNeedsKyc(
+    userId: User['id'],
+    pivotAmount: string | null,
+    pivotCurrency: string,
+  ): Promise<boolean> {
+    return this.kycPolicy
+      ? this.kycPolicy.requiresKycForWithdrawal({ userId, pivotAmount, pivotCurrency })
+      : Promise.resolve(true);
   }
 
   getBalance(userId: User['id']) {
@@ -1009,6 +1214,7 @@ export class WalletService {
 
         const { row } = await this.insertIdempotentTransaction(txn, {
           namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
+          userId,
           walletId: holder.id,
           rawIdempotencyKey: idempotencyKey,
           amount,
@@ -1136,6 +1342,7 @@ export class WalletService {
 
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
         namespace: MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE,
+        userId,
         walletId: walletRecord.id,
         rawIdempotencyKey: idempotencyKey,
         amount,
@@ -1186,8 +1393,8 @@ export class WalletService {
         actorId: adminId,
         actorType: 'admin',
         action: 'wallet.manual_adjustment.created',
-        resourceType: 'wallet_transaction',
-        resourceId: row.id,
+        resourceType: 'player',
+        resourceId: playerId,
         before: { balance: balanceBefore, currency },
         after: {
           balance: balance.amount,
@@ -1196,6 +1403,7 @@ export class WalletService {
           direction,
           amount,
           reason,
+          reference: toReferenceDto(row),
         },
         ip,
         userAgent,
@@ -1318,6 +1526,7 @@ export class WalletService {
     txn: DrizzleTx,
     {
       namespace,
+      userId,
       walletId,
       rawIdempotencyKey,
       amount,
@@ -1325,6 +1534,7 @@ export class WalletService {
       values,
     }: {
       namespace: string;
+      userId: User['id'];
       walletId: Wallet['id'];
       rawIdempotencyKey: string | undefined;
       amount: string;
@@ -1332,7 +1542,10 @@ export class WalletService {
       // `direction` is nullable on the column (historical rows predate it) but every
       // new insert must set it explicitly - narrowed to required+non-null here so a
       // caller that forgets it fails to typecheck instead of writing another NULL row.
-      values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey' | 'direction'> & {
+      values: Omit<
+        typeof walletTransaction.$inferInsert,
+        'idempotencyKey' | 'direction' | keyof ReferenceSnapshot
+      > & {
         direction: ManualAdjustmentDirection;
       };
     },
@@ -1341,9 +1554,10 @@ export class WalletService {
       ? namespacedIdempotencyKey(namespace, rawIdempotencyKey)
       : undefined;
 
+    const reference = await this.referenceSnapshot(txn, userId, amount, currency);
     const insertQuery = txn
       .insert(walletTransaction)
-      .values({ ...values, idempotencyKey: idempotencyKey ?? null });
+      .values({ ...values, ...reference, idempotencyKey: idempotencyKey ?? null });
     const [row] = idempotencyKey
       ? await insertQuery.onConflictDoNothing().returning()
       : await insertQuery.returning();
@@ -1397,13 +1611,14 @@ export class WalletService {
     destinationTag?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    await this.assertKycForWithdrawal(userId);
+    await this.assertKycForWithdrawal(userId, amount, currency);
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
     const assets = await this.assetsForCurrency(currency);
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
+    const fee = withdrawalFeeFor(assets, amount, currency, settlementNetwork);
     const destinationWalletId = await this.requireWhitelistedWalletId(
       userId,
       currency,
@@ -1440,6 +1655,7 @@ export class WalletService {
 
         const { row, replayed } = await this.insertIdempotentTransaction(txn, {
           namespace: WITHDRAW_IDEMPOTENCY_NAMESPACE,
+          userId,
           walletId: current.id,
           rawIdempotencyKey: idempotencyKey,
           amount,
@@ -1456,6 +1672,7 @@ export class WalletService {
             destinationAddress: destinationAddress ?? null,
             destinationTag: destinationTag ?? null,
             destinationWalletId,
+            fee,
           },
         });
 
@@ -1520,16 +1737,42 @@ export class WalletService {
   }
 
   /**
-   * The withdrawal-type + status/currency/rail/amount/date conditions shared by the queue
+   * One search term against the three things an admin pastes into the queue: a user id or a
+   * destination address (both exact, so both stay on an index), or an email or username
+   * fragment resolved through the directory to a capped userId set. EVM addresses are hex, so
+   * their case carries no meaning and is ignored; every other chain's address is case-sensitive.
+   */
+  private async withdrawalSearchCondition(search: string): Promise<SQL> {
+    const sameAddressIgnoringCase = sql`lower(${walletTransaction.destinationAddress}) = ${search.toLowerCase()}`;
+    const matches = [
+      EVM_ADDRESS_PATTERN.test(search)
+        ? sameAddressIgnoringCase
+        : sql`(${sameAddressIgnoringCase} and ${walletTransaction.destinationAddress} = ${search})`,
+    ];
+    if (UuidSchema.safeParse(search).success) {
+      matches.push(eq(wallet.userId, search));
+    }
+    const userIds = this.directory ? await this.directory.findPlayerIds(search) : [];
+    if (userIds.length > 0) {
+      matches.push(inArray(wallet.userId, userIds));
+    }
+    return sql`(${sql.join(matches, sql` or `)})`;
+  }
+
+  /**
+   * The withdrawal-type + status/search/currency/rail/amount/date conditions shared by the queue
    * list and its summary. Excludes the KYC filter: that one needs the player directory, so
    * each caller resolves it against its own data shape (row-level for the list, a bounded
    * userId set for the summary's SQL aggregate).
    */
-  private withdrawalConditions(
+  private async withdrawalConditions(
     filters: WithdrawalQueueSummaryFilter & Pick<WithdrawalQueueFilter, 'status'>,
     statuses?: readonly WalletTransaction['status'][],
   ) {
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
+    if (filters.search) {
+      conditions.push(await this.withdrawalSearchCondition(filters.search));
+    }
     if (filters.status) {
       conditions.push(eq(walletTransaction.status, filters.status));
     }
@@ -1572,7 +1815,7 @@ export class WalletService {
     }: { statuses?: readonly WalletTransaction['status'][]; withPlayers: boolean },
   ) {
     const db = this.drizzle.db;
-    const conditions = this.withdrawalConditions(filters, statuses);
+    const conditions = await this.withdrawalConditions(filters, statuses);
 
     // Bounded queue: fetch all SQL-matching rows, then enrich + kycStatus-filter + paginate in memory,
     // else DB-side pagination makes `total` wrong once kycStatus prunes.
@@ -1648,7 +1891,7 @@ export class WalletService {
       }
     }
 
-    const conditions = this.withdrawalConditions(filters, QUEUED_WITHDRAWAL_STATUSES);
+    const conditions = await this.withdrawalConditions(filters, QUEUED_WITHDRAWAL_STATUSES);
     if (kycUserIds) {
       conditions.push(inArray(wallet.userId, kycUserIds));
     }
@@ -1721,6 +1964,7 @@ export class WalletService {
         playerId: summary?.playerId ?? null,
         username: summary?.username ?? '',
         amount: r.tx.amount,
+        fee: r.tx.fee,
         currency: r.tx.currency,
         network: r.tx.network,
         rail: r.tx.rail ?? null,
@@ -1808,12 +2052,14 @@ export class WalletService {
     meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const amount = tx.amount;
     // `approved` is admin-attributed; the system auto path skips it - its trail is the
     // AUDIT_WRITER entry plus the shared `completed` event below.
     if (adminId) {
       this.events.emit('wallet.withdrawal.approved', {
         userId,
+        playerId,
         amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -1833,7 +2079,8 @@ export class WalletService {
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
-      result = await adapter.processWithdrawal(amount, tx.currency, {
+      // The fee stays with the operator: the player was debited `amount`, the payout is net of it.
+      result = await adapter.processWithdrawal(payoutAmount(tx), tx.currency, {
         transactionId: tx.id,
         userId,
         rail: tx.rail,
@@ -1851,7 +2098,7 @@ export class WalletService {
     } catch (err) {
       if (err instanceof PaymentRejectedError) {
         // The vendor refused it, so no payout exists - mark failed and return the held funds.
-        await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+        await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
         throw err;
       }
       // A timeout or dropped connection looks exactly like a lost response to a payout the
@@ -1866,9 +2113,8 @@ export class WalletService {
           actorType: adminId ? 'admin' : 'system',
           actorId: adminId,
           action: 'wallet.withdrawal.outcome_unknown',
-          resourceType: 'withdrawal',
-          resourceId: tx.id,
-          after: { userId, amount, currency: tx.currency, providerName },
+          ...withdrawalAuditSubject(playerId, tx.id),
+          after: { userId, transactionId: tx.id, amount, currency: tx.currency, providerName },
         });
       } catch (auditErr) {
         logger.error({ err: auditErr, transactionId: tx.id }, 'outcome_unknown audit write failed');
@@ -1877,7 +2123,7 @@ export class WalletService {
     }
 
     if (result.status === 'failed') {
-      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
       return { transactionId: tx.id, status: 'failed' };
     }
 
@@ -1912,7 +2158,7 @@ export class WalletService {
     }
     this.events.emit('wallet.withdrawal.completed', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       amount,
       currency: tx.currency,
       transactionId: tx.id,
@@ -1925,11 +2171,13 @@ export class WalletService {
     tx,
     adminId,
     userId,
+    playerId,
     amount,
   }: {
     tx: WalletTransaction;
     adminId: User['id'] | null;
     userId: User['id'];
+    playerId: Player['id'] | null;
     amount: string;
   }): Promise<void> {
     const transitioned = await this.drizzle.db.transaction(async (txn) => {
@@ -1949,9 +2197,8 @@ export class WalletService {
         actorType: adminId ? 'admin' : 'system',
         actorId: adminId,
         action: 'wallet.withdrawal.failed',
-        resourceType: 'withdrawal',
-        resourceId: tx.id,
-        after: { userId, amount, currency: tx.currency, reason: null },
+        ...withdrawalAuditSubject(playerId, tx.id),
+        after: { userId, transactionId: tx.id, amount, currency: tx.currency, reason: null },
       });
       return true;
     });
@@ -1961,6 +2208,7 @@ export class WalletService {
     if (transitioned) {
       this.events.emit('wallet.withdrawal.failed', {
         userId,
+        playerId,
         amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -1995,6 +2243,7 @@ export class WalletService {
     }
 
     const userId = await this.userIdForWallet(tx.walletId);
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
     if (status === 'completed') {
       const updated = await this.drizzle.db
@@ -2007,7 +2256,7 @@ export class WalletService {
       }
       this.events.emit('wallet.withdrawal.completed', {
         userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        playerId,
         amount: tx.amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -2016,7 +2265,13 @@ export class WalletService {
     }
 
     if (status === 'failed') {
-      await this.finalizeFailedWithdrawal({ tx, adminId: null, userId, amount: tx.amount });
+      await this.finalizeFailedWithdrawal({
+        tx,
+        adminId: null,
+        userId,
+        playerId,
+        amount: tx.amount,
+      });
     }
   }
 
@@ -2055,6 +2310,10 @@ export class WalletService {
             txn,
           );
           if (caps.exceeded) {
+            logger.info(
+              { userId: args.userId, walletId: args.walletId, gate: 'daily_cap' },
+              'auto-withdrawal skipped',
+            );
             return null;
           }
           const tx = await this.flipToProcessing({
@@ -2085,10 +2344,13 @@ export class WalletService {
         await this.audit.record({
           actorType: 'system',
           action: 'wallet.withdrawal.auto_approved',
-          resourceType: 'wallet_transaction',
-          resourceId: args.transactionId,
+          ...withdrawalAuditSubject(
+            await this.identityReader.getPlayerIdByUserIdSafe(args.userId),
+            args.transactionId,
+          ),
           after: {
             userId: args.userId,
+            transactionId: args.transactionId,
             amount: args.amount,
             currency: args.currency,
             ...decision,
@@ -2142,26 +2404,33 @@ export class WalletService {
     walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<AutoApprovalGates | null> {
+    // Every gate fails closed; the log names the one that did, so a manual-queue withdrawal is explainable.
+    const skip = (gate: string): null => {
+      logger.info({ userId, walletId, gate }, 'auto-withdrawal skipped');
+      return null;
+    };
     const cfg = this.platformConfig?.autoWithdrawal;
     if (!cfg?.enabled) {
-      return null;
+      return skip('disabled');
     }
     const threshold = await this.resolveAutoThreshold(userId, rail);
     if (!threshold || moneyCompare(threshold.value, '0') <= 0) {
-      return null;
+      return skip('no_threshold');
     }
     // One threshold serves every currency on the rail, so it is read in the fx pivot. A raw
     // comparison let 0.4 BTC clear a threshold of 1 that was written with a stablecoin in mind.
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
     if (pivotAmount === null || moneyCompare(pivotAmount, threshold.value) > 0) {
-      return null;
+      return skip('over_threshold');
     }
 
-    // Independent of kyc.gateWithdrawals: auto-approval always demands a passing status; anything else fails closed.
+    // Independent of kyc.gateWithdrawals: auto-approval follows the compliance policy even when
+    // the request itself was not gated, so a required-but-missing KYC always goes to a human.
+    const kycRequired = await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency);
     const kycStatus = await this.autoApprovalKycStatus(userId);
-    if (!kycStatus || !KYC_PASS_STATUSES.has(normalizeKycStatus(kycStatus))) {
-      return null;
+    if (kycRequired && !isKycPassed(kycStatus)) {
+      return skip('kyc');
     }
 
     const effectiveExcludeTags = threshold.config.excludeRiskFlags;
@@ -2169,20 +2438,21 @@ export class WalletService {
     const riskTags = await this.autoApprovalRiskTags(userId, effectiveExcludeTags);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
     if (riskTags === null) {
-      return null;
+      return skip('risk_tags_unavailable');
     }
     if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
-      return null;
+      return skip('risk_tag');
     }
 
     const heuristics = await this.autoApprovalHeuristics({ walletId, amount: pivotAmount });
     if (heuristics.largeAmount || heuristics.highFrequency) {
-      return null;
+      return skip('heuristics');
     }
 
     return {
       threshold: threshold.value,
       thresholdSource: threshold.source,
+      kycRequired,
       kycStatus,
       riskTagsEvaluated: riskTags,
       effectiveExcludeTags,
@@ -2545,6 +2815,7 @@ export class WalletService {
           eq(walletTransaction.type, 'withdrawal'),
           gte(walletTransaction.createdAt, since),
           inArray(walletTransaction.walletId, walletIds),
+          notInArray(walletTransaction.status, [...VELOCITY_IGNORED_STATUSES]),
         ),
       )
       .groupBy(walletTransaction.walletId);
@@ -2689,6 +2960,7 @@ export class WalletService {
     const userId = await this.userIdForWallet(tx.walletId);
     this.events.emit('wallet.withdrawal.rejected', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       amount: tx.amount,
       currency: tx.currency,
       transactionId: tx.id,
@@ -2736,6 +3008,7 @@ export class WalletService {
     reason: string;
     proposalId: ActionExecutionContext['proposalId'];
   }) {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     return this.drizzle.db.transaction(async (txn) => {
       const current = findOneOrThrow(
         await txn
@@ -2765,56 +3038,101 @@ export class WalletService {
         actorId: adminId,
         actorType: 'admin',
         action: 'wallet.withdrawal.held',
-        resourceType: 'withdrawal',
-        resourceId: withdrawalId,
+        ...withdrawalAuditSubject(playerId, withdrawalId),
         before: { status: 'pending' },
-        after: { status: 'on_hold', reason, proposalId },
+        after: { userId, transactionId: withdrawalId, status: 'on_hold', reason, proposalId },
       });
       return { changed: true };
     });
   }
 
+  /**
+   * The player's history: their ledger rows and, when `includeGrants`, the bonus grants they
+   * received (a bonus, gift or rain credit lands on a grant, never on the ledger). Both halves
+   * are one UNION ALL, so every filter, the sort and the page apply to the whole history in SQL.
+   */
   async getTransactions({
     userId,
     page,
     limit,
     sortBy,
     sortOrder,
+    types,
+    statuses,
+    currencies,
+    from,
+    to,
+    search,
     includeInternal = false,
+    includeGrants = false,
   }: PaginationOptions<
-    { userId: User['id']; includeInternal?: boolean },
+    { userId: User['id']; includeInternal?: boolean; includeGrants?: boolean } & Omit<
+      WalletTransactionListQuery,
+      'page' | 'limit' | 'sortBy' | 'sortOrder'
+    >,
     WalletTransactionSortBy
   >) {
-    const db = this.drizzle.db;
+    const t = walletTransaction;
+    const ledgerRows = sql`
+      select ${t.id} as id, ${t.type}::text as type, ${t.amount} as amount,
+        ${t.currency} as currency, ${t.network} as network, ${t.status}::text as status,
+        ${t.direction}::text as direction, ${t.createdAt} as created_at, ${t.rail}::text as rail,
+        ${t.reviewedBy} as reviewed_by, ${t.reviewedAt} as reviewed_at,
+        ${t.reviewReason} as review_reason, ${t.referenceCurrency} as reference_currency,
+        ${t.referenceAmount} as reference_amount, ${t.referenceRate} as reference_rate,
+        ${t.referenceRateAsOf} as reference_rate_as_of, ${t.providerRefId} as provider_ref_id,
+        ${t.txHash} as tx_hash, ${t.fee} as fee
+      from ${t}
+      where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
+    // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
+    const grantQuery =
+      includeGrants && this.grantLedger
+        ? (this.grantLedger.ledgerRowsQuery(userId) as SQL)
+        : undefined;
+    const grantRows = grantQuery
+      ? sql`
+      union all
+      select g.id, g.type, g.amount, g.currency, null, g.status, 'credit', g.created_at, null,
+        null, null, null, null, null, null, null, null, null, null
+      from (${grantQuery}) g`
+      : sql``;
+    const history = sql`(${ledgerRows} ${grantRows}) as history`;
 
-    const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!walletRecord) {
-      return { items: [], total: 0, page, limit };
+    const conditions: SQL[] = [];
+    if (types?.length) {
+      conditions.push(sql`type = any(${sql.param(types)}::text[])`);
     }
-    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
-    const TX_SORT_COLS = {
-      createdAt: walletTransaction.createdAt,
-      amount: walletTransaction.amount,
-      type: walletTransaction.type,
-      status: walletTransaction.status,
-      currency: walletTransaction.currency,
-      rail: walletTransaction.rail,
-      reviewedAt: walletTransaction.reviewedAt,
-    } as const;
-    const col = TX_SORT_COLS[sortBy ?? 'createdAt'];
-    const where = eq(walletTransaction.walletId, walletRecord.id);
-    const [txs, [{ n }]] = await Promise.all([
-      db
-        .select()
-        .from(walletTransaction)
-        .where(where)
-        .orderBy(dir(col), desc(walletTransaction.id))
-        .limit(limit)
-        .offset(pageToOffset(page, limit)),
-      db.select({ n: count() }).from(walletTransaction).where(where),
+    if (statuses?.length) {
+      conditions.push(sql`status = any(${sql.param(statuses)}::text[])`);
+    }
+    if (currencies?.length) {
+      conditions.push(sql`currency = any(${sql.param(currencies)}::text[])`);
+    }
+    if (from) {
+      conditions.push(sql`created_at >= ${from}::timestamptz`);
+    }
+    if (to) {
+      conditions.push(sql`created_at <= ${to}::timestamptz`);
+    }
+    if (search) {
+      conditions.push(
+        sql`(id::text like ${`${escapeLike(search.toLowerCase())}%`} or provider_ref_id = ${search} or tx_hash = ${search})`,
+      );
+    }
+    const where = conditions.length ? sql`where ${sql.join(conditions, sql` and `)}` : sql``;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? sql`asc` : sql`desc`;
+    const sortColumn = sql.identifier(TX_SORT_COLUMNS[sortBy ?? 'createdAt']);
+
+    const db = this.drizzle.db;
+    const [{ rows }, { rows: counted }] = await Promise.all([
+      db.execute<TransactionHistoryRow>(sql`
+        select * from ${history} ${where}
+        order by ${sortColumn} ${dir}, id desc
+        limit ${limit} offset ${pageToOffset(page, limit)}`),
+      db.execute<{ n: number }>(sql`select count(*)::int as n from ${history} ${where}`),
     ]);
     return {
-      items: txs.map((tx) => ({
+      items: rows.map((tx) => ({
         id: tx.id,
         type: tx.type,
         amount: tx.amount,
@@ -2822,13 +3140,24 @@ export class WalletService {
         network: tx.network,
         status: tx.status,
         direction: tx.direction,
-        createdAt: tx.createdAt.toISOString(),
-        reviewedBy: includeInternal ? tx.reviewedBy : null,
-        reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
+        fee: tx.fee,
+        createdAt: new Date(tx.created_at).toISOString(),
+        reviewedBy: includeInternal ? tx.reviewed_by : null,
+        reviewedAt:
+          includeInternal && tx.reviewed_at ? new Date(tx.reviewed_at).toISOString() : null,
         reviewReason:
-          includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.reviewReason : null,
+          includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.review_reason : null,
+        // Internal only: a reference currency is never shown to the player.
+        reference: includeInternal
+          ? toReferenceDto({
+              referenceCurrency: tx.reference_currency,
+              referenceAmount: tx.reference_amount,
+              referenceRate: tx.reference_rate,
+              referenceRateAsOf: tx.reference_rate_as_of ? new Date(tx.reference_rate_as_of) : null,
+            })
+          : null,
       })),
-      total: Number(n),
+      total: counted[0]?.n ?? 0,
       page,
       limit,
     };
@@ -2968,9 +3297,28 @@ export class WalletService {
         );
       }
 
+      // A redelivery of a credited deposit must not depend on a rate being available now.
+      const [credited] = await this.findDepositByProviderRef(
+        txn,
+        depositAddress.providerName,
+        event.externalId,
+      );
+      if (credited) {
+        return { transactionId: credited.id, replayed: true };
+      }
+      // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
+      // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
+      // and reconciliation files it as a missing deposit if the redeliveries run out.
+      const reference = await this.referenceSnapshot(
+        txn,
+        depositAddress.userId,
+        event.amount,
+        event.currency,
+      );
       const [inserted] = await txn
         .insert(walletTransaction)
         .values({
+          ...reference,
           walletId: walletRecord.id,
           type: 'deposit',
           amount: event.amount,
@@ -2994,15 +3342,11 @@ export class WalletService {
         return { transactionId: inserted.id, replayed: false };
       }
 
-      const [winner] = await txn
-        .select()
-        .from(walletTransaction)
-        .where(
-          and(
-            eq(walletTransaction.providerName, depositAddress.providerName),
-            eq(walletTransaction.providerRefId, event.externalId),
-          ),
-        );
+      const [winner] = await this.findDepositByProviderRef(
+        txn,
+        depositAddress.providerName,
+        event.externalId,
+      );
       if (!winner) {
         throw new Error(
           `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
@@ -3062,6 +3406,22 @@ export class WalletService {
         this.audit,
       );
     }
+  }
+
+  private findDepositByProviderRef(
+    txn: DrizzleTx,
+    providerName: string,
+    externalId: NonNullable<WalletTransaction['providerRefId']>,
+  ) {
+    return txn
+      .select({ id: walletTransaction.id })
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.providerName, providerName),
+          eq(walletTransaction.providerRefId, externalId),
+        ),
+      );
   }
 
   private async userIdForWallet(walletId: Wallet['id']) {

@@ -17,3 +17,8 @@ export {
   type RealtimeClientStatus,
   type RealtimeSubscribeHandlers,
 } from './context/realtime-client.js';
+export {
+  createSseRealtimeClientAdapter,
+  type RealtimeStreamEvent,
+  type SseRealtimeClientAdapterOptions,
+} from './context/sse-realtime-client.js';

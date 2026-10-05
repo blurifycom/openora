@@ -13,5 +13,5 @@ export {
   type ReKycTrigger,
   type ReKycPlayerSnapshot,
 } from './service/re-kyc-trigger.js';
-export { createComplianceRouter } from './router/index.js';
+export { createComplianceRouter, kycStatusChannel } from './router/index.js';
 export { default } from './plugin.js';

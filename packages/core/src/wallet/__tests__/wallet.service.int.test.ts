@@ -19,6 +19,7 @@ import {
   makeIdentityReader,
   NO_CLIENT_META,
   makeAuditWriter,
+  makeExchangeRateReader,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -74,14 +75,16 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
     paymentProviders: makePaymentProviderRegistry(),
     audit,
     identityReader: makeIdentityReader(),
+    rates: makeExchangeRateReader(),
     ...overrides,
   });
   return { svc, events, psp, audit };
 }
 
-function playerIdentityReader() {
+function playerIdentityReader(playerId: string = randomUUID()) {
   const identityReader = makeIdentityReader();
-  vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(randomUUID());
+  vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(playerId);
+  vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockResolvedValue(playerId);
   return identityReader;
 }
 
@@ -277,7 +280,8 @@ describe('WalletService.deposit (real PG)', () => {
 
 describe('WalletService.manualAdjust (real PG)', () => {
   it('credits, debits, writes an immutable ledger row and replays exactly once', async () => {
-    const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader() });
+    const playerId = randomUUID();
+    const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader(playerId) });
     const player = await seedWallet({ balance: '10' });
     const adminId = randomUUID();
     const idempotencyKey = randomUUID();
@@ -328,7 +332,9 @@ describe('WalletService.manualAdjust (real PG)', () => {
       expect.objectContaining({
         action: 'wallet.manual_adjustment.created',
         actorId: adminId,
-        resourceId: credit.transactionId,
+        resourceType: 'player',
+        resourceId: playerId,
+        after: expect.objectContaining({ transactionId: credit.transactionId }),
       }),
     );
     expect(psp.processDeposit).not.toHaveBeenCalled();
@@ -1652,7 +1658,8 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
   });
 
   it('refunds, marks failed, and emits a failed event with no admin attribution', async () => {
-    const { svc, events, audit } = makeService();
+    const playerId = randomUUID();
+    const { svc, events, audit } = makeService({ identityReader: playerIdentityReader(playerId) });
     const w = await seedWallet({ balance: '0' });
     const externalId = randomUUID();
     const tx = await seedTx(w.id, {
@@ -1668,19 +1675,20 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(40);
     expect(events.emit).toHaveBeenCalledWith(
       'wallet.withdrawal.failed',
-      expect.objectContaining({ userId: w.userId, transactionId: tx.id, adminId: null }),
+      expect.objectContaining({ userId: w.userId, playerId, transactionId: tx.id, adminId: null }),
     );
     // The audit row for the refund commits in the same transaction as the credit -
-    // not left to a best-effort subscriber on the event above.
+    // not left to a best-effort subscriber on the event above. Filed under the player
+    // so the player-scoped audit view finds it; the withdrawal id stays in `after`.
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         actorType: 'system',
         actorId: null,
         action: 'wallet.withdrawal.failed',
-        resourceType: 'withdrawal',
-        resourceId: tx.id,
-        after: expect.objectContaining({ userId: w.userId }),
+        resourceType: 'player',
+        resourceId: playerId,
+        after: expect.objectContaining({ userId: w.userId, transactionId: tx.id }),
       }),
     );
   });
@@ -1927,7 +1935,10 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
   });
 
   function gateDeciding(checkDeposit: NonNullable<WalletServiceDeps['rgLimits']>['checkDeposit']) {
-    return mock<NonNullable<WalletServiceDeps['rgLimits']>>({ checkDeposit: vi.fn(checkDeposit) });
+    return mock<NonNullable<WalletServiceDeps['rgLimits']>>({
+      checkDeposit: vi.fn(checkDeposit),
+      referenceCurrency: vi.fn(async () => null),
+    });
   }
 
   async function findingsFor(externalId: string) {

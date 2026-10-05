@@ -5,7 +5,9 @@ import {
   ProfileService,
   UnsupportedDisplayCurrencyError,
   PhoneCountryMismatchError,
+  BioBlockedError,
 } from '../service/profile.service.js';
+import { UsernameBlockedError } from '../../shared/username.js';
 
 export function createProfileRouter(profile: ProfileService) {
   const os = implement(profileContract).$context<OssContext>();
@@ -14,8 +16,9 @@ export function createProfileRouter(profile: ProfileService) {
     get: os.get.handler(({ context }) => profile.getMyProfile(getUserId(context))),
 
     update: os.update.handler(({ input, context }) =>
-      mapErrors({ BAD_REQUEST: PhoneCountryMismatchError }, () =>
-        profile.updateMyProfile(getUserId(context), input),
+      mapErrors(
+        { BAD_REQUEST: [PhoneCountryMismatchError, UsernameBlockedError, BioBlockedError] },
+        () => profile.updateMyProfile(getUserId(context), input),
       ),
     ),
 
@@ -27,6 +30,10 @@ export function createProfileRouter(profile: ProfileService) {
       mapErrors({ BAD_REQUEST: UnsupportedDisplayCurrencyError }, () =>
         profile.setMyDisplayCurrency(getUserId(context), input),
       ),
+    ),
+
+    setDisplayDecimalPlaces: os.setDisplayDecimalPlaces.handler(({ input, context }) =>
+      profile.setMyDisplayDecimalPlaces(getUserId(context), input),
     ),
   });
 }

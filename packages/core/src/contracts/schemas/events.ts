@@ -45,7 +45,11 @@ import {
   PlayerStatusSchema,
 } from './player.js';
 import { WalletTransactionTypeSchema } from './wallet-tx.js';
-import { BonusForfeitReasonSchema, BonusGrantSourceSchema } from './promo.js';
+import {
+  BonusForfeitReasonSchema,
+  BonusGrantSourceSchema,
+  ContributionPercentSchema,
+} from './promo.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -216,6 +220,9 @@ export const domainEventSchemas = {
     email: z.email(),
     reason: z.string().nullable().optional(),
     attemptsRemaining: z.number().int().optional(),
+    // Carried only by the country gate, which is the one refusal that turns on where the
+    // caller is rather than on what they sent.
+    countryCode: CountryCodeSchema.nullable().optional(),
   }),
   'identity.user.logout': authContextBase.extend({
     userId: UuidSchema,
@@ -252,7 +259,11 @@ export const domainEventSchemas = {
   'identity.2fa.disabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // The method the account was enrolled with, i.e. what was turned off.
     method: TwoFactorMethodSchema,
+    // The credential that authorised turning it off: the enrolled method's live code, or
+    // a recovery code when that method is what the player lost.
+    stepUpMethod: TwoFactorMethodSchema,
   }),
   'identity.2fa.verified': authContextBase.extend({
     userId: UuidSchema,
@@ -271,6 +282,8 @@ export const domainEventSchemas = {
   'identity.2fa.backup_codes_regenerated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    // The credential that authorised the rotation.
+    stepUpMethod: TwoFactorMethodSchema,
   }),
   // A Super Admin cleared someone else's second factor; the account is back to the
   // unenrolled state and must set one up before it reaches any admin route again.
@@ -300,12 +313,14 @@ export const domainEventSchemas = {
   }),
   'identity.trusted_device.added': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
     label: z.string(),
     expiresAt: TimestampSchema,
   }),
   'identity.trusted_device.revoked': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
     // Absent when the guard itself forces the revoke (fingerprint mismatch) rather
     // than an admin or the device owner acting.
@@ -425,17 +440,20 @@ export const domainEventSchemas = {
   // A payments admin approved a pending withdrawal; it moves to `processing` and
   // is sent to the PSP/custody rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
-    .extend({ adminId: UuidSchema })
+    .extend({ playerId: UuidSchema.nullable(), adminId: UuidSchema })
     .extend(authContextBase.shape),
   // A payments admin rejected a pending withdrawal; held funds are returned to the
   // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
   'wallet.withdrawal.rejected': walletTxnBase
-    .extend({ adminId: UuidSchema, reason: z.string() })
+    .extend({ playerId: UuidSchema.nullable(), adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
   // An approved withdrawal failed at the PSP/custody rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`. `adminId` is
   // null when no reviewer was involved: an auto-approved payout, or a later webhook rejection.
-  'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema.nullable() }),
+  'wallet.withdrawal.failed': walletTxnBase.extend({
+    playerId: UuidSchema.nullable(),
+    adminId: UuidSchema.nullable(),
+  }),
   // A super admin credited or debited a balance directly, outside the deposit and
   // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
   // a correction is not a deposit, and reporting it as one would overstate deposits and
@@ -614,6 +632,8 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
+      // Older game-update events predate the custom thumbnail; replay them as unset.
+      customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
       // Older game-update events predate game tags; replay them as an empty tag set.
@@ -626,6 +646,8 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
+      // Older game-update events predate the custom thumbnail; replay them as unset.
+      customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
       // Older game-update events predate game tags; replay them as an empty tag set.
@@ -686,6 +708,7 @@ export const domainEventSchemas = {
     wageringRequired: MoneyAmountSchema,
     source: BonusGrantSourceSchema,
     offerId: UuidSchema.nullable(),
+    rankBonusKind: z.enum(['daily', 'weekly', 'monthly']).optional(),
   }),
   // Wagering requirement met. The lock is released; what happens to the balance is the
   // conversion step, which emits nothing of its own.
@@ -717,12 +740,17 @@ export const domainEventSchemas = {
     // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),
-  // Fires on promotion only - a rank never decreases.
   'promo.rank.changed': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,
     previousTierId: UuidSchema.nullable(),
     position: z.number().int().nonnegative(),
+    tierName: z.string().min(1).optional(),
+    currency: CurrencyTickerSchema.optional(),
+    rakebackPercent: ContributionPercentSchema.optional(),
+    dailyBonus: MoneyAmountSchema.nullable().optional(),
+    weeklyBonus: MoneyAmountSchema.nullable().optional(),
+    monthlyBonus: MoneyAmountSchema.nullable().optional(),
   }),
   // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
   'promo.race.settled': z.object({
@@ -736,6 +764,27 @@ export const domainEventSchemas = {
         grantId: UuidSchema.nullable(),
       }),
     ),
+    currency: CurrencyTickerSchema,
+  }),
+  // One winner's own prize, emitted per player after the settlement transaction commits - the
+  // shape the in-app/email notification maps 1:1 (see engagement/notifications/plugin.ts).
+  'promo.race.won': z.object({
+    userId: UuidSchema,
+    raceId: UuidSchema,
+    raceName: z.string(),
+    position: z.number().int().positive(),
+    amount: MoneyAmountSchema,
+    currency: CurrencyTickerSchema,
+  }),
+  // One winner's own Rank Challenge tier, emitted per player after the settlement transaction
+  // commits - the shape the in-app/email notification maps 1:1, mirroring promo.race.won.
+  'promo.rank-challenge.won': z.object({
+    userId: UuidSchema,
+    tierId: UuidSchema,
+    tierKey: z.string(),
+    tierName: z.string(),
+    cashAmount: MoneyAmountSchema.nullable(),
+    physicalItem: z.string().nullable(),
     currency: CurrencyTickerSchema,
   }),
 
@@ -810,6 +859,7 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    adminId: UuidSchema.optional(),
   }),
   'chat.room.member.left': authContextBase.extend({
     roomId: UuidSchema,
@@ -845,6 +895,12 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     bannedBy: UuidSchema,
     playerId: UuidSchema.nullable(),
+    reason: z.string().optional(),
+    expiresAt: z.iso.datetime().nullable().optional(),
+    replaced: z
+      .object({ banId: UuidSchema, expiresAt: z.iso.datetime().nullable() })
+      .nullable()
+      .optional(),
   }),
 
   'chat.room.ownership.transferred': authContextBase.extend({
@@ -878,6 +934,20 @@ export const domainEventSchemas = {
     actorId: UuidSchema.optional(),
   }),
 
+  // A country rule refused a request. `countryCode` is null when the address resolved to
+  // no country and the fail-closed branch denied it, which is a different operational
+  // fact from a named blocked country and has to stay distinguishable in the audit trail.
+  'compliance.geo.access_blocked': authContextBase.extend({
+    countryCode: CountryCodeSchema.nullable(),
+    reason: z.string(),
+  }),
+  // A blacklisted country was let through because the operator redirects it to a mirror.
+  // The access itself is allowed, so it is recorded separately from a block.
+  'compliance.geo.access_redirected': authContextBase.extend({
+    countryCode: CountryCodeSchema,
+    redirectUrl: z.string(),
+  }),
+
   'compliance.game-geo-rule.upserted': authContextBase.extend({
     ruleId: UuidSchema,
     gameId: UuidSchema,
@@ -896,6 +966,14 @@ export const domainEventSchemas = {
     before: gameGeoRuleEventState,
     after: z.null(),
     actorId: UuidSchema,
+  }),
+
+  'compliance.game-geo-rules.bulk_updated': gameBulkEventBase.extend({
+    operation: z.enum(['restrict', 'unrestrict']),
+    countryCode: CountryCodeSchema,
+    reason: NonEmptyReasonSchema,
+    // Games whose rule the call added (restrict) or removed (unrestrict).
+    changedGameIds: z.array(UuidSchema),
   }),
 
   'compliance.provider-geo-rule.upserted': authContextBase.extend({
@@ -1144,6 +1222,13 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     actorId: UuidSchema,
   }),
+  'player.status.changed': authContextBase.extend({
+    playerId: UuidSchema,
+    userId: UuidSchema,
+    actorId: UuidSchema,
+    previousStatus: PlayerStatusSchema,
+    newStatus: PlayerStatusSchema,
+  }),
 
   'social.friend_request.sent': authContextBase.extend({
     friendshipId: UuidSchema,
@@ -1197,7 +1282,10 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'identity.sessions.revoked_all': 2,
   // v2: `method` records which factor was used, required by the audit trail.
   'identity.2fa.enabled': 2,
-  'identity.2fa.disabled': 2,
+  // v3: stepUpMethod records whether a live code or a recovery code authorised it.
+  'identity.2fa.disabled': 3,
+  // v2: stepUpMethod records the credential that authorised the rotation.
+  'identity.2fa.backup_codes_regenerated': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

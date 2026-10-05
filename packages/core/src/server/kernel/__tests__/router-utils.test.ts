@@ -39,6 +39,18 @@ describe('getUserId', () => {
     expect(reasonOf(() => getUserId(context))).toBe('authentication_required');
   });
 
+  it('refuses a caller who still owes a second-factor enrolment', () => {
+    const context = withRequest({ auth: { userId: 'user-1', twoFactorSetupRequired: true } });
+
+    expect(reasonOf(() => getUserId(context))).toBe('two_factor_setup_required');
+  });
+
+  it('lets a route that opts in through while the enrolment is owed', () => {
+    const context = withRequest({ auth: { userId: 'user-1', twoFactorSetupRequired: true } });
+
+    expect(getUserId(context, { allowPendingTwoFactorSetup: true })).toBe('user-1');
+  });
+
   it('throws UNAUTHORIZED rather than a bare Error', () => {
     expect(() => getUserId(undefined)).toThrow(ORPCError);
   });

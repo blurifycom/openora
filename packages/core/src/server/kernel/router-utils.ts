@@ -13,6 +13,10 @@ export type AuthContext = {
   // Id of the better-auth session row backing this request. Lets a handler tell the
   // caller's own session apart from their other devices (eg "In Use" vs "Revoke").
   sessionId?: string | undefined;
+  // Set by the request middleware while the account owes a second-factor enrolment
+  // (TWO_FACTOR_SETUP_POLICY); every route that reads the caller through getUserId is
+  // refused until it is done.
+  twoFactorSetupRequired?: boolean | undefined;
 };
 
 export type OssContext = {
@@ -25,7 +29,14 @@ export type OssContext = {
   rawBody?: string;
 };
 
-function resolveAuth(context: unknown): AuthContext {
+export type ResolveAuthOptions = {
+  // For the few routes an account must still reach while it owes a second-factor
+  // enrolment: the session streams, its own sessions, the phone verification an SMS factor
+  // needs, and responsible-gambling self-protection.
+  allowPendingTwoFactorSetup?: boolean;
+};
+
+function resolveAuth(context: unknown, opts?: ResolveAuthOptions): AuthContext {
   if (
     typeof context !== 'object' ||
     context === null ||
@@ -46,15 +57,22 @@ function resolveAuth(context: unknown): AuthContext {
     });
   }
 
+  if (auth.twoFactorSetupRequired && !opts?.allowPendingTwoFactorSetup) {
+    throw new ORPCError('FORBIDDEN', {
+      message: 'Set up two-factor authentication to continue',
+      data: { reason: AuthGuardReasonSchema.enum.two_factor_setup_required },
+    });
+  }
+
   return auth;
 }
 
-export function getUserId(context: unknown): string {
-  return resolveAuth(context).userId;
+export function getUserId(context: unknown, opts?: ResolveAuthOptions): string {
+  return resolveAuth(context, opts).userId;
 }
 
-export function getSessionId(context: unknown): string | undefined {
-  return resolveAuth(context).sessionId;
+export function getSessionId(context: unknown, opts?: ResolveAuthOptions): string | undefined {
+  return resolveAuth(context, opts).sessionId;
 }
 
 // Extracts IP only from headers; does not trust X-Forwarded-For without a

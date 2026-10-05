@@ -79,8 +79,9 @@ export class BackofficeService {
     };
   }
 
-  async listUsers({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
-    const { rows, total } = await this.users.list({ page, limit, search, sortBy, sortOrder });
+  async listUsers(options: AdminUserListOptions) {
+    const { page, limit } = options;
+    const { rows, total } = await this.users.list(options);
     const assignments = await this.roleAssignments.listByUserIds(rows.map((r) => r.id));
     const assignmentsByUserId = new Map<string, AdminRoleAssignmentSummary[]>();
     for (const assignment of assignments) {
@@ -136,6 +137,7 @@ export class BackofficeService {
       amountMin,
       amountMax,
       player,
+      search,
       sortBy,
       sortOrder,
     } = filters;
@@ -165,6 +167,7 @@ export class BackofficeService {
       dateTo: dateTo ? new Date(dateTo) : undefined,
       amountMin,
       amountMax,
+      search,
       sortBy,
       sortOrder,
     });

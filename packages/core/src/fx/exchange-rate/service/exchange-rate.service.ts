@@ -12,7 +12,8 @@ export const UnsupportedExchangeCurrencyError = createDomainError<[currency: str
  * The route-facing half of the exchange-rate seam. Every code is checked against the
  * operator's configured currency list first: an unknown code otherwise reaches the reader,
  * misses the cache, and buys a vendor call, so an arbitrary code space would be
- * attacker-controlled vendor spend.
+ * attacker-controlled vendor spend. A batch answers an unknown source code with a null quote
+ * instead of failing the whole batch.
  */
 export class ExchangeRateService {
   private readonly supported: ReadonlySet<string>;
@@ -32,17 +33,18 @@ export class ExchangeRateService {
 
   getRates(to: string, from: readonly string[]) {
     this.assertSupported(to);
-    for (const currency of from) {
-      this.assertSupported(currency);
-    }
     return mapConcurrent(from, GET_RATES_CONCURRENCY, async (currency) => ({
       from: currency,
-      quote: await this.reader.getRate(currency, to),
+      quote: this.isSupported(currency) ? await this.reader.getRate(currency, to) : null,
     }));
   }
 
+  private isSupported(currency: string): boolean {
+    return this.supported.has(currency.toUpperCase());
+  }
+
   private assertSupported(currency: string): void {
-    if (!this.supported.has(currency.toUpperCase())) {
+    if (!this.isSupported(currency)) {
       throw new UnsupportedExchangeCurrencyError(currency);
     }
   }

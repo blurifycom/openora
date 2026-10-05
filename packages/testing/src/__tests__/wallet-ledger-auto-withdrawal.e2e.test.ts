@@ -55,6 +55,31 @@ async function verifyKyc(admin: TestClient, userId: string) {
   }
 }
 
+// Withdrawals here are far below the default KYC triggers, so a test that needs KYC to be
+// required lowers the single-withdrawal threshold for its duration.
+async function withKycWithdrawalThreshold(
+  admin: Awaited<ReturnType<typeof asAdmin>>,
+  withdrawalThreshold: string,
+  run: () => Promise<void>,
+) {
+  const set = async (value: string | null) => {
+    const current = await readJson(await admin.get('/compliance/global-kyc'));
+    const res = await admin.put('/compliance/global-kyc', {
+      enabled: true,
+      withdrawalThreshold: value,
+      confirm: true,
+      expectedUpdatedAt: current.updatedAt,
+    });
+    expect(res.status).toBe(200);
+  };
+  await set(withdrawalThreshold);
+  try {
+    await run();
+  } finally {
+    await set(null);
+  }
+}
+
 async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
   const res = await admin.post(`/player/${playerId}/player-tag`, {
     tagKey,
@@ -87,7 +112,15 @@ beforeAll(async () => {
     new URL('./fixtures/test-wallet-auto-withdrawal-config-plugin.ts', import.meta.url),
   );
   appGated = await bootTestApp({
-    plugins: [...basePlugins, { id: 'test-wallet-auto-withdrawal-config', path: gatedFixture }],
+    plugins: [
+      ...basePlugins,
+      { id: 'test-wallet-auto-withdrawal-config', path: gatedFixture },
+      // The crypto-rail scenario deposits BTC, which needs a BTC rate to snapshot its reference value.
+      {
+        id: 'testing-exchange-rate-provider',
+        path: fileURLToPath(new URL('../test-exchange-rate-provider-plugin.ts', import.meta.url)),
+      },
+    ],
     databaseUrl: db.url,
   });
 
@@ -130,7 +163,9 @@ afterAll(async () => {
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {
   it('auto-completes a fiat withdrawal under threshold, with a KYC-verified untagged player', async () => {
     const email = `auto-ok-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -156,7 +191,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${body.transactionId}&action=wallet.withdrawal.auto_approved`,
+        `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
@@ -171,11 +206,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     });
   });
 
-  it('stays pending when KYC is not verified/manually_overridden, even though kyc.gateWithdrawals is off', async () => {
-    const email = `auto-kyc-pending-${randomUUID()}@e2e.test`;
+  it('auto-completes an unverified player below every KYC trigger', async () => {
+    const email = `auto-kyc-not-required-${randomUUID()}@e2e.test`;
     const { client } = await registerAndMaterializePlayer(appGated, { email: email });
-    const admin = await asAdmin(appGated.app);
-    // No verifyKyc() call - player stays at the default kycStatus 'pending'.
 
     await client.post('/wallet/deposit', {
       idempotencyKey: randomUUID(),
@@ -187,14 +220,36 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       amount: '0.5',
       currency: 'USD',
     });
-    // gateWithdrawals is off, so the withdraw request itself succeeds...
     expect(res.status).toBe(200);
-    const body = await readJson(res);
-    // ...but the auto-approval KYC gate is independent and fails closed to manual.
-    expect(body.status).toBe('pending');
+    expect((await readJson(res)).status).toBe('completed');
+  });
 
-    const pending = await pendingWithdrawalIds(admin);
-    expect(pending.has(body.transactionId)).toBe(true);
+  it('stays pending when KYC is required but not approved, even though kyc.gateWithdrawals is off', async () => {
+    const email = `auto-kyc-pending-${randomUUID()}@e2e.test`;
+    const { client } = await registerAndMaterializePlayer(appGated, { email: email });
+    const admin = await asAdmin(appGated.app);
+    // No verifyKyc() call - player stays at the default kycStatus 'pending'.
+
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '3',
+      currency: 'USD',
+    });
+    await withKycWithdrawalThreshold(admin, '0.1', async () => {
+      const res = await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '0.5',
+        currency: 'USD',
+      });
+      // gateWithdrawals is off, so the withdraw request itself succeeds...
+      expect(res.status).toBe(200);
+      const body = await readJson(res);
+      // ...but auto-approval asks the KYC policy regardless and fails closed to manual.
+      expect(body.status).toBe('pending');
+
+      const pending = await pendingWithdrawalIds(admin);
+      expect(pending.has(body.transactionId)).toBe(true);
+    });
   });
 
   it('stays pending when the player carries an excluded risk tag', async () => {
@@ -302,7 +357,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('a higher per-player rule allows what the global threshold would block', async () => {
     const email = `auto-rule-allows-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -328,7 +385,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${body.transactionId}&action=wallet.withdrawal.auto_approved`,
+        `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items[0].after).toMatchObject({

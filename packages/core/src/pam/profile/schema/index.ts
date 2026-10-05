@@ -8,8 +8,11 @@ import {
   timestamp,
   pgEnum,
   index,
+  boolean,
+  check,
 } from 'drizzle-orm/pg-core';
-import { PLAYER_STATUSES, KYC_STATUSES } from '@openora/core/contracts';
+import { sql } from 'drizzle-orm';
+import { PLAYER_STATUSES, KYC_STATUSES, MAX_DISPLAY_DECIMAL_PLACES } from '@openora/core/contracts';
 
 export const playerStatusEnum = pgEnum('player_status', PLAYER_STATUSES);
 export const kycStatusEnum = pgEnum('kyc_status', KYC_STATUSES);
@@ -29,8 +32,10 @@ export const player = pgTable(
     // profile field into a phone-enumeration oracle and let anyone squat a stranger's number.
     phone: text(),
     country: text(),
+    bio: text(),
     currency: text().notNull().default('USD'),
     displayCurrency: text(),
+    displayDecimalPlaces: integer(),
     status: playerStatusEnum().notNull().default('active'),
     kycStatus: kycStatusEnum().notNull().default('pending'),
     level: integer().notNull().default(1),
@@ -47,12 +52,28 @@ export const player = pgTable(
     ageAcceptedAt: timestamp({ withTimezone: true }),
     registrationIp: text(),
     registrationUserAgent: text(),
+    /** Shows "Incognito" in place of this player's username on a public leaderboard (a wager
+     * race, say) instead of the platform's own partial masking. Never affects the player's own
+     * standing, wagered total, or prize eligibility - only what other players see. */
+    hideUsernameOnLeaderboards: boolean().notNull().default(false),
+    /** Off refuses new friend requests addressed to this player. A request the player sent
+     * themselves, and friendships that already exist, are unaffected. */
+    allowFriendRequests: boolean().notNull().default(true),
+    /** Off hides this player's online status and last-seen time from their friends. */
+    showOnlineStatusToFriends: boolean().notNull().default(true),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
-  (t) => [index('player_status_idx').on(t.status), index('player_created_at_idx').on(t.createdAt)],
+  (t) => [
+    index('player_status_idx').on(t.status),
+    index('player_created_at_idx').on(t.createdAt),
+    check(
+      'player_display_decimal_places_range',
+      sql`${t.displayDecimalPlaces} BETWEEN 0 AND ${sql.raw(String(MAX_DISPLAY_DECIMAL_PLACES))}`,
+    ),
+  ],
 );
 
 export type Player = typeof player.$inferSelect;

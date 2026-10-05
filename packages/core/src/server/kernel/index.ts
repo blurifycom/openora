@@ -12,6 +12,8 @@ export { EVENT_BUS, createEventBus } from './event-bus.js';
 
 export { BullMqJobQueue } from './bullmq-job-queue.js';
 export { makeRateLimitError, assertRateLimit } from './rate-limiter.js';
+export { moderateContent, type ModerationResult } from './moderate-content.js';
+export { hasProfanity } from './profanity.js';
 export { cached, invalidate } from './cache.js';
 export { createRedisClient, type RedisClient } from './redis-client.js';
 export { RedisCache } from './redis-cache.js';
@@ -42,8 +44,11 @@ export { mapErrors } from './orpc-error-map.js';
 export { assertOwnership } from './ownership.js';
 export { serializeRow } from './serialize-row.js';
 export type { SerializedRow } from './serialize-row.js';
-export { createEventStreamGenerator } from './event-stream.js';
-export type { EventStreamOptions } from './event-stream.js';
+export {
+  createEventStreamGenerator,
+  createMultiplexedEventStreamGenerator,
+} from './event-stream.js';
+export type { EventStreamOptions, MultiplexedChannel, MultiplexedEvent } from './event-stream.js';
 
 // T0 PlatformConfig loader. See ADR-0013 Tier 0.
 export { loadPlatformConfig, resolvePlatformConfigPath } from './platform-config-loader.js';

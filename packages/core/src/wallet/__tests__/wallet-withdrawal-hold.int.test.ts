@@ -193,9 +193,36 @@ describe('WalletService.holdWithdrawal (real PG)', () => {
       resourceType: 'withdrawal',
       resourceId: pending.id,
       before: { status: 'pending' },
-      after: { status: 'on_hold', reason: HOLD_REASON, proposalId: input.proposalId },
+      after: {
+        userId: w.userId,
+        transactionId: pending.id,
+        status: 'on_hold',
+        reason: HOLD_REASON,
+        proposalId: input.proposalId,
+      },
     });
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('files the held record under the player when a player backs the wallet', async () => {
+    const playerId = randomUUID();
+    const identityReader = makeIdentityReader();
+    vi.mocked(identityReader.getPlayerIdByUserIdSafe).mockResolvedValue(playerId);
+    const { svc, audit } = makeService({ identityReader });
+    const w = await seedWallet();
+    const pending = await seedWithdrawal(w.id);
+
+    await svc.holdWithdrawal(holdInput(w.userId, pending.id));
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.withdrawal.held',
+        resourceType: 'player',
+        resourceId: playerId,
+        after: expect.objectContaining({ transactionId: pending.id }),
+      }),
+    );
   });
 
   it('rolls the hold back when its audit record cannot be written', async () => {

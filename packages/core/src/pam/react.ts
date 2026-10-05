@@ -12,6 +12,7 @@ export {
   useVerify2fa,
   useDisable2fa,
   useTwoFactorStatus,
+  useRegenerateBackupCodes,
   useSendTwoFactorOtp,
   useVerifyEmail,
   useUpdateProfile,
@@ -39,12 +40,14 @@ export {
   type UseSetAntiPhishingCodeResult,
   type UseRequestPhoneVerificationResult,
   type UseConfirmPhoneVerificationResult,
+  type UseRegenerateBackupCodesResult,
 } from './identity/react/account.js';
 export {
   usePlayerProfile,
   useUpdatePlayerProfile,
   useDisplayCurrency,
   useSetDisplayCurrency,
+  useSetDisplayDecimalPlaces,
   type PlayerProfile,
   type DisplayCurrencyInfo,
 } from './profile/react/profile.js';

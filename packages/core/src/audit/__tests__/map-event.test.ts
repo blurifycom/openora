@@ -460,29 +460,73 @@ describe('mapEventToRecord: gaming.game.availability_changed', () => {
 describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset', () => {
   const deviceId = '55555555-5555-5555-5555-555555555555';
 
-  it('marks a self-service trust teardown a player action, not an admin one', async () => {
+  it("files a player's own trust teardown under the player, with the player as actor", async () => {
     const row = await mapEventToRecord('identity.trusted_device.revoked', {
       userId,
+      playerId,
       deviceId,
       actorId: userId,
     });
 
-    expect(row).toMatchObject({ actorType: 'player', resourceType: 'user', resourceId: userId });
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
+  });
+
+  it("names an admin's own trust teardown as that admin, not as a player", async () => {
+    const row = await mapEventToRecord('identity.trusted_device.revoked', {
+      userId,
+      playerId: null,
+      deviceId,
+      actorId: userId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
   });
 
   it('marks a cross-user device revoke an admin action', async () => {
     const row = await mapEventToRecord('identity.trusted_device.revoked', {
       userId,
+      playerId,
       deviceId,
       actorId: adminId,
     });
 
-    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: userId });
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
+  });
+
+  it('files a trusted device added by a player under the player', async () => {
+    const row = await mapEventToRecord('identity.trusted_device.added', {
+      userId,
+      playerId,
+      deviceId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
   });
 
   it('attributes an AdminGuard-forced trust revoke to the system', async () => {
     const row = await mapEventToRecord('identity.trusted_device.revoked', {
       userId,
+      playerId: null,
       deviceId,
     });
 
@@ -496,7 +540,27 @@ describe('mapEventToRecord: identity.trusted_device.revoked / identity.2fa.reset
       actorId: adminId,
     });
 
-    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId, resourceId: userId });
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
+  });
+
+  it('files a Super Admin 2FA reset of a player account under that player', async () => {
+    const row = await mapEventToRecord('identity.2fa.reset', {
+      userId,
+      playerId,
+      actorId: adminId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
   });
 });
 
@@ -634,6 +698,74 @@ describe('mapEventToRecord: wallet.withdrawal.failed', () => {
   });
 });
 
+describe('mapEventToRecord: wallet.withdrawal.rejected / approved', () => {
+  const transactionId = '99999999-9999-4999-8999-999999999999';
+
+  it("records an admin rejection as a success: the admin's decision was carried out", async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.rejected', {
+      userId,
+      amount: '10.00',
+      currency: 'USDT',
+      transactionId,
+      adminId,
+      reason: 'suspicious destination',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'withdrawal',
+      resourceId: transactionId,
+      result: 'success',
+      after: expect.objectContaining({ reason: 'suspicious destination' }),
+    });
+  });
+
+  it('records an admin approval as a success', async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.approved', {
+      userId,
+      amount: '10.00',
+      currency: 'USDT',
+      transactionId,
+      adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', result: 'success' });
+  });
+});
+
+describe('mapEventToRecord: withdrawal lifecycle filed under the player', () => {
+  const transactionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const payload = { userId, playerId, amount: '10.00', currency: 'USDT', transactionId };
+
+  it.each([
+    ['wallet.withdrawal.approved', { adminId }, 'admin', 'success'],
+    ['wallet.withdrawal.rejected', { adminId, reason: 'suspicious' }, 'admin', 'success'],
+    ['wallet.withdrawal.failed', { adminId: null }, 'system', 'failure'],
+    ['wallet.withdrawal.completed', {}, 'system', 'success'],
+  ] as const)('%s keeps the withdrawal id in after', async (topic, extra, actorType, result) => {
+    const row = await mapEventToRecord(topic, { ...payload, ...extra });
+
+    expect(row).toMatchObject({
+      actorType,
+      resourceType: 'player',
+      resourceId: playerId,
+      result,
+      after: expect.objectContaining({ userId, transactionId }),
+    });
+  });
+
+  it('falls back to the withdrawal when no player backs the wallet', async () => {
+    const row = await mapEventToRecord('wallet.withdrawal.approved', {
+      ...payload,
+      playerId: null,
+      adminId,
+    });
+
+    expect(row).toMatchObject({ resourceType: 'withdrawal', resourceId: transactionId });
+  });
+});
+
 describe('mapEventToRecord: identity.email.changed', () => {
   it('records the address transition as a player self-action', async () => {
     const row = await mapEventToRecord('identity.email.changed', {
@@ -646,8 +778,8 @@ describe('mapEventToRecord: identity.email.changed', () => {
     expect(row).toMatchObject({
       actorType: 'player',
       actorId: playerId,
-      resourceType: 'user',
-      resourceId: userId,
+      resourceType: 'player',
+      resourceId: playerId,
       before: { email: 'old@example.com' },
       after: { email: 'new@example.com' },
     });
@@ -683,5 +815,195 @@ describe('mapEventToRecord: player account closed and reopened', () => {
       resourceId: '55555555-5555-4555-8555-555555555555',
       after: { closed: false },
     });
+  });
+});
+
+describe('mapEventToRecord: player.status.changed', () => {
+  it('records the status transition by the acting admin against the subject player', async () => {
+    const row = await mapEventToRecord('player.status.changed', {
+      playerId,
+      userId,
+      actorId: adminId,
+      previousStatus: 'active',
+      newStatus: 'suspended',
+    });
+
+    expect(row).toMatchObject({
+      action: 'player.status.changed',
+      actorType: 'admin',
+      actorId: adminId,
+      resourceType: 'player',
+      resourceId: playerId,
+      before: { status: 'active' },
+      after: { status: 'suspended' },
+    });
+  });
+});
+
+describe('mapEventToRecord: identity topics on a player-backed account', () => {
+  it.each([
+    'identity.user.login',
+    'identity.user.logout',
+    'identity.2fa.enabled',
+    'identity.2fa.disabled',
+    'identity.password.changed',
+    'identity.profile.updated',
+  ])('files a player self-action %s under the player', async (topic) => {
+    const row = await mapEventToRecord(topic, { userId, playerId });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'player',
+      resourceId: playerId,
+    });
+  });
+
+  it('files the same self-action from an admin account under the user', async () => {
+    const row = await mapEventToRecord('identity.user.login', { userId, playerId: null });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
+  });
+
+  it('files a topic that carries no playerId under the user', async () => {
+    const row = await mapEventToRecord('identity.2fa.enrollment_blocked', { userId });
+
+    expect(row).toMatchObject({ resourceType: 'user', resourceId: userId });
+  });
+
+  it.each([
+    'identity.phone.verified',
+    'identity.security.auto_logout.updated',
+    'identity.security.withdrawal_pin.set',
+    'identity.security.anti_phishing_code.set',
+  ])('files a player security change %s under the player', async (topic) => {
+    const row = await mapEventToRecord(topic, { userId, playerId });
+
+    expect(row).toMatchObject({ resourceType: 'player', resourceId: playerId });
+  });
+
+  it.each(['identity.user.phone_login', 'identity.sessions.revoked_all'])(
+    'files %s under the player',
+    async (topic) => {
+      const row = await mapEventToRecord(topic, { userId, playerId, actorId: adminId });
+
+      expect(row).toMatchObject({ resourceType: 'player', resourceId: playerId });
+    },
+  );
+
+  it('keeps an account without a player row under the user', async () => {
+    const row = await mapEventToRecord('identity.security.withdrawal_pin.removed', {
+      userId,
+      playerId: null,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'admin',
+      actorId: userId,
+      resourceType: 'user',
+      resourceId: userId,
+    });
+  });
+});
+
+describe('mapEventToRecord: compliance.geo.access_blocked', () => {
+  it('records a denial as a failure against the resolved country', async () => {
+    const row = await mapEventToRecord('compliance.geo.access_blocked', {
+      countryCode: 'DE',
+      reason: 'Country DE is blocked',
+      ip: '203.0.113.7',
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      resourceType: 'geo-access',
+      resourceId: 'DE',
+      result: 'failure',
+      ip: '203.0.113.7',
+      after: { countryCode: 'DE', reason: 'Country DE is blocked' },
+    });
+  });
+
+  it('keeps an unresolved country distinguishable from a named one', async () => {
+    const row = await mapEventToRecord('compliance.geo.access_blocked', {
+      countryCode: null,
+      reason: 'Geolocation could not be determined',
+      ip: null,
+    });
+
+    expect(row).toMatchObject({ resourceId: null, result: 'failure' });
+  });
+});
+
+describe('mapEventToRecord: chat.room.member.banned', () => {
+  const roomId = '77777777-7777-4777-8777-777777777777';
+  const banId = '88888888-8888-4888-8888-888888888888';
+
+  it('records the ban it replaced as before', async () => {
+    const row = await mapEventToRecord('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: adminId,
+      playerId,
+      reason: 'spam',
+      expiresAt: '2026-01-01T00:00:01.000Z',
+      replaced: { banId, expiresAt: null },
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      before: { banId, expiresAt: null },
+      after: { roomId, reason: 'spam', expiresAt: '2026-01-01T00:00:01.000Z' },
+    });
+  });
+
+  it('stays a player action when the moderator has no player profile', async () => {
+    const row = await mapEventToRecord('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: adminId,
+      playerId: null,
+    });
+
+    expect(row).toMatchObject({ actorType: 'player', actorId: adminId });
+  });
+
+  it('leaves before empty for a first ban', async () => {
+    const row = await mapEventToRecord('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: adminId,
+      playerId,
+      replaced: null,
+    });
+
+    expect(row.before).toBeNull();
+  });
+});
+
+describe('mapEventToRecord: chat.room.member.joined', () => {
+  const roomId = '99999999-9999-4999-8999-999999999999';
+
+  it('credits a back-office join to the admin', async () => {
+    const row = await mapEventToRecord('chat.room.member.joined', {
+      roomId,
+      userId: adminId,
+      playerId: null,
+      adminId,
+    });
+
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId });
+  });
+
+  it('credits a player join to the player', async () => {
+    const row = await mapEventToRecord('chat.room.member.joined', { roomId, userId, playerId });
+
+    expect(row).toMatchObject({ actorType: 'player', actorId: playerId });
   });
 });

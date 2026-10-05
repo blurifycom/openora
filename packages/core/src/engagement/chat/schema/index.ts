@@ -290,6 +290,12 @@ export const chatMute = pgTable(
     expiryRecordedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
+    uniqueIndex('chat_mute_active_scope_key')
+      .on(t.userId, t.scope)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NULL`),
+    uniqueIndex('chat_mute_active_room_key')
+      .on(t.userId, t.scope, t.roomId)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_mute_user_room_idx').on(t.userId, t.roomId),
     index('chat_mute_expires_at_idx').on(t.expiresAt),
   ],

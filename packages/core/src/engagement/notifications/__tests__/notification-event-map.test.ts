@@ -212,7 +212,7 @@ describe('notificationEventMap', () => {
     expect(entryFor('wallet.withdrawal.failed').securityAlert).toBe(false);
   });
 
-  it('builds a preference-gated security alert mail for a requested withdrawal', () => {
+  it('always mails the requested-withdrawal confirmation, not gated on the alert preference', () => {
     const transactionId = randomUUID();
     const payload = {
       userId: randomUUID(),
@@ -223,7 +223,7 @@ describe('notificationEventMap', () => {
 
     const entry = entryFor('wallet.withdrawal.requested');
 
-    expect(entry.securityAlert).toBe(true);
+    expect(entry.securityAlert).toBe(false);
     expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
       key: 'securityWithdrawalRequested',
       data: {
@@ -392,6 +392,37 @@ describe('notificationEventMap', () => {
     expect(input.body).not.toContain('1234.500000000000000000');
   });
 
+  it('names a periodic rank bonus in its notification title', () => {
+    const input = entryFor('promo.bonus.granted').buildNotification({
+      userId: randomUUID(),
+      grantId: randomUUID(),
+      currency: 'USDT',
+      grantedAmount: '10',
+      wageringRequired: '10',
+      source: 'rank',
+      offerId: null,
+      rankBonusKind: 'weekly',
+    });
+
+    expect(input.title).toBe('Weekly bonus credited');
+  });
+
+  it('builds a bonusUnlocked mail alongside the promo.bonus.completed in-app notification', () => {
+    const entry = entryFor('promo.bonus.completed');
+    const payload = {
+      userId: randomUUID(),
+      grantId: randomUUID(),
+      currency: 'EUR',
+      convertedAmount: '1234.500000000000000000',
+    };
+
+    expect(entry.buildEmail(payload, OCCURRED_AT)).toEqual({
+      key: 'bonusUnlocked',
+      data: { convertedAmount: '1234.500000000000000000', currency: 'EUR' },
+    });
+    expect(entry.securityAlert).toBe(false);
+  });
+
   it('leaves currency and reason untouched while only the amount substring is reformatted', () => {
     const input = entryFor('wallet.manual_adjustment.created').buildNotification({
       userId: randomUUID(),
@@ -405,5 +436,82 @@ describe('notificationEventMap', () => {
     });
 
     expect(input.body).toBe('Your balance was credited 100 EUR. Reason: goodwill credit.');
+  });
+
+  describe('promo.rank.changed', () => {
+    const rankChanged = (bonuses: {
+      dailyBonus: string | null;
+      weeklyBonus: string | null;
+      monthlyBonus: string | null;
+    }) => ({
+      userId: randomUUID(),
+      tierId: randomUUID(),
+      previousTierId: randomUUID(),
+      position: 2,
+      tierName: 'Gold',
+      currency: 'USD',
+      rakebackPercent: '5.00',
+      ...bonuses,
+    });
+
+    it('congratulates the player on the rank and names everything it pays from now on', () => {
+      const payload = rankChanged({
+        dailyBonus: '2.000000000000000000',
+        weeklyBonus: '10.000000000000000000',
+        monthlyBonus: '25.000000000000000000',
+      });
+
+      const input = entryFor('promo.rank.changed').buildNotification(payload);
+
+      expect(input).toEqual({
+        userId: payload.userId,
+        type: 'promo.rank.changed',
+        title: 'You reached Gold rank',
+        body: 'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus worth 2 USD daily, 10 USD weekly, 25 USD monthly.',
+        data: { tierId: payload.tierId },
+      });
+    });
+
+    it('keeps delivering a notification for the original event payload', () => {
+      const input = entryFor('promo.rank.changed').buildNotification({
+        userId: randomUUID(),
+        tierId: randomUUID(),
+        previousTierId: null,
+        position: 1,
+      });
+
+      expect(input).toMatchObject({
+        type: 'promo.rank.changed',
+        title: 'Rank updated',
+        body: 'Your account rank has been updated.',
+      });
+    });
+
+    it('leaves out a bonus the rank does not pay', () => {
+      const input = entryFor('promo.rank.changed').buildNotification(
+        rankChanged({ dailyBonus: '0.500000000000000000', weeklyBonus: null, monthlyBonus: null }),
+      );
+
+      expect(input.body).toBe(
+        'Congratulations on reaching Gold. Your rank now pays 5% rakeback and a bonus worth 0.5 USD daily.',
+      );
+    });
+
+    it('names the rakeback alone when the rank pays no periodic bonus', () => {
+      const input = entryFor('promo.rank.changed').buildNotification(
+        rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
+      );
+
+      expect(input.body).toBe('Congratulations on reaching Gold. Your rank now pays 5% rakeback.');
+    });
+
+    it('sends no email - a rank-up is an in-app moment', () => {
+      expect(
+        entryFor('promo.rank.changed').buildEmail(
+          rankChanged({ dailyBonus: null, weeklyBonus: null, monthlyBonus: null }),
+          new Date().toISOString(),
+        ),
+      ).toBeNull();
+    });
   });
 });

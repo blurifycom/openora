@@ -12,6 +12,10 @@ export const BONUS_GRANT_SOURCES = [
   'race',
   'gift',
   'rain',
+  // A VIP Cashback grant, computed and credited by a scheduled job off a player's net loss
+  // over a period rather than off a deposit - system-actor like 'streak'/'rank'/'race', not
+  // 'manual' (no admin issued it) and not 'deposit' (no deposit earned it).
+  'cashback',
 ] as const;
 
 /**
@@ -31,10 +35,14 @@ export const BONUS_GRANT_STATUSES = [
 /** Why an active grant was taken away. Recorded on every forfeit, for the regulator. */
 export const BONUS_FORFEIT_REASONS = [
   'self_exclusion',
+  'cooling_off',
   'account_closed',
   'admin',
   'player_opt_out',
   'withdrawal_while_active',
+  // An offer's own terms breached by the player - e.g. an Activity Bonus that missed a
+  // required wagering day - closed by a scheduled job rather than an admin or an RG event.
+  'terms_breach',
 ] as const;
 
 export const PROMO_OFFER_STATUSES = ['draft', 'active', 'paused', 'archived'] as const;

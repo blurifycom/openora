@@ -8,7 +8,18 @@ The game catalog, category ordering, and round management module. `docs/catalog.
 - **Game rounds** - a player's engagement with a game; started by the player, concluded by the provider.
 - **Category ordering** - every category has a configurable sort with a materialized, job-written effective order, manual drag-and-drop positioning, and pinned slots.
 - **Rule-based category membership** - a category can be populated by a rule instead of by hand: a pipeline of clauses over an operator-extensible catalog of rule kinds (built-ins: providers, tags, most played); see below.
+- **Player game favorites** - a player's hearted games, capped at 200; see below.
 - **Read ports** - `GAME_CATALOG_READER` for cross-module access (lobby sections, promotions) and `GAMING_COMMANDS` for wallet integration (`accumulateExternalRound`, `setGameAvailability`) and catalogue imports (`notifyGamesCreated`).
+
+## Game thumbnails
+
+Every game carries both `thumbnailUrl` (synced from a catalogue provider or aggregator) and `customThumbnailUrl` (operator-set override). Set `customThumbnailUrl` on `PATCH /backoffice/gaming/games/{id}` to any https URL up to 512 characters once normalized; `null` clears it and omitting the field leaves it untouched. A catalogue sync writes only `thumbnailUrl` and never touches the custom field.
+
+The value is stored and returned normalized (`new URL(v).href`), never the raw input, and a URL carrying credentials (`https://user:pass@host/...`) is rejected outright. Its host must be on `PlatformConfig.gaming.allowedThumbnailHosts` (exact host or subdomain match, same shape as `cms.allowedBannerImageHosts`) - empty by default, so every custom thumbnail is rejected until an operator lists at least one host. This matters because the value is rendered as an `<img src>` to anonymous players: an unlisted host would let an operator (or a compromised admin account) turn it into a tracking pixel against an arbitrary third party.
+
+Both fields are exposed on every game output (admin and public game lists and detail, category games, rule preview, `GAME_CATALOG_READER` `CatalogGame`, lobby `GameSummary` and `FeaturedSlot`), and both are included in `gaming.game.updated` before/after snapshots; legacy events predate this field and carry `customThumbnailUrl: null`.
+
+The consumer resolves precedence: `customThumbnailUrl ?? thumbnailUrl`. Core exposes both and leaves the choice to the consumer so a fallback path always exists.
 
 ## Per-category game ordering
 
@@ -21,6 +32,7 @@ A sort definition is a `GameSortDefinition<Params>`:
 - **`key`** - the stable sort identifier (e.g., `'manual'`, `'name'`, `'rtp'` in an overlay).
 - **`directions`** - an ordered array of supported directions; the first is the default (e.g., `'asc'` only for manual, `'asc' | 'desc'` for name or stats).
 - **`paramsSchema`** - a real Zod schema (not a duck-typed parser), so the admin route `/backoffice/gaming/sort-options` can emit its JSON Schema for a dynamic config UI.
+- **`refreshIntervalMs`** (optional) - for a sort over data that changes without a catalogue event (round counts, revenue): the rank sweep marks a clean category with this sort dirty once its last successful rank is older than this, so its order follows the data. Must be 60 seconds (the sweep interval) to 365 days; `defineGameSort` and `createGameSortCatalog` reject anything else. Without it, a category re-ranks only when something about it changes.
 - **`rank(input)`** - an async function returning an ordered list of game ids from any source: a SQL query, an external ranking service, a cached analytics rollup. The function receives:
   - **`categoryId`** - the category to order.
   - **`gameIds`** - every current member of the category (including inactive games).
@@ -66,7 +78,7 @@ The ranking service claims a category version before computing. Each configurati
 
 Every relevant mutation also records durable dirty work. A claim bumps the same marker, so a run whose adapter fails leaves the category dirty and retryable. The marker uses the database wall clock at the write, rather than the transaction start time; a writer that began before an earlier successful run cannot make its newer work appear already processed.
 
-The periodic sweep runs every minute and enqueues at most 200 dirty categories, oldest first. Claims move attempted categories behind older pending work, preventing a failing category from monopolizing a full backlog. Unknown definitions, invalid parameters and adapter errors preserve both the previous ranks and the last successful evaluation time. They remain eligible for a later sweep, so fixing a temporary dependency failure or restoring an overlay does not require another configuration change. Each failure increments `rankFailures`, and the sweep skips the category until 2 minutes have passed since its last attempt, doubling per consecutive failure up to an hour; a success resets the count. A write that enqueues directly still runs at once.
+The periodic sweep runs every minute. It first marks dirty every clean category whose sort declares `refreshIntervalMs` and whose ranks are older than that, keeping `updatedAt`, then enqueues at most 200 dirty categories, oldest first. Claims move attempted categories behind older pending work, preventing a failing category from monopolizing a full backlog. Unknown definitions, invalid parameters and adapter errors preserve both the previous ranks and the last successful evaluation time. They remain eligible for a later sweep, so fixing a temporary dependency failure or restoring an overlay does not require another configuration change. Each failure increments `rankFailures`, and the sweep skips the category until 2 minutes have passed since its last attempt, doubling per consecutive failure up to an hour; a success resets the count. A write that enqueues directly still runs at once.
 
 A successful write records the exact database dirty timestamp as its success timestamp under the version lock. This preserves PostgreSQL timestamp precision: rounding through a JavaScript date would otherwise leave a successful category appearing dirty. Definition validation and option discovery live in the sort service; event selection and the sweep live in the trigger service. Plugin code only wires those services to events, jobs, and routes.
 
@@ -112,12 +124,24 @@ A pin is untouched by any of this: dragging a different game only ever changes t
 
 - **`position`** (nullable) - the operator-written manual position, `null` if never explicitly positioned.
 - **`pinnedPosition`** (nullable) - the operator-written pin slot, `null` if not pinned.
+- **`isPlayable`** - active game, active provider, not vendor-unavailable. Pins are placed among playable games only, so a pin on an unplayable game holds no slot until it becomes playable again; an admin UI should offer pinning only when this is `true`.
 
 The list is returned in the same effective order players see (`categoryGameOrder()`), not in raw `position` order, so a drag-and-drop UI shows what it is about to reorder even while the category is on an automatic sort. A reorder or pin change is reflected here only once the rank job has run, so a client that re-reads immediately may still see the previous order.
 
 **Cross-module read** (`GAME_CATALOG_READER.listPlayableGamesInCategory(categoryId, { limit })`) - called by lobby sections and promotions. Returns an ordered list of playable games (active game, active provider, not vendor-unavailable), capped at `limit`. Falls back to name ordering for any game not yet ranked.
 
 The lobby module's own `lobby_category`/`lobby_category_game`/`featured_slot` system is unaffected and unaware of gaming sorts. A lobby section that surfaces a gaming category still reads it through `GAME_CATALOG_READER`, so it inherits the category's configured order automatically - but the lobby layout itself is cached (by default 30 seconds), so a re-rank triggered here can take up to that TTL to become visible in lobby sections.
+
+## Player game favorites
+
+`game_favorite` holds one row per `(userId, gameId)`; a player may hold at most `GAME_FAVORITE_LIMIT` (200). Every route acts on the session's own player.
+
+- **`GET /gaming/favorites`** - full game cards, newest-favorited first. A game hidden by its own or its provider's inactive state, or by vendor unavailability, is omitted but keeps its row, so it reappears when the game is playable again.
+- **`GET /gaming/favorites/ids`** - every favorited id, hidden games included, so a heart icon can render its state anywhere without loading the cards.
+- **`POST /gaming/favorites`** - `{ gameId }`. Idempotent: re-favoriting a game already on the list succeeds even at the cap. `NOT_FOUND` for an unknown game or one not currently playable, `CONFLICT` past the cap; the count and insert run under a per-player advisory lock.
+- **`DELETE /gaming/favorites/{gameId}`** - idempotent; removing a game that is not a favorite succeeds.
+
+Deleting a game cascades to its favorite rows.
 
 ## Rule-based category membership
 
@@ -224,6 +248,14 @@ Every writer of `game_category_game` takes locks in the order **game rows, then 
 | POST   | `/backoffice/gaming/categories/{id}/membership/evaluate` | Re-evaluate a rule-mode category now                                             |
 
 `POST`/`PATCH` on a category also accept `membershipMode` and `membershipRule`. The preview needs `game-config:view`. The preview, a create or update that sends a rule or switches to rule mode, and an on-demand evaluation also need `report:view` when a clause's definition sets `exposesReporting` - none of the built-ins does. The check runs on the rule the write stores and the evaluation resolves, re-checked on every retry, so a rule another admin saves meanwhile is never applied on the strength of a check against the one before it.
+
+## Admin game list geo filters
+
+`GET /backoffice/gaming/games` takes three geo filters. Any of them needs `compliance:view` on top of `game-config:view`, and answers 400 when the compliance module is not loaded. A game counts as blocked in a country when it or its provider has a rule for that country, as in `ComplianceService.checkGame`.
+
+- **`geoBlocked`** - `true`: blocked in at least one country. `false`: no game or provider rule at all.
+- **`geoBlockedCountries`** (up to 50) - blocked in every listed country. Not combinable with `geoBlocked=false`.
+- **`geoAvailableCountries`** (up to 50) - no game or provider rule for any listed country. Not combinable with `geoBlocked=true`, and must not share a code with `geoBlockedCountries`. If a listed country is blocked platform-wide, the page is empty; `GET /compliance/blocked-countries` tells the caller why.
 
 ## Audited events
 

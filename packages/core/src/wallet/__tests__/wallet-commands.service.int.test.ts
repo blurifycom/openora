@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { PlayEligibilityPort, RgLimitsPort } from '@openora/core/contracts';
+import type {
+  BonusGrantCommands,
+  PlayEligibilityPort,
+  RgLimitsPort,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -347,6 +351,51 @@ describe('WalletCommandsService.credit (real PG)', () => {
         type: 'win',
       }),
     ).rejects.toThrow(/positive/);
+  });
+});
+
+describe('WalletCommandsService.credit gift/rain grant terms (real PG)', () => {
+  it('forwards explicit terms to the bonus grant', async () => {
+    const w = await seedWallet({ balance: '0' });
+    const grant = vi.fn().mockResolvedValue({ ok: true, grantId: randomUUID(), created: true });
+    const svcWithGrants = new WalletCommandsService(eligibility(false), audit, {
+      bonusGrants: mock<BonusGrantCommands>({ grant }),
+    });
+
+    await svcWithGrants.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'gift',
+      providerRef: { providerName: 'social-transfers', providerRefId: randomUUID() },
+      terms: { wageringMultiplier: '3', expiryDays: 7 },
+    });
+
+    expect(grant).toHaveBeenCalledWith(
+      db.drizzle.db,
+      expect.objectContaining({ terms: { wageringMultiplier: '3', expiryDays: 7 } }),
+    );
+  });
+
+  it('omits terms and leaves the bonus module to fall back to its own default', async () => {
+    const w = await seedWallet({ balance: '0' });
+    const grant = vi.fn().mockResolvedValue({ ok: true, grantId: randomUUID(), created: true });
+    const svcWithGrants = new WalletCommandsService(eligibility(false), audit, {
+      bonusGrants: mock<BonusGrantCommands>({ grant }),
+    });
+
+    await svcWithGrants.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'rain',
+      providerRef: { providerName: 'social-transfers', providerRefId: randomUUID() },
+    });
+
+    expect(grant).toHaveBeenCalledWith(
+      db.drizzle.db,
+      expect.objectContaining({ terms: undefined }),
+    );
   });
 });
 

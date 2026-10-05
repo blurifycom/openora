@@ -33,6 +33,7 @@ import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import {
   RgLimitExceededError,
+  isAllowedHost,
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
@@ -72,8 +73,7 @@ import {
   markCategoriesRankDirtyForGames,
   playableGameCondition,
   tagsByGameIds,
-  toCategorySummary,
-  toGameTagSummary,
+  toGame,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
 import type { ListAdminGamesInput, ListGamesInput, UpdateGameInput } from '../contract/index.js';
@@ -92,6 +92,11 @@ export const GameAggregatorNotMappedError = createDomainError<
 >(
   'GameAggregatorNotMappedError',
   (providerId, aggregator) => `Provider ${providerId} has no mapping for aggregator ${aggregator}`,
+);
+
+export const GameThumbnailHostNotAllowedError = createDomainError<[host: string]>(
+  'GameThumbnailHostNotAllowedError',
+  (host) => `Custom thumbnail URL rejected: host not allowed: ${host}`,
 );
 
 export const RgRestrictedError = makeConflictError(
@@ -138,33 +143,6 @@ export const ExternalRoundOwnerMismatchError = createDomainError<[externalRoundI
     `externalRoundId ${externalRoundId} is already tagged to a different game/user`,
 );
 
-function toGame(row: {
-  game: typeof game.$inferSelect;
-  provider: typeof gameProvider.$inferSelect;
-  categories: (typeof gameCategory.$inferSelect)[];
-  tags: (typeof gameTag.$inferSelect)[];
-}) {
-  return {
-    id: row.game.id,
-    name: row.game.name,
-    slug: row.game.slug,
-    provider: {
-      id: row.provider.id,
-      slug: row.provider.slug,
-      name: row.provider.name,
-      logoUrl: row.provider.logoUrl,
-    },
-    aggregator: row.game.aggregator,
-    categories: row.categories.map(toCategorySummary),
-    tags: row.tags.map(toGameTagSummary),
-    gameType: row.game.gameType,
-    thumbnailUrl: row.game.thumbnailUrl,
-    isActive: row.game.isActive,
-    isUnavailable: row.game.isUnavailable,
-    metadata: row.game.metadata,
-  };
-}
-
 // Reads the links through the caller's transaction so the snapshot matches the
 // locked row; ordered so identical link sets always serialize identically.
 async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
@@ -186,6 +164,7 @@ async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
     providerId: row.providerId,
     aggregator: row.aggregator,
     thumbnailUrl: row.thumbnailUrl,
+    customThumbnailUrl: row.customThumbnailUrl,
     isActive: row.isActive,
     categoryIds: links.map((link) => link.categoryId),
     tagIds: tagLinks.map((link) => link.tagId),
@@ -219,6 +198,7 @@ export class GamingService {
     private readonly identityReader: IdentityReader,
     private readonly rgLimits?: RgLimitsPort,
     private readonly gameGeoCheck?: GameGeoCheckPort,
+    private readonly allowedThumbnailHosts: readonly string[] = [],
   ) {}
 
   async listGamesPublic(input: ListGamesInput) {
@@ -237,12 +217,21 @@ export class GamingService {
     gameTypes,
     geoBlocked,
     geoBlockedCountries,
+    geoAvailableCountries,
     ...input
   }: ListAdminGamesInput) {
-    if (!this.gameGeoCheck && (geoBlocked !== undefined || geoBlockedCountries)) {
+    const gameGeoCheck = this.gameGeoCheck;
+    if (
+      !gameGeoCheck &&
+      (geoBlocked !== undefined || geoBlockedCountries || geoAvailableCountries)
+    ) {
       throw new GameGeoFiltersUnavailableError();
     }
     const db = this.drizzle.db;
+    const geoAvailableFilter =
+      geoAvailableCountries && gameGeoCheck
+        ? await this.buildGeoAvailableFilter(geoAvailableCountries, gameGeoCheck)
+        : undefined;
     const anyCategory = this.rowsWhere({
       table: gameCategoryGame,
       column: gameCategoryGame.gameId,
@@ -322,8 +311,39 @@ export class GamingService {
               ),
             })
           : undefined,
+        geoAvailableFilter,
       ],
     });
+  }
+
+  private async buildGeoAvailableFilter(
+    countries: string[],
+    gameGeoCheck: GameGeoCheckPort,
+  ): Promise<SQL | undefined> {
+    const globallyBlocked = new Set(await gameGeoCheck.listGloballyBlockedCountries());
+    if (countries.some((countryCode) => globallyBlocked.has(countryCode))) {
+      return sql`false`;
+    }
+    const db = this.drizzle.db;
+    return and(
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(gameGeoRule)
+          .where(and(eq(gameGeoRule.gameId, game.id), inArray(gameGeoRule.countryCode, countries))),
+      ),
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(providerGeoRule)
+          .where(
+            and(
+              eq(providerGeoRule.providerId, game.providerId),
+              inArray(providerGeoRule.countryCode, countries),
+            ),
+          ),
+      ),
+    );
   }
 
   private rowsWhere({
@@ -502,18 +522,33 @@ export class GamingService {
     id: Game['id'],
     opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
   ) {
+    return this.findGame(eq(game.id, id), id, opts);
+  }
+
+  async getGameBySlug(
+    slug: Game['slug'],
+    opts: { activeOnly?: boolean; includeInvisibleTags?: boolean } = {},
+  ) {
+    return this.findGame(eq(game.slug, slug), slug, opts);
+  }
+
+  private async findGame(
+    where: SQL,
+    key: string,
+    opts: { activeOnly?: boolean; includeInvisibleTags?: boolean },
+  ) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .select({ game, provider: gameProvider })
         .from(game)
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
-        .where(eq(game.id, id)),
-      new GameNotFoundError(id),
+        .where(where),
+      new GameNotFoundError(key),
     );
-    // The public detail route passes activeOnly: internal callers (updateGame's
+    // The public detail routes pass activeOnly: internal callers (updateGame's
     // return value) keep the unfiltered row so an admin still sees what they wrote.
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
-      throw new GameNotFoundError(id);
+      throw new GameNotFoundError(key);
     }
     const [categories, tags] = await Promise.all([
       categoriesByGameIds(this.drizzle.db, [row.game.id], opts.activeOnly),
@@ -558,47 +593,49 @@ export class GamingService {
     // without one can never be settled back.
     const roundId = randomUUID();
 
-    const { round, betTransactionId, completed } = await this.drizzle.db.transaction(async (tx) => {
-      // The same currency the RG pre-check above weighed. Left off, the debit falls on the
-      // player's active currency, and the two would then judge different moves.
-      const outcome = await this.walletCommands.debit(tx, {
-        userId,
-        amount: betAmount,
-        currency,
-        type: 'bet',
-        context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
-        providerRef: {
-          providerName: INTERNAL_ROUND_PROVIDER,
-          providerRefId: `bet:${roundId}`,
-          externalRoundId: roundId,
-        },
+    const { round, betTransactionId, completed, wagerTrackingCredits } =
+      await this.drizzle.db.transaction(async (tx) => {
+        // The same currency the RG pre-check above weighed. Left off, the debit falls on the
+        // player's active currency, and the two would then judge different moves.
+        const outcome = await this.walletCommands.debit(tx, {
+          userId,
+          amount: betAmount,
+          currency,
+          type: 'bet',
+          context: { provider: INTERNAL_ROUND_PROVIDER, product: INTERNAL_ROUND_PRODUCT, gameId },
+          providerRef: {
+            providerName: INTERNAL_ROUND_PROVIDER,
+            providerRefId: `bet:${roundId}`,
+            externalRoundId: roundId,
+          },
+        });
+        if (!outcome.ok) {
+          throw new InsufficientBalanceError(outcome.available, betAmount);
+        }
+        const insertedRound = findOneOrThrow(
+          await tx
+            .insert(gameRound)
+            .values({
+              id: roundId,
+              gameId,
+              userId,
+              currency,
+              betAmount,
+              status: 'active',
+            })
+            .returning(),
+          new GameRoundNotFoundError(gameId),
+        );
+        const moved = outcome.moved ? outcome : undefined;
+        return {
+          round: insertedRound,
+          completed: moved?.completed
+            ? { ...moved.completed, currency: outcome.currency }
+            : undefined,
+          betTransactionId: moved?.transactionId,
+          wagerTrackingCredits: moved?.wagerTrackingCredits ?? [],
+        };
       });
-      if (!outcome.ok) {
-        throw new InsufficientBalanceError(outcome.available, betAmount);
-      }
-      const insertedRound = findOneOrThrow(
-        await tx
-          .insert(gameRound)
-          .values({
-            id: roundId,
-            gameId,
-            userId,
-            currency,
-            betAmount,
-            status: 'active',
-          })
-          .returning(),
-        new GameRoundNotFoundError(gameId),
-      );
-      const moved = outcome.moved ? outcome : undefined;
-      return {
-        round: insertedRound,
-        completed: moved?.completed
-          ? { ...moved.completed, currency: outcome.currency }
-          : undefined,
-        betTransactionId: moved?.transactionId,
-      };
-    });
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
@@ -613,6 +650,20 @@ export class GamingService {
         transactionId: betTransactionId,
         type: 'bet',
         direction: 'debit',
+      });
+    }
+
+    // Whatever a WAGER_TRACKING consumer (rank rakeback) credited to the real balance inside the
+    // same transaction as the bet above - same post-commit rule as the bet debit itself.
+    for (const credit of wagerTrackingCredits) {
+      this.events.emit('wallet.balance.changed', {
+        userId,
+        playerId,
+        amount: credit.amount,
+        currency: credit.currency,
+        transactionId: credit.transactionId,
+        type: 'cashback',
+        direction: 'credit',
       });
     }
 
@@ -834,6 +885,13 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & CatalogActor) {
+    // The only writer of `custom_thumbnail_url`; any new write path must repeat this host check.
+    if (patchInput.customThumbnailUrl !== undefined && patchInput.customThumbnailUrl !== null) {
+      const host = new URL(patchInput.customThumbnailUrl).hostname;
+      if (!isAllowedHost(host, this.allowedThumbnailHosts)) {
+        throw new GameThumbnailHostNotAllowedError(host);
+      }
+    }
     const uniqueCategoryIds = categoryIds === undefined ? undefined : [...new Set(categoryIds)];
     const uniqueTagIds = tagIds === undefined ? undefined : [...new Set(tagIds)];
     const patch: Partial<typeof game.$inferInsert> = { ...patchInput };

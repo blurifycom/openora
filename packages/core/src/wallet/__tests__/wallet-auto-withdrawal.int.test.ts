@@ -9,6 +9,7 @@ import {
   type AutoWithdrawalConfig,
   type ExchangeRateReader,
   type KycStatus,
+  type KycWithdrawalPolicy,
   type PaymentAdapter,
   type PlatformConfig,
   type AdminPlayerSummary,
@@ -33,8 +34,13 @@ import {
   walletTransaction,
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
+  walletAsset,
 } from '../schema/index.js';
-import { WalletService } from '../service/wallet.service.js';
+import {
+  WalletService,
+  WalletReferenceRateUnavailableError,
+  WithdrawalAmountNotAboveFeeError,
+} from '../service/wallet.service.js';
 
 let db: TestDb;
 
@@ -55,6 +61,10 @@ const USD_PER_UNIT: Partial<Record<string, string>> = { BTC: '1000', USDT: '1' }
 
 function fixedRates(): ExchangeRateReader {
   return mock<ExchangeRateReader>({
+    getRate: vi.fn(async (from: string, to: string) => {
+      const perUnit = from === to ? '1' : USD_PER_UNIT[from];
+      return perUnit && to === 'USD' ? { rate: perUnit, asOf: new Date().toISOString() } : null;
+    }),
     convert: vi.fn(async (amount: string, from: string, to: string) => {
       const perUnit = USD_PER_UNIT[from];
       if (from === to) {
@@ -84,6 +94,7 @@ type ServiceOptions = {
   kycStatus?: KycStatus | null;
   directoryThrows?: boolean;
   riskTags?: TagKey[] | 'unbound';
+  kycPolicy?: KycWithdrawalPolicy;
 };
 
 async function makeService({
@@ -96,6 +107,7 @@ async function makeService({
   kycStatus = 'verified',
   directoryThrows = false,
   riskTags = [],
+  kycPolicy,
 }: ServiceOptions = {}) {
   if (autoWithdrawal && !skipConfigSeed) {
     await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
@@ -136,6 +148,7 @@ async function makeService({
     directory,
     platformConfig,
     ...(rates === 'unbound' ? {} : { rates }),
+    kycPolicy,
     ...(riskTags === 'unbound'
       ? {}
       : {
@@ -184,7 +197,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${autoWithdrawalRule}, ${walletAutoWithdrawalConfig}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${autoWithdrawalRule}, ${walletAutoWithdrawalConfig}, ${walletAsset}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -220,7 +233,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       expect.objectContaining({
         actorType: 'system',
         action: 'wallet.withdrawal.auto_approved',
-        resourceType: 'wallet_transaction',
+        resourceType: 'withdrawal',
         resourceId: result.transactionId,
         after: expect.objectContaining({
           threshold: '1000.000000000000000000',
@@ -342,6 +355,50 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       autoWithdrawal: {},
       fiatThreshold: '1000',
       kycStatus: 'pending',
+    });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('auto-approves a player without KYC when the KYC policy does not require it', async () => {
+    const requiresKycForWithdrawal = vi.fn(async () => false);
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      kycStatus: 'pending',
+      kycPolicy: { requiresKycForWithdrawal },
+    });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(requiresKycForWithdrawal).toHaveBeenCalledWith({
+      userId: w.userId,
+      pivotAmount: '40',
+      pivotCurrency: 'USD',
+    });
+  });
+
+  it('stays pending when the KYC policy requires KYC the player does not have', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      kycStatus: 'pending',
+      kycPolicy: { requiresKycForWithdrawal: vi.fn(async () => true) },
     });
     const w = await seedWallet();
 
@@ -595,6 +652,47 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
+  it('ignores failed and cancelled withdrawals in the velocity count', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values([
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'failed' },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'failed' },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'cancelled' },
+    ]);
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+  });
+
+  it.each([
+    ['rejected', 'rejected'],
+    ['processing', 'on_hold'],
+    ['pending', 'processing'],
+  ] as const)('counts %s and %s withdrawals toward the velocity flag', async (first, second) => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet();
+    await db.drizzle.db.insert(walletTransaction).values([
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: first },
+      { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: second },
+    ]);
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
   it('ignores withdrawals outside the velocity window', async () => {
     const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet();
@@ -830,7 +928,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
-  it('stays pending when there is no rate to value the withdrawal in the pivot', async () => {
+  it('refuses the withdrawal when there is no rate to value it', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       cryptoThreshold: '100000',
@@ -838,18 +936,18 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '1',
-      currency: 'BTC',
-      destinationAddress: 'bc1qexample',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '1',
+        currency: 'BTC',
+        destinationAddress: 'bc1qexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(WalletReferenceRateUnavailableError);
   });
 
-  it('stays pending when the bound reader has no rate for the currency', async () => {
+  it('refuses the withdrawal when the bound reader has no rate for the currency', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       fiatThreshold: '100000',
@@ -857,15 +955,15 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     });
     const w = await seedWallet({ currency: 'ETH', balance: '10' });
 
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '1',
-      currency: 'ETH',
-      destinationAddress: '0xexample',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '1',
+        currency: 'ETH',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(WalletReferenceRateUnavailableError);
   });
 
   it('caps on the pivot value a past payout was approved at, not its value at the current rate', async () => {
@@ -1120,5 +1218,62 @@ describe('WalletService auto-withdrawal config methods (real PG)', () => {
     const { svc } = await makeService();
 
     await expect(svc.getAutoWithdrawalConfig()).rejects.toThrow();
+  });
+});
+
+describe('WalletService.withdraw network fee (real PG)', () => {
+  async function seedUsdAsset(withdrawalFee: string) {
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USD',
+      network: 'SEPA',
+      providerAssetId: 'USD_SEPA',
+      minDeposit: '0',
+      minWithdrawal: '0',
+      withdrawalFee,
+    });
+  }
+
+  it('debits the full amount, records the fee and sends the net payout to the provider', async () => {
+    await seedUsdAsset('2.5');
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+    const w = await seedWallet({ balance: '100' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      '37.500000000000000000',
+      'USD',
+      expect.objectContaining({ transactionId: result.transactionId }),
+    );
+    expect(await txById(result.transactionId)).toMatchObject({
+      amount: '40.000000000000000000',
+      fee: '2.500000000000000000',
+    });
+    const [balance] = await db.drizzle.db
+      .select({ amount: walletBalance.amount })
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(balance?.amount).toBe('60.000000000000000000');
+  });
+
+  it('refuses a withdrawal that does not exceed the fee, before any debit', async () => {
+    await seedUsdAsset('2.5');
+    const { svc } = await makeService();
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '2.5', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(WithdrawalAmountNotAboveFeeError);
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.walletId, w.id));
+    expect(rows).toHaveLength(0);
   });
 });

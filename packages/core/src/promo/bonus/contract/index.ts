@@ -90,13 +90,26 @@ export const SetWagerWeightsInputSchema = z.object({
 export type SetWagerWeightsInput = z.infer<typeof SetWagerWeightsInputSchema>;
 
 /**
- * Who an offer is for. Kept as jsonb on the row rather than as columns: every one of these is a
- * predicate an operator turns on or off, and a new one should not cost a migration - which is
- * why a rule with no way to answer it yet is absent rather than present and never firing.
+ * Who an offer is for, and the small per-offer knobs a mechanic needs that core has no grant
+ * shape for. Kept as jsonb on the row rather than as columns: every one of these is a predicate
+ * or a setting an operator turns on, off or tunes, and a new one should not cost a migration -
+ * which is why a rule with no way to answer it yet is absent rather than present and never
+ * firing.
  */
 export const PromoOfferRulesSchema = z.object({
   /** Only the player's first confirmed deposit qualifies. */
   firstDepositOnly: z.boolean().default(false),
+  /**
+   * Free spins a grant of this offer entitles the player to. No provider-crediting API exists
+   * yet, so a job sets these pending on grant rather than never asking for a count at all -
+   * absent means this offer grants no spins.
+   */
+  freeSpins: z.number().int().positive().optional(),
+  /**
+   * How many days a period-close job (e.g. a net-loss cashback sweep) looks back. Absent means
+   * the job's own default period.
+   */
+  periodDays: z.number().int().positive().optional(),
 });
 
 export type PromoOfferRules = z.infer<typeof PromoOfferRulesSchema>;
@@ -164,8 +177,11 @@ export const UpdatePromoOfferInputSchema = PromoOfferSchema.omit({
 
 export type UpdatePromoOfferInput = z.infer<typeof UpdatePromoOfferInputSchema>;
 
-/** What a player sees of an offer: the deal, never the operator's weighting. */
-export const PlayerOfferSchema = PromoOfferSchema.pick({
+/**
+ * What a signed-out visitor sees of an offer: the deal and nothing else. No claim state, no
+ * progress, no operator weighting - there is no player to answer those for.
+ */
+export const PublicOfferSchema = PromoOfferSchema.pick({
   id: true,
   key: true,
   name: true,
@@ -177,8 +193,19 @@ export const PlayerOfferSchema = PromoOfferSchema.pick({
   validUntil: true,
 }).extend({
   wageringMultiplier: MoneyAmountSchema,
+});
+
+export type PublicOffer = z.infer<typeof PublicOfferSchema>;
+
+/** What a player sees of an offer: the deal, never the operator's weighting. */
+export const PlayerOfferSchema = PublicOfferSchema.extend({
   /** The player already took this one; deposits are counting toward its minimum. */
   optedIn: z.boolean(),
+  /**
+   * A deposit already turned this claim into a bonus. Read off the claim rather than the
+   * grant list, so it holds however far back that grant has been paged.
+   */
+  claimed: z.boolean(),
   /** What their deposits have put toward the minimum so far. */
   accumulatedDeposit: MoneyAmountSchema,
 });
@@ -193,8 +220,12 @@ export const PlayerGrantSchema = z.object({
   id: UuidSchema,
   /** The offer this bonus came from, so a client can show its state on that offer's card. */
   offerId: UuidSchema.nullable(),
+  /** The offer's key and name, so a grant still shows its offer once that offer has closed. */
+  offerKey: z.string().nullable(),
+  offerName: z.string().nullable(),
   currency: CurrencyTickerSchema,
   source: BonusGrantSourceSchema,
+  sourceRef: z.string(),
   status: BonusGrantStatusSchema,
   grantedAmount: MoneyAmountSchema,
   bonusBalance: MoneyAmountSchema,
@@ -210,7 +241,6 @@ export type PlayerGrant = z.infer<typeof PlayerGrantSchema>;
 
 export const AdminGrantSchema = PlayerGrantSchema.extend({
   userId: UuidSchema,
-  sourceRef: z.string(),
 });
 
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;
@@ -298,6 +328,11 @@ export {
 export const bonusContract = {
   offers: {
     list: oc.route({ method: 'GET', path: '/promo/offers' }).output(z.array(PlayerOfferSchema)),
+
+    /** The live catalogue for a signed-out visitor; empty where the country rule refuses them. */
+    listPublic: oc
+      .route({ method: 'GET', path: '/promo/offers/public' })
+      .output(z.array(PublicOfferSchema)),
 
     optIn: oc
       .route({ method: 'POST', path: '/promo/offers/{id}/opt-in' })

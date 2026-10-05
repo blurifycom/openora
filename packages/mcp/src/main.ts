@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { dirname, join, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildDepGraph, impactOf, type DepGraph } from './dep-graph.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -680,6 +681,96 @@ server.registerTool(
         },
       ],
     };
+  },
+);
+
+let builtGraph: DepGraph | null = null;
+
+// The repo's own graph: a prebuilt dep-graph.json at the root wins (CI writes one), else built
+// once per server process - a full cruise takes seconds, not milliseconds.
+function localGraph(rebuild: boolean): DepGraph {
+  const prebuilt = join(process.cwd(), 'dep-graph.json');
+  if (!rebuild && existsSync(prebuilt)) {
+    return JSON.parse(readFileSync(prebuilt, 'utf8')) as DepGraph;
+  }
+  if (rebuild || !builtGraph) {
+    builtGraph = buildDepGraph(process.cwd());
+  }
+  return builtGraph;
+}
+
+// Shipped with the package (built by the platform's publish job), so a consumer repo can follow
+// a platform file into its own code without a platform checkout.
+function platformGraph(): DepGraph | null {
+  const shipped = join(here, '..', 'docs', 'dep-graph.json');
+  return existsSync(shipped) ? (JSON.parse(readFileSync(shipped, 'utf8')) as DepGraph) : null;
+}
+
+server.registerTool(
+  'impact',
+  {
+    description:
+      'Blast radius of a change: for each repo-relative file, the files that import it (transitively), and for a platform file (packages/core/src/...) the public @openora/* entry points it reaches plus the consumer files importing them. Use before editing a shared file, or to decide what to re-test after a change.',
+    inputSchema: {
+      files: z
+        .array(z.string())
+        .min(1)
+        .describe('Repo-relative paths, e.g. "apps/web/src/lib/x.ts"'),
+      depth: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .optional()
+        .describe('Import hops to follow (default 4)'),
+      rebuild: z
+        .boolean()
+        .optional()
+        .describe('Re-cruise the repo instead of using a cached graph'),
+    },
+  },
+  async ({ files, depth = 4, rebuild = false }) => {
+    let local: DepGraph;
+    try {
+      local = localGraph(rebuild);
+    } catch (error) {
+      return {
+        content: [{ type: 'text' as const, text: `Could not build the graph: ${String(error)}` }],
+      };
+    }
+    const platform = platformGraph();
+    const list = (items: string[], max = 40) =>
+      items.length === 0
+        ? '  (none)'
+        : items
+            .slice(0, max)
+            .map((i) => `  - ${i}`)
+            .join('\n') + (items.length > max ? `\n  (+${items.length - max} more)` : '');
+    const sections = files.map((file) => {
+      const known = (g: DepGraph) =>
+        file in g.dependents || file in g.entryPoints || file in g.platform;
+      const onPlatform = platform && !known(local) && known(platform);
+      const impact = onPlatform
+        ? impactOf(platform, file, depth, local)
+        : impactOf(local, file, depth);
+      const lines = [
+        `=== ${file} ===`,
+        `Importers (${impact.importers.length}):`,
+        list(impact.importers),
+      ];
+      if (impact.specifiers.length > 0) {
+        lines.push(`Public entry points reached:`, list(impact.specifiers));
+      }
+      if (onPlatform) {
+        lines.push(`Files in this repo importing them:`, list(impact.consumerFiles));
+      }
+      const imports = local.platform[file];
+      if (imports?.length) {
+        lines.push(`Platform imports of this file:`, list(imports));
+      }
+      return lines.join('\n');
+    });
+    return { content: [{ type: 'text' as const, text: sections.join('\n\n') }] };
   },
 );
 

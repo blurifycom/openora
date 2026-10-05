@@ -37,6 +37,8 @@ export type AdminUserListOptions = {
   page: number;
   limit: number;
   search?: string;
+  /** Leaves out player accounts, so the list holds only accounts with a back-office role. */
+  staffOnly?: boolean;
   sortBy?: AdminUserSortBy;
   sortOrder?: SortOrder;
 };

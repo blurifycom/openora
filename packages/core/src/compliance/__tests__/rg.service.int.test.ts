@@ -20,6 +20,7 @@ import {
   ExclusionPeriodNotElapsedError,
   ExclusionNotFoundError,
   LimitRaiseNotAllowedError,
+  LimitOrderingViolationError,
   isWeakening,
   resolveLimitCurrency,
   RgLimitCurrencyUnresolvedError,
@@ -487,6 +488,189 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     if (raiseAttempt.status === 'rejected') {
       expect(raiseAttempt.reason).toBeInstanceOf(LimitRaiseNotAllowedError);
     }
+  });
+});
+
+describe('RgService.setPlayerLimit ordering (real PG)', () => {
+  function limitInput(overrides: Partial<Parameters<RgService['setPlayerLimit']>[1]> = {}) {
+    return {
+      userId: '',
+      type: 'deposit' as const,
+      amount: '10',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily' as const,
+      reason: 'admin override',
+      confirm: true as const,
+      ...overrides,
+    };
+  }
+
+  it('refuses setting daily above an existing weekly', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'weekly', amount: '50' }),
+      actorId,
+      'admin',
+    );
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'daily', amount: '80' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+
+  it('refuses setting weekly below an existing daily - even as a reduce-only override', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'daily', amount: '50' }),
+      actorId,
+      'admin',
+    );
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'weekly', amount: '80' }),
+      actorId,
+      'admin',
+    );
+
+    // A decrease from 80 to 30 passes the reduce-only check but still violates ordering
+    // against the existing daily=50.
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'weekly', amount: '30' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+
+  it('refuses setting monthly below an existing weekly', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'weekly', amount: '50' }),
+      actorId,
+      'admin',
+    );
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'monthly', amount: '20' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+
+  it('accepts a valid ordered set: daily <= weekly <= monthly', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'daily', amount: '10' }),
+      actorId,
+      'admin',
+    );
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'weekly', amount: '20' }),
+      actorId,
+      'admin',
+    );
+    const dto = await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'monthly', amount: '30' }),
+      actorId,
+      'admin',
+    );
+
+    expect(Number(dto.amount)).toBe(30);
+  });
+
+  it('converts across currencies when a rate is available', async () => {
+    const rates = mock<ExchangeRateReader>({
+      getRate: vi.fn(async () => null),
+      convert: vi.fn(async (amount: string, from: string, to: string) => {
+        if (from === to) {
+          return amount;
+        }
+        if (from === 'EUR' && to === 'USD') {
+          return String(Number(amount) * 1.1);
+        }
+        if (from === 'USD' && to === 'EUR') {
+          return String(Number(amount) / 1.1);
+        }
+        return null;
+      }),
+    });
+    const { svc } = makeService(undefined, rates);
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'daily', amount: '10', currency: 'USD' }),
+      actorId,
+      'admin',
+    );
+
+    // The daily bound (10 USD) converts to ~9.09 EUR, which is <= 20 EUR: allowed.
+    const dto = await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'weekly', amount: '20', currency: 'EUR' }),
+      actorId,
+      'admin',
+    );
+    expect(Number(dto.amount)).toBe(20);
+
+    // The daily bound (10 USD) converts to ~9.09 EUR, above a 5 EUR weekly: refused.
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'weekly', amount: '5', currency: 'EUR' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+
+  it('refuses the whole operation when a required exchange rate is missing, rather than skipping the check', async () => {
+    const { svc } = makeService(undefined, identityRates());
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      limitInput({ userId, period: 'daily', amount: '10', currency: 'USD' }),
+      actorId,
+      'admin',
+    );
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        limitInput({ userId, period: 'weekly', amount: '20', currency: 'EUR' }),
+        actorId,
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
   });
 });
 

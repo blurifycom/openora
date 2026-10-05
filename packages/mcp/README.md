@@ -12,20 +12,31 @@ shipped in the published package, or a catalog you point it at.
 
 ## Tools
 
-| Tool                | Args      | Purpose                                                    |
-| ------------------- | --------- | ---------------------------------------------------------- |
-| `catalog-overview`  | -         | Start here: counts + adapter table + config fields.        |
-| `list-adapters`     | -         | Vendor swap-seams: interface, token, wired-vs-stub.        |
-| `list-routes`       | `module?` | oRPC route namespaces, optionally scoped to one module.    |
-| `list-events`       | -         | Cross-module domain events to subscribe to.                |
-| `list-agent-tools`  | `module?` | Agent tools and action types, with IAM and schema version. |
-| `list-slots`        | -         | Named UI slots for extending the backoffice.               |
-| `describe-module`   | `name`    | One module's tables, routes and agent surface.             |
-| `schema-get`        | `name`    | Where a Zod contract schema is defined.                    |
-| `get-config-schema` | -         | iGaming-config token, source, and fields.                  |
+| Tool                | Args      | Purpose                                                                    |
+| ------------------- | --------- | -------------------------------------------------------------------------- |
+| `catalog-overview`  | -         | Start here: counts + adapter table + config fields.                        |
+| `list-adapters`     | -         | Vendor swap-seams: interface, token, wired-vs-stub.                        |
+| `list-routes`       | `module?` | oRPC route namespaces, optionally scoped to one module.                    |
+| `list-events`       | -         | Cross-module domain events to subscribe to.                                |
+| `list-agent-tools`  | `module?` | Agent tools and action types, with IAM and schema version.                 |
+| `list-slots`        | -         | Named UI slots for extending the backoffice.                               |
+| `describe-module`   | `name`    | One module's tables, routes and agent surface.                             |
+| `schema-get`        | `name`    | Where a Zod contract schema is defined.                                    |
+| `get-config-schema` | -         | iGaming-config token, source, and fields.                                  |
+| `impact`            | `files`   | Transitive importers of files; platform files are followed into this repo. |
 
 All tools are read-only. If the catalog cannot be located, every tool returns a
 helpful message instead of crashing.
+
+## Import graph (`impact`, `openora-dep-graph`)
+
+`impact` walks a `dependents` map built with the repo's own dependency-cruiser config: a
+`dep-graph.json` at the repo root if present, else one cruise per server process. The package
+also ships the platform's own graph (`docs/dep-graph.json`, built by the publish job), so from a
+consumer repo `impact packages/core/src/...` names the public entry points a platform change
+reaches and the consumer files importing them.
+
+`openora-dep-graph [out]` writes the same graph for CI or automation (default `dep-graph.json`).
 
 ## Catalog resolution
 

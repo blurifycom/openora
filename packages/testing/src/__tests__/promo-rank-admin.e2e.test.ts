@@ -102,6 +102,7 @@ const recordWager = (userId: string, weightedAmount: string) =>
       currency: 'USDT',
       amount: weightedAmount,
       weightedAmount,
+      realAmount: weightedAmount,
       context: { provider: 'aggregator', product: 'casino' },
     }),
   );
@@ -331,6 +332,7 @@ describe('an operator configuring the rank ladder', () => {
         currency: 'USDT',
         amount: '15000',
         weightedAmount: '15000',
+        realAmount: '15000',
         context: { provider: 'aggregator', product: 'casino' },
       }),
     );

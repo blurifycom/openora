@@ -7,14 +7,23 @@ import {
   KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
+  GameBulkIdsSchema,
+  GameBulkTargetFieldsSchema,
+  gameBulkTargetRefinement,
+  hasGameBulkTarget,
   GeoRuleActionSchema,
   NonEmptyReasonSchema,
   PageQuerySchema,
   paginated,
+  MoneyAmountSchema,
 } from '@openora/core/contracts';
 import { KycDocumentTypeSchema, KycTriggeredBySchema } from './enums.js';
 import { LimitSchema, LimitViewSchema, UpsertLimitInputSchema } from './limits.js';
 import { rgContract } from './rg.js';
+
+const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
+  message: 'Must be greater than zero',
+});
 
 export { KycDocumentTypeSchema, KycTriggeredBySchema };
 
@@ -152,11 +161,38 @@ export const BulkApproveKycOutputSchema = z.object({
 });
 export type BulkApproveKycOutput = z.infer<typeof BulkApproveKycOutputSchema>;
 
+const isBareHttpsOrigin = (value: string) => {
+  try {
+    return new URL(value).origin === value && value.startsWith('https://');
+  } catch {
+    return false;
+  }
+};
+
+// An origin, not a page: the consumer appends the path the visitor asked for, and an
+// origin is the unit a host allowlist can compare without parsing surprises.
+export const MirrorUrlSchema = z
+  .string()
+  .max(253 + 'https://'.length)
+  .refine(
+    isBareHttpsOrigin,
+    'Mirror URL must be an https origin with no path, e.g. https://example.com',
+  );
+
+// What a country actually gets, whatever the stored flags say: a blacklisted country with a
+// mirror in force is `redirected`, not `blocked`.
+export const CountryEffectiveAccessSchema = z.enum(['blocked', 'redirected', 'open']);
+export type CountryEffectiveAccess = z.infer<typeof CountryEffectiveAccessSchema>;
+
 export const CountryRuleSchema = z.object({
   id: UuidSchema,
   countryCode: CountryCodeSchema,
   blacklisted: z.boolean(),
   redirectIp: z.boolean(),
+  // A plain string on output: the shape is enforced where it is written, and a row written
+  // outside the API must not fail every read of the list.
+  mirrorUrl: z.string().nullable(),
+  effectiveAccess: CountryEffectiveAccessSchema,
   kycRequired: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.nullable(),
@@ -206,14 +242,19 @@ export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
   kycRequired: true,
 })
   .extend({
+    // Omitted keeps the stored target, so a client that predates the field cannot clear it.
+    mirrorUrl: MirrorUrlSchema.nullable().optional(),
     expectedUpdatedAt: TimestampSchema.nullable(),
     confirm: z.boolean().optional(),
   })
   .strict();
 export type UpsertCountryRuleInput = z.infer<typeof UpsertCountryRuleInputSchema>;
 
+// In the fx pivot currency. A null withdrawal threshold means no single-withdrawal trigger.
 export const GlobalKycConfigSchema = z.object({
   enabled: z.boolean(),
+  withdrawalThreshold: MoneyAmountSchema.nullable(),
+  cumulativeDepositThreshold: MoneyAmountSchema,
   updatedAt: TimestampSchema.nullable(),
   updatedBy: UuidSchema.nullable(),
 });
@@ -222,6 +263,9 @@ export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
 export const SetGlobalKycConfigInputSchema = z
   .object({
     enabled: z.boolean(),
+    // Omitted = unchanged.
+    withdrawalThreshold: PositiveMoneyAmountSchema.nullable().optional(),
+    cumulativeDepositThreshold: PositiveMoneyAmountSchema.optional(),
     confirm: z.literal(true),
     expectedUpdatedAt: TimestampSchema.nullable(),
   })
@@ -269,7 +313,36 @@ const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
   countryCode: CountryCodeSchema.nullable(),
   reason: z.string().nullable(),
+  // Set on an allowed decision for a country redirected to a mirror, null on every denial:
+  // a consumer serving the primary domain sends the visitor there instead of rendering.
+  redirectUrl: z.string().nullable(),
 });
+
+export const GetBlockedCountriesOutputSchema = z.object({
+  countryCodes: z.array(CountryCodeSchema),
+});
+export type GetBlockedCountriesOutput = z.infer<typeof GetBlockedCountriesOutputSchema>;
+
+export const BulkGameGeoRuleInputSchema = GameBulkTargetFieldsSchema.extend({
+  countryCode: CountryCodeSchema,
+  reason: NonEmptyReasonSchema.max(500),
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
+export type BulkGameGeoRuleInput = z.infer<typeof BulkGameGeoRuleInputSchema>;
+
+export const BulkRestrictGameGeoRulesOutputSchema = z.object({
+  changed: z.number().int().nonnegative(),
+  unchanged: z.number().int().nonnegative(),
+  notFound: GameBulkIdsSchema,
+});
+export type BulkRestrictGameGeoRulesOutput = z.infer<typeof BulkRestrictGameGeoRulesOutputSchema>;
+
+export const BulkUnrestrictGameGeoRulesOutputSchema = BulkRestrictGameGeoRulesOutputSchema.extend({
+  stillBlockedByProvider: z.number().int().nonnegative(),
+  globallyBlocked: z.boolean(),
+});
+export type BulkUnrestrictGameGeoRulesOutput = z.infer<
+  typeof BulkUnrestrictGameGeoRulesOutputSchema
+>;
 
 export const complianceContract = {
   getLimits: oc
@@ -295,7 +368,7 @@ export const complianceContract = {
 
   listGeoRules: oc
     .route({ method: 'GET', path: '/compliance/geo-rules' })
-    .output(z.array(GeoRuleSchema)),
+    .output(z.array(GeoRuleSchema.extend({ effectiveAccess: CountryEffectiveAccessSchema }))),
 
   upsertGameGeoRules: oc
     .route({ method: 'PUT', path: '/compliance/game-geo-rules/{gameId}' })
@@ -311,6 +384,20 @@ export const complianceContract = {
     .route({ method: 'GET', path: '/compliance/game-geo-rules' })
     .input(ListGameGeoRulesInputSchema)
     .output(paginated(GameGeoRuleSchema)),
+
+  bulkRestrictGameGeoRules: oc
+    .route({ method: 'POST', path: '/compliance/game-geo-rules/bulk/restrict' })
+    .input(BulkGameGeoRuleInputSchema)
+    .output(BulkRestrictGameGeoRulesOutputSchema),
+
+  bulkUnrestrictGameGeoRules: oc
+    .route({ method: 'POST', path: '/compliance/game-geo-rules/bulk/unrestrict' })
+    .input(BulkGameGeoRuleInputSchema)
+    .output(BulkUnrestrictGameGeoRulesOutputSchema),
+
+  getBlockedCountries: oc
+    .route({ method: 'GET', path: '/compliance/blocked-countries' })
+    .output(GetBlockedCountriesOutputSchema),
 
   upsertProviderGeoRules: oc
     .route({ method: 'PUT', path: '/compliance/provider-geo-rules/{providerId}' })

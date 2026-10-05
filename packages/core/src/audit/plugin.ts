@@ -10,6 +10,24 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
+// Identity topics also fire for admins; a player-backed account is filed under the player.
+function identitySubject(
+  p: Record<string, unknown>,
+): Pick<RecordInput, 'resourceType' | 'resourceId'> {
+  return typeof p['playerId'] === 'string'
+    ? { resourceType: 'player', resourceId: p['playerId'] }
+    : { resourceType: 'user', resourceId: str(p['userId']) };
+}
+
+// Withdrawal decisions are about the player; the withdrawal id stays in `after.transactionId`.
+function withdrawalSubject(
+  p: Record<string, unknown>,
+): Pick<RecordInput, 'resourceType' | 'resourceId'> {
+  return typeof p['playerId'] === 'string'
+    ? { resourceType: 'player', resourceId: p['playerId'] }
+    : { resourceType: 'withdrawal', resourceId: str(p['transactionId']) };
+}
+
 export async function mapEventToRecord(
   topic: string,
   p: Record<string, unknown>,
@@ -90,6 +108,29 @@ export async function mapEventToRecord(
     };
   }
 
+  // No actor: the subject is the request's own origin, and there is no account yet on the
+  // registration, login and page-gate paths that produce this.
+  if (topic === 'compliance.geo.access_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'geo-access',
+      resourceId: str(p['countryCode']),
+      result: 'failure',
+      after: { countryCode: p['countryCode'] ?? null, reason: p['reason'] ?? null },
+    };
+  }
+
+  if (topic === 'compliance.geo.access_redirected') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'geo-access',
+      resourceId: str(p['countryCode']),
+      after: { countryCode: p['countryCode'] ?? null, redirectUrl: p['redirectUrl'] ?? null },
+    };
+  }
+
   if (topic === 'compliance.geo-rule.added') {
     return {
       ...base,
@@ -154,22 +195,25 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
-  // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
-  // carried on reject. `failed` has no adminId when auto-approved or webhook-rejected.
+  // Admin approve/reject of a withdrawal, a PSP-rail failure on an approved one, or its
+  // completion. actorId = the reviewing admin (none on completed, auto-approved or
+  // webhook-driven outcomes); filed under the player; reason carried on reject.
   if (
     topic === 'wallet.withdrawal.approved' ||
     topic === 'wallet.withdrawal.rejected' ||
-    topic === 'wallet.withdrawal.failed'
+    topic === 'wallet.withdrawal.failed' ||
+    topic === 'wallet.withdrawal.completed'
   ) {
     return {
       ...base,
       actorType: p['adminId'] ? 'admin' : 'system',
       actorId: str(p['adminId']),
-      resourceType: 'withdrawal',
-      resourceId: str(p['transactionId']),
+      ...withdrawalSubject(p),
+      // A rejection is the admin's decision carried out, not a failed action.
+      result: topic === 'wallet.withdrawal.failed' ? 'failure' : 'success',
       after: {
         userId: str(p['userId']),
+        transactionId: str(p['transactionId']),
         amount: p['amount'],
         currency: p['currency'],
         reason: p['reason'] ?? null,
@@ -252,8 +296,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'player',
       actorId: str(p['playerId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       result: 'success',
     };
   }
@@ -315,8 +358,9 @@ export async function mapEventToRecord(
       ...base,
       actorType,
       actorId,
-      resourceType: isSingle ? 'session' : 'user',
-      resourceId: isSingle ? str(p['sessionId']) : str(p['userId']),
+      ...(isSingle
+        ? { resourceType: 'session', resourceId: str(p['sessionId']) }
+        : identitySubject(p)),
     };
   }
 
@@ -346,7 +390,7 @@ export async function mapEventToRecord(
 
   // actorId = the moderator's resolved playerId; resource = the affected player in
   // that room (not player-typed - resourceId stays the raw member userId).
-  if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
+  if (topic === 'chat.room.member.kicked') {
     return {
       ...base,
       actorType: 'player',
@@ -354,6 +398,23 @@ export async function mapEventToRecord(
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },
+    };
+  }
+
+  // A room ban only comes from a room moderator on a player route, never from the back office.
+  if (topic === 'chat.room.member.banned') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['playerId']) ?? str(p['bannedBy']),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      before: isRecord(p['replaced']) ? p['replaced'] : null,
+      after: {
+        roomId: str(p['roomId']),
+        reason: str(p['reason']),
+        expiresAt: str(p['expiresAt']),
+      },
     };
   }
 
@@ -398,10 +459,11 @@ export async function mapEventToRecord(
   // actorId = the joining/leaving player's resolved playerId; resource is not
   // player-typed - resourceId stays the raw member userId.
   if (topic === 'chat.room.member.joined' || topic === 'chat.room.member.left') {
+    const adminId = str(p['adminId']);
     return {
       ...base,
-      actorType: 'player',
-      actorId: str(p['playerId']),
+      actorType: adminId ? 'admin' : 'player',
+      actorId: adminId ?? str(p['playerId']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },
@@ -459,6 +521,7 @@ export async function mapEventToRecord(
     };
   }
 
+  // Only the admin player routes reach PlayerService.update / remove.
   if (topic === 'player.account.closed' || topic === 'player.account.reopened') {
     return {
       ...base,
@@ -467,6 +530,19 @@ export async function mapEventToRecord(
       resourceType: 'player',
       resourceId: str(p['playerId']),
       after: { closed: topic === 'player.account.closed' },
+    };
+  }
+
+  // Only the admin player routes reach PlayerService.update / remove.
+  if (topic === 'player.status.changed') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      before: { status: p['previousStatus'] ?? null },
+      after: { status: p['newStatus'] ?? null },
     };
   }
 
@@ -1028,12 +1104,12 @@ export async function mapEventToRecord(
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
     const isForced = !isSystem && rawActorId !== p['userId'];
+    const playerId = str(p['playerId']);
     return {
       ...base,
-      actorType: isSystem ? 'system' : isForced ? 'admin' : 'player',
-      actorId: isSystem ? null : isForced ? str(rawActorId) : str(p['playerId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      actorType: isSystem ? 'system' : isForced || !playerId ? 'admin' : 'player',
+      actorId: isSystem ? null : isForced ? str(rawActorId) : (playerId ?? str(p['userId'])),
+      ...identitySubject(p),
     };
   }
 
@@ -1045,8 +1121,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       before: { email: str(p['previousEmail']) },
       after: { email: str(p['newEmail']) },
     };
@@ -1058,8 +1133,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       before: { phoneVerified: p['previousPhoneVerified'] ?? null },
       after: { phoneVerified: true },
     };
@@ -1071,8 +1145,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       before: { loginWithdrawalAlertsEnabled: p['previousEnabled'] ?? null },
       after: { loginWithdrawalAlertsEnabled: p['enabled'] ?? null },
     };
@@ -1084,8 +1157,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       before: { autoLogoutDuration: p['previousDuration'] ?? null },
       after: { autoLogoutDuration: p['duration'] ?? null },
     };
@@ -1097,8 +1169,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       before: { requireTwoFactorOnLogin: p['previousEnabled'] ?? null },
       after: { requireTwoFactorOnLogin: p['enabled'] ?? null },
     };
@@ -1110,8 +1181,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       // Booleans only - the PIN and its hash never reach the audit trail.
       before: { withdrawalPinSet: p['wasAlreadySet'] ?? null },
       after: { withdrawalPinSet: true },
@@ -1124,8 +1194,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       before: { withdrawalPinSet: true },
       after: { withdrawalPinSet: false },
     };
@@ -1137,8 +1206,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
-      resourceType: 'user',
-      resourceId: str(p['userId']),
+      ...identitySubject(p),
       // The code value never reaches the audit trail, only that it was set.
       before: { antiPhishingCodeSet: p['wasAlreadySet'] ?? null },
       after: { antiPhishingCodeSet: true },
@@ -1168,8 +1236,8 @@ export async function mapEventToRecord(
   ) {
     const playerId = p['playerId'];
     return playerId
-      ? { ...base, actorId: str(playerId), actorType: 'player' }
-      : { ...base, actorId: str(p['userId']), actorType: 'admin' };
+      ? { ...base, ...identitySubject(p), actorId: str(playerId), actorType: 'player' }
+      : { ...base, ...identitySubject(p), actorId: str(p['userId']), actorType: 'admin' };
   }
 
   // Generic player-self-action fallback (gaming rounds, chat, self-service RG
@@ -1182,6 +1250,8 @@ export async function mapEventToRecord(
 }
 
 const SUBSCRIBED_TOPICS: DomainEventName[] = [
+  'compliance.geo.access_blocked',
+  'compliance.geo.access_redirected',
   'identity.user.registered',
   'identity.user.registration.failed',
   'identity.user.login',
@@ -1321,6 +1391,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'player.login_blocked',
   'player.account.closed',
   'player.account.reopened',
+  'player.status.changed',
   'social.friend_request.sent',
   'social.friend_request.accepted',
   'social.friendship.removed',

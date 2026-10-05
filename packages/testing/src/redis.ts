@@ -1,6 +1,6 @@
 import { createClient } from 'redis';
 
-const BASE_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
+const BASE_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
 const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
 
 /**

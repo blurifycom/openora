@@ -17,6 +17,7 @@ import {
   ilike,
   inArray,
   isNotNull,
+  ne,
   notInArray,
   or,
   sql,
@@ -57,9 +58,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return Number(r?.n ?? 0);
   }
 
-  async list({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
+  async list({ page, limit, search, staffOnly, sortBy, sortOrder }: AdminUserListOptions) {
     const db = this.drizzle.db;
-    const where = search ? ilike(user.email, `%${search}%`) : undefined;
+    const where = and(
+      search ? ilike(user.email, `%${search}%`) : undefined,
+      staffOnly ? ne(user.role, 'player') : undefined,
+    );
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
     const USER_SORT_COLS = {
       createdAt: user.createdAt,

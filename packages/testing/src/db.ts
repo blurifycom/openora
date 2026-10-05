@@ -24,7 +24,7 @@ import { migrate as migrateExchangeRate } from '@openora/core/fx/migrate/exchang
 import { migrate as migratePromoBonus } from '@openora/core/promo/migrate/bonus';
 import { migrate as migratePromoGamification } from '@openora/core/promo/migrate/gamification';
 
-const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
+const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5434/oss_igaming_test';
 
 async function applyAllMigrations(url: string): Promise<void> {
   // No cross-module FKs (db-conventions), so order is only for readability.

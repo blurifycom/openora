@@ -69,6 +69,7 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
         providerId: provider!.id,
         aggregator: 'direct',
         thumbnailUrl: 'aces.png',
+        customThumbnailUrl: 'aces-custom.png',
         isActive: true,
       })
       .returning();
@@ -80,6 +81,22 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
       .values({ gameId: g.id, title: 'Big Win', placement: 'home', sortOrder: 0, isActive: true })
       .returning();
 
+    // A pre-deploy entry without customThumbnailUrl must not be served.
+    await redis.client.set(
+      'cache:lobby:featured',
+      JSON.stringify([
+        {
+          id: slot.id,
+          title: 'Stale',
+          gameId: g.id,
+          gameName: 'Aces',
+          thumbnailUrl: null,
+          placement: 'home',
+          sortOrder: 0,
+        },
+      ]),
+      { expiration: { type: 'PX', value: 30_000 } },
+    );
     const svc = makeLobbyService(new RedisCache(redis.client));
 
     const first = await svc.getFeatured();
@@ -90,12 +107,13 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
         gameId: g.id,
         gameName: 'Aces',
         thumbnailUrl: 'aces.png',
+        customThumbnailUrl: 'aces-custom.png',
         placement: 'home',
         sortOrder: 0,
       },
     ]);
 
-    const pttl = await redis.client.pTTL('cache:lobby:featured');
+    const pttl = await redis.client.pTTL('cache:lobby:featured:v2');
     expect(pttl).toBeGreaterThan(0);
     expect(pttl).toBeLessThanOrEqual(30_000);
 
@@ -107,7 +125,7 @@ describe('LobbyService featured cache (real PG + real Redis)', () => {
 });
 
 describe('LobbyService public game gates (real PG)', () => {
-  async function seedPlayableGame(name: string) {
+  async function seedPlayableGame(name: string, overrides: Partial<typeof game.$inferInsert> = {}) {
     const tag = randomUUID();
     const [provider] = await db.drizzle.db
       .insert(gameProvider)
@@ -121,13 +139,16 @@ describe('LobbyService public game gates (real PG)', () => {
         providerId: provider!.id,
         aggregator: 'direct',
         isActive: true,
+        ...overrides,
       })
       .returning();
     return { provider: provider!, row: row! };
   }
 
   it('search hides inactive games and games of deactivated providers', async () => {
-    await seedPlayableGame('Gate Search Live');
+    const live = await seedPlayableGame('Gate Search Live', {
+      customThumbnailUrl: 'https://cdn.example/gate-search-live.png',
+    });
     const dark = await seedPlayableGame('Gate Search Dark');
     await db.drizzle.db.update(game).set({ isActive: false }).where(eq(game.id, dark.row.id));
     const orphaned = await seedPlayableGame('Gate Search Orphaned');
@@ -137,7 +158,12 @@ describe('LobbyService public game gates (real PG)', () => {
       .where(eq(gameProvider.id, orphaned.provider.id));
 
     const svc = makeLobbyService();
-    expect((await svc.search('gate search')).map((r) => r.name)).toEqual(['Gate Search Live']);
+    const results = await svc.search('gate search');
+    expect(results.map((r) => r.name)).toEqual(['Gate Search Live']);
+    expect(results[0]).toMatchObject({
+      id: live.row.id,
+      customThumbnailUrl: 'https://cdn.example/gate-search-live.png',
+    });
   });
 
   it('public game summaries omit invisible tags', async () => {
@@ -170,7 +196,9 @@ describe('LobbyService public game gates (real PG)', () => {
       .insert(lobbyCategory)
       .values({ slug: `gate-${tag}`, name: 'Gate' })
       .returning();
-    const live = await seedPlayableGame('Gate Feed Live');
+    const live = await seedPlayableGame('Gate Feed Live', {
+      customThumbnailUrl: 'https://cdn.example/gate-feed-live.png',
+    });
     const dark = await seedPlayableGame('Gate Feed Dark');
     await db.drizzle.db.update(game).set({ isActive: false }).where(eq(game.id, dark.row.id));
     const orphaned = await seedPlayableGame('Gate Feed Orphaned');
@@ -199,6 +227,9 @@ describe('LobbyService public game gates (real PG)', () => {
     const feed = await svc.getCategoryGames(category!.slug);
     expect(feed.games.map((g) => g.name)).toEqual(['Gate Feed Live']);
     expect(feed.games[0]?.categories.map((entry) => entry.name)).toEqual(['Visible']);
+    expect(feed.games[0]).toMatchObject({
+      customThumbnailUrl: 'https://cdn.example/gate-feed-live.png',
+    });
 
     const listed = await svc.listCategories();
     expect(listed.find((entry) => entry.slug === `gate-${tag}`)?.gameCount).toBe(feed.games.length);

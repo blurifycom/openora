@@ -15,7 +15,7 @@ The generator creates `extensions/<name>/plugin.ts` and registers it in `extensi
 - `ctx.mcp.tool(defineMcpTool({...}), (c) => async (input, run) => output)` - register an agent tool, a read a model makes during a run.
 - `ctx.actions.register(defineActionType({...}), (c) => ({ precondition, execute }))` - register an agent action type, a change a model may only propose. `execute` performs nothing on a replay while its effect still holds, and answers `already_applied`.
 
-Both are served only through the `MCP_KERNEL` token, which checks IAM, validates input, applies the output allow-list and audits every tool call and action execution; a shape it cannot serve fails boot with the fix (ADR-0041). The one-argument `ctx.mcp.tool(definition)` still registers but the kernel does not serve it.
+Both are served only through the `MCP_KERNEL` token, which checks IAM, validates input, applies the output allow-list and audits every tool call and action execution; a shape it cannot serve fails boot with the fix (ADR-0042). The one-argument `ctx.mcp.tool(definition)` still registers but the kernel does not serve it.
 
 Tables go in the plugin's own `schema/index.ts` (Drizzle `pgTable`), then `pnpm regen`.
 

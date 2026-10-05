@@ -33,6 +33,7 @@ afterAll(async () => {
 runRealtimeTransportConformanceSuite({
   name: 'RedisPubSubRealtimeTransport',
   create: () => makeTransport(),
+  sharesBackendAcrossInstances: true,
   supportsServerSideSubscribe: true,
   addPresence: (transport, channel, entries) => {
     for (const { userId, connectionId } of entries) {
@@ -144,6 +145,69 @@ describe('RedisPubSubRealtimeTransport', () => {
     expect(revokedMessages).toEqual([]);
     expect(revokedSignals).toEqual([revocation]);
     expect(throwingSignals).toEqual([revocation]);
+  });
+
+  it('a replica revoking a user does not cut the subscription that user opens right after', async () => {
+    const transport = makeTransport();
+    const channel = `chat:room:${randomUUID()}`;
+    await settle();
+
+    const revocation = transport.revokeUserFromChannel('rejoined-user', channel);
+    const received: unknown[] = [];
+    transport.subscribe(channel, (event) => received.push(event), 'rejoined-user');
+    await revocation;
+    await settle();
+
+    await transport.publish(channel, 'after-rejoin');
+    await vi.waitFor(() => expect(received).toEqual(['after-rejoin']));
+  });
+
+  it('a revocation never crosses into another service name', async () => {
+    const origin = makeTransport('svc-a');
+    const otherService = makeTransport('svc-b');
+    const channel = `chat:room:${randomUUID()}`;
+    const signals: RealtimeSignal[] = [];
+    otherService.subscribeSignal(channel, (signal) => signals.push(signal), 'user-a');
+    await settle();
+
+    await origin.revokeUserFromChannel('user-a', channel);
+    await settle();
+    await otherService.signal(channel, 'chat:room-changed', { channel });
+
+    await vi.waitFor(() =>
+      expect(signals).toEqual([{ name: 'chat:room-changed', payload: { channel } }]),
+    );
+  });
+
+  it('cross-process proof: a revocation on one replica cuts the user on a replica with its own connection', async () => {
+    const redisA = await createTestRedis();
+    const redisB = await createTestRedis();
+    try {
+      const instanceA = new RedisPubSubRealtimeTransport(redisA.client, 'chat');
+      const instanceB = new RedisPubSubRealtimeTransport(redisB.client, 'chat');
+      try {
+        const channel = `chat:room:${randomUUID()}`;
+        const signals: RealtimeSignal[] = [];
+        const messages: unknown[] = [];
+        instanceB.subscribeSignal(channel, (signal) => signals.push(signal), 'revoked-user');
+        instanceB.subscribe(channel, (event) => messages.push(event), 'revoked-user');
+        await settle();
+
+        await instanceA.revokeUserFromChannel('revoked-user', channel);
+        await vi.waitFor(
+          () => expect(signals).toEqual([{ name: 'chat:access-revoked', payload: { channel } }]),
+          { timeout: 5000 },
+        );
+
+        await instanceA.publish(channel, 'after-revoke');
+        await settle();
+        expect(messages).toEqual([]);
+      } finally {
+        await Promise.allSettled([instanceA.close(), instanceB.close()]);
+      }
+    } finally {
+      await Promise.allSettled([redisA.quit(), redisB.quit()]);
+    }
   });
 
   it('prefixes channels with serviceName, so two service names never cross-deliver', async () => {

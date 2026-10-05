@@ -407,6 +407,14 @@ export const identityContract = {
       .input(z.object({ userId: UuidSchema, reason: z.string().trim().min(10).max(500) }))
       .output(IdentitySuccessSchema),
 
+    // Support-desk twin for a player who lost their device: needs the player-update
+    // grant, works only on player accounts, keeps "require 2FA on login" set and mails
+    // the player. Same `reason` audit trail as the Super Admin route.
+    resetPlayerTwoFactor: oc
+      .route({ method: 'POST', path: '/identity/admin-security/2fa/reset-player' })
+      .input(z.object({ userId: UuidSchema, reason: z.string().trim().min(10).max(500) }))
+      .output(IdentitySuccessSchema),
+
     // Cross-user twin, for a Super Admin cutting off someone else's trusted device.
     revokeUserTrustedDevice: oc
       .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/revoke-for-user' })

@@ -28,6 +28,21 @@ export class NotificationsService {
     private readonly events: EventBus,
   ) {}
 
+  /**
+   * Looked up by the plugin's `notifications.created` subscriber, the one place every
+   * `create()` call - core's own dispatch jobs and an overlay's own `NotificationsService`
+   * instance alike, since both share this module's event bus - ends up pushed onto the
+   * realtime channel from. `create()` cannot publish itself: it runs before the router factory
+   * has bound a realtime transport into this instance.
+   */
+  async getById(id: string): Promise<Notification | null> {
+    const [record] = await this.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.id, id));
+    return record ?? null;
+  }
+
   async create(input: CreateNotificationInput): Promise<Notification | null> {
     const [record] = await this.drizzle.db
       .insert(notification)

@@ -10,6 +10,7 @@ import {
 import {
   mock,
   makeAuditWriter,
+  makeRateLimiter,
   makeRealtimeTransport,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
@@ -31,6 +32,8 @@ const COUNTRY_RULE = {
   countryCode: 'FR',
   blacklisted: true,
   redirectIp: false,
+  mirrorUrl: null,
+  effectiveAccess: 'blocked' as const,
   kycRequired: true,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -39,6 +42,8 @@ const COUNTRY_RULE = {
 
 const GLOBAL_KYC_CONFIG = {
   enabled: true,
+  withdrawalThreshold: null,
+  cumulativeDepositThreshold: '10000',
   updatedAt: '2026-01-01T00:00:00.000Z',
   updatedBy: null,
 };
@@ -70,6 +75,7 @@ function build(guard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({}),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
+    limiter: makeRateLimiter(),
     realtime: makeRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),

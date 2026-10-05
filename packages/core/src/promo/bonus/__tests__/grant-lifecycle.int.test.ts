@@ -209,6 +209,18 @@ describe('forfeiting every grant a player holds', () => {
     });
   });
 
+  it('takes everything for a cooling-off period, the same as a self-exclusion', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId });
+
+    await lifecycle.forfeitAllFor(userId, 'cooling_off');
+
+    expect(await rowOf(grantId)).toMatchObject({
+      status: 'forfeited',
+      forfeitReason: 'cooling_off',
+    });
+  });
+
   it('leaves another player’s grants untouched', async () => {
     const mine = await grant({ userId: randomUUID() });
     const theirs = await grant({ userId: randomUUID() });
@@ -261,5 +273,49 @@ describe('forfeiting every grant a player holds', () => {
       expect.objectContaining({ actorType: 'system' }),
     );
     expect(closed[0]?.actorId).toBeNull();
+  });
+});
+
+describe('forfeiting a single grant by id', () => {
+  it('closes it with no actor when a scheduled job forfeits it, not an admin', async () => {
+    const grantId = await grant();
+
+    const closed = await lifecycle.forfeit(
+      grantId,
+      'terms_breach',
+      undefined,
+      'missed a required wagering day',
+    );
+
+    expect(closed).toMatchObject({ grantId });
+    expect(await rowOf(grantId)).toMatchObject({
+      status: 'forfeited',
+      forfeitReason: 'terms_breach',
+    });
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorType: 'system', action: 'promo.bonus.forfeited' }),
+    );
+  });
+
+  it('still records the admin when one is given', async () => {
+    const grantId = await grant();
+    const actorId = randomUUID();
+
+    await lifecycle.forfeit(grantId, 'admin', { id: actorId, isAdmin: true }, 'manual takedown');
+
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorType: 'admin', actorId }),
+    );
+  });
+
+  it('throws when the grant does not exist, recording the refusal with no actor', async () => {
+    await expect(
+      lifecycle.forfeit(randomUUID(), 'terms_breach', undefined, 'missed a required wagering day'),
+    ).rejects.toThrow();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ actorType: 'system', action: 'promo.bonus.forfeit_refused' }),
+    );
   });
 });

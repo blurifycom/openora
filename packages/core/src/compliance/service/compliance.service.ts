@@ -5,20 +5,27 @@ import {
   makeConflictError,
   makeNotFoundError,
   makeOwnershipError,
+  moneyEquals,
   serializeRow,
+  withAdvisoryXactLock,
   withAdvisoryXactLocks,
+  type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, asc, count, eq, exists, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, exists, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import {
   countryRule,
   gameGeoRule,
   globalKycConfig,
   GLOBAL_KYC_ENABLED_DEFAULT,
+  GLOBAL_KYC_CUMULATIVE_DEPOSIT_THRESHOLD_DEFAULT,
   providerGeoRule,
 } from '../schema/index.js';
 import type {
   AddGeoRuleInput,
+  BulkGameGeoRuleInput,
+  BulkRestrictGameGeoRulesOutput,
+  BulkUnrestrictGameGeoRulesOutput,
   DeleteGameGeoRulesInput,
   DeleteProviderGeoRulesInput,
   UpsertGameGeoRulesInput,
@@ -29,13 +36,17 @@ import type {
   UpsertCountryRuleInput,
 } from '../contract/index.js';
 import {
+  GAME_BULK_CAP,
+  GameBulkTooManyGamesError,
   normalizeCountryCode,
   type AuditWritePort,
+  type CacheAdapter,
   type ClientMeta,
   type GameGeoCheckInput,
   type GeoIpAdapter,
   type GeoRuleAction,
   type IgamingConfig,
+  type MirrorTargetPolicy,
   type User,
 } from '@openora/core/contracts';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
@@ -66,30 +77,75 @@ export const LicensedJurisdictionBlacklistError = makeConflictError(
   { reason: 'licensed_jurisdiction' },
 );
 
+export const MirrorTargetNotApprovedError = makeConflictError(
+  'MirrorTargetNotApprovedError',
+  'This mirror URL is not an approved mirror domain',
+  { reason: 'mirror_not_approved' },
+);
+
 export const CountryRuleConfirmationRequiredError = makeConflictError(
   'CountryRuleConfirmationRequiredError',
   'Confirmation is required to change a country rule.',
   { reason: 'confirmation_required' },
 );
 
-const COUNTRY_RULE_FIELDS = ['blacklisted', 'redirectIp', 'kycRequired'] as const;
+const COUNTRY_RULE_FIELDS = ['blacklisted', 'redirectIp', 'mirrorUrl', 'kycRequired'] as const;
 
-function hasCountryRuleChanges(
-  before: typeof countryRule.$inferSelect,
-  input: UpsertCountryRuleInput,
-) {
-  return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== input[field]);
+type CountryRuleSettings = Pick<
+  UpsertCountryRuleInput,
+  'blacklisted' | 'redirectIp' | 'kycRequired'
+> & {
+  mirrorUrl: string | null;
+};
+
+// Redirection needs both the toggle and a target; either alone changes nothing. An empty
+// target (a row written outside the API) is no target, so it cannot open a blocked country.
+function mirrorTargetOf(rule: { redirectIp: boolean; mirrorUrl: string | null }) {
+  return rule.redirectIp && rule.mirrorUrl ? rule.mirrorUrl : null;
 }
 
-function weakensCountryRule(
-  before: typeof countryRule.$inferSelect,
-  input: UpsertCountryRuleInput,
-) {
+// A blacklisted country that is redirected plays on the mirror, so the API lets it through
+// and keeping it off the primary domain is left to whoever serves that domain.
+function deniesAccess(rule: {
+  blacklisted: boolean;
+  redirectIp: boolean;
+  mirrorUrl: string | null;
+}) {
+  return rule.blacklisted && mirrorTargetOf(rule) === null;
+}
+
+const countryRuleDeniesAccess = and(
+  eq(countryRule.action, 'block'),
+  or(
+    eq(countryRule.redirectIp, false),
+    isNull(countryRule.mirrorUrl),
+    eq(countryRule.mirrorUrl, ''),
+  ),
+);
+
+function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
+  return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== next[field]);
+}
+
+// A change needs `confirm` when it moves a country on or off the blacklist, lets a denied
+// country in, sends a blacklisted country to a different mirror, or drops KYC. Closing
+// access - turning a mirror off on a blacklisted country - never does.
+function needsConfirmation(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
+  const prior = { ...before, blacklisted: before.action === 'block' };
+  const nextTarget = mirrorTargetOf(next);
   return (
-    (before.action === 'block' && !input.blacklisted) ||
-    (before.redirectIp && !input.redirectIp) ||
-    (before.kycRequired && !input.kycRequired)
+    prior.blacklisted !== next.blacklisted ||
+    (deniesAccess(prior) && !deniesAccess(next)) ||
+    (next.blacklisted && nextTarget !== null && nextTarget !== mirrorTargetOf(prior)) ||
+    (before.kycRequired && !next.kycRequired)
   );
+}
+
+function effectiveAccessOf(rule: CountryRuleSettings, isDeploymentBlocked: boolean) {
+  if (isDeploymentBlocked || deniesAccess(rule)) {
+    return 'blocked' as const;
+  }
+  return mirrorTargetOf(rule) === null ? ('open' as const) : ('redirected' as const);
 }
 
 function countryRuleFieldValue(
@@ -99,16 +155,23 @@ function countryRuleFieldValue(
   return field === 'blacklisted' ? row.action === 'block' : row[field];
 }
 
+function moneyEqualsOrBothNull(a: string | null, b: string | null) {
+  return a === null || b === null ? a === b : moneyEquals(a, b);
+}
+
 function hasExpectedVersion(actual: Date | null, expected: string | null) {
   return (actual ? actual.toISOString() : null) === expected;
 }
 
-function toCountryRuleView(row: typeof countryRule.$inferSelect) {
+function toCountryRuleView(row: typeof countryRule.$inferSelect, isDeploymentBlocked: boolean) {
+  const settings = { ...row, blacklisted: row.action === 'block' };
   return {
     id: row.id,
     countryCode: row.countryCode,
-    blacklisted: row.action === 'block',
+    blacklisted: settings.blacklisted,
     redirectIp: row.redirectIp,
+    mirrorUrl: row.mirrorUrl,
+    effectiveAccess: effectiveAccessOf(settings, isDeploymentBlocked),
     kycRequired: row.kycRequired,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt?.toISOString() ?? null,
@@ -119,6 +182,8 @@ function toCountryRuleView(row: typeof countryRule.$inferSelect) {
 function toGlobalKycConfigView(row: typeof globalKycConfig.$inferSelect) {
   return {
     enabled: row.enabled,
+    withdrawalThreshold: row.withdrawalThreshold,
+    cumulativeDepositThreshold: row.cumulativeDepositThreshold,
     updatedAt: row.updatedAt?.toISOString() ?? null,
     updatedBy: row.updatedBy,
   };
@@ -144,6 +209,88 @@ function gameGeoRuleLockKey(
   return `game-geo-rule:${gameId}:${countryCode}`;
 }
 
+// Bulk writers take this exclusive; single-target writers take it shared, before their
+// per-(game, country) keys.
+function gameGeoRuleCountryLockKey(countryCode: string): string {
+  return `game-geo-rule-country:${countryCode}`;
+}
+
+function withGameGeoRuleLocks<T>(
+  tx: DrizzleTx,
+  gameId: UpsertGameGeoRulesInput['gameId'],
+  countryCodes: UpsertGameGeoRulesInput['countryCodes'],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withAdvisoryXactLocks(
+    tx,
+    countryCodes.map(gameGeoRuleCountryLockKey),
+    () =>
+      withAdvisoryXactLocks(
+        tx,
+        countryCodes.map((countryCode) => gameGeoRuleLockKey(gameId, countryCode)),
+        fn,
+      ),
+    'shared',
+  );
+}
+
+function bulkGameGeoTargetCondition(gameIds: string[], providerIds: string[]): SQL | undefined {
+  return or(
+    gameIds.length > 0 ? inArray(game.id, gameIds) : undefined,
+    providerIds.length > 0 ? inArray(game.providerId, providerIds) : undefined,
+  );
+}
+
+async function resolveBulkGeoScope(
+  tx: DrizzleTx,
+  gameIds: string[],
+  providerIds: string[],
+  limit: number,
+): Promise<{
+  games: { id: string; providerId: string }[];
+  notFoundGameIds: string[];
+  notFoundProviderIds: string[];
+}> {
+  const games = await tx
+    .select({ id: game.id, providerId: game.providerId })
+    .from(game)
+    .where(bulkGameGeoTargetCondition(gameIds, providerIds))
+    .limit(limit);
+  const foundGameIds = new Set(games.map((row) => row.id));
+  const notFoundGameIds = gameIds.filter((id) => !foundGameIds.has(id)).sort();
+
+  const foundProviderIds =
+    providerIds.length > 0
+      ? new Set(
+          (
+            await tx
+              .select({ id: gameProvider.id })
+              .from(gameProvider)
+              .where(inArray(gameProvider.id, providerIds))
+          ).map((row) => row.id),
+        )
+      : new Set<string>();
+  const notFoundProviderIds = providerIds.filter((id) => !foundProviderIds.has(id)).sort();
+
+  return { games, notFoundGameIds, notFoundProviderIds };
+}
+
+async function assertWithinGeoCap(
+  tx: DrizzleTx,
+  gameIds: string[],
+  providerIds: string[],
+  scopeLength: number,
+): Promise<void> {
+  if (scopeLength <= GAME_BULK_CAP) {
+    return;
+  }
+  const [{ n }] = await tx
+    .select({ n: count() })
+    .from(game)
+    .where(bulkGameGeoTargetCondition(gameIds, providerIds));
+  throw new GameBulkTooManyGamesError(Number(n), GAME_BULK_CAP);
+}
+
 export const ProviderGeoRuleNotFoundError = makeNotFoundError('ProviderGeoRule');
 
 export const GeoRuleProviderNotFoundError = makeNotFoundError('GameProvider');
@@ -164,6 +311,10 @@ function serializeGeoRule<Rule extends { createdAt: Date; updatedAt: Date }>(rul
   return serializeRow(rule, { dateFields: ['createdAt', 'updatedAt'] });
 }
 
+function serializeBulkGeoRules(rows: (typeof gameGeoRule.$inferSelect)[]) {
+  return rows.map(serializeGeoRule).sort((a, b) => a.gameId.localeCompare(b.gameId));
+}
+
 function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date; updatedAt: Date }>(
   before: Rule[],
   after: Rule[],
@@ -177,6 +328,8 @@ function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date;
     .sort((a, b) => a.after.countryCode.localeCompare(b.after.countryCode));
 }
 
+const VISITOR_GEO_BLOCK_AUDIT_WINDOW_MS = 60 * 60 * 1000;
+
 export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -184,17 +337,131 @@ export class ComplianceService {
     private readonly geoIp: GeoIpAdapter | null,
     private readonly audit: AuditWritePort,
     private readonly igaming: IgamingConfig | null = null,
+    private readonly cache: CacheAdapter | null = null,
+    private readonly mirrorTargetPolicy: MirrorTargetPolicy | null = null,
   ) {}
 
+  private countryRuleView(row: typeof countryRule.$inferSelect) {
+    return toCountryRuleView(
+      row,
+      this.igaming?.blockedCountries.includes(row.countryCode) ?? false,
+    );
+  }
+
+  private emitAccessRedirected(
+    ipAddress: string | null,
+    { countryCode, redirectUrl }: { countryCode: string; redirectUrl: string },
+  ) {
+    this.events.emit('compliance.geo.access_redirected', {
+      countryCode,
+      redirectUrl,
+      ip: ipAddress,
+    });
+  }
+
+  private emitAccessBlocked(
+    ipAddress: string | null,
+    { countryCode, reason }: { countryCode: string | null; reason: string },
+  ) {
+    this.events.emit('compliance.geo.access_blocked', { countryCode, reason, ip: ipAddress });
+  }
+
+  /**
+   * The single country-rule decision every caller shares: registration, login, game
+   * launch and any page-level gate a consumer builds on `GET /compliance/geo-check`.
+   *
+   * Fail-closed on an unresolved country whenever any block rule exists, so a lookup
+   * outage cannot silently reopen a blacklisted jurisdiction. A denial is emitted here
+   * rather than by each caller, so no enforcement point can be added without its audit
+   * trail.
+   *
+   * `redirectUrl` rides along on an allowed decision: a redirected country passes here even
+   * when blacklisted, because its players are meant to reach the platform through the mirror.
+   * The decision only sees the address, so holding such a player to the mirror is the
+   * consumer's job, with `redirectUrl` from `GEO_CHECK_COMMANDS.checkAccess`; letting a
+   * blacklisted country in this way is audited as `compliance.geo.access_redirected`.
+   */
   async geoCheck(ipAddress: string | null) {
+    const { isBlacklistAdmittedByMirror, ...decision } = await this.decideCountryAccess(ipAddress);
+    if (!decision.allowed) {
+      this.emitAccessBlocked(ipAddress, decision);
+    } else if (isBlacklistAdmittedByMirror && decision.countryCode && decision.redirectUrl) {
+      this.emitAccessRedirected(ipAddress, {
+        countryCode: decision.countryCode,
+        redirectUrl: decision.redirectUrl,
+      });
+    }
+    return decision;
+  }
+
+  /**
+   * `GET /compliance/geo-check`: the same decision, but a consumer polls it on every page
+   * load, so a denial is audited once per address and country per window - the first row
+   * is the evidence, the rest would be noise. Best-effort: a cache outage audits every
+   * poll rather than none.
+   */
+  async visitorGeoCheck(ipAddress: string | null) {
+    const { isBlacklistAdmittedByMirror: _admittedByMirror, ...decision } =
+      await this.decideCountryAccess(ipAddress);
+    if (!decision.allowed && (await this.isFirstVisitorBlockInWindow(ipAddress, decision))) {
+      this.emitAccessBlocked(ipAddress, decision);
+    }
+    return decision;
+  }
+
+  private async isFirstVisitorBlockInWindow(
+    ipAddress: string | null,
+    { countryCode }: { countryCode: string | null },
+  ) {
+    if (!this.cache) {
+      return true;
+    }
+    try {
+      return await this.cache.setIfAbsent(
+        `geo-check-audit:${ipAddress ?? 'unknown'}:${countryCode ?? 'unresolved'}`,
+        true,
+        { ttlMs: VISITOR_GEO_BLOCK_AUDIT_WINDOW_MS },
+      );
+    } catch {
+      return true;
+    }
+  }
+
+  private async decideCountryAccess(ipAddress: string | null): Promise<
+    | {
+        allowed: true;
+        countryCode: string | null;
+        reason: null;
+        redirectUrl: string | null;
+        isBlacklistAdmittedByMirror: boolean;
+      }
+    | {
+        allowed: false;
+        countryCode: string | null;
+        reason: string;
+        redirectUrl: null;
+        isBlacklistAdmittedByMirror: false;
+      }
+  > {
+    const open = (countryCode: string | null) =>
+      ({
+        allowed: true,
+        countryCode,
+        reason: null,
+        redirectUrl: null,
+        isBlacklistAdmittedByMirror: false,
+      }) as const;
+
     if (!this.geoIp) {
-      return { allowed: true, countryCode: null, reason: null };
+      return open(null);
     }
 
     const countryCode = normalizeCountryCode(
       ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null,
     );
 
+    // Counts a redirected blacklisted country too, deliberately: without a country there is
+    // no mirror to send the visitor to, so an unresolved address stays denied.
     if (!countryCode) {
       const [blacklistedRule] = await this.drizzle.db
         .select({ countryCode: countryRule.countryCode })
@@ -202,24 +469,51 @@ export class ComplianceService {
         .where(eq(countryRule.action, 'block'))
         .limit(1);
       return blacklistedRule || this.igaming?.blockedCountries.length
-        ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
-        : { allowed: true, countryCode: null, reason: null };
+        ? {
+            allowed: false,
+            countryCode: null,
+            reason: 'Geolocation could not be determined',
+            redirectUrl: null,
+            isBlacklistAdmittedByMirror: false,
+          }
+        : open(null);
     }
 
+    const blocked = {
+      allowed: false,
+      countryCode,
+      reason: `Country ${countryCode} is blocked`,
+      redirectUrl: null,
+      isBlacklistAdmittedByMirror: false,
+    } as const;
+
+    // Deployment-level blocks are not the operator's to redirect around.
     if (this.igaming?.blockedCountries.includes(countryCode)) {
-      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
+      return blocked;
     }
 
     const [rule] = await this.drizzle.db
-      .select({ action: countryRule.action })
+      .select({
+        action: countryRule.action,
+        redirectIp: countryRule.redirectIp,
+        mirrorUrl: countryRule.mirrorUrl,
+      })
       .from(countryRule)
       .where(eq(countryRule.countryCode, countryCode));
 
-    if (rule?.action === 'block') {
-      return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
+    if (!rule) {
+      return open(countryCode);
+    }
+    const settings = { ...rule, blacklisted: rule.action === 'block' };
+    if (deniesAccess(settings)) {
+      return blocked;
     }
 
-    return { allowed: true, countryCode, reason: null };
+    return {
+      ...open(countryCode),
+      redirectUrl: mirrorTargetOf(rule),
+      isBlacklistAdmittedByMirror: settings.blacklisted,
+    };
   }
 
   async checkGame(input: GameGeoCheckInput) {
@@ -279,9 +573,25 @@ export class ComplianceService {
     return { allowed: true as const, countryCode, reason: null };
   }
 
-  async checkRegistration(ipAddress: string | null) {
+  async checkAccess(ipAddress: string | null) {
     const result = await this.geoCheck(ipAddress);
-    return { allowed: result.allowed, countryCode: result.countryCode };
+    return {
+      allowed: result.allowed,
+      countryCode: result.countryCode,
+      redirectUrl: result.redirectUrl,
+    };
+  }
+
+  async listGloballyBlockedCountries(): Promise<string[]> {
+    const rows = await this.drizzle.db
+      .select({ countryCode: countryRule.countryCode })
+      .from(countryRule)
+      .where(countryRuleDeniesAccess);
+    const blocked = new Set([
+      ...(this.igaming?.blockedCountries ?? []),
+      ...rows.map((row) => row.countryCode),
+    ]);
+    return [...blocked].sort();
   }
 
   async upsertCountryRule(input: UpsertCountryRuleInput, actorId: User['id'], meta?: ClientMeta) {
@@ -309,13 +619,24 @@ export class ComplianceService {
       if (!hasExpectedVersion(before.updatedAt, input.expectedUpdatedAt)) {
         throw new CountryRuleVersionConflictError();
       }
-      if (
-        ((before.action !== 'block' && input.blacklisted) || weakensCountryRule(before, input)) &&
-        !input.confirm
-      ) {
+      const next: CountryRuleSettings = {
+        blacklisted: input.blacklisted,
+        redirectIp: input.redirectIp,
+        kycRequired: input.kycRequired,
+        mirrorUrl: input.mirrorUrl === undefined ? before.mirrorUrl : input.mirrorUrl,
+      };
+      if (needsConfirmation(before, next) && !input.confirm) {
         throw new CountryRuleConfirmationRequiredError();
       }
-      if (!hasCountryRuleChanges(before, input)) {
+      const nextTarget = mirrorTargetOf(next);
+      if (
+        nextTarget !== null &&
+        this.mirrorTargetPolicy &&
+        !(await this.mirrorTargetPolicy.isApprovedTarget(tx, nextTarget))
+      ) {
+        throw new MirrorTargetNotApprovedError();
+      }
+      if (!hasCountryRuleChanges(before, next)) {
         if (inserted) {
           const row = findOneOrThrow(
             await tx
@@ -335,13 +656,14 @@ export class ComplianceService {
             after: {
               blacklisted: false,
               redirectIp: false,
+              mirrorUrl: null,
               kycRequired: true,
             },
             ...meta,
           });
-          return toCountryRuleView(row);
+          return this.countryRuleView(row);
         }
-        return toCountryRuleView(before);
+        return this.countryRuleView(before);
       }
 
       const row = findOneOrThrow(
@@ -350,6 +672,7 @@ export class ComplianceService {
           .set({
             action: input.blacklisted ? 'block' : 'allow',
             redirectIp: input.redirectIp,
+            mirrorUrl: next.mirrorUrl,
             kycRequired: input.kycRequired,
             updatedAt: new Date(),
             updatedBy: actorId,
@@ -375,13 +698,13 @@ export class ComplianceService {
         });
       }
 
-      return toCountryRuleView(row);
+      return this.countryRuleView(row);
     });
   }
 
   async listCountryRules() {
     const rows = await this.drizzle.db.select().from(countryRule);
-    return rows.map(toCountryRuleView);
+    return rows.map((row) => this.countryRuleView(row));
   }
 
   async getGlobalKycConfig() {
@@ -391,7 +714,13 @@ export class ComplianceService {
       .where(eq(globalKycConfig.singletonKey, 'global'));
     return row
       ? toGlobalKycConfigView(row)
-      : { enabled: GLOBAL_KYC_ENABLED_DEFAULT, updatedAt: null, updatedBy: null };
+      : {
+          enabled: GLOBAL_KYC_ENABLED_DEFAULT,
+          withdrawalThreshold: null,
+          cumulativeDepositThreshold: GLOBAL_KYC_CUMULATIVE_DEPOSIT_THRESHOLD_DEFAULT,
+          updatedAt: null,
+          updatedBy: null,
+        };
   }
 
   /**
@@ -447,14 +776,27 @@ export class ComplianceService {
       if (!hasExpectedVersion(before.updatedAt, input.expectedUpdatedAt)) {
         throw new GlobalKycConfigVersionConflictError();
       }
-      if (before.enabled === input.enabled) {
+      const next = {
+        enabled: input.enabled,
+        withdrawalThreshold:
+          input.withdrawalThreshold === undefined
+            ? before.withdrawalThreshold
+            : input.withdrawalThreshold,
+        cumulativeDepositThreshold:
+          input.cumulativeDepositThreshold ?? before.cumulativeDepositThreshold,
+      };
+      if (
+        before.enabled === next.enabled &&
+        moneyEqualsOrBothNull(before.withdrawalThreshold, next.withdrawalThreshold) &&
+        moneyEquals(before.cumulativeDepositThreshold, next.cumulativeDepositThreshold)
+      ) {
         return toGlobalKycConfigView(before);
       }
 
       const row = findOneOrThrow(
         await tx
           .update(globalKycConfig)
-          .set({ enabled: input.enabled, updatedAt: new Date(), updatedBy: actorId })
+          .set({ ...next, updatedAt: new Date(), updatedBy: actorId })
           .where(eq(globalKycConfig.id, before.id))
           .returning(),
         new GlobalKycConfigNotFoundError('global'),
@@ -466,8 +808,16 @@ export class ComplianceService {
         action: 'compliance.global_kyc.set',
         resourceType: 'global-kyc-config',
         resourceId: 'global',
-        before: { enabled: before.enabled },
-        after: { enabled: row.enabled },
+        before: {
+          enabled: before.enabled,
+          withdrawalThreshold: before.withdrawalThreshold,
+          cumulativeDepositThreshold: before.cumulativeDepositThreshold,
+        },
+        after: {
+          enabled: row.enabled,
+          withdrawalThreshold: row.withdrawalThreshold,
+          cumulativeDepositThreshold: row.cumulativeDepositThreshold,
+        },
         ...meta,
       });
 
@@ -486,6 +836,9 @@ export class ComplianceService {
         countryCode: input.countryCode,
         blacklisted,
         redirectIp: existing?.redirectIp ?? false,
+        // Blocking through this route means blocked: a stored mirror would otherwise keep
+        // the country open while the rule and its event both say `block`.
+        ...(blacklisted ? { mirrorUrl: null } : {}),
         kycRequired: existing?.kycRequired ?? true,
         expectedUpdatedAt: existing?.updatedAt?.toISOString() ?? null,
         confirm: input.confirm ?? true,
@@ -513,7 +866,10 @@ export class ComplianceService {
 
   async listGeoRules() {
     const rows = await this.drizzle.db.select().from(countryRule);
-    return rows.map(toGeoRuleView);
+    return rows.map((row) => ({
+      ...toGeoRuleView(row),
+      effectiveAccess: this.countryRuleView(row).effectiveAccess,
+    }));
   }
 
   async upsertGameGeoRules(input: UpsertGameGeoRulesInput, actorId: User['id'], meta: ClientMeta) {
@@ -524,36 +880,32 @@ export class ComplianceService {
         new GeoRuleGameNotFoundError(input.gameId),
       );
 
-      return withAdvisoryXactLocks(
-        tx,
-        countryCodes.map((countryCode) => gameGeoRuleLockKey(input.gameId, countryCode)),
-        async () => {
-          const before = await tx
-            .select()
-            .from(gameGeoRule)
-            .where(
-              and(
-                eq(gameGeoRule.gameId, input.gameId),
-                inArray(gameGeoRule.countryCode, countryCodes),
-              ),
-            );
-          const rows = await tx
-            .insert(gameGeoRule)
-            .values(
-              countryCodes.map((countryCode) => ({
-                gameId: input.gameId,
-                countryCode,
-                reason: input.reason,
-              })),
-            )
-            .onConflictDoUpdate({
-              target: [gameGeoRule.gameId, gameGeoRule.countryCode],
-              set: { reason: input.reason, updatedAt: new Date() },
-            })
-            .returning();
-          return pairGeoRuleChanges(before, rows);
-        },
-      );
+      return withGameGeoRuleLocks(tx, input.gameId, countryCodes, async () => {
+        const before = await tx
+          .select()
+          .from(gameGeoRule)
+          .where(
+            and(
+              eq(gameGeoRule.gameId, input.gameId),
+              inArray(gameGeoRule.countryCode, countryCodes),
+            ),
+          );
+        const rows = await tx
+          .insert(gameGeoRule)
+          .values(
+            countryCodes.map((countryCode) => ({
+              gameId: input.gameId,
+              countryCode,
+              reason: input.reason,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [gameGeoRule.gameId, gameGeoRule.countryCode],
+            set: { reason: input.reason, updatedAt: new Date() },
+          })
+          .returning();
+        return pairGeoRuleChanges(before, rows);
+      });
     });
 
     for (const { before, after } of changes) {
@@ -575,28 +927,24 @@ export class ComplianceService {
   async deleteGameGeoRules(input: DeleteGameGeoRulesInput, actorId: User['id'], meta: ClientMeta) {
     const countryCodes = [...new Set(input.countryCodes)].sort();
     const deleted = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLocks(
-        tx,
-        countryCodes.map((countryCode) => gameGeoRuleLockKey(input.gameId, countryCode)),
-        async () => {
-          const rows = await tx
-            .delete(gameGeoRule)
-            .where(
-              and(
-                eq(gameGeoRule.gameId, input.gameId),
-                inArray(gameGeoRule.countryCode, countryCodes),
-              ),
-            )
-            .returning();
-          const missing = missingCountryCodes(countryCodes, rows);
-          if (missing.length > 0) {
-            throw new GameGeoRuleNotFoundError(`${input.gameId}:${missing.join(',')}`);
-          }
-          return rows
-            .map(serializeGeoRule)
-            .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
-        },
-      ),
+      withGameGeoRuleLocks(tx, input.gameId, countryCodes, async () => {
+        const rows = await tx
+          .delete(gameGeoRule)
+          .where(
+            and(
+              eq(gameGeoRule.gameId, input.gameId),
+              inArray(gameGeoRule.countryCode, countryCodes),
+            ),
+          )
+          .returning();
+        const missing = missingCountryCodes(countryCodes, rows);
+        if (missing.length > 0) {
+          throw new GameGeoRuleNotFoundError(`${input.gameId}:${missing.join(',')}`);
+        }
+        return rows
+          .map(serializeGeoRule)
+          .sort((a, b) => a.countryCode.localeCompare(b.countryCode));
+      }),
     );
 
     for (const before of deleted) {
@@ -613,6 +961,179 @@ export class ComplianceService {
       });
     }
     return deleted;
+  }
+
+  /**
+   * Idempotent: a game that already has the rule keeps it, reason included, and counts as
+   * `unchanged`. Never writes `provider_geo_rule`.
+   */
+  async bulkRestrictGameGeoRules(
+    input: BulkGameGeoRuleInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ): Promise<BulkRestrictGameGeoRulesOutput> {
+    const outcome = await this.bulkWriteGameGeoRules(
+      'restrict',
+      input,
+      actorId,
+      meta,
+      async (tx, games) => {
+        if (games.length === 0) {
+          return { rules: [] };
+        }
+        const rows = await tx
+          .insert(gameGeoRule)
+          .values(
+            games.map((row) => ({
+              gameId: row.id,
+              countryCode: input.countryCode,
+              reason: input.reason,
+            })),
+          )
+          .onConflictDoNothing({ target: [gameGeoRule.gameId, gameGeoRule.countryCode] })
+          .returning();
+        return { rules: serializeBulkGeoRules(rows) };
+      },
+    );
+
+    return {
+      changed: outcome.rules.length,
+      unchanged: outcome.matchedCount - outcome.rules.length,
+      notFound: outcome.notFound,
+    };
+  }
+
+  /**
+   * Idempotent: a game without the rule counts as `unchanged`, not NOT_FOUND. Never deletes
+   * `provider_geo_rule`; games it keeps blocked are counted in `stillBlockedByProvider`.
+   */
+  async bulkUnrestrictGameGeoRules(
+    input: BulkGameGeoRuleInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+  ): Promise<BulkUnrestrictGameGeoRulesOutput> {
+    const outcome = await this.bulkWriteGameGeoRules(
+      'unrestrict',
+      input,
+      actorId,
+      meta,
+      async (tx, games) => {
+        if (games.length === 0) {
+          return { rules: [], stillBlockedByProvider: 0 };
+        }
+        const rows = await tx
+          .delete(gameGeoRule)
+          .where(
+            and(
+              inArray(
+                gameGeoRule.gameId,
+                games.map((row) => row.id),
+              ),
+              eq(gameGeoRule.countryCode, input.countryCode),
+            ),
+          )
+          .returning();
+
+        const blockingProviders = await tx
+          .select({ providerId: providerGeoRule.providerId })
+          .from(providerGeoRule)
+          .where(
+            and(
+              inArray(providerGeoRule.providerId, [...new Set(games.map((row) => row.providerId))]),
+              eq(providerGeoRule.countryCode, input.countryCode),
+            ),
+          );
+        const blockingProviderIds = new Set(blockingProviders.map((row) => row.providerId));
+
+        return {
+          rules: serializeBulkGeoRules(rows),
+          stillBlockedByProvider: games.filter((row) => blockingProviderIds.has(row.providerId))
+            .length,
+        };
+      },
+    );
+
+    const globallyBlocked = (await this.listGloballyBlockedCountries()).includes(input.countryCode);
+
+    return {
+      changed: outcome.rules.length,
+      unchanged: outcome.matchedCount - outcome.rules.length,
+      stillBlockedByProvider: outcome.stillBlockedByProvider,
+      globallyBlocked,
+      notFound: outcome.notFound,
+    };
+  }
+
+  private async bulkWriteGameGeoRules<
+    T extends { rules: ReturnType<typeof serializeBulkGeoRules> },
+  >(
+    operation: 'restrict' | 'unrestrict',
+    input: BulkGameGeoRuleInput,
+    actorId: User['id'],
+    meta: ClientMeta,
+    write: (tx: DrizzleTx, games: { id: string; providerId: string }[]) => Promise<T>,
+  ) {
+    const gameIds = [...new Set(input.gameIds ?? [])].sort();
+    const providerIds = [...new Set(input.providerIds ?? [])].sort();
+
+    const outcome = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, gameGeoRuleCountryLockKey(input.countryCode), async () => {
+        const { games, notFoundGameIds, notFoundProviderIds } = await resolveBulkGeoScope(
+          tx,
+          gameIds,
+          providerIds,
+          GAME_BULK_CAP + 1,
+        );
+        await assertWithinGeoCap(tx, gameIds, providerIds, games.length);
+        const result = await write(tx, games);
+        const notFound = { gameIds: notFoundGameIds, providerIds: notFoundProviderIds };
+        if (result.rules.length > 0) {
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'admin',
+            action: 'compliance.game-geo-rules.bulk_updated',
+            resourceType: 'game-geo-rule',
+            resourceId: null,
+            // Unrestrict keeps what it deleted, so the licence history survives the removal.
+            before:
+              operation === 'unrestrict'
+                ? {
+                    removedRules: result.rules.map(({ id, gameId, reason }) => ({
+                      ruleId: id,
+                      gameId,
+                      reason,
+                    })),
+                  }
+                : null,
+            after: {
+              operation,
+              countryCode: input.countryCode,
+              reason: input.reason,
+              changedGameIds: result.rules.map((rule) => rule.gameId),
+              target: { gameIds, providerIds },
+              notFound,
+            },
+            ...meta,
+          });
+        }
+        return { ...result, matchedCount: games.length, notFound };
+      }),
+    );
+
+    if (outcome.rules.length > 0) {
+      this.events.emit('compliance.game-geo-rules.bulk_updated', {
+        operation,
+        countryCode: input.countryCode,
+        reason: input.reason,
+        changedGameIds: outcome.rules.map((rule) => rule.gameId),
+        target: { gameIds, providerIds },
+        notFound: outcome.notFound,
+        actorId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return outcome;
   }
 
   async listGameGeoRules({ gameIds, page, limit }: ListGameGeoRulesInput) {

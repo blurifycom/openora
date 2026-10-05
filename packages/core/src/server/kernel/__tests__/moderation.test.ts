@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { hasProfanity, sanitizeUrls, moderateContent } from '../moderation/index.js';
+import { hasProfanity } from '../profanity.js';
+import { sanitizeUrls } from '../sanitize-urls.js';
+import { moderateContent } from '../moderate-content.js';
 
 describe('hasProfanity', () => {
   it('flags blocked words across every launch language', () => {
@@ -57,7 +59,7 @@ describe('moderateContent', () => {
     expect(moderateContent('5')).toEqual({ ok: true, content: '5' });
   });
 
-  it('preserves emoji (AC6)', () => {
+  it('preserves emoji', () => {
     const withEmoji = 'gg 🎉🔥 nice 😄';
     expect(moderateContent(withEmoji)).toEqual({ ok: true, content: withEmoji });
   });

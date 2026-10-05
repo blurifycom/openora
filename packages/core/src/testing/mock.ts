@@ -1,22 +1,26 @@
 import { vi, type Mock } from 'vitest';
 import { ORPCError } from '@orpc/server';
-import type {
-  AdminCaller,
-  AdminGuard,
-  DrizzleService,
-  EventBus,
-  OssContext,
+import {
+  moneyScaleBy,
+  type AdminCaller,
+  type AdminGuard,
+  type DrizzleService,
+  type EventBus,
+  type OssContext,
 } from '@openora/core/server';
 import {
   DEFAULT_PAYMENT_PROVIDER,
   type AuditWritePort,
   type CacheAdapter,
   type ClientMeta,
+  type ExchangeRateReader,
   type IdentityReader,
   type JobQueueAdapter,
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookVerifier,
+  type RateLimitKey,
+  type RateLimiterAdapter,
   type RealtimeTransport,
 } from '@openora/core/contracts';
 
@@ -191,6 +195,17 @@ export const makeCache = (): CacheAdapter => {
   };
 };
 
+/**
+ * Always-allow RateLimiterAdapter double, for a test whose subject is the handler behind
+ * a throttle rather than the throttle. A test that asserts the throttle itself binds the
+ * production driver (`RedisRateLimiter` over `createTestRedis()`), per ADR-0039.
+ */
+export const makeRateLimiter = (): RateLimiterAdapter<RateLimitKey> =>
+  mock<RateLimiterAdapter<RateLimitKey>>({
+    consume: vi.fn(async () => ({ allowed: true, retryAfterMs: 0 })),
+    reset: vi.fn(async () => undefined),
+  });
+
 export const makeRealtimeTransport = (): RealtimeTransport =>
   mock<RealtimeTransport>({
     publish: vi.fn(async () => undefined),
@@ -198,6 +213,15 @@ export const makeRealtimeTransport = (): RealtimeTransport =>
     subscribe: vi.fn(() => () => undefined),
     getOnlineUserIds: vi.fn(async () => []),
   });
+
+/**
+ * An exchange-rate reader that quotes every pair at `rate`, fresh as of now. For tests that
+ * need a rate to exist but do not assert on its value.
+ */
+export const makeExchangeRateReader = (rate = '1'): ExchangeRateReader => ({
+  getRate: vi.fn(async () => ({ rate, asOf: new Date().toISOString() })),
+  convert: vi.fn(async (amount: string) => moneyScaleBy(amount, rate)),
+});
 
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({

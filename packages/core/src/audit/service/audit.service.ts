@@ -5,10 +5,11 @@ import {
   pageToOffset,
   serializeRow,
   withAdvisoryXactLock,
+  type DrizzleTx,
   type EventBus,
   type SerializedRow,
 } from '@openora/core/server';
-import { eq, and, or, gt, gte, lte, like, asc, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gt, gte, lte, like, asc, desc, sql, inArray } from 'drizzle-orm';
 import {
   LimitChangeKindSchema,
   LimitPeriodSchema,
@@ -151,6 +152,8 @@ function buildWhere(filters: AuditExportFilters) {
     toDate,
   } = filters;
 
+  const searchTerms = q?.split(/\s+/).filter(Boolean) ?? [];
+
   return and(
     actorId ? eq(auditLog.actorId, actorId) : undefined,
     actorType ? eq(auditLog.actorType, actorType as AuditLog['actorType']) : undefined,
@@ -158,7 +161,9 @@ function buildWhere(filters: AuditExportFilters) {
     actionPrefix ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
     resourceType ? eq(auditLog.resourceType, resourceType) : undefined,
     resourceId ? eq(auditLog.resourceId, resourceId) : undefined,
-    q ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
+    searchTerms.length > 0
+      ? or(inArray(auditLog.actorId, searchTerms), inArray(auditLog.resourceId, searchTerms))
+      : undefined,
     fromDate ? gte(auditLog.createdAt, startOfDayUtc(fromDate)) : undefined,
     toDate ? lte(auditLog.createdAt, endOfDayUtc(toDate)) : undefined,
   );
@@ -169,6 +174,59 @@ const toDto = (row: AuditLog) => serializeRow(row, { dateFields: ['createdAt'] }
 export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
+
+/**
+ * Appends one row to the hash chain inside the caller's transaction. Exported for a writer that
+ * runs outside the container - a deploy step - so it keeps the same chain protocol as
+ * `AUDIT_WRITER` rather than inserting into `audit_log` by hand.
+ *
+ * Must be called inside a transaction: the advisory lock is transaction-scoped, so on a plain
+ * connection it is released after its own statement and concurrent writers can fork the chain.
+ */
+export async function recordAuditInTransaction(
+  txn: DrizzleTx,
+  input: RecordInput,
+): Promise<AuditLog> {
+  const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
+    const [latest] = await txn
+      .select({ hash: auditLog.hash })
+      .from(auditLog)
+      .orderBy(desc(auditLog.seq))
+      .limit(1);
+    const prevHash = latest?.hash ?? null;
+
+    const seqResult = await txn.execute<{ seq: string | number }>(
+      sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
+    );
+    const seq = +(seqResult.rows.at(0)?.seq ?? 0);
+
+    const id = randomUUID();
+    const createdAt = new Date();
+
+    const hash = computeHash({
+      id,
+      actorId: input.actorId ?? null,
+      actorType: input.actorType,
+      action: input.action,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId ?? null,
+      before: input.before ?? null,
+      after: input.after ?? null,
+      result: input.result ?? null,
+      seq,
+      createdAt: createdAt.toISOString(),
+      prevHash,
+    });
+
+    const [inserted] = await txn
+      .insert(auditLog)
+      .values({ ...input, id, seq, prevHash, createdAt, hash })
+      .returning();
+
+    return inserted;
+  });
+  return row;
+}
 
 export class AuditService {
   constructor(
@@ -185,47 +243,8 @@ export class AuditService {
     return toDto(row);
   }
 
-  async recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
-    const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
-    const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
-      const [latest] = await txn
-        .select({ hash: auditLog.hash })
-        .from(auditLog)
-        .orderBy(desc(auditLog.seq))
-        .limit(1);
-      const prevHash = latest?.hash ?? null;
-
-      const seqResult = await txn.execute<{ seq: string | number }>(
-        sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
-      );
-      const seq = +(seqResult.rows.at(0)?.seq ?? 0);
-
-      const id = randomUUID();
-      const createdAt = new Date();
-
-      const hash = computeHash({
-        id,
-        actorId: input.actorId ?? null,
-        actorType: input.actorType,
-        action: input.action,
-        resourceType: input.resourceType,
-        resourceId: input.resourceId ?? null,
-        before: input.before ?? null,
-        after: input.after ?? null,
-        result: input.result ?? null,
-        seq,
-        createdAt: createdAt.toISOString(),
-        prevHash,
-      });
-
-      const [inserted] = await txn
-        .insert(auditLog)
-        .values({ ...input, id, seq, prevHash, createdAt, hash })
-        .returning();
-
-      return inserted;
-    });
-    return row;
+  recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
+    return recordAuditInTransaction(tx as DrizzleTx, input);
   }
 
   async list(filters: AuditListFilters) {

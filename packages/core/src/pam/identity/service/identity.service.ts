@@ -38,6 +38,7 @@ import type {
   Verify2faInput,
   TwoFactorChallengeMethod,
   TwoFactorDeliveryMethod,
+  StepUpMethod,
   TwoFactorStatus,
   Disable2faInput,
   RegenerateBackupCodesInput,
@@ -68,7 +69,8 @@ import type {
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
-import { assertAccountNotBlocked } from './rg-guard.service.js';
+import { assertAccountNotBlocked, assertCountryAllowed } from './rg-guard.service.js';
+import { assertUsernameAllowed, isUsernameAllowed } from '../../shared/username.js';
 import {
   DEFAULT_LOCKOUT_DURATION_MS,
   DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -78,8 +80,16 @@ import {
   makeLoginSecurityState,
 } from './lockout-policy.service.js';
 import { getSecurityControls } from './security-controls.service.js';
-import { resolveChallengeMethod, verifyChallengeCode } from './two-factor-challenge.service.js';
-import { assertFreshReauthentication } from './fresh-reauthentication.service.js';
+import { countRemainingBackupCodes } from './backup-codes.service.js';
+import {
+  isLostBackupCodeRace,
+  resolveChallengeMethod,
+  verifyChallengeCode,
+} from './two-factor-challenge.service.js';
+import {
+  assertAccountPassword,
+  assertFreshReauthentication,
+} from './fresh-reauthentication.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -415,6 +425,9 @@ function loginShadowKey(email: string): string {
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
 
+// Gate input for a caller whose account could not be resolved: never exempt as staff.
+const NO_ROLE = { role: 'player' };
+
 function hasErrorCode(error: unknown, code: string) {
   if (typeof error !== 'object' || error === null || !('data' in error)) {
     return false;
@@ -634,6 +647,17 @@ export class IdentityService {
     return controls;
   }
 
+  // Scoped to one token: the account's other devices did nothing wrong, and signing them
+  // out here would be indistinguishable from a session hijack.
+  private async expireSessionToken(token: string | null | undefined) {
+    if (token) {
+      await this.drizzle.db
+        .update(session)
+        .set({ expiresAt: new Date() })
+        .where(eq(session.token, token));
+    }
+  }
+
   // Same gate as password login and phone login, from the one shared implementation.
   private assertAccountNotBlocked(
     account: { id: User['id']; rgBlocked: boolean; rgBlockedUntil: Date | null },
@@ -688,10 +712,16 @@ export class IdentityService {
       this.emitRegistrationFailed('rate_limited', input, meta);
       throw err;
     }
-    const registrationGeo = this.geoCheck ? await this.geoCheck.checkRegistration(ip) : null;
+    const registrationGeo = this.geoCheck ? await this.geoCheck.checkAccess(ip) : null;
     if (registrationGeo && !registrationGeo.allowed) {
       this.emitRegistrationFailed('geo_blocked', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
+    try {
+      assertUsernameAllowed(input.username, this.platformConfig?.reservedUsernames);
+    } catch (err) {
+      this.emitRegistrationFailed('username_blocked', input, meta);
+      throw err;
     }
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.api.signUpEmail({
@@ -845,7 +875,11 @@ export class IdentityService {
       `check-username:${ip ?? 'unknown'}`,
       USERNAME_AVAILABILITY_RATE_LIMIT,
     );
-    return { available: !(await this.findUserIdByUsername(username)) };
+    return {
+      available:
+        isUsernameAllowed(username, this.platformConfig?.reservedUsernames) &&
+        !(await this.findUserIdByUsername(username)),
+    };
   }
 
   /**
@@ -1012,14 +1046,32 @@ export class IdentityService {
         ? await this.assertAccountNotBlocked(existingUser, { ip, userAgent })
         : null;
 
-      this.forwardCookies(authResponse, resHeaders);
-
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
         token?: string;
         session?: { expiresAt: string | Date };
         twoFactorRedirect?: boolean;
       };
+
+      // Before any cookie is forwarded, so a denied caller holds neither a session nor a
+      // pending 2FA challenge; the session better-auth just minted is expired outright.
+      await assertCountryAllowed(
+        this.geoCheck,
+        existingUser ?? NO_ROLE,
+        ip,
+        async (countryCode) => {
+          await this.expireSessionToken(body.token);
+          this.events.emit('identity.user.login.failed', {
+            email,
+            reason: 'geo_blocked',
+            countryCode,
+            ip,
+            userAgent,
+          });
+        },
+      );
+
+      this.forwardCookies(authResponse, resHeaders);
 
       if (body.twoFactorRedirect || !body.user || !body.token) {
         // The challenge screen has to know whether to ask for an authenticator code or
@@ -1072,15 +1124,17 @@ export class IdentityService {
         }),
       };
     } catch (error) {
-      // An RG block is not a credential failure - surface it as-is, without touching the
-      // lockout budget or emitting login.failed (the RG event was already emitted). Match on
+      // An RG or country block is not a credential failure - surface it as-is, without touching
+      // the lockout budget or emitting login.failed again (the block was already recorded). Match on
       // the RG_BLOCKED marker, not the bare FORBIDDEN code - ensureOk also maps a banned-user
       // 403 (better-auth's admin plugin) to FORBIDDEN, and that path must still fall through
       // to the generic branch below to emit login.failed.
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
-        (hasErrorCode(error, 'RG_BLOCKED') || hasErrorCode(error, 'ACCOUNT_SUSPENDED'))
+        (hasErrorCode(error, 'RG_BLOCKED') ||
+          hasErrorCode(error, 'ACCOUNT_SUSPENDED') ||
+          hasErrorCode(error, 'GEO_BLOCKED'))
       ) {
         throw error;
       }
@@ -1515,6 +1569,7 @@ export class IdentityService {
       method: enabled ? (row.twoFactorMethod ?? null) : null,
       maskedEmail: maskEmail(row.email),
       maskedPhone: row.phoneVerified && row.phoneNumber ? maskPhone(row.phoneNumber) : null,
+      backupCodesRemaining: enabled ? await countRemainingBackupCodes(this.auth, userId) : null,
     };
   }
 
@@ -1639,6 +1694,15 @@ export class IdentityService {
     return row?.requireTwoFactorOnLogin ?? false;
   }
 
+  private async accountRole(userId: User['id']) {
+    const [row] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row ?? NO_ROLE;
+  }
+
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
@@ -1652,6 +1716,11 @@ export class IdentityService {
     if (challengedUserId) {
       await this.twoFactorLockout?.assertNotLocked(challengedUserId);
     }
+    // The password was proven from wherever the challenge was issued; the session is handed
+    // to wherever it is answered. Enrolment (a live session) signs no one in.
+    if (challengedUserId && !sessionUserId) {
+      await assertCountryAllowed(this.geoCheck, await this.accountRole(challengedUserId), ip);
+    }
 
     // A backup code is a single-use recovery credential, not a second factor to bind a
     // browser to: it clears the challenge but never buys the trust window. A pushed
@@ -1663,8 +1732,11 @@ export class IdentityService {
       !(await this.requiresTwoFactorEveryLogin(challengedUserId));
     const body = { code: input.code, trustDevice };
     const res = await this.verifyChallengeCode(input.method, body, headers);
-    if (!res.ok && challengedUserId) {
-      await this.twoFactorLockout?.recordFailure(challengedUserId, { ip, userAgent });
+    if (!res.ok && challengedUserId && !isLostBackupCodeRace(res)) {
+      await this.twoFactorLockout?.recordFailure(challengedUserId, input.method, {
+        ip,
+        userAgent,
+      });
     }
     await ensureOk(res);
     if (challengedUserId) {
@@ -1791,7 +1863,7 @@ export class IdentityService {
       challengeHeaders,
     );
     if (!verified.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, { ip, userAgent });
+      await this.twoFactorLockout?.recordFailure(userId, challengeMethod, { ip, userAgent });
     }
     await ensureOk(verified);
     await this.twoFactorLockout?.reset(userId);
@@ -1822,27 +1894,67 @@ export class IdentityService {
 
   /**
    * A step-up gate for the self-service routes that change standing 2FA state: the
-   * caller has to clear a live authenticator code, not just the account password.
-   * Routed through TwoFactorLockoutService so a hijacked session plus a reused
-   * password cannot grind the second factor here the way the password-only paths let it.
+   * caller has to clear a second factor, not just the account password. Routed through
+   * TwoFactorLockoutService so a hijacked session plus a reused password cannot grind
+   * the second factor here the way the password-only paths let it.
+   *
+   * A backup code is accepted only where the caller asks for it, and spends itself doing
+   * so - see `disableTwoFactor`. It is spent by being checked, so the password is verified
+   * first: a typo there must not cost the player a code they may have no replacement for.
+   * A wrong password on that path still banks a lockout strike, so the password check
+   * cannot be ground through it any faster than through the code itself.
+   *
+   * Returns the credential that cleared it, so the action's own audit event can say
+   * whether it was authorised by the enrolled method or by a recovery code.
    */
-  private async assertFreshSecondFactor(
-    userId: User['id'],
-    headers: Headers,
-    meta: ClientMeta,
-    code: string,
-  ): Promise<void> {
+  private async assertFreshSecondFactor({
+    userId,
+    headers,
+    meta,
+    password,
+    code,
+    method,
+  }: {
+    userId: User['id'];
+    headers: Headers;
+    meta: ClientMeta;
+    password: string;
+    code: string;
+    method: StepUpMethod;
+  }): Promise<TwoFactorChallengeMethod> {
     await this.twoFactorLockout?.assertNotLocked(userId);
+    const challengeMethod =
+      method === 'backup_code' ? 'backup_code' : await resolveChallengeMethod(this.drizzle, userId);
+    if (challengeMethod === 'backup_code') {
+      try {
+        await assertAccountPassword({ drizzle: this.drizzle, auth: this.auth, userId, password });
+      } catch (err) {
+        await this.twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
+        throw err;
+      }
+    }
     const res = await this.verifyChallengeCode(
-      await resolveChallengeMethod(this.drizzle, userId),
+      challengeMethod,
       { code, trustDevice: false },
       headers,
     );
+    if (isLostBackupCodeRace(res)) {
+      throw new ORPCError('CONFLICT', { message: 'This backup code has just been used.' });
+    }
     if (!res.ok) {
-      await this.twoFactorLockout?.recordFailure(userId, meta);
+      await this.twoFactorLockout?.recordFailure(userId, challengeMethod, meta);
     }
     await ensureOk(res, { genericMessage: 'Invalid authenticator code' });
     await this.twoFactorLockout?.reset(userId);
+    this.events.emit('identity.2fa.verified', {
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      method: challengeMethod,
+      trustedDevice: false,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
+    });
+    return challengeMethod;
   }
 
   async regenerateBackupCodes(
@@ -1861,7 +1973,14 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+    const stepUpMethod = await this.assertFreshSecondFactor({
+      userId,
+      headers,
+      meta: { ip, userAgent },
+      password: input.password,
+      code: input.code,
+      method: 'live',
+    });
 
     const res = await this.api.generateBackupCodes({
       body: { password: input.password },
@@ -1879,6 +1998,7 @@ export class IdentityService {
     this.events.emit('identity.2fa.backup_codes_regenerated', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      stepUpMethod,
       ip,
       userAgent,
     });
@@ -1897,7 +2017,14 @@ export class IdentityService {
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
-    await this.assertFreshSecondFactor(userId, headers, { ip, userAgent }, input.code);
+    const stepUpMethod = await this.assertFreshSecondFactor({
+      userId,
+      headers,
+      meta: { ip, userAgent },
+      password: input.password,
+      code: input.code,
+      method: input.method,
+    });
 
     // Read before the teardown clears it, so the audit trail records which method the
     // account was actually protected by rather than a blank.
@@ -1929,6 +2056,7 @@ export class IdentityService {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       method: disabledMethod,
+      stepUpMethod,
       ip,
       userAgent,
     });
@@ -2418,6 +2546,7 @@ export class IdentityService {
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
         twoFactorEnabled: user.twoFactorEnabled,
+        role: user.role,
       })
       .from(user)
       .where(eq(user.id, body.user.id))
@@ -2425,6 +2554,10 @@ export class IdentityService {
     if (account) {
       await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
+    // The code mints a session, so it is a sign-in path like any other.
+    await assertCountryAllowed(this.geoCheck, account ?? NO_ROLE, ip, () =>
+      this.expireSessionToken(body.token),
+    );
     // Before the 2FA branch below: that path ends the session it just minted, but the zone
     // the browser reported is good either way.
     await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
@@ -2434,15 +2567,8 @@ export class IdentityService {
     // the emailed code alone, bypassing its second factor. Verification still stands; the
     // session does not, and the player signs in through `login` to face the challenge.
     if (account?.twoFactorEnabled) {
-      // Scoped to the token this call just minted: the player's other devices did nothing
-      // wrong, and an unrelated sign-out here would be indistinguishable from a session
-      // hijack. The RG/backoffice branch above is the one that revokes everything.
-      if (body.token) {
-        await this.drizzle.db
-          .update(session)
-          .set({ expiresAt: new Date() })
-          .where(eq(session.token, body.token));
-      }
+      // The RG/backoffice branch above is the one that revokes everything.
+      await this.expireSessionToken(body.token);
       return { twoFactorRedirect: true as const };
     }
 

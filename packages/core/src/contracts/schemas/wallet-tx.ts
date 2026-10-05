@@ -22,6 +22,8 @@ export const WALLET_TRANSACTION_TYPES = [
   'swap_out',
   'swap_in',
   'bet_reversal',
+  /** Rank rakeback and a streak's cash reward: an operator-funded real-money credit, no wagering requirement. */
+  'cashback',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [

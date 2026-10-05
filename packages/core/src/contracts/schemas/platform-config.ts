@@ -81,6 +81,13 @@ export const WalletConfigSchema = z
      */
     defaultCurrency: CurrencyTickerInputSchema.optional(),
     /**
+     * Reference currency a deposit, withdrawal or manual adjustment is converted into for its
+     * ledger snapshot when the player has no money limit to take one from. A player's own
+     * reference currency is the currency of their deposit limit, else their wager limit.
+     * Absent = USD.
+     */
+    defaultReferenceCurrency: CurrencyTickerInputSchema.optional(),
+    /**
      * Vendor-side account each provider's sweeps move player funds into, keyed by the
      * provider name in `wallet_asset.providerName` (`default` for the single bound
      * adapter). Keyed rather than flat because one operator can run several vendors,
@@ -148,6 +155,26 @@ export const WalletConfigSchema = z
   .strict();
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
+
+const DEFAULT_WALLET_CURRENCY = 'USD';
+
+/**
+ * The currency a cash prize or cashback credit lands in when its own source (a rank ladder, a
+ * race, a streak milestone) is priced in something else - never the source's own currency
+ * unconditionally, or crediting a crypto-only player in a fiat ticker would open a balance the
+ * operator never offers. Absent `wallet.defaultCurrency` falls back to USD, the same default
+ * `readWalletBalances` uses for a player with no wallet row yet.
+ */
+export function resolveWalletDefaultCurrency(config: WalletConfig | undefined): string {
+  return (config?.defaultCurrency ?? DEFAULT_WALLET_CURRENCY).toUpperCase();
+}
+
+const DEFAULT_REFERENCE_CURRENCY = 'USD';
+
+/** Reference currency for a player with no money limit. See `wallet.defaultReferenceCurrency`. */
+export function resolveWalletReferenceCurrency(config: WalletConfig | undefined): string {
+  return (config?.defaultReferenceCurrency ?? DEFAULT_REFERENCE_CURRENCY).toUpperCase();
+}
 
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
 
@@ -242,6 +269,9 @@ export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
  */
 export const RANK_PAYOUT_DEFAULT_CRON = '3,13,23,33,43,53 * * * *';
 export const RANK_PERIODIC_DEFAULT_CRON = '17 * * * *';
+export const STREAK_PAYOUT_DEFAULT_CRON = '7,27,47 * * * *';
+/** Once, shortly after the UTC day turns over - the boundary the streak's own "day" is defined by. */
+export const STREAK_CLOSE_DEFAULT_CRON = '5 0 * * *';
 
 export const PromoConfigSchema = z
   .object({
@@ -251,6 +281,15 @@ export const PromoConfigSchema = z
         payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
         /** How often the daily, weekly and monthly payouts check whether a period has closed. */
         periodicCron: CronExpressionSchema.default(RANK_PERIODIC_DEFAULT_CRON),
+      })
+      .strict()
+      .prefault({}),
+    streaks: z
+      .object({
+        /** How often owed milestone rewards are settled. */
+        payoutCron: CronExpressionSchema.default(STREAK_PAYOUT_DEFAULT_CRON),
+        /** How often a UTC day is closed out, resetting anyone who missed it. */
+        closeCron: CronExpressionSchema.default(STREAK_CLOSE_DEFAULT_CRON),
       })
       .strict()
       .prefault({}),
@@ -283,6 +322,10 @@ export const HostAllowlistEntrySchema = z
     { message: 'must be a hostname without a protocol, port, credentials, or path' },
   )
   .transform((hostname) => hostname.toLowerCase());
+
+export function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boolean {
+  return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`));
+}
 
 export const ChatConfigSchema = z
   .object({
@@ -356,6 +399,14 @@ export const CmsConfigSchema = z
   .strict();
 export type CmsConfig = z.infer<typeof CmsConfigSchema>;
 
+export const GamingConfigSchema = z
+  .object({
+    /** Hostnames a game's custom thumbnail URL may be served from. Empty = no custom thumbnails allowed. */
+    allowedThumbnailHosts: z.array(HostAllowlistEntrySchema).default([]),
+  })
+  .strict();
+export type GamingConfig = z.infer<typeof GamingConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -403,12 +454,19 @@ export const PlatformConfigSchema = z
     supportedLanguages: z.array(z.string().min(1)).optional(),
     /** Currencies a player may pick to display amounts in. Absent or empty = built-in default. */
     displayCurrencies: z.array(z.string().min(1)).optional(),
+    /**
+     * Handles players may not take at sign-up or rename (eg the brand name), on top of the
+     * built-in staff/system list. Case-insensitive, matched as a word inside the handle.
+     */
+    reservedUsernames: z.array(z.string().min(1)).optional(),
     /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
     /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
     /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
     cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
+    /** Game custom thumbnail host allow-list. Absent = built-in default (empty = disabled). */
+    gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
     /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
     /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */

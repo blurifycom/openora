@@ -501,13 +501,18 @@ describe('an agent-proposed withdrawal hold, then an admin decision', () => {
       reviewReason: holdReason,
     });
 
-    const held = await auditRowsOf('wallet.withdrawal.held', heldWithdrawalId);
+    const held = await auditRowsOf('wallet.withdrawal.held', holder.playerId);
     expect(held).toHaveLength(1);
     expect(held[0]).toMatchObject({
       actorId: adminId,
-      resourceType: 'withdrawal',
+      resourceType: 'player',
       before: { status: 'pending' },
-      after: { status: 'on_hold', reason: holdReason, proposalId: holdProposalId },
+      after: {
+        transactionId: heldWithdrawalId,
+        status: 'on_hold',
+        reason: holdReason,
+        proposalId: holdProposalId,
+      },
     });
 
     const executed = await auditRowsOf('mcp.action.executed', holdProposalId);

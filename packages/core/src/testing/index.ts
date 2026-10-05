@@ -7,6 +7,8 @@ export {
   createTestDb,
   createTestRedis,
   redisUrlForWorker,
+  waitForAdvisoryLockWaiter,
+  waitForRowLockWaiter,
   waitForConsumerGroup,
   type Migration,
   type TestDb,

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
+import { player as playerTable } from '@openora/core/pam/schema/profile';
 import {
   setupTestDb,
   bootTestApp,
@@ -42,10 +43,30 @@ describe('GET /profile/display-currency', () => {
     const res = await player.get('/profile/display-currency');
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { currency: string; supported: string[] };
+    const body = (await res.json()) as {
+      currency: string;
+      supported: string[];
+      decimalPlaces: number | null;
+    };
     expect(typeof body.currency).toBe('string');
+    expect(body.decimalPlaces).toBeNull();
     expect(body.supported).toContain('USD');
     expect(body.supported).toContain('BTC');
+  });
+
+  it('ignores a saved pick the operator no longer offers instead of serving it', async () => {
+    await app.container
+      .get(DRIZZLE)
+      .db.update(playerTable)
+      .set({ displayCurrency: 'ZZZ' })
+      .where(eq(playerTable.id, playerId));
+
+    const res = await player.get('/profile/display-currency');
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { currency: string; supported: string[] };
+    expect(body.currency).not.toBe('ZZZ');
+    expect(body.supported).toContain(body.currency);
   });
 });
 
@@ -78,6 +99,58 @@ describe('PUT /profile/display-currency', () => {
 
     const after = await player.get('/profile/display-currency');
     expect((await after.json()) as { currency: string }).not.toMatchObject({ currency: 'ZZZ' });
+  });
+});
+
+describe('PUT /profile/display-decimal-places', () => {
+  it('persists the pick, records an audit entry, and reflects it on the next read', async () => {
+    const res = await player.put('/profile/display-decimal-places', { decimalPlaces: 6 });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { decimalPlaces: number }).toMatchObject({ decimalPlaces: 6 });
+
+    const readBack = await player.get('/profile/display-currency');
+    expect((await readBack.json()) as { decimalPlaces: number }).toMatchObject({
+      decimalPlaces: 6,
+    });
+
+    const rows = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.resourceId, playerId),
+          eq(auditLog.action, 'player.display_decimal_places.set'),
+        ),
+      );
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it.each([19, -1, 2.5, '4'])(
+    'rejects %j instead of writing it and leaves the stored pick alone',
+    async (decimalPlaces) => {
+      await player.put('/profile/display-decimal-places', { decimalPlaces: 6 });
+
+      const res = await player.put('/profile/display-decimal-places', { decimalPlaces });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      const after = await player.get('/profile/display-currency');
+      expect((await after.json()) as { decimalPlaces: number }).toMatchObject({
+        decimalPlaces: 6,
+      });
+    },
+  );
+
+  it('clears the pick when set to null', async () => {
+    const res = await player.put('/profile/display-decimal-places', { decimalPlaces: null });
+
+    expect(res.status).toBe(200);
+    const readBack = await player.get('/profile/display-currency');
+    expect((await readBack.json()) as { decimalPlaces: null }).toMatchObject({
+      decimalPlaces: null,
+    });
   });
 });
 

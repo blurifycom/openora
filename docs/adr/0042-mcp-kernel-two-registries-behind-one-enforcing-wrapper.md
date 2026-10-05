@@ -1,4 +1,4 @@
-# ADR-0041: MCP kernel - two registries behind one enforcing wrapper
+# ADR-0042: MCP kernel - two registries behind one enforcing wrapper
 
 **Date**: 2026-09-25
 **Status**: Proposed

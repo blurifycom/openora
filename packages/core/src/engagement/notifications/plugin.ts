@@ -32,6 +32,42 @@ import { CreateNotificationInputSchema, type CreateNotificationInput } from './c
 const describeLimitValue = (amount: string | null, minutes: number | null): string =>
   amount !== null ? amount : `${minutes} minutes`;
 
+// A Rank Challenge tier may carry a cash amount, a physical item, or both (master/titan) - the
+// body text names whichever the player actually won.
+const describeRankChallengePrize = (p: {
+  cashAmount: string | null;
+  physicalItem: string | null;
+  currency: string;
+}): string => {
+  const parts = [
+    p.cashAmount !== null ? `${formatMoneyAmount(p.cashAmount)} ${p.currency}` : null,
+    p.physicalItem,
+  ].filter((part): part is string => part !== null);
+  return parts.join(' + ');
+};
+
+const describeRankBenefits = (p: {
+  currency: string;
+  rakebackPercent: string;
+  dailyBonus?: string | null;
+  weeklyBonus?: string | null;
+  monthlyBonus?: string | null;
+}): string => {
+  const bonuses = [
+    p.dailyBonus !== null && p.dailyBonus !== undefined
+      ? `${formatMoneyAmount(p.dailyBonus)} ${p.currency} daily`
+      : null,
+    p.weeklyBonus !== null && p.weeklyBonus !== undefined
+      ? `${formatMoneyAmount(p.weeklyBonus)} ${p.currency} weekly`
+      : null,
+    p.monthlyBonus !== null && p.monthlyBonus !== undefined
+      ? `${formatMoneyAmount(p.monthlyBonus)} ${p.currency} monthly`
+      : null,
+  ].filter((part): part is string => part !== null);
+  const rakeback = `${formatMoneyAmount(p.rakebackPercent)}% rakeback`;
+  return bonuses.length > 0 ? `${rakeback} and a bonus worth ${bonuses.join(', ')}` : rakeback;
+};
+
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
@@ -169,7 +205,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
           occurredAt,
         },
       }),
-      securityAlert: true,
     },
   ),
 
@@ -250,17 +285,89 @@ export const notificationEventMap: NotificationMapEntry[] = [
   mapEvent('promo.bonus.granted', (p) => ({
     userId: p.userId,
     type: 'promo.bonus.granted',
-    title: 'Bonus credited',
+    title: p.rankBonusKind
+      ? `${p.rankBonusKind[0].toUpperCase()}${p.rankBonusKind.slice(1)} bonus credited`
+      : 'Bonus credited',
     body: `You received a ${formatMoneyAmount(p.grantedAmount)} ${p.currency} bonus. Wager ${formatMoneyAmount(p.wageringRequired)} ${p.currency} to unlock it.`,
     data: { grantId: p.grantId },
   })),
 
-  mapEvent('promo.bonus.completed', (p) => ({
+  mapEvent(
+    'promo.bonus.completed',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.bonus.completed',
+      title: 'Bonus unlocked',
+      body: `Your ${formatMoneyAmount(p.convertedAmount)} ${p.currency} bonus has cleared its wagering requirement and is now fully withdrawable.`,
+      data: { grantId: p.grantId },
+    }),
+    {
+      email: (p) => ({
+        key: 'bonusUnlocked',
+        data: { convertedAmount: p.convertedAmount, currency: p.currency },
+      }),
+    },
+  ),
+
+  mapEvent(
+    'promo.race.won',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.race.won',
+      title: 'You placed in a race',
+      body: `You placed #${p.position} in ${p.raceName} and won ${formatMoneyAmount(p.amount)} ${p.currency}.`,
+      data: { raceId: p.raceId },
+    }),
+    {
+      email: (p) => ({
+        key: 'raceWon',
+        data: {
+          raceName: p.raceName,
+          position: p.position,
+          amount: p.amount,
+          currency: p.currency,
+        },
+      }),
+    },
+  ),
+
+  mapEvent(
+    'promo.rank-challenge.won',
+    (p) => ({
+      userId: p.userId,
+      type: 'promo.rank-challenge.won',
+      title: 'You won a Rank Challenge tier',
+      body: `You reached the ${p.tierName} tier and won ${describeRankChallengePrize(p)}.`,
+      data: { tierId: p.tierId },
+    }),
+    {
+      email: (p) => ({
+        key: 'rankChallengeWon' as const,
+        data: {
+          tierName: p.tierName,
+          cashAmount: p.cashAmount,
+          physicalItem: p.physicalItem,
+          currency: p.currency,
+        },
+      }),
+    },
+  ),
+
+  mapEvent('promo.rank.changed', (p) => ({
     userId: p.userId,
-    type: 'promo.bonus.completed',
-    title: 'Bonus unlocked',
-    body: `Your ${formatMoneyAmount(p.convertedAmount)} ${p.currency} bonus has cleared its wagering requirement and is now fully withdrawable.`,
-    data: { grantId: p.grantId },
+    type: 'promo.rank.changed',
+    title: p.tierName ? `You reached ${p.tierName} rank` : 'Rank updated',
+    body:
+      p.tierName && p.currency && p.rakebackPercent
+        ? `Congratulations on reaching ${p.tierName}. Your rank now pays ${describeRankBenefits({
+            currency: p.currency,
+            rakebackPercent: p.rakebackPercent,
+            dailyBonus: p.dailyBonus,
+            weeklyBonus: p.weeklyBonus,
+            monthlyBonus: p.monthlyBonus,
+          })}.`
+        : 'Your account rank has been updated.',
+    data: { tierId: p.tierId },
   })),
 
   mapEvent('chat.user.mentioned', (p) => ({
@@ -396,6 +503,27 @@ export default {
       }
     };
 
+    // The one place every `create()` call ends up on the realtime channel from - this
+    // module's own dispatch jobs below, and an overlay's own `NotificationsService` instance
+    // over a consumer-specific event `domainEventSchemas` has no entry for, since both share
+    // this event bus and `create()` always emits this topic. Re-reads the row rather than
+    // carrying it on the event: the event is `{ notificationId, userId }` only, the same shape
+    // every other consumer of this topic (the audit log) already treats as the full payload.
+    ctx.events.on('notifications.created', (payload) => {
+      const parsed = domainEventSchemas['notifications.created'].safeParse(payload);
+      if (!parsed.success || !svcRef) {
+        return;
+      }
+      void svcRef
+        .getById(parsed.data.notificationId)
+        .then((record) => {
+          if (record) {
+            publishNotification(record);
+          }
+        })
+        .catch((err: unknown) => logger.error({ err }, 'notification realtime lookup failed'));
+    });
+
     for (const entry of notificationEventMap) {
       ctx.events.on(entry.event, (payload, envelope) => {
         if (!jobQueueRef || !envelope) {
@@ -412,9 +540,7 @@ export default {
               event: entry.event,
               input: { ...entry.buildNotification(data), eventId: envelope.eventId },
               email: entry.buildEmail(data, envelope.occurredAt),
-              // `wallet.withdrawal.requested` already creates an in-app notification. Its
-              // existing dispatch is enriched with a preference-gated email rather than adding
-              // a second record or a second subscription.
+              // An opted-in entry's email is preference-gated; every other entry always mails.
               securityAlert: entry.securityAlert,
             },
             {
@@ -574,7 +700,6 @@ export default {
         if (!record) {
           return;
         }
-        publishNotification(record);
         if (payload.eventId) {
           await dispatchMail(
             payload.userId,
@@ -605,7 +730,6 @@ export default {
           }
           return;
         }
-        publishNotification(record);
         if (payload.email) {
           const mailKey = payload.input.eventId ?? record.id;
           await (payload.securityAlert

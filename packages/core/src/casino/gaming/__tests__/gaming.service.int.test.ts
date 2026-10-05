@@ -35,6 +35,7 @@ import {
   GameAggregatorNotMappedError,
   GameNotFoundError,
   GameSlugTakenError,
+  GameThumbnailHostNotAllowedError,
   RgRestrictedError,
   InsufficientBalanceError,
   WinCreditFailedError,
@@ -67,6 +68,8 @@ function makeWalletCommands(
   });
 }
 
+const DEFAULT_ALLOWED_THUMBNAIL_HOSTS = ['cdn.example'];
+
 function makeService({
   provider = mock<GameAdapter>({
     launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
@@ -77,6 +80,7 @@ function makeService({
   rgLimits,
   gameGeoCheck,
   events = noopEvents,
+  allowedThumbnailHosts = DEFAULT_ALLOWED_THUMBNAIL_HOSTS,
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
@@ -84,6 +88,7 @@ function makeService({
   rgLimits?: RgLimitsPort;
   gameGeoCheck?: GameGeoCheckPort;
   events?: ReturnType<typeof makeEventBus>;
+  allowedThumbnailHosts?: readonly string[];
 } = {}) {
   return new GamingService(
     db.drizzle,
@@ -94,6 +99,7 @@ function makeService({
     makeIdentityReader(),
     rgLimits,
     gameGeoCheck,
+    allowedThumbnailHosts,
   );
 }
 
@@ -727,7 +733,95 @@ describe('GamingService admin list filters (real PG)', () => {
     await expect(
       svc.listGamesAdmin({ page: 1, limit: 10, geoBlockedCountries: ['DE'] }),
     ).rejects.toBeInstanceOf(GameGeoFiltersUnavailableError);
+    await expect(
+      svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DE'] }),
+    ).rejects.toBeInstanceOf(GameGeoFiltersUnavailableError);
     await expect(svc.listGamesAdmin({ page: 1, limit: 10 })).resolves.toMatchObject({ total: 0 });
+  });
+
+  function geoCheckMock(globallyBlocked: string[] = []) {
+    return mock<GameGeoCheckPort>({
+      listGloballyBlockedCountries: vi.fn().mockResolvedValue(globallyBlocked),
+    });
+  }
+
+  it('geoAvailableCountries excludes a game blocked by its own or its provider rule', async () => {
+    const blockedStudio = await seedProvider();
+    const gameBlockedDk = await seedGame();
+    await seedGame({ providerId: blockedStudio.id });
+    const onlySe = await seedGame();
+    const open = await seedGame();
+    await blockGame(gameBlockedDk.id, ['DK']);
+    await db.drizzle.db
+      .insert(providerGeoRule)
+      .values({ providerId: blockedStudio.id, countryCode: 'DK', reason: 'licence' });
+    await blockGame(onlySe.id, ['SE']);
+    const svc = makeService({ gameGeoCheck: geoCheckMock() });
+
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DK'] })),
+    ).toEqual([onlySe.id, open.id].sort());
+  });
+
+  it('geoAvailableCountries requires availability in every listed country', async () => {
+    const dkOnly = await seedGame();
+    const frOnly = await seedGame();
+    const openBoth = await seedGame();
+    await blockGame(dkOnly.id, ['DK']);
+    await blockGame(frOnly.id, ['FR']);
+    const svc = makeService({ gameGeoCheck: geoCheckMock() });
+
+    expect(
+      ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DK', 'FR'] })),
+    ).toEqual([openBoth.id]);
+  });
+
+  it('geoAvailableCountries combines with categoryIds, isActive, isUnavailable, tagIds, gameTypes, and q', async () => {
+    const hot = await seedTag();
+    const category = await seedCategory();
+    const match = await seedGame({ name: 'Aurora Slots', gameType: 'original', isActive: true }, [
+      category.id,
+    ]);
+    await tagGame(match.id, [hot.id]);
+    const blockedMatch = await seedGame(
+      { name: 'Aurora Blocked', gameType: 'original', isActive: true },
+      [category.id],
+    );
+    await tagGame(blockedMatch.id, [hot.id]);
+    await blockGame(blockedMatch.id, ['DK']);
+    const inactiveMatch = await seedGame(
+      { name: 'Aurora Inactive', gameType: 'original', isActive: false },
+      [category.id],
+    );
+    await tagGame(inactiveMatch.id, [hot.id]);
+    const otherType = await seedGame({ name: 'Aurora Other', gameType: 'casino', isActive: true }, [
+      category.id,
+    ]);
+    await tagGame(otherType.id, [hot.id]);
+    const svc = makeService({ gameGeoCheck: geoCheckMock() });
+
+    const result = await svc.listGamesAdmin({
+      page: 1,
+      limit: 10,
+      q: 'Aurora',
+      categoryIds: [category.id],
+      isActive: true,
+      isUnavailable: false,
+      tagIds: [hot.id],
+      gameTypes: ['original'],
+      geoAvailableCountries: ['DK'],
+    });
+
+    expect(ids(result)).toEqual([match.id]);
+  });
+
+  it('geoAvailableCountries returns an empty page when a requested country is globally blocked', async () => {
+    await seedGame();
+    const svc = makeService({ gameGeoCheck: geoCheckMock(['DK']) });
+
+    await expect(
+      svc.listGamesAdmin({ page: 1, limit: 10, geoAvailableCountries: ['DK'] }),
+    ).resolves.toMatchObject({ items: [], total: 0 });
   });
 
   it('combines filters with AND', async () => {
@@ -803,6 +897,32 @@ describe('ListAdminGamesInputSchema', () => {
     expect(ListAdminGamesInputSchema.safeParse({ geoBlockedCountries: ['de'] }).success).toBe(
       false,
     );
+  });
+
+  it('rejects geoBlocked=true combined with geoAvailableCountries', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({ geoBlocked: 'true', geoAvailableCountries: ['DE'] })
+        .success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({ geoBlocked: 'false', geoAvailableCountries: ['DE'] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects a country shared between geoAvailableCountries and geoBlockedCountries', () => {
+    expect(
+      ListAdminGamesInputSchema.safeParse({
+        geoAvailableCountries: ['DE', 'FR'],
+        geoBlockedCountries: ['FR'],
+      }).success,
+    ).toBe(false);
+    expect(
+      ListAdminGamesInputSchema.safeParse({
+        geoAvailableCountries: ['DE'],
+        geoBlockedCountries: ['FR'],
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -1018,6 +1138,49 @@ describe('GamingService.startRound wallet.balance.changed event (real PG)', () =
 
     expect(events.emit).not.toHaveBeenCalledWith('wallet.balance.changed', expect.anything());
   });
+
+  it('also emits it for a WAGER_TRACKING credit (rank rakeback) alongside the bet debit', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a8', name: 'Aces' });
+    const events = makeEventBus();
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      moved: true,
+      newBalance: '90',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000d2',
+      wagerTrackingCredits: [
+        {
+          transactionId: '00000000-0000-0000-0000-0000000000d3',
+          amount: '0.10',
+          currency: 'USD',
+        },
+      ],
+    });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      mock<GameAdapter>({
+        launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
+        endRound: vi.fn(),
+      }),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+    const userId = '00000000-0000-0000-0000-000000000408';
+
+    await startRound(svc, userId, created.id, 'USD', '10');
+
+    expect(events.emit).toHaveBeenCalledWith('wallet.balance.changed', {
+      userId,
+      playerId: null,
+      amount: '0.10',
+      currency: 'USD',
+      transactionId: '00000000-0000-0000-0000-0000000000d3',
+      type: 'cashback',
+      direction: 'credit',
+    });
+  });
 });
 
 describe('GamingService updateGame (real PG)', () => {
@@ -1209,6 +1372,144 @@ describe('GamingService updateGame (real PG)', () => {
     await expect(
       svc.updateGame({ id: created.id, slug: 'game-two', ...ACTOR }),
     ).rejects.toBeInstanceOf(GameSlugTakenError);
+  });
+
+  it('persists a custom thumbnail, clears it with null, and leaves it when omitted', async () => {
+    const created = await seedGame();
+    const svc = makeService();
+
+    const set = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(set.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+
+    const left = await svc.updateGame({ id: created.id, name: 'Renamed Custom', ...ACTOR });
+    expect(left.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+
+    const cleared = await svc.updateGame({ id: created.id, customThumbnailUrl: null, ...ACTOR });
+    expect(cleared.customThumbnailUrl).toBeNull();
+  });
+
+  it('keeps thumbnailUrl and customThumbnailUrl independent of each other', async () => {
+    const created = await seedGame({ thumbnailUrl: 'https://cdn.example/aggregator.png' });
+    const svc = makeService();
+
+    const customSet = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(customSet.thumbnailUrl).toBe('https://cdn.example/aggregator.png');
+    expect(customSet.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+
+    const thumbnailChanged = await svc.updateGame({
+      id: created.id,
+      thumbnailUrl: 'https://cdn.example/aggregator-2.png',
+      ...ACTOR,
+    });
+    expect(thumbnailChanged.thumbnailUrl).toBe('https://cdn.example/aggregator-2.png');
+    expect(thumbnailChanged.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+  });
+
+  it('carries the old and new customThumbnailUrl on the emitted gaming.game.updated event', async () => {
+    const created = await seedGame({ customThumbnailUrl: 'https://cdn.example/old.png' });
+    const events = makeEventBus();
+    const svc = makeService({ events });
+
+    await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/new.png',
+      ...ACTOR,
+    });
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'gaming.game.updated',
+      expect.objectContaining({
+        before: expect.objectContaining({ customThumbnailUrl: 'https://cdn.example/old.png' }),
+        after: expect.objectContaining({ customThumbnailUrl: 'https://cdn.example/new.png' }),
+      }),
+    );
+  });
+
+  it('returns customThumbnailUrl from getGame, admin listing and public listing', async () => {
+    const created = await seedGame({
+      isActive: true,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+    });
+    const svc = makeService();
+
+    expect(await svc.getGame(created.id)).toMatchObject({
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+    });
+    expect(
+      (await svc.listGamesAdmin({ page: 1, limit: 10 })).items.find((g) => g.id === created.id),
+    ).toMatchObject({ customThumbnailUrl: 'https://cdn.example/custom.png' });
+    expect(
+      (await svc.listGamesPublic({ page: 1, limit: 10 })).items.find((g) => g.id === created.id),
+    ).toMatchObject({ customThumbnailUrl: 'https://cdn.example/custom.png' });
+  });
+
+  it('persists a custom thumbnail whose host is allowlisted', async () => {
+    const created = await seedGame();
+    const svc = makeService({ allowedThumbnailHosts: ['cdn.example'] });
+
+    const updated = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(updated.customThumbnailUrl).toBe('https://cdn.example/custom.png');
+  });
+
+  it('persists a custom thumbnail on a subdomain of an allowlisted host', async () => {
+    const created = await seedGame();
+    const svc = makeService({ allowedThumbnailHosts: ['cdn.example'] });
+
+    const updated = await svc.updateGame({
+      id: created.id,
+      customThumbnailUrl: 'https://assets.cdn.example/custom.png',
+      ...ACTOR,
+    });
+    expect(updated.customThumbnailUrl).toBe('https://assets.cdn.example/custom.png');
+  });
+
+  it('rejects a custom thumbnail on a host outside the allowlist, leaving the column unchanged and emitting nothing', async () => {
+    const created = await seedGame();
+    const events = makeEventBus();
+    const svc = makeService({ events, allowedThumbnailHosts: ['cdn.example'] });
+
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        customThumbnailUrl: 'https://evil.example/tracker.png',
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameThumbnailHostNotAllowedError);
+
+    expect(events.emit).not.toHaveBeenCalledWith('gaming.game.updated', expect.anything());
+    const [row] = await db.drizzle.db
+      .select({ customThumbnailUrl: game.customThumbnailUrl })
+      .from(game)
+      .where(eq(game.id, created.id));
+    expect(row?.customThumbnailUrl).toBeNull();
+  });
+
+  it('rejects any custom thumbnail when the allowlist is empty, but null still clears it', async () => {
+    const created = await seedGame({ customThumbnailUrl: 'https://cdn.example/old.png' });
+    const svc = makeService({ allowedThumbnailHosts: [] });
+
+    await expect(
+      svc.updateGame({
+        id: created.id,
+        customThumbnailUrl: 'https://cdn.example/new.png',
+        ...ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(GameThumbnailHostNotAllowedError);
+
+    const cleared = await svc.updateGame({ id: created.id, customThumbnailUrl: null, ...ACTOR });
+    expect(cleared.customThumbnailUrl).toBeNull();
   });
 });
 

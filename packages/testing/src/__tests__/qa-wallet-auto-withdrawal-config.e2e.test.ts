@@ -111,7 +111,7 @@ let unseededAdminClient: Client;
 async function createIsolatedTestDatabase(): Promise<string> {
   const baseUrl =
     process.env['TEST_DATABASE_URL'] ??
-    'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
+    'postgres://postgres:postgres@localhost:5434/oss_igaming_test';
   const url = new URL(baseUrl);
   const dbName = `unseeded_${randomUUID().replaceAll('-', '')}`;
   const admin = new Client({
@@ -377,13 +377,14 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     expect(pendingIds.has(belowBody.transactionId)).toBe(false);
 
     const autoApprovedAuditRes = await superAdmin.get(
-      `/audit/logs?resourceId=${belowBody.transactionId}&action=wallet.withdrawal.auto_approved`,
+      `/audit/logs?resourceType=player&resourceId=${below.playerId}&action=wallet.withdrawal.auto_approved`,
     );
     const autoApprovedAudit = await readJson(autoApprovedAuditRes);
     expect(autoApprovedAudit.items.length).toBeGreaterThanOrEqual(1);
     expect(autoApprovedAudit.items[0].actorType).toBe('system');
     expect(autoApprovedAudit.items[0].after).toMatchObject({
       userId: below.userId,
+      transactionId: belowBody.transactionId,
       threshold: '100.000000000000000000',
       thresholdSource: 'global',
     });
@@ -453,7 +454,9 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       excludeRiskFlags: [],
     });
     const email = `rule-above-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '1000',
@@ -475,7 +478,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
     expect(res.status).toBe('completed');
 
     const auditRes = await superAdmin.get(
-      `/audit/logs?resourceId=${res.transactionId}&action=wallet.withdrawal.auto_approved`,
+      `/audit/logs?resourceType=player&resourceId=${playerId}&action=wallet.withdrawal.auto_approved`,
     );
     const audit = await readJson(auditRes);
     expect(audit.items[0].after).toMatchObject({ thresholdSource: 'per-player' });

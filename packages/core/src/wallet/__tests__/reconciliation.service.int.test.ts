@@ -14,6 +14,7 @@ import {
   mock,
   makeEventBus,
   makeIdentityReader,
+  makeExchangeRateReader,
   makeAuditWriter,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
@@ -80,6 +81,7 @@ function makeServices(
     audit,
     identityReader: overrides.identityReader ?? makeIdentityReader(),
     platformConfig,
+    rates: makeExchangeRateReader(),
   });
   const reconciliation = new ReconciliationService({
     drizzle: db.drizzle,
@@ -764,6 +766,7 @@ describe('ReconciliationService.resolveFinding', () => {
     const finding = await seedFinding();
     const w = await seedWallet('BTC', '0');
     const rgLimits = mock<RgLimitsPort>({
+      referenceCurrency: vi.fn(async () => null),
       checkDeposit: vi.fn(async () => ({
         allowed: false as const,
         limitType: 'deposit' as const,
@@ -828,6 +831,7 @@ describe('ReconciliationService.resolveFinding', () => {
         getPlayerIdByUserId: vi.fn().mockResolvedValue(randomUUID()),
       }),
       rgLimits: mock<RgLimitsPort>({
+        referenceCurrency: vi.fn(async () => null),
         checkDeposit: vi.fn(async () => ({ allowed: true as const })),
       }),
     });

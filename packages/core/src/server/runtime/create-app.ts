@@ -44,6 +44,7 @@ import {
   PLATFORM_CONFIG,
   PLAYER_ACTIVITY_TRACKER,
   SESSION_IDLE_POLICY,
+  TWO_FACTOR_SETUP_POLICY,
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
@@ -510,7 +511,22 @@ export async function createApp(
       }
     }
 
-    context.auth = resolved;
+    // Published as a flag rather than answered here: getUserId refuses it unless a route
+    // opts in, and the identity router holds its own routes to an enrolment allowlist. A
+    // DB error takes the unauthenticated path, as above.
+    let twoFactorSetupRequired = false;
+    if (container.has(TWO_FACTOR_SETUP_POLICY)) {
+      try {
+        twoFactorSetupRequired = await container
+          .get(TWO_FACTOR_SETUP_POLICY)
+          .isSetupRequired(userId);
+      } catch (err) {
+        createLogger('two-factor-setup').error({ err }, 'setup check failed');
+        return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
+      }
+    }
+
+    context.auth = twoFactorSetupRequired ? { ...resolved, twoFactorSetupRequired } : resolved;
 
     if (container.has(PLAYER_ACTIVITY_TRACKER)) {
       // Awaited, not fire-and-forget. Modules and overlays read this stamp to decide

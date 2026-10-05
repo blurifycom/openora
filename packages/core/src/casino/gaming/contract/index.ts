@@ -5,6 +5,9 @@ import {
   CurrencyCodeSchema,
   GAME_TYPES,
   GameBulkIdsSchema,
+  GameBulkTargetFieldsSchema,
+  gameBulkTargetRefinement,
+  hasGameBulkTarget,
   GameCategoryMembershipModeSchema,
   GameCategoryMembershipTriggerSchema,
   GameCategoryNameSchema,
@@ -69,6 +72,7 @@ export const GameSchema = z.object({
   tags: z.array(GameTagSummarySchema),
   gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
+  customThumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),
   isUnavailable: z.boolean(),
   metadata: z.unknown().nullable(),
@@ -127,6 +131,13 @@ export type ListGamesInput = z.infer<typeof ListGamesInputSchema>;
 
 export const CatalogSlugSchema = createKebabSlugSchema(64);
 
+export const GAME_FAVORITE_LIMIT = 200;
+
+export const GameFavoriteInputSchema = z.object({ gameId: UuidSchema });
+export type GameFavoriteInput = z.infer<typeof GameFavoriteInputSchema>;
+
+export const GameFavoriteAckSchema = z.object({ success: z.literal(true) });
+
 export const gamingContract = {
   listGames: oc
     .route({ method: 'GET', path: '/gaming/games' })
@@ -136,6 +147,11 @@ export const gamingContract = {
   getGame: oc
     .route({ method: 'GET', path: '/gaming/games/{id}' })
     .input(IdInputSchema)
+    .output(GameSchema),
+
+  getGameBySlug: oc
+    .route({ method: 'GET', path: '/gaming/games/by-slug/{slug}' })
+    .input(z.object({ slug: CatalogSlugSchema }))
     .output(GameSchema),
 
   startRound: oc
@@ -169,6 +185,23 @@ export const gamingContract = {
     .route({ method: 'GET', path: '/gaming/categories/{slug}' })
     .input(z.object({ slug: CatalogSlugSchema }))
     .output(GameCategorySummaryWithTranslationsSchema),
+
+  // Newest-favorited first; a hidden game is omitted here but keeps its favorite row.
+  listFavorites: oc.route({ method: 'GET', path: '/gaming/favorites' }).output(z.array(GameSchema)),
+
+  listFavoriteIds: oc
+    .route({ method: 'GET', path: '/gaming/favorites/ids' })
+    .output(z.array(UuidSchema)),
+
+  addFavorite: oc
+    .route({ method: 'POST', path: '/gaming/favorites' })
+    .input(GameFavoriteInputSchema)
+    .output(GameFavoriteAckSchema),
+
+  removeFavorite: oc
+    .route({ method: 'DELETE', path: '/gaming/favorites/{gameId}' })
+    .input(GameFavoriteInputSchema)
+    .output(GameFavoriteAckSchema),
 };
 
 // Backoffice catalog management (game-config guarded in the router).
@@ -217,6 +250,7 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   gameTypes: queryArraySchema(GameTypeSchema, GAME_TYPES.length).optional(),
   geoBlocked: QueryBooleanSchema.optional(),
   geoBlockedCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
+  geoAvailableCountries: queryArraySchema(CountryCodeSchema, 50).optional(),
 })
   .refine(
     (input) => !(input.uncategorized === true && (input.categoryId || input.categoryIds?.length)),
@@ -225,7 +259,21 @@ export const ListAdminGamesInputSchema = ListGamesInputSchema.extend({
   .refine((input) => !(input.geoBlocked === false && input.geoBlockedCountries?.length), {
     message: 'geoBlocked=false cannot be combined with geoBlockedCountries',
     path: ['geoBlocked'],
-  });
+  })
+  .refine((input) => !(input.geoBlocked === true && input.geoAvailableCountries?.length), {
+    message: 'geoBlocked=true cannot be combined with geoAvailableCountries',
+    path: ['geoAvailableCountries'],
+  })
+  .refine(
+    (input) =>
+      !input.geoBlockedCountries?.length ||
+      !input.geoAvailableCountries?.length ||
+      !input.geoBlockedCountries.some((code) => input.geoAvailableCountries?.includes(code)),
+    {
+      message: 'geoAvailableCountries cannot share a country with geoBlockedCountries',
+      path: ['geoAvailableCountries'],
+    },
+  );
 export type ListAdminGamesInput = z.infer<typeof ListAdminGamesInputSchema>;
 
 // `active` and `inactive` count each row's own `isActive` flag, matching the admin list filters.
@@ -326,10 +374,12 @@ export const CategoryGameItemSchema = GameSchema.pick({
   slug: true,
   provider: true,
   thumbnailUrl: true,
+  customThumbnailUrl: true,
   isActive: true,
 }).extend({
   position: z.number().int().nullable(),
   pinnedPosition: z.number().int().nullable(),
+  isPlayable: z.boolean(),
 });
 
 export const ListCategoryGamesInputSchema = PageQuerySchema.extend({
@@ -460,6 +510,7 @@ export const CategoryRulePreviewItemSchema = GameSchema.pick({
   slug: true,
   provider: true,
   thumbnailUrl: true,
+  customThumbnailUrl: true,
   isActive: true,
 });
 
@@ -542,6 +593,18 @@ export const UpdateGameInputSchema = z.object({
   providerId: UuidSchema.optional(),
   aggregator: z.string().trim().min(1).max(64).optional(),
   thumbnailUrl: z.string().trim().min(1).max(512).nullable().optional(),
+  customThumbnailUrl: z
+    .url({ protocol: /^https$/, normalize: true, abort: true })
+    .max(512)
+    .refine(
+      (v) => {
+        const url = new URL(v);
+        return url.username === '' && url.password === '';
+      },
+      { message: 'must not embed credentials' },
+    )
+    .nullable()
+    .optional(),
   // No isUnavailable: the flag is vendor-set only, an admin must never be able to toggle it.
   isActive: z.boolean().optional(),
   metadata: z.unknown().nullable().optional(),
@@ -550,33 +613,19 @@ export const UpdateGameInputSchema = z.object({
 });
 export type UpdateGameInput = z.infer<typeof UpdateGameInputSchema>;
 
-const BulkGameTargetFieldsSchema = z.object({
-  providerIds: z.array(UuidSchema).max(50).optional(),
-  gameIds: z.array(UuidSchema).max(500).optional(),
-});
-
-function hasBulkTarget(target: { providerIds?: string[]; gameIds?: string[] }) {
-  return (target.providerIds?.length ?? 0) > 0 || (target.gameIds?.length ?? 0) > 0;
-}
-
-const bulkTargetRefinement = {
-  message: 'Provide at least one non-empty providerIds or gameIds',
-  path: ['gameIds'],
-};
-
-export const SetGamesActiveInputSchema = BulkGameTargetFieldsSchema.extend({
+export const SetGamesActiveInputSchema = GameBulkTargetFieldsSchema.extend({
   isActive: z.boolean(),
-}).refine(hasBulkTarget, bulkTargetRefinement);
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type SetGamesActiveInput = z.infer<typeof SetGamesActiveInputSchema>;
 
-export const AddGameTagsInputSchema = BulkGameTargetFieldsSchema.extend({
+export const AddGameTagsInputSchema = GameBulkTargetFieldsSchema.extend({
   tagIds: z.array(UuidSchema).min(1).max(50),
-}).refine(hasBulkTarget, bulkTargetRefinement);
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type AddGameTagsInput = z.infer<typeof AddGameTagsInputSchema>;
 
-export const AddGameCategoriesInputSchema = BulkGameTargetFieldsSchema.extend({
+export const AddGameCategoriesInputSchema = GameBulkTargetFieldsSchema.extend({
   categoryIds: z.array(UuidSchema).min(1).max(50),
-}).refine(hasBulkTarget, bulkTargetRefinement);
+}).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type AddGameCategoriesInput = z.infer<typeof AddGameCategoriesInputSchema>;
 
 const BulkCountSchema = z.object({

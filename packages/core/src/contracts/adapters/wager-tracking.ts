@@ -17,11 +17,33 @@ export type WagerTrackingArgs = {
   amount: string;
   /** Stake after the bonus engine's resolved weight, as a decimal string. */
   weightedAmount: string;
+  /**
+   * The part of `amount` staked out of the player's own funds - `amount` minus whatever a bonus
+   * grant covered. `RankService`'s lifetime-wagering counter intentionally ignores this and
+   * counts the full stake (see its own doc comment); every other consumer here - rakeback,
+   * streak, races, the rank challenge - counts only this, since none of them may reward money
+   * the player never risked.
+   */
+  realAmount: string;
   context: WagerContext;
 };
 
+/**
+ * A real-money wallet credit a `recordWager` consumer made inside the caller's own transaction -
+ * rank rakeback today. Reported back rather than fired as an event from inside the port, since a
+ * consumer here has no view of when the caller's transaction actually commits; the caller collects
+ * these and emits `wallet.balance.changed` itself once it does, the same rule every other wallet
+ * mover in `WalletCommandsService` follows.
+ */
+export type WagerTrackingWalletCredit = {
+  transactionId: string;
+  amount: string;
+  currency: string;
+};
+
 export type WagerTrackingCommands = {
-  recordWager(tx: unknown, args: WagerTrackingArgs): Promise<void>;
+  /** Empty array when nothing here moved real money - the common case. */
+  recordWager(tx: unknown, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]>;
 };
 
 export const WAGER_TRACKING: Token<WagerTrackingCommands> = createToken('WAGER_TRACKING');

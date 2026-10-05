@@ -155,6 +155,7 @@ export const game = pgTable(
     aggregator: text().notNull(),
     gameType: gameTypeEnum().notNull().default('casino'),
     thumbnailUrl: text(),
+    customThumbnailUrl: text(),
     isActive: boolean().notNull().default(false),
     isUnavailable: boolean().notNull().default(false),
     metadata: jsonb(),
@@ -276,6 +277,24 @@ export const gameRound = pgTable(
   ],
 );
 
+export const gameFavorite = pgTable(
+  'game_favorite',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // bare id - cross-module (user from pam/identity), no FK - same convention as game_round.userId.
+    userId: uuid().notNull(),
+    gameId: uuid()
+      .notNull()
+      .references(() => game.id, { onDelete: 'cascade' }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('game_favorite_user_id_game_id_key').on(t.userId, t.gameId),
+    // Separate from the unique index above: that one can't also serve an ORDER BY createdAt.
+    index('game_favorite_user_id_created_at_idx').on(t.userId, t.createdAt),
+  ],
+);
+
 export type Game = typeof game.$inferSelect;
 export type GameRound = typeof gameRound.$inferSelect;
 export type GameProvider = typeof gameProvider.$inferSelect;
@@ -284,3 +303,4 @@ export type GameCategory = typeof gameCategory.$inferSelect;
 export type GameCategoryGame = typeof gameCategoryGame.$inferSelect;
 export type GameTag = typeof gameTag.$inferSelect;
 export type GameTagGame = typeof gameTagGame.$inferSelect;
+export type GameFavorite = typeof gameFavorite.$inferSelect;

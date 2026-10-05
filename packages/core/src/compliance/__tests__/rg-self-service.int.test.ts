@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type {
   ExchangeRateReader,
   LoginEnforcementPort,
@@ -22,7 +22,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
-import { RgService } from '../service/rg.service.js';
+import { RgService, LimitOrderingViolationError } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import {
   RgSelfServiceService,
@@ -249,6 +249,68 @@ describe('RgSelfServiceService.upsertLimit (real PG)', () => {
   });
 });
 
+describe('RgSelfServiceService.upsertLimit ordering (real PG)', () => {
+  it('refuses an immediate write (a lowering) that would cross an existing sibling bound', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, { ...deposit100, period: 'weekly', amount: '50' });
+
+    // A first-time daily write is immediate, and 80 > the weekly bound of 50.
+    await expect(
+      svc.upsertLimit(userId, { ...deposit100, period: 'daily', amount: '80' }),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+
+  it('refuses a parked raise whose pending (effective) amount would cross an existing sibling bound', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, { ...deposit100, period: 'daily', amount: '10' });
+    await svc.upsertLimit(userId, { ...deposit100, period: 'weekly', amount: '20' });
+
+    // A raise on daily to 30 is parked (not applied), but 30 already exceeds the
+    // existing weekly=20 - it must be refused now, using the pending value.
+    await expect(
+      svc.upsertLimit(userId, { ...deposit100, period: 'daily', amount: '30' }),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(userLimit)
+      .where(and(eq(userLimit.userId, userId), eq(userLimit.period, 'daily')));
+    expect(rows[0]?.pendingKind).toBeNull();
+  });
+
+  it('accepts a valid ordered set across daily/weekly/monthly', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, { ...deposit100, period: 'daily', amount: '10' });
+    await svc.upsertLimit(userId, { ...deposit100, period: 'weekly', amount: '20' });
+    const view = await svc.upsertLimit(userId, { ...deposit100, period: 'monthly', amount: '30' });
+
+    expect(view.amount).toBe('30.000000000000000000');
+  });
+
+  it('refuses when a required cross-currency rate is missing, rather than skipping the check', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, {
+      ...deposit100,
+      period: 'daily',
+      amount: '10',
+      currency: 'USD',
+    });
+
+    await expect(
+      svc.upsertLimit(userId, {
+        ...deposit100,
+        period: 'weekly',
+        amount: '20',
+        currency: 'EUR',
+      }),
+    ).rejects.toBeInstanceOf(LimitOrderingViolationError);
+  });
+});
+
 const BTC_USD_RATE = 50000;
 
 describe('RgSelfServiceService.getLimits - multi-currency usage', () => {
@@ -345,6 +407,22 @@ describe('RgSelfServiceService.requestLimitRemoval (real PG)', () => {
     await expect(svc.requestLimitRemoval(row.id, randomUUID())).rejects.toBeInstanceOf(
       LimitOwnershipError,
     );
+  });
+
+  it('is never blocked by ordering - removing a bound only loosens it', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.upsertLimit(userId, { ...deposit100, period: 'daily', amount: '20' });
+    await svc.upsertLimit(userId, { ...deposit100, period: 'weekly', amount: '20' });
+    const rows = await db.drizzle.db
+      .select()
+      .from(userLimit)
+      .where(and(eq(userLimit.userId, userId), eq(userLimit.period, 'weekly')));
+    const weeklyRow = rows[0]!;
+
+    const view = await svc.requestLimitRemoval(weeklyRow.id, userId);
+
+    expect(view.pendingKind).toBe('removal');
   });
 });
 
