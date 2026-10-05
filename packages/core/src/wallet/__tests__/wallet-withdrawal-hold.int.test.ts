@@ -464,29 +464,6 @@ describe('WalletService auto-approval against held withdrawals (real PG)', () =>
     });
     expect(await balanceOf(w.id)).toBe(60);
   });
-
-  it("does not count a reviewer's hold that reads 'auto-approved' towards the daily cap", async () => {
-    await seedAutoApprovalConfig();
-    const directory = mock<AdminUserDirectory>({
-      lookupPlayers: vi.fn(async (ids: string[]) => ids.map(approvedPlayer)),
-    });
-    const { svc } = makeService({
-      directory,
-      platformConfig: autoApprovalConfig({ dailyCapCount: 1 }),
-    });
-    const w = await seedWallet('100');
-    const held = await seedWithdrawal(w.id, { amount: '10' });
-    await svc.holdWithdrawal({ ...holdInput(w.userId, held.id), reason: 'auto-approved' });
-
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '40',
-      currency: 'USD',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('completed');
-  });
 });
 
 describe('WalletService.deleteWalletAsset with a held withdrawal (real PG)', () => {

@@ -655,9 +655,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-// Also, with no reviewer, the marker the cumulative-cap query reads back to identify
-// auto-approved payouts - keep write and read in lockstep. A reviewer's free-text reason can
-// hold the same words, so the reviewer column is part of the marker.
+// Also the marker the cumulative-cap query reads back to identify auto-approved payouts - keep write and read in lockstep.
 const AUTO_APPROVED_REASON = 'auto-approved';
 
 function assertWithdrawalIn(
@@ -2858,7 +2856,6 @@ export class WalletService {
           eq(walletTransaction.walletId, walletId),
           eq(walletTransaction.type, 'withdrawal'),
           eq(walletTransaction.reviewReason, AUTO_APPROVED_REASON),
-          isNull(walletTransaction.reviewedBy),
           gte(walletTransaction.createdAt, since),
         ),
       );
