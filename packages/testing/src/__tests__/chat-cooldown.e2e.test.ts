@@ -78,7 +78,8 @@ describe('chat: back-office player cooldowns', () => {
     const refused = await send();
     expect(refused.status).toBe(403);
     expect(await refusalReason(refused)).toBe('slow_mode');
-    expect(await listCooldowns(player.userId)).toEqual([
+    const [cooldown] = await listCooldowns(player.userId);
+    expect(cooldown).toEqual(
       expect.objectContaining({
         userId: player.userId,
         roomId: null,
@@ -86,13 +87,21 @@ describe('chat: back-office player cooldowns', () => {
         cooldownSeconds: 60,
         reason: 'flooding',
       }),
-    ]);
+    );
 
     const lift = { userId: player.userId, roomId: GLOBAL_CHAT_ROOM_ID };
     expect((await admin.post('/backoffice/chat/cooldowns/lift', lift)).status).toBe(200);
     expect((await admin.post('/backoffice/chat/cooldowns/lift', lift)).status).toBe(200);
     expect(await listCooldowns(player.userId)).toEqual([]);
     expect((await send()).status).toBe(200);
+    const lifted = await app.container
+      .get(DRIZZLE)
+      .db.select({ id: auditLog.id })
+      .from(auditLog)
+      .where(
+        and(eq(auditLog.action, 'chat.cooldown.lifted'), eq(auditLog.resourceId, cooldown!.id)),
+      );
+    expect(lifted).toHaveLength(1);
   });
 
   it('shares one window across every room an all-chats cooldown covers', async () => {
@@ -101,6 +110,11 @@ describe('chat: back-office player cooldowns', () => {
     for (const room of [first, second]) {
       expect((await player.client.post(`/chat/rooms/${room.id}/join`)).status).toBe(200);
     }
+    const created = await player.client.post('/chat/rooms/private', {
+      name: `room-${randomUUID()}`,
+    });
+    expect(created.status).toBe(200);
+    const privateRoom = ChatRoomSchema.parse(await created.json());
     const set = await admin.post('/backoffice/chat/cooldowns', {
       userId: player.userId,
       roomId: '__all',
@@ -115,6 +129,7 @@ describe('chat: back-office player cooldowns', () => {
     expect((await sendTo(first.id)).status).toBe(200);
     expect((await sendTo(second.id)).status).toBe(403);
     expect((await player.client.post('/chat/global', { content: 'hi' })).status).toBe(403);
+    expect((await sendTo(privateRoom.id)).status).toBe(403);
   });
 
   it('replaces the active cooldown and audits the previous one', async () => {

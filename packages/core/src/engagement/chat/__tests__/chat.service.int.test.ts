@@ -3734,6 +3734,40 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     expect(await refusal(send())).toBeInstanceOf(ChatPlayerMutedError);
   });
 
+  it('holds a send to another room until a concurrent send under the same cooldown commits', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const [roomA, roomB] = [await seedRoom(), await seedRoom()];
+    await seedCooldown(account.id);
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    let firstLocked!: () => void;
+    const locked = new Promise<void>((resolve) => (firstLocked = resolve));
+
+    const first = db.drizzle.db.transaction(async (t) => {
+      await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-send:${account.id}`}))`);
+      await t
+        .insert(chatMessage)
+        .values({ roomId: roomA.id, userId: account.id, username: 'alice', content: 'first' });
+      firstLocked();
+      await firstHeld;
+    });
+    await locked;
+    const second = refusal(
+      svc.sendRoomMessage({
+        userId: account.id,
+        username: 'alice',
+        roomId: roomB.id,
+        content: 'second',
+      }),
+    );
+    await waitForAdvisoryLockWaiter(db);
+    releaseFirst();
+    await first;
+
+    expect(await second).toBeInstanceOf(ChatPlayerMutedError);
+  });
+
   it('ignores a lifted or lapsed cooldown', async () => {
     const { svc } = makeService();
     const account = await seedUser(db, { name: 'Alice', username: 'alice' });
