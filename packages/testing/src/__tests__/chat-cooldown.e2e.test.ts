@@ -41,8 +41,8 @@ async function listCooldowns(userId: string) {
   return ChatCooldownEntrySchema.array().parse(await listed.json());
 }
 
-const refusalReason = async (response: Response) =>
-  ((await response.json()) as { data?: { reason?: string } }).data?.reason;
+const refusalData = async (response: Response) =>
+  ((await response.json()) as { data?: { reason?: string; retryAfterMs?: number } }).data;
 
 beforeAll(async () => {
   process.env['BETTER_AUTH_SECRET'] ??= 'e2e-test-better-auth-secret-please-change-000000';
@@ -77,7 +77,10 @@ describe('chat: back-office player cooldowns', () => {
     expect((await send()).status).toBe(200);
     const refused = await send();
     expect(refused.status).toBe(403);
-    expect(await refusalReason(refused)).toBe('slow_mode');
+    expect(await refusalData(refused)).toMatchObject({
+      reason: 'slow_mode',
+      retryAfterMs: expect.any(Number),
+    });
     const [cooldown] = await listCooldowns(player.userId);
     expect(cooldown).toEqual(
       expect.objectContaining({
@@ -89,19 +92,19 @@ describe('chat: back-office player cooldowns', () => {
       }),
     );
 
-    const lift = { userId: player.userId, roomId: GLOBAL_CHAT_ROOM_ID };
+    const lift = { userId: player.userId, roomId: GLOBAL_CHAT_ROOM_ID, reason: 'appeal upheld' };
     expect((await admin.post('/backoffice/chat/cooldowns/lift', lift)).status).toBe(200);
     expect((await admin.post('/backoffice/chat/cooldowns/lift', lift)).status).toBe(200);
     expect(await listCooldowns(player.userId)).toEqual([]);
     expect((await send()).status).toBe(200);
     const lifted = await app.container
       .get(DRIZZLE)
-      .db.select({ id: auditLog.id })
+      .db.select({ after: auditLog.after })
       .from(auditLog)
       .where(
         and(eq(auditLog.action, 'chat.cooldown.lifted'), eq(auditLog.resourceId, cooldown!.id)),
       );
-    expect(lifted).toHaveLength(1);
+    expect(lifted).toEqual([{ after: expect.objectContaining({ reason: 'appeal upheld' }) }]);
   });
 
   it('shares one window across every room an all-chats cooldown covers', async () => {
@@ -167,6 +170,7 @@ describe('chat: back-office player cooldowns', () => {
     );
     expect(forPlayer).toHaveLength(2);
     expect(forPlayer[0]!.before).toBeNull();
+    expect(forPlayer[1]!.after).toMatchObject({ cooldownSeconds: 120, durationSeconds: null });
     expect(forPlayer[1]!.before).toMatchObject({ cooldownSeconds: 30, reason: 'first' });
   });
 
@@ -183,7 +187,7 @@ describe('chat: back-office player cooldowns', () => {
     expect((await player.client.post('/backoffice/chat/cooldowns', body)).status).toBe(403);
     expect((await player.client.post('/backoffice/chat/cooldowns/lift', body)).status).toBe(403);
     expect(
-      (await player.client.get(`/backoffice/chat/cooldowns?userId=${target.userId}`)).status,
+      (await player.client.get(`/backoffice/chat/cooldowns?userIds=${target.userId}`)).status,
     ).toBe(403);
   });
 

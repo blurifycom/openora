@@ -1,4 +1,5 @@
 import { and, asc, eq, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { AuditAction, AuditWritePort, Uuid } from '@openora/core/contracts';
 import {
@@ -52,18 +53,26 @@ export class ChatModerationExpiryService {
       chatPlayerCooldown,
       'chat.cooldown.expired',
       'chat_player_cooldown',
+      { cooldownSeconds: chatPlayerCooldown.cooldownSeconds },
     );
     return { mutes, bans, cooldowns } as const;
   }
 
-  private async recordLapsed(table: ExpiringTable, action: AuditAction, resourceType: string) {
+  private async recordLapsed(
+    table: ExpiringTable,
+    action: AuditAction,
+    resourceType: string,
+    details: Record<string, AnyPgColumn> = {},
+  ) {
     const now = new Date();
     const due = await this.drizzle.db
       .select({
+        ...details,
         id: table.id,
         userId: table.userId,
         roomId: table.roomId,
         scope: table.scope,
+        reason: table.reason,
         expiresAt: table.expiresAt,
       })
       .from(table)
@@ -92,11 +101,16 @@ export class ChatModerationExpiryService {
     table: ExpiringTable,
     action: AuditAction,
     resourceType: string,
-    row: {
+    {
+      id,
+      expiresAt,
+      ...before
+    }: {
       id: Uuid;
       userId: Uuid;
       roomId: Uuid | null;
       scope: string;
+      reason: string;
       expiresAt: Date | null;
     },
   ) {
@@ -107,7 +121,7 @@ export class ChatModerationExpiryService {
         .set({ expiryRecordedAt: new Date() })
         .where(
           and(
-            eq(table.id, row.id),
+            eq(table.id, id),
             or(isNull(table.liftedAt), eq(table.liftedAt, table.expiresAt)),
             isNull(table.expiryRecordedAt),
           ),
@@ -121,15 +135,10 @@ export class ChatModerationExpiryService {
         actorType: 'system',
         action,
         resourceType,
-        resourceId: row.id,
+        resourceId: id,
         // The row's own expiresAt, not the sweep's clock: the entry has to state when
         // moderation stopped applying, not when cron got round to noticing.
-        before: {
-          userId: row.userId,
-          roomId: row.roomId,
-          scope: row.scope,
-          expiresAt: row.expiresAt?.toISOString() ?? null,
-        },
+        before: { ...before, expiresAt: expiresAt?.toISOString() ?? null },
       });
       return true;
     });

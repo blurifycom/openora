@@ -1,21 +1,15 @@
+import type * as z from 'zod';
 import { createToken } from './token.js';
 import type { Uuid } from '../schemas/common.js';
 import type {
   CHAT_MODERATION_SCOPES,
   CHAT_MODERATION_SCOPE_VALUES,
+  ChatCooldownEntrySchema,
+  ChatModerationEntrySchema,
 } from '../schemas/chat-command.js';
 
-export type ChatModerationEntry = {
-  id: Uuid;
-  userId: Uuid;
-  roomId: Uuid | null;
-  scope: ChatModerationScope;
-  reason: string;
-  createdAt: string;
-  expiresAt: string | null;
-};
-
-export type ChatCooldownEntry = ChatModerationEntry & { cooldownSeconds: number; createdBy: Uuid };
+export type ChatModerationEntry = z.infer<typeof ChatModerationEntrySchema>;
+export type ChatCooldownEntry = z.infer<typeof ChatCooldownEntrySchema>;
 
 export type ChatPlatformBan = {
   id: Uuid;
@@ -70,11 +64,13 @@ export type ChatModeration = {
   liftCooldown(input: {
     userId: Uuid;
     roomId: ChatModerationRoomId;
+    reason?: string;
     actorId: Uuid;
     ip: string | null;
     userAgent: string | null;
   }): Promise<{ success: true }>;
-  listCooldowns(userIds?: readonly Uuid[]): Promise<ChatCooldownEntry[]>;
+  /** Pass `tx` to read inside the caller's transaction, e.g. under the send lock. */
+  listCooldowns(userIds?: readonly Uuid[], tx?: unknown): Promise<ChatCooldownEntry[]>;
   ban(input: {
     userId: Uuid;
     roomId: ChatModerationRoomId;

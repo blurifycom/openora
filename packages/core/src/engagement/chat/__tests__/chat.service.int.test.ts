@@ -3654,10 +3654,14 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
     );
 
     expect(refused).toBeInstanceOf(ChatPlayerMutedError);
-    expect((refused as ChatPlayerMutedError).data).toEqual({
+    const { data } = refused as ChatPlayerMutedError;
+    expect(data).toEqual({
       reason: 'slow_mode',
       until: new Date(last.createdAt.getTime() + 60_000).toISOString(),
+      retryAfterMs: expect.any(Number),
     });
+    expect(data.retryAfterMs).toBeGreaterThan(45_000);
+    expect(data.retryAfterMs).toBeLessThanOrEqual(50_000);
   });
 
   it('shares an all-public cooldown across public rooms but leaves private rooms out', async () => {
@@ -3760,6 +3764,36 @@ describe('ChatService send path under a player cooldown (real PG)', () => {
         roomId: roomB.id,
         content: 'second',
       }),
+    );
+    await waitForAdvisoryLockWaiter(db);
+    releaseFirst();
+    await first;
+
+    expect(await second).toBeInstanceOf(ChatPlayerMutedError);
+  });
+
+  it('applies a cooldown raised while the send waits for the lock', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    await seedCooldown(account.id, { cooldownSeconds: 30 });
+    await seedMessage({ userId: account.id, createdAt: secondsAgo(60) });
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    let firstLocked!: () => void;
+    const locked = new Promise<void>((resolve) => (firstLocked = resolve));
+
+    const first = db.drizzle.db.transaction(async (t) => {
+      await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-send:${account.id}`}))`);
+      await t
+        .update(chatPlayerCooldown)
+        .set({ cooldownSeconds: 120 })
+        .where(eq(chatPlayerCooldown.userId, account.id));
+      firstLocked();
+      await firstHeld;
+    });
+    await locked;
+    const second = refusal(
+      svc.sendGlobalMessage({ userId: account.id, username: 'alice', content: 'hi' }),
     );
     await waitForAdvisoryLockWaiter(db);
     releaseFirst();

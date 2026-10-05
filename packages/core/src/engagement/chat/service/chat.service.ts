@@ -266,8 +266,9 @@ type ChatServiceDependencies = {
 };
 
 type SendThrottle = {
+  roomId: Uuid | null;
+  reach: ChatRoomReach;
   slowMode: { roomId: Uuid; slowModeSeconds: number } | null;
-  cooldowns: Pick<ChatCooldownEntry, 'scope' | 'roomId' | 'cooldownSeconds'>[];
 };
 
 // A cooldown counts the sender's last message anywhere its scope reaches, so switching rooms does not reset it.
@@ -1620,6 +1621,21 @@ export class ChatService {
       : null;
   }
 
+  private async coveringCooldowns(
+    userId: User['id'],
+    roomId: Uuid | null,
+    reach: ChatRoomReach,
+    tx?: DrizzleTx,
+  ): Promise<ChatCooldownEntry[]> {
+    const coveringScopes = platformScopesFor(reach);
+    return (await this.moderation.listCooldowns([userId], tx)).filter((cooldown) =>
+      cooldown.scope === 'room'
+        ? roomId !== null && cooldown.roomId === roomId
+        : coveringScopes.includes(cooldown.scope),
+    );
+  }
+
+  // Decides whether to take the send lock; the cooldowns that apply are re-read under it.
   private async sendThrottle({
     userId,
     roomId,
@@ -1631,13 +1647,11 @@ export class ChatService {
     reach: ChatRoomReach;
     slowMode: SendThrottle['slowMode'];
   }): Promise<SendThrottle | null> {
-    const coveringScopes = platformScopesFor(reach);
-    const cooldowns = (await this.moderation.listCooldowns([userId])).filter((cooldown) =>
-      cooldown.scope === 'room'
-        ? roomId !== null && cooldown.roomId === roomId
-        : coveringScopes.includes(cooldown.scope),
-    );
-    return slowMode || cooldowns.length > 0 ? { slowMode, cooldowns } : null;
+    if (slowMode) {
+      return { roomId, reach, slowMode };
+    }
+    const cooldowns = await this.coveringCooldowns(userId, roomId, reach);
+    return cooldowns.length > 0 ? { roomId, reach, slowMode } : null;
   }
 
   // One lock per sender, so parallel sends to different rooms cannot both pass a shared cooldown.
@@ -1651,7 +1665,7 @@ export class ChatService {
     }
     return this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-send:${values.userId}`, async () => {
-        await this.assertSendWindowElapsed(t, values.userId, values.roomId, throttle);
+        await this.assertSendWindowElapsed(t, values.userId, throttle);
         const [record] = await t.insert(chatMessage).values(values).returning();
         return record;
       }),
@@ -1661,28 +1675,20 @@ export class ChatService {
   private async assertSendWindowElapsed(
     t: DrizzleTx,
     userId: User['id'],
-    roomId: Uuid | null,
-    throttle: SendThrottle,
+    { roomId, reach, slowMode }: SendThrottle,
   ) {
-    let until: Date | null = null;
-    const extend = (last: { createdAt: Date } | undefined, seconds: number) => {
-      const end = last ? new Date(last.createdAt.getTime() + seconds * 1000) : null;
-      if (end && (!until || end > until)) {
-        until = end;
-      }
-    };
-    for (const cooldown of throttle.cooldowns) {
-      extend(
-        await this.lastUserMessageWithin(
-          t,
-          userId,
-          messagesInScope(t, cooldown.scope, cooldown.roomId),
-          cooldown.cooldownSeconds,
-        ),
+    const windows: { createdAt: Date; now: Date; seconds: number }[] = [];
+    for (const cooldown of await this.coveringCooldowns(userId, roomId, reach, t)) {
+      const last = await this.lastUserMessageWithin(
+        t,
+        userId,
+        messagesInScope(t, cooldown.scope, cooldown.roomId),
         cooldown.cooldownSeconds,
       );
+      if (last) {
+        windows.push({ ...last, seconds: cooldown.cooldownSeconds });
+      }
     }
-    const { slowMode } = throttle;
     if (slowMode) {
       const last = await this.lastUserMessageWithin(
         t,
@@ -1691,12 +1697,19 @@ export class ChatService {
         slowMode.slowModeSeconds,
       );
       if (last && !(await this.isSlowModeExempt(t, userId, slowMode.roomId))) {
-        extend(last, slowMode.slowModeSeconds);
+        windows.push({ ...last, seconds: slowMode.slowModeSeconds });
       }
     }
-    if (until) {
-      throw new ChatPlayerMutedError(until, 'slow_mode');
+    const [first] = windows;
+    if (!first) {
+      return;
     }
+    const until = Math.max(
+      ...windows.map(({ createdAt, seconds }) => createdAt.getTime() + seconds * 1000),
+    );
+    // now() is fixed for the transaction, so every window shares the same database clock.
+    const retryAfterMs = Math.max(0, until - first.now.getTime());
+    throw new ChatPlayerMutedError(new Date(until), 'slow_mode', retryAfterMs);
   }
 
   private async lastUserMessageWithin(
@@ -1706,7 +1719,10 @@ export class ChatService {
     seconds: number,
   ) {
     const [last] = await t
-      .select({ createdAt: chatMessage.createdAt })
+      .select({
+        createdAt: chatMessage.createdAt,
+        now: sql`now()`.mapWith(chatMessage.createdAt),
+      })
       .from(chatMessage)
       .where(
         and(

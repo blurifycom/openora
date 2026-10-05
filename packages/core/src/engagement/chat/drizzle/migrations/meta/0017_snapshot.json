@@ -1,5 +1,5 @@
 {
-  "id": "f75437c1-bc35-4e90-b3e8-e3d82b3a2990",
+  "id": "b1f974c6-596c-4cce-9f22-c3310eb3db59",
   "prevId": "550e8414-4ccc-4253-b985-e957c81c4511",
   "version": "7",
   "dialect": "postgresql",
@@ -672,7 +672,7 @@
             }
           ],
           "isUnique": false,
-          "where": "\"chat_player_cooldown\".\"expires_at\" IS NOT NULL AND \"chat_player_cooldown\".\"expiry_recorded_at\" IS NULL",
+          "where": "\"chat_player_cooldown\".\"expires_at\" IS NOT NULL AND \"chat_player_cooldown\".\"expiry_recorded_at\" IS NULL AND (\"chat_player_cooldown\".\"lifted_at\" IS NULL OR \"chat_player_cooldown\".\"lifted_at\" = \"chat_player_cooldown\".\"expires_at\")",
           "concurrently": false,
           "method": "btree",
           "with": {}

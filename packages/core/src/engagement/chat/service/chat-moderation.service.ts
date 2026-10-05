@@ -60,8 +60,8 @@ export class ChatModerationService implements ChatModeration {
     return this.cooldowns.liftCooldown(input);
   }
 
-  listCooldowns(userIds?: readonly Uuid[]) {
-    return this.cooldowns.listCooldowns(userIds);
+  listCooldowns(userIds?: readonly Uuid[], tx?: unknown) {
+    return this.cooldowns.listCooldowns(userIds, tx);
   }
 
   ban(input: Parameters<ChatModeration['ban']>[0]) {

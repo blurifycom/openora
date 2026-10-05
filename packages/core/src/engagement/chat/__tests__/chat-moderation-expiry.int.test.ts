@@ -114,8 +114,13 @@ describe('ChatModerationExpiryService.sweep', () => {
       resourceType: 'chat_mute',
     });
     // The instant the player could post again, not the instant the cron noticed.
-    expect((rows[0]!.before as Record<string, unknown>)['expiresAt']).toBe(expiresAt.toISOString());
-    expect((rows[0]!.before as Record<string, unknown>)['userId']).toBe(mute.userId);
+    expect(rows[0]!.before).toEqual({
+      userId: mute.userId,
+      roomId: mute.roomId,
+      scope: mute.scope,
+      reason: mute.reason,
+      expiresAt: expiresAt.toISOString(),
+    });
   });
 
   it('records exactly one audit entry for a lapsed platform ban', async () => {
@@ -152,8 +157,15 @@ describe('ChatModerationExpiryService.sweep', () => {
       actorId: null,
       resourceType: 'chat_player_cooldown',
       resourceId: cooldown.id,
+      before: {
+        userId: cooldown.userId,
+        roomId: null,
+        scope: '__all',
+        reason: 'flooding',
+        cooldownSeconds: 30,
+        expiresAt: expiresAt.toISOString(),
+      },
     });
-    expect((rows[0]!.before as Record<string, unknown>)['expiresAt']).toBe(expiresAt.toISOString());
   });
 
   it('is idempotent - a second sweep records nothing more', async () => {

@@ -327,9 +327,12 @@ export const chatPlayerCooldown = pgTable(
       .on(t.userId, t.scope, t.roomId)
       .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_player_cooldown_user_idx').on(t.userId),
+    // Matches the sweep's scan, so a row lifted before its expiry leaves the index.
     index('chat_player_cooldown_expiry_due_idx')
       .on(t.expiresAt)
-      .where(sql`${t.expiresAt} IS NOT NULL AND ${t.expiryRecordedAt} IS NULL`),
+      .where(
+        sql`${t.expiresAt} IS NOT NULL AND ${t.expiryRecordedAt} IS NULL AND (${t.liftedAt} IS NULL OR ${t.liftedAt} = ${t.expiresAt})`,
+      ),
     check(
       'chat_player_cooldown_seconds_check',
       sql`${t.cooldownSeconds} > 0 AND ${t.cooldownSeconds} <= ${sql.raw(String(CHAT_COOLDOWN_SECONDS_MAX))}`,

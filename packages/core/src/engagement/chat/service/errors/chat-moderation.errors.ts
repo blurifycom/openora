@@ -16,13 +16,20 @@ const MUTE_MESSAGES: Record<ChatMuteReason, (until: string | null) => string> = 
 };
 
 export class ChatPlayerMutedError extends Error {
-  readonly data: ChatRestrictionData & { reason: ChatMuteReason };
+  readonly data: ChatRestrictionData & { reason: ChatMuteReason; retryAfterMs?: number };
 
-  constructor(until: Date | string | null, reason: ChatMuteReason = 'muted') {
+  constructor(
+    until: Date | string | null,
+    reason: ChatMuteReason = 'muted',
+    retryAfterMs?: number,
+  ) {
     const untilIso = until instanceof Date ? until.toISOString() : until;
     super(MUTE_MESSAGES[reason](untilIso));
     this.name = 'ChatPlayerMutedError';
-    this.data = { until: untilIso, reason };
+    this.data =
+      retryAfterMs === undefined
+        ? { until: untilIso, reason }
+        : { until: untilIso, reason, retryAfterMs };
   }
 }
 

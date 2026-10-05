@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
-import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
+import { DrizzleService, withAdvisoryXactLock, type DrizzleTx } from '@openora/core/server';
 import type {
   AuditWritePort,
   ChatCooldownEntry,
@@ -92,6 +92,7 @@ export class ChatCooldownService {
             roomId: target.roomId,
             cooldownSeconds,
             reason,
+            durationSeconds,
             expiresAt: expiresAt?.toISOString() ?? null,
           },
           ip: ip ?? null,
@@ -105,10 +106,11 @@ export class ChatCooldownService {
   async liftCooldown({
     userId,
     roomId,
+    reason,
     actorId,
     ip,
     userAgent,
-  }: { userId: Uuid; roomId: ChatModerationRoomId; actorId: Uuid } & ClientMeta) {
+  }: { userId: Uuid; roomId: ChatModerationRoomId; reason?: string; actorId: Uuid } & ClientMeta) {
     const { scope, roomId: concreteRoomId } = await resolveModerationTarget(
       this.drizzle.db,
       roomId,
@@ -151,7 +153,13 @@ export class ChatCooldownService {
             reason: lifted.reason,
             expiresAt: lifted.expiresAt?.toISOString() ?? null,
           },
-          after: { userId, scope, roomId: concreteRoomId, liftedAt: liftedAt.toISOString() },
+          after: {
+            userId,
+            scope,
+            roomId: concreteRoomId,
+            liftedAt: liftedAt.toISOString(),
+            reason: reason ?? null,
+          },
           ip: ip ?? null,
           userAgent: userAgent ?? null,
         });
@@ -160,8 +168,9 @@ export class ChatCooldownService {
     return { success: true } as const;
   }
 
-  async listCooldowns(userIds?: readonly Uuid[]): Promise<ChatCooldownEntry[]> {
-    const rows = await this.drizzle.db
+  async listCooldowns(userIds?: readonly Uuid[], tx?: unknown): Promise<ChatCooldownEntry[]> {
+    const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);
+    const rows = await db
       .select({
         id: chatPlayerCooldown.id,
         userId: chatPlayerCooldown.userId,
