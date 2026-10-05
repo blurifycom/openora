@@ -30,6 +30,7 @@ import {
   ChatRoomNotFoundError,
 } from './service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
+import { ChatRoomInviteService } from './service/chat-room-invite.service.js';
 import { ChatRoomBanService } from './service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
 import { ChatModerationExpiryService } from './service/chat-moderation-expiry.service.js';
@@ -320,6 +321,12 @@ export default {
       return createChatRouter({
         chatService,
         membershipService,
+        inviteService: new ChatRoomInviteService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(IDENTITY_READER),
+          membershipService,
+        ),
         roomBanService: new ChatRoomBanService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),

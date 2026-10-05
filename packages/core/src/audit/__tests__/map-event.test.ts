@@ -1007,3 +1007,41 @@ describe('mapEventToRecord: chat.room.member.joined', () => {
     expect(row).toMatchObject({ actorType: 'player', actorId: playerId });
   });
 });
+
+describe('mapEventToRecord: chat.room.invite', () => {
+  const roomId = '99999999-9999-4999-8999-999999999999';
+  const inviteId = '88888888-8888-4888-8888-888888888888';
+  const inviterId = '77777777-7777-4777-8777-777777777777';
+
+  it('records a declined invite against the invitee', async () => {
+    const row = await mapEventToRecord('chat.room.invite.declined', {
+      inviteId,
+      roomId,
+      inviterId,
+      inviteeId: userId,
+      playerId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'player',
+      actorId: playerId,
+      resourceType: 'chat_room_invite',
+      resourceId: inviteId,
+      after: { roomId, inviterId, status: 'declined' },
+    });
+  });
+
+  it('falls back to the inviter user id when no player backs the inviter', async () => {
+    const row = await mapEventToRecord('chat.room.invite.sent', {
+      inviteId,
+      roomId,
+      inviterId,
+      inviteeId: userId,
+      inviterUsername: 'host',
+      roomName: 'room',
+      playerId: null,
+    });
+
+    expect(row).toMatchObject({ actorType: 'player', actorId: inviterId, resourceId: inviteId });
+  });
+});

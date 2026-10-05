@@ -53,6 +53,18 @@ import {
   ChatRoomNotFoundError,
 } from '../service/chat-moderation.service.js';
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
+import { ChatRoomInviteService } from '../service/chat-room-invite.service.js';
+import {
+  ChatRoomInviteForbiddenError,
+  ChatRoomInviteNotFoundError,
+  ChatRoomInvitePendingError,
+  ChatRoomInviteSelfError,
+  ChatRoomInviteeAlreadyMemberError,
+  ChatRoomInviteeBannedError,
+  ChatRoomInviteeNotPlayerError,
+  ChatRoomInviteeUnavailableError,
+  ChatRoomInviterBlockedError,
+} from '../service/errors/chat-room-invite.errors.js';
 import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
 import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 
@@ -61,6 +73,18 @@ const JOIN_ROOM_RATE_LIMIT = {
   limit: 5,
   windowMs: 15 * 60 * 1_000,
   onUnavailable: 'deny',
+} as const;
+
+const ROOM_INVITE_RATE_LIMIT = {
+  limit: 30,
+  windowMs: 15 * 60 * 1_000,
+  onUnavailable: 'deny',
+} as const;
+
+const ROOM_INVITE_LOOKUP_RATE_LIMIT = {
+  limit: 120,
+  windowMs: 60 * 1_000,
+  onUnavailable: 'allow',
 } as const;
 
 const SEND_MESSAGE_RATE_LIMIT = {
@@ -100,6 +124,7 @@ async function* messagesOf(
 export function createChatRouter({
   chatService,
   membershipService,
+  inviteService,
   roomBanService,
   roomMuteService,
   moderationService,
@@ -109,6 +134,7 @@ export function createChatRouter({
 }: {
   chatService: ChatService;
   membershipService: ChatRoomMembershipService;
+  inviteService: ChatRoomInviteService;
   roomBanService: ChatRoomBanService;
   roomMuteService: ChatRoomMuteService;
   moderationService: ChatModeration;
@@ -407,6 +433,95 @@ export function createChatRouter({
           FORBIDDEN: ChatRoomNotMemberError,
         },
         () => membershipService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
+      );
+    }),
+
+    inviteToRoom: os.inviteToRoom.handler(async ({ input, context }) => {
+      const actorId = getUserId(context);
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_INVITE, actorId),
+        ROOM_INVITE_RATE_LIMIT,
+      );
+      return mapErrors(
+        {
+          BAD_REQUEST: [ChatRoomInviteSelfError, ChatRoomInviteeNotPlayerError],
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [
+            ChatRoomInviteForbiddenError,
+            ChatRoomInviteeUnavailableError,
+            ChatRoomInviteeBannedError,
+            ChatRoomLockedError,
+            ChatRoomBannedError,
+          ],
+          CONFLICT: [ChatRoomInviteeAlreadyMemberError, ChatRoomInvitePendingError],
+        },
+        () =>
+          inviteService.inviteToRoom({
+            actorId,
+            roomId: input.roomId,
+            userId: input.userId,
+            ...context.clientMeta,
+          }),
+      );
+    }),
+
+    searchRoomInviteCandidates: os.searchRoomInviteCandidates.handler(
+      async ({ input, context }) => {
+        const actorId = getUserId(context);
+        await assertRateLimit(
+          limiter,
+          makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_INVITE_LOOKUP, actorId),
+          ROOM_INVITE_LOOKUP_RATE_LIMIT,
+        );
+        return mapErrors(
+          { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomInviteForbiddenError },
+          () => inviteService.searchRoomInviteCandidates({ actorId, ...input }),
+        );
+      },
+    ),
+
+    getRoomInviteStatuses: os.getRoomInviteStatuses.handler(async ({ input, context }) => {
+      const actorId = getUserId(context);
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_INVITE_LOOKUP, actorId),
+        ROOM_INVITE_LOOKUP_RATE_LIMIT,
+      );
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomInviteForbiddenError },
+        () => inviteService.getRoomInviteStatuses({ actorId, ...input }),
+      );
+    }),
+
+    listMyRoomInvites: os.listMyRoomInvites.handler(({ context }) =>
+      inviteService.listMyRoomInvites(getUserId(context)),
+    ),
+
+    acceptRoomInvite: os.acceptRoomInvite.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors(
+        {
+          NOT_FOUND: [ChatRoomInviteNotFoundError, ChatRoomNotFoundError],
+          FORBIDDEN: [ChatRoomBannedError, ChatRoomLockedError, ChatRoomInviterBlockedError],
+        },
+        () =>
+          inviteService.acceptRoomInvite({
+            userId,
+            inviteId: input.inviteId,
+            ...context.clientMeta,
+          }),
+      );
+    }),
+
+    declineRoomInvite: os.declineRoomInvite.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors({ NOT_FOUND: ChatRoomInviteNotFoundError }, () =>
+        inviteService.declineRoomInvite({
+          userId,
+          inviteId: input.inviteId,
+          ...context.clientMeta,
+        }),
       );
     }),
 

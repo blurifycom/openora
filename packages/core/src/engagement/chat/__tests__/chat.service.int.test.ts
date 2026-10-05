@@ -2432,6 +2432,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
   it('signals the room channel on both promotion and revoke', async () => {
     const { transport, signal } = transportWithSignal();
     const { svc, room, ownerId, memberId } = await roomWithMember(transport);
+    signal.mockClear();
 
     await svc.setMemberRole({
       actorId: ownerId,
@@ -2465,6 +2466,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
   it('stays silent when the member already holds the requested role', async () => {
     const { transport, signal } = transportWithSignal();
     const { svc, room, ownerId, memberId } = await roomWithMember(transport);
+    signal.mockClear();
 
     await svc.setMemberRole({
       actorId: ownerId,
@@ -2482,6 +2484,7 @@ describe('ChatService.setMemberRole (real PG)', () => {
     const { svc, room, memberId } = await roomWithMember(transport);
     const otherId = randomUUID();
     await svc.joinRoom({ userId: otherId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    signal.mockClear();
 
     await expect(
       svc.setMemberRole({

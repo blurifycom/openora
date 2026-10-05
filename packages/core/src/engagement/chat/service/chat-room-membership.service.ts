@@ -14,6 +14,7 @@ import {
   type RealtimeTransport,
   type Uuid,
 } from '@openora/core/contracts';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   chatRoom,
   chatRoomBan,
@@ -22,12 +23,14 @@ import {
   chatRoomRemove,
 } from '../schema/index.js';
 import type {
+  ChatMemberJoinedSignal,
   ChatMemberRoleChangedSignal,
   ChatRoomAssignableRole,
   ChatRoomRole,
   ChatRoomScheduledForDeletionSignal,
 } from '../contract/index.js';
 import {
+  CHAT_MEMBER_JOINED_SIGNAL,
   CHAT_MEMBER_ROLE_CHANGED_SIGNAL,
   CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL,
   OWNERLESS_ROOM_RETENTION_DAYS,
@@ -46,6 +49,8 @@ import {
 import { revokeChannelBestEffort, revokeRoomChannelBestEffort } from './channel-revoke.service.js';
 
 const MODERATOR_ROLES = ['moderator', 'owner'] as const;
+
+const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -77,13 +82,20 @@ export class ChatRoomMembershipService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  private async join(
-    roomId: Uuid,
-    userId: Uuid,
-    meta: ClientMeta & { adminId?: Uuid },
-    predicate: ReturnType<typeof and>,
-  ) {
-    const { room, inserted } = await this.drizzle.db.transaction((t) =>
+  private async join({
+    roomId,
+    userId,
+    meta,
+    predicate,
+    inTransaction,
+  }: {
+    roomId: Uuid;
+    userId: Uuid;
+    meta: ClientMeta & { adminId?: Uuid };
+    predicate: ReturnType<typeof and>;
+    inTransaction?: (t: DrizzleTx) => Promise<void>;
+  }) {
+    const { room, inserted, joinerRole } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t.select().from(chatRoom).where(predicate).limit(1);
         if (!room) {
@@ -121,12 +133,17 @@ export class ChatRoomMembershipService {
         if (ban) {
           throw new ChatRoomBannedError(roomId);
         }
+        await inTransaction?.(t);
         const inserted = await t
           .insert(chatRoomMember)
           .values({ roomId, userId })
           .onConflictDoNothing()
           .returning();
-        return { room, inserted };
+        const [joiner] =
+          inserted.length > 0
+            ? await t.select({ role: user.role }).from(user).where(eq(user.id, userId)).limit(1)
+            : [];
+        return { room, inserted, joinerRole: joiner?.role ?? null };
       }),
     );
     if (inserted.length > 0) {
@@ -138,6 +155,10 @@ export class ChatRoomMembershipService {
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
+      // The member list hides staff from ordinary viewers, so their joins are not signalled.
+      if (!STAFF_USER_ROLES.some((role) => role === joinerRole)) {
+        await this.signalMemberJoined(roomId, userId);
+      }
     }
     return toRoom(room);
   }
@@ -152,35 +173,65 @@ export class ChatRoomMembershipService {
         if (!candidate) {
           throw new ChatRoomJoinCodeNotFoundError(joinCode);
         }
-        return this.join(
-          candidate.id,
+        return this.join({
+          roomId: candidate.id,
           userId,
-          { ip, userAgent },
-          and(
+          meta: { ip, userAgent },
+          predicate: and(
             eq(chatRoom.id, candidate.id),
             eq(chatRoom.joinCode, joinCode),
             isNull(chatRoom.deletedAt),
           ),
-        );
+        });
       });
   }
 
-  joinPublicRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {
-    return this.join(
+  // `inTransaction` runs under the room lock after the lock and ban checks, before the insert.
+  joinByInvite({
+    roomId,
+    userId,
+    ip,
+    userAgent,
+    inTransaction,
+  }: {
+    roomId: Uuid;
+    userId: Uuid;
+    inTransaction: (t: DrizzleTx) => Promise<void>;
+  } & ClientMeta) {
+    return this.join({
       roomId,
       userId,
-      { ip, userAgent },
-      and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, true), isNull(chatRoom.deletedAt)),
-    );
+      meta: { ip, userAgent },
+      predicate: and(
+        eq(chatRoom.id, roomId),
+        eq(chatRoom.isPublic, false),
+        isNull(chatRoom.deletedAt),
+        isNull(chatRoom.scheduledDeletionAt),
+      ),
+      inTransaction,
+    });
+  }
+
+  joinPublicRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {
+    return this.join({
+      roomId,
+      userId,
+      meta: { ip, userAgent },
+      predicate: and(
+        eq(chatRoom.id, roomId),
+        eq(chatRoom.isPublic, true),
+        isNull(chatRoom.deletedAt),
+      ),
+    });
   }
 
   adminJoinRoom({ roomId, userId, ip, userAgent }: { roomId: Uuid; userId: Uuid } & ClientMeta) {
-    return this.join(
+    return this.join({
       roomId,
       userId,
-      { ip, userAgent, adminId: userId },
-      and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)),
-    );
+      meta: { ip, userAgent, adminId: userId },
+      predicate: and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)),
+    });
   }
 
   async leaveRoom({ userId, roomId, ip, userAgent }: { userId: Uuid; roomId: Uuid } & ClientMeta) {
@@ -402,6 +453,15 @@ export class ChatRoomMembershipService {
       await this.signalRoleChange(roomId, userId, role);
     }
     return { success: true } as const;
+  }
+
+  private async signalMemberJoined(roomId: Uuid, userId: Uuid) {
+    const payload: ChatMemberJoinedSignal = { roomId, userId };
+    try {
+      await this.transport?.signal?.(chatChannel(roomId), CHAT_MEMBER_JOINED_SIGNAL, payload);
+    } catch (err: unknown) {
+      logger.error({ err, roomId, userId }, 'chat member-joined signal failed');
+    }
   }
 
   private async signalRoleChange(roomId: Uuid, userId: Uuid, role: ChatRoomRole) {

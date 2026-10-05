@@ -27,6 +27,7 @@ export const NOTIFICATION_TYPES = [
   'chat.mention',
   'chat.room.ownership_transferred',
   'chat.room.scheduled_for_deletion',
+  'chat.room_invite.received',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;

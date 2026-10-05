@@ -861,6 +861,31 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.optional(),
   }),
+  // A room owner or moderator invited a player into a private room. `playerId` is the
+  // inviter's; the accept and decline payloads carry the invitee's.
+  'chat.room.invite.sent': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    inviterUsername: z.string(),
+    roomName: z.string(),
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.room.invite.accepted': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.room.invite.declined': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'chat.room.member.left': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,

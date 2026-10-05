@@ -470,6 +470,35 @@ export async function mapEventToRecord(
     };
   }
 
+  // actorId = the acting player's resolved playerId (inviter on sent, invitee on accepted and
+  // declined), falling back to their raw user id; resource = the invite row. A decline is the
+  // invitee's own choice, so it records as a success despite the topic suffix.
+  if (topic === 'chat.room.invite.sent') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['playerId']) ?? str(p['inviterId']),
+      resourceType: 'chat_room_invite',
+      resourceId: str(p['inviteId']),
+      after: { roomId: str(p['roomId']), inviteeId: str(p['inviteeId']), status: 'pending' },
+    };
+  }
+
+  if (topic === 'chat.room.invite.accepted' || topic === 'chat.room.invite.declined') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['playerId']) ?? str(p['inviteeId']),
+      resourceType: 'chat_room_invite',
+      resourceId: str(p['inviteId']),
+      after: {
+        roomId: str(p['roomId']),
+        inviterId: str(p['inviterId']),
+        status: topic === 'chat.room.invite.accepted' ? 'accepted' : 'declined',
+      },
+    };
+  }
+
   // actorId = the granting/revoking owner's resolved playerId, falling back to the raw acting
   // user id when no player record backs them (the actor must never be lost on a permission
   // change). resource = the member whose role moved; before/after carry the two roles.
@@ -1331,6 +1360,9 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.deleted',
   'chat.room.member.joined',
   'chat.room.member.left',
+  'chat.room.invite.sent',
+  'chat.room.invite.accepted',
+  'chat.room.invite.declined',
   'chat.room.member.kicked',
   'chat.room.member.banned',
   // chat.gift.sent
