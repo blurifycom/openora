@@ -376,7 +376,7 @@ export type MyChatRoomInvite = z.infer<typeof MyChatRoomInviteSchema>;
 
 export const SearchRoomInviteCandidatesInputSchema = z.object({
   roomId: UuidSchema,
-  q: z.string().trim().min(1).max(ROOM_INVITE_SEARCH_MAX_LENGTH),
+  q: z.string().trim().min(3).max(ROOM_INVITE_SEARCH_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(ROOM_INVITE_CANDIDATE_LIMIT_MAX).default(20),
 });
 

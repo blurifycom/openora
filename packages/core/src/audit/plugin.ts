@@ -491,10 +491,25 @@ export async function mapEventToRecord(
       actorId: str(p['playerId']) ?? str(p['inviteeId']),
       resourceType: 'chat_room_invite',
       resourceId: str(p['inviteId']),
+      result: 'success',
       after: {
         roomId: str(p['roomId']),
         inviterId: str(p['inviterId']),
         status: topic === 'chat.room.invite.accepted' ? 'accepted' : 'declined',
+      },
+    };
+  }
+
+  if (topic === 'chat.room.invite.expired') {
+    return {
+      ...base,
+      resourceType: 'chat_room_invite',
+      resourceId: str(p['inviteId']),
+      after: {
+        roomId: str(p['roomId']),
+        inviterId: str(p['inviterId']),
+        inviteeId: str(p['inviteeId']),
+        status: 'expired',
       },
     };
   }
@@ -1363,6 +1378,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.invite.sent',
   'chat.room.invite.accepted',
   'chat.room.invite.declined',
+  'chat.room.invite.expired',
   'chat.room.member.kicked',
   'chat.room.member.banned',
   // chat.gift.sent

@@ -382,8 +382,8 @@ export const notificationEventMap: NotificationMapEntry[] = [
     userId: p.inviteeId,
     type: 'chat.room_invite.received',
     title: 'Room invite',
-    body: `${p.inviterUsername} invited you to ${p.roomName}`,
-    data: { inviteId: p.inviteId, roomId: p.roomId, inviterId: p.inviterId },
+    body: `${p.inviterUsername} invited you to a private room`,
+    data: { inviteId: p.inviteId, roomId: p.roomId, inviterId: p.inviterId, roomName: p.roomName },
   })),
 
   // Pre-existing types: in-app only, unchanged from before the declarative-map refactor.

@@ -30,7 +30,7 @@ export const CHAT_ROOM_SCHEDULED_FOR_DELETION_SIGNAL = 'chat:room-scheduled-for-
 
 export const OWNERLESS_ROOM_RETENTION_DAYS = 30;
 
-export const CHAT_ROOM_INVITE_STATUSES = ['pending', 'accepted', 'declined'] as const;
+export const CHAT_ROOM_INVITE_STATUSES = ['pending', 'accepted', 'declined', 'expired'] as const;
 
 export const CHAT_ROOM_INVITE_CANDIDATE_STATUSES = [
   'available',

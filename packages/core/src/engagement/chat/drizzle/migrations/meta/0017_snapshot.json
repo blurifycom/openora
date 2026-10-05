@@ -1,5 +1,5 @@
 {
-  "id": "c8f83bfe-3a79-4711-acbb-da9300d91b1f",
+  "id": "a4336416-e71a-4d7c-9637-1e20b8cd04c3",
   "prevId": "550e8414-4ccc-4253-b985-e957c81c4511",
   "version": "7",
   "dialect": "postgresql",
@@ -1706,7 +1706,7 @@
     "public.chat_room_invite_status": {
       "name": "chat_room_invite_status",
       "schema": "public",
-      "values": ["pending", "accepted", "declined"]
+      "values": ["pending", "accepted", "declined", "expired"]
     },
     "public.chat_room_role": {
       "name": "chat_room_role",

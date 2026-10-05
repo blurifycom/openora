@@ -1027,7 +1027,26 @@ describe('mapEventToRecord: chat.room.invite', () => {
       actorId: playerId,
       resourceType: 'chat_room_invite',
       resourceId: inviteId,
+      result: 'success',
       after: { roomId, inviterId, status: 'declined' },
+    });
+  });
+
+  it('records a lapsed invite as a system expiry', async () => {
+    const row = await mapEventToRecord('chat.room.invite.expired', {
+      inviteId,
+      roomId,
+      inviterId,
+      inviteeId: userId,
+    });
+
+    expect(row).toMatchObject({
+      actorType: 'system',
+      action: 'chat.room.invite.expired',
+      resourceType: 'chat_room_invite',
+      resourceId: inviteId,
+      result: 'success',
+      after: { roomId, inviterId, inviteeId: userId, status: 'expired' },
     });
   });
 

@@ -1,4 +1,4 @@
-CREATE TYPE "public"."chat_room_invite_status" AS ENUM('pending', 'accepted', 'declined');--> statement-breakpoint
+CREATE TYPE "public"."chat_room_invite_status" AS ENUM('pending', 'accepted', 'declined', 'expired');--> statement-breakpoint
 CREATE TABLE "chat_room_invite" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"room_id" uuid NOT NULL,

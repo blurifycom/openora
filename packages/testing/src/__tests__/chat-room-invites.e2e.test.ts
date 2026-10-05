@@ -5,7 +5,7 @@ import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { CHAT_REALTIME_TRANSPORT, chatChannel } from '@openora/core/contracts';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
-import { chatRoomInvite } from '@openora/core/engagement/schema/chat';
+import { chatRoomInvite, chatRoomMember } from '@openora/core/engagement/schema/chat';
 import {
   CHAT_MEMBER_JOINED_SIGNAL,
   ChatRoomInviteCandidateSchema,
@@ -195,7 +195,7 @@ describe('chat room invites: who may invite', () => {
 
     expect((await invite(outsider, room, invitee.userId)).status).toBe(404);
     expect(
-      (await outsider.client.get(`/chat/rooms/${room.id}/invite-candidates?q=gu`)).status,
+      (await outsider.client.get(`/chat/rooms/${room.id}/invite-candidates?q=gue`)).status,
     ).toBe(404);
   });
 
@@ -345,8 +345,13 @@ describe('chat room invites: accepting', () => {
       const row = items.find((n) => n.type === 'chat.room_invite.received');
       expect(row).toMatchObject({
         title: 'Room invite',
-        body: `${owner.username} invited you to ${room.name}`,
-        data: { inviteId: sent.id, roomId: room.id, inviterId: owner.userId },
+        body: `${owner.username} invited you to a private room`,
+        data: {
+          inviteId: sent.id,
+          roomId: room.id,
+          inviterId: owner.userId,
+          roomName: room.name,
+        },
       });
     }, WAIT);
 
@@ -557,6 +562,54 @@ describe('chat room invites: declining and expiry', () => {
 
     const fresh = await sendInvite(owner, room, invitee);
     expect((await myInvites(invitee)).map((row) => row.id)).toEqual([fresh.id]);
+    expect(await inviteRow(stale.id)).toMatchObject({ status: 'expired', respondedAt: null });
+
+    await vi.waitFor(async () => {
+      const auditRes = await admin.get(
+        `/audit/logs?resourceId=${stale.id}&action=chat.room.invite.expired`,
+      );
+      expect(auditRes.status).toBe(200);
+      const { items } = (await auditRes.json()) as { items: unknown[] };
+      expect(items[0]).toMatchObject({
+        actorType: 'system',
+        resourceType: 'chat_room_invite',
+        result: 'success',
+      });
+    }, WAIT);
+  });
+
+  it("voids an invite once the inviting moderator's account is closed", async () => {
+    const owner = await registerChatter('host');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    const moderator = await addModerator(owner, room);
+    await configureRoom(owner, room, { moderatorInvite: true });
+    const sent = await sendInvite(moderator, room, invitee);
+    await app.container
+      .get(DRIZZLE)
+      .db.update(chatRoomMember)
+      .set({ accountClosedAt: new Date() })
+      .where(and(eq(chatRoomMember.roomId, room.id), eq(chatRoomMember.userId, moderator.userId)));
+
+    expect(await myInvites(invitee)).toEqual([]);
+    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
+    expect(await roomMemberIds(owner, room)).not.toContain(invitee.userId);
+  });
+
+  it('voids an invite once the inviter is put under a platform chat ban', async () => {
+    const owner = await registerChatter('host');
+    const invitee = await registerChatter('guest');
+    const room = await createRoom(owner);
+    const sent = await sendInvite(owner, room, invitee);
+    const ban = await admin.post('/backoffice/chat/bans', {
+      userId: owner.userId,
+      roomId: '__all',
+      reason: 'spam',
+    });
+    expect(ban.status).toBe(200);
+
+    expect(await myInvites(invitee)).toEqual([]);
+    expect((await invitee.client.post(`/chat/invites/${sent.id}/accept`)).status).toBe(404);
   });
 });
 
@@ -658,6 +711,15 @@ describe('chat room invites: finding players', () => {
     expect(ChatRoomInviteLookupSchema.array().parse(await res.json())).toEqual([
       { userId: banned.userId, inviteStatus: 'unavailable' },
     ]);
+  });
+
+  it('refuses a search shorter than three characters', async () => {
+    const owner = await registerChatter('host');
+    const room = await createRoom(owner);
+
+    const res = await owner.client.get(`/chat/rooms/${room.id}/invite-candidates?q=ab`);
+
+    expect(res.status).toBe(400);
   });
 
   it('refuses the lookup to a plain member', async () => {

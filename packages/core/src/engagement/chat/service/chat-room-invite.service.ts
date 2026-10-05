@@ -86,7 +86,19 @@ function liveInvite(db: Db, now: Date) {
           and(
             eq(chatRoomMember.roomId, chatRoomInvite.roomId),
             eq(chatRoomMember.userId, chatRoomInvite.inviterId),
+            isNull(chatRoomMember.accountClosedAt),
             invitingRole,
+          ),
+        ),
+    ),
+    notExists(
+      db
+        .select({ id: chatPlatformBan.id })
+        .from(chatPlatformBan)
+        .where(
+          and(
+            eq(chatPlatformBan.userId, chatRoomInvite.inviterId),
+            activePlatformBan(chatRoomInvite.roomId, now),
           ),
         ),
     ),
@@ -101,7 +113,7 @@ function activeRoomBan(roomId: Uuid, now: Date) {
   );
 }
 
-function activePlatformBan(roomId: Uuid, now: Date) {
+function activePlatformBan(roomId: Uuid | typeof chatRoomInvite.roomId, now: Date) {
   return and(
     isNull(chatPlatformBan.liftedAt),
     or(isNull(chatPlatformBan.expiresAt), gt(chatPlatformBan.expiresAt, now)),
@@ -109,6 +121,7 @@ function activePlatformBan(roomId: Uuid, now: Date) {
       inArray(chatPlatformBan.scope, platformScopesFor('private')),
       and(eq(chatPlatformBan.scope, 'room'), eq(chatPlatformBan.roomId, roomId)),
     ),
+    or(isNull(chatPlatformBan.roomId), eq(chatPlatformBan.roomId, roomId)),
   );
 }
 
@@ -267,7 +280,7 @@ export class ChatRoomInviteService {
     if (actorId === userId) {
       throw new ChatRoomInviteSelfError();
     }
-    const { invite, room } = await this.drizzle.db.transaction((t) =>
+    const { invite, room, lapsed } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const now = new Date();
         const room = await this.assertCanInvite(t, actorId, roomId);
@@ -311,15 +324,17 @@ export class ChatRoomInviteService {
           throw new ChatRoomInviteeUnavailableError(userId);
         }
         // A lapsed invite still holds the one-pending slot in the partial unique index.
-        await t
-          .delete(chatRoomInvite)
+        const lapsed = await t
+          .update(chatRoomInvite)
+          .set({ status: 'expired' })
           .where(
             and(
               eq(chatRoomInvite.roomId, roomId),
               eq(chatRoomInvite.inviteeId, userId),
               eq(chatRoomInvite.status, 'pending'),
             ),
-          );
+          )
+          .returning({ id: chatRoomInvite.id, inviterId: chatRoomInvite.inviterId });
         const [invite] = await t
           .insert(chatRoomInvite)
           .values({ roomId, inviterId: actorId, inviteeId: userId })
@@ -327,9 +342,19 @@ export class ChatRoomInviteService {
         if (!invite) {
           throw new Error('chat room invite insert returned no row');
         }
-        return { invite, room };
+        return { invite, room, lapsed };
       }),
     );
+    for (const expired of lapsed) {
+      this.events.emit('chat.room.invite.expired', {
+        inviteId: expired.id,
+        roomId,
+        inviterId: expired.inviterId,
+        inviteeId: userId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    }
     this.events.emit('chat.room.invite.sent', {
       inviteId: invite.id,
       roomId,

@@ -886,6 +886,13 @@ export const domainEventSchemas = {
     inviteeId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
+  // A lapsed pending invite was retired when the same player was invited again.
+  'chat.room.invite.expired': authContextBase.extend({
+    inviteId: UuidSchema,
+    roomId: UuidSchema,
+    inviterId: UuidSchema,
+    inviteeId: UuidSchema,
+  }),
   'chat.room.member.left': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
