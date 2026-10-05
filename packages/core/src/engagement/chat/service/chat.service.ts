@@ -1051,7 +1051,7 @@ export class ChatService {
   } & ClientMeta) {
     await this.assertRoomModerator(roomId, actorId);
     const config = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, `chat-room-configuration:${roomId}`, async () => {
+      withAdvisoryXactLock(tx, `chat-room:${roomId}`, async () => {
         const before = await this.findRoomConfiguration(tx, roomId);
         const [after] = await tx
           .insert(chatRoomConfiguration)
