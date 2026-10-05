@@ -1,10 +1,12 @@
 import * as z from 'zod';
 import {
+  GEO_CHECK_COMMANDS,
   IDENTITY_READER,
   JOB_QUEUE,
   MAIL_DISPATCH,
   MailTemplateSchema,
   PLATFORM_CONFIG,
+  PLAY_ELIGIBILITY,
   REALTIME_TRANSPORT,
   TimestampSchema,
   UuidSchema,
@@ -13,10 +15,12 @@ import {
   queue,
   type DomainEventName,
   type DomainEventPayload,
+  type GeoCheckCommands,
   type IdentityReader,
   type JobQueueAdapter,
   type MailDispatchPort,
   type MailTemplate,
+  type PlayEligibilityPort,
   type RealtimeTransport,
 } from '@openora/core/contracts';
 import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
@@ -447,6 +451,8 @@ export default {
     let identityReaderRef: IdentityReader | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeRef: RealtimeTransport | null = null;
+    let playEligibilityRef: PlayEligibilityPort | null = null;
+    let geoCheckRef: GeoCheckCommands | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
     const dispatchMail = async (
@@ -555,7 +561,29 @@ export default {
       });
     }
 
-    ctx.events.on('identity.email.verified', (payload) => {
+    // The welcome mail is the first thing a consumer may put a sign-up bonus in, and it goes
+    // out on verification - before the login gate has refused an RG-blocked account or the
+    // geo gate a blocked country. Whatever cannot be confirmed reads as ineligible.
+    const isEligibleForPromotions = async (userId: string, ip: string | null | undefined) => {
+      if (!playEligibilityRef) {
+        return false;
+      }
+      try {
+        if (await playEligibilityRef.isRestricted(userId)) {
+          return false;
+        }
+        if (!geoCheckRef) {
+          return true;
+        }
+        const geoCheck = geoCheckRef.visitorGeoCheck ?? geoCheckRef.checkAccess;
+        return (await geoCheck.call(geoCheckRef, ip ?? null)).allowed;
+      } catch (err) {
+        logger.error({ err, userId }, 'welcome mail promotion eligibility check failed');
+        return false;
+      }
+    };
+
+    ctx.events.on('identity.email.verified', async (payload) => {
       if (!mailDispatchRef) {
         return;
       }
@@ -563,11 +591,13 @@ export default {
       if (!parsed.success) {
         return;
       }
-      void mailDispatchRef
+      const { userId, ip } = parsed.data;
+      const promotionsEligible = await isEligibleForPromotions(userId, ip);
+      await mailDispatchRef
         .toUser({
-          userId: parsed.data.userId,
-          template: { key: 'welcome', data: {} },
-          idempotencyKey: `welcome-mail:${parsed.data.userId}`,
+          userId,
+          template: { key: 'welcome', data: { promotionsEligible } },
+          idempotencyKey: `welcome-mail:${userId}`,
         })
         .catch((err) => logger.error({ err }, 'welcome mail enqueue failed'));
     });
@@ -782,6 +812,8 @@ export default {
       identityReaderRef = c.get(IDENTITY_READER);
       jobQueueRef = c.get(JOB_QUEUE);
       realtimeRef = c.get(REALTIME_TRANSPORT);
+      playEligibilityRef = c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : null;
+      geoCheckRef = c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : null;
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       retentionDaysRef =
         platformConfig?.notifications?.retention?.days ?? DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
