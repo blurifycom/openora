@@ -5,6 +5,7 @@ import {
   JOB_QUEUE,
   MAIL_DISPATCH,
   MAIL_RECIPIENT_DIRECTORY,
+  PLAY_ELIGIBILITY,
 } from '@openora/core/contracts';
 import { createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -35,6 +36,7 @@ export default {
         jobQueue: c.get(JOB_QUEUE),
         audit: c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null,
         encryptionSecret,
+        playEligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : null,
       }));
 
     ctx.provide(EMAIL_SENDER, () => new StdoutEmailSender());

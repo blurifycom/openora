@@ -16,7 +16,10 @@ import {
   type TestApp,
   type TestDb,
 } from '../index.js';
-import { WELCOME_BLOCKED_COUNTRY_IP } from './fixtures/test-welcome-promotions-plugin.js';
+import {
+  WELCOME_BLOCKED_COUNTRY_IP,
+  holdNextEligibleWelcome,
+} from './fixtures/test-welcome-promotions-plugin.js';
 
 let db: TestDb;
 let app: TestApp;
@@ -93,6 +96,22 @@ describe('welcome mail promotion eligibility', () => {
       .where(eq(user.id, userId));
 
     await verifyFrom(email, '198.18.250.1');
+
+    expect(await welcomeTextFor(email)).toContain('promotionsEligible=false');
+  });
+
+  it('rechecks the restriction when a queued eligible welcome is retried', async () => {
+    const held = holdNextEligibleWelcome();
+    const { email, userId } = await registerUnverified();
+
+    await verifyFrom(email, '198.18.250.3');
+    await held.reached;
+    await app.container
+      .get(DRIZZLE)
+      .db.update(user)
+      .set({ rgBlocked: true, rgBlockedUntil: null })
+      .where(eq(user.id, userId));
+    held.release();
 
     expect(await welcomeTextFor(email)).toContain('promotionsEligible=false');
   });
