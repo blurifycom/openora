@@ -15,6 +15,8 @@ export type ChatModerationEntry = {
   expiresAt: string | null;
 };
 
+export type ChatCooldownEntry = ChatModerationEntry & { cooldownSeconds: number; createdBy: Uuid };
+
 export type ChatPlatformBan = {
   id: Uuid;
   userId: Uuid;
@@ -30,7 +32,7 @@ export type ChatModerationRoomId = Uuid | (typeof CHAT_MODERATION_SCOPES)[number
 export type ChatModerationScope = (typeof CHAT_MODERATION_SCOPE_VALUES)[number];
 
 export type ChatModeration = {
-  /** Bans and mutes only; room settings (read-only, slow mode) are enforced by the chat send path. */
+  /** Bans and mutes only; the send path checks read-only before this, and slow mode plus cooldowns after it. */
   assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic?: boolean): Promise<void>;
   deleteMessage(
     id: Uuid,
@@ -55,6 +57,24 @@ export type ChatModeration = {
     userAgent: string | null;
   }): Promise<{ success: true }>;
   listMutes(userIds?: readonly Uuid[]): Promise<ChatModerationEntry[]>;
+  setCooldown(input: {
+    userId: Uuid;
+    roomId: ChatModerationRoomId;
+    cooldownSeconds: number;
+    durationSeconds: number | null;
+    reason: string;
+    actorId: Uuid;
+    ip: string | null;
+    userAgent: string | null;
+  }): Promise<{ success: true }>;
+  liftCooldown(input: {
+    userId: Uuid;
+    roomId: ChatModerationRoomId;
+    actorId: Uuid;
+    ip: string | null;
+    userAgent: string | null;
+  }): Promise<{ success: true }>;
+  listCooldowns(userIds?: readonly Uuid[]): Promise<ChatCooldownEntry[]>;
   ban(input: {
     userId: Uuid;
     roomId: ChatModerationRoomId;

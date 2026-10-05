@@ -76,6 +76,7 @@ import {
   chatUserIgnore,
   chatMute,
   chatPlatformBan,
+  chatPlayerCooldown,
 } from '../schema/index.js';
 import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
 import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
@@ -225,7 +226,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatMessage}, ${chatRoomRule}, ${chatRoomConfiguration}, ${chatRoomMember}, ${chatRoomBan}, ${chatRoomMute}, ${chatRoomRemove}, ${chatMute}, ${chatPlatformBan}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${chatMessage}, ${chatRoomRule}, ${chatRoomConfiguration}, ${chatRoomMember}, ${chatRoomBan}, ${chatRoomMute}, ${chatRoomRemove}, ${chatMute}, ${chatPlatformBan}, ${chatPlayerCooldown}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -683,9 +684,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
     const locked = new Promise<void>((resolve) => (firstLocked = resolve));
 
     const first = db.drizzle.db.transaction(async (t) => {
-      await t.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${`chat-send:${account.id}:${room.id}`}))`,
-      );
+      await t.execute(sql`select pg_advisory_xact_lock(hashtext(${`chat-send:${account.id}`}))`);
       await t
         .insert(chatMessage)
         .values({ roomId: room.id, userId: account.id, username: 'alice', content: 'first' });
@@ -3621,5 +3620,129 @@ describe('ChatService moderation follow-through (real PG)', () => {
       .mocked(audit.recordInTransaction)
       .mock.calls.filter(([, entry]) => entry.action === 'chat.room.rule.updated');
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe('ChatService send path under a player cooldown (real PG)', () => {
+  const secondsAgo = (seconds: number) => new Date(Date.now() - seconds * 1000);
+
+  async function seedCooldown(
+    userId: string,
+    overrides: Partial<typeof chatPlayerCooldown.$inferInsert> = {},
+  ) {
+    await db.drizzle.db.insert(chatPlayerCooldown).values({
+      userId,
+      roomId: null,
+      scope: '__all',
+      cooldownSeconds: 60,
+      reason: 'flooding',
+      createdBy: randomUUID(),
+      ...overrides,
+    });
+  }
+
+  const refusal = (send: Promise<unknown>) => send.then(() => null).catch((err: unknown) => err);
+
+  it('counts a global message sent before the cooldown was set', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const last = await seedMessage({ userId: account.id, createdAt: secondsAgo(10) });
+    await seedCooldown(account.id, { scope: GLOBAL_CHAT_ROOM_ID });
+
+    const refused = await refusal(
+      svc.sendGlobalMessage({ userId: account.id, username: 'alice', content: 'again' }),
+    );
+
+    expect(refused).toBeInstanceOf(ChatPlayerMutedError);
+    expect((refused as ChatPlayerMutedError).data).toEqual({
+      reason: 'slow_mode',
+      until: new Date(last.createdAt.getTime() + 60_000).toISOString(),
+    });
+  });
+
+  it('shares an all-public cooldown across public rooms but leaves private rooms out', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const [first, second] = [await seedRoom(), await seedRoom()];
+    const privateRoom = await seedRoom({ isPublic: false, category: 'private-channels' });
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: privateRoom.id, userId: account.id, role: 'member' });
+    await seedCooldown(account.id, { scope: '__all_public' });
+    await seedMessage({ userId: account.id, roomId: first.id });
+    const send = (roomId: string) =>
+      svc.sendRoomMessage({ userId: account.id, username: 'alice', roomId, content: 'hi' });
+
+    expect(await refusal(send(second.id))).toBeInstanceOf(ChatPlayerMutedError);
+    expect(
+      await refusal(svc.sendGlobalMessage({ userId: account.id, username: 'a', content: 'hi' })),
+    ).toBeInstanceOf(ChatPlayerMutedError);
+    expect(await send(privateRoom.id)).toMatchObject({ roomId: privateRoom.id });
+  });
+
+  it('applies a room cooldown in its own room only', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const [cooled, other] = [await seedRoom(), await seedRoom()];
+    await seedCooldown(account.id, { scope: 'room', roomId: cooled.id });
+    const send = (roomId: string) =>
+      svc.sendRoomMessage({ userId: account.id, username: 'alice', roomId, content: 'hi' });
+
+    await send(cooled.id);
+
+    expect(await send(other.id)).toMatchObject({ roomId: other.id });
+    expect(await refusal(send(cooled.id))).toBeInstanceOf(ChatPlayerMutedError);
+    expect(await refusal(send(cooled.id.toUpperCase()))).toBeInstanceOf(ChatPlayerMutedError);
+  });
+
+  it('waits out the longer of room slow mode and the cooldown', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const room = await seedRoom();
+    await db.drizzle.db
+      .insert(chatRoomConfiguration)
+      .values({ roomId: room.id, slowMode: true, slowModeSeconds: 30 });
+    await seedCooldown(account.id, { cooldownSeconds: 120 });
+    const last = await seedMessage({ userId: account.id, roomId: room.id });
+
+    const refused = await refusal(
+      svc.sendRoomMessage({ userId: account.id, username: 'a', roomId: room.id, content: 'hi' }),
+    );
+
+    expect((refused as ChatPlayerMutedError).data.until).toBe(
+      new Date(last.createdAt.getTime() + 120_000).toISOString(),
+    );
+  });
+
+  it('holds a room moderator to a cooldown though slow mode lets them through', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    const room = await seedRoom();
+    await db.drizzle.db
+      .insert(chatRoomConfiguration)
+      .values({ roomId: room.id, slowMode: true, slowModeSeconds: 60 });
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: room.id, userId: account.id, role: 'moderator' });
+    const send = () =>
+      svc.sendRoomMessage({ userId: account.id, username: 'a', roomId: room.id, content: 'hi' });
+
+    await send();
+    await send();
+    await seedCooldown(account.id);
+
+    expect(await refusal(send())).toBeInstanceOf(ChatPlayerMutedError);
+  });
+
+  it('ignores a lifted or lapsed cooldown', async () => {
+    const { svc } = makeService();
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
+    await seedCooldown(account.id, { liftedAt: new Date(), liftedBy: randomUUID() });
+    await seedCooldown(account.id, { scope: '__all_public', expiresAt: secondsAgo(1) });
+    await seedMessage({ userId: account.id });
+
+    expect(
+      await svc.sendGlobalMessage({ userId: account.id, username: 'alice', content: 'hi' }),
+    ).toMatchObject({ roomId: null });
   });
 });

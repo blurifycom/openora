@@ -13,7 +13,7 @@ import { migrate as migrateAudit } from '@openora/core/audit/migrate';
 import { AuditService } from '@openora/core/audit/server';
 import { makeEventBus, makeIdentityReader, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { chatMute, chatPlatformBan } from '../schema/index.js';
+import { chatMute, chatPlatformBan, chatPlayerCooldown } from '../schema/index.js';
 import { ChatModerationExpiryService } from '../service/chat-moderation-expiry.service.js';
 import { ChatModerationService } from '../service/chat-moderation.service.js';
 
@@ -54,6 +54,22 @@ async function seedBan(overrides: Partial<typeof chatPlatformBan.$inferInsert> =
   return row!;
 }
 
+async function seedCooldown(overrides: Partial<typeof chatPlayerCooldown.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(chatPlayerCooldown)
+    .values({
+      userId: randomUUID(),
+      roomId: null,
+      scope: '__all',
+      cooldownSeconds: 30,
+      createdBy: ADMIN_ID,
+      reason: 'flooding',
+      ...overrides,
+    })
+    .returning();
+  return row!;
+}
+
 const auditRowsFor = (resourceId: string) =>
   db.drizzle.db.select().from(auditLog).where(eq(auditLog.resourceId, resourceId));
 
@@ -74,7 +90,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatMute}, ${chatPlatformBan}, ${auditLog} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${chatMute}, ${chatPlatformBan}, ${chatPlayerCooldown}, ${auditLog} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -87,7 +103,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     const expiresAt = secondsFromNow(-30);
     const mute = await seedMute({ expiresAt });
 
-    expect(await makeSweep().sweep()).toEqual({ mutes: 1, bans: 0 });
+    expect(await makeSweep().sweep()).toEqual({ mutes: 1, bans: 0, cooldowns: 0 });
 
     const rows = await auditRowsFor(mute.id);
     expect(rows).toHaveLength(1);
@@ -106,7 +122,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     const expiresAt = secondsFromNow(-30);
     const ban = await seedBan({ expiresAt });
 
-    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 1 });
+    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 1, cooldowns: 0 });
 
     const rows = await auditRowsFor(ban.id);
     expect(rows).toHaveLength(1);
@@ -119,12 +135,33 @@ describe('ChatModerationExpiryService.sweep', () => {
     expect((rows[0]!.before as Record<string, unknown>)['expiresAt']).toBe(expiresAt.toISOString());
   });
 
+  it('records exactly one audit entry for a lapsed cooldown', async () => {
+    const expiresAt = secondsFromNow(-30);
+    const cooldown = await seedCooldown({ expiresAt });
+    await seedCooldown({ expiresAt: null });
+    await seedCooldown({ expiresAt: secondsFromNow(3600) });
+
+    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 1 });
+    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 0 });
+
+    const rows = await db.drizzle.db.select().from(auditLog);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: 'chat.cooldown.expired',
+      actorType: 'system',
+      actorId: null,
+      resourceType: 'chat_player_cooldown',
+      resourceId: cooldown.id,
+    });
+    expect((rows[0]!.before as Record<string, unknown>)['expiresAt']).toBe(expiresAt.toISOString());
+  });
+
   it('is idempotent - a second sweep records nothing more', async () => {
     const mute = await seedMute({ expiresAt: secondsFromNow(-30) });
     const ban = await seedBan({ expiresAt: secondsFromNow(-30) });
 
     await makeSweep().sweep();
-    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0 });
+    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 0 });
 
     expect(await auditRowsFor(mute.id)).toHaveLength(1);
     expect(await auditRowsFor(ban.id)).toHaveLength(1);
@@ -140,7 +177,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     await seedMute({ expiresAt: secondsFromNow(-30), liftedAt: new Date(), liftedBy: ADMIN_ID });
     await seedBan({ expiresAt: secondsFromNow(-30), liftedAt: new Date(), liftedBy: ADMIN_ID });
 
-    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0 });
+    expect(await makeSweep().sweep()).toEqual({ mutes: 0, bans: 0, cooldowns: 0 });
     expect(await db.drizzle.db.select().from(auditLog)).toEqual([]);
   });
 
@@ -177,7 +214,7 @@ describe('ChatModerationExpiryService.sweep', () => {
     release();
     await lift;
 
-    expect(await sweep).toEqual({ mutes: 0, bans: 0 });
+    expect(await sweep).toEqual({ mutes: 0, bans: 0, cooldowns: 0 });
     expect(await auditRowsFor(mute.id)).toEqual([]);
   });
 

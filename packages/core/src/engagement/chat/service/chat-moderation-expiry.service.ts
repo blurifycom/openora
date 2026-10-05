@@ -1,7 +1,15 @@
 import { and, asc, eq, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { DrizzleService, type DrizzleTx } from '@openora/core/server';
 import type { AuditAction, AuditWritePort, Uuid } from '@openora/core/contracts';
-import { chatMute, chatPlatformBan, chatRoomBan, chatRoomMute } from '../schema/index.js';
+import {
+  chatMute,
+  chatPlatformBan,
+  chatPlayerCooldown,
+  chatRoomBan,
+  chatRoomMute,
+} from '../schema/index.js';
+
+type ExpiringTable = typeof chatMute | typeof chatPlatformBan | typeof chatPlayerCooldown;
 
 /** Rows considered per table per pass. A backlog just drains over the next few ticks. */
 const EXPIRY_SWEEP_BATCH_SIZE = 500;
@@ -9,7 +17,7 @@ const EXPIRY_SWEEP_BATCH_SIZE = 500;
 /** Lifts lapsed rows at their own expiry with no `lifted_by`, so the sweep still records the lapse. */
 export async function retireLapsedRows(
   tx: DrizzleTx,
-  table: typeof chatMute | typeof chatPlatformBan | typeof chatRoomBan | typeof chatRoomMute,
+  table: ExpiringTable | typeof chatRoomBan | typeof chatRoomMute,
   active: SQL | undefined,
   now: Date,
 ) {
@@ -20,7 +28,7 @@ export async function retireLapsedRows(
 }
 
 /**
- * Writes the audit entry nothing else writes: a timed chat mute or platform ban lapsing
+ * Writes the audit entry nothing else writes: a timed chat mute, platform ban or cooldown lapsing
  * on its own. Expiry here is a read-time predicate, so no actor-initiated path records
  * it and the trail would otherwise show moderation start and never end.
  *
@@ -32,7 +40,7 @@ export class ChatModerationExpiryService {
     private readonly audit: AuditWritePort,
   ) {}
 
-  /** One pass over both tables. Idempotent: a recorded row stops matching the scan. */
+  /** One pass over every table. Idempotent: a recorded row stops matching the scan. */
   async sweep() {
     const mutes = await this.recordLapsed(chatMute, 'chat.mute.expired', 'chat_mute');
     const bans = await this.recordLapsed(
@@ -40,14 +48,15 @@ export class ChatModerationExpiryService {
       'chat.platform_ban.expired',
       'chat_platform_ban',
     );
-    return { mutes, bans } as const;
+    const cooldowns = await this.recordLapsed(
+      chatPlayerCooldown,
+      'chat.cooldown.expired',
+      'chat_player_cooldown',
+    );
+    return { mutes, bans, cooldowns } as const;
   }
 
-  private async recordLapsed(
-    table: typeof chatMute | typeof chatPlatformBan,
-    action: AuditAction,
-    resourceType: string,
-  ) {
+  private async recordLapsed(table: ExpiringTable, action: AuditAction, resourceType: string) {
     const now = new Date();
     const due = await this.drizzle.db
       .select({
@@ -80,7 +89,7 @@ export class ChatModerationExpiryService {
   }
 
   private async recordOne(
-    table: typeof chatMute | typeof chatPlatformBan,
+    table: ExpiringTable,
     action: AuditAction,
     resourceType: string,
     row: {

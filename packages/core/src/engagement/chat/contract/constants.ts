@@ -3,6 +3,7 @@ export const DEFAULT_MESSAGE_LIMIT = 50;
 export const ROOM_NAME_MAX_LENGTH = 100;
 export const ROOM_SLUG_MAX_LENGTH = 100;
 export const ROOM_RULE_MAX_LENGTH = 1000;
+export const CHAT_COOLDOWN_SECONDS_MAX = 86_400;
 export const CONNECTION_CLIENT_ID_MAX_LENGTH = 128;
 
 export const JOIN_CODE_LENGTH = 6;

@@ -56,6 +56,18 @@ export const GLOBAL_CHAT_ROOM_ID = '__global';
 export const CHAT_MODERATION_SCOPES = [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'] as const;
 export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;
 
+export const CHAT_ROOM_REACHES = ['global', 'public', 'private'] as const;
+export type ChatRoomReach = (typeof CHAT_ROOM_REACHES)[number];
+
+/** Moderation scopes that reach a room of each kind; a `room` scope reaches only its own room. */
+export const CHAT_SCOPES_COVERING_REACH = {
+  global: [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'],
+  public: ['__all_public', '__all'],
+  private: ['__all'],
+} as const satisfies Record<ChatRoomReach, readonly (typeof CHAT_MODERATION_SCOPES)[number][]>;
+
+export const CHAT_MODERATION_LOOKUP_MAX_USERS = 100;
+
 export const ChatRoomIdSchema = z
   .union([UuidSchema, z.literal(GLOBAL_CHAT_ROOM_ID)])
   .transform((value) => (value === GLOBAL_CHAT_ROOM_ID ? null : value));
