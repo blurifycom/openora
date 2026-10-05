@@ -1,7 +1,7 @@
 # ADR-0042: MCP kernel - two registries behind one enforcing wrapper
 
 **Date**: 2026-09-25
-**Status**: Proposed
+**Status**: Accepted
 
 ## Context
 
