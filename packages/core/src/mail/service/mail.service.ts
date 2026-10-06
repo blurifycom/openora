@@ -8,6 +8,7 @@ import type {
   MailToAddressInput,
   MailToUserInput,
   MailRecipientDirectory,
+  PlayEligibilityPort,
 } from '@openora/core/contracts';
 import { MAIL_SEND_QUEUE, type EncryptedMailSendJob, type MailSendJob } from '../contract/index.js';
 import { createMailPayloadCipher, type MailPayloadCipher } from './mail-payload.service.js';
@@ -53,6 +54,7 @@ export type MailServiceDeps = {
   jobQueue: JobQueueAdapter;
   audit: AuditWritePort | null;
   encryptionSecret: string;
+  playEligibility?: PlayEligibilityPort | null;
 };
 
 export class MailService {
@@ -61,6 +63,7 @@ export class MailService {
   private readonly directory: MailRecipientDirectory;
   private readonly jobQueue: JobQueueAdapter;
   private readonly audit: AuditWritePort | null;
+  private readonly playEligibility: PlayEligibilityPort | null;
   private readonly payloadCipher: MailPayloadCipher;
 
   constructor(deps: MailServiceDeps) {
@@ -69,6 +72,7 @@ export class MailService {
     this.directory = deps.directory;
     this.jobQueue = deps.jobQueue;
     this.audit = deps.audit;
+    this.playEligibility = deps.playEligibility ?? null;
     this.payloadCipher = createMailPayloadCipher(deps.encryptionSecret);
   }
 
@@ -118,7 +122,7 @@ export class MailService {
       return;
     }
     const rendered = await this.renderer.render(
-      job.template,
+      await this.withCurrentEligibility(job),
       resolved.locale,
       resolved.name,
       resolved.antiPhishingCode,
@@ -133,6 +137,24 @@ export class MailService {
       locale: resolved.locale,
       attempt,
     });
+  }
+
+  // The eligibility a welcome mail was queued with can go stale while the job waits or
+  // retries: a player who self-excludes in that window must not be shown the promotion.
+  // Only ever narrows - a queued `false` stays `false`, and an unanswerable check reads false.
+  private async withCurrentEligibility(job: MailSendJob): Promise<MailTemplate> {
+    const { template, recipient } = job;
+    if (template.key !== 'welcome' || template.data.promotionsEligible !== true) {
+      return template;
+    }
+    const stillEligible =
+      recipient.kind === 'user' &&
+      this.playEligibility !== null &&
+      !(await this.playEligibility.isRestricted(recipient.userId).catch((err: unknown) => {
+        logger.error({ err }, 'welcome mail eligibility recheck failed');
+        return true;
+      }));
+    return stillEligible ? template : { ...template, data: { promotionsEligible: false } };
   }
 
   async deliverEncrypted(job: EncryptedMailSendJob, attempt = 1): Promise<void> {
