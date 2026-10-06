@@ -54,7 +54,11 @@ import {
   GameProviderMappingInUseError,
 } from '../service/game-provider.service.js';
 import { GameBulkService } from '../service/game-bulk.service.js';
-import { cachedCatalog, invalidateCatalog } from '../service/game-catalog-cache.service.js';
+import {
+  cachedCatalog,
+  catalogCacheKeys,
+  invalidateCatalog,
+} from '../service/game-catalog-cache.service.js';
 import {
   GameFavoriteService,
   GameFavoriteLimitReachedError,
@@ -66,23 +70,13 @@ import {
   type CacheAdapter,
 } from '@openora/core/contracts';
 
-// Admin writes that change what the public catalog routes return.
-const CATALOG_MUTATIONS: ReadonlySet<string> = new Set([
-  'createProvider',
-  'updateProvider',
-  'createCategory',
-  'updateCategory',
-  'reorderCategoryGames',
-  'updateCategoryPins',
-  'evaluateCategoryMembership',
-  'createTag',
-  'updateTag',
-  'deleteTag',
-  'updateGame',
-  'setGamesActive',
-  'addGameTags',
-  'addGameCategories',
-]);
+// Every non-GET admin route can change what the public catalog returns. The read-only
+// rule-preview POST is included too; it only costs a cache refill.
+const CATALOG_MUTATIONS: ReadonlySet<string> = new Set(
+  Object.entries(gamingAdminContract)
+    .filter(([, procedure]) => procedure['~orpc'].route.method !== 'GET')
+    .map(([name]) => name),
+);
 
 export function createGamingRouter({
   gaming,
@@ -146,18 +140,20 @@ export function createGamingRouter({
     listGames: os.listGames.handler(({ input }) =>
       input.q
         ? gaming.listGamesPublic(input)
-        : catalog(`games:${JSON.stringify(input)}`, () => gaming.listGamesPublic(input)),
+        : catalog(catalogCacheKeys.games(input), () => gaming.listGamesPublic(input)),
     ),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
-        catalog(`game:${input.id}`, () => gaming.getGame(input.id, { activeOnly: true })),
+        catalog(catalogCacheKeys.game(input.id), () =>
+          gaming.getGame(input.id, { activeOnly: true }),
+        ),
       ),
     ),
 
     getGameBySlug: os.getGameBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
-        catalog(`game-slug:${input.slug}`, () =>
+        catalog(catalogCacheKeys.gameBySlug(input.slug), () =>
           gaming.getGameBySlug(input.slug, { activeOnly: true }),
         ),
       ),
@@ -190,24 +186,26 @@ export function createGamingRouter({
     listRounds: os.listRounds.handler(({ context }) => gaming.getUserRounds(getUserId(context))),
 
     listProviders: os.listProviders.handler(({ input }) =>
-      catalog(`providers:${input.page}:${input.limit}`, () => providers.listActiveProviders(input)),
+      catalog(catalogCacheKeys.providers(input), () => providers.listActiveProviders(input)),
     ),
 
     getProviderBySlug: os.getProviderBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameProviderNotFoundError }, () =>
-        catalog(`provider:${input.slug}`, () => providers.getActiveProviderBySlug(input.slug)),
+        catalog(catalogCacheKeys.provider(input.slug), () =>
+          providers.getActiveProviderBySlug(input.slug),
+        ),
       ),
     ),
 
     listCategories: os.listCategories.handler(({ input }) =>
-      catalog(`categories:${input.page}:${input.limit}`, () =>
-        categories.listActiveCategories(input),
-      ),
+      catalog(catalogCacheKeys.categories(input), () => categories.listActiveCategories(input)),
     ),
 
     getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameCategoryNotFoundError }, () =>
-        catalog(`category:${input.slug}`, () => categories.getActiveCategoryBySlug(input.slug)),
+        catalog(catalogCacheKeys.category(input.slug), () =>
+          categories.getActiveCategoryBySlug(input.slug),
+        ),
       ),
     ),
 
