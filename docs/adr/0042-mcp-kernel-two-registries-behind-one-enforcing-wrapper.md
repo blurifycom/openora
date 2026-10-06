@@ -3,6 +3,8 @@
 **Date**: 2026-09-25
 **Status**: Accepted
 
+> **Update (2026-10-06)**: The MCP HTTP transport in core ([ADR-0043](./0043-mcp-http-transport-with-admin-bound-tokens.md)) is a second consumer with no hub in front of it, so it drops the output keys a tool marks as personal before they reach a client, unless the operator switches that off. The kernel itself still returns allow-listed data as the module has it. A tool descriptor's output JSON Schema now describes only the allow-listed keys, because MCP clients validate structured output against the published schema. `AdminGuard.assertUser` now also refuses a deactivated account.
+
 ## Context
 
 An agent hub (a premium package outside this repo) runs models that read platform data and
