@@ -52,7 +52,7 @@ describe('GET /exchange-rate/rate', () => {
   });
 
   it('rejects a malformed currency code with a validation error instead of 200', async () => {
-    const res = await player.get('/exchange-rate/rate?from=eur&to=GBP');
+    const res = await player.get('/exchange-rate/rate?from=EU1&to=GBP');
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createToken } from '../adapters/token.js';
+import { CurrencyTickerInputSchema } from './common.js';
 
 // Centralized, schema-validated igaming configuration. A downstream operator
 // declares one of these and passes it to `createApp({ igaming })`; it is the single
@@ -65,7 +66,7 @@ export const IgamingConfigSchema = z
   .object({
     branding: BrandingSchema,
     // Currencies the igaming transacts in; the first is the default.
-    currencies: z.array(CurrencyCodeSchema).min(1),
+    currencies: z.array(CurrencyTickerInputSchema).min(1),
     // Jurisdictions the igaming is licensed to operate in.
     jurisdictions: z.array(CountryCodeSchema).min(1),
     // Countries blocked regardless of licensing (geo-block list).
