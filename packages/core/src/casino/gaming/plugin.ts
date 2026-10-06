@@ -17,6 +17,8 @@ import {
   WALLET_COMMANDS,
   createGameSortCatalog,
   createGameCategoryRuleCatalog,
+  CACHE,
+  type CacheAdapter,
 } from '@openora/core/contracts';
 import { createDefaultGameCategoryRules } from './adapters/rules/index.js';
 import { GameCategoryMembershipService } from './service/game-category-membership.service.js';
@@ -27,6 +29,7 @@ import { GamingService } from './service/gaming.service.js';
 import { GameCategoryService } from './service/game-category.service.js';
 import { GameSortRankingService } from './service/game-sort-ranking.service.js';
 import { GameSortService } from './service/game-sort.service.js';
+import { invalidateCatalog } from './service/game-catalog-cache.service.js';
 import { GameSortTriggerService } from './service/game-sort-trigger.service.js';
 import { GameTagService } from './service/game-tag.service.js';
 import { GameProviderService } from './service/game-provider.service.js';
@@ -121,6 +124,7 @@ export default {
 
     let rankingRef: GameSortRankingService | null = null;
     let triggersRef: GameSortTriggerService | null = null;
+    let catalogCacheRef: CacheAdapter | undefined;
     const requireTriggers = () => {
       if (!triggersRef) {
         throw new Error('gaming: sort trigger service not constructed yet');
@@ -169,6 +173,7 @@ export default {
           throw new Error('gaming: ranking service not constructed yet');
         }
         await rankingRef.rank(payload.categoryId);
+        await invalidateCatalog(catalogCacheRef);
       },
     });
 
@@ -183,6 +188,7 @@ export default {
       schema: GameCategoryMembershipJobSchema,
       handler: async ({ payload }) => {
         await requireMembership().membership.evaluateJob(payload);
+        await invalidateCatalog(catalogCacheRef);
       },
     });
 
@@ -196,6 +202,7 @@ export default {
 
     ctx.routers.add('gaming', (c) => {
       const jobQueue = c.get(JOB_QUEUE);
+      catalogCacheRef = c.get(CACHE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);
       const sorts = new GameSortService(sortCatalog);
       rankingRef = new GameSortRankingService(c.get(DRIZZLE), sorts);
@@ -219,6 +226,7 @@ export default {
         favorites: new GameFavoriteService(c.get(DRIZZLE)),
         adminGuard: c.get(ADMIN_GUARD),
         sorts,
+        cache: catalogCacheRef,
         rules,
         membership,
       });
