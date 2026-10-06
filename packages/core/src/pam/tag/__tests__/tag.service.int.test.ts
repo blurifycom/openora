@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { PlayEligibilityPort, TagKey } from '@openora/core/contracts';
@@ -707,16 +707,25 @@ describe('TagService.replacePlayerTag (real PG)', () => {
     };
     const otherArgs = { ...args, assignReason: 'player level set to 2' };
 
-    // Both replaces must actually overlap at the DB for one of them to lose. The seeds
-    // above leave a single warm connection in the pool, so without this the second call
-    // pays a TCP connect + startup handshake and can begin only after the first has
-    // already committed - a legitimate sequential replace, and both succeed.
-    await Promise.all([playerTagsOf(p.id), playerTagsOf(p.id)]);
-
-    const results = await Promise.allSettled([
-      svc.replacePlayerTag(args),
-      svc.replacePlayerTag(otherArgs),
-    ]);
+    // A replace loses only when its first read precedes the winner's commit. Holding the
+    // player row until both replaces queue on it guarantees that; left to timing, a slow
+    // runner starts the second after the first commits, and both succeed.
+    let replaces: Promise<PromiseSettledResult<unknown>[]> = Promise.resolve([]);
+    await db.drizzle.db.transaction(async (tx) => {
+      await tx.select({ id: player.id }).from(player).where(eq(player.id, p.id)).for('update');
+      replaces = Promise.allSettled([svc.replacePlayerTag(args), svc.replacePlayerTag(otherArgs)]);
+      await vi.waitFor(
+        async () => {
+          const { rows } = await db.drizzle.db.execute<{ waiting: number }>(
+            sql`select count(*)::int as waiting from pg_stat_activity
+                where datname = current_database() and wait_event_type = 'Lock'`,
+          );
+          expect(rows[0]?.waiting).toBe(2);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+    });
+    const results = await replaces;
 
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
