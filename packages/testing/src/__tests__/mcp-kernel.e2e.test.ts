@@ -705,3 +705,15 @@ describe('agent tag, note and enhanced-KYC actions are replay-safe', () => {
     ).toEqual({ ok: false, error: 'already_requested' });
   });
 });
+
+describe('MCP transport while agents.mcp is off', () => {
+  it('serves no endpoint', async () => {
+    const res = await app.app.request('http://localhost/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+    });
+
+    expect(res.status).toBe(404);
+  });
+});

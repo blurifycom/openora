@@ -3,7 +3,8 @@ import { OpenAPIReferencePlugin } from '@orpc/openapi/plugins';
 import { implement, onError, ORPCError, type AnyRouter } from '@orpc/server';
 import { ResponseHeadersPlugin } from '@orpc/server/plugins';
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
 import { HTTPException } from 'hono/http-exception';
@@ -34,6 +35,7 @@ import {
   AUDIT_WRITER,
   IDENTITY_READER,
   MCP_KERNEL,
+  MCP_TOKEN_AUTHENTICATOR,
   RATE_LIMITER,
   CACHE,
   REALTIME_TRANSPORT,
@@ -41,6 +43,7 @@ import {
   healthContract,
   IGAMING_CONFIG,
   type IgamingConfig,
+  type McpKernel,
   PLATFORM_CONFIG,
   PLAYER_ACTIVITY_TRACKER,
   SESSION_IDLE_POLICY,
@@ -51,8 +54,14 @@ import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { createMcpKernel } from '../mcp/index.js';
 import { authorizeWithAdminGuard } from '../mcp/authorize.js';
+import type { McpHttpTransport } from '../mcp/http-transport.js';
+import { payloadTooLarge } from '../mcp/transport-gate.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
-import { applyClientAddress, resolveTrustedProxies } from './client-address.js';
+import {
+  applyClientAddress,
+  resolveTrustedProxies,
+  type TrustedProxies,
+} from './client-address.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 import type { CoreTokenCatalog } from './core-token-catalog.js';
 
@@ -142,6 +151,80 @@ function headersToRecord(headers: Headers): Record<string, string> {
     out[key] = value;
   });
   return out;
+}
+
+function requestMeta(c: Context, trustedProxies: TrustedProxies) {
+  const headers = headersToRecord(c.req.raw.headers);
+  const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming
+    ?.socket?.remoteAddress;
+  applyClientAddress(headers, remoteAddress, trustedProxies);
+  return {
+    headers,
+    clientMeta: extractClientMeta(headers),
+    traceId: headers['x-trace-id'] ?? randomUUID(),
+  };
+}
+
+const MCP_MAX_BODY_BYTES = 1_048_576;
+
+type MountedMcpTransport = { path: string; transport: McpHttpTransport };
+
+async function loadMcpTransport(container: Container<CoreTokenCatalog>, kernel: McpKernel) {
+  const config = container.get(PLATFORM_CONFIG).agents.mcp;
+  if (!config.enabled) {
+    return null;
+  }
+  const missing = [
+    {
+      name: 'MCP_TOKEN_AUTHENTICATOR',
+      bound: container.has(MCP_TOKEN_AUTHENTICATOR),
+      fix: 'load the iam module, which binds it',
+    },
+    {
+      name: 'AUDIT_WRITER',
+      bound: container.has(AUDIT_WRITER),
+      fix: 'load the audit module - the kernel refuses every call it cannot audit',
+    },
+  ].filter((seam) => !seam.bound);
+  if (missing.length > 0) {
+    throw new Error(
+      '[create-app] agents.mcp.enabled is on, but the MCP transport has no binding for:\n' +
+        missing.map((seam) => `  - ${seam.name}: ${seam.fix}`).join('\n') +
+        '\nBind them, or turn agents.mcp.enabled off.',
+    );
+  }
+  // Imported here so a deployment that never enables MCP never loads the SDK.
+  const { createMcpHttpTransport } = await import('../mcp/http-transport.js');
+  return {
+    path: config.path,
+    transport: createMcpHttpTransport({
+      kernel,
+      authenticator: container.get(MCP_TOKEN_AUTHENTICATOR),
+      adminGuard: container.get(ADMIN_GUARD),
+      rateLimiter: container.get(RATE_LIMITER),
+      config,
+    }),
+  };
+}
+
+function mountMcpTransport(
+  app: Hono,
+  { path, transport }: MountedMcpTransport,
+  trustedProxies: TrustedProxies,
+) {
+  const limitBody = bodyLimit({ maxSize: MCP_MAX_BODY_BYTES, onError: () => payloadTooLarge() });
+  app.all(path, async (c, next) => {
+    if (!transport.servesHost(new URL(c.req.url).hostname)) {
+      return next();
+    }
+    const { clientMeta, traceId } = requestMeta(c, trustedProxies);
+    const refused = await limitBody(c, async () => {
+      c.res = await withRequestContext({ traceId, clientMeta }, () =>
+        transport.handle(c.req.raw, clientMeta),
+      );
+    });
+    return refused ?? c.res;
+  });
 }
 
 // Webhook signature schemes (eg aggregator callbacks) must hash the verbatim body,
@@ -339,7 +422,7 @@ export async function createApp(
     router[namespace] = factory(container) as AnyRouter;
   }
   // Built now so a broken tool or action-type factory fails boot, not the first call.
-  container.get(MCP_KERNEL);
+  const mcpTransport = await loadMcpTransport(container, container.get(MCP_KERNEL));
 
   for (const registration of registry.jobs.getAll()) {
     jobQueue.registerWorker(registration);
@@ -404,6 +487,12 @@ export async function createApp(
     return c.json({ error: 'Internal Server Error' }, 500);
   });
 
+  // Ahead of every app-wide middleware: a served MCP request returns from its own handler, so
+  // CORS, the HTTP cache, raw-body capture and session resolution never run for it.
+  if (mcpTransport) {
+    mountMcpTransport(app, mcpTransport, trustedProxies);
+  }
+
   if (config.cors !== false) {
     const origins =
       config.cors === true || config.cors === undefined ? undefined : config.cors.origins;
@@ -458,13 +547,10 @@ export async function createApp(
   const sessions = container.get(AUTH_SESSION);
 
   app.use('/*', async (c, next) => {
-    const headers = headersToRecord(c.req.raw.headers);
-    const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
-      ?.incoming?.socket?.remoteAddress;
-    applyClientAddress(headers, remoteAddress, trustedProxies);
+    const { headers, clientMeta, traceId } = requestMeta(c, trustedProxies);
     const context: OssContext = {
       request: { headers },
-      clientMeta: extractClientMeta(headers),
+      clientMeta,
       rawBody: await captureRawBody(c.req.raw),
     };
 
@@ -479,8 +565,6 @@ export async function createApp(
       await next();
       return c.res;
     };
-
-    const traceId = headers['x-trace-id'] ?? randomUUID();
 
     if (!resolved) {
       // No valid session - context.auth stays undefined so getUserId 401s. Auth and
