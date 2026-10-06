@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { EventBus } from '@openora/core/server';
+import type { McpTokenRevocation } from '@openora/core/contracts';
 import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -12,11 +13,19 @@ import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 
 let db: TestDb;
 
+const META = { ip: '203.0.113.7', userAgent: 'backoffice/1.0' };
+
 function makeDirectory() {
   const emit = vi.fn();
+  const revokeAllForUser = vi.fn(async () => ({ revoked: 0 }));
   return {
-    dir: new DrizzleAdminUserDirectory(db.drizzle, mock<EventBus>({ emit, on: vi.fn() })),
+    dir: new DrizzleAdminUserDirectory(
+      db.drizzle,
+      mock<EventBus>({ emit, on: vi.fn() }),
+      mock<McpTokenRevocation>({ revokeAllForUser }),
+    ),
     emit,
+    revokeAllForUser,
   };
 }
 
@@ -103,6 +112,72 @@ describe('DrizzleAdminUserDirectory.update (real PG)', () => {
 
     expect(await dir.update(randomUUID(), { isActive: false }, randomUUID())).toBeNull();
     expect(emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('DrizzleAdminUserDirectory.update and MCP tokens (real PG)', () => {
+  it('revokes the MCP tokens as admin_disabled when an active admin is deactivated', async () => {
+    const { dir, revokeAllForUser } = makeDirectory();
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+    const actorId = randomUUID();
+
+    await dir.update(admin.id, { isActive: false }, actorId, META);
+
+    expect(revokeAllForUser).toHaveBeenCalledTimes(1);
+    expect(revokeAllForUser).toHaveBeenCalledWith({
+      userId: admin.id,
+      reason: 'admin_disabled',
+      actorId,
+      ...META,
+    });
+  });
+
+  it('revokes the MCP tokens as admin_role_removed when an admin is demoted', async () => {
+    const { dir, revokeAllForUser } = makeDirectory();
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+    const actorId = randomUUID();
+
+    await dir.update(admin.id, { role: 'player' }, actorId);
+
+    expect(revokeAllForUser).toHaveBeenCalledWith({
+      userId: admin.id,
+      reason: 'admin_role_removed',
+      actorId,
+      ip: null,
+      userAgent: null,
+    });
+  });
+
+  it('leaves the MCP tokens alone when an admin is reactivated', async () => {
+    const { dir, revokeAllForUser } = makeDirectory();
+    const admin = await seedUser(db, { role: 'admin', isActive: false });
+
+    await dir.update(admin.id, { isActive: true }, randomUUID(), META);
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
+  });
+
+  it('leaves the MCP tokens alone on a patch that changes nothing', async () => {
+    const { dir, revokeAllForUser } = makeDirectory();
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+
+    await dir.update(admin.id, { isActive: true, role: 'admin' }, randomUUID(), META);
+
+    expect(revokeAllForUser).not.toHaveBeenCalled();
+  });
+
+  it('propagates a revocation failure with the deactivation already written', async () => {
+    const { dir, emit, revokeAllForUser } = makeDirectory();
+    revokeAllForUser.mockRejectedValueOnce(new Error('token store unavailable'));
+    const admin = await seedUser(db, { role: 'admin', isActive: true });
+
+    await expect(dir.update(admin.id, { isActive: false }, randomUUID(), META)).rejects.toThrow(
+      'token store unavailable',
+    );
+
+    const [stored] = await db.drizzle.db.select().from(user).where(eq(user.id, admin.id));
+    expect(stored?.isActive).toBe(false);
+    expect(emit).toHaveBeenCalledWith('identity.user.deactivated', expect.anything());
   });
 });
 

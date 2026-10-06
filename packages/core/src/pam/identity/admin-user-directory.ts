@@ -4,6 +4,8 @@ import type {
   ClientMeta,
   KycStatus,
   MailRecipientDirectory,
+  McpTokenAutomaticRevokeReason,
+  McpTokenRevocation,
   PlayerIdSearchOptions,
 } from '@openora/core/contracts';
 import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
@@ -47,10 +49,26 @@ function toRow(r: typeof user.$inferSelect) {
   };
 }
 
+type AdminUserPatch = { isActive?: boolean; role?: string };
+
+export function automaticMcpRevokeReason(
+  existing: Pick<typeof user.$inferSelect, 'isActive' | 'role'>,
+  patch: AdminUserPatch,
+): McpTokenAutomaticRevokeReason | null {
+  if (existing.isActive && patch.isActive === false) {
+    return 'admin_disabled';
+  }
+  if (existing.role === 'admin' && patch.role !== undefined && patch.role !== 'admin') {
+    return 'admin_role_removed';
+  }
+  return null;
+}
+
 export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly mcpTokens?: McpTokenRevocation,
   ) {}
 
   async count() {
@@ -112,12 +130,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return rows.map(toRow);
   }
 
-  async update(
-    id: string,
-    patch: { isActive?: boolean; role?: string },
-    actorId: string,
-    meta?: ClientMeta,
-  ) {
+  async update(id: string, patch: AdminUserPatch, actorId: string, meta?: ClientMeta) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     if (!existing) {
       return null;
@@ -144,6 +157,17 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       } else {
         this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
+    }
+
+    const mcpRevokeReason = automaticMcpRevokeReason(existing, patch);
+    if (mcpRevokeReason) {
+      await this.mcpTokens?.revokeAllForUser({
+        userId: id,
+        reason: mcpRevokeReason,
+        actorId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
     }
     return toRow(r);
   }

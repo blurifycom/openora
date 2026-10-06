@@ -10,6 +10,7 @@ import {
   AUTO_LOGOUT_MINUTES,
   type ClientMeta,
   type IdentityReader,
+  type McpTokenRevocation,
   type User,
   type PaginationOptions,
 } from '@openora/core/contracts';
@@ -55,6 +56,7 @@ export type SessionServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   identityReader: IdentityReader;
+  mcpTokens?: McpTokenRevocation | undefined;
 };
 
 function toSessionItem(row: Session, currentSessionId?: Session['id']): SessionItem {
@@ -78,11 +80,13 @@ export class SessionService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly identityReader: IdentityReader;
+  private readonly mcpTokens: McpTokenRevocation | undefined;
 
-  constructor({ drizzle, events, identityReader }: SessionServiceDeps) {
+  constructor({ drizzle, events, identityReader, mcpTokens }: SessionServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.identityReader = identityReader;
+    this.mcpTokens = mcpTokens;
   }
 
   async listSessions({
@@ -249,6 +253,13 @@ export class SessionService {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
+    await this.mcpTokens?.revokeAllForUser({
+      userId,
+      reason: 'sessions_revoked',
+      actorId: actorId ?? null,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
