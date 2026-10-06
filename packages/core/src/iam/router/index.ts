@@ -14,8 +14,18 @@ import {
   AdminUserNotFoundError,
   NotAnAdminUserError,
 } from '../service/iam.service.js';
+import {
+  McpTokenService,
+  McpTokenNotFoundError,
+  McpTokenTtlError,
+  McpTransportDisabledError,
+} from '../service/mcp-token.service.js';
 
-export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
+export function createIamRouter(
+  svc: IamService,
+  adminGuard: AdminGuard,
+  mcpTokens: McpTokenService,
+) {
   const os = implement(iamContract).$context<OssContext>();
 
   // Error map for the super-admin-only mutation routes. NotSuperAdminError and
@@ -25,6 +35,12 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
     BAD_REQUEST: [InvalidGrantError, NotAnAdminUserError],
     FORBIDDEN: [NotSuperAdminError, GrantEscalationError],
     CONFLICT: [ProtectedRoleError, LastSuperAdminError],
+  };
+
+  const mcpTokenErrors = {
+    NOT_FOUND: McpTokenNotFoundError,
+    BAD_REQUEST: McpTokenTtlError,
+    CONFLICT: McpTransportDisabledError,
   };
 
   return os.router({
@@ -119,5 +135,43 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
       const caller = await adminGuard.assert(context);
       return svc.reportAccessDenied({ ...input, caller });
     }),
+
+    mcpTokens: {
+      create: os.mcpTokens.create.handler(async ({ input, context }) => {
+        const caller = await adminGuard.assert(context, 'mcp-access', 'use');
+        return mapErrors(mcpTokenErrors, () =>
+          mcpTokens.create({ ...input, adminUserId: caller.userId }, caller),
+        );
+      }),
+
+      listMine: os.mcpTokens.listMine.handler(async ({ input, context }) => {
+        const caller = await adminGuard.assert(context, 'mcp-access', 'use');
+        return mcpTokens.listMine(caller.userId, input);
+      }),
+
+      revokeMine: os.mcpTokens.revokeMine.handler(async ({ input, context }) => {
+        const caller = await adminGuard.assert(context, 'mcp-access', 'use');
+        return mapErrors(mcpTokenErrors, () =>
+          mcpTokens.revokeMine(caller.userId, input.tokenId, caller),
+        );
+      }),
+
+      list: os.mcpTokens.list.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'mcp-token', 'view');
+        return mcpTokens.list(input);
+      }),
+
+      revoke: os.mcpTokens.revoke.handler(async ({ input, context }) => {
+        const caller = await adminGuard.assert(context, 'mcp-token', 'revoke');
+        return mapErrors(mcpTokenErrors, () =>
+          mcpTokens.revoke(input.tokenId, caller.userId, caller),
+        );
+      }),
+
+      revokeAll: os.mcpTokens.revokeAll.handler(async ({ context }) => {
+        const caller = await adminGuard.assert(context, 'mcp-token', 'revoke');
+        return mcpTokens.revokeAll(caller.userId, caller);
+      }),
+    },
   });
 }

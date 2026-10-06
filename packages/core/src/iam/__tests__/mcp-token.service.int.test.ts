@@ -1,0 +1,578 @@
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import {
+  McpTransportConfigSchema,
+  type AuditWritePort,
+  type McpTransportConfig,
+} from '@openora/core/contracts';
+import { paginated } from '@openora/core/contracts/kit';
+import { createTestDb, seedUser, type TestDb } from '@openora/core/testing';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { user } from '@openora/core/pam/schema/identity';
+import { makeAuditWriter } from '../../testing/mock.js';
+import { migrate as migrateIam } from '../migrate.js';
+import { mcpToken } from '../schema/index.js';
+import { IssuedMcpTokenSchema, McpTokenListItemSchema, McpTokenSchema } from '../contract/index.js';
+import {
+  McpTokenNotFoundError,
+  McpTokenService,
+  McpTokenTtlError,
+  McpTransportDisabledError,
+} from '../service/mcp-token.service.js';
+import {
+  generateMcpToken,
+  hashMcpToken,
+  isMcpTokenFormat,
+  mcpTokenDisplayPrefix,
+} from '../shared/mcp-token.js';
+
+const NOW = new Date('2026-10-06T12:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
+const META = { ip: '203.0.113.7', userAgent: 'mcp-client/1.0' };
+const PAGE = { page: 1, limit: 50 };
+const ENABLED = McpTransportConfigSchema.parse({
+  enabled: true,
+  tokenTtlDays: { default: 30, max: 90 },
+});
+const DISABLED = McpTransportConfigSchema.parse({});
+
+const daysFromNow = (days: number) => new Date(NOW.getTime() + days * DAY_MS);
+
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrateIam, migrateIdentity]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${mcpToken}, ${user} RESTART IDENTITY CASCADE`);
+});
+
+function makeService(config: McpTransportConfig = ENABLED) {
+  const audit = makeAuditWriter();
+  return {
+    svc: new McpTokenService({ drizzle: db.drizzle, audit, config, now: () => NOW }),
+    audit,
+  };
+}
+
+const seedAdmin = (email: string, name = 'Admin') =>
+  seedUser(db, { email, name, role: 'admin', isActive: true });
+
+async function seedToken(adminUserId: string, over: Partial<typeof mcpToken.$inferInsert> = {}) {
+  const token = generateMcpToken();
+  const [row] = await db.drizzle.db
+    .insert(mcpToken)
+    .values({
+      adminUserId,
+      label: 'Laptop',
+      tokenHash: hashMcpToken(token),
+      tokenPrefix: mcpTokenDisplayPrefix(token),
+      createdAt: NOW,
+      expiresAt: daysFromNow(30),
+      ...over,
+    })
+    .returning();
+  return row;
+}
+
+async function storedToken(id: string) {
+  const [row] = await db.drizzle.db.select().from(mcpToken).where(eq(mcpToken.id, id));
+  return row;
+}
+
+type AuditEntry = Parameters<AuditWritePort['recordInTransaction']>[1];
+
+const auditEntries = (audit: ReturnType<typeof makeAuditWriter>): AuditEntry[] =>
+  audit.recordInTransaction.mock.calls.map((call) => call[1]);
+
+describe('McpTokenService.create (real PG)', () => {
+  it('stores only the hash and a display prefix and hands the plaintext back once', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    const issued = await svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META);
+
+    expect(isMcpTokenFormat(issued.token)).toBe(true);
+    const row = await storedToken(issued.id);
+    expect(row).toMatchObject({
+      adminUserId: alice.id,
+      label: 'Claude Code',
+      tokenHash: hashMcpToken(issued.token),
+      tokenPrefix: issued.token.slice(0, 12),
+      callCount: 0,
+      lastUsedAt: null,
+      revokedAt: null,
+    });
+    expect(Object.values(row)).not.toContain(issued.token);
+    expect(IssuedMcpTokenSchema.parse(issued)).toEqual(issued);
+    expect(issued).not.toHaveProperty('tokenHash');
+    expect(issued).toMatchObject({ status: 'active', tokenPrefix: row.tokenPrefix });
+    const listed = await svc.listMine(alice.id, PAGE);
+    expect(JSON.stringify(listed)).not.toContain(issued.token);
+    expect(JSON.stringify(listed)).not.toContain(row.tokenHash);
+  });
+
+  it('expires the token the configured default number of days after issue', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    const issued = await svc.create({ adminUserId: alice.id, label: 'Default' }, META);
+
+    expect((await storedToken(issued.id)).expiresAt).toEqual(daysFromNow(30));
+    expect(issued.createdAt).toBe(NOW.toISOString());
+    expect(issued.expiresAt).toBe(daysFromNow(30).toISOString());
+  });
+
+  it('honours a requested lifetime up to the configured maximum', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    const week = await svc.create({ adminUserId: alice.id, label: 'Week', ttlDays: 7 }, META);
+    const longest = await svc.create({ adminUserId: alice.id, label: 'Max', ttlDays: 90 }, META);
+
+    expect((await storedToken(week.id)).expiresAt).toEqual(daysFromNow(7));
+    expect((await storedToken(longest.id)).expiresAt).toEqual(daysFromNow(90));
+  });
+
+  it('refuses a lifetime above the configured maximum and stores nothing', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    await expect(
+      svc.create({ adminUserId: alice.id, label: 'Too long', ttlDays: 91 }, META),
+    ).rejects.toBeInstanceOf(McpTokenTtlError);
+
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses to issue a token while the transport is disabled', async () => {
+    const { svc, audit } = makeService(DISABLED);
+    const alice = await seedAdmin('alice@ops.example');
+
+    await expect(
+      svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META),
+    ).rejects.toBeInstanceOf(McpTransportDisabledError);
+
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('audits the issue on the creating transaction without the token or its hash', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    const issued = await svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META);
+
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(expect.anything(), {
+      actorId: alice.id,
+      actorType: 'admin',
+      action: 'iam.mcp_token.created',
+      resourceType: 'mcp-token',
+      resourceId: issued.id,
+      after: {
+        adminUserId: alice.id,
+        label: 'Claude Code',
+        tokenPrefix: issued.tokenPrefix,
+        expiresAt: daysFromNow(30).toISOString(),
+        ttlDays: 30,
+      },
+      ...META,
+    });
+    const recorded = JSON.stringify(auditEntries(audit));
+    expect(recorded).not.toContain(issued.token);
+    expect(recorded).not.toContain(hashMcpToken(issued.token));
+  });
+
+  it('rolls the token back when its audit record cannot be written', async () => {
+    const { svc, audit } = makeService();
+    audit.recordInTransaction.mockRejectedValueOnce(new Error('audit store unavailable'));
+    const alice = await seedAdmin('alice@ops.example');
+
+    await expect(svc.create({ adminUserId: alice.id, label: 'Claude Code' }, META)).rejects.toThrow(
+      'audit store unavailable',
+    );
+
+    expect(await db.drizzle.db.select().from(mcpToken)).toHaveLength(0);
+  });
+});
+
+describe('McpTokenService.revokeMine (real PG)', () => {
+  it("revokes the caller's own token as a manual revoke and audits it once", async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+
+    const revoked = await svc.revokeMine(alice.id, token.id, META);
+
+    expect(McpTokenSchema.parse(revoked)).toEqual(revoked);
+    expect(revoked).toMatchObject({
+      id: token.id,
+      status: 'revoked',
+      revokedAt: NOW.toISOString(),
+      revokedBy: alice.id,
+      revokeReason: 'manual',
+    });
+    expect(await storedToken(token.id)).toMatchObject({
+      revokedAt: NOW,
+      revokedBy: alice.id,
+      revokeReason: 'manual',
+    });
+    expect(auditEntries(audit)).toEqual([
+      {
+        actorId: alice.id,
+        actorType: 'admin',
+        action: 'iam.mcp_token.revoked',
+        resourceType: 'mcp-token',
+        resourceId: token.id,
+        before: { revokedAt: null },
+        after: {
+          adminUserId: alice.id,
+          label: token.label,
+          tokenPrefix: token.tokenPrefix,
+          reason: 'manual',
+        },
+        ...META,
+      },
+    ]);
+  });
+
+  it("answers another admin's token as not found and leaves it active", async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    const bobsToken = await seedToken(bob.id);
+
+    await expect(svc.revokeMine(alice.id, bobsToken.id, META)).rejects.toBeInstanceOf(
+      McpTokenNotFoundError,
+    );
+
+    expect(await storedToken(bobsToken.id)).toMatchObject({ revokedAt: null, revokedBy: null });
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('answers an unknown token id as not found', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+
+    await expect(svc.revokeMine(alice.id, randomUUID(), META)).rejects.toBeInstanceOf(
+      McpTokenNotFoundError,
+    );
+  });
+
+  it('returns an already revoked token unchanged and writes no second audit record', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+
+    const first = await svc.revokeMine(alice.id, token.id, META);
+    const second = await svc.revokeMine(alice.id, token.id, META);
+
+    expect(second).toEqual(first);
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('McpTokenService concurrent revocation (real PG)', () => {
+  it('revokes once and audits once when an owner and an overseer revoke together', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const overseer = await seedAdmin('overseer@ops.example');
+    const token = await seedToken(alice.id);
+
+    const [mine, overseen, all] = await Promise.all([
+      svc.revokeMine(alice.id, token.id, META),
+      svc.revoke(token.id, overseer.id, META),
+      svc.revokeAll(overseer.id, META),
+    ]);
+
+    const [winner] = auditEntries(audit);
+    expect(auditEntries(audit)).toHaveLength(1);
+    expect(overseen).toEqual(mine);
+    expect(mine).toMatchObject({ status: 'revoked', revokeReason: winner?.after?.['reason'] });
+    expect(all.revoked).toBe(winner?.after?.['reason'] === 'revoked_all' ? 1 : 0);
+  });
+});
+
+describe('McpTokenService.revoke (real PG)', () => {
+  it("revokes any admin's token in the overseer's name, once", async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const overseer = await seedAdmin('overseer@ops.example');
+    const token = await seedToken(alice.id);
+
+    const revoked = await svc.revoke(token.id, overseer.id, META);
+    const repeated = await svc.revoke(token.id, overseer.id, META);
+
+    expect(revoked).toMatchObject({
+      status: 'revoked',
+      adminUserId: alice.id,
+      revokedBy: overseer.id,
+      revokeReason: 'manual',
+    });
+    expect(repeated).toEqual(revoked);
+    expect(auditEntries(audit)).toEqual([
+      expect.objectContaining({ actorId: overseer.id, actorType: 'admin', resourceId: token.id }),
+    ]);
+  });
+
+  it('answers an unknown token id as not found', async () => {
+    const { svc } = makeService();
+    const overseer = await seedAdmin('overseer@ops.example');
+
+    await expect(svc.revoke(randomUUID(), overseer.id, META)).rejects.toBeInstanceOf(
+      McpTokenNotFoundError,
+    );
+  });
+});
+
+describe('McpTokenService.revokeAll (real PG)', () => {
+  it('revokes every active token, skips expired and revoked ones, and audits each', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    const overseer = await seedAdmin('overseer@ops.example');
+    const active = [await seedToken(alice.id), await seedToken(alice.id), await seedToken(bob.id)];
+    const expired = await seedToken(alice.id, { expiresAt: daysFromNow(-1) });
+    const earlierRevokedAt = daysFromNow(-2);
+    const alreadyRevoked = await seedToken(bob.id, {
+      revokedAt: earlierRevokedAt,
+      revokedBy: bob.id,
+      revokeReason: 'manual',
+    });
+
+    const result = await svc.revokeAll(overseer.id, META);
+
+    expect(result).toEqual({ revoked: 3 });
+    for (const token of active) {
+      expect(await storedToken(token.id)).toMatchObject({
+        revokedAt: NOW,
+        revokedBy: overseer.id,
+        revokeReason: 'revoked_all',
+      });
+    }
+    expect(await storedToken(expired.id)).toMatchObject({ revokedAt: null, revokeReason: null });
+    expect(await storedToken(alreadyRevoked.id)).toMatchObject({
+      revokedAt: earlierRevokedAt,
+      revokedBy: bob.id,
+      revokeReason: 'manual',
+    });
+    const entries = auditEntries(audit);
+    expect(entries.map((entry) => entry.resourceId).sort()).toEqual(
+      active.map((token) => token.id).sort(),
+    );
+    for (const entry of entries) {
+      expect(entry).toMatchObject({
+        actorId: overseer.id,
+        actorType: 'admin',
+        action: 'iam.mcp_token.revoked',
+        after: { reason: 'revoked_all' },
+      });
+    }
+  });
+});
+
+describe('McpTokenService.revokeAllForUser (real PG)', () => {
+  it("revokes only that user's active tokens with the given reason and actor", async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    const overseer = await seedAdmin('overseer@ops.example');
+    const alicesTokens = [await seedToken(alice.id), await seedToken(alice.id)];
+    const bobsToken = await seedToken(bob.id);
+
+    const result = await svc.revokeAllForUser({
+      userId: alice.id,
+      reason: 'admin_disabled',
+      actorId: overseer.id,
+      ...META,
+    });
+
+    expect(result).toEqual({ revoked: 2 });
+    for (const token of alicesTokens) {
+      expect(await storedToken(token.id)).toMatchObject({
+        revokedAt: NOW,
+        revokedBy: overseer.id,
+        revokeReason: 'admin_disabled',
+      });
+    }
+    expect(await storedToken(bobsToken.id)).toMatchObject({ revokedAt: null });
+    expect(auditEntries(audit)).toHaveLength(2);
+    for (const entry of auditEntries(audit)) {
+      expect(entry).toMatchObject({
+        actorId: overseer.id,
+        actorType: 'admin',
+        after: { adminUserId: alice.id, reason: 'admin_disabled' },
+        ...META,
+      });
+    }
+  });
+
+  it('records a revocation with no actor as a system revocation', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const token = await seedToken(alice.id);
+
+    await svc.revokeAllForUser({ userId: alice.id, reason: 'sessions_revoked', actorId: null });
+
+    expect(await storedToken(token.id)).toMatchObject({
+      revokedBy: null,
+      revokeReason: 'sessions_revoked',
+    });
+    expect(auditEntries(audit)).toEqual([
+      expect.objectContaining({
+        actorId: null,
+        actorType: 'system',
+        ip: null,
+        userAgent: null,
+        after: expect.objectContaining({ reason: 'sessions_revoked' }),
+      }),
+    ]);
+  });
+
+  it('revokes nothing and writes no audit record for a user without active tokens', async () => {
+    const { svc, audit } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    await seedToken(alice.id, { expiresAt: daysFromNow(-1) });
+
+    const result = await svc.revokeAllForUser({
+      userId: alice.id,
+      reason: 'admin_role_removed',
+      actorId: null,
+    });
+
+    expect(result).toEqual({ revoked: 0 });
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('McpTokenService.list and listMine (real PG)', () => {
+  it("lists only the caller's tokens in listMine, each with its owning admin", async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example', 'Alice');
+    const bob = await seedAdmin('bob@ops.example', 'Bob');
+    await seedToken(alice.id);
+    await seedToken(alice.id);
+    await seedToken(bob.id);
+
+    const result = await svc.listMine(alice.id, PAGE);
+
+    expect(paginated(McpTokenListItemSchema).parse(result)).toEqual(result);
+    expect(result.total).toBe(2);
+    expect(result.items).toHaveLength(2);
+    for (const item of result.items) {
+      expect(item).not.toHaveProperty('tokenHash');
+      expect(item).toMatchObject({
+        adminUserId: alice.id,
+        status: 'active',
+        admin: { id: alice.id, email: 'alice@ops.example', name: 'Alice', isActive: true },
+      });
+    }
+  });
+
+  it('filters by status, counting only the matching tokens', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const active = await seedToken(alice.id);
+    const expired = await seedToken(alice.id, { expiresAt: NOW });
+    const revoked = await seedToken(alice.id, { revokedAt: daysFromNow(-1) });
+    const revokedAfterExpiry = await seedToken(alice.id, {
+      expiresAt: daysFromNow(-3),
+      revokedAt: daysFromNow(-1),
+    });
+
+    const byStatus = async (status: 'active' | 'expired' | 'revoked') => {
+      const result = await svc.list({ ...PAGE, status });
+      return {
+        total: result.total,
+        ids: result.items.map((item) => item.id).sort(),
+        statuses: [...new Set(result.items.map((item) => item.status))],
+      };
+    };
+
+    expect(await byStatus('active')).toEqual({
+      total: 1,
+      ids: [active.id],
+      statuses: ['active'],
+    });
+    expect(await byStatus('expired')).toEqual({
+      total: 1,
+      ids: [expired.id],
+      statuses: ['expired'],
+    });
+    expect(await byStatus('revoked')).toEqual({
+      total: 2,
+      ids: [revoked.id, revokedAfterExpiry.id].sort(),
+      statuses: ['revoked'],
+    });
+  });
+
+  it('searches the label and the admin email, treating LIKE wildcards literally', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    const pipeline = await seedToken(alice.id, { label: 'CI pipeline' });
+    const percent = await seedToken(alice.id, { label: 'Laptop 100%' });
+    const underscore = await seedToken(alice.id, { label: 'desk_top' });
+    const bobsToken = await seedToken(bob.id, { label: 'Workstation' });
+
+    const idsFor = async (search: string) =>
+      (await svc.list({ ...PAGE, search })).items.map((item) => item.id).sort();
+
+    expect(await idsFor('PIPELINE')).toEqual([pipeline.id]);
+    expect(await idsFor('bob@ops')).toEqual([bobsToken.id]);
+    expect(await idsFor('%')).toEqual([percent.id]);
+    expect(await idsFor('_')).toEqual([underscore.id]);
+  });
+
+  it('narrows the overseer list to one admin and pages with the full total', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    const bob = await seedAdmin('bob@ops.example');
+    await seedToken(alice.id);
+    await seedToken(alice.id);
+    await seedToken(bob.id);
+
+    const secondPage = await svc.list({ page: 2, limit: 1, adminUserId: alice.id });
+
+    expect(secondPage.total).toBe(2);
+    expect(secondPage.items).toHaveLength(1);
+    expect(secondPage.items[0]).toMatchObject({ adminUserId: alice.id });
+  });
+
+  it('sorts by the requested column in the requested direction', async () => {
+    const { svc } = makeService();
+    const alice = await seedAdmin('alice@ops.example');
+    await seedToken(alice.id, { callCount: 5, createdAt: daysFromNow(-3) });
+    await seedToken(alice.id, { callCount: 1, createdAt: daysFromNow(-1) });
+    await seedToken(alice.id, { callCount: 3, createdAt: daysFromNow(-2) });
+
+    const callCounts = async (query: Parameters<McpTokenService['list']>[0]) =>
+      (await svc.list(query)).items.map((item) => item.callCount);
+
+    expect(await callCounts({ ...PAGE, sortBy: 'callCount', sortOrder: 'asc' })).toEqual([1, 3, 5]);
+    expect(await callCounts({ ...PAGE, sortBy: 'callCount', sortOrder: 'desc' })).toEqual([
+      5, 3, 1,
+    ]);
+    expect(await callCounts(PAGE)).toEqual([1, 3, 5]);
+  });
+
+  it('keeps a token whose admin account is gone, with the admin details empty', async () => {
+    const { svc } = makeService();
+    const goneAdminId = randomUUID();
+    await seedToken(goneAdminId);
+
+    const [item] = (await svc.list(PAGE)).items;
+
+    expect(McpTokenListItemSchema.parse(item)).toEqual(item);
+    expect(item?.admin).toEqual({ id: goneAdminId, email: null, name: null, isActive: null });
+  });
+});

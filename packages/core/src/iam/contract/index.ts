@@ -7,7 +7,9 @@ import {
   UuidSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
+import { mcpTokenContract } from './mcp-token.js';
 
+export * from './mcp-token.js';
 export { InvitationStatusSchema, PermissionLevelSchema } from '@openora/core/contracts';
 
 export const AdminRoleSchema = z.object({
@@ -194,6 +196,8 @@ export const iamContract = {
     .route({ method: 'POST', path: '/iam/report-access-denied' })
     .input(GrantInputSchema)
     .output(z.object({ recorded: z.boolean() })),
+
+  mcpTokens: mcpTokenContract,
 };
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;

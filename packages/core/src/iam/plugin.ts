@@ -1,26 +1,40 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_PLAYER_ACTIVITY,
   ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
+  AUDIT_WRITER,
   IDENTITY_READER,
   MAIL_DISPATCH,
+  MCP_TOKEN_AUTHENTICATOR,
+  MCP_TOKEN_REVOCATION,
+  PLATFORM_CONFIG,
   SESSION_COMMANDS,
   CACHE,
   RATE_LIMITER,
   domainEventSchemas,
 } from '@openora/core/contracts';
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
+import { McpTokenService } from './service/mcp-token.service.js';
 import { createIamRouter } from './router/index.js';
 import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js';
 import { DrizzleAdminRoleAssignmentDirectory } from './adapters/admin-role-assignment-directory.js';
+import { DrizzleMcpTokenAuthenticator } from './adapters/mcp-token-authenticator.js';
 
 const logger = createLogger('iam');
 
+function makeMcpTokenService(c: TypedContainer<CoreTokenCatalog>) {
+  return new McpTokenService({
+    drizzle: c.get(DRIZZLE),
+    audit: c.get(AUDIT_WRITER),
+    config: c.get(PLATFORM_CONFIG).agents.mcp,
+  });
+}
+
 export default {
   id: 'iam',
-  dependsOn: ['identity'],
+  dependsOn: ['identity', 'audit'],
   requiresPorts: [MAIL_DISPATCH],
   register(ctx) {
     // Captured from the provider factory so the event handlers below purge the SAME
@@ -67,6 +81,8 @@ export default {
       ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
       (c) => new DrizzleAdminRoleAssignmentDirectory(c.get(DRIZZLE)),
     );
+    ctx.provide(MCP_TOKEN_AUTHENTICATOR, (c) => new DrizzleMcpTokenAuthenticator(c.get(DRIZZLE)));
+    ctx.provide(MCP_TOKEN_REVOCATION, (c) => makeMcpTokenService(c));
 
     ctx.routers.add('iam', (c) =>
       createIamRouter(
@@ -79,6 +95,7 @@ export default {
           c.get(RATE_LIMITER),
         ),
         c.get(ADMIN_GUARD),
+        makeMcpTokenService(c),
       ),
     );
   },
