@@ -34,6 +34,7 @@ import type {
 import { createLogger } from '../kernel/logger.js';
 import { sha256Hex } from './canonical-json.js';
 import { mcpToolModelName } from './contract-validation.js';
+import { projectedOutputJsonSchema } from './output-schema.js';
 
 const logger = createLogger('mcp-kernel');
 
@@ -134,7 +135,7 @@ function serveTool<C extends TokenCatalog>(
       owner,
       modelName: mcpToolModelName(contract.id),
       inputJsonSchema: z.toJSONSchema(contract.inputSchema, { target: 'draft-7', io: 'input' }),
-      outputJsonSchema: z.toJSONSchema(contract.outputSchema, { target: 'draft-7', io: 'output' }),
+      outputJsonSchema: projectedOutputJsonSchema(contract.outputSchema, contract.redact.allow),
     },
   };
 }

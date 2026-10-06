@@ -745,6 +745,7 @@
   "dependencies": {
     "@2toad/profanity": "3.3.0",
     "@hono/node-server": "2.0.10",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@orpc/client": "1.14.5",
     "@orpc/contract": "1.14.5",
     "@orpc/openapi": "1.14.5",

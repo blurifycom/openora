@@ -1,10 +1,9 @@
 /**
  * Rate-limiter seam. Abuse-prone routes (auth flows, money mutations) consume
- * from this adapter so the throttling backend is swappable: the default binding
- * is an in-process fixed-window limiter (zero deps - good for `pnpm dev`, seed
- * and tests), process-local so it does NOT coordinate across replicas. Set
- * REDIS_URL to bind the shipped Redis reference adapter (distributed fixed-window)
- * with zero consumer code; rebind RATE_LIMITER via an overlay for any other backend.
+ * from this adapter so the throttling backend is swappable. It is a required
+ * durable seam with no in-process fallback: REDIS_URL binds the shipped Redis
+ * adapter (distributed fixed-window), an overlay can rebind RATE_LIMITER to any
+ * other backend, and boot refuses to start when neither binds it.
  */
 import { createToken, type Token } from './token.js';
 
@@ -31,6 +30,8 @@ export const RATE_LIMIT_KEYS = {
   REPORT_ACCESS_DENIED: 'report-access-denied',
   GEO_CHECK_IP: 'geo-check-ip',
   PROMO_PUBLIC_OFFERS_IP: 'promo-public-offers-ip',
+  MCP_TOKEN_MINUTE: 'mcp-token-min',
+  MCP_TOKEN_DAY: 'mcp-token-day',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];

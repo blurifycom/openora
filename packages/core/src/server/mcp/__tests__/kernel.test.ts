@@ -579,9 +579,13 @@ describe('McpKernel catalog', () => {
           type: 'object',
           properties: expect.objectContaining({ limit: expect.objectContaining({ maximum: 50 }) }),
         }),
-        outputJsonSchema: expect.objectContaining({ type: 'object' }),
+        outputJsonSchema: expect.objectContaining({
+          type: 'object',
+          required: ['playerId', 'balance'],
+        }),
       }),
     ]);
+    expect(kernel.listTools()[0]?.outputJsonSchema).not.toHaveProperty('properties.email');
     expect(kernel.listActionTypes()).toEqual([
       expect.objectContaining({
         id: 'hold_withdrawal',

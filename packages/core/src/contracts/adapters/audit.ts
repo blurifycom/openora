@@ -72,6 +72,8 @@ export type DirectAuditAction =
   | 'mcp.tool.failed'
   | 'mcp.action.executed'
   | 'mcp.action.failed'
+  | 'iam.mcp_token.created'
+  | 'iam.mcp_token.revoked'
   | 'wallet.withdrawal.held';
 
 /**

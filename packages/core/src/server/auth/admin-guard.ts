@@ -100,7 +100,8 @@ export class AdminGuard {
   /**
    * `assert` for a caller that is not an HTTP request (an agent run, an MCP token): the same
    * user, role, grant and 2FA-enrolment checks and the same denial event, without a session -
-   * so no session-integrity check, and `ip`/`userAgent` are null.
+   * so no session-integrity check, and `ip`/`userAgent` are null. A deactivated account is
+   * refused too: with no session to revoke, nothing else stops a credential it issued.
    */
   async assertUser<R extends ResourceName>(
     userId: string,
@@ -111,7 +112,27 @@ export class AdminGuard {
       userId,
       clientMeta: { ip: null, userAgent: null },
       permission: { resource, action },
+      requireActive: true,
     });
+  }
+
+  /**
+   * The requirements `userId` holds, decided as `assertUser` decides but with no denial event
+   * and no 2FA check: it narrows what a caller is shown and never authorizes anything.
+   */
+  async filterGranted<T extends { resource: string; action: string }>(
+    userId: string,
+    requirements: readonly T[],
+  ): Promise<T[]> {
+    const userRecord = await this.findUser(userId);
+    const userRole = userRecord ? roles[userRecord.role as keyof typeof roles] : undefined;
+    if (!userRecord?.isActive || !userRole) {
+      return [];
+    }
+    const grants = await this.resolveGrants(userId);
+    return requirements.filter(({ resource, action }) =>
+      this.checkGrant(grants, userRole, resource, action),
+    );
   }
 
   async assertSuperAdmin(context: unknown): Promise<AdminCaller> {
@@ -141,21 +162,20 @@ export class AdminGuard {
     clientMeta: { ip, userAgent },
     permission,
     session,
+    requireActive = false,
   }: {
     userId: string;
     clientMeta: ClientMeta;
     permission: { resource: R; action: ActionOf<R> } | undefined;
     session?: { sessionId: string | null };
+    requireActive?: boolean;
   }): Promise<AdminCaller> {
     const deniedResource = permission?.resource ?? 'admin';
     const deniedAction = permission?.action ?? 'access';
 
-    const result = await this.drizzle.db.execute(
-      sql`SELECT id, role FROM "user" WHERE id = ${userId} LIMIT 1`,
-    );
-    const userRecord = result.rows[0] as { id: string; role: string } | undefined;
-    if (!userRecord) {
-      this.emitUnauthorized(userId, undefined, deniedResource, deniedAction, ip, userAgent);
+    const userRecord = await this.findUser(userId);
+    if (!userRecord || (requireActive && !userRecord.isActive)) {
+      this.emitUnauthorized(userId, userRecord?.role, deniedResource, deniedAction, ip, userAgent);
       throw new ORPCError('FORBIDDEN', {
         message: 'Admin access required',
         data: { reason: AuthGuardReasonSchema.enum.admin_required },
@@ -197,6 +217,14 @@ export class AdminGuard {
     }
 
     return { userId, role: userRecord.role, ip, userAgent };
+  }
+
+  private async findUser(userId: string): Promise<{ role: string; isActive: boolean } | undefined> {
+    const result = await this.drizzle.db.execute<{ role: string; is_active: boolean }>(
+      sql`SELECT role, is_active FROM "user" WHERE id = ${userId} LIMIT 1`,
+    );
+    const row = result.rows[0];
+    return row && { role: row.role, isActive: row.is_active };
   }
 
   private resolveGrants(userId: string): Promise<AdminGrant[] | null> {
