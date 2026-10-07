@@ -686,6 +686,32 @@ describe('agent tag, note and enhanced-KYC actions are replay-safe', () => {
     });
   });
 
+  it("forbids a player's user id acting as an admin the precondition, which would reveal the exclusion", async () => {
+    const intruder = await newPlayer('precondition-intruder');
+    const run = adminRun(intruder.userId);
+    const payload = { playerId: excluded.playerId, tagKey: 'vip', reason: vipReason };
+
+    expect(await kernel.checkPrecondition('add_tag', payload, run)).toEqual({
+      ok: false,
+      error: 'forbidden',
+    });
+    expect(await auditRowsOfCall(run.correlationId)).toHaveLength(0);
+    await vi.waitFor(
+      async () => {
+        const denials = await auditRowsOf('identity.user.unauthorized_access', 'tag:create');
+        expect(denials).toContainEqual(
+          expect.objectContaining({
+            actorType: 'player',
+            actorId: intruder.playerId,
+            resourceType: 'tag',
+            result: 'failure',
+          }),
+        );
+      },
+      { timeout: 15_000, interval: 100 },
+    );
+  });
+
   it('tags an active player vip once when the approved proposal is replayed', async () => {
     const payload = { playerId: active.playerId, tagKey: 'vip', reason: vipReason };
     const proposalId = randomUUID();

@@ -440,6 +440,12 @@ async function checkPrecondition(
   if (!action) {
     return failure('unknown_action');
   }
+  const refusal = authorizationFailure(
+    await authorizeActor(state.authorize, run.data.actor, action.contract.iam),
+  );
+  if (refusal) {
+    return refusal;
+  }
   const logContext = { actionTypeId: action.contract.id, runId: run.data.runId };
   const parsed = parseInput(action.contract.payloadSchema, call.payload ?? {}, logContext);
   if (!parsed.success) {

@@ -434,14 +434,37 @@ describe('McpKernel.invokeTool', () => {
 describe('McpKernel.checkPrecondition', () => {
   const payload = { withdrawalId, reason: 'velocity spike' };
 
-  it('passes a satisfied precondition without IAM or audit', async () => {
+  it("passes a satisfied precondition once the caller holds the action type's grant, without an audit record", async () => {
     const { kernel, authorize, audit } = setup();
 
     await expect(
       kernel.checkPrecondition('hold_withdrawal', payload, runContext()),
     ).resolves.toEqual({ ok: true });
-    expect(authorize).not.toHaveBeenCalled();
+    expect(authorize).toHaveBeenCalledWith(adminId, { resource: 'withdrawal', action: 'hold' });
     expect(audit?.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller without the grant before the precondition runs', async () => {
+    const { kernel, implementation, audit } = setup({ authorize: async () => 'denied' });
+
+    await expect(
+      kernel.checkPrecondition('hold_withdrawal', payload, runContext()),
+    ).resolves.toEqual({ ok: false, error: 'forbidden' });
+    expect(implementation.precondition).not.toHaveBeenCalled();
+    expect(audit?.record).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without running the precondition when authorization itself throws', async () => {
+    const { kernel, implementation } = setup({
+      authorize: async () => {
+        throw new Error('iam store unreachable');
+      },
+    });
+
+    await expect(
+      kernel.checkPrecondition('hold_withdrawal', payload, runContext()),
+    ).resolves.toEqual({ ok: false, error: 'internal_error' });
+    expect(implementation.precondition).not.toHaveBeenCalled();
   });
 
   it('returns a declared refusal code', async () => {
