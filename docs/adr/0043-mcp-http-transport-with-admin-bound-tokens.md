@@ -37,7 +37,10 @@ creation time and a mandatory expiry, the revocation time, actor and reason, the
 call count. The plaintext is returned once, when the token is created. The lifetime defaults to
 30 days and is capped by configuration, at 90 days by default and never more than a year. Two
 ports in contracts keep the transport and the identity module independent of iam: one
-authenticates a bearer and records a call, the other revokes every token a user holds.
+authenticates a bearer and records a call, the other revokes every token a user holds inside the
+caller's transaction. Only an active admin can be issued a token; the issuing transaction reads
+the owner with a share lock, so it cannot interleave with a deactivation. Each admin holds a
+configured number of active tokens at most and can issue a configured number per hour.
 
 **Two permissions.** One IAM resource lets an admin use MCP and manage their own tokens; another
 lets an admin see every admin's tokens and revoke any of them, including an emergency revoke of
@@ -48,32 +51,46 @@ level that allows creating a token would also allow revoking everyone else's.
 HTTP endpoint only when `agents.mcp.enabled` is on, and mounts it ahead of CORS, cookie sessions,
 caching and the oRPC handler, so none of them touches the request. It runs the official SDK
 without session state - a fresh server and transport per request, JSON responses - and imports
-the SDK only when the endpoint is enabled. Each request passes, in order:
+the SDK, an optional peer dependency, only when the endpoint is enabled. Each request passes, in
+order:
 
-1. The host binding. On a host the operator did not bind the request falls through to the
-   normal 404, so the endpoint does not exist on the player domain.
+1. The host binding. The config refuses to enable the endpoint without an allowed host, and on
+   any other host the request falls through to the normal 404, so the endpoint does not exist on
+   the player domain.
 2. The origin check. A request carrying a browser origin is refused unless that origin is
    configured; desktop clients send none.
-3. Bearer authentication. A missing, unknown, expired or revoked token gets a 401 whose
+3. A per-client-address limit, before any token is looked up.
+4. Bearer authentication. A missing, unknown, expired or revoked token gets a 401 whose
    challenge names no OAuth metadata, so a client does not start an OAuth discovery.
-4. Per-token rate limits for a minute and a day on the shared rate limiter, failing closed.
-5. `AdminGuard.assertUser` for the MCP permission, which now also refuses a deactivated account.
+5. Per-token rate limits for a minute and a day on the shared rate limiter, failing closed: an
+   unreachable limiter answers 503.
+6. `AdminGuard.assertUser` for the MCP permission, which now also refuses a deactivated account.
 
 Only read-class tools are listed, narrowed to the ones the admin's grants allow; propose-class
 tools and action types are never exposed. Every call still goes through the kernel, which checks
-the tool's own permission and writes the audit record with the token id.
+the tool's own permission and writes the audit record with the token id and the client's address
+and agent. A call naming a tool the endpoint does not expose is refused and audited too, and the
+kernel's input hashing is total, so no request can reach a tool and skip its audit record.
 
-**Personal data is dropped by default.** The transport removes the output keys a tool marks as
-personal from both the result and the published output schema. An operator can switch that off.
-The kernel's descriptor now publishes the output schema projected to the allow-listed keys, so
-what a client validates is what the kernel returns.
+**Personal data is dropped by default.** The transport asks the kernel to drop the output keys a
+tool marks as personal, so the audited output hash covers exactly what the client received, and
+publishes output schemas without them. An operator can switch that off. The kernel's descriptor
+now publishes the output schema projected to the allow-listed keys, so what a client validates is
+what the kernel returns.
 
-**Revocation is manual and automatic.** The owner or an overseer revokes a token by hand. The
-identity module revokes all of a user's tokens, persistently and in its own write path, when it
-deactivates the account, demotes it from admin, or revokes all of the user's sessions - which
-also covers a forced logout, a two-factor reset and an email change. The per-request check stops
-a deactivated admin's token at once; the persisted revocation keeps it dead after the account is
-restored.
+**Revocation is manual and automatic.** The owner or an overseer revokes a token by hand.
+Automatic revocation commits in the same transaction as the change that causes it and keys on the
+resulting state, so a failure rolls the change back and a retry finishes the job:
+
+- the identity module revokes all of an admin's tokens when it deactivates the account, demotes
+  it from admin, revokes all of its sessions (which also covers a forced logout, a two-factor
+  reset and an email change), or completes a password reset or change;
+- the iam module revokes the tokens of every admin who loses MCP access when a role loses the permission, is deleted or is unassigned, or when a first role assignment replaces the static admin role without it; grant changes and bulk revocations take the same lock, so they apply one at a time.
+
+Players can never hold tokens, so their session revocations skip the token table. A bulk
+revocation locks the token table first, so a token issued concurrently cannot survive it. The
+per-request check stops a token at once; the persisted revocation keeps it dead after the
+account or the access is restored.
 
 **The kill switch is configuration plus revocation.** Turning the endpoint off removes it at the
 next start. Revoking all tokens, or removing the MCP permission from a role, stops use without a
@@ -111,14 +128,18 @@ Rejected alternatives:
 
 **Negative / trade-offs:**
 
-- `@openora/core` now depends on the MCP SDK, which installs its transitive dependencies
-  (express, cors and others) for every consumer, although only an enabled endpoint loads it.
+- An operator who enables the endpoint installs the MCP SDK next to core; a deployment that
+  never enables it installs nothing extra.
 - A stolen token reads what its admin can read until it expires or is revoked. The lifetime cap,
   the per-token limits, hashed storage and the per-call audit bound that exposure.
 - Claude Desktop's remote connectors accept only OAuth, so Desktop needs a local bridge that adds
   the header; Claude Code sends it directly.
 - The daily limit is a fixed 24-hour window that opens with the first request, not a calendar
   day, and every authenticated request counts towards both limits.
+- Issuing a token needs a session with the MCP permission but no fresh second factor. A step-up
+  needs a cross-module port into identity and a Backoffice flow, and is left to a later change.
+- The host binding reads the request's host, so the backoffice proxy has to set the `Host` header
+  itself and reject absolute-form request targets.
 
 **Neutral:**
 

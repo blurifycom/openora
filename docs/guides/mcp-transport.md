@@ -11,28 +11,41 @@ The design and its trade-offs are recorded in
 
 ## Enable the endpoint (operator)
 
-The endpoint is off by default. Turn it on in the `agents.mcp` block of the platform config; the
-[agents config schema](../../packages/core/src/contracts/schemas/agents.ts) lists every setting
-with its default and bounds.
+The endpoint is off by default. Enabling it takes two steps.
 
-```yaml
-agents:
-  mcp:
-    enabled: true
-    allowedHosts:
-      - backoffice-api.example.com
-```
+1. Install the MCP SDK next to `@openora/core`. Core declares it as an optional peer dependency
+   and loads it only while the endpoint is on, so a deployment without MCP never installs it.
 
-- **Bind it to the backoffice host.** With an allowed-host list set, the endpoint answers only on
-  those hosts; on any other host the path is a plain 404, so it never appears on the player
-  domain. Behind a proxy, forward the original `Host` header.
+   ```bash
+   pnpm add @modelcontextprotocol/sdk@1.29.0
+   ```
+
+2. Turn the endpoint on in the `agents.mcp` block of the platform config, with the backoffice
+   host it answers on. The [agents config schema](../../packages/core/src/contracts/schemas/agents.ts)
+   lists every setting with its default and bounds.
+
+   ```yaml
+   agents:
+     mcp:
+       enabled: true
+       allowedHosts:
+         - backoffice-api.example.com
+   ```
+
+- **Bind it to the backoffice host.** The config refuses to enable the endpoint without at least
+  one allowed host. On any other host the path is a plain 404, so it never appears on the player
+  domain. The host is read from the request, so let the backoffice proxy set the `Host` header
+  itself and reject absolute-form request targets, or serve the endpoint from a deployment only
+  that proxy reaches.
 - **Browser origins.** A request that carries an `Origin` header is refused unless that origin is
   listed. Desktop clients send none, so the list normally stays empty.
-- **Token lifetime.** A token gets the default lifetime unless the admin picks a shorter or
-  longer one, up to the configured cap.
-- **Rate limits.** Each token has a per-minute and a per-day limit. They run on the shared rate
-  limiter, which needs Redis; when the limiter is unreachable, requests are refused.
-- **Personal data.** By default the endpoint removes the output fields a tool marks as personal
+- **Token issuance.** Each admin can hold a limited number of active tokens and issue a limited
+  number per hour. A token gets the default lifetime unless the admin picks a shorter or longer
+  one, up to the configured cap.
+- **Rate limits.** Every client address has a per-minute limit before any token is looked up, and
+  every token has a per-minute and a per-day limit. They run on the shared rate limiter, which
+  needs Redis; while it is unreachable the endpoint answers 503 instead of serving unthrottled.
+- **Personal data.** By default the kernel removes the output fields a tool marks as personal
   (names, contact details, date of birth and similar) before they reach the client, and with it
   whatever model the client uses. Switching that off sends them through.
 - **Path.** The endpoint is served at `/mcp` unless configured otherwise.
@@ -42,12 +55,13 @@ agents:
 Two permissions in the IAM catalog control the endpoint:
 
 - **MCP access** lets an admin generate, list and revoke their own tokens, and is checked again on
-  every request. Removing it from a role stops that role's tokens immediately.
+  every request. Taking it away - removing it from a role, deleting the role, unassigning the role, or giving an admin a first role that replaces the static admin role without it - revokes the affected admins' tokens for good.
 - **MCP token oversight** lets an admin see every admin's tokens and revoke any of them,
   including revoking all of them at once.
 
-The built-in admin role holds both. Grant them to other roles in the role matrix. MCP access is
-all-or-nothing, so only the read-write level grants it.
+The static admin role and the seeded admin and super-admin roles hold both. A role created before
+this release gets them through the role matrix. MCP access is all-or-nothing, so only the
+read-write level grants it.
 
 A token never reaches more than its admin's own grants: the tools an admin cannot use are not
 listed, and the kernel checks each tool's permission again on every call.
@@ -55,7 +69,7 @@ listed, and the kernel checks each tool's permission again on every call.
 ## Generate a token (admin)
 
 The platform ships the token routes; the operator's Backoffice builds the screen on top of them.
-Generate a token with a label and a lifetime and copy it at once: it is shown only once, and the
+Only an active admin can generate a token. Copy it at once: it is shown only once, and the
 platform stores only its hash.
 
 ## Connect Claude Code
@@ -67,7 +81,9 @@ claude mcp add --transport http --scope local openora \
 ```
 
 Run `/mcp` in Claude Code (or restart it) to connect. The tools appear with underscores in their
-names, for example the player summary tool as `player_summary`.
+names, for example the player summary tool as `player_summary`. When a token is revoked or
+expires, Claude Code reports that the server rejected the header in its configuration; generate a
+new token, update the header and reconnect.
 
 - Keep the server name short. Claude Code names a tool `mcp__<server>__<tool>`, and the model API
   rejects names longer than 64 characters.
@@ -86,27 +102,32 @@ path has not been verified by the platform maintainers.
 - Only read tools, never a proposal or an action.
 - Output limited to each tool's allow-listed fields, without the personal ones unless the
   operator switched them on.
-- An audit record for every tool call with the token, the admin, the tool and its version, and
-  hashes of the input and output, never the data itself.
+- An audit record for every tool call, including a call naming a tool the endpoint does not
+  expose, with the token, the admin, the tool and its version, the client address and agent, and
+  hashes of the input and of exactly the output returned, never the data itself.
 
 ## Revoke a token
 
 - The owner revokes their own tokens; an admin with token oversight revokes anyone's, or all.
 - The platform revokes all of a user's tokens when their account is deactivated, when they stop
-  being an admin, and when all of their sessions are revoked, which includes a forced logout, a
-  two-factor reset and an email change. A revoked token stays revoked after the account is
-  restored.
+  being an admin, when an IAM change takes away their MCP access, when all of their sessions are
+  revoked (a forced logout, a two-factor reset, an email change), and when their password is
+  reset or changed. The revocation commits together with the change that caused it, and a revoked
+  token stays revoked after the account or the access is restored.
 - Turning the endpoint off in the platform config removes it at the next start. Revoking all
   tokens, or removing MCP access from a role, takes effect immediately.
 
 ## Troubleshooting
 
-| Status | Meaning                                                                                                     |
-| ------ | ----------------------------------------------------------------------------------------------------------- |
-| 400    | The body is not valid JSON, or it is a JSON-RPC batch, which the endpoint does not accept.                  |
-| 401    | The token is missing, unknown, expired or revoked. Generate a new one.                                      |
-| 403    | The admin lacks MCP access, the account is deactivated, or the request carried a browser origin not listed. |
-| 404    | The endpoint is off, the path is wrong, or the host is not in the allowed-host list.                        |
-| 405    | The client asked for a server-sent event stream. Clients fall back to plain requests on their own.          |
-| 413    | The request body is larger than 1 MiB.                                                                      |
-| 429    | The token hit its per-minute or per-day limit. Retry after the time the response names.                     |
+| Status | Meaning                                                                                                                          |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | The body is not valid JSON, or it is a JSON-RPC batch, which the endpoint does not accept.                                       |
+| 401    | The token is missing, unknown, expired or revoked. Generate a new one.                                                           |
+| 403    | The admin lacks MCP access, the account is deactivated, a required two-factor enrolment is missing, or the origin is not listed. |
+| 404    | The endpoint is off, the path is wrong, or the host is not in the allowed-host list.                                             |
+| 405    | The client asked for a server-sent event stream. Clients fall back to plain requests on their own.                               |
+| 406    | The client does not accept both JSON and event-stream responses, which MCP Streamable HTTP requires.                             |
+| 413    | The request body is larger than 1 MiB.                                                                                           |
+| 415    | The request is not sent as JSON.                                                                                                 |
+| 429    | The token or the client address hit its limit. Retry after the time the response names.                                          |
+| 503    | The rate limiter is unreachable. Retry shortly.                                                                                  |
